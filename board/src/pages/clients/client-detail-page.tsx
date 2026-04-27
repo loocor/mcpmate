@@ -16,7 +16,7 @@ import {
 	Square,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
@@ -90,9 +90,13 @@ import type {
 	ClientInfo,
 	ConfigSuit,
 	ServerSummary,
+	UnifyDirectCapabilityIds,
 } from "../../lib/types";
 import { formatBackupTime } from "../../lib/utils";
 import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
+
+type UnifyRouteMode = "broker_only" | "server_level" | "capability_level";
+type DirectExposureRouteMode = Extract<UnifyRouteMode, "server_level" | "capability_level">;
 
 const governanceClientsApi = clientsApi as typeof clientsApi & {
 	suspendRecord: (payload: { identifier: string }) => Promise<unknown>;
@@ -111,6 +115,10 @@ const arrangeProfilesWithDefaultFirst = (items: ConfigSuit[] = []) => {
 
 const SUPPORTED_TRANSPORT_OPTIONS = ["streamable_http", "sse", "stdio"];
 
+function normalizeCapabilityIds(ids: string[] = []): string[] {
+	return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean))).sort();
+}
+
 function getUnifyServerSurfaces<T extends { server_id: string }>(
 	selectedSurfaces: T[],
 	serverId: string,
@@ -118,25 +126,42 @@ function getUnifyServerSurfaces<T extends { server_id: string }>(
 	return selectedSurfaces.filter((entry) => entry.server_id === serverId);
 }
 
-function resolveNextCapabilityLevelSurfaces<T extends { server_id: string }>(
-	currentSurfaces: T[],
-	serverId: string,
+function normalizeDirectCapabilityIds(ids?: UnifyDirectCapabilityIds): UnifyDirectCapabilityIds {
+	return {
+		tool_ids: normalizeCapabilityIds(ids?.tool_ids),
+		prompt_ids: normalizeCapabilityIds(ids?.prompt_ids),
+		resource_ids: normalizeCapabilityIds(ids?.resource_ids),
+		template_ids: normalizeCapabilityIds(ids?.template_ids),
+	};
+}
+
+function resolveNextCapabilityIds(
+	currentIds: string[] = [],
 	hasSelectedForServer: boolean,
-	resolvedServerSurfaces: T[],
-): T[] {
-	const otherServerSurfaces = currentSurfaces.filter(
-		(entry) => entry.server_id !== serverId,
-	);
+	serverCapabilityIds: string[],
+): string[] {
+	const serverCapabilityIdSet = new Set(serverCapabilityIds);
+	const otherIds = currentIds.filter((id) => !serverCapabilityIdSet.has(id));
 
 	if (hasSelectedForServer) {
-		return otherServerSurfaces;
+		return otherIds;
 	}
 
-	return [...otherServerSurfaces, ...resolvedServerSurfaces];
+	return normalizeCapabilityIds([...otherIds, ...serverCapabilityIds]);
+}
+
+function getCapabilityId(item: Record<string, unknown>, keys: string[]): string | null {
+	for (const key of keys) {
+		const value = item[key];
+		if (typeof value === "string" && value.trim()) {
+			return value;
+		}
+	}
+	return null;
 }
 
 function isUnifyServerMixedRouting(
-	routeMode: "broker_only" | "server_live" | "capability_level",
+	routeMode: UnifyRouteMode,
 	toolSurfaceCount: number,
 	toolsCount: number | undefined,
 ): boolean {
@@ -168,6 +193,57 @@ function toggleSelectedServerIds(currentIds: string[], serverId: string): string
 	}
 
 	return [...currentIds, serverId];
+}
+
+function buildCapabilityConfigPayloadBase(
+	identifier: string,
+	currentConfig: ClientCapabilityConfigData,
+): Omit<ClientCapabilityConfigReq, "unify_direct_exposure"> {
+	return {
+		identifier,
+		capability_source: currentConfig.capability_source,
+		selected_profile_ids: currentConfig.selected_profile_ids,
+	};
+}
+
+function buildUnifyDirectExposurePayload(
+	routeMode: UnifyRouteMode,
+	serverIds: string[],
+	capabilityIds: UnifyDirectCapabilityIds,
+): NonNullable<ClientCapabilityConfigReq["unify_direct_exposure"]> {
+	return {
+		route_mode: routeMode,
+		server_ids: routeMode === "server_level" ? serverIds : [],
+		capability_ids: routeMode === "capability_level" ? normalizeDirectCapabilityIds(capabilityIds) : {},
+	};
+}
+
+function buildServerLevelExposureUpdate(
+	identifier: string,
+	currentConfig: ClientCapabilityConfigData,
+	serverId: string,
+): ClientCapabilityConfigReq {
+	const currentServerIds = currentConfig.unify_direct_exposure?.server_ids ?? [];
+
+	return {
+		...buildCapabilityConfigPayloadBase(identifier, currentConfig),
+		unify_direct_exposure: buildUnifyDirectExposurePayload(
+			"server_level",
+			toggleSelectedServerIds(currentServerIds, serverId),
+			{},
+		),
+	};
+}
+
+function buildCapabilityLevelExposureUpdate(
+	identifier: string,
+	currentConfig: ClientCapabilityConfigData,
+	nextCapabilityIds: UnifyDirectCapabilityIds,
+): ClientCapabilityConfigReq {
+	return {
+		...buildCapabilityConfigPayloadBase(identifier, currentConfig),
+		unify_direct_exposure: buildUnifyDirectExposurePayload("capability_level", [], nextCapabilityIds),
+	};
 }
 
 function getTransportOptionLabel(
@@ -302,9 +378,9 @@ export function ClientDetailPage() {
 	const limitId = useId();
 	const [mode, setMode] = useState<ClientConfigMode>("hosted");
 	const [transport, setTransport] = useState<string>("auto");
-	const [unifyRouteMode, setUnifyRouteMode] = useState<"broker_only" | "server_live" | "capability_level">("broker_only");
+	const [unifyRouteMode, setUnifyRouteMode] = useState<UnifyRouteMode>("broker_only");
 	const [unifySelectedServers, setUnifySelectedServers] = useState<string[]>([]);
-	const [unifySelectedToolSurfaces, setUnifySelectedToolSurfaces] = useState<{ server_id: string; tool_name: string }[]>([]);
+	const [unifyCapabilityIds, setUnifyCapabilityIds] = useState<UnifyDirectCapabilityIds>({});
 	const [hasUnifyDraftChanges, setHasUnifyDraftChanges] = useState(false);
 
 	useEffect(() => {
@@ -358,7 +434,7 @@ export function ClientDetailPage() {
 		enabled: !!identifier,
 	});
 
-	const { data: capabilityConfig, refetch: refetchCapabilityConfig } = useQuery({
+	const { data: capabilityConfig } = useQuery({
 		queryKey: ["client-capability-config", identifier],
 		queryFn: () => clientsApi.getCapabilityConfig(identifier || ""),
 		enabled: !!identifier,
@@ -388,6 +464,14 @@ export function ClientDetailPage() {
 	const eligibleServers = useMemo(() => {
 		return serversListData?.servers?.filter((s) => s.unify_direct_exposure_eligible) || [];
 	}, [serversListData]);
+
+	const refreshClientCapabilityState = useCallback(async () => {
+		await Promise.allSettled([
+			qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] }),
+			qc.invalidateQueries({ queryKey: ["client-config", identifier] }),
+			qc.invalidateQueries({ queryKey: ["clients"] }),
+		]);
+	}, [identifier, qc]);
 
 	const { data: profilesData, isLoading: loadingProfiles } = useQuery({
 		queryKey: ["profiles"],
@@ -455,6 +539,9 @@ export function ClientDetailPage() {
 		if (!effectiveCapabilityConfig) {
 			return;
 		}
+		if (hasUnifyDraftChanges) {
+			return;
+		}
 		switch (effectiveCapabilityConfig.capability_source) {
 			case "profiles":
 				setSelectedConfig("profile");
@@ -470,16 +557,15 @@ export function ClientDetailPage() {
 				setSelectedProfiles([]);
 				break;
 		}
-		if (!hasUnifyDraftChanges) {
-			if (effectiveCapabilityConfig.unify_direct_exposure) {
-				setUnifyRouteMode(effectiveCapabilityConfig.unify_direct_exposure.route_mode || "broker_only");
-				setUnifySelectedServers(effectiveCapabilityConfig.unify_direct_exposure.selected_server_ids || []);
-				setUnifySelectedToolSurfaces(effectiveCapabilityConfig.unify_direct_exposure.selected_tool_surfaces || []);
-			} else {
-				setUnifyRouteMode("broker_only");
-				setUnifySelectedServers([]);
-				setUnifySelectedToolSurfaces([]);
-			}
+		if (effectiveCapabilityConfig.unify_direct_exposure) {
+			const exposure = effectiveCapabilityConfig.unify_direct_exposure;
+			setUnifyRouteMode(exposure.route_mode || "broker_only");
+			setUnifySelectedServers(exposure.server_ids ?? []);
+			setUnifyCapabilityIds(normalizeDirectCapabilityIds(exposure.capability_ids));
+		} else {
+			setUnifyRouteMode("broker_only");
+			setUnifySelectedServers([]);
+			setUnifyCapabilityIds({});
 		}
 	}, [effectiveCapabilityConfig, hasUnifyDraftChanges]);
 
@@ -615,8 +701,8 @@ export function ClientDetailPage() {
 					}),
 				},
 				{
-					value: "server_live",
-					label: t("detail.configuration.sections.source.unifyRouteModes.server_live", {
+					value: "server_level",
+					label: t("detail.configuration.sections.source.unifyRouteModes.server_level", {
 						defaultValue: "Server Level",
 					}),
 				},
@@ -832,18 +918,13 @@ export function ClientDetailPage() {
 		};
 
 		if (mode === "unify") {
-			const currentUnifyExposure = effectiveCapabilityConfig?.unify_direct_exposure;
 			payload.capability_source = "activated";
 			payload.selected_profile_ids = [];
-			payload.unify_direct_exposure = {
-				route_mode: unifyRouteMode,
-				selected_server_ids:
-					unifyRouteMode === "server_live" ? unifySelectedServers : [],
-				selected_tool_surfaces: unifySelectedToolSurfaces,
-				selected_prompt_surfaces: currentUnifyExposure?.selected_prompt_surfaces ?? [],
-				selected_resource_surfaces: currentUnifyExposure?.selected_resource_surfaces ?? [],
-				selected_template_surfaces: currentUnifyExposure?.selected_template_surfaces ?? [],
-			};
+			payload.unify_direct_exposure = buildUnifyDirectExposurePayload(
+				unifyRouteMode,
+				unifySelectedServers,
+				unifyCapabilityIds,
+			);
 		} else {
 			payload.unify_direct_exposure = effectiveCapabilityConfig?.unify_direct_exposure || null;
 			if (selectedConfig === "profile") {
@@ -873,12 +954,12 @@ export function ClientDetailPage() {
 		return payload;
 	};
 
-	const bulkCapabilityLevelServerMutation = useMutation<
+	const directExposureServerMutation = useMutation<
 		ClientCapabilityConfigData | null,
 		unknown,
-		{ server: ServerSummary }
+		{ server: ServerSummary; routeMode: DirectExposureRouteMode }
 	>({
-		mutationFn: async ({ server }) => {
+		mutationFn: async ({ server, routeMode }) => {
 			if (!identifier) {
 				throw new Error("No identifier provided");
 			}
@@ -894,6 +975,12 @@ export function ClientDetailPage() {
 				);
 			}
 
+			if (routeMode === "server_level") {
+				return clientsApi.updateCapabilityConfig(
+					buildServerLevelExposureUpdate(identifier, currentConfig, server.id),
+				);
+			}
+
 			const [toolsResponse, promptsResponse, resourcesResponse, templatesResponse] =
 				await Promise.all([
 					serversApi.listTools(server.id).catch(() => ({ items: [] })),
@@ -904,35 +991,11 @@ export function ClientDetailPage() {
 
 			const currentUnifyExposure = currentConfig.unify_direct_exposure ?? {
 				route_mode: "capability_level" as const,
-				selected_server_ids: [],
-				selected_tool_surfaces: [],
-				selected_prompt_surfaces: [],
-				selected_resource_surfaces: [],
-				selected_template_surfaces: [],
+				server_ids: [],
+				capability_ids: {},
 			};
 
-			const currentToolSurfaces: NonNullable<
-				ClientCapabilityConfigData["unify_direct_exposure"]
-			>["selected_tool_surfaces"] =
-				currentUnifyExposure.selected_tool_surfaces ?? [];
-			const currentPromptSurfaces: NonNullable<
-				ClientCapabilityConfigData["unify_direct_exposure"]
-			>["selected_prompt_surfaces"] =
-				currentUnifyExposure.selected_prompt_surfaces ?? [];
-			const currentResourceSurfaces: NonNullable<
-				ClientCapabilityConfigData["unify_direct_exposure"]
-			>["selected_resource_surfaces"] =
-				currentUnifyExposure.selected_resource_surfaces ?? [];
-			const currentTemplateSurfaces: NonNullable<
-				ClientCapabilityConfigData["unify_direct_exposure"]
-			>["selected_template_surfaces"] =
-				currentUnifyExposure.selected_template_surfaces ?? [];
-
-			const hasAnySelectedForServer =
-				getUnifyServerSurfaces(currentToolSurfaces, server.id).length > 0 ||
-				getUnifyServerSurfaces(currentPromptSurfaces, server.id).length > 0 ||
-				getUnifyServerSurfaces(currentResourceSurfaces, server.id).length > 0 ||
-				getUnifyServerSurfaces(currentTemplateSurfaces, server.id).length > 0;
+			const currentCapabilityIds = normalizeDirectCapabilityIds(currentUnifyExposure.capability_ids);
 
 			const rawTools = Array.isArray(toolsResponse.items)
 				? (toolsResponse.items as Array<Record<string, unknown>>)
@@ -947,68 +1010,48 @@ export function ClientDetailPage() {
 				? (templatesResponse.items as Array<Record<string, unknown>>)
 				: [];
 
-			const nextToolSurfaces = resolveNextCapabilityLevelSurfaces(
-				currentToolSurfaces,
-				server.id,
-				hasAnySelectedForServer,
-				rawTools
-					.map((tool) => String(tool.tool_name ?? tool.name ?? ""))
-					.filter(Boolean)
-					.map((tool_name) => ({ server_id: server.id, tool_name })),
-			);
-			const nextPromptSurfaces = resolveNextCapabilityLevelSurfaces(
-				currentPromptSurfaces,
-				server.id,
-				hasAnySelectedForServer,
-				rawPrompts
-					.map((prompt) => String(prompt.prompt_name ?? prompt.name ?? ""))
-					.filter(Boolean)
-					.map((prompt_name) => ({ server_id: server.id, prompt_name })),
-			);
-			const nextResourceSurfaces = resolveNextCapabilityLevelSurfaces(
-				currentResourceSurfaces,
-				server.id,
-				hasAnySelectedForServer,
-				rawResources
-					.map((resource) => String(resource.resource_uri ?? resource.uri ?? ""))
-					.filter(Boolean)
-					.map((resource_uri) => ({ server_id: server.id, resource_uri })),
-			);
-			const nextTemplateSurfaces = resolveNextCapabilityLevelSurfaces(
-				currentTemplateSurfaces,
-				server.id,
-				hasAnySelectedForServer,
-				rawTemplates
-					.map((template) =>
-						String(template.uri_template ?? template.template ?? ""),
-					)
-					.filter(Boolean)
-					.map((uri_template) => ({ server_id: server.id, uri_template })),
-			);
-
-			return clientsApi.updateCapabilityConfig({
-				identifier,
-				capability_source: currentConfig.capability_source,
-				selected_profile_ids: currentConfig.selected_profile_ids,
-				unify_direct_exposure: {
-					...currentUnifyExposure,
-					route_mode: "capability_level",
-					selected_server_ids: [],
-					selected_tool_surfaces: nextToolSurfaces,
-					selected_prompt_surfaces: nextPromptSurfaces,
-					selected_resource_surfaces: nextResourceSurfaces,
-					selected_template_surfaces: nextTemplateSurfaces,
-				},
-			});
-		},
-		onSuccess: async () => {
-			await Promise.allSettled([
-				qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] }),
-				qc.invalidateQueries({ queryKey: ["client-config", identifier] }),
-				qc.invalidateQueries({ queryKey: ["clients"] }),
-				refetchCapabilityConfig(),
-				refetchDetails(),
+			const serverToolIds = rawTools
+				.map((tool) => getCapabilityId(tool, ["unique_name"]))
+				.filter((id): id is string => Boolean(id));
+			const serverPromptIds = rawPrompts
+				.map((prompt) => getCapabilityId(prompt, ["unique_name"]))
+				.filter((id): id is string => Boolean(id));
+			const serverResourceIds = rawResources
+				.map((resource) => getCapabilityId(resource, ["unique_uri"]))
+				.filter((id): id is string => Boolean(id));
+			const serverTemplateIds = rawTemplates
+				.map((template) => getCapabilityId(template, ["unique_uri_template", "unique_name"]))
+				.filter((id): id is string => Boolean(id));
+			const serverCapabilityIdSet = new Set([
+				...serverToolIds,
+				...serverPromptIds,
+				...serverResourceIds,
+				...serverTemplateIds,
 			]);
+			const hasAnySelectedForServer = [
+				...(currentCapabilityIds.tool_ids ?? []),
+				...(currentCapabilityIds.prompt_ids ?? []),
+				...(currentCapabilityIds.resource_ids ?? []),
+				...(currentCapabilityIds.template_ids ?? []),
+			].some((id) => serverCapabilityIdSet.has(id));
+
+			const nextCapabilityIds: UnifyDirectCapabilityIds = {
+				tool_ids: resolveNextCapabilityIds(currentCapabilityIds.tool_ids, hasAnySelectedForServer, serverToolIds),
+				prompt_ids: resolveNextCapabilityIds(currentCapabilityIds.prompt_ids, hasAnySelectedForServer, serverPromptIds),
+				resource_ids: resolveNextCapabilityIds(currentCapabilityIds.resource_ids, hasAnySelectedForServer, serverResourceIds),
+				template_ids: resolveNextCapabilityIds(currentCapabilityIds.template_ids, hasAnySelectedForServer, serverTemplateIds),
+			};
+
+			return clientsApi.updateCapabilityConfig(
+				buildCapabilityLevelExposureUpdate(identifier, currentConfig, nextCapabilityIds),
+			);
+		},
+		onSuccess: async (data, { routeMode }) => {
+			if (routeMode === "server_level") {
+				setUnifySelectedServers(data?.unify_direct_exposure?.server_ids ?? []);
+				setHasUnifyDraftChanges(false);
+			}
+			await refreshClientCapabilityState();
 		},
 		onError: (error) =>
 			notifyError(
@@ -1066,7 +1109,7 @@ export function ClientDetailPage() {
 
 	const renderUnifyEligibleServerCapabilitySummary = (
 		server: ServerSummary,
-		routeMode: "server_live" | "capability_level",
+		routeMode: DirectExposureRouteMode,
 		exposedToolCount: number,
 	) => {
 		const cap = server.capabilities ?? server.capability;
@@ -1329,12 +1372,8 @@ export function ClientDetailPage() {
 					}),
 				);
 			}
-			qc.invalidateQueries({ queryKey: ["clients"] });
-			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
-			qc.invalidateQueries({ queryKey: ["client-capability-config", identifier] });
+			void refreshClientCapabilityState();
 			setHasUnifyDraftChanges(false);
-			refetchCapabilityConfig();
-			refetchDetails();
 		},
 		onError: (e) =>
 			notifyError(
@@ -1955,17 +1994,7 @@ export function ClientDetailPage() {
 																			})
 																			: "",
 																	);
-																	await Promise.allSettled([
-																		qc.invalidateQueries({ queryKey: ["clients"] }),
-																		qc.invalidateQueries({
-																			queryKey: ["client-config", identifier],
-																		}),
-																		qc.invalidateQueries({
-																			queryKey: ["client-capability-config", identifier],
-																		}),
-																		refetchCapabilityConfig(),
-																		refetchDetails(),
-																	]);
+													await refreshClientCapabilityState();
 																} catch (err) {
 																	setTransport(previousTransport);
 																	notifyError(
@@ -2229,9 +2258,9 @@ export function ClientDetailPage() {
 																		"All capabilities are kept behind the UCAN broker catalog. Builtin MCP tools will browse and call capabilities from globally enabled servers.",
 																},
 															)}
-														{mode === "unify" && unifyRouteMode === "server_live" &&
-															t(
-																"detail.configuration.sections.source.descriptions.unify_server_live",
+												{mode === "unify" && unifyRouteMode === "server_level" &&
+													t(
+														"detail.configuration.sections.source.descriptions.unify_server_level",
 																{
 																	defaultValue:
 																		"Directly expose all capabilities from selected eligible servers to this client. Exposed capabilities are excluded from the UCAN catalog.",
@@ -2300,7 +2329,7 @@ export function ClientDetailPage() {
 														value={unifyRouteMode}
 														onValueChange={(v) => {
 															setHasUnifyDraftChanges(true);
-															setUnifyRouteMode(v as "broker_only" | "server_live" | "capability_level");
+													setUnifyRouteMode(v as UnifyRouteMode);
 														}}
 														options={unifyRouteModeSegmentOptions}
 														showDots={true}
@@ -2339,9 +2368,9 @@ export function ClientDetailPage() {
 															})}
 														</p>
 													)}
-													{mode === "unify" && unifyRouteMode === "server_live" && (
-														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-															{t("detail.configuration.sections.exposure.descriptions.server_live", {
+											{mode === "unify" && unifyRouteMode === "server_level" && (
+												<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+													{t("detail.configuration.sections.exposure.descriptions.server_level", {
 																defaultValue:
 																	"Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
 															})}
@@ -2437,27 +2466,28 @@ export function ClientDetailPage() {
 																	</div>
 																</CapsuleStripeListItem>
 															) : eligibleServers.length > 0 ? (
-																eligibleServers.map((server) => {
-																	const isSelected = unifySelectedServers.includes(server.id);
-																	const toolSurfaces = getUnifyServerSurfaces(
-																		unifySelectedToolSurfaces,
-																		server.id,
-																	);
-																	const promptSurfaces = getUnifyServerSurfaces(
-																		effectiveCapabilityConfig?.unify_direct_exposure
-																			?.selected_prompt_surfaces ?? [],
-																		server.id,
-																	);
-																	const resourceSurfaces = getUnifyServerSurfaces(
-																		effectiveCapabilityConfig?.unify_direct_exposure
-																			?.selected_resource_surfaces ?? [],
-																		server.id,
-																	);
-																	const templateSurfaces = getUnifyServerSurfaces(
-																		effectiveCapabilityConfig?.unify_direct_exposure
-																			?.selected_template_surfaces ?? [],
-																		server.id,
-																	);
+													eligibleServers.map((server) => {
+														const isSelected = unifySelectedServers.includes(server.id);
+														const toolSurfaces = getUnifyServerSurfaces(
+															effectiveCapabilityConfig?.unify_direct_exposure
+																?.resolved_capabilities?.selected_tool_surfaces ?? [],
+															server.id,
+														);
+														const promptSurfaces = getUnifyServerSurfaces(
+															effectiveCapabilityConfig?.unify_direct_exposure
+																?.resolved_capabilities?.selected_prompt_surfaces ?? [],
+															server.id,
+														);
+														const resourceSurfaces = getUnifyServerSurfaces(
+															effectiveCapabilityConfig?.unify_direct_exposure
+																?.resolved_capabilities?.selected_resource_surfaces ?? [],
+															server.id,
+														);
+														const templateSurfaces = getUnifyServerSurfaces(
+															effectiveCapabilityConfig?.unify_direct_exposure
+																?.resolved_capabilities?.selected_template_surfaces ?? [],
+															server.id,
+														);
 																	const selectedCapabilityCount =
 																		toolSurfaces.length +
 																		promptSurfaces.length +
@@ -2485,15 +2515,18 @@ export function ClientDetailPage() {
 																			interactive={true}
 																			className={`group relative transition-colors ${showDirectSelection ? "bg-primary/10 ring-1 ring-primary/40" : ""}`}
 																			onClick={() => {
-																				if (unifyRouteMode === "capability_level") {
-																					bulkCapabilityLevelServerMutation.mutate({ server });
-																				} else if (unifyRouteMode === "server_live") {
-																					setHasUnifyDraftChanges(true);
-																					setUnifySelectedServers((prev) =>
-																						toggleSelectedServerIds(prev, server.id),
-																					);
-																				}
-																			}}
+															if (unifyRouteMode === "capability_level") {
+																directExposureServerMutation.mutate({ server, routeMode: "capability_level" });
+															} else if (unifyRouteMode === "server_level") {
+																if (hasUnifyDraftChanges) {
+																	setUnifySelectedServers((prev) =>
+																		toggleSelectedServerIds(prev, server.id),
+																	);
+																} else {
+																	directExposureServerMutation.mutate({ server, routeMode: "server_level" });
+																}
+															}
+															}}
 																		>
 																			<CapsuleStripeRowBody
 																				lead={

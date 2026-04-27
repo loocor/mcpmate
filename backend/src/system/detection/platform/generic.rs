@@ -26,12 +26,7 @@ impl GenericDetector {
         let path = PathBuf::from(file_path);
 
         if path.exists() {
-            return Ok(DetectionResult::success(
-                path,
-                None,
-                DetectionMethod::FilePath,
-                0.4,
-            ));
+            return Ok(DetectionResult::success(path, None, DetectionMethod::FilePath, 0.4));
         }
 
         Ok(DetectionResult::failure(DetectionMethod::FilePath))

@@ -19,7 +19,7 @@ pub enum CacheScope {
     SharedRaw,
     ClientFiltered {
         selection_key: String,
-        rules_fingerprint: String,
+        surface_fingerprint: String,
     },
 }
 
@@ -32,14 +32,14 @@ impl CacheScope {
     ///
     /// # Arguments
     /// * `selection_key` - Cache scope key from ConnectionSelection::cache_scope_key()
-    /// * `rules_fingerprint` - Fingerprint of the client's rule configuration
+    /// * `surface_fingerprint` - Fingerprint of the client's visible capability surface
     pub fn client_filtered(
         selection_key: String,
-        rules_fingerprint: String,
+        surface_fingerprint: String,
     ) -> Self {
         Self::ClientFiltered {
             selection_key,
-            rules_fingerprint,
+            surface_fingerprint,
         }
     }
 
@@ -53,8 +53,8 @@ impl CacheScope {
             CacheScope::SharedRaw => "raw".to_string(),
             CacheScope::ClientFiltered {
                 selection_key,
-                rules_fingerprint,
-            } => format!("filtered:{}:{}", selection_key, rules_fingerprint),
+                surface_fingerprint,
+            } => format!("filtered:{}:{}", selection_key, surface_fingerprint),
         }
     }
 }
@@ -306,22 +306,21 @@ mod tests {
         let selection = ConnectionSelection {
             server_id: "srv_1".to_string(),
             affinity_key: AffinityKey::PerSession("sess-123".to_string()),
-            routing_fingerprint: Some("fp-123".to_string()),
         };
 
-        assert_eq!(selection.cache_scope_key(), "srv_1#session:sess-123#fp-123");
+        assert_eq!(selection.cache_scope_key(), "srv_1#session:sess-123");
     }
 
     #[test]
     fn cache_scope_suffix_separates_raw_and_filtered_entries() {
         let raw = CacheScope::shared_raw();
         let filtered = CacheScope::ClientFiltered {
-            selection_key: "srv_1#session:sess-123#fp-123".to_string(),
-            rules_fingerprint: "fp-123".to_string(),
+            selection_key: "srv_1#session:sess-123".to_string(),
+            surface_fingerprint: "fp-123".to_string(),
         };
 
         assert_eq!(raw.key_suffix(), "raw");
-        assert_eq!(filtered.key_suffix(), "filtered:srv_1#session:sess-123#fp-123:fp-123");
+        assert_eq!(filtered.key_suffix(), "filtered:srv_1#session:sess-123:fp-123");
         assert_ne!(raw.key_suffix(), filtered.key_suffix());
     }
 }

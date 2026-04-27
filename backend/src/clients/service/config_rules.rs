@@ -115,8 +115,7 @@ async fn resolve_create_inspect_path(raw_path: &str) -> ConfigResult<String> {
 
     infer_format_from_path(resolved.to_str()).ok_or_else(|| {
         ConfigError::DataAccessError(
-            "Only json, json5, toml, yaml, or yml files can be inspected before creating a client record."
-                .to_string(),
+            "Only json, json5, toml, yaml, or yml files can be inspected before creating a client record.".to_string(),
         )
     })?;
     let metadata = tokio::fs::metadata(&resolved).await.map_err(|err| {

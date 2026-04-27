@@ -2,26 +2,29 @@ use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
-    FormatRule,
-    UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectPromptSurface,
-    UnifyDirectPromptSurfaceDiagnostic, UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic,
-    UnifyDirectTemplateSurface, UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface,
-    UnifyDirectToolSurfaceDiagnostic,
+    FormatRule, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
+    UnifyDirectExposureIntent, UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic,
+    UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface,
+    UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic,
 };
 use crate::clients::service::core::RuntimeClientMetadata;
 use crate::common::profile::{ProfileRole, ProfileType};
+use crate::config::database::Database;
 use crate::config::models::Profile;
+use crate::core::proxy::server::{ClientContext, ClientIdentitySource, ClientTransport};
 use crate::system::paths::get_path_service;
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::OpenOptions;
 
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
 const VALID_CONNECTION_MODES: &[&str] = &["local_config_detected", "remote_http", "manual"];
-const VALID_SUPPORTED_TRANSPORTS: &[&str] = &["sse", "stdio", "streamable_http"];
 
 #[derive(Debug, Clone, Default)]
 struct ResolvedUnifyDirectExposureState {
+    intent: UnifyDirectExposureIntent,
     config: UnifyDirectExposureConfig,
     diagnostics: UnifyDirectExposureDiagnostics,
 }
@@ -32,6 +35,10 @@ struct UnifyDirectExposureInventory {
     prompts: HashMap<String, HashSet<String>>,
     resources: HashMap<String, HashSet<String>>,
     templates: HashMap<String, HashSet<String>>,
+    tool_ids: HashMap<String, UnifyDirectToolSurface>,
+    prompt_ids: HashMap<String, UnifyDirectPromptSurface>,
+    resource_ids: HashMap<String, UnifyDirectResourceSurface>,
+    template_ids: HashMap<String, UnifyDirectTemplateSurface>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -47,7 +54,6 @@ pub struct ActiveClientSettingsUpdate {
     pub docs_url: Option<String>,
     pub support_url: Option<String>,
     pub logo_url: Option<String>,
-    pub supported_transports: Option<Vec<String>>,
     pub config_file_parse: Option<ClientConfigFileParse>,
     pub clear_config_file_parse: bool,
     pub format_rules: Option<HashMap<String, FormatRule>>,
@@ -99,9 +105,15 @@ fn unify_direct_exposure_references_server(
             .any(|surface| surface.server_id == server_id)
 }
 
-fn serialize_json_or_none<T: serde::Serialize>(value: &T) -> ConfigResult<Option<String>> {
-    let serialized = serde_json::to_string(value).map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-    Ok(Some(serialized))
+fn serialize_json<T: serde::Serialize>(value: &T) -> ConfigResult<String> {
+    serde_json::to_string(value).map_err(|err| ConfigError::DataAccessError(err.to_string()))
+}
+
+fn retain_known_capability_ids<V>(
+    ids: Vec<String>,
+    valid_ids: &HashMap<String, V>,
+) -> Vec<String> {
+    ids.into_iter().filter(|id| valid_ids.contains_key(id)).collect()
 }
 
 impl ClientConfigService {
@@ -111,7 +123,6 @@ impl ClientConfigService {
         observed_name: Option<&str>,
         client_version: Option<&str>,
         transport: Option<&str>,
-        supported_transports: Option<Vec<String>>,
         connection_mode: Option<&str>,
     ) -> ConfigResult<()> {
         let display_name = observed_name
@@ -131,12 +142,7 @@ impl ClientConfigService {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
-        if display_name.is_none()
-            && client_version.is_none()
-            && transport.is_none()
-            && supported_transports.is_none()
-            && connection_mode.is_none()
-        {
+        if display_name.is_none() && client_version.is_none() && transport.is_none() && connection_mode.is_none() {
             return Ok(());
         }
 
@@ -146,7 +152,6 @@ impl ClientConfigService {
                 display_name,
                 client_version,
                 transport,
-                supported_transports,
                 connection_mode,
                 ..ActiveClientSettingsUpdate::default()
             },
@@ -305,20 +310,6 @@ impl ClientConfigService {
             }
         }
 
-        if let Some(ref supported_transports) = update.supported_transports {
-            for transport in supported_transports {
-                if !VALID_SUPPORTED_TRANSPORTS.contains(&transport.as_str()) {
-                    let err = format!(
-                        "Invalid supported transport '{}', must be one of: {}",
-                        transport,
-                        VALID_SUPPORTED_TRANSPORTS.join(", ")
-                    );
-                    tracing::error!(client = %identifier, supported_transport = %transport, "{}", err);
-                    return Err(ConfigError::DataAccessError(err));
-                }
-            }
-        }
-
         let trimmed_display_name = update
             .display_name
             .as_deref()
@@ -416,7 +407,6 @@ impl ClientConfigService {
             || update.docs_url.is_some()
             || update.support_url.is_some()
             || update.logo_url.is_some()
-            || update.supported_transports.is_some()
         {
             let existing_metadata = existing_state
                 .as_ref()
@@ -437,9 +427,6 @@ impl ClientConfigService {
                 support_url: update.support_url.or(existing_metadata.support_url),
                 logo_url: update.logo_url.or(existing_metadata.logo_url),
                 category: existing_metadata.category,
-                supported_transports: update
-                    .supported_transports
-                    .unwrap_or(existing_metadata.supported_transports),
             };
 
             tracing::debug!(
@@ -822,7 +809,7 @@ impl ClientConfigService {
         let selected_profile_ids_json = if selected_profile_ids.is_empty() {
             None
         } else {
-            serialize_json_or_none(&selected_profile_ids)?
+            Some(serialize_json(&selected_profile_ids)?)
         };
 
         sqlx::query(
@@ -864,14 +851,15 @@ impl ClientConfigService {
                 capability_config.custom_profile_id.as_deref(),
             )
             .await?;
-        let raw_unify_direct_exposure = state.unify_direct_exposure_config()?;
+        let raw_unify_direct_exposure = state.unify_direct_exposure_intent()?;
         let resolved = self
-            .resolve_unify_direct_exposure_config(identifier, &capability_config, &raw_unify_direct_exposure)
+            .resolve_unify_direct_exposure_intent(identifier, &capability_config, &raw_unify_direct_exposure)
             .await?;
 
         Ok(Some(ClientCapabilityConfigState {
             capability_config,
             custom_profile_missing,
+            unify_direct_exposure_intent: resolved.intent,
             unify_direct_exposure: resolved.config,
             unify_direct_exposure_diagnostics: resolved.diagnostics,
         }))
@@ -892,30 +880,45 @@ impl ClientConfigService {
         identifier: &str,
         capability_source: CapabilitySource,
         selected_profile_ids: Vec<String>,
-        unify_direct_exposure_update: Option<UnifyDirectExposureConfig>,
+        unify_direct_exposure_update: Option<UnifyDirectExposureIntent>,
     ) -> ConfigResult<(ClientCapabilityConfigState, bool)> {
+        let visibility_service = crate::core::profile::visibility::ProfileVisibilityService::new(
+            Some(Arc::new(Database {
+                pool: self.db_pool.as_ref().clone(),
+                path: PathBuf::new(),
+            })),
+            None,
+        );
+
+        let build_client_context =
+            |config_mode: &str, unify_direct_exposure: Option<UnifyDirectExposureConfig>| ClientContext {
+                client_id: identifier.to_string(),
+                session_id: None,
+                profile_id: None,
+                config_mode: Some(config_mode.to_string()),
+                unify_workspace: unify_direct_exposure,
+                surface_fingerprint: None,
+                transport: ClientTransport::Other,
+                source: ClientIdentitySource::ManagedQuery,
+                observed_client_info: None,
+            };
+
         let old_state = self.get_capability_config_state(identifier).await?;
-        let old_fingerprint = old_state
-            .as_ref()
-            .map(|state| crate::core::profile::visibility::compute_capability_fingerprint(&state.capability_config));
         let effective_mode = self.get_effective_config_mode(identifier).await?;
-        let default_capability_config = ClientCapabilityConfig::default();
-        let default_unify_direct_exposure = UnifyDirectExposureConfig::default();
-        let old_visible_fingerprint = if effective_mode == "unify" {
-            self.compute_unify_visible_tool_surface_fingerprint(
-                identifier,
-                old_state
-                    .as_ref()
-                    .map(|state| &state.capability_config)
-                    .unwrap_or(&default_capability_config),
-                old_state
-                    .as_ref()
-                    .map(|state| &state.unify_direct_exposure)
-                    .unwrap_or(&default_unify_direct_exposure),
+        let resolve_unify_workspace = |state: &ClientCapabilityConfigState| {
+            (effective_mode == "unify").then(|| state.unify_direct_exposure.clone())
+        };
+        let old_fingerprint = if let Some(state) = old_state.as_ref() {
+            let context = build_client_context(&effective_mode, resolve_unify_workspace(state));
+            Some(
+                visibility_service
+                    .resolve_snapshot_for_client(&context)
+                    .await
+                    .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
+                    .surface_fingerprint,
             )
-            .await?
         } else {
-            String::new()
+            None
         };
 
         let state = self
@@ -927,12 +930,16 @@ impl ClientConfigService {
             )
             .await?;
 
-        let new_fingerprint =
-            crate::core::profile::visibility::compute_capability_fingerprint(&state.capability_config);
+        let new_context = build_client_context(&effective_mode, resolve_unify_workspace(&state));
+        let new_fingerprint = visibility_service
+            .resolve_snapshot_for_client(&new_context)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
+            .surface_fingerprint;
 
         if let Some(ref fingerprint) = old_fingerprint {
             if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
-                match cache_manager.invalidate_by_rules_fingerprint(fingerprint).await {
+                match cache_manager.invalidate_by_surface_fingerprint(fingerprint).await {
                     Ok(count) => {
                         tracing::info!(
                             client = %identifier,
@@ -952,27 +959,14 @@ impl ClientConfigService {
             }
         }
 
-        crate::core::profile::visibility::invalidate_visibility_cache(identifier);
-
-        let visible_surface_changed = if effective_mode == "unify" {
-            if old_fingerprint.is_none() {
-                false
-            } else {
-                let new_visible_fingerprint = self
-                    .compute_unify_visible_tool_surface_fingerprint(
-                        identifier,
-                        &state.capability_config,
-                        &state.unify_direct_exposure,
-                    )
-                    .await?;
-                old_visible_fingerprint != new_visible_fingerprint
-            }
-        } else {
-            old_fingerprint
-                .as_ref()
-                .map(|fingerprint| fingerprint != &new_fingerprint)
-                .unwrap_or(false)
-        };
+        let has_visible_direct_surface = !state.unify_direct_exposure.selected_tool_surfaces.is_empty()
+            || !state.unify_direct_exposure.selected_prompt_surfaces.is_empty()
+            || !state.unify_direct_exposure.selected_resource_surfaces.is_empty()
+            || !state.unify_direct_exposure.selected_template_surfaces.is_empty();
+        let visible_surface_changed = old_fingerprint
+            .as_ref()
+            .map(|fingerprint| fingerprint != &new_fingerprint)
+            .unwrap_or(has_visible_direct_surface);
 
         Ok((state, visible_surface_changed))
     }
@@ -996,16 +990,19 @@ impl ClientConfigService {
         let mut reconciled = Vec::new();
 
         for (identifier, row) in states {
-            let raw_unify_direct_exposure = row.unify_direct_exposure_config()?;
-            if !unify_direct_exposure_references_server(&raw_unify_direct_exposure, server_id) {
-                continue;
-            }
-
             if self.get_effective_config_mode(&identifier).await? != "unify" {
                 continue;
             }
 
             let capability_config = row.capability_config()?;
+            let raw_unify_direct_exposure = row.unify_direct_exposure_intent()?;
+            let resolved = self
+                .resolve_unify_direct_exposure_intent(&identifier, &capability_config, &raw_unify_direct_exposure)
+                .await?;
+            if !unify_direct_exposure_references_server(&resolved.config, server_id) {
+                continue;
+            }
+
             let (state, visible_surface_changed) = self
                 .update_capability_config_state_and_invalidate(
                     &identifier,
@@ -1040,7 +1037,7 @@ impl ClientConfigService {
         identifier: &str,
         capability_source: CapabilitySource,
         selected_profile_ids: Vec<String>,
-        unify_direct_exposure_update: Option<UnifyDirectExposureConfig>,
+        unify_direct_exposure_update: Option<UnifyDirectExposureIntent>,
     ) -> ConfigResult<ClientCapabilityConfigState> {
         let name = self.resolve_client_name(identifier).await?;
         self.ensure_state_row_with_name(identifier, &name).await?;
@@ -1067,12 +1064,12 @@ impl ClientConfigService {
         let existing_unify_direct_exposure = self
             .fetch_state(identifier)
             .await?
-            .map(|row| row.unify_direct_exposure_config())
+            .map(|row| row.unify_direct_exposure_intent())
             .transpose()?
             .unwrap_or_default();
         let requested_unify_direct_exposure = unify_direct_exposure_update.unwrap_or(existing_unify_direct_exposure);
         let resolved_unify_direct_exposure = self
-            .resolve_unify_direct_exposure_config(
+            .resolve_unify_direct_exposure_intent(
                 identifier,
                 &ClientCapabilityConfig {
                     capability_source,
@@ -1082,44 +1079,12 @@ impl ClientConfigService {
                 &requested_unify_direct_exposure,
             )
             .await?;
-        let unify_selected_server_ids_json = if resolved_unify_direct_exposure.config.selected_server_ids.is_empty() {
-            None
-        } else {
-            serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_server_ids)?
-        };
-        let unify_selected_tool_surfaces_json =
-            if resolved_unify_direct_exposure.config.selected_tool_surfaces.is_empty() {
+        let unify_direct_exposure_intent_json =
+            if resolved_unify_direct_exposure.intent == UnifyDirectExposureIntent::default() {
                 None
             } else {
-                serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_tool_surfaces)?
+                Some(serialize_json(&resolved_unify_direct_exposure.intent)?)
             };
-        let unify_selected_prompt_surfaces_json = if resolved_unify_direct_exposure
-            .config
-            .selected_prompt_surfaces
-            .is_empty()
-        {
-            None
-        } else {
-            serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_prompt_surfaces)?
-        };
-        let unify_selected_resource_surfaces_json = if resolved_unify_direct_exposure
-            .config
-            .selected_resource_surfaces
-            .is_empty()
-        {
-            None
-        } else {
-            serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_resource_surfaces)?
-        };
-        let unify_selected_template_surfaces_json = if resolved_unify_direct_exposure
-            .config
-            .selected_template_surfaces
-            .is_empty()
-        {
-            None
-        } else {
-            serialize_json_or_none(&resolved_unify_direct_exposure.config.selected_template_surfaces)?
-        };
 
         sqlx::query(
             r#"
@@ -1127,12 +1092,7 @@ impl ClientConfigService {
             SET capability_source = ?,
                 selected_profile_ids = ?,
                 custom_profile_id = ?,
-                unify_route_mode = ?,
-                unify_selected_server_ids = ?,
-                unify_selected_tool_surfaces = ?,
-                unify_selected_prompt_surfaces = ?,
-                unify_selected_resource_surfaces = ?,
-                unify_selected_template_surfaces = ?,
+                unify_direct_exposure_intent = ?,
                 governance_kind = 'active',
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
@@ -1141,12 +1101,7 @@ impl ClientConfigService {
         .bind(capability_source.as_str())
         .bind(selected_profile_ids_json)
         .bind(custom_profile_id.as_deref())
-        .bind(resolved_unify_direct_exposure.config.route_mode.as_str())
-        .bind(unify_selected_server_ids_json)
-        .bind(unify_selected_tool_surfaces_json)
-        .bind(unify_selected_prompt_surfaces_json)
-        .bind(unify_selected_resource_surfaces_json)
-        .bind(unify_selected_template_surfaces_json)
+        .bind(unify_direct_exposure_intent_json)
         .bind(identifier)
         .execute(&*self.db_pool)
         .await
@@ -1159,6 +1114,7 @@ impl ClientConfigService {
                 custom_profile_id,
             },
             custom_profile_missing,
+            unify_direct_exposure_intent: resolved_unify_direct_exposure.intent,
             unify_direct_exposure: resolved_unify_direct_exposure.config,
             unify_direct_exposure_diagnostics: resolved_unify_direct_exposure.diagnostics,
         })
@@ -1183,11 +1139,11 @@ impl ClientConfigService {
             .is_none())
     }
 
-    async fn resolve_unify_direct_exposure_config(
+    async fn resolve_unify_direct_exposure_intent(
         &self,
         identifier: &str,
         capability_config: &ClientCapabilityConfig,
-        config: &UnifyDirectExposureConfig,
+        intent: &UnifyDirectExposureIntent,
     ) -> ConfigResult<ResolvedUnifyDirectExposureState> {
         let inventory = self.load_unify_direct_exposure_inventory().await?;
         let visible_server_ids = self
@@ -1195,9 +1151,10 @@ impl ClientConfigService {
             .await?;
         let mut diagnostics = UnifyDirectExposureDiagnostics::default();
 
-        let selected_server_ids = self.normalize_selected_server_ids_for_unify(config.selected_server_ids.clone());
-        let selected_server_ids = selected_server_ids
-            .into_iter()
+        let requested_server_ids = self.normalize_selected_server_ids_for_unify(intent.server_ids.clone());
+        let selected_server_ids = requested_server_ids
+            .iter()
+            .cloned()
             .filter_map(|server_id| {
                 if !visible_server_ids.contains(&server_id) {
                     diagnostics.invalid_server_ids.push(server_id);
@@ -1215,7 +1172,73 @@ impl ClientConfigService {
             })
             .collect::<Vec<_>>();
 
-        let selected_tool_surfaces = self.normalize_selected_tool_surfaces(config.selected_tool_surfaces.clone());
+        let server_level_tool_surfaces = if intent.route_mode == crate::clients::models::UnifyRouteMode::ServerLevel {
+            self.materialize_tool_surfaces_for_servers(&selected_server_ids, &inventory)
+        } else {
+            Vec::new()
+        };
+        let server_level_prompt_surfaces = if intent.route_mode == crate::clients::models::UnifyRouteMode::ServerLevel {
+            self.materialize_prompt_surfaces_for_servers(&selected_server_ids, &inventory)
+        } else {
+            Vec::new()
+        };
+        let server_level_resource_surfaces = if intent.route_mode == crate::clients::models::UnifyRouteMode::ServerLevel
+        {
+            self.materialize_resource_surfaces_for_servers(&selected_server_ids, &inventory)
+        } else {
+            Vec::new()
+        };
+        let server_level_template_surfaces = if intent.route_mode == crate::clients::models::UnifyRouteMode::ServerLevel
+        {
+            self.materialize_template_surfaces_for_servers(&selected_server_ids, &inventory)
+        } else {
+            Vec::new()
+        };
+
+        let capability_level_tool_surfaces = if intent.route_mode
+            == crate::clients::models::UnifyRouteMode::CapabilityLevel
+        {
+            self.resolve_tool_surfaces_for_capability_ids(&intent.capability_ids.tool_ids, &inventory, &mut diagnostics)
+        } else {
+            Vec::new()
+        };
+        let capability_level_prompt_surfaces =
+            if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+                self.resolve_prompt_surfaces_for_capability_ids(
+                    &intent.capability_ids.prompt_ids,
+                    &inventory,
+                    &mut diagnostics,
+                )
+            } else {
+                Vec::new()
+            };
+        let capability_level_resource_surfaces =
+            if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+                self.resolve_resource_surfaces_for_capability_ids(
+                    &intent.capability_ids.resource_ids,
+                    &inventory,
+                    &mut diagnostics,
+                )
+            } else {
+                Vec::new()
+            };
+        let capability_level_template_surfaces =
+            if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+                self.resolve_template_surfaces_for_capability_ids(
+                    &intent.capability_ids.template_ids,
+                    &inventory,
+                    &mut diagnostics,
+                )
+            } else {
+                Vec::new()
+            };
+
+        let selected_tool_surfaces = self.normalize_selected_tool_surfaces(
+            capability_level_tool_surfaces
+                .into_iter()
+                .chain(server_level_tool_surfaces)
+                .collect(),
+        );
         let selected_tool_surfaces = selected_tool_surfaces
             .into_iter()
             .filter_map(|surface| {
@@ -1255,7 +1278,12 @@ impl ClientConfigService {
                 }
             })
             .collect::<Vec<_>>();
-        let selected_prompt_surfaces = self.normalize_selected_prompt_surfaces(config.selected_prompt_surfaces.clone());
+        let selected_prompt_surfaces = self.normalize_selected_prompt_surfaces(
+            capability_level_prompt_surfaces
+                .into_iter()
+                .chain(server_level_prompt_surfaces)
+                .collect(),
+        );
         let selected_prompt_surfaces = selected_prompt_surfaces
             .into_iter()
             .filter_map(|surface| {
@@ -1293,8 +1321,12 @@ impl ClientConfigService {
                 }
             })
             .collect::<Vec<_>>();
-        let selected_resource_surfaces =
-            self.normalize_selected_resource_surfaces(config.selected_resource_surfaces.clone());
+        let selected_resource_surfaces = self.normalize_selected_resource_surfaces(
+            capability_level_resource_surfaces
+                .into_iter()
+                .chain(server_level_resource_surfaces)
+                .collect(),
+        );
         let selected_resource_surfaces = selected_resource_surfaces
             .into_iter()
             .filter_map(|surface| {
@@ -1332,8 +1364,12 @@ impl ClientConfigService {
                 }
             })
             .collect::<Vec<_>>();
-        let selected_template_surfaces =
-            self.normalize_selected_template_surfaces(config.selected_template_surfaces.clone());
+        let selected_template_surfaces = self.normalize_selected_template_surfaces(
+            capability_level_template_surfaces
+                .into_iter()
+                .chain(server_level_template_surfaces)
+                .collect(),
+        );
         let selected_template_surfaces = selected_template_surfaces
             .into_iter()
             .filter_map(|surface| {
@@ -1402,11 +1438,32 @@ impl ClientConfigService {
                 .then(left.reason.cmp(&right.reason))
         });
         diagnostics.invalid_template_surfaces.dedup();
+        diagnostics.invalid_capability_ids.sort();
+        diagnostics.invalid_capability_ids.dedup();
+
+        let resolved_intent = UnifyDirectExposureIntent {
+            route_mode: intent.route_mode,
+            server_ids: if intent.route_mode == crate::clients::models::UnifyRouteMode::ServerLevel {
+                requested_server_ids
+            } else {
+                Vec::new()
+            },
+            capability_ids: if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+                self.resolve_valid_unify_direct_capability_ids(&intent.capability_ids, &inventory)
+            } else {
+                UnifyDirectCapabilityIds::default()
+            },
+        };
 
         Ok(ResolvedUnifyDirectExposureState {
+            intent: resolved_intent,
             config: UnifyDirectExposureConfig {
-                route_mode: config.route_mode,
-                selected_server_ids,
+                route_mode: intent.route_mode,
+                selected_server_ids: if intent.route_mode == crate::clients::models::UnifyRouteMode::ServerLevel {
+                    selected_server_ids
+                } else {
+                    Vec::new()
+                },
                 selected_tool_surfaces,
                 selected_prompt_surfaces,
                 selected_resource_surfaces,
@@ -1417,9 +1474,9 @@ impl ClientConfigService {
     }
 
     async fn load_unify_direct_exposure_inventory(&self) -> ConfigResult<UnifyDirectExposureInventory> {
-        let tool_rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        let tool_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, st.tool_name
+            SELECT sc.id, st.tool_name, st.unique_name
             FROM server_config sc
             LEFT JOIN server_tools st ON st.server_id = sc.id
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
@@ -1429,9 +1486,9 @@ impl ClientConfigService {
         .fetch_all(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        let prompt_rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        let prompt_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, sp.prompt_name
+            SELECT sc.id, sp.prompt_name, sp.unique_name
             FROM server_config sc
             LEFT JOIN server_prompts sp ON sp.server_id = sc.id
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
@@ -1441,9 +1498,9 @@ impl ClientConfigService {
         .fetch_all(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        let resource_rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        let resource_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, sr.resource_uri
+            SELECT sc.id, sr.resource_uri, sr.unique_uri
             FROM server_config sc
             LEFT JOIN server_resources sr ON sr.server_id = sc.id
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
@@ -1453,9 +1510,9 @@ impl ClientConfigService {
         .fetch_all(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        let template_rows: Vec<(String, Option<String>)> = sqlx::query_as(
+        let template_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, srt.uri_template
+            SELECT sc.id, srt.uri_template, srt.unique_name
             FROM server_config sc
             LEFT JOIN server_resource_templates srt ON srt.server_id = sc.id
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
@@ -1467,111 +1524,60 @@ impl ClientConfigService {
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         let mut inventory = UnifyDirectExposureInventory::default();
-        for (server_id, tool_name) in tool_rows {
-            let entry = inventory.tools.entry(server_id).or_default();
+        for (server_id, tool_name, unique_name) in tool_rows {
+            let entry = inventory.tools.entry(server_id.clone()).or_default();
             if let Some(tool_name) = tool_name {
-                entry.insert(tool_name);
+                entry.insert(tool_name.clone());
+                if let Some(unique_name) = unique_name {
+                    inventory
+                        .tool_ids
+                        .insert(unique_name, UnifyDirectToolSurface { server_id, tool_name });
+                }
             }
         }
-        for (server_id, prompt_name) in prompt_rows {
-            let entry = inventory.prompts.entry(server_id).or_default();
+        for (server_id, prompt_name, unique_name) in prompt_rows {
+            let entry = inventory.prompts.entry(server_id.clone()).or_default();
             if let Some(prompt_name) = prompt_name {
-                entry.insert(prompt_name);
+                entry.insert(prompt_name.clone());
+                if let Some(unique_name) = unique_name {
+                    inventory
+                        .prompt_ids
+                        .insert(unique_name, UnifyDirectPromptSurface { server_id, prompt_name });
+                }
             }
         }
-        for (server_id, resource_uri) in resource_rows {
-            let entry = inventory.resources.entry(server_id).or_default();
+        for (server_id, resource_uri, unique_uri) in resource_rows {
+            let entry = inventory.resources.entry(server_id.clone()).or_default();
             if let Some(resource_uri) = resource_uri {
-                entry.insert(resource_uri);
+                entry.insert(resource_uri.clone());
+                if let Some(unique_uri) = unique_uri {
+                    inventory.resource_ids.insert(
+                        unique_uri,
+                        UnifyDirectResourceSurface {
+                            server_id,
+                            resource_uri,
+                        },
+                    );
+                }
             }
         }
-        for (server_id, uri_template) in template_rows {
-            let entry = inventory.templates.entry(server_id).or_default();
+        for (server_id, uri_template, unique_name) in template_rows {
+            let entry = inventory.templates.entry(server_id.clone()).or_default();
             if let Some(uri_template) = uri_template {
-                entry.insert(uri_template);
+                entry.insert(uri_template.clone());
+                if let Some(unique_name) = unique_name {
+                    inventory.template_ids.insert(
+                        unique_name,
+                        UnifyDirectTemplateSurface {
+                            server_id,
+                            uri_template,
+                        },
+                    );
+                }
             }
         }
 
         Ok(inventory)
-    }
-
-    async fn compute_unify_visible_tool_surface_fingerprint(
-        &self,
-        identifier: &str,
-        capability_config: &ClientCapabilityConfig,
-        unify_direct_exposure: &UnifyDirectExposureConfig,
-    ) -> ConfigResult<String> {
-        let visible_server_ids = self
-            .resolve_visible_server_ids_for_unify_direct_exposure(identifier, capability_config)
-            .await?;
-        let inventory = self.load_unify_direct_exposure_inventory().await?;
-        let mut visible_surfaces = Vec::new();
-
-        match unify_direct_exposure.route_mode {
-            crate::clients::models::UnifyRouteMode::BrokerOnly => {}
-            crate::clients::models::UnifyRouteMode::ServerLive => {
-                for server_id in &unify_direct_exposure.selected_server_ids {
-                    if !visible_server_ids.contains(server_id) {
-                        continue;
-                    }
-                    if let Some(tool_names) = inventory.tools.get(server_id) {
-                        for tool_name in tool_names {
-                            visible_surfaces.push(format!("tool\u{1f}{server_id}\u{1f}{tool_name}"));
-                        }
-                    }
-                    if let Some(prompt_names) = inventory.prompts.get(server_id) {
-                        for prompt_name in prompt_names {
-                            visible_surfaces.push(format!("prompt\u{1f}{server_id}\u{1f}{prompt_name}"));
-                        }
-                    }
-                    if let Some(resource_uris) = inventory.resources.get(server_id) {
-                        for resource_uri in resource_uris {
-                            visible_surfaces.push(format!("resource\u{1f}{server_id}\u{1f}{resource_uri}"));
-                        }
-                    }
-                    if let Some(uri_templates) = inventory.templates.get(server_id) {
-                        for uri_template in uri_templates {
-                            visible_surfaces.push(format!("template\u{1f}{server_id}\u{1f}{uri_template}"));
-                        }
-                    }
-                }
-            }
-            crate::clients::models::UnifyRouteMode::CapabilityLevel => {
-                for surface in &unify_direct_exposure.selected_tool_surfaces {
-                    if visible_server_ids.contains(&surface.server_id) {
-                        visible_surfaces.push(format!("tool\u{1f}{}\u{1f}{}", surface.server_id, surface.tool_name));
-                    }
-                }
-                for surface in &unify_direct_exposure.selected_prompt_surfaces {
-                    if visible_server_ids.contains(&surface.server_id) {
-                        visible_surfaces.push(format!(
-                            "prompt\u{1f}{}\u{1f}{}",
-                            surface.server_id, surface.prompt_name
-                        ));
-                    }
-                }
-                for surface in &unify_direct_exposure.selected_resource_surfaces {
-                    if visible_server_ids.contains(&surface.server_id) {
-                        visible_surfaces.push(format!(
-                            "resource\u{1f}{}\u{1f}{}",
-                            surface.server_id, surface.resource_uri
-                        ));
-                    }
-                }
-                for surface in &unify_direct_exposure.selected_template_surfaces {
-                    if visible_server_ids.contains(&surface.server_id) {
-                        visible_surfaces.push(format!(
-                            "template\u{1f}{}\u{1f}{}",
-                            surface.server_id, surface.uri_template
-                        ));
-                    }
-                }
-            }
-        }
-
-        visible_surfaces.sort();
-        visible_surfaces.dedup();
-        Ok(visible_surfaces.join("\u{1e}"))
     }
 
     async fn resolve_visible_server_ids_for_capability_config(
@@ -1652,6 +1658,158 @@ impl ClientConfigService {
         }
     }
 
+    fn resolve_tool_surfaces_for_capability_ids(
+        &self,
+        capability_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+        diagnostics: &mut UnifyDirectExposureDiagnostics,
+    ) -> Vec<UnifyDirectToolSurface> {
+        self.normalize_unify_direct_ids(capability_ids.to_vec())
+            .into_iter()
+            .filter_map(|capability_id| match inventory.tool_ids.get(&capability_id) {
+                Some(surface) => Some(surface.clone()),
+                None => {
+                    diagnostics.invalid_capability_ids.push(capability_id);
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn resolve_prompt_surfaces_for_capability_ids(
+        &self,
+        capability_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+        diagnostics: &mut UnifyDirectExposureDiagnostics,
+    ) -> Vec<UnifyDirectPromptSurface> {
+        self.normalize_unify_direct_ids(capability_ids.to_vec())
+            .into_iter()
+            .filter_map(|capability_id| match inventory.prompt_ids.get(&capability_id) {
+                Some(surface) => Some(surface.clone()),
+                None => {
+                    diagnostics.invalid_capability_ids.push(capability_id);
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn resolve_resource_surfaces_for_capability_ids(
+        &self,
+        capability_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+        diagnostics: &mut UnifyDirectExposureDiagnostics,
+    ) -> Vec<UnifyDirectResourceSurface> {
+        self.normalize_unify_direct_ids(capability_ids.to_vec())
+            .into_iter()
+            .filter_map(|capability_id| match inventory.resource_ids.get(&capability_id) {
+                Some(surface) => Some(surface.clone()),
+                None => {
+                    diagnostics.invalid_capability_ids.push(capability_id);
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn resolve_template_surfaces_for_capability_ids(
+        &self,
+        capability_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+        diagnostics: &mut UnifyDirectExposureDiagnostics,
+    ) -> Vec<UnifyDirectTemplateSurface> {
+        self.normalize_unify_direct_ids(capability_ids.to_vec())
+            .into_iter()
+            .filter_map(|capability_id| match inventory.template_ids.get(&capability_id) {
+                Some(surface) => Some(surface.clone()),
+                None => {
+                    diagnostics.invalid_capability_ids.push(capability_id);
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn materialize_tool_surfaces_for_servers(
+        &self,
+        server_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+    ) -> Vec<UnifyDirectToolSurface> {
+        server_ids
+            .iter()
+            .flat_map(|server_id| {
+                inventory.tools.get(server_id).into_iter().flat_map(|tool_names| {
+                    tool_names.iter().map(|tool_name| UnifyDirectToolSurface {
+                        server_id: server_id.clone(),
+                        tool_name: tool_name.clone(),
+                    })
+                })
+            })
+            .collect()
+    }
+
+    fn materialize_prompt_surfaces_for_servers(
+        &self,
+        server_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+    ) -> Vec<UnifyDirectPromptSurface> {
+        server_ids
+            .iter()
+            .flat_map(|server_id| {
+                inventory.prompts.get(server_id).into_iter().flat_map(|prompt_names| {
+                    prompt_names.iter().map(|prompt_name| UnifyDirectPromptSurface {
+                        server_id: server_id.clone(),
+                        prompt_name: prompt_name.clone(),
+                    })
+                })
+            })
+            .collect()
+    }
+
+    fn materialize_resource_surfaces_for_servers(
+        &self,
+        server_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+    ) -> Vec<UnifyDirectResourceSurface> {
+        server_ids
+            .iter()
+            .flat_map(|server_id| {
+                inventory
+                    .resources
+                    .get(server_id)
+                    .into_iter()
+                    .flat_map(|resource_uris| {
+                        resource_uris.iter().map(|resource_uri| UnifyDirectResourceSurface {
+                            server_id: server_id.clone(),
+                            resource_uri: resource_uri.clone(),
+                        })
+                    })
+            })
+            .collect()
+    }
+
+    fn materialize_template_surfaces_for_servers(
+        &self,
+        server_ids: &[String],
+        inventory: &UnifyDirectExposureInventory,
+    ) -> Vec<UnifyDirectTemplateSurface> {
+        server_ids
+            .iter()
+            .flat_map(|server_id| {
+                inventory
+                    .templates
+                    .get(server_id)
+                    .into_iter()
+                    .flat_map(|uri_templates| {
+                        uri_templates.iter().map(|uri_template| UnifyDirectTemplateSurface {
+                            server_id: server_id.clone(),
+                            uri_template: uri_template.clone(),
+                        })
+                    })
+            })
+            .collect()
+    }
+
     async fn resolve_profile_ids_for_capability_config(
         &self,
         identifier: &str,
@@ -1690,6 +1848,46 @@ impl ClientConfigService {
         normalized.sort();
         normalized.dedup();
         normalized
+    }
+
+    fn normalize_unify_direct_ids(
+        &self,
+        ids: Vec<String>,
+    ) -> Vec<String> {
+        let mut normalized = ids
+            .into_iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        normalized.sort();
+        normalized.dedup();
+        normalized
+    }
+
+    fn normalize_unify_direct_capability_ids(
+        &self,
+        capability_ids: UnifyDirectCapabilityIds,
+    ) -> UnifyDirectCapabilityIds {
+        UnifyDirectCapabilityIds {
+            tool_ids: self.normalize_unify_direct_ids(capability_ids.tool_ids),
+            prompt_ids: self.normalize_unify_direct_ids(capability_ids.prompt_ids),
+            resource_ids: self.normalize_unify_direct_ids(capability_ids.resource_ids),
+            template_ids: self.normalize_unify_direct_ids(capability_ids.template_ids),
+        }
+    }
+
+    fn resolve_valid_unify_direct_capability_ids(
+        &self,
+        capability_ids: &UnifyDirectCapabilityIds,
+        inventory: &UnifyDirectExposureInventory,
+    ) -> UnifyDirectCapabilityIds {
+        let capability_ids = self.normalize_unify_direct_capability_ids(capability_ids.clone());
+        UnifyDirectCapabilityIds {
+            tool_ids: retain_known_capability_ids(capability_ids.tool_ids, &inventory.tool_ids),
+            prompt_ids: retain_known_capability_ids(capability_ids.prompt_ids, &inventory.prompt_ids),
+            resource_ids: retain_known_capability_ids(capability_ids.resource_ids, &inventory.resource_ids),
+            template_ids: retain_known_capability_ids(capability_ids.template_ids, &inventory.template_ids),
+        }
     }
 
     fn normalize_selected_tool_surfaces(

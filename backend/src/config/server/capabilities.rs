@@ -573,6 +573,13 @@ pub async fn store_dual_write(
         protocol_version.as_deref(),
     )
     .await?;
+    if let Err(e) = redb.invalidate_client_filtered_by_server(server_id).await {
+        tracing::warn!(
+            server_id = %server_id,
+            error = %e,
+            "Failed to invalidate client-filtered cache entries after raw capability snapshot refresh"
+        );
+    }
     // Clear any refreshing marker now that we have a fresh snapshot
     redb.clear_refreshing(server_id).await;
 

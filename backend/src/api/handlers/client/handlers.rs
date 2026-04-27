@@ -8,21 +8,24 @@ use crate::api::models::client::{
     ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
     ClientConfigFileParseData, ClientConfigFileParseInspectData, ClientConfigFileParseInspectExistingReq,
     ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq, ClientConfigFileParseInspectResp,
-    ClientConfigFileParseValidationData, ClientConfigImportData, ClientFormatRuleData,
-    ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq, ClientConfigResp,
-    ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata,
-    ClientTemplateStorageMetadata, ClientUnifyDirectExposureData,
+    ClientConfigFileParseValidationData, ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp,
+    ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected,
+    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientFormatRuleData, ClientImportSummary,
+    ClientImportedServer, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
+    ClientUnifyDirectExposureData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat, UnifyDirectExposureConfig};
-use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
+use crate::clients::models::{
+    ClientCapabilityConfigState, ClientConfigFileParse, ContainerType, TemplateFormat, UnifyDirectExposureConfig,
+};
+use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata, supported_transports_from_format_rules};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
 use crate::common::ClientCategory;
+use crate::core::proxy::server::ProxyServer;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -31,7 +34,7 @@ use chrono::Utc;
 use json5;
 use serde_json::{Value, json};
 use serde_yaml;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use toml;
 
@@ -74,6 +77,24 @@ fn client_settings_error(
             &message.into(),
         )),
     )
+}
+
+fn build_client_capability_config_data(
+    identifier: String,
+    state: ClientCapabilityConfigState,
+) -> ClientCapabilityConfigData {
+    ClientCapabilityConfigData {
+        identifier,
+        capability_source: state.capability_config.capability_source,
+        selected_profile_ids: state.capability_config.selected_profile_ids,
+        custom_profile_id: state.capability_config.custom_profile_id,
+        custom_profile_missing: state.custom_profile_missing,
+        unify_direct_exposure: ClientUnifyDirectExposureData {
+            intent: state.unify_direct_exposure_intent,
+            diagnostics: state.unify_direct_exposure_diagnostics,
+            resolved_capabilities: state.unify_direct_exposure,
+        },
+    }
 }
 
 fn parse_rule_from_api_data(parse: &ClientConfigFileParseData) -> ClientConfigFileParse {
@@ -141,7 +162,7 @@ fn format_rule_from_api_data(data: &ClientFormatRuleData) -> crate::clients::mod
 }
 
 fn parse_api_format_rules(
-    rules: &HashMap<String, ClientFormatRuleData>,
+    rules: &HashMap<String, ClientFormatRuleData>
 ) -> Result<HashMap<String, crate::clients::models::FormatRule>, String> {
     rules
         .iter()
@@ -156,9 +177,7 @@ fn parse_api_format_rules(
         .collect()
 }
 
-fn format_rules_data_from_state(
-    state: Option<&ClientStateRow>,
-) -> Option<HashMap<String, ClientFormatRuleData>> {
+fn format_rules_data_from_state(state: Option<&ClientStateRow>) -> Option<HashMap<String, ClientFormatRuleData>> {
     let state = state?;
     let rules = state.parsed_format_rules().ok()?;
     if rules.is_empty() {
@@ -189,7 +208,11 @@ fn build_config_file_parse_inspect_data(
                 container_found: validation.container_found,
                 server_count: validation.server_count,
             }),
-        preview: if include_preview { inspection.preview } else { Value::Null },
+        preview: if include_preview {
+            inspection.preview
+        } else {
+            Value::Null
+        },
         preview_text: None,
         warnings: inspection.warnings,
     }
@@ -239,10 +262,8 @@ pub async fn config_file_parse_inspect(
 pub async fn config_file_parse_inspect_existing(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientConfigFileParseInspectExistingReq>,
-) -> Result<
-    Json<ClientConfigFileParseInspectExistingResp>,
-    (StatusCode, Json<ClientConfigFileParseInspectExistingResp>),
-> {
+) -> Result<Json<ClientConfigFileParseInspectExistingResp>, (StatusCode, Json<ClientConfigFileParseInspectExistingResp>)>
+{
     let service = get_client_service(&app_state).map_err(|status| {
         (
             status,
@@ -509,7 +530,7 @@ pub async fn config_details(
         imported_servers,
         import_summary,
         template: build_client_template_metadata(state.as_ref(), &runtime_metadata),
-        supported_transports: extract_client_supported_transports(state.as_ref(), &runtime_metadata),
+        supported_transports: state.as_ref().map_or_else(Vec::new, extract_supported_transports),
         format_rules,
         managed,
         description,
@@ -862,10 +883,8 @@ pub async fn config_import(
     let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Build standard import payload from parsed config
-    let items = build_import_payload_from_value(
-        &json_value,
-        resolve_effective_config_file_parse(Some(&state)).as_ref(),
-    );
+    let items =
+        build_import_payload_from_value(&json_value, resolve_effective_config_file_parse(Some(&state)).as_ref());
     let opts = crate::config::server::ImportOptions {
         by_name: true,
         by_fingerprint: true,
@@ -1019,18 +1038,17 @@ async fn sync_bound_client_runtime_state(
         return;
     };
 
-    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
-        if let Ok(guard) = proxy.try_lock() {
-            if let Err(err) = guard
-                .apply_persisted_client_runtime_state(
-                    identifier,
-                    Some(runtime_state.effective_mode.clone()),
-                    runtime_state.unify_workspace.clone(),
-                )
-                .await
-            {
-                tracing::warn!(client = %identifier, error = %err, mode = %runtime_state.effective_mode, "Failed to sync bound client runtime state");
-            }
+    if let Some(proxy_server) = ProxyServer::global().and_then(|proxy| proxy.try_lock().ok().map(|guard| guard.clone()))
+    {
+        if let Err(err) = proxy_server
+            .apply_persisted_client_runtime_state(
+                identifier,
+                Some(runtime_state.effective_mode.clone()),
+                runtime_state.unify_workspace.clone(),
+            )
+            .await
+        {
+            tracing::warn!(client = %identifier, error = %err, mode = %runtime_state.effective_mode, "Failed to sync bound client runtime state");
         }
     }
 
@@ -1111,7 +1129,6 @@ pub async fn update_settings(
                 docs_url: request.docs_url.clone(),
                 support_url: request.support_url.clone(),
                 logo_url: request.logo_url.clone(),
-                supported_transports: request.supported_transports.clone(),
                 config_file_parse: request.config_file_parse.as_ref().map(parse_rule_from_api_data),
                 clear_config_file_parse: request.clear_config_file_parse,
                 format_rules: parsed_format_rules,
@@ -1177,7 +1194,7 @@ pub async fn update_settings(
         client_version: version,
         connection_mode: Some(state.connection_mode().as_str().to_string()),
         config_path: state.config_path().map(str::to_string),
-        supported_transports: runtime_metadata.supported_transports.clone(),
+        supported_transports: extract_supported_transports(&state),
         format_rules,
         description: runtime_metadata.description.clone(),
         homepage_url: runtime_metadata.homepage_url.clone(),
@@ -1247,18 +1264,7 @@ pub async fn update_capability_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let custom_profile_id = state.capability_config.custom_profile_id.clone();
-    let data = ClientCapabilityConfigData {
-        identifier: request.identifier,
-        capability_source: state.capability_config.capability_source,
-        selected_profile_ids: state.capability_config.selected_profile_ids,
-        custom_profile_id: custom_profile_id.clone(),
-        custom_profile_missing: state.custom_profile_missing,
-        unify_direct_exposure: ClientUnifyDirectExposureData {
-            config: state.unify_direct_exposure.clone(),
-            diagnostics: state.unify_direct_exposure_diagnostics.clone(),
-        },
-    };
+    let data = build_client_capability_config_data(request.identifier, state);
 
     sync_bound_client_runtime_state(&service, &data.identifier, visible_surface_changed).await;
 
@@ -1301,18 +1307,9 @@ pub async fn get_capability_config(
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let custom_profile_id = config.capability_config.custom_profile_id.clone();
-    Ok(Json(ClientCapabilityConfigResp::success(ClientCapabilityConfigData {
-        identifier: request.identifier,
-        capability_source: config.capability_config.capability_source,
-        selected_profile_ids: config.capability_config.selected_profile_ids,
-        custom_profile_id: custom_profile_id.clone(),
-        custom_profile_missing: config.custom_profile_missing,
-        unify_direct_exposure: ClientUnifyDirectExposureData {
-            config: config.unify_direct_exposure,
-            diagnostics: config.unify_direct_exposure_diagnostics,
-        },
-    })))
+    Ok(Json(ClientCapabilityConfigResp::success(
+        build_client_capability_config_data(request.identifier, config),
+    )))
 }
 
 async fn descriptor_to_client_info(
@@ -1341,7 +1338,7 @@ async fn descriptor_to_client_info(
         .as_deref()
         .and_then(ClientCategory::parse)
         .unwrap_or_default();
-    let supported_transports = runtime_metadata.supported_transports.clone();
+    let supported_transports = extract_supported_transports(&state);
     let description = runtime_metadata.description.clone();
     let homepage_url = runtime_metadata.homepage_url.clone();
     let docs_url = runtime_metadata.docs_url.clone();
@@ -1478,52 +1475,9 @@ async fn descriptor_to_client_info(
 // moved to POST /api/client/config/import
 
 fn extract_supported_transports(state: &ClientStateRow) -> Vec<String> {
-    match state.parsed_format_rules() {
-        Ok(rules) => extract_supported_transports_from_rules(&rules),
-        Err(_) => Vec::new(),
-    }
-}
-
-fn extract_supported_transports_from_rules(
-    rules: &HashMap<String, crate::clients::models::FormatRule>,
-) -> Vec<String> {
-    let mut available: HashSet<&'static str> = HashSet::new();
-
-    for key in rules.keys() {
-        let normalized = key.to_ascii_lowercase();
-        match normalized.as_str() {
-            "streamable_http" | "streamablehttp" | "http" => {
-                available.insert("streamable_http");
-            }
-            "sse" => {
-                available.insert("sse");
-            }
-            "stdio" => {
-                available.insert("stdio");
-            }
-            _ => {}
-        }
-    }
-
-    ["streamable_http", "sse", "stdio"]
-        .into_iter()
-        .filter(|transport| available.contains(*transport))
-        .map(str::to_string)
-        .collect()
-}
-
-fn extract_client_supported_transports(
-    state: Option<&ClientStateRow>,
-    runtime_metadata: &RuntimeClientMetadata,
-) -> Vec<String> {
-    if !runtime_metadata.supported_transports.is_empty() {
-        return runtime_metadata.supported_transports.clone();
-    }
-
-    match state {
-        Some(state) => extract_supported_transports(state),
-        None => runtime_metadata.supported_transports.clone(),
-    }
+    state
+        .parsed_format_rules()
+        .map_or_else(|_| Vec::new(), |rules| supported_transports_from_format_rules(&rules))
 }
 
 fn build_runtime_template_metadata(
@@ -1918,6 +1872,7 @@ mod tests {
         eligible: bool,
         tool_names: &[&str],
     ) {
+        crate::core::capability::naming::initialize(pool.clone());
         sqlx::query(
             r#"
             INSERT INTO server_config (id, name, server_type, command, capabilities, enabled, unify_direct_exposure_eligible)
@@ -1932,9 +1887,18 @@ mod tests {
         .expect("insert unify server");
 
         for tool_name in tool_names {
-            crate::config::server::tools::upsert_server_tool(pool, id, name, tool_name, Some("tool"), None)
-                .await
-                .expect("upsert server tool");
+            sqlx::query(
+                "INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(format!("{id}-tool-{tool_name}"))
+            .bind(id)
+            .bind(name)
+            .bind(tool_name)
+            .bind(format!("{}_{}", name.to_lowercase().replace(' ', "_"), tool_name))
+            .bind(Some("tool"))
+            .execute(pool)
+            .await
+            .expect("insert server tool");
         }
     }
 
@@ -1946,6 +1910,7 @@ mod tests {
         resource_uris: &[&str],
         template_uris: &[&str],
     ) {
+        crate::core::capability::naming::initialize(pool.clone());
         for prompt_name in prompt_names {
             sqlx::query(
                 "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES (?, ?, ?, ?, ?)",
@@ -2015,7 +1980,7 @@ mod tests {
         assert_eq!(data.selected_profile_ids, vec![profile_id.clone()]);
         assert!(data.custom_profile_id.is_none());
         assert_eq!(
-            data.unify_direct_exposure.config.route_mode,
+            data.unify_direct_exposure.intent.route_mode,
             crate::clients::models::UnifyRouteMode::BrokerOnly
         );
 
@@ -2054,7 +2019,7 @@ mod tests {
         assert!(data.selected_profile_ids.is_empty());
         assert_eq!(data.custom_profile_id, config.custom_profile_id);
         assert_eq!(
-            data.unify_direct_exposure.config.route_mode,
+            data.unify_direct_exposure.intent.route_mode,
             crate::clients::models::UnifyRouteMode::BrokerOnly
         );
     }
@@ -2071,11 +2036,8 @@ mod tests {
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
-                    selected_server_ids: Vec::new(),
-                    selected_tool_surfaces: Vec::new(),
-                    selected_prompt_surfaces: Vec::new(),
-                    selected_resource_surfaces: Vec::new(),
-                    selected_template_surfaces: Vec::new(),
+                    server_ids: Vec::new(),
+                    capability_ids: Default::default(),
                 }),
             }),
         )
@@ -2084,17 +2046,22 @@ mod tests {
 
         let data = response.data.expect("response data");
         assert_eq!(
-            data.unify_direct_exposure.config.route_mode,
+            data.unify_direct_exposure.intent.route_mode,
             crate::clients::models::UnifyRouteMode::BrokerOnly
         );
-        assert!(data.unify_direct_exposure.config.selected_server_ids.is_empty());
-        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
+        assert!(data.unify_direct_exposure.intent.server_ids.is_empty());
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
         assert!(data.unify_direct_exposure.diagnostics.invalid_server_ids.is_empty());
         assert!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.is_empty());
     }
 
     #[tokio::test]
-    async fn capability_config_roundtrips_unify_server_selection() {
+    async fn capability_config_roundtrips_unify_server_level_selection() {
         let context = create_test_context().await;
         insert_unify_server(
             &context.db_pool,
@@ -2108,33 +2075,177 @@ mod tests {
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
-                identifier: "client-server-live".to_string(),
+                identifier: "client-server-level".to_string(),
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
-                    route_mode: crate::clients::models::UnifyRouteMode::ServerLive,
-                    selected_server_ids: vec!["server-eligible".to_string()],
-                    selected_tool_surfaces: Vec::new(),
-                    selected_prompt_surfaces: Vec::new(),
-                    selected_resource_surfaces: Vec::new(),
-                    selected_template_surfaces: Vec::new(),
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
+                    server_ids: vec!["server-eligible".to_string()],
+                    capability_ids: Default::default(),
                 }),
             }),
         )
         .await
-        .expect("update server-live capability config");
+        .expect("update server-level capability config");
 
         let data = response.data.expect("response data");
         assert_eq!(
-            data.unify_direct_exposure.config.route_mode,
-            crate::clients::models::UnifyRouteMode::ServerLive
+            data.unify_direct_exposure.intent.route_mode,
+            crate::clients::models::UnifyRouteMode::ServerLevel
         );
         assert_eq!(
-            data.unify_direct_exposure.config.selected_server_ids,
+            data.unify_direct_exposure.intent.server_ids,
             vec!["server-eligible".to_string()]
         );
-        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
+        assert_eq!(
+            data.unify_direct_exposure.resolved_capabilities.selected_tool_surfaces,
+            vec![
+                crate::clients::models::UnifyDirectToolSurface {
+                    server_id: "server-eligible".to_string(),
+                    tool_name: "tool-a".to_string(),
+                },
+                crate::clients::models::UnifyDirectToolSurface {
+                    server_id: "server-eligible".to_string(),
+                    tool_name: "tool-b".to_string(),
+                },
+            ]
+        );
         assert!(data.unify_direct_exposure.diagnostics.invalid_server_ids.is_empty());
+
+        let stored_intent: Option<String> =
+            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE identifier = ?")
+                .bind("client-server-level")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("load stored unify intent");
+        let stored_intent: serde_json::Value =
+            serde_json::from_str(stored_intent.as_deref().expect("stored intent payload"))
+                .expect("parse stored intent payload");
+        assert_eq!(stored_intent["route_mode"], "server_level");
+        assert_eq!(stored_intent["server_ids"], serde_json::json!(["server-eligible"]));
+        assert!(stored_intent.get("selected_tool_surfaces").is_none());
+
+        sqlx::query(
+            "INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("server-eligible-tool-tool-c")
+        .bind("server-eligible")
+        .bind("Eligible Server")
+        .bind("tool-c")
+        .bind("eligible_server_tool-c")
+        .bind(Some("tool"))
+        .execute(&context.db_pool)
+        .await
+        .expect("insert refreshed server tool");
+
+        let Json(response) = get_capability_config(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-server-level".to_string(),
+            }),
+        )
+        .await
+        .expect("reload server-level capability config after inventory refresh");
+
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.intent.server_ids,
+            vec!["server-eligible".to_string()]
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .iter()
+                .any(|surface| surface.server_id == "server-eligible" && surface.tool_name == "tool-c")
+        );
+    }
+
+    #[tokio::test]
+    async fn initial_unify_server_level_selection_survives_late_server_enable() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-late-enable",
+            "Late Enable Server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+        sqlx::query("UPDATE server_config SET enabled = 0 WHERE id = ?")
+            .bind("server-late-enable")
+            .execute(&context.db_pool)
+            .await
+            .expect("disable server before initial selection");
+
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-late-server-level",
+                ActiveClientSettingsUpdate {
+                    config_mode: Some("unify".to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed unify client mode");
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-late-server-level".to_string(),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
+                    server_ids: vec!["server-late-enable".to_string()],
+                    capability_ids: Default::default(),
+                }),
+            }),
+        )
+        .await
+        .expect("store server-level intent before server is enabled");
+
+        let data = response.data.expect("response data");
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
+
+        let stored_intent: Option<String> =
+            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE identifier = ?")
+                .bind("client-late-server-level")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("load stored unify intent");
+        let stored_intent: serde_json::Value =
+            serde_json::from_str(stored_intent.as_deref().expect("stored intent payload"))
+                .expect("parse stored intent payload");
+        assert_eq!(stored_intent["route_mode"], "server_level");
+        assert_eq!(stored_intent["server_ids"], serde_json::json!(["server-late-enable"]));
+
+        sqlx::query("UPDATE server_config SET enabled = 1 WHERE id = ?")
+            .bind("server-late-enable")
+            .execute(&context.db_pool)
+            .await
+            .expect("enable server after initial selection");
+
+        let reconciled = context
+            .client_service
+            .reconcile_unify_direct_exposure_for_server("server-late-enable")
+            .await
+            .expect("reconcile direct exposure after enable");
+        assert_eq!(reconciled.len(), 1);
+        assert_eq!(reconciled[0].identifier, "client-late-server-level");
+        assert_eq!(
+            reconciled[0].unify_direct_exposure.selected_tool_surfaces,
+            vec![crate::clients::models::UnifyDirectToolSurface {
+                server_id: "server-late-enable".to_string(),
+                tool_name: "tool-a".to_string(),
+            }]
+        );
     }
 
     #[tokio::test]
@@ -2157,14 +2268,11 @@ mod tests {
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
-                    selected_server_ids: Vec::new(),
-                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
-                        server_id: "server-tools".to_string(),
-                        tool_name: "tool-b".to_string(),
-                    }],
-                    selected_prompt_surfaces: Vec::new(),
-                    selected_resource_surfaces: Vec::new(),
-                    selected_template_surfaces: Vec::new(),
+                    server_ids: Vec::new(),
+                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
+                        tool_ids: vec!["tool_server_tool-b".to_string()],
+                        ..Default::default()
+                    },
                 }),
             }),
         )
@@ -2173,7 +2281,7 @@ mod tests {
 
         let data = response.data.expect("response data");
         assert_eq!(
-            data.unify_direct_exposure.config.selected_tool_surfaces,
+            data.unify_direct_exposure.resolved_capabilities.selected_tool_surfaces,
             vec![crate::clients::models::UnifyDirectToolSurface {
                 server_id: "server-tools".to_string(),
                 tool_name: "tool-b".to_string(),
@@ -2204,20 +2312,13 @@ mod tests {
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
-                    selected_server_ids: Vec::new(),
-                    selected_tool_surfaces: Vec::new(),
-                    selected_prompt_surfaces: vec![crate::clients::models::UnifyDirectPromptSurface {
-                        server_id: "server-mixed".to_string(),
-                        prompt_name: "prompt-a".to_string(),
-                    }],
-                    selected_resource_surfaces: vec![crate::clients::models::UnifyDirectResourceSurface {
-                        server_id: "server-mixed".to_string(),
-                        resource_uri: "resource-a".to_string(),
-                    }],
-                    selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
-                        server_id: "server-mixed".to_string(),
-                        uri_template: "template-a".to_string(),
-                    }],
+                    server_ids: Vec::new(),
+                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
+                        prompt_ids: vec!["mixed_server_prompt-a".to_string()],
+                        resource_ids: vec!["mixed_server:resource-a".to_string()],
+                        template_ids: vec!["mixed_server_template-a".to_string()],
+                        ..Default::default()
+                    },
                 }),
             }),
         )
@@ -2226,21 +2327,27 @@ mod tests {
 
         let data = response.data.expect("response data");
         assert_eq!(
-            data.unify_direct_exposure.config.selected_prompt_surfaces,
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_prompt_surfaces,
             vec![crate::clients::models::UnifyDirectPromptSurface {
                 server_id: "server-mixed".to_string(),
                 prompt_name: "prompt-a".to_string(),
             }]
         );
         assert_eq!(
-            data.unify_direct_exposure.config.selected_resource_surfaces,
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_resource_surfaces,
             vec![crate::clients::models::UnifyDirectResourceSurface {
                 server_id: "server-mixed".to_string(),
                 resource_uri: "resource-a".to_string(),
             }]
         );
         assert_eq!(
-            data.unify_direct_exposure.config.selected_template_surfaces,
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_template_surfaces,
             vec![crate::clients::models::UnifyDirectTemplateSurface {
                 server_id: "server-mixed".to_string(),
                 uri_template: "template-a".to_string(),
@@ -2287,14 +2394,11 @@ mod tests {
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
-                    selected_server_ids: Vec::new(),
-                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
-                        server_id: "server-global-only".to_string(),
-                        tool_name: "tool-b".to_string(),
-                    }],
-                    selected_prompt_surfaces: Vec::new(),
-                    selected_resource_surfaces: Vec::new(),
-                    selected_template_surfaces: Vec::new(),
+                    server_ids: Vec::new(),
+                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
+                        tool_ids: vec!["global_only_server_tool-b".to_string()],
+                        ..Default::default()
+                    },
                 }),
             }),
         )
@@ -2303,7 +2407,7 @@ mod tests {
 
         let data = response.data.expect("response data");
         assert_eq!(
-            data.unify_direct_exposure.config.selected_tool_surfaces,
+            data.unify_direct_exposure.resolved_capabilities.selected_tool_surfaces,
             vec![crate::clients::models::UnifyDirectToolSurface {
                 server_id: "server-global-only".to_string(),
                 tool_name: "tool-b".to_string(),
@@ -2482,28 +2586,15 @@ mod tests {
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
-                    selected_server_ids: vec![
-                        "server-eligible".to_string(),
-                        "server-ineligible".to_string(),
-                        "server-missing".to_string(),
-                    ],
-                    selected_tool_surfaces: vec![
-                        crate::clients::models::UnifyDirectToolSurface {
-                            server_id: "server-eligible".to_string(),
-                            tool_name: "tool-missing".to_string(),
-                        },
-                        crate::clients::models::UnifyDirectToolSurface {
-                            server_id: "server-ineligible".to_string(),
-                            tool_name: "tool-x".to_string(),
-                        },
-                        crate::clients::models::UnifyDirectToolSurface {
-                            server_id: "server-eligible".to_string(),
-                            tool_name: "tool-a".to_string(),
-                        },
-                    ],
-                    selected_prompt_surfaces: Vec::new(),
-                    selected_resource_surfaces: Vec::new(),
-                    selected_template_surfaces: Vec::new(),
+                    server_ids: Vec::new(),
+                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
+                        tool_ids: vec![
+                            "eligible_server_tool-missing".to_string(),
+                            "ineligible_server_tool-x".to_string(),
+                            "eligible_server_tool-a".to_string(),
+                        ],
+                        ..Default::default()
+                    },
                 }),
             }),
         )
@@ -2511,49 +2602,61 @@ mod tests {
         .expect("update invalid unify config");
 
         let data = response.data.expect("response data");
+        assert!(data.unify_direct_exposure.intent.server_ids.is_empty());
         assert_eq!(
-            data.unify_direct_exposure.config.selected_server_ids,
-            vec!["server-eligible".to_string()]
-        );
-        assert_eq!(
-            data.unify_direct_exposure.config.selected_tool_surfaces,
+            data.unify_direct_exposure.resolved_capabilities.selected_tool_surfaces,
             vec![crate::clients::models::UnifyDirectToolSurface {
                 server_id: "server-eligible".to_string(),
                 tool_name: "tool-a".to_string(),
             }]
         );
         assert_eq!(
+            data.unify_direct_exposure.intent.capability_ids.tool_ids,
+            vec!["eligible_server_tool-a".to_string()]
+        );
+        assert_eq!(
             data.unify_direct_exposure.diagnostics.invalid_server_ids,
-            vec!["server-ineligible".to_string(), "server-missing".to_string()]
+            Vec::<String>::new()
         );
-        assert_eq!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.len(), 2);
+        assert_eq!(data.unify_direct_exposure.diagnostics.invalid_capability_ids.len(), 2);
         assert!(
             data.unify_direct_exposure
                 .diagnostics
-                .invalid_tool_surfaces
+                .invalid_capability_ids
                 .iter()
-                .any(|item| item.server_id == "server-eligible"
-                    && item.tool_name == "tool-missing"
-                    && item.reason == "tool_not_found")
+                .any(|item| item == "eligible_server_tool-missing")
         );
         assert!(
             data.unify_direct_exposure
                 .diagnostics
-                .invalid_tool_surfaces
+                .invalid_capability_ids
                 .iter()
-                .any(|item| item.server_id == "server-ineligible"
-                    && item.tool_name == "tool-x"
-                    && item.reason == "server_not_eligible_or_missing")
+                .any(|item| item == "ineligible_server_tool-x")
+        );
+
+        let stored_intent: Option<String> =
+            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE identifier = ?")
+                .bind("client-invalid")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("load stored unify intent");
+        let stored_intent: serde_json::Value =
+            serde_json::from_str(stored_intent.as_deref().expect("stored intent payload"))
+                .expect("parse stored intent payload");
+        assert_eq!(stored_intent["route_mode"], "capability_level");
+        assert_eq!(
+            stored_intent["capability_ids"]["tool_ids"],
+            serde_json::json!(["eligible_server_tool-a"])
         );
     }
 
     #[tokio::test]
-    async fn server_eligibility_change_prunes_server_live_direct_selection() {
+    async fn server_eligibility_change_prunes_server_level_direct_surfaces() {
         let context = create_test_context().await;
         insert_unify_server(
             &context.db_pool,
-            "server-prune-live",
-            "Prune Live Server",
+            "server-prune-level",
+            "Prune Level Server",
             true,
             &["tool-a"],
         )
@@ -2562,26 +2665,23 @@ mod tests {
         let _ = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
-                identifier: "client-prune-live".to_string(),
+                identifier: "client-prune-level".to_string(),
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
-                    route_mode: crate::clients::models::UnifyRouteMode::ServerLive,
-                    selected_server_ids: vec!["server-prune-live".to_string()],
-                    selected_tool_surfaces: Vec::new(),
-                    selected_prompt_surfaces: Vec::new(),
-                    selected_resource_surfaces: Vec::new(),
-                    selected_template_surfaces: Vec::new(),
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
+                    server_ids: vec!["server-prune-level".to_string()],
+                    capability_ids: Default::default(),
                 }),
             }),
         )
         .await
-        .expect("seed server-live capability config");
+        .expect("seed server-level capability config");
 
         let _ = crate::api::handlers::server::update_server(
             State(context.app_state.clone()),
             Json(crate::api::models::server::ServerUpdateReq {
-                id: "server-prune-live".to_string(),
+                id: "server-prune-level".to_string(),
                 kind: None,
                 command: None,
                 url: None,
@@ -2602,14 +2702,19 @@ mod tests {
         let Json(response) = get_capability_config(
             State(context.app_state.clone()),
             Query(ClientConfigReq {
-                identifier: "client-prune-live".to_string(),
+                identifier: "client-prune-level".to_string(),
             }),
         )
         .await
         .expect("load pruned capability config");
 
         let data = response.data.expect("response data");
-        assert!(data.unify_direct_exposure.config.selected_server_ids.is_empty());
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2641,23 +2746,13 @@ mod tests {
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
-                    selected_server_ids: Vec::new(),
-                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
-                        server_id: "server-prune-capabilities".to_string(),
-                        tool_name: "tool-a".to_string(),
-                    }],
-                    selected_prompt_surfaces: vec![crate::clients::models::UnifyDirectPromptSurface {
-                        server_id: "server-prune-capabilities".to_string(),
-                        prompt_name: "prompt-a".to_string(),
-                    }],
-                    selected_resource_surfaces: vec![crate::clients::models::UnifyDirectResourceSurface {
-                        server_id: "server-prune-capabilities".to_string(),
-                        resource_uri: "resource-a".to_string(),
-                    }],
-                    selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
-                        server_id: "server-prune-capabilities".to_string(),
-                        uri_template: "template-a".to_string(),
-                    }],
+                    server_ids: Vec::new(),
+                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
+                        tool_ids: vec!["prune_capability_server_tool-a".to_string()],
+                        prompt_ids: vec!["prune_capability_server_prompt-a".to_string()],
+                        resource_ids: vec!["prune_capability_server:resource-a".to_string()],
+                        template_ids: vec!["prune_capability_server_template-a".to_string()],
+                    },
                 }),
             }),
         )
@@ -2695,19 +2790,43 @@ mod tests {
         .expect("load pruned capability-level config");
 
         let data = response.data.expect("response data");
-        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.config.selected_prompt_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.config.selected_resource_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.config.selected_template_surfaces.is_empty());
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_prompt_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_resource_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_template_surfaces
+                .is_empty()
+        );
+        assert_eq!(
+            data.unify_direct_exposure.intent.capability_ids,
+            crate::clients::models::UnifyDirectCapabilityIds::default()
+        );
     }
 
     #[tokio::test]
-    async fn server_disable_prunes_server_live_direct_selection() {
+    async fn server_disable_prunes_server_level_direct_surfaces() {
         let context = create_test_context().await;
         insert_unify_server(
             &context.db_pool,
-            "server-disable-live",
-            "Disable Live Server",
+            "server-disable-level",
+            "Disable Level Server",
             true,
             &["tool-a"],
         )
@@ -2716,25 +2835,22 @@ mod tests {
         let _ = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
-                identifier: "client-disable-live".to_string(),
+                identifier: "client-disable-level".to_string(),
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
-                    route_mode: crate::clients::models::UnifyRouteMode::ServerLive,
-                    selected_server_ids: vec!["server-disable-live".to_string()],
-                    selected_tool_surfaces: Vec::new(),
-                    selected_prompt_surfaces: Vec::new(),
-                    selected_resource_surfaces: Vec::new(),
-                    selected_template_surfaces: Vec::new(),
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
+                    server_ids: vec!["server-disable-level".to_string()],
+                    capability_ids: Default::default(),
                 }),
             }),
         )
         .await
-        .expect("seed server-live config before disable");
+        .expect("seed server-level config before disable");
 
         let _ = crate::api::handlers::server::disable_server(
             State(context.app_state.clone()),
-            Path("server-disable-live".to_string()),
+            Path("server-disable-level".to_string()),
             Query(std::collections::HashMap::new()),
         )
         .await
@@ -2743,14 +2859,19 @@ mod tests {
         let Json(response) = get_capability_config(
             State(context.app_state.clone()),
             Query(ClientConfigReq {
-                identifier: "client-disable-live".to_string(),
+                identifier: "client-disable-level".to_string(),
             }),
         )
         .await
-        .expect("load server-live config after disable");
+        .expect("load server-level config after disable");
 
         let data = response.data.expect("response data");
-        assert!(data.unify_direct_exposure.config.selected_server_ids.is_empty());
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2782,23 +2903,13 @@ mod tests {
                 selected_profile_ids: Vec::new(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
-                    selected_server_ids: Vec::new(),
-                    selected_tool_surfaces: vec![crate::clients::models::UnifyDirectToolSurface {
-                        server_id: "server-disable-capabilities".to_string(),
-                        tool_name: "tool-a".to_string(),
-                    }],
-                    selected_prompt_surfaces: vec![crate::clients::models::UnifyDirectPromptSurface {
-                        server_id: "server-disable-capabilities".to_string(),
-                        prompt_name: "prompt-a".to_string(),
-                    }],
-                    selected_resource_surfaces: vec![crate::clients::models::UnifyDirectResourceSurface {
-                        server_id: "server-disable-capabilities".to_string(),
-                        resource_uri: "resource-a".to_string(),
-                    }],
-                    selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
-                        server_id: "server-disable-capabilities".to_string(),
-                        uri_template: "template-a".to_string(),
-                    }],
+                    server_ids: Vec::new(),
+                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
+                        tool_ids: vec!["disable_capability_server_tool-a".to_string()],
+                        prompt_ids: vec!["disable_capability_server_prompt-a".to_string()],
+                        resource_ids: vec!["disable_capability_server:resource-a".to_string()],
+                        template_ids: vec!["disable_capability_server_template-a".to_string()],
+                    },
                 }),
             }),
         )
@@ -2823,10 +2934,30 @@ mod tests {
         .expect("load capability config after disable");
 
         let data = response.data.expect("response data");
-        assert!(data.unify_direct_exposure.config.selected_tool_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.config.selected_prompt_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.config.selected_resource_surfaces.is_empty());
-        assert!(data.unify_direct_exposure.config.selected_template_surfaces.is_empty());
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_prompt_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_resource_surfaces
+                .is_empty()
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_template_surfaces
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -2840,7 +2971,6 @@ mod tests {
                 ActiveClientSettingsUpdate {
                     config_mode: Some("hosted".to_string()),
                     connection_mode: Some("manual".to_string()),
-                    supported_transports: Some(vec!["streamable_http".to_string()]),
                     description: Some("Runtime-only client".to_string()),
                     ..ActiveClientSettingsUpdate::default()
                 },
@@ -2863,7 +2993,7 @@ mod tests {
         assert!(!data.governed_by_default_policy);
         assert!(!data.writable_config);
         assert!(data.warnings.is_empty());
-        assert_eq!(data.supported_transports, vec!["streamable_http".to_string()]);
+        assert!(data.supported_transports.is_empty());
         assert_eq!(data.description.as_deref(), Some("Runtime-only client"));
         assert_eq!(data.template.format, "json");
         assert_eq!(data.template.storage.kind, "file");
@@ -2906,10 +3036,7 @@ mod tests {
         let data = response.data.expect("response data");
         assert_eq!(data.display_name, "Custom Runtime");
         assert_eq!(data.connection_mode.as_deref(), Some("local_config_detected"));
-        assert_eq!(
-            data.supported_transports,
-            vec!["streamable_http".to_string()]
-        );
+        assert!(data.supported_transports.is_empty());
         assert_eq!(data.description.as_deref(), Some("Custom runtime client"));
 
         let state = context
@@ -2936,7 +3063,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_details_prefers_persisted_supported_transports_for_template_client() {
+    async fn config_details_derives_supported_transports_from_format_rules() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("template-client.json");
         tokio::fs::write(&config_path, "{}")
@@ -2994,7 +3121,7 @@ mod tests {
 
         assert!(details_response.success);
         let details = details_response.data.expect("details data");
-        assert_eq!(details.supported_transports, vec!["stdio".to_string()]);
+        assert_eq!(details.supported_transports, vec!["streamable_http".to_string()]);
 
         let Json(list_response) = list(
             State(context.app_state.clone()),
@@ -3010,11 +3137,11 @@ mod tests {
             .into_iter()
             .find(|client| client.identifier == "client-a")
             .expect("client-a in list response");
-        assert_eq!(listed_client.supported_transports, vec!["stdio".to_string()]);
+        assert_eq!(listed_client.supported_transports, vec!["streamable_http".to_string()]);
     }
 
     #[test]
-    fn extract_supported_transports_from_rules_does_not_infer_sse_from_http_keys() {
+    fn supported_transports_from_format_rules_does_not_infer_sse_from_http_keys() {
         let mut rules: HashMap<String, crate::clients::models::FormatRule> = HashMap::new();
         rules.insert(
             "http".to_string(),
@@ -3024,12 +3151,12 @@ mod tests {
                     "url": "{{{url}}}",
                     "headers": "{{{json headers}}}"
                 }),
-                    include_type: false,
+                include_type: false,
                 ..Default::default()
             },
         );
 
-        let transports = extract_supported_transports_from_rules(&rules);
+        let transports = supported_transports_from_format_rules(&rules);
         assert_eq!(transports, vec!["streamable_http".to_string()]);
     }
 
@@ -3355,7 +3482,6 @@ mod tests {
                     transport: Some("streamable_http".to_string()),
                     connection_mode: Some("local_config_detected".to_string()),
                     config_path: Some(config_path.to_string_lossy().to_string()),
-                    supported_transports: Some(vec!["streamable_http".to_string()]),
                     ..ActiveClientSettingsUpdate::default()
                 },
             )

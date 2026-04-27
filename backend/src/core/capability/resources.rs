@@ -432,7 +432,6 @@ pub async fn read_upstream_resource(
                 let scoped_selection = crate::core::capability::ConnectionSelection {
                     server_id: server_id.to_string(),
                     affinity_key: selection.affinity_key.clone(),
-                    routing_fingerprint: selection.routing_fingerprint.clone(),
                 };
                 pool.ensure_connected_with_selection(&scoped_selection)
                     .await

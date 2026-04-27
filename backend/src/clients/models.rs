@@ -460,8 +460,8 @@ mod tests {
             UnifyRouteMode::BrokerOnly
         );
         assert_eq!(
-            UnifyRouteMode::from_str("server_live").expect("parse server_live"),
-            UnifyRouteMode::ServerLive
+            UnifyRouteMode::from_str("server_level").expect("parse server_level"),
+            UnifyRouteMode::ServerLevel
         );
         assert_eq!(
             UnifyRouteMode::from_str("capability_level").expect("parse capability_level"),
@@ -610,7 +610,10 @@ pub struct FormatRule {
 }
 
 impl FormatRule {
-    fn template_string_matches(value: &serde_json::Value, candidates: &[&str]) -> bool {
+    fn template_string_matches(
+        value: &serde_json::Value,
+        candidates: &[&str],
+    ) -> bool {
         let Some(raw) = value.as_str() else {
             return false;
         };
@@ -647,7 +650,10 @@ impl FormatRule {
                 continue;
             }
 
-            if Self::template_string_matches(value, &["{{{json headers}}}", "{{json headers}}", "{{headers}}", "{{{headers}}}"]) {
+            if Self::template_string_matches(
+                value,
+                &["{{{json headers}}}", "{{json headers}}", "{{headers}}", "{{{headers}}}"],
+            ) {
                 normalized.headers_field.get_or_insert_with(|| key.clone());
                 continue;
             }
@@ -681,7 +687,10 @@ impl FormatRule {
             || !normalized.extra_fields.is_empty()
     }
 
-    pub fn validate_for_transport(&self, transport: &str) -> Result<(), String> {
+    pub fn validate_for_transport(
+        &self,
+        transport: &str,
+    ) -> Result<(), String> {
         let normalized = self.normalized();
 
         if normalized.include_type
@@ -723,10 +732,7 @@ impl FormatRule {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
         {
-            map.insert(
-                "type".to_string(),
-                serde_json::Value::String(type_value),
-            );
+            map.insert("type".to_string(), serde_json::Value::String(type_value));
         }
 
         if let Some(command_key) = &normalized.command_field {
@@ -744,10 +750,7 @@ impl FormatRule {
         }
 
         if let Some(env_key) = &normalized.env_field {
-            map.insert(
-                env_key.clone(),
-                serde_json::Value::String("{{{json env}}}".to_string()),
-            );
+            map.insert(env_key.clone(), serde_json::Value::String("{{{json env}}}".to_string()));
         }
 
         if let Some(url_key) = &normalized.url_field {
@@ -847,69 +850,6 @@ impl ClientCapabilityConfig {
             capability_source,
             selected_profile_ids,
             custom_profile_id,
-        })
-    }
-}
-
-impl UnifyDirectExposureConfig {
-    pub fn from_parts(
-        route_mode: Option<&str>,
-        selected_server_ids_json: Option<&str>,
-        selected_tool_surfaces_json: Option<&str>,
-        selected_prompt_surfaces_json: Option<&str>,
-        selected_resource_surfaces_json: Option<&str>,
-        selected_template_surfaces_json: Option<&str>,
-    ) -> Result<Self, String> {
-        let route_mode = route_mode
-            .map(UnifyRouteMode::from_str)
-            .transpose()
-            .map_err(|_| {
-                format!(
-                    "invalid unify_route_mode '{}': expected broker_only|server_live|capability_level",
-                    route_mode.unwrap_or_default()
-                )
-            })?
-            .unwrap_or_default();
-
-        let selected_server_ids = if let Some(raw) = selected_server_ids_json {
-            serde_json::from_str::<Vec<String>>(raw)
-                .map_err(|err| format!("invalid unify_selected_server_ids payload '{}': {}", raw, err))?
-        } else {
-            Vec::new()
-        };
-
-        let selected_tool_surfaces = if let Some(raw) = selected_tool_surfaces_json {
-            serde_json::from_str::<Vec<UnifyDirectToolSurface>>(raw)
-                .map_err(|err| format!("invalid unify_selected_tool_surfaces payload '{}': {}", raw, err))?
-        } else {
-            Vec::new()
-        };
-        let selected_prompt_surfaces = if let Some(raw) = selected_prompt_surfaces_json {
-            serde_json::from_str::<Vec<UnifyDirectPromptSurface>>(raw)
-                .map_err(|err| format!("invalid unify_selected_prompt_surfaces payload '{}': {}", raw, err))?
-        } else {
-            Vec::new()
-        };
-        let selected_resource_surfaces = if let Some(raw) = selected_resource_surfaces_json {
-            serde_json::from_str::<Vec<UnifyDirectResourceSurface>>(raw)
-                .map_err(|err| format!("invalid unify_selected_resource_surfaces payload '{}': {}", raw, err))?
-        } else {
-            Vec::new()
-        };
-        let selected_template_surfaces = if let Some(raw) = selected_template_surfaces_json {
-            serde_json::from_str::<Vec<UnifyDirectTemplateSurface>>(raw)
-                .map_err(|err| format!("invalid unify_selected_template_surfaces payload '{}': {}", raw, err))?
-        } else {
-            Vec::new()
-        };
-
-        Ok(Self {
-            route_mode,
-            selected_server_ids,
-            selected_tool_surfaces,
-            selected_prompt_surfaces,
-            selected_resource_surfaces,
-            selected_template_surfaces,
         })
     }
 }
@@ -1040,7 +980,7 @@ impl FromStr for CapabilitySource {
 pub enum UnifyRouteMode {
     #[default]
     BrokerOnly,
-    ServerLive,
+    ServerLevel,
     CapabilityLevel,
 }
 
@@ -1048,8 +988,49 @@ impl UnifyRouteMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             UnifyRouteMode::BrokerOnly => "broker_only",
-            UnifyRouteMode::ServerLive => "server_live",
+            UnifyRouteMode::ServerLevel => "server_level",
             UnifyRouteMode::CapabilityLevel => "capability_level",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct UnifyDirectCapabilityIds {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompt_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub template_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct UnifyDirectExposureIntent {
+    #[serde(default)]
+    pub route_mode: UnifyRouteMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "UnifyDirectCapabilityIds::is_empty")]
+    pub capability_ids: UnifyDirectCapabilityIds,
+}
+
+impl UnifyDirectCapabilityIds {
+    pub fn is_empty(&self) -> bool {
+        self.tool_ids.is_empty()
+            && self.prompt_ids.is_empty()
+            && self.resource_ids.is_empty()
+            && self.template_ids.is_empty()
+    }
+}
+
+impl UnifyDirectExposureIntent {
+    pub fn from_parts(intent_json: Option<&str>) -> Result<Self, String> {
+        match intent_json.filter(|raw| !raw.trim().is_empty()) {
+            Some(raw) => serde_json::from_str::<Self>(raw)
+                .map_err(|err| format!("invalid unify_direct_exposure_intent payload '{}': {}", raw, err)),
+            None => Ok(Self::default()),
         }
     }
 }
@@ -1083,7 +1064,7 @@ impl FromStr for UnifyRouteMode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "broker_only" => Ok(UnifyRouteMode::BrokerOnly),
-            "server_live" => Ok(UnifyRouteMode::ServerLive),
+            "server_level" => Ok(UnifyRouteMode::ServerLevel),
             "capability_level" => Ok(UnifyRouteMode::CapabilityLevel),
             _ => Err(ParseUnifyRouteModeError),
         }
@@ -1127,6 +1108,8 @@ pub struct UnifyDirectExposureDiagnostics {
     pub invalid_resource_surfaces: Vec<UnifyDirectResourceSurfaceDiagnostic>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invalid_template_surfaces: Vec<UnifyDirectTemplateSurfaceDiagnostic>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invalid_capability_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
@@ -1188,6 +1171,7 @@ pub struct ClientCapabilityConfig {
 pub struct ClientCapabilityConfigState {
     pub capability_config: ClientCapabilityConfig,
     pub custom_profile_missing: bool,
+    pub unify_direct_exposure_intent: UnifyDirectExposureIntent,
     pub unify_direct_exposure: UnifyDirectExposureConfig,
     pub unify_direct_exposure_diagnostics: UnifyDirectExposureDiagnostics,
 }

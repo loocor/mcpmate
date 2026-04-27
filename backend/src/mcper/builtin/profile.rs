@@ -21,6 +21,10 @@ use crate::{
 
 use crate::mcper::builtin::{
     helpers::{load_profile_capability_counts, load_profile_detail_components},
+    names::{
+        MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_DISABLE_TOOL,
+        MCPMATE_PROFILE_ENABLE_TOOL, MCPMATE_PROFILE_LIST_TOOL,
+    },
     registry::BuiltinService,
     types::{PromptDetail, ResourceDetail, ServerDetail, ToolDetail},
 };
@@ -126,9 +130,8 @@ impl ProfileService {
     ) -> Result<CallToolResult> {
         let profile = profile::get_profile(&self.database.pool, &profile_id)
             .await
-            .context("Failed to get profile")?;
-
-        let profile = profile.ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
+            .context("Failed to get profile")?
+            .ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
 
         if profile.is_active {
             return Ok(CallToolResult::success(vec![rmcp::model::Content::text(
@@ -168,9 +171,8 @@ impl ProfileService {
     ) -> Result<CallToolResult> {
         let profile = profile::get_profile(&self.database.pool, &profile_id)
             .await
-            .context("Failed to get profile")?;
-
-        let profile = profile.ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
+            .context("Failed to get profile")?
+            .ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
 
         if !profile.is_active {
             return Ok(CallToolResult::success(vec![rmcp::model::Content::text(
@@ -261,7 +263,7 @@ impl BuiltinService for ProfileService {
     fn tools(&self) -> Vec<rmcp::model::Tool> {
         vec![
             Tool::new(
-                "mcpmate_profile_list",
+                MCPMATE_PROFILE_LIST_TOOL,
                 "List profiles with capability counts",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -275,7 +277,7 @@ impl BuiltinService for ProfileService {
                 ),
             ),
             Tool::new(
-                "mcpmate_profile_preview",
+                MCPMATE_PROFILE_DETAILS_TOOL,
                 "Preview a profile with lightweight capability details for one reusable scene.",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -294,7 +296,7 @@ impl BuiltinService for ProfileService {
                 ),
             ),
             Tool::new(
-                "mcpmate_profile_enable",
+                MCPMATE_PROFILE_ENABLE_TOOL,
                 "Enable a profile. If the target profile is exclusive, other non-default profiles may be disabled by profile rules.",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -313,7 +315,7 @@ impl BuiltinService for ProfileService {
                 ),
             ),
             Tool::new(
-                "mcpmate_profile_disable",
+                MCPMATE_PROFILE_DISABLE_TOOL,
                 "Disable a profile and remove it from the active working set.",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -332,7 +334,7 @@ impl BuiltinService for ProfileService {
                 ),
             ),
             Tool::new(
-                "mcpmate_profile_activate_only",
+                MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL,
                 "Switch to a single shared scene by keeping only this profile active among non-default profiles.",
                 std::sync::Arc::new(
                     serde_json::json!({
@@ -358,29 +360,21 @@ impl BuiltinService for ProfileService {
         request: &CallToolRequestParams,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            "mcpmate_profile_list" => self.profile_list().await,
-            "mcpmate_profile_preview" => {
-                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: ProfileDetailsParams =
-                    serde_json::from_value(args).context("Invalid parameters for profile_preview")?;
+            MCPMATE_PROFILE_LIST_TOOL => self.profile_list().await,
+            MCPMATE_PROFILE_DETAILS_TOOL => {
+                let params = parse_profile_details_params(request)?;
                 self.profile_preview(params.profile_id).await
             }
-            "mcpmate_profile_enable" => {
-                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: ProfileActionParams =
-                    serde_json::from_value(args).context("Invalid parameters for profile_enable")?;
+            MCPMATE_PROFILE_ENABLE_TOOL => {
+                let params = parse_profile_action_params(request, "Invalid parameters for profile_enable")?;
                 self.profile_enable(params.profile_id).await
             }
-            "mcpmate_profile_disable" => {
-                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: ProfileActionParams =
-                    serde_json::from_value(args).context("Invalid parameters for profile_disable")?;
+            MCPMATE_PROFILE_DISABLE_TOOL => {
+                let params = parse_profile_action_params(request, "Invalid parameters for profile_disable")?;
                 self.profile_disable(params.profile_id).await
             }
-            "mcpmate_profile_activate_only" => {
-                let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                let params: ProfileActionParams =
-                    serde_json::from_value(args).context("Invalid parameters for profile_activate_only")?;
+            MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL => {
+                let params = parse_profile_action_params(request, "Invalid parameters for profile_activate_only")?;
                 self.profile_activate_only(params.profile_id).await
             }
             _ => Err(anyhow::anyhow!("Unknown tool: {}", request.name)),
@@ -396,6 +390,19 @@ struct ProfileDetailsParams {
 #[derive(Debug, Deserialize)]
 struct ProfileActionParams {
     profile_id: String,
+}
+
+fn parse_profile_details_params(request: &CallToolRequestParams) -> Result<ProfileDetailsParams> {
+    let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+    serde_json::from_value(args).context(format!("Invalid parameters for {MCPMATE_PROFILE_DETAILS_TOOL}"))
+}
+
+fn parse_profile_action_params(
+    request: &CallToolRequestParams,
+    error_message: &'static str,
+) -> Result<ProfileActionParams> {
+    let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+    serde_json::from_value(args).context(error_message)
 }
 
 #[derive(Debug, Serialize)]

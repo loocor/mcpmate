@@ -28,7 +28,7 @@ fn derive_cache_scope(
 ) -> CacheScope {
     match (runtime_identity, connection_selection) {
         (Some(identity), Some(selection)) => {
-            CacheScope::client_filtered(selection.cache_scope_key(), identity.rules_fingerprint.clone())
+            CacheScope::client_filtered(selection.cache_scope_key(), identity.surface_fingerprint.clone())
         }
         _ => CacheScope::shared_raw(),
     }
@@ -1088,12 +1088,11 @@ mod tests {
         let identity = RuntimeIdentity {
             client_id: "test-client".to_string(),
             profile_id: None,
-            rules_fingerprint: "fp-123".to_string(),
+            surface_fingerprint: "fp-123".to_string(),
         };
         let selection = ConnectionSelection {
             server_id: "srv-1".to_string(),
             affinity_key: AffinityKey::PerSession("sess-abc".to_string()),
-            routing_fingerprint: Some("fp-456".to_string()),
         };
 
         let scope = derive_cache_scope(Some(&identity), Some(&selection));
@@ -1107,7 +1106,7 @@ mod tests {
         let identity = RuntimeIdentity {
             client_id: "test-client".to_string(),
             profile_id: None,
-            rules_fingerprint: "fp-123".to_string(),
+            surface_fingerprint: "fp-123".to_string(),
         };
 
         let scope = derive_cache_scope(Some(&identity), None);
@@ -1121,7 +1120,6 @@ mod tests {
         let selection = ConnectionSelection {
             server_id: "srv-1".to_string(),
             affinity_key: AffinityKey::PerSession("sess-abc".to_string()),
-            routing_fingerprint: Some("fp-456".to_string()),
         };
 
         let scope = derive_cache_scope(None, Some(&selection));
