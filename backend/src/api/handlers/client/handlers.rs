@@ -25,6 +25,7 @@ use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
 use crate::common::ClientCategory;
+use crate::core::proxy::server::ProxyServer;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -1037,18 +1038,17 @@ async fn sync_bound_client_runtime_state(
         return;
     };
 
-    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
-        if let Ok(guard) = proxy.try_lock() {
-            if let Err(err) = guard
-                .apply_persisted_client_runtime_state(
-                    identifier,
-                    Some(runtime_state.effective_mode.clone()),
-                    runtime_state.unify_workspace.clone(),
-                )
-                .await
-            {
-                tracing::warn!(client = %identifier, error = %err, mode = %runtime_state.effective_mode, "Failed to sync bound client runtime state");
-            }
+    if let Some(proxy_server) = ProxyServer::global().and_then(|proxy| proxy.try_lock().ok().map(|guard| guard.clone()))
+    {
+        if let Err(err) = proxy_server
+            .apply_persisted_client_runtime_state(
+                identifier,
+                Some(runtime_state.effective_mode.clone()),
+                runtime_state.unify_workspace.clone(),
+            )
+            .await
+        {
+            tracing::warn!(client = %identifier, error = %err, mode = %runtime_state.effective_mode, "Failed to sync bound client runtime state");
         }
     }
 
