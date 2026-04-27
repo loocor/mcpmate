@@ -4,6 +4,12 @@ use rmcp::{
     model::{ClientCapabilities, ClientInfo, Implementation, ProtocolVersion},
 };
 
+use crate::core::proxy::server::ProxyServer;
+
+fn global_proxy_server() -> Option<ProxyServer> {
+    ProxyServer::global().and_then(|server| server.try_lock().ok().map(|guard| guard.clone()))
+}
+
 /// Minimal upstream client handler used by the proxy when connecting to upstream MCP servers.
 ///
 /// Step 1 (PR6): only logs and accepts notifications; no downstream forwarding yet.
@@ -58,12 +64,10 @@ impl ClientHandler for UpstreamClientHandler {
             "Upstream progress received"
         );
         if let Some(server_id) = self.server_id.get() {
-            if let Some(global) = crate::core::proxy::server::ProxyServer::global() {
-                if let Ok(guard) = global.try_lock() {
-                    let _ = guard
-                        .forward_upstream_progress(server_id, params.clone(), context.meta.get_progress_token())
-                        .await;
-                }
+            if let Some(proxy_server) = global_proxy_server() {
+                let _ = proxy_server
+                    .forward_upstream_progress(server_id, params.clone(), context.meta.get_progress_token())
+                    .await;
             }
         }
         let _ = crate::inspector::service::inspector_forward_progress(&params).await;
@@ -81,10 +85,8 @@ impl ClientHandler for UpstreamClientHandler {
             "Upstream request cancelled"
         );
         if let Some(server_id) = self.server_id.get() {
-            if let Some(global) = crate::core::proxy::server::ProxyServer::global() {
-                if let Ok(guard) = global.try_lock() {
-                    let _ = guard.forward_upstream_cancelled(server_id, params.clone()).await;
-                }
+            if let Some(proxy_server) = global_proxy_server() {
+                let _ = proxy_server.forward_upstream_cancelled(server_id, params.clone()).await;
             }
         }
         let _ = crate::inspector::service::inspector_forward_cancel(&params.request_id, params.reason.clone()).await;
@@ -103,12 +105,10 @@ impl ClientHandler for UpstreamClientHandler {
             "Upstream log message"
         );
         if let Some(server_id) = self.server_id.get() {
-            if let Some(global) = crate::core::proxy::server::ProxyServer::global() {
-                if let Ok(guard) = global.try_lock() {
-                    let _ = guard
-                        .forward_upstream_log(server_id, params.clone(), context.meta.get_progress_token())
-                        .await;
-                }
+            if let Some(proxy_server) = global_proxy_server() {
+                let _ = proxy_server
+                    .forward_upstream_log(server_id, params.clone(), context.meta.get_progress_token())
+                    .await;
             }
         }
         let token = context.meta.get_progress_token();
