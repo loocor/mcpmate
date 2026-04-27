@@ -12,6 +12,7 @@ use crate::{
     },
     config::{database::Database, server},
     core::cache::{CacheQuery, CacheScope, FreshnessLevel},
+    core::proxy::server::ProxyServer,
 };
 use axum::http::StatusCode;
 use tracing::{debug, warn};
@@ -346,27 +347,26 @@ pub(crate) async fn reconcile_client_direct_exposure_after_server_constraint_cha
         return Ok(0);
     }
 
-    if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
-        if let Ok(guard) = proxy.try_lock() {
-            for client in &reconciled {
-                if let Err(err) = guard
-                    .apply_persisted_unify_direct_exposure(&client.identifier, client.unify_direct_exposure.clone())
-                    .await
-                {
-                    warn!(client = %client.identifier, server_id = %server_id, error = %err, "Failed to refresh reconciled Unify direct exposure state");
-                }
+    if let Some(proxy_server) = ProxyServer::global().and_then(|proxy| proxy.try_lock().ok().map(|guard| guard.clone()))
+    {
+        for client in &reconciled {
+            if let Err(err) = proxy_server
+                .apply_persisted_unify_direct_exposure(&client.identifier, client.unify_direct_exposure.clone())
+                .await
+            {
+                warn!(client = %client.identifier, server_id = %server_id, error = %err, "Failed to refresh reconciled Unify direct exposure state");
             }
-
-            let (tools_count, prompts_count, resources_count) = guard.notify_all_list_changed().await;
-            debug!(
-                server_id = %server_id,
-                reconciled_clients = reconciled.len(),
-                tools_count,
-                prompts_count,
-                resources_count,
-                "Reconciled client direct exposure after server constraint change"
-            );
         }
+
+        let (tools_count, prompts_count, resources_count) = proxy_server.notify_all_list_changed().await;
+        debug!(
+            server_id = %server_id,
+            reconciled_clients = reconciled.len(),
+            tools_count,
+            prompts_count,
+            resources_count,
+            "Reconciled client direct exposure after server constraint change"
+        );
     }
 
     Ok(reconciled.len())

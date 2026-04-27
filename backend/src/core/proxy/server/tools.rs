@@ -2,6 +2,12 @@ use super::*;
 use crate::clients::models::CapabilitySource;
 use crate::core::capability::naming::{NamingKind, resolve_unique_name};
 use crate::mcper::builtin::ClientBuiltinContext;
+use crate::mcper::{
+    MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DETAILS_TOOL,
+    MCPMATE_PROFILE_DISABLE_TOOL, MCPMATE_PROFILE_ENABLE_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_SCOPE_ADD_TOOL,
+    MCPMATE_SCOPE_GET_TOOL, MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL, MCPMATE_UCAN_CALL_TOOL,
+    MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL, PROFILE_MODE_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES,
+};
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, PaginatedRequestParams};
@@ -14,18 +20,9 @@ fn builtin_tool_allowed(
     tool_name: &str,
 ) -> bool {
     match config_mode {
-        Some("unify") => matches!(
-            tool_name,
-            "mcpmate_ucan_catalog" | "mcpmate_ucan_details" | "mcpmate_ucan_call"
-        ),
+        Some("unify") => UNIFY_BUILTIN_TOOL_NAMES.contains(&tool_name),
         Some("transparent") => false,
-        _ => match tool_name {
-            "mcpmate_profile_list" | "mcpmate_profile_preview" => capability_source == CapabilitySource::Profiles,
-            "mcpmate_scope_set" | "mcpmate_scope_add" | "mcpmate_scope_remove" => {
-                capability_source == CapabilitySource::Profiles
-            }
-            _ => false,
-        },
+        _ => capability_source == CapabilitySource::Profiles && PROFILE_MODE_BUILTIN_TOOL_NAMES.contains(&tool_name),
     }
 }
 
@@ -39,19 +36,19 @@ fn direct_managed_tool_call_allowed(
 fn client_aware_builtin_tool_requires_runtime_refresh(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "mcpmate_profile_enable"
-            | "mcpmate_profile_disable"
-            | "mcpmate_profile_activate_only"
-            | "mcpmate_scope_set"
-            | "mcpmate_scope_add"
-            | "mcpmate_scope_remove"
+        MCPMATE_PROFILE_ENABLE_TOOL
+            | MCPMATE_PROFILE_DISABLE_TOOL
+            | MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL
+            | MCPMATE_SCOPE_SET_TOOL
+            | MCPMATE_SCOPE_ADD_TOOL
+            | MCPMATE_SCOPE_REMOVE_TOOL
     )
 }
 
 fn builtin_tool_requires_runtime_refresh(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "mcpmate_profile_enable" | "mcpmate_profile_disable" | "mcpmate_profile_activate_only"
+        MCPMATE_PROFILE_ENABLE_TOOL | MCPMATE_PROFILE_DISABLE_TOOL | MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL
     )
 }
 
@@ -210,17 +207,24 @@ pub(super) async fn call_tool(
         "ProxyServer::call_tool received request"
     );
 
-    let is_profile_tool = request.name.starts_with("mcpmate_profile_");
+    let is_profile_tool = matches!(
+        request.name.as_ref(),
+        MCPMATE_PROFILE_LIST_TOOL
+            | MCPMATE_PROFILE_DETAILS_TOOL
+            | MCPMATE_PROFILE_ENABLE_TOOL
+            | MCPMATE_PROFILE_DISABLE_TOOL
+            | MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL
+    );
     let is_client_tool = matches!(
         request.name.as_ref(),
-        "mcpmate_scope_get"
-            | "mcpmate_scope_set"
-            | "mcpmate_scope_add"
-            | "mcpmate_scope_remove"
-            | "mcpmate_client_custom_profile_details"
-            | "mcpmate_ucan_catalog"
-            | "mcpmate_ucan_details"
-            | "mcpmate_ucan_call"
+        MCPMATE_SCOPE_GET_TOOL
+            | MCPMATE_SCOPE_SET_TOOL
+            | MCPMATE_SCOPE_ADD_TOOL
+            | MCPMATE_SCOPE_REMOVE_TOOL
+            | MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL
+            | MCPMATE_UCAN_CATALOG_TOOL
+            | MCPMATE_UCAN_DETAILS_TOOL
+            | MCPMATE_UCAN_CALL_TOOL
     );
 
     if is_profile_tool || is_client_tool {
@@ -556,11 +560,17 @@ pub(super) async fn call_tool(
 mod tests {
     use super::{builtin_tool_allowed, direct_managed_tool_call_allowed};
     use crate::clients::models::{CapabilitySource, UnifyDirectExposureConfig, UnifyDirectToolSurface, UnifyRouteMode};
+    use crate::mcper::{
+        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DETAILS_TOOL,
+        MCPMATE_PROFILE_DISABLE_TOOL, MCPMATE_PROFILE_ENABLE_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_SCOPE_ADD_TOOL,
+        MCPMATE_SCOPE_GET_TOOL, MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL, MCPMATE_UCAN_CALL_TOOL,
+        MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL,
+    };
     use std::collections::HashSet;
 
     #[test]
     fn hosted_profile_listing_tools_are_only_available_for_profiles_source() {
-        let other_tools = ["mcpmate_profile_list", "mcpmate_profile_preview"];
+        let other_tools = [MCPMATE_PROFILE_LIST_TOOL, MCPMATE_PROFILE_DETAILS_TOOL];
 
         for tool in other_tools {
             assert!(
@@ -597,7 +607,7 @@ mod tests {
 
     #[test]
     fn hosted_mode_does_not_expose_scope_get_or_custom_detail_tools() {
-        let hosted_only_denied = ["mcpmate_scope_get", "mcpmate_client_custom_profile_details"];
+        let hosted_only_denied = [MCPMATE_SCOPE_GET_TOOL, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL];
 
         for tool in hosted_only_denied {
             assert!(!builtin_tool_allowed(None, CapabilitySource::Activated, tool));
@@ -609,9 +619,9 @@ mod tests {
     #[test]
     fn profile_enablement_tools_are_not_exposed_in_hosted_or_transparent_modes() {
         let profile_tools = [
-            "mcpmate_profile_enable",
-            "mcpmate_profile_disable",
-            "mcpmate_profile_activate_only",
+            MCPMATE_PROFILE_ENABLE_TOOL,
+            MCPMATE_PROFILE_DISABLE_TOOL,
+            MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL,
         ];
 
         for tool in profile_tools {
@@ -629,14 +639,14 @@ mod tests {
     #[test]
     fn transparent_mode_exposes_no_runtime_builtin_tools() {
         let transparent_denied = [
-            "mcpmate_profile_list",
-            "mcpmate_profile_preview",
-            "mcpmate_scope_set",
-            "mcpmate_scope_add",
-            "mcpmate_scope_remove",
-            "mcpmate_ucan_catalog",
-            "mcpmate_ucan_details",
-            "mcpmate_ucan_call",
+            MCPMATE_PROFILE_LIST_TOOL,
+            MCPMATE_PROFILE_DETAILS_TOOL,
+            MCPMATE_SCOPE_SET_TOOL,
+            MCPMATE_SCOPE_ADD_TOOL,
+            MCPMATE_SCOPE_REMOVE_TOOL,
+            MCPMATE_UCAN_CATALOG_TOOL,
+            MCPMATE_UCAN_DETAILS_TOOL,
+            MCPMATE_UCAN_CALL_TOOL,
         ];
 
         for tool in transparent_denied {
@@ -650,7 +660,7 @@ mod tests {
 
     #[test]
     fn hosted_mode_exposes_only_profile_range_adjustment_tools_for_profiles_source() {
-        let tool = "mcpmate_scope_set";
+        let tool = MCPMATE_SCOPE_SET_TOOL;
 
         assert!(!builtin_tool_allowed(None, CapabilitySource::Activated, tool));
         assert!(builtin_tool_allowed(None, CapabilitySource::Profiles, tool));
@@ -659,7 +669,11 @@ mod tests {
 
     #[test]
     fn client_profiles_tools_are_only_available_for_profiles_source() {
-        let profiles_tools = ["mcpmate_scope_set", "mcpmate_scope_add", "mcpmate_scope_remove"];
+        let profiles_tools = [
+            MCPMATE_SCOPE_SET_TOOL,
+            MCPMATE_SCOPE_ADD_TOOL,
+            MCPMATE_SCOPE_REMOVE_TOOL,
+        ];
 
         for tool in profiles_tools {
             assert!(
@@ -679,7 +693,7 @@ mod tests {
 
     #[test]
     fn client_custom_profile_details_is_only_available_for_custom_source() {
-        let tool = "mcpmate_client_custom_profile_details";
+        let tool = MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL;
 
         assert!(
             !builtin_tool_allowed(None, CapabilitySource::Activated, tool),
@@ -700,47 +714,47 @@ mod tests {
         assert!(builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_ucan_catalog"
+            MCPMATE_UCAN_CATALOG_TOOL
         ));
         assert!(builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_ucan_details"
+            MCPMATE_UCAN_DETAILS_TOOL
         ));
         assert!(builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_ucan_call"
+            MCPMATE_UCAN_CALL_TOOL
         ));
         assert!(!builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_scope_set"
+            MCPMATE_SCOPE_SET_TOOL
         ));
         assert!(!builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_scope_add"
+            MCPMATE_SCOPE_ADD_TOOL
         ));
         assert!(!builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_scope_remove"
+            MCPMATE_SCOPE_REMOVE_TOOL
         ));
         assert!(!builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_profile_enable"
+            MCPMATE_PROFILE_ENABLE_TOOL
         ));
         assert!(!builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Profiles,
-            "mcpmate_profile_list"
+            MCPMATE_PROFILE_LIST_TOOL
         ));
         assert!(!builtin_tool_allowed(
             Some("unify"),
             CapabilitySource::Custom,
-            "mcpmate_client_custom_profile_details"
+            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL
         ));
     }
 
@@ -777,11 +791,14 @@ mod tests {
     }
 
     #[test]
-    fn unify_direct_exposure_server_live_only_exposes_selected_eligible_servers() {
+    fn unify_direct_exposure_server_level_uses_materialized_surfaces() {
         let workspace = UnifyDirectExposureConfig {
-            route_mode: UnifyRouteMode::ServerLive,
-            selected_server_ids: vec!["server-a".to_string()],
-            selected_tool_surfaces: Vec::new(),
+            route_mode: UnifyRouteMode::ServerLevel,
+            selected_server_ids: Vec::new(),
+            selected_tool_surfaces: vec![UnifyDirectToolSurface {
+                server_id: "server-a".to_string(),
+                tool_name: "tool-one".to_string(),
+            }],
             selected_prompt_surfaces: Vec::new(),
             selected_resource_surfaces: Vec::new(),
             selected_template_surfaces: Vec::new(),
@@ -797,6 +814,12 @@ mod tests {
         assert!(!crate::core::proxy::server::unify_directly_exposed_tool_allowed(
             Some(&workspace),
             &eligible_server_ids,
+            "server-a",
+            "tool-two",
+        ));
+        assert!(!crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            Some(&workspace),
+            &eligible_server_ids,
             "server-b",
             "tool-one",
         ));
@@ -805,16 +828,6 @@ mod tests {
             &HashSet::new(),
             "server-a",
             "tool-one",
-        ));
-        assert!(crate::core::proxy::server::unify_directly_exposed_server_allowed(
-            Some(&workspace),
-            &eligible_server_ids,
-            "server-a",
-        ));
-        assert!(!crate::core::proxy::server::unify_directly_exposed_server_allowed(
-            Some(&workspace),
-            &eligible_server_ids,
-            "server-b",
         ));
     }
 

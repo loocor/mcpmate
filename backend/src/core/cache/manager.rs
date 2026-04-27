@@ -463,17 +463,17 @@ impl RedbCacheManager {
         Ok(())
     }
 
-    /// Invalidate all client-filtered cache entries matching a rules_fingerprint.
+    /// Invalidate all client-filtered cache entries matching a surface_fingerprint.
     ///
     /// Called when a client's capability configuration changes. All filtered cache entries
     /// with the matching fingerprint are removed to ensure fresh data on next request.
-    pub async fn invalidate_by_rules_fingerprint(
+    pub async fn invalidate_by_surface_fingerprint(
         &self,
-        rules_fingerprint: &str,
+        surface_fingerprint: &str,
     ) -> Result<usize, CacheError> {
         use super::schema::SERVERS_TABLE;
 
-        let fingerprint_marker = format!(":{}", rules_fingerprint);
+        let fingerprint_marker = format!(":{}", surface_fingerprint);
         let mut invalidated_count: usize = 0;
 
         let keys_to_remove: Vec<String> = {
@@ -485,7 +485,7 @@ impl RedbCacheManager {
                 .filter_map(|item| {
                     let (key, _) = item.ok()?;
                     let key_str = key.value().to_string();
-                    // Key format: "{server_id}#production#filtered:{selection_key}:{rules_fingerprint}"
+                    // Key format: "{server_id}#production#filtered:{selection_key}:{surface_fingerprint}"
                     if key_str.contains(&fingerprint_marker) {
                         Some(key_str)
                     } else {
@@ -519,8 +519,8 @@ impl RedbCacheManager {
             m.cache_invalidations += invalidated_count as u64;
             info!(
                 invalidated_count = invalidated_count,
-                rules_fingerprint = %rules_fingerprint,
-                "Invalidated client-filtered cache entries by rules_fingerprint"
+                surface_fingerprint = %surface_fingerprint,
+                "Invalidated client-filtered cache entries by surface_fingerprint"
             );
         }
 
@@ -549,7 +549,7 @@ impl RedbCacheManager {
                 .filter_map(|item| {
                     let (key, _) = item.ok()?;
                     let key_str = key.value().to_string();
-                    // Key format: "{server_id}#production#filtered:{selection_key}:{rules_fingerprint}"
+                    // Key format: "{server_id}#production#filtered:{selection_key}:{surface_fingerprint}"
                     if key_str.contains(&selection_marker) {
                         Some(key_str)
                     } else {
@@ -585,6 +585,126 @@ impl RedbCacheManager {
                 invalidated_count = invalidated_count,
                 selection_key = %selection_key,
                 "Invalidated client-filtered cache entries by selection_key"
+            );
+        }
+
+        Ok(invalidated_count)
+    }
+
+    /// Invalidate all client-filtered cache entries for a server.
+    ///
+    /// Called when the upstream server's raw capability snapshot changes. SharedRaw is
+    /// the source snapshot for client-visible entries, so any materialized filtered
+    /// entries for this server must be refreshed on the next list request.
+    pub async fn invalidate_client_filtered_by_server(
+        &self,
+        server_id: &str,
+    ) -> Result<usize, CacheError> {
+        use super::schema::SERVERS_TABLE;
+
+        let key_prefix = format!("{server_id}#production#filtered:");
+        let mut invalidated_count: usize = 0;
+
+        let keys_to_remove: Vec<String> = {
+            let read_txn = self.db.begin_read()?;
+            let servers_table = read_txn.open_table(SERVERS_TABLE)?;
+
+            servers_table
+                .iter()?
+                .filter_map(|item| {
+                    let (key, _) = item.ok()?;
+                    let key_str = key.value().to_string();
+                    key_str.starts_with(&key_prefix).then_some(key_str)
+                })
+                .collect()
+        };
+
+        {
+            let mut memory_cache = self.memory_cache.write().await;
+            for key in &keys_to_remove {
+                memory_cache.pop(key);
+            }
+        }
+
+        if !keys_to_remove.is_empty() {
+            let write_txn = self.db.begin_write()?;
+            {
+                let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
+                for key in &keys_to_remove {
+                    servers_table.remove(key.as_str())?;
+                    invalidated_count += 1;
+                }
+            }
+            write_txn.commit()?;
+        }
+
+        if invalidated_count > 0 {
+            let mut m = self.metrics.write().await;
+            m.cache_invalidations += invalidated_count as u64;
+            info!(
+                invalidated_count = invalidated_count,
+                server_id = %server_id,
+                "Invalidated client-filtered cache entries by server raw capability change"
+            );
+        }
+
+        Ok(invalidated_count)
+    }
+
+    /// Invalidate client-filtered entries bound to a client or downstream session affinity.
+    pub async fn invalidate_by_affinity_fragments(
+        &self,
+        fragments: &[String],
+    ) -> Result<usize, CacheError> {
+        use super::schema::SERVERS_TABLE;
+
+        if fragments.is_empty() {
+            return Ok(0);
+        }
+
+        let mut invalidated_count: usize = 0;
+        let keys_to_remove: Vec<String> = {
+            let read_txn = self.db.begin_read()?;
+            let servers_table = read_txn.open_table(SERVERS_TABLE)?;
+
+            servers_table
+                .iter()?
+                .filter_map(|item| {
+                    let (key, _) = item.ok()?;
+                    let key_str = key.value().to_string();
+                    fragments
+                        .iter()
+                        .any(|fragment| key_str.contains(fragment))
+                        .then_some(key_str)
+                })
+                .collect()
+        };
+
+        {
+            let mut memory_cache = self.memory_cache.write().await;
+            for key in &keys_to_remove {
+                memory_cache.pop(key);
+            }
+        }
+
+        if !keys_to_remove.is_empty() {
+            let write_txn = self.db.begin_write()?;
+            {
+                let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
+                for key in &keys_to_remove {
+                    servers_table.remove(key.as_str())?;
+                    invalidated_count += 1;
+                }
+            }
+            write_txn.commit()?;
+        }
+
+        if invalidated_count > 0 {
+            let mut m = self.metrics.write().await;
+            m.cache_invalidations += invalidated_count as u64;
+            info!(
+                invalidated_count = invalidated_count,
+                "Invalidated client-filtered cache entries by downstream affinity"
             );
         }
 
@@ -689,6 +809,7 @@ impl RedbCacheManager {
         let should_invalidate = self.should_invalidate_cache(server_id, fingerprint).await?;
 
         if should_invalidate {
+            self.invalidate_client_filtered_by_server(server_id).await?;
             self.invalidate_and_update(server_id, fingerprint).await?;
             self.store_server_data(server_data).await?;
 
@@ -785,6 +906,104 @@ impl RedbCacheManager {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_manager() -> (tempfile::TempDir, RedbCacheManager) {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let path = temp_dir.path().join("capability.redb");
+        let manager = RedbCacheManager::new(path, CacheConfig::default()).expect("cache manager");
+        (temp_dir, manager)
+    }
+
+    fn make_cached_data(
+        server_id: &str,
+        scope: CacheScope,
+    ) -> CachedServerData {
+        CachedServerData {
+            server_id: server_id.to_string(),
+            server_name: server_id.to_string(),
+            server_version: None,
+            protocol_version: "latest".to_string(),
+            tools: Vec::new(),
+            resources: Vec::new(),
+            prompts: Vec::new(),
+            resource_templates: Vec::new(),
+            cached_at: Utc::now(),
+            fingerprint: format!("test:{server_id}"),
+            scope,
+        }
+    }
+
+    async fn cache_hit(
+        manager: &RedbCacheManager,
+        server_id: &str,
+        scope: CacheScope,
+    ) -> bool {
+        manager
+            .get_server_data(&CacheQuery {
+                server_id: server_id.to_string(),
+                freshness_level: FreshnessLevel::Cached,
+                include_disabled: false,
+                scope,
+            })
+            .await
+            .expect("cache query")
+            .cache_hit
+    }
+
+    #[tokio::test]
+    async fn invalidate_client_filtered_by_server_keeps_shared_raw() {
+        let (_temp_dir, manager) = make_manager();
+        let raw_scope = CacheScope::shared_raw();
+        let filtered_scope = CacheScope::client_filtered("srv-1#session:sess-1".to_string(), "surface-1".to_string());
+
+        manager
+            .store_server_data(&make_cached_data("srv-1", raw_scope.clone()))
+            .await
+            .expect("store raw");
+        manager
+            .store_server_data(&make_cached_data("srv-1", filtered_scope.clone()))
+            .await
+            .expect("store filtered");
+
+        let removed = manager
+            .invalidate_client_filtered_by_server("srv-1")
+            .await
+            .expect("invalidate filtered");
+
+        assert_eq!(removed, 1);
+        assert!(cache_hit(&manager, "srv-1", raw_scope).await);
+        assert!(!cache_hit(&manager, "srv-1", filtered_scope).await);
+    }
+
+    #[tokio::test]
+    async fn invalidate_by_affinity_fragments_removes_matching_scopes() {
+        let (_temp_dir, manager) = make_manager();
+        let matching_scope = CacheScope::client_filtered("srv-1#session:sess-1".to_string(), "surface-1".to_string());
+        let other_scope = CacheScope::client_filtered("srv-1#session:sess-2".to_string(), "surface-1".to_string());
+
+        manager
+            .store_server_data(&make_cached_data("srv-1", matching_scope.clone()))
+            .await
+            .expect("store matching");
+        manager
+            .store_server_data(&make_cached_data("srv-1", other_scope.clone()))
+            .await
+            .expect("store other");
+
+        let removed = manager
+            .invalidate_by_affinity_fragments(&["#session:sess-1".to_string()])
+            .await
+            .expect("invalidate affinity");
+
+        assert_eq!(removed, 1);
+        assert!(!cache_hit(&manager, "srv-1", matching_scope).await);
+        assert!(cache_hit(&manager, "srv-1", other_scope).await);
     }
 }
 

@@ -348,22 +348,14 @@ impl LockMetrics {
     pub fn average_wait_time_us(&self) -> u64 {
         let total_wait = self.total_wait_time_us.load(Ordering::Relaxed);
         let total_acquisitions = self.total_acquisitions.load(Ordering::Relaxed);
-        if total_acquisitions > 0 {
-            total_wait / total_acquisitions
-        } else {
-            0
-        }
+        total_wait.checked_div(total_acquisitions).unwrap_or(0)
     }
 
     /// Get average hold time in microseconds
     pub fn average_hold_time_us(&self) -> u64 {
         let total_hold = self.total_hold_time_us.load(Ordering::Relaxed);
         let total_acquisitions = self.total_acquisitions.load(Ordering::Relaxed);
-        if total_acquisitions > 0 {
-            total_hold / total_acquisitions
-        } else {
-            0
-        }
+        total_hold.checked_div(total_acquisitions).unwrap_or(0)
     }
 
     /// Get slow acquisition percentage

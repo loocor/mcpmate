@@ -56,14 +56,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             template_identifier TEXT,
             selected_profile_ids TEXT,
             custom_profile_id TEXT,
-            unify_route_mode TEXT NOT NULL DEFAULT 'broker_only' CHECK (
-                unify_route_mode IN ('broker_only', 'server_live', 'capability_level')
-            ),
-            unify_selected_server_ids TEXT,
-            unify_selected_tool_surfaces TEXT,
-            unify_selected_prompt_surfaces TEXT,
-            unify_selected_resource_surfaces TEXT,
-            unify_selected_template_surfaces TEXT,
+            unify_direct_exposure_intent TEXT,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -91,18 +84,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     .await?;
     ensure_column(pool, tables::CLIENT, "selected_profile_ids", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "custom_profile_id", "TEXT").await?;
-    ensure_column(
-        pool,
-        tables::CLIENT,
-        "unify_route_mode",
-        "TEXT NOT NULL DEFAULT 'broker_only' CHECK (unify_route_mode IN ('broker_only', 'server_live', 'capability_level'))",
-    )
-    .await?;
-    ensure_column(pool, tables::CLIENT, "unify_selected_server_ids", "TEXT").await?;
-    ensure_column(pool, tables::CLIENT, "unify_selected_tool_surfaces", "TEXT").await?;
-    ensure_column(pool, tables::CLIENT, "unify_selected_prompt_surfaces", "TEXT").await?;
-    ensure_column(pool, tables::CLIENT, "unify_selected_resource_surfaces", "TEXT").await?;
-    ensure_column(pool, tables::CLIENT, "unify_selected_template_surfaces", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "unify_direct_exposure_intent", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "display_name", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "config_path", "TEXT").await?;
     ensure_column(
@@ -492,14 +474,7 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                 template_identifier TEXT,
                 selected_profile_ids TEXT,
                 custom_profile_id TEXT,
-                unify_route_mode TEXT NOT NULL DEFAULT 'broker_only' CHECK (
-                    unify_route_mode IN ('broker_only', 'server_live', 'capability_level')
-                ),
-                unify_selected_server_ids TEXT,
-                unify_selected_tool_surfaces TEXT,
-                unify_selected_prompt_surfaces TEXT,
-                unify_selected_resource_surfaces TEXT,
-                unify_selected_template_surfaces TEXT,
+                unify_direct_exposure_intent TEXT,
                 approval_status TEXT NOT NULL DEFAULT 'approved' CHECK (
                     approval_status IN ('pending', 'approved', 'suspended', 'rejected')
                 ),
@@ -538,8 +513,7 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                 id, name, display_name, identifier, config_path, managed, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
                 connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
-                unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces,
-                unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces,
+                unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
                 merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse,
@@ -549,8 +523,7 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                 id, name, display_name, identifier, config_path, managed, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
                 connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
-                unify_route_mode, unify_selected_server_ids, unify_selected_tool_surfaces,
-                unify_selected_prompt_surfaces, unify_selected_resource_surfaces, unify_selected_template_surfaces,
+                unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
                 merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse,

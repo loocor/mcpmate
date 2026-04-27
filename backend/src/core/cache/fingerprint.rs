@@ -1,4 +1,10 @@
-//! Unified fingerprinting system for change detection
+//! Unified fingerprinting system for change detection.
+//!
+//! This module is an unfinished security-audit planning fragment. It is intended
+//! to detect changes in MCP server package code and backend support code used to
+//! run those servers, using code-level analysis rather than runtime policy state.
+//! The planned security detection and governance response flow has not been
+//! completed, so this module is separate from client visible-surface cache logic.
 
 use super::{manager::RedbCacheManager, types::CacheError};
 use anyhow::Result;

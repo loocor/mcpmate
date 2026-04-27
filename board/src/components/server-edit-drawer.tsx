@@ -401,7 +401,7 @@ export function ServerEditDrawer({
 				<p className="text-sm text-muted-foreground">
 					{t("manual.fields.unifyEligibility.howToEnableDesc", {
 						defaultValue:
-							"First mark the server as eligible here. Then open a Client in Unify mode and choose Server Live (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
+						"First mark the server as eligible here. Then open a Client in Unify mode and choose Server Level (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
 					})}
 				</p>
 			</div>

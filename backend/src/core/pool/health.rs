@@ -185,32 +185,31 @@ impl UpstreamConnectionPool {
                 }
 
                 // Ready state
-                ConnectionStatus::Ready => {
-                    // Check if the service is still connected
-                    if !conn.is_connected() {
-                        tracing::warn!(
-                            "Connection check: Service for '{}' instance '{}' is not connected",
+                ConnectionStatus::Ready if !conn.is_connected() => {
+                    tracing::warn!(
+                        "Connection check: Service for '{}' instance '{}' is not connected",
+                        server_name,
+                        instance_id
+                    );
+
+                    // Schedule reconnection (non-blocking)
+                    if let Err(e) = self.reconnect(&server_name, &instance_id).await {
+                        tracing::error!(
+                            "Connection check: Failed to schedule reconnection to '{}' instance '{}': {}",
+                            server_name,
+                            instance_id,
+                            e
+                        );
+                    } else {
+                        tracing::info!(
+                            "Connection check: Scheduled reconnection for '{}' instance '{}'",
                             server_name,
                             instance_id
                         );
-
-                        // Schedule reconnection (non-blocking)
-                        if let Err(e) = self.reconnect(&server_name, &instance_id).await {
-                            tracing::error!(
-                                "Connection check: Failed to schedule reconnection to '{}' instance '{}': {}",
-                                server_name,
-                                instance_id,
-                                e
-                            );
-                        } else {
-                            tracing::info!(
-                                "Connection check: Scheduled reconnection for '{}' instance '{}'",
-                                server_name,
-                                instance_id
-                            );
-                        }
                     }
                 }
+
+                ConnectionStatus::Ready => {}
 
                 // Error state
                 ConnectionStatus::Error(_error_details) => {
