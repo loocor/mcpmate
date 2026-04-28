@@ -231,10 +231,9 @@ function normalizeDashboardSettings(
 	) {
 		next.clientListDefaultFilter = patch.clientListDefaultFilter;
 	} else if (
-		patch.clientListDefaultFilter === "detected" ||
-		patch.clientListDefaultFilter === "managed"
+		patch.clientListDefaultFilter === "detected"
 	) {
-		// Legacy persisted values (older dashboard used detection/management axes for filters).
+		// Legacy persisted value (older dashboard used detection axis for filters).
 		next.clientListDefaultFilter = "all";
 	}
 
