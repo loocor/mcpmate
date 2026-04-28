@@ -50,6 +50,8 @@ pub async fn get_merged_configuration(db: &Database) -> anyhow::Result<(ProfileM
 mod tests {
     use super::*;
     use crate::config::database::Database;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -57,8 +59,15 @@ mod tests {
         // This test just verifies that we can create a ProfileService instance
         // without panicking. It doesn't require a real database connection.
 
-        // Create a mock database (this will fail if we try to use it, but that's ok for this test)
-        let db = Arc::new(Database::new().await.unwrap());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let db = Arc::new(Database {
+            pool,
+            path: PathBuf::from(":memory:"),
+        });
 
         // Create ProfileService
         let _profile_service = ProfileService::new(db);

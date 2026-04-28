@@ -56,6 +56,27 @@ pub fn get_nested_value<'a>(
     Some(current)
 }
 
+/// Retrieve a mutable value from a dot-delimited path within a JSON object.
+pub fn get_nested_value_mut<'a>(
+    config: &'a mut Value,
+    path: &str,
+) -> Option<&'a mut Value> {
+    if path.is_empty() {
+        return Some(config);
+    }
+
+    let parts: Vec<&str> = path.split('.').collect();
+    if parts.len() == 1 {
+        return config.get_mut(path);
+    }
+
+    let mut current = config;
+    for part in parts {
+        current = current.get_mut(part)?;
+    }
+    Some(current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +106,15 @@ mod tests {
     fn get_nested_value_nested() {
         let config = json!({"mcp": {"servers": {"server1": {}}}});
         assert_eq!(get_nested_value(&config, "mcp.servers"), Some(&json!({"server1": {}})));
+    }
+
+    #[test]
+    fn get_nested_value_mut_updates_nested() {
+        let mut config = json!({"mcp": {"servers": {"server1": {}}}});
+        let servers = get_nested_value_mut(&mut config, "mcp.servers").expect("servers container");
+        servers["server2"] = json!({});
+
+        assert_eq!(config["mcp"]["servers"].as_object().expect("servers").len(), 2);
     }
 
     #[test]

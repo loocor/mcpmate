@@ -17,7 +17,7 @@
 //!
 //! ## API
 //!
-//! ```rust
+//! ```ignore
 //! // Convert server_name to server_id
 //! let server_id = resolver::to_id("playwright-server").await?;
 //!

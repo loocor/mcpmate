@@ -1,12 +1,14 @@
-use super::core::{ClientConfigService, ClientStateRow};
+use super::core::{ClientConfigService, ClientStateRow, PersistedTemplateConfig};
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::{BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, FirstContactBehavior};
+use crate::clients::models::{
+    AttachmentState, BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, FirstContactBehavior,
+};
 use std::collections::HashMap;
 
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -33,21 +35,14 @@ impl ClientConfigService {
         }
 
         let first_contact_behavior = self.get_first_contact_behavior().await?;
-        let (managed, approval_status) = match first_contact_behavior {
-            FirstContactBehavior::Deny => (0_i64, "rejected"),
-            FirstContactBehavior::Review => (0_i64, "pending"),
-            FirstContactBehavior::Allow => (1_i64, "approved"),
+        let approval_status = match first_contact_behavior {
+            FirstContactBehavior::Deny => "suspended",
+            FirstContactBehavior::Review => "pending",
+            FirstContactBehavior::Allow => "approved",
         };
 
-        self.create_state_row(
-            identifier,
-            name,
-            ClientGovernanceKind::Passive,
-            managed,
-            approval_status,
-            None,
-        )
-        .await
+        self.create_state_row(identifier, name, ClientGovernanceKind::Passive, approval_status, None)
+            .await
     }
 
     pub async fn fetch_state(
@@ -55,7 +50,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, managed, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
@@ -119,47 +114,21 @@ impl ClientConfigService {
         Ok(identifier.to_string())
     }
 
-    pub async fn set_client_managed(
-        &self,
-        identifier: &str,
-        managed: bool,
-    ) -> ConfigResult<bool> {
-        let name = self.resolve_client_name(identifier).await?;
-        self.ensure_active_state_row_with_name(identifier, &name, Some(managed), Some("approved"))
-            .await?;
-
-        sqlx::query(
-            r#"
-            UPDATE client
-            SET name = ?, managed = ?, governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
-            WHERE identifier = ?
-            "#,
-        )
-        .bind(name)
-        .bind(if managed { 1 } else { 0 })
-        .bind(identifier)
-        .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        Ok(managed)
-    }
-
-    pub async fn is_client_managed(
+    pub async fn is_client_approved(
         &self,
         identifier: &str,
     ) -> ConfigResult<bool> {
-        let row = sqlx::query_scalar::<_, i64>("SELECT managed FROM client WHERE identifier = ?")
+        let status = sqlx::query_scalar::<_, String>("SELECT approval_status FROM client WHERE identifier = ?")
             .bind(identifier)
             .fetch_optional(&*self.db_pool)
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        match row {
-            Some(value) => Ok(value != 0),
+        match status {
+            Some(value) => Ok(value == "approved"),
             None => {
                 let state = self.ensure_state_row(identifier).await?;
-                Ok(state.managed())
+                Ok(state.is_approved())
             }
         }
     }
@@ -179,7 +148,7 @@ impl ClientConfigService {
     ) -> ConfigResult<BackupPolicySetting> {
         let (policy_label, limit) = policy.as_db_pair();
         let name = self.resolve_client_name(identifier).await?;
-        self.ensure_active_state_row_with_name(identifier, &name, None, Some("approved"))
+        self.ensure_active_state_row_with_name(identifier, &name, Some("approved"))
             .await?;
 
         sqlx::query(
@@ -274,20 +243,20 @@ impl ClientConfigService {
     pub async fn approve_client(
         &self,
         identifier: &str,
-    ) -> ConfigResult<(String, bool)> {
+    ) -> ConfigResult<String> {
         let name = self.resolve_client_name(identifier).await?;
         let row = self
-            .ensure_active_state_row_with_name(identifier, &name, Some(true), Some("approved"))
+            .ensure_active_state_row_with_name(identifier, &name, Some("approved"))
             .await?;
 
         if row.approval_status() == "approved" {
-            return Ok((row.approval_status().to_string(), row.managed()));
+            return Ok(row.approval_status().to_string());
         }
 
         sqlx::query(
             r#"
             UPDATE client
-            SET managed = 1, approval_status = 'approved', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
+            SET approval_status = 'approved', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
@@ -296,58 +265,26 @@ impl ClientConfigService {
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        Ok(("approved".to_string(), true))
-    }
-
-    pub async fn reject_client(
-        &self,
-        identifier: &str,
-    ) -> ConfigResult<(String, bool)> {
-        let name = self.resolve_client_name(identifier).await?;
-        let row = self
-            .ensure_active_state_row_with_name(identifier, &name, Some(false), Some("rejected"))
-            .await?;
-
-        if row.approval_status() == "rejected" {
-            return Ok((row.approval_status().to_string(), row.managed()));
-        }
-
-        sqlx::query(
-            r#"
-            UPDATE client
-            SET approval_status = 'rejected', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
-            WHERE identifier = ?
-            "#,
-        )
-        .bind(identifier)
-        .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        let updated_row = self.fetch_state(identifier).await?.ok_or_else(|| {
-            ConfigError::DataAccessError(format!("Failed to fetch client {} after rejection", identifier))
-        })?;
-
-        Ok((updated_row.approval_status().to_string(), updated_row.managed()))
+        Ok("approved".to_string())
     }
 
     pub async fn suspend_client(
         &self,
         identifier: &str,
-    ) -> ConfigResult<(String, bool)> {
+    ) -> ConfigResult<String> {
         let name = self.resolve_client_name(identifier).await?;
         let row = self
-            .ensure_active_state_row_with_name(identifier, &name, Some(false), Some("suspended"))
+            .ensure_active_state_row_with_name(identifier, &name, Some("suspended"))
             .await?;
 
         if row.approval_status() == "suspended" {
-            return Ok((row.approval_status().to_string(), row.managed()));
+            return Ok(row.approval_status().to_string());
         }
 
         sqlx::query(
             r#"
             UPDATE client
-            SET managed = 0, approval_status = 'suspended', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
+            SET approval_status = 'suspended', governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
@@ -356,7 +293,59 @@ impl ClientConfigService {
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        Ok(("suspended".to_string(), false))
+        Ok("suspended".to_string())
+    }
+
+    pub async fn mark_client_attached(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET attachment_state = CASE
+                    WHEN connection_mode = 'local_config_detected'
+                        AND config_path IS NOT NULL
+                        AND TRIM(config_path) <> ''
+                    THEN 'attached'
+                    ELSE 'not_applicable'
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
+    }
+
+    pub async fn mark_client_detached(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET attachment_state = CASE
+                    WHEN connection_mode = 'local_config_detected'
+                        AND config_path IS NOT NULL
+                        AND TRIM(config_path) <> ''
+                    THEN 'detached'
+                    ELSE 'not_applicable'
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
     }
 
     /// Used by detection/list and by the MCP proxy when registering an unknown client under `review` policy.
@@ -370,17 +359,16 @@ impl ClientConfigService {
             return self.refresh_existing_state_name(identifier, name, existing).await;
         }
         let first_contact_behavior = self.get_first_contact_behavior().await?;
-        let (managed, approval_status) = match first_contact_behavior {
-            FirstContactBehavior::Deny => (0_i64, "rejected"),
-            FirstContactBehavior::Review => (0_i64, "pending"),
-            FirstContactBehavior::Allow => (1_i64, "approved"),
+        let approval_status = match first_contact_behavior {
+            FirstContactBehavior::Deny => "suspended",
+            FirstContactBehavior::Review => "pending",
+            FirstContactBehavior::Allow => "approved",
         };
 
         self.create_state_row(
             identifier,
             name,
             ClientGovernanceKind::Passive,
-            managed,
             approval_status,
             config_path,
         )
@@ -391,18 +379,16 @@ impl ClientConfigService {
         &self,
         identifier: &str,
         name: &str,
-        managed: Option<bool>,
         approval_status: Option<&str>,
     ) -> ConfigResult<ClientStateRow> {
         if let Some(existing) = self.fetch_state(identifier).await? {
-            self.promote_existing_state(identifier, name, managed, approval_status, existing)
+            self.promote_existing_state(identifier, name, approval_status, existing)
                 .await
         } else {
             self.create_state_row(
                 identifier,
                 name,
                 ClientGovernanceKind::Active,
-                i64::from(managed.unwrap_or(true)),
                 approval_status.unwrap_or("approved"),
                 None,
             )
@@ -442,11 +428,9 @@ impl ClientConfigService {
         &self,
         identifier: &str,
         name: &str,
-        managed: Option<bool>,
         approval_status: Option<&str>,
         existing: ClientStateRow,
     ) -> ConfigResult<ClientStateRow> {
-        let managed = managed.unwrap_or(existing.managed()) as i64;
         let approval_status = approval_status.unwrap_or(existing.approval_status());
 
         sqlx::query(
@@ -454,14 +438,12 @@ impl ClientConfigService {
             UPDATE client
             SET name = ?,
                 governance_kind = 'active',
-                managed = ?,
                 approval_status = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
         .bind(name)
-        .bind(managed)
         .bind(approval_status)
         .bind(identifier)
         .execute(&*self.db_pool)
@@ -478,7 +460,6 @@ impl ClientConfigService {
         identifier: &str,
         name: &str,
         governance_kind: ClientGovernanceKind,
-        managed: i64,
         approval_status: &str,
         observed_config_path: Option<&str>,
     ) -> ConfigResult<ClientStateRow> {
@@ -498,91 +479,28 @@ impl ClientConfigService {
         } else {
             ClientConnectionMode::Manual.as_str()
         };
+        let attachment_state = if config_path.is_some() {
+            AttachmentState::Detached.as_str()
+        } else {
+            AttachmentState::NotApplicable.as_str()
+        };
         let template_identifier = template.as_ref().map(|entry| entry.identifier.clone());
         let generated_id = crate::generate_id!("clnt");
-
-        // Extract template configuration fields for persistence
-        let (
-            config_format,
-            protocol_revision,
-            container_type,
-            container_keys,
-            storage_kind,
-            storage_adapter,
-            storage_path_strategy,
-            merge_strategy,
-            keep_original_config,
-            managed_source,
-            format_rules,
-            config_file_parse,
-        ) = if let Some(ref tmpl) = template {
-            let config_format = Some(tmpl.format.as_str().to_string());
-            let protocol_revision = tmpl.protocol_revision.clone();
-            let container_type = Some(
-                match tmpl.config_mapping.container_type {
-                    crate::clients::models::ContainerType::ObjectMap => "object",
-                    crate::clients::models::ContainerType::Array => "array",
-                }
-                .to_string(),
-            );
-            let container_keys = serde_json::to_string(&tmpl.config_mapping.container_keys).ok();
-            let storage_kind = Some(
-                match tmpl.storage.kind {
-                    crate::clients::models::StorageKind::File => "file",
-                    crate::clients::models::StorageKind::Kv => "kv",
-                    crate::clients::models::StorageKind::Custom => "custom",
-                }
-                .to_string(),
-            );
-            let storage_adapter = tmpl.storage.adapter.clone();
-            let storage_path_strategy = tmpl.storage.path_strategy.clone();
-            let merge_strategy = Some(
-                match tmpl.config_mapping.merge_strategy {
-                    crate::clients::models::MergeStrategy::Replace => "replace",
-                    crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
-                }
-                .to_string(),
-            );
-            let keep_original_config = Some(if tmpl.config_mapping.keep_original_config {
-                1_i64
-            } else {
-                0_i64
-            });
-            let managed_source = tmpl.config_mapping.managed_source.clone();
-            let format_rules = if tmpl.config_mapping.format_rules.is_empty() {
-                None
-            } else {
-                serde_json::to_string(&tmpl.config_mapping.format_rules).ok()
-            };
-
-            (
-                config_format,
-                protocol_revision,
-                container_type,
-                container_keys,
-                storage_kind,
-                storage_adapter,
-                storage_path_strategy,
-                merge_strategy,
-                keep_original_config,
-                managed_source,
-                format_rules,
-                None::<String>,
-            )
-        } else {
-            (None, None, None, None, None, None, None, None, None, None, None, None)
-        };
+        let persisted_config = template
+            .as_ref()
+            .map(PersistedTemplateConfig::from_template)
+            .unwrap_or_default();
 
         let insert_result = sqlx::query(
             r#"
             INSERT INTO client (
-                id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
+                id, name, display_name, identifier, config_path, backup_policy, backup_limit,
                 approval_status, governance_kind, connection_mode, template_identifier,
                 config_format, protocol_revision, container_type, container_keys,
                 storage_kind, storage_adapter, storage_path_strategy,
-                merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse
+                merge_strategy, keep_original_config, managed_source, transports, config_file_parse, attachment_state
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'keep_n', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'keep_n', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&generated_id)
@@ -590,23 +508,23 @@ impl ClientConfigService {
         .bind(display_name)
         .bind(identifier)
         .bind(config_path)
-        .bind(managed)
         .bind(approval_status)
         .bind(governance_kind.as_str())
         .bind(connection_mode)
         .bind(template_identifier)
-        .bind(config_format)
-        .bind(protocol_revision)
-        .bind(container_type)
-        .bind(container_keys)
-        .bind(storage_kind)
-        .bind(storage_adapter)
-        .bind(storage_path_strategy)
-        .bind(merge_strategy)
-        .bind(keep_original_config)
-        .bind(managed_source)
-        .bind(format_rules)
-        .bind(config_file_parse)
+        .bind(persisted_config.config_format)
+        .bind(persisted_config.protocol_revision)
+        .bind(persisted_config.container_type)
+        .bind(persisted_config.container_keys)
+        .bind(persisted_config.storage_kind)
+        .bind(persisted_config.storage_adapter)
+        .bind(persisted_config.storage_path_strategy)
+        .bind(persisted_config.merge_strategy)
+        .bind(persisted_config.keep_original_config)
+        .bind(persisted_config.managed_source)
+        .bind(persisted_config.transports)
+        .bind(persisted_config.config_file_parse)
+        .bind(attachment_state)
         .execute(&*self.db_pool)
         .await;
 
@@ -692,7 +610,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_manage_policy_creates_approved_managed_client() {
+    async fn auto_manage_policy_creates_approved_client() {
         let (_temp_dir, service) = create_test_service().await;
 
         set_onboarding_policy(&service, OnboardingPolicy::AutoManage)
@@ -706,13 +624,12 @@ mod tests {
 
         assert_eq!(state.identifier, "test.client");
         assert_eq!(state.name, "Test Client");
-        assert_eq!(state.managed, 1);
         assert_eq!(state.approval_status.as_deref(), Some("approved"));
         assert_eq!(state.governance_kind().as_str(), "passive");
     }
 
     #[tokio::test]
-    async fn require_approval_policy_creates_pending_unmanaged_client() {
+    async fn require_approval_policy_creates_pending_client() {
         let (_temp_dir, service) = create_test_service().await;
 
         set_onboarding_policy(&service, OnboardingPolicy::RequireApproval)
@@ -726,13 +643,12 @@ mod tests {
 
         assert_eq!(state.identifier, "test.client");
         assert_eq!(state.name, "Test Client");
-        assert_eq!(state.managed, 0);
         assert_eq!(state.approval_status.as_deref(), Some("pending"));
         assert_eq!(state.governance_kind().as_str(), "passive");
     }
 
     #[tokio::test]
-    async fn manual_policy_creates_rejected_client() {
+    async fn manual_policy_creates_suspended_client() {
         let (_temp_dir, service) = create_test_service().await;
 
         set_onboarding_policy(&service, OnboardingPolicy::Manual)
@@ -746,8 +662,7 @@ mod tests {
 
         assert_eq!(state.identifier, "test.client");
         assert_eq!(state.name, "Test Client");
-        assert_eq!(state.managed, 0);
-        assert_eq!(state.approval_status.as_deref(), Some("rejected"));
+        assert_eq!(state.approval_status.as_deref(), Some("suspended"));
         assert_eq!(state.governance_kind().as_str(), "passive");
     }
 
@@ -783,7 +698,6 @@ mod tests {
             .expect("second ensure should succeed");
 
         assert_eq!(first.id, second.id);
-        assert_eq!(second.managed, 1);
         assert_eq!(second.approval_status.as_deref(), Some("approved"));
     }
 
@@ -827,6 +741,115 @@ mod tests {
             .expect("state exists");
         assert_eq!(promoted.governance_kind().as_str(), "active");
         assert_eq!(promoted.config_mode.as_deref(), Some("hosted"));
+    }
+
+    #[tokio::test]
+    async fn handshake_observation_fills_existing_passive_client_once() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        set_onboarding_policy(&service, OnboardingPolicy::RequireApproval)
+            .await
+            .expect("set policy");
+        service
+            .ensure_passive_observed_row("test.observed", "Observed", None)
+            .await
+            .expect("create passive observed row");
+
+        service
+            .persist_handshake_observation(
+                "test.observed",
+                Some("Observed App"),
+                Some("1.2.3"),
+                Some("streamable_http"),
+                Some("remote_http"),
+                Some("Observed description"),
+                Some("https://example.com"),
+                Some("https://example.com/logo.png"),
+            )
+            .await
+            .expect("persist first handshake observation");
+
+        service
+            .persist_handshake_observation(
+                "test.observed",
+                Some("Changed App"),
+                Some("9.9.9"),
+                Some("sse"),
+                Some("remote_http"),
+                Some("Changed description"),
+                Some("https://changed.example.com"),
+                Some("https://changed.example.com/logo.png"),
+            )
+            .await
+            .expect("ignore later handshake observation");
+
+        let state = service
+            .fetch_state("test.observed")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.governance_kind().as_str(), "passive");
+        assert_eq!(state.approval_status.as_deref(), Some("pending"));
+        assert_eq!(state.display_name.as_deref(), Some("Observed App"));
+        assert_eq!(state.client_version.as_deref(), Some("1.2.3"));
+        assert_eq!(state.transport.as_deref(), Some("streamable_http"));
+        assert_eq!(state.connection_mode.as_deref(), Some("remote_http"));
+
+        let metadata = state.runtime_client_metadata();
+        assert_eq!(metadata.description.as_deref(), Some("Observed description"));
+        assert_eq!(metadata.homepage_url.as_deref(), Some("https://example.com"));
+        assert_eq!(metadata.logo_url.as_deref(), Some("https://example.com/logo.png"));
+
+        let transports = state.parsed_transports().expect("transports json");
+        assert!(transports.contains_key("streamable_http"));
+        assert!(!transports.contains_key("sse"));
+    }
+
+    #[tokio::test]
+    async fn handshake_observation_does_not_override_template_client() {
+        let (_temp_dir, service) = create_test_service().await;
+        service
+            .ensure_passive_observed_row("template.client", "Template Client", None)
+            .await
+            .expect("create template-like client");
+        sqlx::query("UPDATE client SET template_identifier = ? WHERE identifier = ?")
+            .bind("template.client")
+            .bind("template.client")
+            .execute(service.db_pool.as_ref())
+            .await
+            .expect("mark template identifier");
+        let template_client = service
+            .fetch_state("template.client")
+            .await
+            .expect("fetch template-like state")
+            .expect("template-like state exists");
+        let identifier = template_client.identifier.clone();
+        let original_display_name = template_client.display_name.clone();
+        let original_client_version = template_client.client_version.clone();
+        let original_metadata = template_client.runtime_client_metadata();
+
+        service
+            .persist_handshake_observation(
+                &identifier,
+                Some("Changed Template"),
+                Some("9.9.9"),
+                Some("streamable_http"),
+                Some("remote_http"),
+                Some("Changed description"),
+                Some("https://changed.example.com"),
+                Some("https://changed.example.com/logo.png"),
+            )
+            .await
+            .expect("template handshake observation should be ignored");
+
+        let state = service
+            .fetch_state(&identifier)
+            .await
+            .expect("fetch template state")
+            .expect("template state exists");
+        assert_eq!(state.display_name, original_display_name);
+        assert_eq!(state.client_version, original_client_version);
+        assert_eq!(state.runtime_client_metadata(), original_metadata);
     }
 
     #[tokio::test]
