@@ -29,6 +29,8 @@
 - Capture TODOs in code comments or checklists but resolve them within the same iteration; avoid carrying speculative work between stages.
 - Log significant findings, regressions, or retest evidence back into the active project backlog so the current working record stays authoritative.
 - Pre-release stance: MCPMate has no production footprint; there is zero historical data. When adjusting the schema or configuration, perform a clean rebuild; do not independently add migrations, compatibility layers, or fallbacks. Only make an exception if explicitly required by the product owner (Loocor).
+- Do not add fallback behavior unless the design or product requirements explicitly call for it. If fallback semantics are ambiguous, stop and ask rather than inventing one.
+- Do not embed migration logic in the main program. When migration is needed, provide it as a separate tool or script so runtime code stays simple and focused.
 
 ## Delivery Discipline & Design Alignment
 - Treat `.claude/plans/configuration-mode-implementation.md` as the delivery contract for configuration-mode work unless Loocor explicitly approves a scope change.

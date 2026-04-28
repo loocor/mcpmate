@@ -17,6 +17,7 @@ export const dashboardTranslations = {
 			connected: "Connected",
 			totalClients: "Total Clients",
 			managed: "Managed",
+				approved: "Approved",
 		},
 		metrics: {
 			title: "Metrics",
@@ -83,6 +84,7 @@ export const dashboardTranslations = {
 			connected: "已连接",
 			totalClients: "总客户端",
 			managed: "被托管",
+				approved: "已允许",
 		},
 		metrics: {
 			title: "资源指标",
@@ -143,6 +145,7 @@ export const dashboardTranslations = {
 			connected: "接続済み",
 			totalClients: "総クライアント",
 			managed: "管理対象",
+				approved: "許可済み",
 		},
 		metrics: {
 			title: "リソースメトリクス",

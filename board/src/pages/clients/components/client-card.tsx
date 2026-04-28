@@ -30,14 +30,17 @@ function normalizeAttachmentState(
 	}
 }
 
-function getGovernanceStatusLabel(status: ClientGovernanceStatus): string {
+function getGovernanceStatusLabel(
+	status: ClientGovernanceStatus,
+	t: ReturnType<typeof useTranslation>["t"],
+): string {
 	switch (status) {
 		case "allowed":
-			return "Allowed";
+			return t("entity.badge.allowed", { defaultValue: "Allowed" });
 		case "pending":
-			return "Pending";
+			return t("entity.badge.pending", { defaultValue: "Pending" });
 		case "denied":
-			return "Denied";
+			return t("entity.badge.denied", { defaultValue: "Denied" });
 	}
 }
 
@@ -112,7 +115,7 @@ export function ClientCard({
 		},
 		{
 			label: t("entity.stats.governance", { defaultValue: "Governance" }),
-			value: getGovernanceStatusLabel(governanceStatus),
+			value: getGovernanceStatusLabel(governanceStatus, t),
 		},
 		{
 			label: t("entity.stats.detected", { defaultValue: "Detected" }),
