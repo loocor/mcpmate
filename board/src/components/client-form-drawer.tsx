@@ -819,10 +819,10 @@ export function ClientFormDrawer({
 	onSuccess,
 	onDeleteSuccess,
 }: ClientFormDrawerProps) {
-	const { t } = useTranslation("clients");
+	const { t, i18n } = useTranslation("clients");
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
-	const formSchema = useMemo(() => createFormSchema(t), [t]);
+	const formSchema = useMemo(() => createFormSchema(t), [t, i18n.language]);
 	const [isHydrating, setIsHydrating] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
