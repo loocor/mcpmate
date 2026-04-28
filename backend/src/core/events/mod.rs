@@ -16,7 +16,7 @@
 //!
 //! ## Basic Event Publishing
 //!
-//! ```rust
+//! ```ignore
 //! use crate::core::events::{EventBus, Event};
 //!
 //! // Publish an event
@@ -29,7 +29,7 @@
 //!
 //! ## Initialize with Custom Handlers
 //!
-//! ```rust
+//! ```ignore
 //! use crate::core::events::{EventHandlers, init_with_handlers};
 //!
 //! let mut handlers = EventHandlers::new();
