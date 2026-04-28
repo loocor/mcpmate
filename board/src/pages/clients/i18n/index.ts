@@ -49,13 +49,13 @@ export const clientsTranslations = {
 				title: "Detected",
 				description: "installed",
 			},
-			managed: {
-				title: "Managed",
-				description: "management enabled",
+			approved: {
+				title: "Approved",
+				description: "governance allowed",
 			},
-			configured: {
-				title: "Configured",
-				description: "has MCP config",
+			pending: {
+				title: "Pending",
+				description: "awaiting review",
 			},
 		},
 		notifications: {
@@ -73,7 +73,9 @@ export const clientsTranslations = {
 				config: "Config",
 				servers: "Servers",
 				managed: "Managed",
+				governance: "Governance",
 				detected: "Detected",
+				attachment: "Attachment",
 			},
 			config: {
 				notConfigured: "Not configured",
@@ -88,6 +90,24 @@ export const clientsTranslations = {
 			badge: {
 				detected: "Detected",
 				notDetected: "Not Detected",
+				allowed: "Allowed",
+				pending: "Pending",
+				denied: "Denied",
+				defaultPolicy: "Default Policy",
+				explicitRecord: "Explicit Record",
+				writableConfig: "Writable",
+			},
+			attachment: {
+				attached: "Attached",
+				detached: "Detached",
+				notApplicable: "Config N/A",
+			},
+			tooltip: {
+				attachmentState: "Attachment: {{status}}",
+				attachmentUnavailable: "Attachment: N/A",
+				defaultPolicy: "Default policy: {{answer}}",
+				explicitRecord: "Explicit record: {{answer}}",
+				writableConfig: "Writable config: {{answer}}",
 			},
 		},
 		states: {
@@ -184,6 +204,8 @@ export const clientsTranslations = {
 					reject: "Reject",
 					allow: "Allow",
 					deny: "Deny",
+					detach: "Detach",
+					attach: "Attach",
 				},
 				noDetails: "No details available",
 					currentServers: {
@@ -272,8 +294,6 @@ export const clientsTranslations = {
 							placeholder: "~/.cursor/mcp.json",
 							description:
 								"A writable local config path enables MCPMate to manage this client through file-based configuration operations.",
-							unavailableHint:
-								"This client does not currently have a writable local config path, so file-based configuration management is unavailable.",
 							browse: "Choose…",
 							browseAria: "Browse for configuration file on disk",
 							dialogTitle: "Select configuration file",
@@ -585,6 +605,14 @@ export const clientsTranslations = {
 				deleteLabel: "Delete",
 				restoreLabel: "Restore",
 				cancelLabel: "Cancel",
+				detachTitle: "Detach MCPMate from client config?",
+				detachDescription:
+					"This removes the MCPMate server entry from the client configuration file. Running MCP connections for that client may break until you attach again; confirm before continuing.",
+				detachLabel: "Detach",
+				attachTitle: "Attach MCPMate to client config?",
+				attachDescription:
+					"This writes the MCPMate server entry back into the client configuration file. The client's MCP session may restart or reconnect; confirm before continuing.",
+				attachLabel: "Attach",
 			},
 			policy: {
 				title: "Backup Policy",
@@ -633,7 +661,7 @@ export const clientsTranslations = {
 					reviewSuccess: {
 						title: "Success",
 						messageApproved: "Record approved successfully.",
-						messageRejected: "Record rejected successfully.",
+						messageSuspended: "Record suspended successfully.",
 					},
 					reviewFailed: {
 						title: "Review failed",
@@ -694,6 +722,20 @@ export const clientsTranslations = {
 				governanceDenied: {
 					title: "Updated",
 					message: "Client governance is now denied.",
+				},
+				detachSuccess: {
+					title: "Detached",
+					message: "MCPMate was removed from the client configuration file.",
+				},
+				detachFailed: {
+					title: "Detach failed",
+				},
+				attachSuccess: {
+					title: "Attached",
+					message: "MCPMate was written back to the client configuration.",
+				},
+				attachFailed: {
+					title: "Attach failed",
 				},
 				previewFailed: {
 					title: "Preview failed",
@@ -778,13 +820,13 @@ export const clientsTranslations = {
 				title: "已检测",
 				description: "已安装",
 			},
-			managed: {
-				title: "管理中",
-				description: "管理已启用",
+			approved: {
+				title: "已允许",
+				description: "治理已放行",
 			},
-			configured: {
-				title: "已配置",
-				description: "存在 MCP 配置",
+			pending: {
+				title: "待审批",
+				description: "等待审核",
 			},
 		},
 		notifications: {
@@ -802,7 +844,9 @@ export const clientsTranslations = {
 				config: "配置",
 				servers: "服务器",
 				managed: "管理",
+				governance: "治理",
 				detected: "检测",
+				attachment: "接入",
 			},
 			config: {
 				notConfigured: "未配置",
@@ -817,6 +861,24 @@ export const clientsTranslations = {
 			badge: {
 				detected: "已检测",
 				notDetected: "未检测",
+				allowed: "已允许",
+				pending: "待审批",
+				denied: "已拒绝",
+				defaultPolicy: "默认策略",
+				explicitRecord: "显式记录",
+				writableConfig: "可写配置",
+			},
+			attachment: {
+				attached: "已接入",
+				detached: "已断开",
+				notApplicable: "配置不可用",
+			},
+			tooltip: {
+				attachmentState: "接入状态：{{status}}",
+				attachmentUnavailable: "接入状态：N/A",
+				defaultPolicy: "默认策略：{{answer}}",
+				explicitRecord: "显式记录：{{answer}}",
+				writableConfig: "配置可写：{{answer}}",
 			},
 		},
 		states: {
@@ -910,6 +972,8 @@ export const clientsTranslations = {
 					reject: "拒绝",
 					allow: "允许",
 					deny: "拒绝治理",
+					detach: "断开",
+					attach: "接入",
 				},
 				noDetails: "暂无详细信息",
 					currentServers: {
@@ -990,7 +1054,6 @@ export const clientsTranslations = {
 							label: "配置文件路径",
 							placeholder: "~/.cursor/mcp.json",
 							description: "可写的本地配置路径会让 MCPMate 能通过文件配置操作来管理该客户端。",
-							unavailableHint: "该客户端当前没有可写的本地配置路径，因此暂时无法进行基于文件的配置管理。",
 							browse: "选择…",
 							browseAria: "从磁盘选择配置文件",
 							dialogTitle: "选择配置文件",
@@ -1284,6 +1347,14 @@ export const clientsTranslations = {
 				deleteLabel: "删除",
 				restoreLabel: "恢复",
 				cancelLabel: "取消",
+				detachTitle: "从客户端配置中移除 MCPMate？",
+				detachDescription:
+					"将从客户端配置文件中移除 MCPMate 服务器条目。该客户端正在运行的 MCP 连接可能会中断，直到再次接入；请确认后继续。",
+				detachLabel: "断开",
+				attachTitle: "将 MCPMate 写回客户端配置？",
+				attachDescription:
+					"将把 MCPMate 服务器条目写回客户端配置文件，客户端的 MCP 会话可能会重连；请确认后继续。",
+				attachLabel: "接入",
 			},
 			policy: {
 				title: "备份策略",
@@ -1331,7 +1402,7 @@ export const clientsTranslations = {
 					reviewSuccess: {
 						title: "成功",
 						messageApproved: "记录已成功批准。",
-						messageRejected: "记录已成功拒绝。",
+						messageSuspended: "记录已成功暂停。",
 					},
 					reviewFailed: {
 						title: "审批失败",
@@ -1391,6 +1462,20 @@ export const clientsTranslations = {
 				governanceDenied: {
 					title: "已更新",
 					message: "该客户端现已禁行。",
+				},
+				detachSuccess: {
+					title: "已断开",
+					message: "已从客户端配置中移除 MCPMate 条目。",
+				},
+				detachFailed: {
+					title: "断开失败",
+				},
+				attachSuccess: {
+					title: "已接入",
+					message: "已将 MCPMate 写回客户端配置文件。",
+				},
+				attachFailed: {
+					title: "接入失败",
 				},
 				previewFailed: {
 					title: "预览失败",
@@ -1475,13 +1560,13 @@ export const clientsTranslations = {
 				title: "検出",
 				description: "インストール済み",
 			},
-			managed: {
-				title: "管理中",
-				description: "管理が有効",
+			approved: {
+				title: "許可済み",
+				description: "ガバナンス許可済み",
 			},
-			configured: {
-				title: "設定済み",
-				description: "MCP 設定あり",
+			pending: {
+				title: "承認待ち",
+				description: "レビュー待ち",
 			},
 		},
 		notifications: {
@@ -1499,7 +1584,9 @@ export const clientsTranslations = {
 				config: "設定",
 				servers: "サーバー",
 				managed: "管理",
+				governance: "ガバナンス",
 				detected: "検出",
+				attachment: "接続",
 			},
 			config: {
 				notConfigured: "未設定",
@@ -1514,6 +1601,24 @@ export const clientsTranslations = {
 			badge: {
 				detected: "検出済み",
 				notDetected: "未検出",
+				allowed: "許可済み",
+				pending: "承認待ち",
+				denied: "拒否済み",
+				defaultPolicy: "デフォルトポリシー",
+				explicitRecord: "明示レコード",
+				writableConfig: "書き込み可能",
+			},
+			attachment: {
+				attached: "接続済み",
+				detached: "切り離し済み",
+				notApplicable: "設定 N/A",
+			},
+			tooltip: {
+				attachmentState: "接続状態: {{status}}",
+				attachmentUnavailable: "接続状態: N/A",
+				defaultPolicy: "デフォルトポリシー: {{answer}}",
+				explicitRecord: "明示レコード: {{answer}}",
+				writableConfig: "設定を書き込み可能: {{answer}}",
 			},
 		},
 		states: {
@@ -1609,6 +1714,8 @@ export const clientsTranslations = {
 					reject: "拒否",
 					allow: "許可",
 					deny: "拒否",
+					detach: "切り離す",
+					attach: "再接続",
 				},
 				noDetails: "詳細情報がありません",
 					currentServers: {
@@ -1689,7 +1796,6 @@ export const clientsTranslations = {
 							label: "設定ファイルパス",
 							placeholder: "~/.cursor/mcp.json",
 							description: "書き込み可能なローカル設定パスがある場合、MCPMate はファイルベースの設定操作でこのクライアントを管理できます。",
-							unavailableHint: "このクライアントには現在書き込み可能なローカル設定パスがないため、ファイルベースの設定管理は利用できません。",
 							browse: "選択…",
 							browseAria: "ディスク上の設定ファイルを選択",
 							dialogTitle: "設定ファイルを選択",
@@ -1997,6 +2103,14 @@ export const clientsTranslations = {
 				deleteLabel: "削除",
 				restoreLabel: "復元",
 				cancelLabel: "キャンセル",
+				detachTitle: "クライアント設定から MCPMate を切り離しますか？",
+				detachDescription:
+					"MCPMate のサーバー定義をクライアント設定ファイルから削除します。実行中の MCP 接続は再接続まで利用できない場合があります。続行する前に確認してください。",
+				detachLabel: "切り離す",
+				attachTitle: "クライアント設定に MCPMate を書き戻しますか？",
+				attachDescription:
+					"MCPMate のサーバー定義をクライアント設定ファイルに再度書き込みます。MCP セッションが再接続する場合があります。続行する前に確認してください。",
+				attachLabel: "再接続",
 			},
 			policy: {
 				title: "バックアップポリシー",
@@ -2045,7 +2159,7 @@ export const clientsTranslations = {
 					reviewSuccess: {
 						title: "成功",
 						messageApproved: "レコードを承認しました。",
-						messageRejected: "レコードを拒否しました。",
+						messageSuspended: "レコードを停止しました。",
 					},
 					reviewFailed: {
 						title: "レビューに失敗しました",
@@ -2106,6 +2220,20 @@ export const clientsTranslations = {
 				governanceDenied: {
 					title: "更新しました",
 					message: "このクライアントは拒否状態になりました。",
+				},
+				detachSuccess: {
+					title: "切り離しました",
+					message: "クライアント設定から MCPMate エントリを削除しました。",
+				},
+				detachFailed: {
+					title: "切り離しに失敗しました",
+				},
+				attachSuccess: {
+					title: "再接続しました",
+					message: "クライアント設定に MCPMate を書き戻しました。",
+				},
+				attachFailed: {
+					title: "再接続に失敗しました",
 				},
 				previewFailed: {
 					title: "プレビューに失敗しました",
