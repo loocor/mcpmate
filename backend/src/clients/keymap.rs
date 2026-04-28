@@ -17,19 +17,19 @@ impl KeyMapRegistry {
         Self { transports }
     }
 
-    /// Determine if the map contains a rule for the normalized transport in the given format_rules map
+    /// Determine if the map contains a rule for the normalized transport in the given transports map
     pub fn has_rule(
         &self,
-        format_rules: &HashMap<String, crate::clients::models::FormatRule>,
+        transports: &HashMap<String, crate::clients::models::FormatRule>,
         norm: &str,
     ) -> bool {
         let norm_lc = norm.to_ascii_lowercase();
-        if format_rules.contains_key(&norm_lc) {
+        if transports.contains_key(&norm_lc) {
             return true;
         }
         if let Some(aliases) = self.transports.get(&norm_lc) {
             for alias in aliases {
-                if format_rules.contains_key(alias) {
+                if transports.contains_key(alias) {
                     return true;
                 }
             }
@@ -37,19 +37,19 @@ impl KeyMapRegistry {
         false
     }
 
-    /// Resolve the concrete key existing in format_rules for the given normalized transport
+    /// Resolve the concrete key existing in transports for the given normalized transport
     pub fn resolve_rule_key(
         &self,
-        format_rules: &HashMap<String, crate::clients::models::FormatRule>,
+        transports: &HashMap<String, crate::clients::models::FormatRule>,
         norm: &str,
     ) -> Option<String> {
         let norm_lc = norm.to_ascii_lowercase();
-        if format_rules.contains_key(&norm_lc) {
+        if transports.contains_key(&norm_lc) {
             return Some(norm_lc);
         }
         if let Some(aliases) = self.transports.get(&norm_lc) {
             for alias in aliases {
-                if format_rules.contains_key(alias) {
+                if transports.contains_key(alias) {
                     return Some(alias.clone());
                 }
             }
@@ -60,11 +60,11 @@ impl KeyMapRegistry {
     /// Advertise normalized supported transports based on presence of normalized or alias keys
     pub fn advertise_supported(
         &self,
-        format_rules: &HashMap<String, crate::clients::models::FormatRule>,
+        transports: &HashMap<String, crate::clients::models::FormatRule>,
     ) -> Vec<String> {
         let mut out = Vec::new();
         for t in ["streamable_http", "sse", "stdio"] {
-            if self.has_rule(format_rules, t) {
+            if self.has_rule(transports, t) {
                 out.push(t.to_string());
             }
         }

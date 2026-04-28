@@ -13,10 +13,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::clients::models::{UnifyDirectExposureConfig, UnifyRouteMode};
+use crate::common::constants::client_headers;
 use crate::core::capability::naming::{NamingKind, normalize_server_name, resolve_unique_name, strip_server_prefix};
-
-const MANAGED_CLIENT_ID_HEADER: &str = "x-mcpmate-client-id";
-const MANAGED_PROFILE_ID_HEADER: &str = "x-mcpmate-profile-id";
 
 /// Determine whether a server declares a given capability token
 pub fn supports_capability(
@@ -152,11 +150,14 @@ pub async fn resolve_direct_surface_value(
     strip_server_prefix(kind, server_name, presented_value).unwrap_or_else(|| presented_value.to_string())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ObservedClientInfo {
     pub name: String,
     pub version: String,
     pub title: Option<String>,
+    pub description: Option<String>,
+    pub website_url: Option<String>,
+    pub logo_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -436,6 +437,7 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
 
         let session_id = extract_session_id(parts)
             .ok_or_else(|| anyhow!("Managed downstream session is required before request context resolution"))?;
+
         let peer_key = peer_context_key(context)?;
         let pending_client_context = self
             .pending_initializations
@@ -688,10 +690,20 @@ fn resolve_managed_profile_id(parts: &axum::http::request::Parts) -> Result<Opti
 }
 
 fn observe_client_info(initialize: &InitializeRequestParams) -> ObservedClientInfo {
+    let logo_url = initialize
+        .client_info
+        .icons
+        .as_ref()
+        .and_then(|icons| icons.first())
+        .map(|icon| icon.src.clone());
+
     ObservedClientInfo {
         name: initialize.client_info.name.clone(),
         version: initialize.client_info.version.clone(),
         title: initialize.client_info.title.clone(),
+        description: initialize.client_info.description.clone(),
+        website_url: initialize.client_info.website_url.clone(),
+        logo_url,
     }
 }
 
@@ -723,11 +735,11 @@ fn extract_query_client_id(parts: &axum::http::request::Parts) -> Option<String>
 }
 
 fn extract_header_profile_id(parts: &axum::http::request::Parts) -> Option<String> {
-    extract_header_value(parts, MANAGED_PROFILE_ID_HEADER)
+    extract_header_value(parts, client_headers::MCPMATE_PROFILE_ID)
 }
 
 fn extract_header_client_id(parts: &axum::http::request::Parts) -> Option<String> {
-    extract_header_value(parts, MANAGED_CLIENT_ID_HEADER)
+    extract_header_value(parts, client_headers::MCPMATE_CLIENT_ID)
 }
 
 fn extract_header_value(
@@ -893,13 +905,13 @@ mod tests {
         }
         if let Some(managed_client_id) = managed_client_id {
             request.headers_mut().insert(
-                MANAGED_CLIENT_ID_HEADER,
+                client_headers::MCPMATE_CLIENT_ID,
                 HeaderValue::from_str(managed_client_id).unwrap(),
             );
         }
         if let Some(managed_profile_id) = managed_profile_id {
             request.headers_mut().insert(
-                MANAGED_PROFILE_ID_HEADER,
+                client_headers::MCPMATE_PROFILE_ID,
                 HeaderValue::from_str(managed_profile_id).unwrap(),
             );
         }
@@ -977,6 +989,9 @@ mod tests {
                     name: "bridge".to_string(),
                     version: "1.0.0".to_string(),
                     title: None,
+                    description: None,
+                    website_url: None,
+                    logo_url: None,
                 }),
             },
         );
@@ -1058,6 +1073,9 @@ mod tests {
                 name: "bridge".to_string(),
                 version: "1.0.0".to_string(),
                 title: None,
+                description: None,
+                website_url: None,
+                logo_url: None,
             }),
         };
 
@@ -1270,6 +1288,9 @@ mod tests {
             name: "test-client".to_string(),
             version: "1.0.0".to_string(),
             title: Some("Test Client".to_string()),
+            description: None,
+            website_url: None,
+            logo_url: None,
         };
         let context = ClientContext {
             client_id: "client-obs".to_string(),
@@ -1303,6 +1324,9 @@ mod tests {
             name: "cached-client".to_string(),
             version: "2.0.0".to_string(),
             title: None,
+            description: None,
+            website_url: None,
+            logo_url: None,
         };
         resolver
             .observed_clients

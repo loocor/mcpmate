@@ -95,6 +95,12 @@ pub mod transport {
     pub const STREAMABLE_HTTP: &str = "streamable_http";
 }
 
+/// HTTP side-band headers used by MCPMate-attached client entries.
+pub mod client_headers {
+    pub const MCPMATE_CLIENT_ID: &str = "x-mcpmate-client-id";
+    pub const MCPMATE_PROFILE_ID: &str = "x-mcpmate-profile-id";
+}
+
 /// Database constants for unified database operations
 pub mod database {
     /// Database table name constants

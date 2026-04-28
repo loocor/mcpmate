@@ -29,7 +29,7 @@ impl ClientConfigService {
 
         for descriptor in descriptors {
             let client_id = descriptor.state.identifier().to_string();
-            if !descriptor.managed {
+            if !descriptor.state.is_approved() {
                 continue;
             }
 

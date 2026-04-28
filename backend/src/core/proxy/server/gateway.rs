@@ -119,6 +119,9 @@ impl ProxyServer {
             .resolve_initialize_context(initialize, context)
             .await
             .map_err(|error| self.map_client_context_error(error))?;
+        // Persist observed initialize facts before governance gating; first-contact review/deny
+        // can reject the request, but we still need the record to reflect what was observed.
+        self.persist_initialize_observation(&client).await;
         self.attach_runtime_identity(client).await
     }
 
@@ -230,10 +233,6 @@ impl ProxyServer {
         if let Some(ref state) = state_opt {
             return match state.approval_status() {
                 "approved" => Ok(()),
-                "rejected" => Err(rmcp::ErrorData::invalid_request(
-                    "MCPMate rejected this client identifier; connection is not allowed.".to_string(),
-                    None,
-                )),
                 "suspended" => Err(rmcp::ErrorData::invalid_request(
                     "This client is suspended in MCPMate; connection is not allowed.".to_string(),
                     None,
@@ -299,8 +298,24 @@ impl ProxyServer {
             return;
         };
 
-        let observed_name = client.observed_client_info.as_ref().map(|info| info.name.as_str());
+        let observed_display_name = client
+            .observed_client_info
+            .as_ref()
+            .and_then(|info| info.title.as_deref())
+            .or_else(|| client.observed_client_info.as_ref().map(|info| info.name.as_str()));
         let client_version = client.observed_client_info.as_ref().map(|info| info.version.as_str());
+        let observed_description = client
+            .observed_client_info
+            .as_ref()
+            .and_then(|info| info.description.as_deref());
+        let observed_homepage_url = client
+            .observed_client_info
+            .as_ref()
+            .and_then(|info| info.website_url.as_deref());
+        let observed_logo_url = client
+            .observed_client_info
+            .as_ref()
+            .and_then(|info| info.logo_url.as_deref());
         let (transport, connection_mode) = match client.transport {
             super::common::ClientTransport::StreamableHttp => (Some("streamable_http"), Some("remote_http")),
             super::common::ClientTransport::Other => (None, None),
@@ -309,10 +324,13 @@ impl ProxyServer {
         if let Err(err) = service
             .persist_handshake_observation(
                 &client.client_id,
-                observed_name,
+                observed_display_name,
                 client_version,
                 transport,
                 connection_mode,
+                observed_description,
+                observed_homepage_url,
+                observed_logo_url,
             )
             .await
         {
@@ -1209,7 +1227,6 @@ impl ServerHandler for ProxyServer {
         let client = self.resolve_initialize_client_context(&context, &request).await?;
         if client.session_id.is_some() {
             self.register_downstream_client(&client, context.peer.clone()).await?;
-            self.persist_initialize_observation(&client).await;
         }
 
         let mut data = Map::new();
@@ -1881,8 +1898,8 @@ mod tests {
 
         sqlx::query(
             r#"
-            INSERT INTO client (id, name, identifier, managed, config_mode, backup_policy, backup_limit)
-            VALUES (?, ?, ?, 1, ?, 'keep_n', 5)
+            INSERT INTO client (id, name, identifier, config_mode, backup_policy, backup_limit)
+            VALUES (?, ?, ?, ?, 'keep_n', 5)
             "#,
         )
         .bind(crate::generate_id!("clnt"))
@@ -1955,8 +1972,8 @@ mod tests {
 
         sqlx::query(
             r#"
-            INSERT INTO client (id, name, identifier, managed, config_mode, backup_policy, backup_limit)
-            VALUES (?, ?, ?, 1, ?, 'keep_n', 5)
+            INSERT INTO client (id, name, identifier, config_mode, backup_policy, backup_limit)
+            VALUES (?, ?, ?, ?, 'keep_n', 5)
             "#,
         )
         .bind(crate::generate_id!("clnt"))
