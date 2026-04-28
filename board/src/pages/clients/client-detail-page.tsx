@@ -9,12 +9,15 @@ import {
 	Download,
 	HardDrive,
 	Info,
+	Link2,
 	MoreVertical,
 	Pencil,
 	RefreshCw,
 	RotateCcw,
-	Square,
+	ShieldCheck,
+	ShieldX,
 	Trash2,
+	Unlink,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -90,6 +93,7 @@ import type {
 	ClientInfo,
 	ConfigSuit,
 	ServerSummary,
+	TransportRuleData,
 	UnifyDirectCapabilityIds,
 } from "../../lib/types";
 import { formatBackupTime } from "../../lib/utils";
@@ -113,7 +117,38 @@ const arrangeProfilesWithDefaultFirst = (items: ConfigSuit[] = []) => {
 	return [...defaults, ...others];
 };
 
-const SUPPORTED_TRANSPORT_OPTIONS = ["streamable_http", "sse", "stdio"];
+const SUPPORTED_TRANSPORT_OPTIONS = ["streamable_http", "sse", "stdio"] as const;
+type SupportedTransportOption = (typeof SUPPORTED_TRANSPORT_OPTIONS)[number];
+
+function isSupportedTransportOption(value: string): value is SupportedTransportOption {
+	return SUPPORTED_TRANSPORT_OPTIONS.includes(value as SupportedTransportOption);
+}
+
+function resolveSelectedTransport(
+	transports: Record<string, TransportRuleData> | null | undefined,
+): "auto" | SupportedTransportOption {
+	for (const transport of SUPPORTED_TRANSPORT_OPTIONS) {
+		if (transports?.[transport]?.selected === true) {
+			return transport;
+		}
+	}
+	return "auto";
+}
+
+function withSelectedTransport(
+	transports: Record<string, TransportRuleData> | null | undefined,
+	selected: string,
+): Record<string, TransportRuleData> {
+	return Object.fromEntries(
+		Object.entries(transports ?? {}).map(([transport, rule]) => [
+			transport,
+			{
+				...rule,
+				selected: selected !== "auto" && transport === selected ? true : undefined,
+			},
+		]),
+	);
+}
 
 function normalizeCapabilityIds(ids: string[] = []): string[] {
 	return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean))).sort();
@@ -280,7 +315,7 @@ function resolveConfigModeForWritableState(
 }
 
 function isDeniedApprovalStatus(status?: string | null): boolean {
-	return status === "rejected" || status === "suspended";
+	return status === "suspended";
 }
 
 function extractServers(obj: unknown): string[] {
@@ -346,6 +381,7 @@ export function ClientDetailPage() {
 	const [selectedBackups, setSelectedBackups] = useState<string[]>([]);
 	const [isClientFormOpen, setIsClientFormOpen] = useState(false);
 	const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+	const [attachmentActionConfirm, setAttachmentActionConfirm] = useState<"detach" | "attach" | null>(null);
 
 	const { data: clientsData } = useQuery({
 		queryKey: ["clients"],
@@ -401,14 +437,7 @@ export function ClientDetailPage() {
 		} else {
 			setMode(resolveConfigModeForWritableState(clientDefaultMode, isWritableConfig));
 		}
-		const currentTransport =
-			typeof currentClient.transport === "string" ? currentClient.transport : "auto";
-		setTransport(
-			currentTransport !== "auto" &&
-				!currentClient.supported_transports.includes(currentTransport)
-				? "auto"
-				: currentTransport,
-		);
+		setTransport(resolveSelectedTransport(currentClient.transports));
 	}, [clientDefaultMode, currentClient]);
 
 	useEffect(() => {
@@ -663,10 +692,17 @@ export function ClientDetailPage() {
 	const customProfileCapabilities = customProfileId
 		? profileCapabilities.get(customProfileId)
 		: undefined;
-	const managedTransportSupported = (configDetails?.supported_transports?.length ?? 0) > 0;
+	const managedTransportSupported = Object.keys(configDetails?.transports ?? {}).length > 0;
 	const canWriteClientConfig = configDetails?.writable_config !== false;
 	const isPendingApproval = configDetails?.approval_status === "pending";
-	const isRejectedClient = isDeniedApprovalStatus(configDetails?.approval_status);
+	const isSuspendedClient = isDeniedApprovalStatus(configDetails?.approval_status);
+	const isAttachmentApplicable =
+		configDetails?.attachment_state === "attached" ||
+		configDetails?.attachment_state === "detached";
+	const isAttachedClient = isAttachmentApplicable && configDetails?.attachment_state === "attached";
+	const showLocalConfigMetadata = isAttachmentApplicable && Boolean(configDetails?.config_path);
+	const overviewActionButtonClass =
+		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
 	const canSaveManagementSettings = !isPendingApproval;
 	const canApplyTransparentConfig =
 		canSaveManagementSettings &&
@@ -680,7 +716,7 @@ export function ClientDetailPage() {
 	const shouldRequireLocalConfigWrite = mode === "transparent";
 
 	const supportedTransportOptions = useMemo(() => {
-		const supported = (configDetails?.supported_transports || []) as string[];
+		const supported = Object.keys(configDetails?.transports ?? {});
 		if (supported.length < 2) {
 			return [] as string[];
 		}
@@ -689,7 +725,7 @@ export function ClientDetailPage() {
 		return SUPPORTED_TRANSPORT_OPTIONS.filter((transportOption) =>
 			allowed.has(transportOption),
 		);
-	}, [configDetails?.supported_transports]);
+	}, [configDetails?.transports]);
 
 	const unifyRouteModeSegmentOptions = useMemo(
 		() => {
@@ -766,6 +802,38 @@ export function ClientDetailPage() {
 	const detailHomepageUrl = configDetails?.homepage_url ?? "";
 	const detailDocsUrl = configDetails?.docs_url ?? "";
 	const detailSupportUrl = configDetails?.support_url ?? "";
+	const renderOverviewActionButtons = () => {
+		if (!configDetails) return null;
+		return (
+			<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => refreshDetectMutation.mutate()}
+					disabled={refreshDetectMutation.isPending}
+					className={overviewActionButtonClass}
+				>
+					<RefreshCw
+						className={`h-4 w-4 ${refreshDetectMutation.isPending ? "animate-spin" : ""}`}
+					/>
+					{t("detail.overview.buttons.refresh", {
+						defaultValue: "Refresh",
+					})}
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => setIsClientFormOpen(true)}
+					className={overviewActionButtonClass}
+				>
+					<Pencil className="h-4 w-4" />
+					{t("detail.overview.buttons.edit", {
+						defaultValue: "Edit",
+					})}
+				</Button>
+			</ButtonGroup>
+		);
+	};
 	const managementModeSegmentOptions = useMemo(
 		() => {
 			return [
@@ -1210,11 +1278,11 @@ export function ClientDetailPage() {
 	});
 
 	const reviewMutation = useMutation({
-		mutationFn: async (action: "approve" | "reject") => {
+		mutationFn: async (action: "approve" | "suspend") => {
 			if (!identifier) throw new Error("No identifier provided");
 			return action === "approve"
 				? clientsApi.approveRecord({ identifier })
-				: clientsApi.rejectRecord({ identifier });
+				: clientsApi.suspendRecord({ identifier });
 		},
 		onSuccess: (_, action) => {
 			notifySuccess(
@@ -1222,12 +1290,12 @@ export function ClientDetailPage() {
 				t(
 					action === "approve"
 						? "detail.notifications.reviewSuccess.messageApproved"
-						: "detail.notifications.reviewSuccess.messageRejected",
+						: "detail.notifications.reviewSuccess.messageSuspended",
 					{
 						defaultValue:
 							action === "approve"
 								? "Record approved successfully."
-								: "Record rejected successfully.",
+								: "Record suspended successfully.",
 					},
 				),
 			);
@@ -1237,6 +1305,50 @@ export function ClientDetailPage() {
 		onError: (e) =>
 			notifyError(
 				t("detail.notifications.reviewFailed.title", { defaultValue: "Review failed" }),
+				String(e),
+			),
+	});
+
+	const detachMutation = useMutation({
+		mutationFn: async () => {
+			if (!identifier) throw new Error("No identifier provided");
+			return clientsApi.detach(identifier);
+		},
+		onSuccess: () => {
+			notifySuccess(
+				t("detail.notifications.detachSuccess.title", { defaultValue: "Detached" }),
+				t("detail.notifications.detachSuccess.message", {
+					defaultValue: "MCPMate was removed from the client configuration file.",
+				}),
+			);
+			qc.invalidateQueries({ queryKey: ["clients"] });
+			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
+		},
+		onError: (e) =>
+			notifyError(
+				t("detail.notifications.detachFailed.title", { defaultValue: "Detach failed" }),
+				String(e),
+			),
+	});
+
+	const attachMutation = useMutation({
+		mutationFn: async () => {
+			if (!identifier) throw new Error("No identifier provided");
+			return clientsApi.attach(identifier);
+		},
+		onSuccess: () => {
+			notifySuccess(
+				t("detail.notifications.attachSuccess.title", { defaultValue: "Attached" }),
+				t("detail.notifications.attachSuccess.message", {
+					defaultValue: "MCPMate was written back to the client configuration.",
+				}),
+			);
+			qc.invalidateQueries({ queryKey: ["clients"] });
+			qc.invalidateQueries({ queryKey: ["client-config", identifier] });
+		},
+		onError: (e) =>
+			notifyError(
+				t("detail.notifications.attachFailed.title", { defaultValue: "Attach failed" }),
 				String(e),
 			),
 	});
@@ -1436,7 +1548,7 @@ export function ClientDetailPage() {
 			),
 	});
 
-	// Header actions: refresh detection and toggle managed
+	// Header actions: refresh detection and update governance state
 	const refreshDetectMutation = useMutation({
 		mutationFn: async () => {
 			const data = await clientsApi.list(true);
@@ -1692,18 +1804,17 @@ export function ClientDetailPage() {
 								{t("detail.badges.pendingReview", { defaultValue: "Pending Review" })}
 							</Badge>
 						)}
-						{isRejectedClient && (
+						{isSuspendedClient && (
 							<Badge variant="destructive">
-								{t("detail.badges.rejected", { defaultValue: "Rejected" })}
+								{t("detail.badges.suspended", { defaultValue: "Suspended" })}
 							</Badge>
 						)}
-						{/* Managed status badge */}
-						{typeof configDetails?.managed === "boolean" ? (
-							<Badge variant={configDetails.managed ? "secondary" : "outline"}>
-								{configDetails.managed
-									? t("detail.badges.managed", { defaultValue: "Managed" })
-									: t("detail.badges.unmanaged", {
-										defaultValue: "Unmanaged",
+						{isAttachmentApplicable ? (
+							<Badge variant={isAttachedClient ? "secondary" : "outline"}>
+								{isAttachedClient
+									? t("detail.badges.attached", { defaultValue: "Attached" })
+									: t("detail.badges.detached", {
+										defaultValue: "Detached",
 									})}
 							</Badge>
 						) : null}
@@ -1738,6 +1849,7 @@ export function ClientDetailPage() {
 							</TabsTrigger>
 						)}
 					</TabsList>
+					{renderOverviewActionButtons()}
 				</div>
 
 				<TabsContent
@@ -1762,23 +1874,27 @@ export function ClientDetailPage() {
 													className="text-sm"
 												/>
 												<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
-													<span className="text-xs uppercase text-slate-500">
-														{t("detail.overview.labels.configPath", {
-															defaultValue: "Config Path",
-														})}
-													</span>
-													<span className="font-mono text-xs truncate max-w-[520px]">
-														{configDetails.config_path}
-													</span>
+													{showLocalConfigMetadata ? (
+														<>
+															<span className="text-xs uppercase text-slate-500">
+																{t("detail.overview.labels.configPath", {
+																	defaultValue: "Config Path",
+																})}
+															</span>
+															<span className="font-mono text-xs truncate max-w-[520px]">
+																{configDetails.config_path}
+															</span>
 
-													<span className="text-xs uppercase text-slate-500">
-														{t("detail.overview.labels.lastModified", {
-															defaultValue: "Last Modified",
-														})}
-													</span>
-													<span className="text-xs">
-														{formatBackupTime(configDetails.last_modified)}
-													</span>
+															<span className="text-xs uppercase text-slate-500">
+																{t("detail.overview.labels.lastModified", {
+																	defaultValue: "Last Modified",
+																})}
+															</span>
+															<span className="text-xs">
+																{formatBackupTime(configDetails.last_modified)}
+															</span>
+														</>
+													) : null}
 
 													<span className="text-xs uppercase text-slate-500">
 														{t("detail.overview.labels.supportedTransports", {
@@ -1786,14 +1902,14 @@ export function ClientDetailPage() {
 														})}
 													</span>
 													<span className="text-xs flex gap-2">
-														{(configDetails.supported_transports || []).map(
-															(t) => (
+														{(Object.keys(configDetails?.transports ?? {})).map(
+															(transport) => (
 																<span
-																	key={t}
+																	key={transport}
 																	className="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
-																	title={t}
+																	title={transport}
 																>
-																	{t}
+																	{transport}
 																</span>
 															),
 														)}
@@ -1853,17 +1969,6 @@ export function ClientDetailPage() {
 												</div>
 											</div>
 											<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => setIsClientFormOpen(true)}
-													className="gap-2"
-												>
-													<Pencil className="h-4 w-4" />
-													{t("detail.overview.buttons.edit", {
-														defaultValue: "Edit",
-													})}
-												</Button>
 												{configDetails?.approval_status === "pending" && (
 													<>
 														<Button
@@ -1880,28 +1985,14 @@ export function ClientDetailPage() {
 															variant="outline"
 															size="sm"
 															className="bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 border-red-200 dark:bg-red-950 dark:text-red-300 dark:hover:bg-red-900 dark:border-red-800 gap-2"
-															onClick={() => reviewMutation.mutate("reject")}
+															onClick={() => reviewMutation.mutate("suspend")}
 															disabled={reviewMutation.isPending}
 														>
 															<Trash2 className="h-4 w-4" />
-															{t("detail.overview.buttons.reject", { defaultValue: "Reject" })}
+															{t("detail.overview.buttons.suspend", { defaultValue: "Suspend" })}
 														</Button>
 													</>
 												)}
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => refreshDetectMutation.mutate()}
-													disabled={refreshDetectMutation.isPending}
-													className="gap-2"
-												>
-													<RefreshCw
-														className={`h-4 w-4 ${refreshDetectMutation.isPending ? "animate-spin" : ""}`}
-													/>
-													{t("detail.overview.buttons.refresh", {
-														defaultValue: "Refresh",
-													})}
-												</Button>
 												<Button
 													variant="outline"
 													size="sm"
@@ -1920,9 +2011,9 @@ export function ClientDetailPage() {
 													className="gap-2"
 												>
 													{isDeniedApprovalStatus(configDetails?.approval_status) ? (
-														<Check className="h-4 w-4" />
+														<ShieldCheck className="h-4 w-4" />
 													) : (
-														<Square className="h-4 w-4" />
+														<ShieldX className="h-4 w-4" />
 													)}
 													{isDeniedApprovalStatus(configDetails?.approval_status)
 														? t("detail.overview.buttons.allow", {
@@ -1932,6 +2023,26 @@ export function ClientDetailPage() {
 															defaultValue: "Deny",
 														})}
 												</Button>
+												{isAttachmentApplicable ? (
+													<Button
+														variant="outline"
+														size="sm"
+														onClick={() =>
+															setAttachmentActionConfirm(isAttachedClient ? "detach" : "attach")
+														}
+														disabled={detachMutation.isPending || attachMutation.isPending}
+														className="gap-2"
+													>
+														{isAttachedClient ? (
+															<Unlink className="h-4 w-4" />
+														) : (
+															<Link2 className="h-4 w-4" />
+														)}
+														{isAttachedClient
+															? t("detail.overview.buttons.detach", { defaultValue: "Detach" })
+															: t("detail.overview.buttons.attach", { defaultValue: "Attach" })}
+													</Button>
+												) : null}
 												{supportedTransportOptions.length > 0 ? (
 													<ButtonGroupText className="h-9 p-0 select-none shadow-none">
 														<Select
@@ -1940,11 +2051,16 @@ export function ClientDetailPage() {
 																if (!identifier) return;
 																const previousTransport = transport;
 																setTransport(v);
-																try {
-																	await clientsApi.update({
-																		identifier,
-																		transport: v,
-																	});
+														try {
+															const selectedTransport = isSupportedTransportOption(v) ? v : "auto";
+															await clientsApi.update({
+																identifier,
+																transport: selectedTransport,
+																transports: withSelectedTransport(
+																	configDetails?.transports,
+																	selectedTransport,
+																),
+															});
 
 																	let configApplied = false;
 																	const shouldApplyManagedConfig =
@@ -1994,7 +2110,7 @@ export function ClientDetailPage() {
 																			})
 																			: "",
 																	);
-													await refreshClientCapabilityState();
+																	await refreshClientCapabilityState();
 																} catch (err) {
 																	setTransport(previousTransport);
 																	notifyError(
@@ -2184,11 +2300,11 @@ export function ClientDetailPage() {
 											className={`h-4 w-4 ${applyMutation.isPending ? "animate-pulse" : ""}`}
 										/>
 										{t(
-											configDetails?.managed
+											isAttachmentApplicable && isAttachedClient
 												? "detail.configuration.reapply"
 												: "detail.configuration.apply",
 											{
-												defaultValue: configDetails?.managed ? "Re-Apply" : "Apply",
+												defaultValue: isAttachmentApplicable && isAttachedClient ? "Re-Apply" : "Apply",
 											},
 										)}
 									</Button>
@@ -2258,9 +2374,9 @@ export function ClientDetailPage() {
 																		"All capabilities are kept behind the UCAN broker catalog. Builtin MCP tools will browse and call capabilities from globally enabled servers.",
 																},
 															)}
-												{mode === "unify" && unifyRouteMode === "server_level" &&
-													t(
-														"detail.configuration.sections.source.descriptions.unify_server_level",
+														{mode === "unify" && unifyRouteMode === "server_level" &&
+															t(
+																"detail.configuration.sections.source.descriptions.unify_server_level",
 																{
 																	defaultValue:
 																		"Directly expose all capabilities from selected eligible servers to this client. Exposed capabilities are excluded from the UCAN catalog.",
@@ -2329,7 +2445,7 @@ export function ClientDetailPage() {
 														value={unifyRouteMode}
 														onValueChange={(v) => {
 															setHasUnifyDraftChanges(true);
-													setUnifyRouteMode(v as UnifyRouteMode);
+															setUnifyRouteMode(v as UnifyRouteMode);
 														}}
 														options={unifyRouteModeSegmentOptions}
 														showDots={true}
@@ -2368,9 +2484,9 @@ export function ClientDetailPage() {
 															})}
 														</p>
 													)}
-											{mode === "unify" && unifyRouteMode === "server_level" && (
-												<p className="text-xs text-slate-500 mt-1 leading-relaxed">
-													{t("detail.configuration.sections.exposure.descriptions.server_level", {
+													{mode === "unify" && unifyRouteMode === "server_level" && (
+														<p className="text-xs text-slate-500 mt-1 leading-relaxed">
+															{t("detail.configuration.sections.exposure.descriptions.server_level", {
 																defaultValue:
 																	"Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
 															})}
@@ -2466,28 +2582,28 @@ export function ClientDetailPage() {
 																	</div>
 																</CapsuleStripeListItem>
 															) : eligibleServers.length > 0 ? (
-													eligibleServers.map((server) => {
-														const isSelected = unifySelectedServers.includes(server.id);
-														const toolSurfaces = getUnifyServerSurfaces(
-															effectiveCapabilityConfig?.unify_direct_exposure
-																?.resolved_capabilities?.selected_tool_surfaces ?? [],
-															server.id,
-														);
-														const promptSurfaces = getUnifyServerSurfaces(
-															effectiveCapabilityConfig?.unify_direct_exposure
-																?.resolved_capabilities?.selected_prompt_surfaces ?? [],
-															server.id,
-														);
-														const resourceSurfaces = getUnifyServerSurfaces(
-															effectiveCapabilityConfig?.unify_direct_exposure
-																?.resolved_capabilities?.selected_resource_surfaces ?? [],
-															server.id,
-														);
-														const templateSurfaces = getUnifyServerSurfaces(
-															effectiveCapabilityConfig?.unify_direct_exposure
-																?.resolved_capabilities?.selected_template_surfaces ?? [],
-															server.id,
-														);
+																eligibleServers.map((server) => {
+																	const isSelected = unifySelectedServers.includes(server.id);
+																	const toolSurfaces = getUnifyServerSurfaces(
+																		effectiveCapabilityConfig?.unify_direct_exposure
+																			?.resolved_capabilities?.selected_tool_surfaces ?? [],
+																		server.id,
+																	);
+																	const promptSurfaces = getUnifyServerSurfaces(
+																		effectiveCapabilityConfig?.unify_direct_exposure
+																			?.resolved_capabilities?.selected_prompt_surfaces ?? [],
+																		server.id,
+																	);
+																	const resourceSurfaces = getUnifyServerSurfaces(
+																		effectiveCapabilityConfig?.unify_direct_exposure
+																			?.resolved_capabilities?.selected_resource_surfaces ?? [],
+																		server.id,
+																	);
+																	const templateSurfaces = getUnifyServerSurfaces(
+																		effectiveCapabilityConfig?.unify_direct_exposure
+																			?.resolved_capabilities?.selected_template_surfaces ?? [],
+																		server.id,
+																	);
 																	const selectedCapabilityCount =
 																		toolSurfaces.length +
 																		promptSurfaces.length +
@@ -2515,18 +2631,18 @@ export function ClientDetailPage() {
 																			interactive={true}
 																			className={`group relative transition-colors ${showDirectSelection ? "bg-primary/10 ring-1 ring-primary/40" : ""}`}
 																			onClick={() => {
-															if (unifyRouteMode === "capability_level") {
-																directExposureServerMutation.mutate({ server, routeMode: "capability_level" });
-															} else if (unifyRouteMode === "server_level") {
-																if (hasUnifyDraftChanges) {
-																	setUnifySelectedServers((prev) =>
-																		toggleSelectedServerIds(prev, server.id),
-																	);
-																} else {
-																	directExposureServerMutation.mutate({ server, routeMode: "server_level" });
-																}
-															}
-															}}
+																				if (unifyRouteMode === "capability_level") {
+																					directExposureServerMutation.mutate({ server, routeMode: "capability_level" });
+																				} else if (unifyRouteMode === "server_level") {
+																					if (hasUnifyDraftChanges) {
+																						setUnifySelectedServers((prev) =>
+																							toggleSelectedServerIds(prev, server.id),
+																						);
+																					} else {
+																						directExposureServerMutation.mutate({ server, routeMode: "server_level" });
+																					}
+																				}
+																			}}
 																		>
 																			<CapsuleStripeRowBody
 																				lead={
@@ -2984,6 +3100,50 @@ export function ClientDetailPage() {
 						await restoreMutation.mutateAsync({ backup: confirm.backup });
 					}
 					setConfirm(null);
+				}}
+			/>
+
+			<ConfirmDialog
+				isOpen={attachmentActionConfirm !== null}
+				onClose={() => setAttachmentActionConfirm(null)}
+				title={
+					attachmentActionConfirm === "attach"
+						? t("detail.confirm.attachTitle", {
+							defaultValue: "Attach MCPMate to this client configuration?",
+						})
+						: t("detail.confirm.detachTitle", {
+							defaultValue: "Detach MCPMate from this client configuration?",
+						})
+				}
+				description={
+					attachmentActionConfirm === "attach"
+						? t("detail.confirm.attachDescription", {
+							defaultValue:
+								"This writes the MCPMate server entry back into the client configuration file. The client's MCP session may restart or reconnect; confirm before continuing.",
+						})
+						: t("detail.confirm.detachDescription", {
+							defaultValue:
+								"This removes the MCPMate server entry from the client configuration file. Running MCP connections for that client may break until you attach again; confirm before continuing.",
+						})
+				}
+				confirmLabel={
+					attachmentActionConfirm === "attach"
+						? t("detail.confirm.attachLabel", { defaultValue: "Attach" })
+						: t("detail.confirm.detachLabel", { defaultValue: "Detach" })
+				}
+				cancelLabel={t("detail.confirm.cancelLabel", {
+					defaultValue: "Cancel",
+				})}
+				variant="default"
+				isLoading={detachMutation.isPending || attachMutation.isPending}
+				onConfirm={async () => {
+					if (!attachmentActionConfirm || !identifier) return;
+					if (attachmentActionConfirm === "detach") {
+						await detachMutation.mutateAsync();
+					} else {
+						await attachMutation.mutateAsync();
+					}
+					setAttachmentActionConfirm(null);
 				}}
 			/>
 

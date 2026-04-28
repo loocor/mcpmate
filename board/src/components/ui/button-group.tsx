@@ -6,13 +6,13 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../../lib/utils";
 
 const buttonGroupVariants = cva(
-	"inline-flex items-center justify-center gap-0 [&>*:not(:first-child)]:ml-[-1px] [&>*:not(:first-child)]:rounded-l-none [&>*:not(:last-child)]:rounded-r-none [&>*:first-child]:rounded-r-none [&>*:last-child]:rounded-l-none",
+	"inline-flex items-center justify-center gap-0 [&>*:not(:first-child)]:ml-[-1px] [&>*:not(:first-child)]:rounded-l-none [&>*:not(:last-child)]:rounded-r-none [&>*:not(:only-child):first-child]:rounded-r-none [&>*:not(:only-child):last-child]:rounded-l-none",
 	{
 		variants: {
 			orientation: {
 				horizontal: "flex-row",
 				vertical:
-					"flex-col [&>*:not(:first-child)]:mt-[-1px] [&>*:not(:first-child)]:rounded-t-none [&>*:not(:last-child)]:rounded-b-none [&>*:first-child]:rounded-b-none [&>*:last-child]:rounded-t-none",
+					"flex-col [&>*:not(:first-child)]:mt-[-1px] [&>*:not(:first-child)]:rounded-t-none [&>*:not(:last-child)]:rounded-b-none [&>*:not(:only-child):first-child]:rounded-b-none [&>*:not(:only-child):last-child]:rounded-t-none",
 			},
 		},
 		defaultVariants: {
@@ -23,7 +23,7 @@ const buttonGroupVariants = cva(
 
 export interface ButtonGroupProps
 	extends React.HTMLAttributes<HTMLDivElement>,
-		VariantProps<typeof buttonGroupVariants> {}
+	VariantProps<typeof buttonGroupVariants> { }
 
 const ButtonGroup = React.forwardRef<HTMLDivElement, ButtonGroupProps>(
 	({ className, orientation, ...props }, ref) => (
