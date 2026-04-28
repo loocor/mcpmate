@@ -132,10 +132,10 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::ServerInstanceRecover
         | AuditAction::ServerInstanceCancel
         | AuditAction::ServerCacheReset
-        | AuditAction::ClientManageEnable
-        | AuditAction::ClientManageDisable
         | AuditAction::ClientSettingsUpdate
         | AuditAction::ClientConfigApply
+        | AuditAction::ClientConfigAttach
+        | AuditAction::ClientConfigDetach
         | AuditAction::ClientConfigRestore
         | AuditAction::ClientConfigImport
         | AuditAction::ClientCapabilityUpdate
@@ -143,7 +143,6 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::ClientBackupDelete
         | AuditAction::ClientBackupPolicyUpdate
         | AuditAction::ClientApprove
-        | AuditAction::ClientReject
         | AuditAction::ClientSuspend
         | AuditAction::OnboardingPolicyUpdate
         | AuditAction::FirstContactBehaviorUpdate

@@ -8,7 +8,7 @@
 /// the OpenAPI schema, avoiding generic naming issues.
 ///
 /// # Usage
-/// ```rust
+/// ```ignore
 /// api_resp!(MyResp, MyData, "My API response description");
 /// ```
 ///

@@ -307,7 +307,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// documentation function for legacy handlers that return `Result<Json<T>, ApiError>`.
 ///
 /// # Usage
-/// ```rust
+/// ```ignore
 /// aide_wrapper!(
 ///     system::get_status,         // Full handler path (enables VS Code jump + auto tag)
 ///     StatusResponse,             // Response type
@@ -320,7 +320,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// - `get_status_docs` function for OpenAPI documentation
 ///
 /// Then use in routes:
-/// ```rust
+/// ```ignore
 /// .api_route("/system/status", get_with(get_status_aide, get_status_docs))
 /// ```
 #[macro_export]
@@ -354,7 +354,7 @@ macro_rules! aide_wrapper {
 /// Macro for GET endpoints with query parameters
 ///
 /// Usage:
-/// ```rust
+/// ```ignore
 /// aide_get_with_query!(
 ///     capabilities::details,                      // Handler function path
 ///     DetailsQuery,                               // Query parameter type
@@ -395,7 +395,7 @@ macro_rules! aide_wrapper_query {
 /// Macro for POST endpoints with payload body
 ///
 /// Usage:
-/// ```rust
+/// ```ignore
 /// aide_wrapper_payload!(
 ///     runtime::install,                                                   // Handler function path
 ///     RuntimeInstallReq,                                                  // Payload body type

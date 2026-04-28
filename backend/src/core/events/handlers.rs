@@ -83,6 +83,36 @@ impl EventHandlers {
         Ok(())
     }
 
+    async fn invalidate_profile_cache(&self) {
+        if let Some(profile_service) = &self.profile_service {
+            profile_service.invalidate_cache().await;
+        }
+    }
+
+    async fn invalidate_cache_and_sync_servers(&self) {
+        self.invalidate_profile_cache().await;
+        if let Some(connection_pool) = &self.connection_pool {
+            let mut pool = connection_pool.lock().await;
+            if let Err(e) = pool.sync_servers_from_active_profile().await {
+                error!("Failed to sync servers after database/config event: {}", e);
+            }
+        }
+    }
+
+    async fn notify_all_list_changed(
+        &self,
+        context: &str,
+    ) {
+        if let Some(proxy_server) = global_proxy_server() {
+            let refreshed = proxy_server.refresh_all_bound_sessions().await;
+            let (t, p, r) = proxy_server.notify_all_list_changed().await;
+            debug!(
+                "{}: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
+                context, refreshed, t, p, r
+            );
+        }
+    }
+
     /// Handle events with appropriate actions
     async fn handle_event(
         &self,
@@ -92,28 +122,8 @@ impl EventHandlers {
             // Config profile status changed - trigger server management and listChanged
             Event::ProfileStatusChanged { profile_id, enabled } => {
                 debug!("Handling ProfileStatusChanged: {} -> {}", profile_id, enabled);
-
-                // Invalidate cache first
-                if let Some(profile_service) = &self.profile_service {
-                    profile_service.invalidate_cache().await;
-                }
-
-                // Sync servers from active profile using connection pool
-                if let Some(connection_pool) = &self.connection_pool {
-                    let mut pool = connection_pool.lock().await;
-                    if let Err(e) = pool.sync_servers_from_active_profile().await {
-                        error!("Failed to sync servers after profile change: {}", e);
-                    }
-                }
-
-                if let Some(proxy_server) = global_proxy_server() {
-                    let refreshed = proxy_server.refresh_all_bound_sessions().await;
-                    let (t, p, r) = proxy_server.notify_all_list_changed().await;
-                    debug!(
-                        "Profile change: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
-                        refreshed, t, p, r
-                    );
-                }
+                self.invalidate_cache_and_sync_servers().await;
+                self.notify_all_list_changed("Profile change").await;
             }
 
             // Server enabled in profile changed - trigger immediate server management for active profile
@@ -128,12 +138,8 @@ impl EventHandlers {
                     server_name, profile_id, enabled
                 );
 
-                // Invalidate cache
-                if let Some(profile_service) = &self.profile_service {
-                    profile_service.invalidate_cache().await;
-                }
+                self.invalidate_profile_cache().await;
 
-                // Use connection pool to manage server status
                 if let Some(connection_pool) = &self.connection_pool {
                     let mut pool = connection_pool.lock().await;
                     if let Err(e) = pool.update_server_status(&server_id, enabled).await {
@@ -144,52 +150,20 @@ impl EventHandlers {
                     }
                 }
 
-                // Downstream: listChanged across tools/prompts/resources
-                if let Some(proxy_server) = global_proxy_server() {
-                    let refreshed = proxy_server.refresh_all_bound_sessions().await;
-                    let (t, p, r) = proxy_server.notify_all_list_changed().await;
-                    debug!(
-                        "Server enabled change: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
-                        refreshed, t, p, r
-                    );
-                }
+                self.notify_all_list_changed("Server enabled change").await;
             }
 
             // Events that require server synchronization (but not specific server management)
             Event::ServerGlobalStatusChanged { .. } | Event::DatabaseChanged | Event::ConfigReloaded => {
                 debug!("Handling server sync event: {:?}", event);
-
-                // Invalidate profile merge cache
-                if let Some(profile_service) = &self.profile_service {
-                    profile_service.invalidate_cache().await;
-                }
-
-                // Keep connection pool configuration in sync with DB (placeholders only; no forced connect)
-                if let Some(connection_pool) = &self.connection_pool {
-                    let mut pool = connection_pool.lock().await;
-                    if let Err(e) = pool.sync_servers_from_active_profile().await {
-                        error!("Failed to sync servers after database/config event: {}", e);
-                    }
-                }
-
-                // Downstream: listChanged across tools/prompts/resources (capability surface likely changed)
-                if let Some(proxy_server) = global_proxy_server() {
-                    let refreshed = proxy_server.refresh_all_bound_sessions().await;
-                    let (t, p, r) = proxy_server.notify_all_list_changed().await;
-                    debug!(
-                        "Server sync event: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
-                        refreshed, t, p, r
-                    );
-                }
+                self.invalidate_cache_and_sync_servers().await;
+                self.notify_all_list_changed("Server sync event").await;
             }
 
             // Emit listChanged notifications for downstream clients
             Event::ToolEnabledInProfileChanged { .. } => {
                 debug!("Tool configuration changed: emitting tools/list_changed");
-                // Invalidate profile cache so visibility recalculates
-                if let Some(profile_service) = &self.profile_service {
-                    profile_service.invalidate_cache().await;
-                }
+                self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
                     let count = proxy_server.notify_tool_list_changed().await;
                     debug!("tools/list_changed notified {} client(s)", count);
@@ -197,9 +171,7 @@ impl EventHandlers {
             }
             Event::PromptEnabledInProfileChanged { .. } => {
                 debug!("Prompt configuration changed: emitting prompts/list_changed");
-                if let Some(profile_service) = &self.profile_service {
-                    profile_service.invalidate_cache().await;
-                }
+                self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
                     let count = proxy_server.notify_prompt_list_changed().await;
                     debug!("prompts/list_changed notified {} client(s)", count);
@@ -220,9 +192,7 @@ impl EventHandlers {
             }
             Event::ResourceEnabledInProfileChanged { .. } => {
                 debug!("Resource configuration changed: emitting resources/list_changed");
-                if let Some(profile_service) = &self.profile_service {
-                    profile_service.invalidate_cache().await;
-                }
+                self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
                     let count = proxy_server.notify_resource_list_changed().await;
                     debug!("resources/list_changed notified {} client(s)", count);
@@ -230,11 +200,8 @@ impl EventHandlers {
             }
 
             Event::ResourceTemplateEnabledInProfileChanged { .. } => {
-                // Invalidate profile cache and broadcast resources/list_changed as closest signal.
                 debug!("Resource template configuration changed: emitting resources/list_changed");
-                if let Some(profile_service) = &self.profile_service {
-                    profile_service.invalidate_cache().await;
-                }
+                self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
                     let count = proxy_server.notify_resource_list_changed().await;
                     debug!(

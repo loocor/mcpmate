@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use mcpmate::common::constants::branding;
+use mcpmate::common::constants::{branding, client_headers};
 use reqwest::{
     Client as HttpClient,
     header::{HeaderMap, HeaderName, HeaderValue},
@@ -261,7 +261,7 @@ impl BridgeServer {
                     tracing::error!("Invalid APPID header value: {err}");
                     McpError::internal_error("Invalid APPID header value", None)
                 })?;
-                default_headers.insert(HeaderName::from_static("x-mcpmate-client-id"), value);
+                default_headers.insert(HeaderName::from_static(client_headers::MCPMATE_CLIENT_ID), value);
             }
         }
         if let Ok(profile_id) = std::env::var("PROFILE_ID") {
@@ -271,7 +271,7 @@ impl BridgeServer {
                     tracing::error!("Invalid PROFILE_ID header value: {err}");
                     McpError::internal_error("Invalid PROFILE_ID header value", None)
                 })?;
-                default_headers.insert(HeaderName::from_static("x-mcpmate-profile-id"), value);
+                default_headers.insert(HeaderName::from_static(client_headers::MCPMATE_PROFILE_ID), value);
             }
         }
 
