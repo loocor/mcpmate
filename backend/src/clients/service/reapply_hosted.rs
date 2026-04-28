@@ -38,7 +38,7 @@ impl ClientConfigService {
         for template in templates {
             let identifier = template.identifier.clone();
             let state = states.get(&identifier);
-            if !state.map(|s| s.managed()).unwrap_or(true) {
+            if !state.map(|s| s.is_approved()).unwrap_or(true) {
                 continue;
             }
 

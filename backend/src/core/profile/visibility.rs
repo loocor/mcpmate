@@ -29,6 +29,19 @@ fn builtin_tool_surface_ids(
     }
 }
 
+fn collect_sorted_surfaces<T, F>(
+    surfaces: &[T],
+    format_key: F,
+) -> Vec<String>
+where
+    F: Fn(&T) -> String,
+{
+    let mut result: Vec<String> = surfaces.iter().map(format_key).collect();
+    result.sort();
+    result.dedup();
+    result
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilityKind {
     Tools,
@@ -288,37 +301,18 @@ impl ProfileVisibilityService {
             return Ok(None);
         };
 
-        let mut tool_surfaces = workspace
-            .selected_tool_surfaces
-            .iter()
-            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.tool_name))
-            .collect::<Vec<_>>();
-        tool_surfaces.sort();
-        tool_surfaces.dedup();
-
-        let mut prompt_surfaces = workspace
-            .selected_prompt_surfaces
-            .iter()
-            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.prompt_name))
-            .collect::<Vec<_>>();
-        prompt_surfaces.sort();
-        prompt_surfaces.dedup();
-
-        let mut resource_surfaces = workspace
-            .selected_resource_surfaces
-            .iter()
-            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.resource_uri))
-            .collect::<Vec<_>>();
-        resource_surfaces.sort();
-        resource_surfaces.dedup();
-
-        let mut template_surfaces = workspace
-            .selected_template_surfaces
-            .iter()
-            .map(|surface| format!("{}\u{1e}{}", surface.server_id, surface.uri_template))
-            .collect::<Vec<_>>();
-        template_surfaces.sort();
-        template_surfaces.dedup();
+        let tool_surfaces = collect_sorted_surfaces(&workspace.selected_tool_surfaces, |surface| {
+            format!("{}\u{1e}{}", surface.server_id, surface.tool_name)
+        });
+        let prompt_surfaces = collect_sorted_surfaces(&workspace.selected_prompt_surfaces, |surface| {
+            format!("{}\u{1e}{}", surface.server_id, surface.prompt_name)
+        });
+        let resource_surfaces = collect_sorted_surfaces(&workspace.selected_resource_surfaces, |surface| {
+            format!("{}\u{1e}{}", surface.server_id, surface.resource_uri)
+        });
+        let template_surfaces = collect_sorted_surfaces(&workspace.selected_template_surfaces, |surface| {
+            format!("{}\u{1e}{}", surface.server_id, surface.uri_template)
+        });
 
         let mut selected_server_ids = workspace.selected_server_ids.clone();
         selected_server_ids.sort();
@@ -1316,8 +1310,8 @@ mod tests {
 
         sqlx::query(
             r#"
-            INSERT INTO client (id, name, identifier, managed, capability_source, selected_profile_ids, custom_profile_id)
-            VALUES (?, ?, ?, 1, ?, ?, ?)
+            INSERT INTO client (id, name, identifier, capability_source, selected_profile_ids, custom_profile_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(crate::generate_id!("clnt"))
