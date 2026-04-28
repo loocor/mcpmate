@@ -38,7 +38,7 @@ import type {
 	ClientConfigFileParseInspectResp,
 	ClientConfigFileParseInspectReq,
 	ClientConnectionMode,
-	ClientFormatRuleData,
+	TransportRuleData,
 	ClientInfo,
 } from "../lib/types";
 import { cn } from "../lib/utils";
@@ -168,7 +168,7 @@ function createEmptyTransportRuleEditor(): TransportRuleEditorValue {
 	};
 }
 
-function transportRuleEditorFromData(rule?: ClientFormatRuleData | null): TransportRuleEditorValue {
+function transportRuleEditorFromData(rule?: TransportRuleData | null): TransportRuleEditorValue {
 	return {
 		includeType: Boolean(rule?.include_type),
 		typeValue: rule?.type_value?.toString() ?? "",
@@ -187,9 +187,9 @@ function transportRuleEditorFromData(rule?: ClientFormatRuleData | null): Transp
 
 function transportRuleEditorsFromClient(client?: ClientInfo | null): TransportRuleEditors {
 	return {
-		streamable_http: transportRuleEditorFromData(client?.format_rules?.streamable_http),
-		sse: transportRuleEditorFromData(client?.format_rules?.sse),
-		stdio: transportRuleEditorFromData(client?.format_rules?.stdio),
+		streamable_http: transportRuleEditorFromData(client?.transports?.streamable_http),
+		sse: transportRuleEditorFromData(client?.transports?.sse),
+		stdio: transportRuleEditorFromData(client?.transports?.stdio),
 	};
 }
 
@@ -315,7 +315,7 @@ function transportRuleDataFromEditor(
 	transport: SupportedTransportValue,
 	editor: TransportRuleEditorValue,
 	t: TFunction,
-): ClientFormatRuleData {
+): TransportRuleData {
 	const commandField = editor.commandField.trim();
 	const argsField = editor.argsField.trim();
 	const envField = editor.envField.trim();
@@ -371,8 +371,20 @@ function buildTransportRulesPayload(
 	editors: TransportRuleEditors,
 	client: ClientInfo | null | undefined,
 	t: TFunction,
-): Record<string, ClientFormatRuleData> {
-	return transports.reduce<Record<string, ClientFormatRuleData>>((acc, transport) => {
+	hasWritableRules: boolean,
+): Record<string, TransportRuleData> {
+	const selectedTransport = findSelectedTransport(client?.transports);
+
+	if (!hasWritableRules) {
+		const result: Record<string, TransportRuleData> = {};
+		if (selectedTransport && transports.includes(selectedTransport)) {
+			result[selectedTransport] = { selected: true };
+		}
+		return result;
+	}
+
+	return transports.reduce<Record<string, TransportRuleData>>((acc, transport) => {
+		const selected = selectedTransport === transport ? true : undefined;
 		const currentEditor = editors[transport] ?? createEmptyTransportRuleEditor();
 		const editor = isTransportRuleEditorEmpty(currentEditor)
 			? cloneTransportRuleEditorValue(
@@ -380,9 +392,32 @@ function buildTransportRulesPayload(
 					?.value ?? createEmptyTransportRuleEditor()),
 			)
 			: currentEditor;
-		acc[transport] = transportRuleDataFromEditor(transport, editor, t);
+		const rule = transportRuleDataFromEditor(transport, editor, t);
+		acc[transport] = selected ? { ...rule, selected } : rule;
 		return acc;
 	}, {});
+}
+
+function findSelectedTransport(
+	transports: Record<string, TransportRuleData> | null | undefined,
+): SupportedTransportValue | null {
+	for (const transport of SUPPORTED_TRANSPORT_VALUES) {
+		if (transports?.[transport]?.selected === true) {
+			return transport;
+		}
+	}
+	return null;
+}
+
+function filterCurrentTransportPayload(
+	currentTransports: Record<string, TransportRuleData> | null | undefined,
+	supportedTransports: SupportedTransportValue[],
+): Record<string, TransportRuleData> {
+	if (!currentTransports) return {};
+	const allowed = new Set(supportedTransports);
+	return Object.fromEntries(
+		Object.entries(currentTransports).filter(([transport]) => allowed.has(transport as SupportedTransportValue)),
+	);
 }
 
 type ClientRecordFormValues = z.infer<ReturnType<typeof createFormSchema>>;
@@ -625,9 +660,7 @@ function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 	const connectionShape = connectionModeToShape(client?.connection_mode, client?.config_path);
 	const supportedTransports = (() => {
 		if (!client) return ["streamable_http", "stdio"] satisfies SupportedTransportValue[];
-		const explicit = normalizeSupportedTransports(client?.supported_transports);
-		if (explicit.length > 0) return explicit;
-		const fromRules = normalizeSupportedTransports(Object.keys(client?.format_rules ?? {}));
+		const fromRules = normalizeSupportedTransports(Object.keys(client?.transports ?? {}));
 		if (fromRules.length > 0) return fromRules;
 		if (client?.transport) return normalizeSupportedTransports([client.transport]);
 		return [];
@@ -786,10 +819,10 @@ export function ClientFormDrawer({
 	onSuccess,
 	onDeleteSuccess,
 }: ClientFormDrawerProps) {
-	const { t, i18n } = useTranslation("clients");
+	const { t } = useTranslation("clients");
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
-	const formSchema = useMemo(() => createFormSchema(t), [t, i18n.language]);
+	const formSchema = useMemo(() => createFormSchema(t), [t]);
 	const [isHydrating, setIsHydrating] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -910,7 +943,7 @@ export function ClientFormDrawer({
 		});
 
 		previousSupportedTransportsRef.current = supportedTransports;
-	}, [client, i18n.language, isHydrating, supportedTransports, t]);
+	}, [client, isHydrating, supportedTransports, t]);
 
 	useEffect(() => {
 		if (isHydrating || mode !== "create") return;
@@ -937,11 +970,11 @@ export function ClientFormDrawer({
 			{ value: "local_without_config", label: t("detail.form.connectionShape.options.localWithoutConfig", { defaultValue: "Local / Unknown Config" }) },
 			{ value: "remote_http", label: t("detail.form.connectionShape.options.remoteHttp", { defaultValue: "Remote HTTP" }) },
 		],
-		[t, i18n.language],
+		[t],
 	);
 	const supportedTransportOptions = useMemo(
 		() => SUPPORTED_TRANSPORT_VALUES.map((transport) => ({ value: transport, label: getTransportSupportLabel(transport, t) })),
-		[t, i18n.language],
+		[t],
 	);
 	const configParseFormatOptions: SegmentOption[] = useMemo(
 		() => CONFIG_PARSE_FORMAT_VALUES.map((value) => ({ value, label: value.toUpperCase() })),
@@ -952,7 +985,7 @@ export function ClientFormDrawer({
 			{ value: "standard", label: t("detail.form.fields.configFileParse.containerTypeOptions.standard", { defaultValue: "Object Map" }) },
 			{ value: "array", label: t("detail.form.fields.configFileParse.containerTypeOptions.array", { defaultValue: "Array" }) },
 		],
-		[t, i18n.language],
+		[t],
 	);
 	const transportRuleValidationMessages = useMemo(
 		() => [
@@ -966,7 +999,7 @@ export function ClientFormDrawer({
 				defaultValue: "Type value is required when including the type field.",
 			}),
 		],
-		[t, i18n.language],
+		[t],
 	);
 	const isTransportRuleValidationError =
 		Boolean(formError) && transportRuleValidationMessages.includes(formError ?? "");
@@ -1163,24 +1196,30 @@ export function ClientFormDrawer({
 			const values = form.getValues();
 			const normalizedIdentifier = normalizeIdentifier(values.identifier);
 			const parseForSave = parseDraftFromValues(values);
-			const formatRules = hasWritableConfig(values)
-				&& (
-					mode === "create" ||
-					!isSameSupportedTransports(
-						initialSupportedTransportsRef.current,
-						values.supportedTransports,
-					) ||
-					transportRuleEditorsSignature(transportRuleEditors) !==
-					transportRuleEditorsSignature(transportRuleEditorsFromClient(client))
-				)
-				? buildTransportRulesPayload(
-					values.supportedTransports,
-					transportRuleEditors,
-					client,
-					t,
-				)
+			const hasWritableRules = hasWritableConfig(values);
+			const supportedTransportsChanged = !isSameSupportedTransports(
+				initialSupportedTransportsRef.current,
+				values.supportedTransports,
+			);
+			const transportEditorsChanged =
+				hasWritableRules &&
+				transportRuleEditorsSignature(transportRuleEditors) !==
+				transportRuleEditorsSignature(transportRuleEditorsFromClient(client));
+			const shouldPersistTransports =
+				mode === "create" || supportedTransportsChanged || transportEditorsChanged;
+			const transports = shouldPersistTransports
+				? mode === "edit" && !supportedTransportsChanged && !transportEditorsChanged
+					? (client?.transports ?? undefined)
+					: mode === "edit" && !hasWritableRules
+						? filterCurrentTransportPayload(client?.transports, values.supportedTransports)
+						: buildTransportRulesPayload(
+							values.supportedTransports,
+							transportRuleEditors,
+							client,
+							t,
+							hasWritableRules,
+						)
 				: undefined;
-
 			if (hasWritableConfig(values) && (parseForSave.container_keys?.length ?? 0) === 0) {
 				throw new Error(
 					t("detail.form.fields.configFileParse.keysRequired", {
@@ -1195,14 +1234,13 @@ export function ClientFormDrawer({
 				connection_mode: connectionShapeToMode(values.connectionShape),
 				config_path: hasWritableConfig(values) ? values.configPath?.trim() || undefined : undefined,
 				client_version: values.clientVersion?.trim() || undefined,
-				supported_transports: values.supportedTransports,
 				description: values.description || undefined,
 				homepage_url: values.homepageUrl || undefined,
 				docs_url: values.docsUrl || undefined,
 				support_url: values.supportUrl || undefined,
 				logo_url: values.logoUrl || undefined,
 				config_file_parse: hasWritableConfig(values) ? parseForSave : undefined,
-				format_rules: formatRules,
+				transports,
 			});
 
 			if (
@@ -1384,18 +1422,20 @@ export function ClientFormDrawer({
 									</FormItem>
 								)} />
 
-								<FormField control={form.control} name="supportedTransports" render={({ field }) => (
-									<FormItem className="space-y-0">
-										<div className="flex items-start gap-4">
-											<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>{t("detail.form.transportSupport.label", { defaultValue: "Transport Support" })}</FormLabel>
-											<div className="min-w-0 flex-1 space-y-2">
-												<FormControl><TransportSupportCombobox value={field.value} onChange={field.onChange} options={supportedTransportOptions} placeholder={t("detail.form.transportSupport.placeholder", { defaultValue: "Select supported transports" })} emptyText={t("detail.form.transportSupport.empty", { defaultValue: "No transports found." })} /></FormControl>
-												<FormDescription>{t("detail.form.transportSupport.description", { defaultValue: "Choose which runtime transports this client supports. This array is the only source used to constrain hosted/unify transport selection." })}</FormDescription>
-												<FormMessage />
+								{connectionShape === "local_with_config" ? (
+									<FormField control={form.control} name="supportedTransports" render={({ field }) => (
+										<FormItem className="space-y-0">
+											<div className="flex items-start gap-4">
+												<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>{t("detail.form.transportSupport.label", { defaultValue: "Transport Support" })}</FormLabel>
+												<div className="min-w-0 flex-1 space-y-2">
+													<FormControl><TransportSupportCombobox value={field.value} onChange={field.onChange} options={supportedTransportOptions} placeholder={t("detail.form.transportSupport.placeholder", { defaultValue: "Select supported transports" })} emptyText={t("detail.form.transportSupport.empty", { defaultValue: "No transports found." })} /></FormControl>
+													<FormDescription>{t("detail.form.transportSupport.description", { defaultValue: "Choose which runtime transports this client supports. This array is the only source used to constrain hosted/unify transport selection." })}</FormDescription>
+													<FormMessage />
+												</div>
 											</div>
-										</div>
-									</FormItem>
-								)} />
+										</FormItem>
+									)} />
+								) : null}
 
 								{connectionShape === "local_with_config" ? (
 									<>
@@ -1638,11 +1678,7 @@ export function ClientFormDrawer({
 										</div>
 
 									</>
-								) : (
-									<div className="ml-24 rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-										{t("detail.form.fields.configPath.unavailableHint", { defaultValue: "This client does not currently have a writable local config path, so file-based configuration management is unavailable." })}
-									</div>
-								)}
+								) : null}
 							</TabsContent>
 
 							<TabsContent value="meta" className="space-y-4 pt-4">

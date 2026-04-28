@@ -58,8 +58,8 @@ export const pageSpecificConfigs: Record<
 					defaultDirection: "desc",
 				},
 				{
-					value: "managed",
-					label: "Management Status",
+					value: "approval_status",
+					label: "Governance Status",
 					defaultDirection: "desc",
 				},
 			],

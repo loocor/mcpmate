@@ -807,6 +807,8 @@ export function ServerDetailPage() {
 	}, [serverLogsQuery.data?.events, logFilter]);
 	const serverEnabled = Boolean(server?.enabled ?? server?.globally_enabled);
 	const runtimeStatus = server?.status ?? (serverEnabled ? "idle" : "disabled");
+	const overviewActionButtonClass =
+		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
 	const showDefaultHeaders = useAppStore(
 		(state) => state.dashboardSettings.showDefaultHeaders,
 	);
@@ -962,7 +964,37 @@ export function ServerDetailPage() {
 							serverId={serverId}
 							viewMode={viewMode}
 						/>
-						{viewMode === VIEW_MODES.debug ? (
+						{viewMode === VIEW_MODES.browse ? (
+							<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => {
+										refreshCapabilitiesMutation.mutate();
+									}}
+									disabled={isOverviewRefreshing}
+									className={overviewActionButtonClass}
+								>
+									<RefreshCw
+										className={`h-4 w-4 ${isOverviewRefreshing ? "animate-spin" : ""}`}
+									/>
+									{t("detail.actions.refresh", {
+										defaultValue: "Refresh",
+									})}
+								</Button>
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => setIsEditOpen(true)}
+									className={overviewActionButtonClass}
+								>
+									<Edit3 className="h-4 w-4" />
+									{t("detail.actions.edit", {
+										defaultValue: "Edit",
+									})}
+								</Button>
+							</ButtonGroup>
+						) : viewMode === VIEW_MODES.debug ? (
 							<InspectorChannelControls
 								selected={requestedChannel}
 								active={channel}
@@ -1198,74 +1230,43 @@ export function ServerDetailPage() {
 															</span>
 														</div>
 													</div>
-													{viewMode === VIEW_MODES.browse ? (
-														<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-															<Button
-																size="sm"
-																variant="outline"
-																onClick={() => {
-																	refreshCapabilitiesMutation.mutate();
-																}}
-																disabled={isOverviewRefreshing}
-																className="gap-2"
-															>
-																<RefreshCw
-																	className={`h-4 w-4 ${isOverviewRefreshing ? "animate-spin" : ""}`}
-																/>
-																{t("detail.actions.refresh", {
-																	defaultValue: "Refresh",
-																})}
-															</Button>
-															<Button
-																size="sm"
-																variant="outline"
-																onClick={() => setIsEditOpen(true)}
-																className="gap-2"
-															>
-																<Edit3 className="h-4 w-4" />
-																{t("detail.actions.edit", {
-																	defaultValue: "Edit",
-																})}
-															</Button>
-															<Button
-																size="sm"
-																variant="outline"
-																onClick={() =>
-																	toggleServerM.mutate(!serverEnabled)
-																}
-																disabled={toggleServerM.isPending}
-																className="gap-2"
-															>
-																{serverEnabled ? (
-																	<>
-																		<PowerOff className="h-4 w-4" />
-																		{t("detail.actions.disable", {
-																			defaultValue: "Disable",
-																		})}
-																	</>
-																) : (
-																	<>
-																		<Power className="h-4 w-4" />
-																		{t("detail.actions.enable", {
-																			defaultValue: "Enable",
-																		})}
-																	</>
-																)}
-															</Button>
-															<Button
-																size="sm"
-																variant="destructive"
-																onClick={() => setIsDeleteOpen(true)}
-																disabled={deleteServerM.isPending}
-																className="gap-2"
-															>
-																<Trash2 className="h-4 w-4" />
-																{t("detail.actions.delete", {
-																	defaultValue: "Delete",
-																})}
-															</Button>
-														</ButtonGroup>
-													) : null}
+													<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+														<Button
+															size="sm"
+															variant="outline"
+															onClick={() => toggleServerM.mutate(!serverEnabled)}
+															disabled={toggleServerM.isPending}
+															className={overviewActionButtonClass}
+														>
+															{serverEnabled ? (
+																<>
+																	<PowerOff className="h-4 w-4" />
+																	{t("detail.actions.disable", {
+																		defaultValue: "Disable",
+																	})}
+																</>
+															) : (
+																<>
+																	<Power className="h-4 w-4" />
+																	{t("detail.actions.enable", {
+																		defaultValue: "Enable",
+																	})}
+																</>
+															)}
+														</Button>
+														<Button
+															size="sm"
+															variant="destructive"
+															onClick={() => setIsDeleteOpen(true)}
+															disabled={deleteServerM.isPending}
+															className={overviewActionButtonClass}
+														>
+															<Trash2 className="h-4 w-4" />
+															{t("detail.actions.delete", {
+																defaultValue: "Delete",
+															})}
+														</Button>
+													</ButtonGroup>
 												</div>
 											</div>
 										</CardContent>
@@ -1312,7 +1313,7 @@ export function ServerDetailPage() {
 											</CardContent>
 										</Card>
 									) : null}
-				{showServerLevelLogs && viewMode === VIEW_MODES.browse ? (
+									{showServerLevelLogs && viewMode === VIEW_MODES.browse ? (
 										<AuditLogsPanel
 											title={t("detail.logs.title", { defaultValue: "Logs" })}
 											description={t("detail.logs.description", {
@@ -1387,7 +1388,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("tool", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("tools/")}
-										showLogs={showServerLevelLogs}
+									showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
@@ -1406,7 +1407,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("prompt", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("prompts/")}
-										showLogs={showServerLevelLogs}
+									showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
@@ -1425,7 +1426,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("resource", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("resources/")}
-										showLogs={showServerLevelLogs}
+									showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
@@ -1444,7 +1445,7 @@ export function ServerDetailPage() {
 									onInspect={(item) => handleInspect("template", item)}
 									logs={logs}
 									onClearLogs={() => clearLogsByPrefix("templates/")}
-										showLogs={showServerLevelLogs}
+									showLogs={showServerLevelLogs}
 								/>
 							</div>
 						)}
