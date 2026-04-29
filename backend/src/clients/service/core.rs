@@ -451,11 +451,9 @@ fn effective_transports_for_state(state: &ClientStateRow) -> ConfigResult<HashMa
 }
 
 pub(crate) fn supported_transports_from_transports(transports: &HashMap<String, FormatRule>) -> Vec<String> {
-    let keymap = crate::clients::keymap::registry();
-
     ["streamable_http", "sse", "stdio"]
         .into_iter()
-        .filter(|transport| keymap.has_rule(transports, transport))
+        .filter(|transport| transports.contains_key(*transport))
         .map(str::to_string)
         .collect()
 }
@@ -1110,6 +1108,42 @@ mod render_definition_tests {
             .expect("render definition should derive transports from format rules");
 
         assert!(definition.config_mapping.format_rules.contains_key("streamable_http"));
+    }
+
+    #[test]
+    fn build_render_definition_requires_canonical_transport_keys() {
+        let state = ClientStateRow {
+            identifier: "cursor".to_string(),
+            config_path: Some("~/.cursor/mcp.json".to_string()),
+            connection_mode: Some("local_config_detected".to_string()),
+            template_identifier: Some("cursor".to_string()),
+            config_format: Some("json".to_string()),
+            container_type: Some("object".to_string()),
+            container_keys: Some("[\"mcpServers\"]".to_string()),
+            storage_kind: Some("file".to_string()),
+            storage_path_strategy: Some("config_path".to_string()),
+            merge_strategy: Some("replace".to_string()),
+            managed_source: Some("profile".to_string()),
+            transports: Some(
+                serde_json::json!({
+                    "http": {
+                        "template": {
+                            "type": "streamable_http",
+                            "url": "{{{url}}}"
+                        },
+                        "include_type": false
+                    }
+                })
+                .to_string(),
+            ),
+            approval_metadata: None,
+            ..ClientStateRow::default()
+        };
+
+        let error = ClientConfigService::build_render_definition_from_state(&state)
+            .expect_err("alias transport keys should be rejected");
+
+        assert!(error.to_string().contains("missing persisted transports"));
     }
 
     #[test]

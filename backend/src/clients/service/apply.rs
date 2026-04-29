@@ -8,9 +8,9 @@ use crate::clients::models::{ConfigMode, TemplateFormat};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-fn normalize_transport(transport: &str) -> Option<&'static str> {
-    match transport.trim().to_ascii_lowercase().as_str() {
-        "streamable_http" | "streamablehttp" | "http" => Some("streamable_http"),
+fn supported_transport_name(transport: &str) -> Option<&'static str> {
+    match transport {
+        "streamable_http" => Some("streamable_http"),
         "sse" => Some("sse"),
         "stdio" => Some("stdio"),
         _ => None,
@@ -24,7 +24,7 @@ fn available_managed_transports(transports: Option<&HashMap<String, FormatRule>>
 
     supported_transports_from_transports(rules)
         .into_iter()
-        .filter_map(|transport| normalize_transport(&transport))
+        .filter_map(|transport| supported_transport_name(&transport))
         .collect()
 }
 
@@ -44,9 +44,8 @@ fn select_managed_transport(
 
 fn selected_managed_transport(transports: Option<&HashMap<String, FormatRule>>) -> Option<&'static str> {
     let rules = transports?;
-    supported_transports_from_transports(rules)
+    ["streamable_http", "sse", "stdio"]
         .into_iter()
-        .filter_map(|transport| normalize_transport(&transport))
         .find(|transport| rules.get(*transport).is_some_and(|rule| rule.selected == Some(true)))
 }
 
@@ -340,4 +339,44 @@ struct ProbeEntry {
     args_len: u32,
     has_url: bool,
     has_command: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{available_managed_transports, selected_managed_transport};
+    use crate::clients::models::FormatRule;
+    use std::collections::HashMap;
+
+    #[test]
+    fn available_managed_transports_returns_only_canonical_keys() {
+        let mut transports = HashMap::new();
+        transports.insert("http".to_string(), FormatRule::default());
+        transports.insert("streamable_http".to_string(), FormatRule::default());
+        transports.insert("stdio".to_string(), FormatRule::default());
+
+        let available = available_managed_transports(Some(&transports));
+
+        assert_eq!(available, vec!["streamable_http", "stdio"]);
+    }
+
+    #[test]
+    fn selected_managed_transport_ignores_alias_keys() {
+        let mut transports = HashMap::new();
+        transports.insert(
+            "http".to_string(),
+            FormatRule {
+                selected: Some(true),
+                ..FormatRule::default()
+            },
+        );
+        transports.insert(
+            "streamable_http".to_string(),
+            FormatRule {
+                selected: Some(true),
+                ..FormatRule::default()
+            },
+        );
+
+        assert_eq!(selected_managed_transport(Some(&transports)), Some("streamable_http"));
+    }
 }
