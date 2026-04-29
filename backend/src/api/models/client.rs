@@ -62,8 +62,6 @@ pub struct ClientInfo {
     pub category: ClientCategory,
     #[schemars(description = "Whether client is enabled in MCPMate")]
     pub enabled: bool,
-    #[schemars(description = "Whether MCPMate manages this client")]
-    pub managed: bool,
     #[schemars(description = "Whether client is installed and detected")]
     pub detected: bool,
     #[schemars(description = "Installation path of the clientlication")]
@@ -74,11 +72,9 @@ pub struct ClientInfo {
     pub config_exists: bool,
     #[schemars(description = "Whether MCP servers are configured")]
     pub has_mcp_config: bool,
-    #[schemars(description = "Supported MCP transport protocols")]
-    pub supported_transports: Vec<String>,
     #[schemars(description = "Persisted fine-grained transport rules for this client")]
     #[serde(default)]
-    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
+    pub transports: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
     #[schemars(description = "Short description of the client application")]
     #[serde(default)]
     pub description: Option<String>,
@@ -123,9 +119,12 @@ pub struct ClientInfo {
     pub mcp_servers_count: Option<u32>,
     #[schemars(description = "Template metadata summary for this client")]
     pub template: ClientTemplateMetadata,
-    #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
+    #[schemars(description = "Approval status of the client (pending/approved/suspended)")]
     #[serde(default)]
     pub approval_status: Option<String>,
+    #[schemars(description = "External client attachment state (attached/detached/not_applicable)")]
+    #[serde(default)]
+    pub attachment_state: Option<String>,
     #[schemars(description = "Runtime governance kind (passive or active)")]
     #[serde(default)]
     pub governance_kind: Option<String>,
@@ -247,15 +246,6 @@ pub struct ClientConfigUpdateData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Client management state response")]
-pub struct ClientManageData {
-    #[schemars(description = "Client identifier")]
-    pub identifier: String,
-    #[schemars(description = "Whether MCPMate manages this client")]
-    pub managed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Delete a client record")]
 pub struct ClientDeleteReq {
     #[schemars(description = "Client identifier")]
@@ -345,13 +335,9 @@ pub struct ClientConfigData {
     pub import_summary: Option<ClientImportSummary>,
     #[schemars(description = "Template metadata summary for this client")]
     pub template: ClientTemplateMetadata,
-    #[schemars(description = "Supported transports derived from the template")]
-    pub supported_transports: Vec<String>,
     #[schemars(description = "Persisted fine-grained transport rules for this client")]
     #[serde(default)]
-    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
-    #[schemars(description = "Whether MCPMate manages this client")]
-    pub managed: bool,
+    pub transports: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
     #[schemars(description = "Short description of the client application")]
     #[serde(default)]
     pub description: Option<String>,
@@ -379,9 +365,12 @@ pub struct ClientConfigData {
     #[schemars(description = "Whether the current custom capability profile is missing or no longer resolvable")]
     #[serde(default)]
     pub custom_profile_missing: bool,
-    #[schemars(description = "Approval status of the client (pending/approved/suspended/rejected)")]
+    #[schemars(description = "Approval status of the client (pending/approved/suspended)")]
     #[serde(default)]
     pub approval_status: Option<String>,
+    #[schemars(description = "External client attachment state (attached/detached/not_applicable)")]
+    #[serde(default)]
+    pub attachment_state: Option<String>,
     #[schemars(description = "Runtime governance kind (passive or active)")]
     #[serde(default)]
     pub governance_kind: Option<String>,
@@ -501,6 +490,8 @@ pub struct ClientFormatRuleData {
     pub headers_field: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_fields: Option<std::collections::HashMap<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -570,7 +561,6 @@ api_resp!(
     ClientConfigImportData,
     "Client configuration import response"
 );
-api_resp!(ClientManageResp, ClientManageData, "Client management toggle response");
 api_resp!(ClientDeleteResp, ClientDeleteData, "Client deletion response");
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -682,9 +672,6 @@ pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Runtime config path when the client uses a local config target")]
     #[serde(default)]
     pub config_path: Option<String>,
-    #[schemars(description = "Supported transports explicitly declared for runtime-only active clients")]
-    #[serde(default)]
-    pub supported_transports: Option<Vec<String>>,
     #[schemars(description = "Short description of the client application")]
     #[serde(default)]
     pub description: Option<String>,
@@ -710,10 +697,10 @@ pub struct ClientSettingsUpdateReq {
     pub clear_config_file_parse: bool,
     #[schemars(description = "Fine-grained transport rules to persist for runtime rendering")]
     #[serde(default)]
-    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
+    pub transports: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
     #[schemars(description = "Clear persisted fine-grained transport rules")]
     #[serde(default)]
-    pub clear_format_rules: bool,
+    pub clear_transports: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -731,9 +718,7 @@ pub struct ClientSettingsUpdateData {
     #[serde(default)]
     pub config_path: Option<String>,
     #[serde(default)]
-    pub supported_transports: Vec<String>,
-    #[serde(default)]
-    pub format_rules: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
+    pub transports: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -838,8 +823,6 @@ pub struct ClientApproveData {
     pub identifier: String,
     #[schemars(description = "New approval status after operation")]
     pub approval_status: String,
-    #[schemars(description = "Whether the client is now managed")]
-    pub managed: bool,
 }
 
 api_resp!(ClientApproveResp, ClientApproveData, "Client approval response");
@@ -858,8 +841,6 @@ pub struct ClientSuspendData {
     pub identifier: String,
     #[schemars(description = "New approval status after operation")]
     pub approval_status: String,
-    #[schemars(description = "Whether the client is still managed")]
-    pub managed: bool,
 }
 
 api_resp!(ClientSuspendResp, ClientSuspendData, "Client suspend response");
@@ -915,40 +896,6 @@ pub struct ClientConfigUpdateReq {
     #[serde(default)]
     #[schemars(description = "Optional backup policy to persist before applying configuration")]
     pub backup_policy: Option<ClientBackupPolicyPayload>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(description = "Client management request payload")]
-pub struct ClientManageReq {
-    #[schemars(description = "Client identifier")]
-    pub identifier: String,
-    #[schemars(description = "Management action: enable or disable")]
-    pub action: ClientManageAction,
-}
-
-#[derive(Debug, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-#[schemars(description = "Management action enum")]
-pub enum ClientManageAction {
-    Enable,
-    Disable,
-}
-
-impl<'de> serde::Deserialize<'de> for ClientManageAction {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        match s.to_ascii_lowercase().as_str() {
-            "enable" => Ok(ClientManageAction::Enable),
-            "disable" => Ok(ClientManageAction::Disable),
-            other => Err(serde::de::Error::custom(format!(
-                "invalid action '{}', allowed: enable|disable (case-insensitive)",
-                other
-            ))),
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
@@ -1038,9 +985,47 @@ pub struct ApprovalResponse {
     pub identifier: String,
     #[schemars(description = "Updated approval status")]
     pub status: String,
-    #[schemars(description = "Whether client is managed after approval")]
-    pub managed: bool,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Detach MCPMate from an external client configuration")]
+pub struct ClientDetachReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client detach response body")]
+pub struct ClientDetachData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "New attachment state after operation")]
+    pub attachment_state: String,
+    #[schemars(description = "Whether the external client config file was changed")]
+    pub changed: bool,
+}
+
+api_resp!(ClientDetachResp, ClientDetachData, "Client detach response");
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Re-attach MCPMate to an external client configuration")]
+pub struct ClientAttachReq {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Client attach response body")]
+pub struct ClientAttachData {
+    #[schemars(description = "Client identifier")]
+    pub identifier: String,
+    #[schemars(description = "New attachment state after operation")]
+    pub attachment_state: String,
+    #[schemars(description = "Whether the external client config file was updated")]
+    pub changed: bool,
+}
+
+api_resp!(ClientAttachResp, ClientAttachData, "Client attach response");
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Onboarding policy update request")]

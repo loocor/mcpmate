@@ -17,7 +17,7 @@ pub(crate) const DEFAULT_CONFIG_MODE: &str = "unify";
 const OPTIONAL_CONFIG_MODE_SCHEMA_FRAGMENT: &str =
     "config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent'))";
 
-/// Initialize client management table (identifier-managed/policy metadata)
+/// Initialize client configuration state table.
 pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Initializing client management table");
 
@@ -31,7 +31,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             display_name TEXT,
             identifier TEXT NOT NULL UNIQUE,
             config_path TEXT,
-            managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
             -- Management mode: unify|hosted|transparent; NULL means use default mode
             config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
             -- Transport protocol: auto|sse|stdio|streamable_http (default: auto)
@@ -57,6 +56,12 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             selected_profile_ids TEXT,
             custom_profile_id TEXT,
             unify_direct_exposure_intent TEXT,
+            approval_status TEXT NOT NULL DEFAULT 'approved' CHECK (
+                approval_status IN ('pending', 'approved', 'suspended')
+            ),
+            attachment_state TEXT NOT NULL DEFAULT 'not_applicable' CHECK (
+                attachment_state IN ('attached', 'detached', 'not_applicable')
+            ),
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -124,7 +129,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         pool,
         tables::CLIENT,
         "approval_status",
-        "TEXT NOT NULL DEFAULT 'approved' CHECK (approval_status IN ('pending', 'approved', 'suspended', 'rejected'))",
+        "TEXT NOT NULL DEFAULT 'approved' CHECK (approval_status IN ('pending', 'approved', 'suspended'))",
     )
     .await?;
     ensure_column(pool, tables::CLIENT, "template_id", "TEXT").await?;
@@ -142,8 +147,15 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     ensure_column(pool, tables::CLIENT, "merge_strategy", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "keep_original_config", "INTEGER").await?;
     ensure_column(pool, tables::CLIENT, "managed_source", "TEXT").await?;
-    ensure_column(pool, tables::CLIENT, "format_rules", "TEXT").await?;
+    ensure_column(pool, tables::CLIENT, "transports", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "config_file_parse", "TEXT").await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "attachment_state",
+        "TEXT NOT NULL DEFAULT 'not_applicable' CHECK (attachment_state IN ('attached', 'detached', 'not_applicable'))",
+    )
+    .await?;
 
     sqlx::query(&format!(
         r#"
@@ -230,8 +242,7 @@ WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'a
             WHEN capability_source IS NOT NULL AND capability_source <> 'activated' THEN 'active' \
             WHEN selected_profile_ids IS NOT NULL AND TRIM(selected_profile_ids) <> '' THEN 'active' \
             WHEN custom_profile_id IS NOT NULL AND TRIM(custom_profile_id) <> '' THEN 'active' \
-            WHEN approval_status IN ('rejected', 'suspended') THEN 'active' \
-            WHEN approval_status = 'approved' AND managed = 0 THEN 'active' \
+            WHEN approval_status = 'suspended' THEN 'active' \
             ELSE ? END \
          WHERE governance_kind IS NULL OR governance_kind = ''",
         table = tables::CLIENT,
@@ -351,7 +362,6 @@ async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> R
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 identifier TEXT NOT NULL UNIQUE,
-                managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
                 config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
                 transport TEXT NOT NULL DEFAULT 'auto' CHECK (
                     transport IN ('auto', 'sse', 'stdio', 'streamable_http')
@@ -381,12 +391,12 @@ async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> R
         sqlx::query(&format!(
             r#"
             INSERT INTO {temp_table} (
-                id, name, identifier, managed, config_mode, transport, client_version,
+                id, name, identifier, config_mode, transport, client_version,
                 backup_policy, backup_limit, capability_source, selected_profile_ids,
                 custom_profile_id, created_at, updated_at
             )
             SELECT
-                id, name, identifier, managed,
+                id, name, identifier,
                 config_mode, transport, client_version,
                 backup_policy, backup_limit, capability_source, selected_profile_ids,
                 custom_profile_id, created_at, updated_at
@@ -452,7 +462,6 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                 display_name TEXT,
                 identifier TEXT NOT NULL UNIQUE,
                 config_path TEXT,
-                managed INTEGER NOT NULL DEFAULT 1 CHECK (managed IN (0, 1)),
                 config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
                 transport TEXT NOT NULL DEFAULT 'auto' CHECK (
                     transport IN ('auto', 'sse', 'stdio', 'streamable_http')
@@ -476,7 +485,7 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                 custom_profile_id TEXT,
                 unify_direct_exposure_intent TEXT,
                 approval_status TEXT NOT NULL DEFAULT 'approved' CHECK (
-                    approval_status IN ('pending', 'approved', 'suspended', 'rejected')
+                    approval_status IN ('pending', 'approved', 'suspended')
                 ),
                 template_id TEXT,
                 template_version TEXT,
@@ -491,8 +500,11 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                 merge_strategy TEXT,
                 keep_original_config INTEGER,
                 managed_source TEXT,
-                format_rules TEXT,
+                transports TEXT,
                 config_file_parse TEXT,
+                attachment_state TEXT NOT NULL DEFAULT 'not_applicable' CHECK (
+                    attachment_state IN ('attached', 'detached', 'not_applicable')
+                ),
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -510,23 +522,25 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
         sqlx::query(&format!(
             r#"
             INSERT INTO {temp_table} (
-                id, name, display_name, identifier, config_path, managed, config_mode, transport,
+                id, name, display_name, identifier, config_path, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
                 connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
                 unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
-                merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse,
+                merge_strategy, keep_original_config, managed_source, transports, config_file_parse,
+                attachment_state,
                 created_at, updated_at
             )
             SELECT
-                id, name, display_name, identifier, config_path, managed, config_mode, transport,
+                id, name, display_name, identifier, config_path, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
                 connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
                 unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
                 merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse,
+                attachment_state,
                 created_at, updated_at
             FROM {table}
             "#,

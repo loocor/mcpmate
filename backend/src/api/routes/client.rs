@@ -1,12 +1,12 @@
 use crate::api::handlers::client;
 use crate::api::models::client::{
-    ApprovalRequest, ApprovalResponse, ClientBackupActionResp, ClientBackupListReq, ClientBackupListResp,
-    ClientBackupOperateReq, ClientBackupPolicyReq, ClientBackupPolicyResp, ClientBackupPolicySetReq,
-    ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp,
+    ApprovalRequest, ApprovalResponse, ClientAttachReq, ClientAttachResp, ClientBackupActionResp, ClientBackupListReq,
+    ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq, ClientBackupPolicyResp,
+    ClientBackupPolicySetReq, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp,
     ClientConfigFileParseInspectExistingReq, ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq,
     ClientConfigFileParseInspectResp, ClientConfigImportReq, ClientConfigImportResp, ClientConfigReq, ClientConfigResp,
     ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientDeleteReq, ClientDeleteResp,
-    ClientManageReq, ClientManageResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
+    ClientDetachReq, ClientDetachResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -66,14 +66,6 @@ aide_wrapper_payload!(
     ClientConfigImportReq,
     ClientConfigImportResp,
     "Preview or import servers from client's existing configuration"
-);
-
-// Management toggle
-aide_wrapper_payload!(
-    client::manage,
-    ClientManageReq,
-    ClientManageResp,
-    "Enable or disable MCPMate management for a client"
 );
 
 aide_wrapper_payload!(
@@ -142,17 +134,24 @@ aide_wrapper_payload!(
 );
 
 aide_wrapper_payload!(
-    client::reject_client,
-    ApprovalRequest,
-    ApprovalResponse,
-    "Reject a pending client"
-);
-
-aide_wrapper_payload!(
     client::suspend_client,
     ApprovalRequest,
     ApprovalResponse,
-    "Suspend a client to disable management"
+    "Suspend a client"
+);
+
+aide_wrapper_payload!(
+    client::client_detach,
+    ClientDetachReq,
+    ClientDetachResp,
+    "Detach MCPMate from a client's configuration"
+);
+
+aide_wrapper_payload!(
+    client::client_attach,
+    ClientAttachReq,
+    ClientAttachResp,
+    "Re-attach MCPMate to a client's external configuration"
 );
 
 /// Create client management routes
@@ -183,7 +182,6 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/client/config/import",
             post_with(config_import_aide, config_import_docs),
         )
-        .api_route("/client/manage", post_with(manage_aide, manage_docs))
         .api_route("/client/delete", post_with(delete_client_aide, delete_client_docs))
         .api_route("/client/update", post_with(update_settings_aide, update_settings_docs))
         .api_route(
@@ -206,12 +204,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             post_with(approve_client_aide, approve_client_docs),
         )
         .api_route(
-            "/client/manage/reject",
-            post_with(reject_client_aide, reject_client_docs),
-        )
-        .api_route(
             "/client/manage/suspend",
             post_with(suspend_client_aide, suspend_client_docs),
         )
+        .api_route("/client/detach", post_with(client_detach_aide, client_detach_docs))
+        .api_route("/client/attach", post_with(client_attach_aide, client_attach_docs))
         .with_state(state)
 }

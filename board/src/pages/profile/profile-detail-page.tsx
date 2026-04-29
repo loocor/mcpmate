@@ -728,6 +728,8 @@ export function ProfileDetailPage() {
 		refetchTemplates();
 		invalidateProfileCapabilityLedger();
 	};
+	const overviewActionButtonClass =
+		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
 
 	const handleEditDrawerClose = (open: boolean) => {
 		setIsEditDialogOpen(open);
@@ -968,6 +970,29 @@ export function ProfileDetailPage() {
 								{t("profiles:detail.tabs.templates", { defaultValue: "Templates" })} ({enabledTemplates.length}/{templates.length})
 							</TabsTrigger>
 						</TabsList>
+						<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={handleRefreshAll}
+								disabled={isRefetchingSuit}
+								className={overviewActionButtonClass}
+							>
+								<RefreshCw
+									className={`h-4 w-4 ${isRefetchingSuit ? "animate-spin" : ""}`}
+								/>
+								{t("profiles:detail.buttons.refresh", { defaultValue: "Refresh" })}
+							</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								onClick={() => setIsEditDialogOpen(true)}
+								className={overviewActionButtonClass}
+							>
+								<Edit3 className="h-4 w-4" />
+								{t("profiles:detail.buttons.edit", { defaultValue: "Edit" })}
+							</Button>
+						</ButtonGroup>
 					</div>
 
 					<TabsContent
@@ -976,7 +1001,21 @@ export function ProfileDetailPage() {
 					>
 						<div className="grid gap-4">
 							<Card>
-								<CardContent className="p-4">
+								<CardContent className="relative p-4">
+									{!isHostApp && !isCustomMode && (
+										<div className="absolute right-4 top-4">
+											<Button
+												variant="destructive"
+												size="sm"
+												onClick={() => setIsDeleteDialogOpen(true)}
+												disabled={!!suit?.is_default}
+												className="gap-2"
+											>
+												<Trash2 className="h-4 w-4" />
+												{t("profiles:detail.buttons.delete", { defaultValue: "Delete" })}
+											</Button>
+										</div>
+									)}
 									<div className="flex flex-col gap-4">
 										<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
 											<div className="flex flex-wrap items-start gap-4">
@@ -1024,27 +1063,6 @@ export function ProfileDetailPage() {
 												</div>
 											</div>
 											<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={handleRefreshAll}
-													disabled={isRefetchingSuit}
-													className="gap-2"
-												>
-													<RefreshCw
-														className={`h-4 w-4 ${isRefetchingSuit ? "animate-spin" : ""}`}
-													/>
-													{t("profiles:detail.buttons.refresh", { defaultValue: "Refresh" })}
-												</Button>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => setIsEditDialogOpen(true)}
-													className="gap-2"
-												>
-													<Edit3 className="h-4 w-4" />
-													{t("profiles:detail.buttons.edit", { defaultValue: "Edit" })}
-												</Button>
 												{suitRole === "user" && !isHostApp && !isCustomMode && (
 													<Button
 														variant="outline"
@@ -1055,26 +1073,16 @@ export function ProfileDetailPage() {
 															activateSuitMutation.isPending ||
 															deactivateSuitMutation.isPending
 														}
-														className="gap-2"
+														className={overviewActionButtonClass}
 													>
 														{suit?.is_active ? (
 															<Square className="h-4 w-4" />
 														) : (
 															<Play className="h-4 w-4" />
 														)}
-														{suit?.is_active ? t("profiles:detail.buttons.disable", { defaultValue: "Disable" }) : t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
-													</Button>
-												)}
-												{!isHostApp && !isCustomMode && (
-													<Button
-														variant="destructive"
-														size="sm"
-														onClick={() => setIsDeleteDialogOpen(true)}
-														disabled={!!suit?.is_default}
-														className="gap-2"
-													>
-														<Trash2 className="h-4 w-4" />
-														{t("profiles:detail.buttons.delete", { defaultValue: "Delete" })}
+														{suit?.is_active
+															? t("profiles:detail.buttons.disable", { defaultValue: "Disable" })
+															: t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
 													</Button>
 												)}
 											</ButtonGroup>

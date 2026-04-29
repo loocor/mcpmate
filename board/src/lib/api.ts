@@ -28,9 +28,9 @@ import type {
 	ClientConfigUpdateReq,
 	ClientConfigUpdateResp,
 	ClientDeleteResp,
-	ClientFormatRuleData,
-	ClientManageAction,
-	ClientManageResp,
+	ClientAttachResp,
+	ClientDetachResp,
+ TransportRuleData,
 	ClientRecordLifecycleResp,
 	ClientRecordReviewReq,
 	ConfigPreset,
@@ -267,6 +267,17 @@ async function fetchCapabilityList(
 	} catch {
 		return capabilityTransportErrorResult();
 	}
+}
+
+async function fetchConfigSuitCapabilityList(
+	path: string,
+	serverId: string,
+	refresh?: "auto" | "force" | "cache",
+) {
+	const q = new URLSearchParams({ id: serverId });
+	if (refresh) q.set("refresh", refresh);
+	const resp = await fetchApi<ServerCapabilityResp>(`${path}?${q}`);
+	return extractApiData(resp);
 }
 
 /** Row shape from `/api/mcp/profile/list` */
@@ -612,6 +623,74 @@ const enrichServerRecord = <T extends Record<string, unknown>>(server: T) => {
 	};
 };
 
+function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): ServerDetail {
+	const enabledValue =
+		typeof enhanced?.enabled === "boolean"
+			? enhanced.enabled
+			: typeof enhanced?.globally_enabled === "boolean"
+				? enhanced.globally_enabled
+				: undefined;
+
+	const instances = Array.isArray(enhanced?.instances)
+		? (enhanced.instances as InstanceSummary[])
+		: [];
+
+	const detailRecord = enhanced as Record<string, unknown>;
+	const registryServerId = asStringOrNull(
+		detailRecord.registry_server_id ?? detailRecord.registryServerId,
+	);
+
+	const serverType =
+		toTrimmedString(detailRecord.server_type as string | undefined) ??
+		toTrimmedString(detailRecord.kind as string | undefined);
+
+	const displayName = asOptionalString(detailRecord.name) ?? id;
+
+	return {
+		id: asOptionalString(detailRecord.id) ?? id,
+		name: displayName,
+		status:
+			(typeof enhanced?.status === "string" && enhanced.status) || "unknown",
+		server_type: serverType,
+		registry_server_id: registryServerId,
+		enabled: enabledValue,
+		unify_direct_exposure_eligible:
+			typeof enhanced?.unify_direct_exposure_eligible === "boolean"
+				? enhanced.unify_direct_exposure_eligible
+				: undefined,
+		globally_enabled:
+			typeof enhanced?.globally_enabled === "boolean"
+				? enhanced.globally_enabled
+				: undefined,
+		enabled_in_suits:
+			typeof enhanced?.enabled_in_suits === "boolean"
+				? enhanced.enabled_in_suits
+				: undefined,
+		enabled_in_profile:
+			typeof enhanced?.enabled_in_profile === "boolean"
+				? enhanced.enabled_in_profile
+				: undefined,
+		instances,
+		command: asOptionalString(detailRecord.command),
+		args: Array.isArray(enhanced?.args)
+			? (enhanced.args as string[])
+			: undefined,
+		env:
+			typeof enhanced?.env === "object" && enhanced?.env !== null
+				? (enhanced.env as Record<string, string>)
+				: undefined,
+		url: typeof enhanced?.url === "string" ? enhanced.url : undefined,
+		auth_mode: asOptionalString(detailRecord.auth_mode) ?? null,
+		oauth_status: asOptionalString(detailRecord.oauth_status) ?? null,
+		headers:
+			typeof enhanced?.headers === "object" && enhanced?.headers !== null
+				? (enhanced.headers as Record<string, string>)
+				: undefined,
+		meta: enhanced?.meta,
+		icons: enhanced?.icons,
+	};
+}
+
 // Core API request function
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
 	const isRelative = !API_BASE_URL;
@@ -807,135 +886,8 @@ export const serversApi = {
 			);
 			const data = (resp?.data ?? {}) as Record<string, unknown>;
 			const enhanced = enrichServerRecord(data);
-			const detailRecord = enhanced as Record<string, unknown>;
-			const enabledValue =
-				typeof enhanced?.enabled === "boolean"
-					? enhanced.enabled
-					: typeof enhanced?.globally_enabled === "boolean"
-						? enhanced.globally_enabled
-						: undefined;
 
-			const instances = Array.isArray(enhanced?.instances)
-				? (enhanced.instances as InstanceSummary[])
-				: [];
-
-			const metaRecord =
-				enhanced.meta && typeof enhanced.meta === "object"
-					? (enhanced.meta as Record<string, unknown>)
-					: undefined;
-			const rawStatus = (
-				enhanced.status ??
-				enhanced.state ??
-				enhanced.runtime_status ??
-				metaRecord?.state ??
-				""
-			)
-				.toString()
-				.toLowerCase();
-
-			const statusMap: Record<string, string> = {
-				ready: "ready",
-				running: "ready",
-				connected: "ready",
-				busy: "busy",
-				active: "ready",
-				healthy: "ready",
-				idle: "idle",
-				unload: enabledValue ? "idle" : "disabled",
-				unloaded: enabledValue ? "idle" : "disabled",
-				disabled: "disabled",
-				offline: "shutdown",
-				stopped: "stopped",
-				stopping: "stopped",
-				error: "error",
-				failed: "error",
-				unknown: "unknown",
-			};
-
-			const hasActiveInstance = instances.some((instance) =>
-				[
-					"ready",
-					"running",
-					"connected",
-					"busy",
-					"active",
-					"healthy",
-					"thinking",
-					"fetch",
-				].includes((instance.status || "").toLowerCase()),
-			);
-			const hasInitializingInstance = instances.some((instance) =>
-				["initializing", "starting", "connecting"].includes(
-					(instance.status || "").toLowerCase(),
-				),
-			);
-			const hasErrorInstance = instances.some((instance) =>
-				["error", "unhealthy", "stopped", "failed"].includes(
-					(instance.status || "").toLowerCase(),
-				),
-			);
-
-			let normalizedStatus = statusMap[rawStatus] ?? rawStatus;
-			if (!normalizedStatus) {
-				if (hasActiveInstance) normalizedStatus = "ready";
-				else if (hasInitializingInstance) normalizedStatus = "initializing";
-				else if (hasErrorInstance) normalizedStatus = "error";
-				else normalizedStatus = enabledValue ? "idle" : "disabled";
-			}
-
-			const erDetail = enhanced as unknown as Record<string, unknown>;
-			const registryServerId = asStringOrNull(
-				erDetail.registry_server_id ?? erDetail.registryServerId,
-			);
-
-			const serverType =
-				toTrimmedString(erDetail.server_type as string | undefined) ??
-				toTrimmedString(erDetail.kind as string | undefined);
-
-			const displayName = asOptionalString(erDetail.name) ?? id;
-
-			return {
-				id: asOptionalString(erDetail.id) ?? id,
-				name: displayName,
-				status: normalizedStatus,
-				server_type: serverType,
-				registry_server_id: registryServerId,
-				enabled: enabledValue,
-				unify_direct_exposure_eligible:
-					typeof enhanced?.unify_direct_exposure_eligible === "boolean"
-						? enhanced.unify_direct_exposure_eligible
-						: undefined,
-				globally_enabled:
-					typeof enhanced?.globally_enabled === "boolean"
-						? enhanced.globally_enabled
-						: undefined,
-				enabled_in_suits:
-					typeof enhanced?.enabled_in_suits === "boolean"
-						? enhanced.enabled_in_suits
-						: undefined,
-				enabled_in_profile:
-					typeof enhanced?.enabled_in_profile === "boolean"
-						? enhanced.enabled_in_profile
-						: undefined,
-				instances,
-				command: asOptionalString(erDetail.command),
-				args: Array.isArray(enhanced?.args)
-					? (enhanced.args as string[])
-					: undefined,
-				env:
-					typeof enhanced?.env === "object" && enhanced?.env !== null
-						? (enhanced.env as Record<string, string>)
-						: undefined,
-				url: typeof enhanced?.url === "string" ? enhanced.url : undefined,
-				auth_mode: asOptionalString(detailRecord.auth_mode) ?? null,
-				oauth_status: asOptionalString(detailRecord.oauth_status) ?? null,
-				headers:
-					typeof enhanced?.headers === "object" && enhanced?.headers !== null
-						? (enhanced.headers as Record<string, string>)
-						: undefined,
-				meta: enhanced?.meta,
-				icons: enhanced?.icons,
-			};
+			return normalizeServerDetail(enhanced, id);
 		} catch (error) {
 			console.error(`Error fetching server details for ${id}:`, error);
 			return {
@@ -958,65 +910,8 @@ export const serversApi = {
 		);
 		const data = extractApiData(resp as unknown as ApiWrapper<ServerDetail>) as unknown as Record<string, unknown>;
 		const enhanced = enrichServerRecord(data);
-		const enabledValue =
-			typeof enhanced?.enabled === "boolean"
-				? enhanced.enabled
-				: typeof enhanced?.globally_enabled === "boolean"
-					? enhanced.globally_enabled
-					: undefined;
-		const instances = Array.isArray(enhanced?.instances)
-			? (enhanced.instances as InstanceSummary[])
-			: [];
-		const detailRecord = enhanced as unknown as Record<string, unknown>;
-		const registryServerId = asStringOrNull(
-			detailRecord.registry_server_id ?? detailRecord.registryServerId,
-		);
-		const serverType =
-			toTrimmedString(detailRecord.server_type as string | undefined) ??
-			toTrimmedString(detailRecord.kind as string | undefined);
-		return {
-			id: asOptionalString(detailRecord.id) ?? id,
-			name: asOptionalString(detailRecord.name) ?? id,
-			status:
-				(typeof enhanced?.status === "string" && enhanced.status) || "unknown",
-			server_type: serverType,
-			registry_server_id: registryServerId,
-			enabled: enabledValue,
-			unify_direct_exposure_eligible:
-				typeof enhanced?.unify_direct_exposure_eligible === "boolean"
-					? enhanced.unify_direct_exposure_eligible
-					: undefined,
-			globally_enabled:
-				typeof enhanced?.globally_enabled === "boolean"
-					? enhanced.globally_enabled
-					: undefined,
-			enabled_in_suits:
-				typeof enhanced?.enabled_in_suits === "boolean"
-					? enhanced.enabled_in_suits
-					: undefined,
-			enabled_in_profile:
-				typeof enhanced?.enabled_in_profile === "boolean"
-					? enhanced.enabled_in_profile
-					: undefined,
-			instances,
-			command: asOptionalString(detailRecord.command),
-			args: Array.isArray(enhanced?.args)
-				? (enhanced.args as string[])
-				: undefined,
-			env:
-				typeof enhanced?.env === "object" && enhanced?.env !== null
-					? (enhanced.env as Record<string, string>)
-					: undefined,
-			url: typeof enhanced?.url === "string" ? enhanced.url : undefined,
-			auth_mode: asOptionalString(detailRecord.auth_mode) ?? null,
-			oauth_status: asOptionalString(detailRecord.oauth_status) ?? null,
-			headers:
-				typeof enhanced?.headers === "object" && enhanced?.headers !== null
-					? (enhanced.headers as Record<string, string>)
-					: undefined,
-			meta: enhanced?.meta,
-			icons: enhanced?.icons,
-		};
+
+		return normalizeServerDetail(enhanced, id);
 	},
 
 	getInstances: async (serverId: string) => {
@@ -1975,45 +1870,16 @@ export const configSuitsApi = {
 	},
 	// Server capabilities
 	listTools: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
-		const q = new URLSearchParams({ id: serverId });
-		if (refresh) q.set("refresh", refresh);
-		const resp = await fetchApi<ServerCapabilityResp>(
-			`/api/mcp/servers/tools?${q}`,
-		);
-		return extractApiData(resp);
+		return fetchConfigSuitCapabilityList("/api/mcp/servers/tools", serverId, refresh);
 	},
-	listResources: async (
-		serverId: string,
-		refresh?: "auto" | "force" | "cache",
-	) => {
-		const q = new URLSearchParams({ id: serverId });
-		if (refresh) q.set("refresh", refresh);
-		const resp = await fetchApi<ServerCapabilityResp>(
-			`/api/mcp/servers/resources?${q}`,
-		);
-		return extractApiData(resp);
+	listResources: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
+		return fetchConfigSuitCapabilityList("/api/mcp/servers/resources", serverId, refresh);
 	},
-	listPrompts: async (
-		serverId: string,
-		refresh?: "auto" | "force" | "cache",
-	) => {
-		const q = new URLSearchParams({ id: serverId });
-		if (refresh) q.set("refresh", refresh);
-		const resp = await fetchApi<ServerCapabilityResp>(
-			`/api/mcp/servers/prompts?${q}`,
-		);
-		return extractApiData(resp);
+	listPrompts: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
+		return fetchConfigSuitCapabilityList("/api/mcp/servers/prompts", serverId, refresh);
 	},
-	listResourceTemplates: async (
-		serverId: string,
-		refresh?: "auto" | "force" | "cache",
-	) => {
-		const q = new URLSearchParams({ id: serverId });
-		if (refresh) q.set("refresh", refresh);
-		const resp = await fetchApi<ServerCapabilityResp>(
-			`/api/mcp/servers/resources/templates?${q}`,
-		);
-		return extractApiData(resp);
+	listResourceTemplates: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
+		return fetchConfigSuitCapabilityList("/api/mcp/servers/resources/templates", serverId, refresh);
 	},
 
 	getSuit: async (id: string): Promise<ConfigSuit> => {
@@ -2563,14 +2429,6 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
-	manage: async (identifier: string, action: ClientManageAction) => {
-		const resp = await fetchApi<ClientManageResp>("/api/client/manage", {
-			method: "POST",
-			body: JSON.stringify({ identifier, action }),
-		});
-		return extractApiData(resp);
-	},
-
 	deleteRecord: async (identifier: string) => {
 		const resp = await fetchApi<ClientDeleteResp>("/api/client/delete", {
 			method: "POST",
@@ -2586,18 +2444,27 @@ export const clientsApi = {
 		});
 	},
 
-	rejectRecord: async (payload: ClientRecordReviewReq) => {
-		return fetchApi<ClientRecordLifecycleResp>("/api/client/manage/reject", {
-			method: "POST",
-			body: JSON.stringify(payload),
-		});
-	},
-
 	suspendRecord: async (payload: ClientRecordReviewReq) => {
 		return fetchApi<ClientRecordLifecycleResp>("/api/client/manage/suspend", {
 			method: "POST",
 			body: JSON.stringify(payload),
 		});
+	},
+
+	detach: async (identifier: string) => {
+		const resp = await fetchApi<ClientDetachResp>("/api/client/detach", {
+			method: "POST",
+			body: JSON.stringify({ identifier }),
+		});
+		return extractApiData(resp);
+	},
+
+	attach: async (identifier: string) => {
+		const resp = await fetchApi<ClientAttachResp>("/api/client/attach", {
+			method: "POST",
+			body: JSON.stringify({ identifier }),
+		});
+		return extractApiData(resp);
 	},
 
 	configDetails: async (identifier: string, doImport = false) => {
@@ -2616,15 +2483,14 @@ export const clientsApi = {
 		connection_mode?: string;
 		config_path?: string;
 		client_version?: string;
-		supported_transports?: string[];
         description?: string;
         homepage_url?: string;
         docs_url?: string;
         support_url?: string;
         logo_url?: string;
 		config_file_parse?: ClientConfigFileParse;
-		format_rules?: Record<string, ClientFormatRuleData>;
-		clear_format_rules?: boolean;
+		transports?: Record<string, TransportRuleData>;
+		clear_transports?: boolean;
 	}) => {
 		const resp = await fetchApi<
 			{ success: boolean } & ApiWrapper<Record<string, unknown>>

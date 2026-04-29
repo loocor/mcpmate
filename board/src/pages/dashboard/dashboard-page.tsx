@@ -501,8 +501,8 @@ export function DashboardPage() {
 		servers?.servers?.filter((server) => server.status === "connected")
 			.length || 0;
 	const totalClients = clientsData?.total ?? clientsData?.client?.length ?? 0;
-	const managedClients =
-		clientsData?.client?.filter((client) => client.managed).length ?? 0;
+	const approvedClients =
+		clientsData?.client?.filter((client) => client.approval_status === "approved").length ?? 0;
 
 	const effectiveSystemStatus = React.useMemo(() => {
 		if (
@@ -767,15 +767,15 @@ export function DashboardPage() {
 									</div>
 									<div className="flex items-center justify-between">
 										<CardDescription>
-											{t("dashboard:labels.managed", {
-												defaultValue: "Managed",
+											{t("dashboard:labels.approved", {
+												defaultValue: "Approved",
 											})}
 										</CardDescription>
 										{isLoadingClients ? (
 											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
 										) : (
 											<span className="text-sm font-medium">
-												{managedClients}
+												{approvedClients}
 											</span>
 										)}
 									</div>

@@ -7,7 +7,7 @@ use crate::clients::models::{
     UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface,
     UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic,
 };
-use crate::clients::service::core::RuntimeClientMetadata;
+use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::common::profile::{ProfileRole, ProfileType};
 use crate::config::database::Database;
 use crate::config::models::Profile;
@@ -21,6 +21,22 @@ use tokio::fs::OpenOptions;
 
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
 const VALID_CONNECTION_MODES: &[&str] = &["local_config_detected", "remote_http", "manual"];
+
+fn canonical_record_transport(transport: &str) -> Option<&'static str> {
+    match transport.trim() {
+        "streamable_http" => Some("streamable_http"),
+        "sse" => Some("sse"),
+        "stdio" => Some("stdio"),
+        _ => None,
+    }
+}
+
+fn sanitize_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|trimmed| !trimmed.is_empty())
+        .map(str::to_string)
+}
 
 #[derive(Debug, Clone, Default)]
 struct ResolvedUnifyDirectExposureState {
@@ -56,8 +72,8 @@ pub struct ActiveClientSettingsUpdate {
     pub logo_url: Option<String>,
     pub config_file_parse: Option<ClientConfigFileParse>,
     pub clear_config_file_parse: bool,
-    pub format_rules: Option<HashMap<String, FormatRule>>,
-    pub clear_format_rules: bool,
+    pub transports: Option<HashMap<String, FormatRule>>,
+    pub clear_transports: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +132,33 @@ fn retain_known_capability_ids<V>(
     ids.into_iter().filter(|id| valid_ids.contains_key(id)).collect()
 }
 
+fn can_apply_first_initialize_observation(state: &ClientStateRow) -> ConfigResult<bool> {
+    if state.template_identifier().is_some() || state.governance_kind().as_str() != "passive" {
+        return Ok(false);
+    }
+
+    if state
+        .client_version
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+        || state.transport.as_deref().is_some_and(|value| {
+            let trimmed = value.trim();
+            !trimmed.is_empty() && trimmed != "auto"
+        })
+        || !state.parsed_transports()?.is_empty()
+    {
+        return Ok(false);
+    }
+
+    let metadata = state.runtime_client_metadata();
+    Ok(metadata.description.is_none()
+        && metadata.homepage_url.is_none()
+        && metadata.docs_url.is_none()
+        && metadata.support_url.is_none()
+        && metadata.logo_url.is_none()
+        && metadata.category.is_none())
+}
+
 impl ClientConfigService {
     pub async fn persist_handshake_observation(
         &self,
@@ -124,40 +167,129 @@ impl ClientConfigService {
         client_version: Option<&str>,
         transport: Option<&str>,
         connection_mode: Option<&str>,
+        description: Option<&str>,
+        homepage_url: Option<&str>,
+        logo_url: Option<&str>,
     ) -> ConfigResult<()> {
-        let display_name = observed_name
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let client_version = client_version
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let transport = transport
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let connection_mode = connection_mode
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
+        let display_name = sanitize_optional(observed_name);
+        let client_version = sanitize_optional(client_version);
+        let transport = sanitize_optional(transport);
+        let connection_mode = sanitize_optional(connection_mode);
+        let description = sanitize_optional(description);
+        let homepage_url = sanitize_optional(homepage_url);
+        let logo_url = sanitize_optional(logo_url);
 
-        if display_name.is_none() && client_version.is_none() && transport.is_none() && connection_mode.is_none() {
+        if [
+            display_name.as_deref(),
+            client_version.as_deref(),
+            transport.as_deref(),
+            connection_mode.as_deref(),
+            description.as_deref(),
+            homepage_url.as_deref(),
+            logo_url.as_deref(),
+        ]
+        .iter()
+        .all(|value| value.is_none())
+        {
             return Ok(());
         }
 
-        self.set_active_client_settings(
-            identifier,
-            ActiveClientSettingsUpdate {
-                display_name,
-                client_version,
-                transport,
-                connection_mode,
-                ..ActiveClientSettingsUpdate::default()
+        let observed_name = display_name.as_deref().unwrap_or(identifier);
+        let existing_state = if let Some(state) = self.fetch_state(identifier).await? {
+            if !can_apply_first_initialize_observation(&state)? {
+                return Ok(());
+            }
+            state
+        } else {
+            let platform = crate::system::paths::PathService::get_current_platform();
+            if self.template_source.get_template(identifier, platform).await?.is_some() {
+                return Ok(());
+            }
+            self.ensure_passive_observed_row(identifier, observed_name, None)
+                .await?
+        };
+
+        if let Some(display_name) = display_name.as_deref() {
+            self.update_client_names(identifier, display_name).await?;
+        }
+
+        if let Some(client_version) = client_version.as_deref() {
+            self.update_client_version(identifier, client_version).await?;
+        }
+
+        if let Some(transport) = transport.as_deref() {
+            self.update_transport(identifier, transport).await?;
+        }
+
+        if let Some(connection_mode) = connection_mode.as_deref() {
+            self.update_runtime_target(identifier, None, Some(connection_mode), false)
+                .await?;
+        }
+
+        if description.is_some() || homepage_url.is_some() || logo_url.is_some() {
+            let existing_metadata = existing_state.runtime_client_metadata();
+            let next_metadata = RuntimeClientMetadata {
+                description: description.or(existing_metadata.description),
+                homepage_url: homepage_url.or(existing_metadata.homepage_url),
+                docs_url: existing_metadata.docs_url,
+                support_url: existing_metadata.support_url,
+                logo_url: logo_url.or(existing_metadata.logo_url),
+                category: existing_metadata.category,
+            };
+            self.update_runtime_client_metadata(identifier, &next_metadata, false)
+                .await?;
+        }
+
+        if let Some(observed_transport) = transport.as_deref() {
+            self.upsert_observed_transport_support(identifier, observed_transport)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn upsert_observed_transport_support(
+        &self,
+        identifier: &str,
+        observed_transport: &str,
+    ) -> ConfigResult<()> {
+        let Some(normalized_transport) = canonical_record_transport(observed_transport) else {
+            if observed_transport.trim().is_empty() {
+                return Ok(());
+            }
+            return Err(ConfigError::DataAccessError(format!(
+                "Invalid observed transport '{}'; expected canonical transport key",
+                observed_transport.trim()
+            )));
+        };
+
+        let existing_raw: Option<String> = sqlx::query_scalar("SELECT transports FROM client WHERE identifier = ?")
+            .bind(identifier)
+            .fetch_optional(&*self.db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
+            .flatten();
+
+        let mut transports = existing_raw
+            .as_deref()
+            .map(serde_json::from_str::<HashMap<String, FormatRule>>)
+            .transpose()
+            .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse transports: {}", err)))?
+            .unwrap_or_default();
+
+        if transports.contains_key(normalized_transport) {
+            return Ok(());
+        }
+
+        transports.insert(
+            normalized_transport.to_string(),
+            FormatRule {
+                selected: Some(true),
+                ..FormatRule::default()
             },
-        )
-        .await
-        .map(|_| ())
+        );
+
+        self.update_transports(identifier, Some(&transports), false).await
     }
 
     async fn resolve_effective_mode_from_explicit(
@@ -375,11 +507,10 @@ impl ClientConfigService {
             .map(|state| (state.approval_status().to_string(), "stored"))
             .unwrap_or_else(|| ("approved".to_string(), "default"));
 
-        self.ensure_active_state_row_with_name(identifier, &name, None, Some(&approval_status))
+        self.ensure_active_state_row_with_name(identifier, &name, Some(&approval_status))
             .await?;
 
-        self.update_client_name(identifier, &name).await?;
-        self.update_display_name(identifier, &name).await?;
+        self.update_client_names(identifier, &name).await?;
 
         if let Some(mode) = update.config_mode {
             self.update_config_mode(identifier, &mode).await?;
@@ -398,6 +529,7 @@ impl ClientConfigService {
                 identifier,
                 normalized_config_path.as_deref(),
                 resolved_connection_mode.as_deref(),
+                true,
             )
             .await?;
         }
@@ -435,7 +567,8 @@ impl ClientConfigService {
                 "Merged runtime metadata, calling update_runtime_client_metadata"
             );
 
-            self.update_runtime_client_metadata(identifier, &next_metadata).await?;
+            self.update_runtime_client_metadata(identifier, &next_metadata, true)
+                .await?;
         }
 
         if update.clear_config_file_parse || update.config_file_parse.is_some() {
@@ -447,8 +580,8 @@ impl ClientConfigService {
             .await?;
         }
 
-        if update.clear_format_rules || update.format_rules.is_some() {
-            self.update_format_rules(identifier, update.format_rules.as_ref(), update.clear_format_rules)
+        if update.clear_transports || update.transports.is_some() {
+            self.update_transports(identifier, update.transports.as_ref(), update.clear_transports)
                 .await?;
         }
 
@@ -468,38 +601,28 @@ impl ClientConfigService {
         })
     }
 
-    /// Update client name
-    async fn update_client_name(
+    async fn update_client_names(
         &self,
         identifier: &str,
         name: &str,
     ) -> ConfigResult<()> {
-        tracing::debug!(client = %identifier, name = %name, "Updating client name");
+        tracing::debug!(client = %identifier, name = %name, "Updating client name and display name");
 
-        sqlx::query("UPDATE client SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ?")
-            .bind(name)
-            .bind(identifier)
-            .execute(&*self.db_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!(client = %identifier, error = %e, "Failed to update client name");
-                ConfigError::DataAccessError(e.to_string())
-            })?;
-
-        Ok(())
-    }
-
-    async fn update_display_name(
-        &self,
-        identifier: &str,
-        display_name: &str,
-    ) -> ConfigResult<()> {
-        sqlx::query("UPDATE client SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ?")
-            .bind(display_name)
-            .bind(identifier)
-            .execute(&*self.db_pool)
-            .await
-            .map_err(|e| ConfigError::DataAccessError(e.to_string()))?;
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET name = ?,
+                display_name = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(name)
+        .bind(name)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         Ok(())
     }
@@ -599,7 +722,9 @@ impl ClientConfigService {
         identifier: &str,
         config_path: Option<&str>,
         connection_mode: Option<&str>,
+        promote_active: bool,
     ) -> ConfigResult<()> {
+        let governance_kind = if promote_active { Some("active") } else { None };
         sqlx::query(
             r#"
             UPDATE client
@@ -612,7 +737,13 @@ impl ClientConfigService {
                     WHEN ? IS NULL THEN connection_mode
                     ELSE NULLIF(?, '')
                 END,
-                governance_kind = 'active',
+                attachment_state = CASE
+                    WHEN ? IS NOT NULL AND NULLIF(?, '') IS NOT NULL THEN 'detached'
+                    WHEN ? IN ('manual', 'remote_http') THEN 'not_applicable'
+                    WHEN ? = 'local_config_detected' AND NULLIF(?, '') IS NOT NULL THEN 'detached'
+                    ELSE attachment_state
+                END,
+                governance_kind = COALESCE(?, governance_kind),
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
@@ -623,6 +754,12 @@ impl ClientConfigService {
         .bind(config_path)
         .bind(connection_mode)
         .bind(connection_mode)
+        .bind(config_path)
+        .bind(config_path)
+        .bind(connection_mode)
+        .bind(connection_mode)
+        .bind(config_path)
+        .bind(governance_kind)
         .bind(identifier)
         .execute(&*self.db_pool)
         .await
@@ -635,6 +772,7 @@ impl ClientConfigService {
         &self,
         identifier: &str,
         metadata: &RuntimeClientMetadata,
+        promote_active: bool,
     ) -> ConfigResult<()> {
         let existing: Option<String> = sqlx::query_scalar("SELECT approval_metadata FROM client WHERE identifier = ?")
             .bind(identifier)
@@ -648,14 +786,19 @@ impl ClientConfigService {
             .unwrap_or_default();
         payload.insert("runtime_client".to_string(), json!(metadata));
 
+        let governance_kind = if promote_active { Some("active") } else { None };
+
         sqlx::query(
             r#"
             UPDATE client
-            SET approval_metadata = ?, governance_kind = 'active', updated_at = CURRENT_TIMESTAMP
+            SET approval_metadata = ?,
+                governance_kind = COALESCE(?, governance_kind),
+                updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
         .bind(serde_json::to_string(&payload).map_err(|e| ConfigError::DataAccessError(e.to_string()))?)
+        .bind(governance_kind)
         .bind(identifier)
         .execute(&*self.db_pool)
         .await
@@ -726,17 +869,17 @@ impl ClientConfigService {
         Ok(())
     }
 
-    async fn update_format_rules(
+    async fn update_transports(
         &self,
         identifier: &str,
-        format_rules: Option<&HashMap<String, FormatRule>>,
+        transports: Option<&HashMap<String, FormatRule>>,
         clear_override: bool,
     ) -> ConfigResult<()> {
         if clear_override {
             sqlx::query(
                 r#"
                 UPDATE client
-                SET format_rules = NULL,
+                SET transports = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE identifier = ?
                 "#,
@@ -748,16 +891,25 @@ impl ClientConfigService {
             return Ok(());
         }
 
-        let Some(rules) = format_rules else {
+        let Some(rules) = transports else {
             return Ok(());
         };
+
+        for transport in rules.keys() {
+            if canonical_record_transport(transport).is_none() {
+                return Err(ConfigError::DataAccessError(format!(
+                    "Invalid transport key '{}'; expected canonical transport key",
+                    transport
+                )));
+            }
+        }
 
         let serialized = serde_json::to_string(rules).map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         sqlx::query(
             r#"
             UPDATE client
-            SET format_rules = ?,
+            SET transports = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
