@@ -96,25 +96,6 @@ impl MCPMatePaths {
         self.runtimes_dir().join(runtime_type)
     }
 
-    /// Get runtime version directory (~/.mcpmate/runtimes/{runtime_type}/{version})
-    pub fn runtime_version_dir(
-        &self,
-        runtime_type: &str,
-        version: &str,
-    ) -> PathBuf {
-        self.runtime_type_dir(runtime_type).join(version)
-    }
-
-    /// Get runtime bin directory (~/.mcpmate/runtimes/{runtime_type}/{version}/bin)
-    pub fn runtime_bin_dir(
-        &self,
-        runtime_type: &str,
-        version: &str,
-    ) -> PathBuf {
-        self.runtime_version_dir(runtime_type, version)
-            .join(constants::paths::BIN_DIR_NAME)
-    }
-
     /// Get runtime cache directory (~/.mcpmate/cache/{runtime_type})
     pub fn runtime_cache_dir(
         &self,
@@ -146,20 +127,14 @@ impl MCPMatePaths {
     pub fn ensure_runtime_directories(
         &self,
         runtime_type: &str,
-        version: &str,
     ) -> Result<()> {
-        let dirs = [
-            self.runtime_type_dir(runtime_type),
-            self.runtime_version_dir(runtime_type, version),
-            self.runtime_bin_dir(runtime_type, version),
-            self.runtime_cache_dir(runtime_type),
-        ];
+        let dirs = [self.runtime_type_dir(runtime_type), self.runtime_cache_dir(runtime_type)];
 
         for dir in &dirs {
             std::fs::create_dir_all(dir).with_context(|| format!("Failed to create directory: {}", dir.display()))?;
         }
 
-        tracing::debug!("Created runtime directories for {} {}", runtime_type, version);
+        tracing::debug!("Created runtime directories for {}", runtime_type);
         Ok(())
     }
 

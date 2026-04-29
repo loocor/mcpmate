@@ -4,6 +4,7 @@
 
 use super::{Args, ProxyServer};
 use crate::core::{pool::UpstreamConnectionPool, transport::TransportType};
+use crate::system::config::bind_socket_addr;
 use anyhow::Result;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -67,7 +68,7 @@ pub async fn start_proxy_server(
     args: &Args,
 ) -> Result<Option<tokio::task::JoinHandle<Result<(), anyhow::Error>>>> {
     // Start proxy server with specified transport
-    let mcp_bind_address = format!("127.0.0.1:{}", args.mcp_port).parse()?;
+    let mcp_bind_address = bind_socket_addr(args.mcp_port)?;
     tracing::info!("MCP Proxy Server binding to address: {}", mcp_bind_address);
     tracing::info!("Using port from args.port: {}", args.mcp_port);
 
@@ -151,7 +152,7 @@ pub async fn start_api_server(
     args: &Args,
 ) -> Result<(tokio::task::JoinHandle<()>, tokio_util::sync::CancellationToken)> {
     // Start API server
-    let api_bind_address: SocketAddr = format!("127.0.0.1:{}", args.api_port).parse()?;
+    let api_bind_address: SocketAddr = bind_socket_addr(args.api_port)?;
     tracing::info!("🚀 API Server binding to address: {}", api_bind_address);
     tracing::info!("🔧 Using port from args.api_port: {}", args.api_port);
 

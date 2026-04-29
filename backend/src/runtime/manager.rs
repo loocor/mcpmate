@@ -21,7 +21,7 @@ pub struct RuntimeManager {
 impl RuntimeManager {
     /// Create a new runtime manager
     pub fn new() -> Self {
-        let runtimes_dir = global_paths().base_dir().join("runtimes");
+        let runtimes_dir = global_paths().runtimes_dir();
         Self { runtimes_dir }
     }
 
@@ -119,12 +119,11 @@ impl RuntimeManager {
         runtime_type: RuntimeType,
     ) -> String {
         if let Some(path) = self.get_executable_path(runtime_type) {
-            let source_info = if path.to_string_lossy().contains(".mcpmate") {
-                " (MCPMate managed)"
-            } else {
-                " (system fallback)"
-            };
-            format!("✓ {} is available{}", runtime_type.as_str(), source_info)
+            format!(
+                "✓ {} is available (MCPMate managed at {})",
+                runtime_type.as_str(),
+                path.display()
+            )
         } else {
             format!("✗ {} is not installed", runtime_type.as_str())
         }

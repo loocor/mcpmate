@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, env, fs, io::Write, path::PathBuf};
 use anyhow::Result;
 use mcpmate::common::MCPMatePaths;
 
-pub fn configure_process_environment() {
+pub fn configure_process_environment() -> Result<()> {
     const SKIP_BOARD_STATIC: &str = "MCPMATE_SKIP_BOARD_STATIC";
 
     if env::var_os(SKIP_BOARD_STATIC).is_none() {
@@ -12,53 +12,54 @@ pub fn configure_process_environment() {
         }
     }
 
-    for (key, value) in desktop_runtime_environment() {
+    for (key, value) in desktop_runtime_environment()? {
         unsafe {
             env::set_var(key, value);
         }
     }
+
+    Ok(())
 }
 
-pub fn service_environment_entries() -> Vec<(String, String)> {
-    desktop_runtime_environment().into_iter().collect()
+pub fn service_environment_entries() -> Result<Vec<(String, String)>> {
+    Ok(desktop_runtime_environment()?.into_iter().collect())
 }
 
-pub fn merge_service_environment(base: Vec<(String, String)>) -> Vec<(String, String)> {
+pub fn merge_service_environment(base: Vec<(String, String)>) -> Result<Vec<(String, String)>> {
     let mut merged: BTreeMap<String, String> = base.into_iter().collect();
 
-    for (key, value) in service_environment_entries() {
+    for (key, value) in service_environment_entries()? {
         merged.insert(key, value);
     }
 
-    merged.into_iter().collect()
+    Ok(merged.into_iter().collect())
 }
 
-fn desktop_runtime_environment() -> BTreeMap<String, String> {
+fn desktop_runtime_environment() -> Result<BTreeMap<String, String>> {
     #[cfg(target_os = "macos")]
     {
         let mut env_entries = BTreeMap::new();
-        if let Ok(path) = ensure_desktop_runtime_path() {
-            env_entries.insert("PATH".to_string(), path);
+        let path = ensure_desktop_runtime_path()?;
+        env_entries.insert("PATH".to_string(), path);
+
+        if let Ok(home) = env::var("HOME")
+            && !home.trim().is_empty()
+        {
+            env_entries.insert("HOME".to_string(), home);
         }
 
-        if let Ok(home) = env::var("HOME") {
-            if !home.trim().is_empty() {
-                env_entries.insert("HOME".to_string(), home);
-            }
-        }
-
-        return env_entries;
+        Ok(env_entries)
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        BTreeMap::new()
+        Ok(BTreeMap::new())
     }
 }
 
 #[cfg(target_os = "macos")]
 fn ensure_desktop_runtime_path() -> Result<String> {
-    let base_dir = resolve_base_dir();
+    let base_dir = resolve_base_dir()?;
     let bin_dir = base_dir.join("bin");
     fs::create_dir_all(&bin_dir)?;
 
@@ -122,14 +123,8 @@ fn ensure_executable_shim(path: &std::path::Path, body: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn resolve_base_dir() -> PathBuf {
-    match MCPMatePaths::new() {
-        Ok(paths) => paths.base_dir().to_path_buf(),
-        Err(_) => {
-            let home = env::var("HOME").unwrap_or_else(|_| String::from("/"));
-            PathBuf::from(home).join(".mcpmate")
-        }
-    }
+fn resolve_base_dir() -> Result<PathBuf> {
+    Ok(MCPMatePaths::new()?.base_dir().to_path_buf())
 }
 
 #[cfg(test)]
@@ -141,7 +136,8 @@ mod tests {
         let env = merge_service_environment(vec![
             ("MCPMATE_DATA_DIR".to_string(), "/tmp/mcpmate".to_string()),
             ("MCPMATE_API_PORT".to_string(), "8080".to_string()),
-        ]);
+        ])
+        .expect("merge service environment");
 
         assert!(
             env.iter()
@@ -158,7 +154,8 @@ mod tests {
         let env = merge_service_environment(vec![
             ("MCPMATE_DATA_DIR".to_string(), "/tmp/mcpmate".to_string()),
             ("PATH".to_string(), "/tmp/bin".to_string()),
-        ]);
+        ])
+        .expect("merge service environment");
 
         assert_eq!(env.iter().filter(|(key, _)| key == "PATH").count(), 1);
         assert!(
@@ -170,7 +167,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn service_environment_includes_path_on_macos() {
-        let env = service_environment_entries();
+        let env = service_environment_entries().expect("service environment entries");
         let path = env
             .iter()
             .find(|(key, _)| key == "PATH")
@@ -184,6 +181,6 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn service_environment_is_empty_off_macos() {
-        assert!(service_environment_entries().is_empty());
+        assert!(service_environment_entries().expect("service environment entries").is_empty());
     }
 }

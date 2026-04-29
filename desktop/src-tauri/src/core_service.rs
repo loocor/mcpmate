@@ -2,6 +2,7 @@ use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use mcpmate::common::global_paths;
+use mcpmate::system::config::{api_url_from_port, bind_socket_addr};
 use service_manager::{
     RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx,
     ServiceStatus, ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
@@ -204,7 +205,7 @@ fn service_install_ctx(
             "MCPMATE_MCP_PORT".to_string(),
             config.localhost.mcp_port.to_string(),
         ),
-    ]);
+    ])?;
 
     Ok(ServiceInstallCtx {
         label,
@@ -245,7 +246,7 @@ pub async fn probe_localhost_core(api_port: u16) -> bool {
         return false;
     };
 
-    let url = format!("http://127.0.0.1:{api_port}/api/system/status");
+    let url = format!("{}/api/system/status", api_url_from_port(api_port));
     match client.get(url).send().await {
         Ok(response) => response.status().is_success(),
         Err(_) => false,
@@ -280,7 +281,7 @@ pub async fn wait_for_port_available(port: u16) -> Result<()> {
 
     for attempt in 0..30 {
         // Try to bind to the port to check if it's available
-        match TcpListener::bind(format!("127.0.0.1:{}", port)) {
+        match TcpListener::bind(bind_socket_addr(port)?) {
             Ok(_) => {
                 // Port is available
                 return Ok(());
