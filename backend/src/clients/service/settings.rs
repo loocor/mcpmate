@@ -22,6 +22,15 @@ use tokio::fs::OpenOptions;
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
 const VALID_CONNECTION_MODES: &[&str] = &["local_config_detected", "remote_http", "manual"];
 
+fn canonical_record_transport(transport: &str) -> Option<&'static str> {
+    match transport.trim() {
+        "streamable_http" => Some("streamable_http"),
+        "sse" => Some("sse"),
+        "stdio" => Some("stdio"),
+        _ => None,
+    }
+}
+
 fn sanitize_optional(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -244,10 +253,15 @@ impl ClientConfigService {
         identifier: &str,
         observed_transport: &str,
     ) -> ConfigResult<()> {
-        let normalized_transport = observed_transport.trim();
-        if normalized_transport.is_empty() {
-            return Ok(());
-        }
+        let Some(normalized_transport) = canonical_record_transport(observed_transport) else {
+            if observed_transport.trim().is_empty() {
+                return Ok(());
+            }
+            return Err(ConfigError::DataAccessError(format!(
+                "Invalid observed transport '{}'; expected canonical transport key",
+                observed_transport.trim()
+            )));
+        };
 
         let existing_raw: Option<String> = sqlx::query_scalar("SELECT transports FROM client WHERE identifier = ?")
             .bind(identifier)
@@ -880,6 +894,15 @@ impl ClientConfigService {
         let Some(rules) = transports else {
             return Ok(());
         };
+
+        for transport in rules.keys() {
+            if canonical_record_transport(transport).is_none() {
+                return Err(ConfigError::DataAccessError(format!(
+                    "Invalid transport key '{}'; expected canonical transport key",
+                    transport
+                )));
+            }
+        }
 
         let serialized = serde_json::to_string(rules).map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 

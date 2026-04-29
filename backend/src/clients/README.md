@@ -213,4 +213,4 @@ The `template_id` field decouples record identity (`identifier`) from template b
 - `/api/client/backups/restore` / `/api/client/backups/delete` (POST) restore or remove a backup snapshot.
 - `/api/client/backups/policy` (GET/POST) reads or updates the retention policy described above.
 
-All state is persisted in the lightweight `client` table so that backups and management preferences survive restarts without reintroducing the legacy config tables. Transport alias keymaps are also shipped as built-in code defaults rather than external user files.
+All state is persisted in the lightweight `client` table so that backups and management preferences survive restarts without reintroducing the legacy config tables. Transport rules are persisted with canonical transport keys so record data stays authoritative and deterministic.

@@ -853,6 +853,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persist_handshake_observation_rejects_alias_transport_keys() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        service
+            .ensure_passive_observed_row("test.observed", "Observed", None)
+            .await
+            .expect("create passive observed row");
+
+        let error = service
+            .persist_handshake_observation(
+                "test.observed",
+                Some("Observed App"),
+                Some("1.2.3"),
+                Some("http"),
+                Some("remote_http"),
+                Some("Observed description"),
+                Some("https://example.com"),
+                Some("https://example.com/logo.png"),
+            )
+            .await
+            .expect_err("alias observed transport should be rejected");
+
+        let message = error.to_string();
+        assert!(message.contains("Invalid") || message.contains("transport"), "unexpected error: {message}");
+    }
+
+    #[tokio::test]
     async fn delete_client_record_cleans_runtime_and_allows_recreation() {
         let (_temp_dir, service) = create_test_service().await;
 
