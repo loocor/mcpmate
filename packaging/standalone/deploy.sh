@@ -55,9 +55,13 @@ show_usage() {
     echo "  $0 --target aarch64-apple-darwin --release"
 }
 
-# Check if we're in the right directory
-if [ ! -f "Cargo.toml" ] || [ ! -d "board" ]; then
-    print_error "This script must be run from the MCPMate root directory"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BACKEND_DIR="${WORKSPACE_ROOT}/backend"
+BOARD_DIR="${WORKSPACE_ROOT}/board"
+
+if [ ! -f "${BACKEND_DIR}/Cargo.toml" ] || [ ! -d "${BOARD_DIR}" ]; then
+    print_error "Unable to locate backend/ or board/ from the repository root"
     exit 1
 fi
 
@@ -130,12 +134,12 @@ fi
 
 # Determine output directory name
 if [ -n "$TARGET" ]; then
-    DIST_DIR="dist/${TARGET}"
+    DIST_DIR="${BACKEND_DIR}/dist/${TARGET}"
     if [ "$BUILD_MODE" = "release" ]; then
         DIST_DIR="${DIST_DIR}-release"
     fi
 else
-    DIST_DIR="dist/local"
+    DIST_DIR="${BACKEND_DIR}/dist/local"
     if [ "$BUILD_MODE" = "release" ]; then
         DIST_DIR="${DIST_DIR}-release"
     fi
@@ -143,9 +147,9 @@ fi
 
 # Determine binary path
 if [ -n "$TARGET" ]; then
-    BINARY_PATH="target/${TARGET}/${BUILD_MODE}/${BINARY_NAME}"
+    BINARY_PATH="${BACKEND_DIR}/target/${TARGET}/${BUILD_MODE}/${BINARY_NAME}"
 else
-    BINARY_PATH="target/${BUILD_MODE}/${BINARY_NAME}"
+    BINARY_PATH="${BACKEND_DIR}/target/${BUILD_MODE}/${BINARY_NAME}"
 fi
 
 print_status "Configuration:"
@@ -157,51 +161,46 @@ echo ""
 
 # Step 1: Build frontend
 print_status "Building frontend..."
-cd board
+cd "$BOARD_DIR"
 
 if [ ! -f "package.json" ]; then
     print_error "package.json not found in board directory"
     exit 1
 fi
 
-# Detect package manager
-if command -v yarn &> /dev/null && [ -f "yarn.lock" ]; then
-    PACKAGE_MANAGER="yarn"
-elif command -v npm &> /dev/null; then
-    PACKAGE_MANAGER="npm"
-else
-    print_error "Neither npm nor yarn found. Please install Node.js and npm/yarn."
+if ! command -v bun >/dev/null 2>&1; then
+    print_error "bun is required to build the board workspace"
     exit 1
 fi
 
 # Install and build
-$PACKAGE_MANAGER install
-$PACKAGE_MANAGER run build
+bun install
+bun run build
 
 if [ ! -f "dist/index.html" ]; then
     print_error "Frontend build failed - dist/index.html not found"
     exit 1
 fi
 
-cd ..
+cd "$WORKSPACE_ROOT"
 
 # Step 2: Build backend using platform-specific script
 print_status "Building backend..."
 
-SCRIPT_DIR="script"
+PACKAGING_SCRIPT_DIR="$WORKSPACE_ROOT/packaging/standalone"
 
 # Resolve platform script from target/platform
 PLATFORM_SCRIPT=""
 if [ -n "$PLATFORM" ]; then
     case "$PLATFORM" in
         linux|linux-x64|linux-arm64)
-            PLATFORM_SCRIPT="$SCRIPT_DIR/build-linux.sh"
+            PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-linux.sh"
             ;;
         windows|win64|windows-arm64)
-            PLATFORM_SCRIPT="$SCRIPT_DIR/build-windows.sh"
+            PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-windows.sh"
             ;;
         macos|macos-x64|macos-arm64|darwin)
-            PLATFORM_SCRIPT="$SCRIPT_DIR/build-macos.sh"
+            PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-macos.sh"
             ;;
         *)
             print_error "Unknown platform: $PLATFORM"
@@ -211,9 +210,9 @@ if [ -n "$PLATFORM" ]; then
     esac
 elif [ -n "$TARGET" ]; then
     case "$TARGET" in
-        *unknown-linux-gnu*) PLATFORM_SCRIPT="$SCRIPT_DIR/build-linux.sh" ;;
-        *pc-windows-*)       PLATFORM_SCRIPT="$SCRIPT_DIR/build-windows.sh" ;;
-        *apple-darwin*)      PLATFORM_SCRIPT="$SCRIPT_DIR/build-macos.sh" ;;
+        *unknown-linux-gnu*) PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-linux.sh" ;;
+        *pc-windows-*)       PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-windows.sh" ;;
+        *apple-darwin*)      PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-macos.sh" ;;
         *)
             print_error "Cannot determine platform for target: $TARGET"
             exit 1
@@ -222,9 +221,9 @@ elif [ -n "$TARGET" ]; then
 else
     # Auto-detect current host
     case "$(uname -s)" in
-        Linux)  PLATFORM_SCRIPT="$SCRIPT_DIR/build-linux.sh" ;;
-        Darwin) PLATFORM_SCRIPT="$SCRIPT_DIR/build-macos.sh" ;;
-        CYGWIN*|MINGW*|MSYS*) PLATFORM_SCRIPT="$SCRIPT_DIR/build-windows.sh" ;;
+        Linux)  PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-linux.sh" ;;
+        Darwin) PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-macos.sh" ;;
+        CYGWIN*|MINGW*|MSYS*) PLATFORM_SCRIPT="$PACKAGING_SCRIPT_DIR/build-windows.sh" ;;
         *) print_error "Unsupported host platform: $(uname -s)"; exit 1 ;;
     esac
 fi
@@ -427,7 +426,7 @@ EOF
 
 print_success "Deployment package created successfully!"
 echo ""
-print_status "Package location: ./$DIST_DIR/"
+print_status "Package location: $DIST_DIR"
 print_status "Package contents:"
 ls -la "$DIST_DIR/"
 echo ""
@@ -452,6 +451,6 @@ fi
 # Show available packages
 echo ""
 print_status "All available packages:"
-if [ -d "dist" ]; then
-    find dist -maxdepth 1 -type d -not -name "dist" | sort
+if [ -d "${BACKEND_DIR}/dist" ]; then
+    find "${BACKEND_DIR}/dist" -maxdepth 1 -type d ! -path "${BACKEND_DIR}/dist" | sort
 fi
