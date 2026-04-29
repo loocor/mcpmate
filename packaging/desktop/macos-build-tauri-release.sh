@@ -26,9 +26,10 @@ DIAG_DEFAULT=0
 # Load .env files from desktop/ so users don't need to pass flags each time.
 load_env_files() {
   local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local tauri_dir="$(cd "${script_dir}/.." && pwd)"
-  local env_main="${tauri_dir}/.env"
-  local env_local="${tauri_dir}/.env.local"
+  local workspace_root="$(cd "${script_dir}/../.." && pwd)"
+  local desktop_dir="${workspace_root}/desktop"
+  local env_main="${desktop_dir}/.env"
+  local env_local="${desktop_dir}/.env.local"
   set +u
   if [[ -f "$env_main" ]]; then
     set -a; # export all sourced variables
@@ -70,9 +71,9 @@ Options:
   -h, --help                  Show this help message
 
 Examples:
-  script/macos-build-tauri-release.sh
-  script/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
-  script/macos-build-tauri-release.sh --profile debug --skip-board
+  packaging/desktop/macos-build-tauri-release.sh
+  packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
+  packaging/desktop/macos-build-tauri-release.sh --profile debug --skip-board
 
 Notes:
   * Windows targets must be built on Windows with the MSVC toolchain available.
@@ -159,11 +160,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-WORKSPACE_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT_DIR="$(cd "$WORKSPACE_ROOT/desktop" && pwd)"
 BACKEND_DIR="$(cd "$WORKSPACE_ROOT/backend" && pwd)"
 TAURI_SRC_DIR="$(cd "$ROOT_DIR/src-tauri" && pwd)"
-LICENSE_SCRIPT="$ROOT_DIR/script/generate-open-source-notices.sh"
+LICENSE_SCRIPT="$WORKSPACE_ROOT/packaging/desktop/generate-open-source-notices.sh"
 SIDECAR_OUTPUT_DIR="$BACKEND_DIR/target/sidecars"
 # Skip Finder automation by default to avoid DMG AppleScript prompts on recent macOS.
 : "${CI:=true}"
@@ -183,7 +185,7 @@ backend_sidecar_fingerprint() {
     "$BACKEND_DIR/src"
     "$BACKEND_DIR/config"
     "$BACKEND_DIR/crates"
-    "$BACKEND_DIR/script"
+    "$WORKSPACE_ROOT/packaging/standalone"
     "$BACKEND_DIR/src/bin/${binary_name}.rs"
   )
 
@@ -436,19 +438,19 @@ fi
 
 if [[ $BUILD_BOARD -eq 1 ]]; then
   echo "[macos-build-tauri-release] building board/dist"
-  npm --prefix "$BOARD_DIR" install >/dev/null
-	  if [[ -x "$LICENSE_SCRIPT" ]]; then
-	    echo "[macos-build-tauri-release] generating open source notices"
-	    "$LICENSE_SCRIPT" \
-	      --board-dir "$BOARD_DIR" \
-	      --backend-dir "$BACKEND_DIR" \
-	      --tauri-dir "$TAURI_SRC_DIR" \
-	      --output "$BOARD_DIR/public/open-source-notices.json"
+  bun install --cwd "$BOARD_DIR" >/dev/null
+  if [[ -x "$LICENSE_SCRIPT" ]]; then
+    echo "[macos-build-tauri-release] generating open source notices"
+    "$LICENSE_SCRIPT" \
+      --board-dir "$BOARD_DIR" \
+      --backend-dir "$BACKEND_DIR" \
+      --tauri-dir "$TAURI_SRC_DIR" \
+      --output "$BOARD_DIR/public/open-source-notices.json"
   else
     echo "[macos-build-tauri-release] missing license generator at $LICENSE_SCRIPT" >&2
     exit 1
   fi
-  npm --prefix "$BOARD_DIR" run build
+  bun run --cwd "$BOARD_DIR" build
 else
   echo "[macos-build-tauri-release] skipping board build"
 fi

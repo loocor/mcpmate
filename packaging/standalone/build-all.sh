@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build for all supported platforms using platform-specific build scripts
 
-set -e
+set -euo pipefail
 
 echo "🚀 Building MCPMate for all platforms..."
 
