@@ -1,4 +1,4 @@
-use super::core::supported_transports_from_format_rules;
+use super::core::supported_transports_from_transports;
 use super::core::{ApplyOutcome, ClientConfigService, ClientRenderOptions, ClientRenderResult, PreviewOutcome};
 use crate::clients::TemplateExecutionResult;
 use crate::clients::engine::RenderRequest;
@@ -8,38 +8,45 @@ use crate::clients::models::{ConfigMode, TemplateFormat};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-fn normalize_transport(transport: &str) -> Option<&'static str> {
-    match transport.trim().to_ascii_lowercase().as_str() {
-        "streamable_http" | "streamablehttp" | "http" => Some("streamable_http"),
+fn supported_transport_name(transport: &str) -> Option<&'static str> {
+    match transport {
+        "streamable_http" => Some("streamable_http"),
         "sse" => Some("sse"),
         "stdio" => Some("stdio"),
         _ => None,
     }
 }
 
-fn available_managed_transports(format_rules: Option<&HashMap<String, FormatRule>>) -> Vec<&'static str> {
-    let Some(rules) = format_rules else {
+fn available_managed_transports(transports: Option<&HashMap<String, FormatRule>>) -> Vec<&'static str> {
+    let Some(rules) = transports else {
         return Vec::new();
     };
 
-    supported_transports_from_format_rules(rules)
+    supported_transports_from_transports(rules)
         .into_iter()
-        .filter_map(|transport| normalize_transport(&transport))
+        .filter_map(|transport| supported_transport_name(&transport))
         .collect()
 }
 
 fn select_managed_transport(
-    configured_transport: &str,
     supported_transports: &[&'static str],
+    selected_transport: Option<&'static str>,
 ) -> (Option<String>, bool) {
-    if configured_transport != "auto" && supported_transports.contains(&configured_transport) {
-        return (Some(configured_transport.to_string()), false);
+    if let Some(transport) = selected_transport {
+        return (Some(transport.to_string()), false);
     }
 
     let chosen_transport = supported_transports.first().map(|transport| (*transport).to_string());
-    let auto_selected = configured_transport == "auto" && chosen_transport.is_some();
+    let auto_selected = chosen_transport.is_some();
 
     (chosen_transport, auto_selected)
+}
+
+fn selected_managed_transport(transports: Option<&HashMap<String, FormatRule>>) -> Option<&'static str> {
+    let rules = transports?;
+    ["streamable_http", "sse", "stdio"]
+        .into_iter()
+        .find(|transport| rules.get(*transport).is_some_and(|rule| rule.selected == Some(true)))
 }
 
 impl ClientConfigService {
@@ -48,7 +55,7 @@ impl ClientConfigService {
         &self,
         options: ClientRenderOptions,
     ) -> ConfigResult<ClientRenderResult> {
-        if !self.is_client_managed(&options.client_id).await? {
+        if !self.is_client_approved(&options.client_id).await? {
             return Err(ConfigError::ClientDisabled {
                 identifier: options.client_id.clone(),
             });
@@ -69,13 +76,13 @@ impl ClientConfigService {
             .await?
             .ok_or_else(|| ConfigError::DataAccessError(format!("Client state not found: {}", options.client_id)))?;
         let render_definition = Self::build_render_definition_from_state(&state)?;
-        let format_rules = (!render_definition.config_mapping.format_rules.is_empty())
+        let transports = (!render_definition.config_mapping.format_rules.is_empty())
             .then(|| render_definition.config_mapping.format_rules.clone());
 
-        // Validate format_rules exists for Managed mode
-        if matches!(options.mode, ConfigMode::Managed) && format_rules.is_none() {
+        // Validate transports exists for Managed mode
+        if matches!(options.mode, ConfigMode::Managed) && transports.is_none() {
             return Err(ConfigError::DataAccessError(format!(
-                "Client '{}' has no format_rules (likely legacy record); re-detect this client to populate transport configuration",
+                "Client '{}' has no transports (likely legacy record); re-detect this client to populate transport configuration",
                 options.client_id
             )));
         }
@@ -84,20 +91,15 @@ impl ClientConfigService {
         let mut chosen_transport: Option<String> = None;
         let mut auto_selected = false;
         if matches!(options.mode, ConfigMode::Managed) {
-            let supported_transports = available_managed_transports(format_rules.as_ref());
-
-            if let Some((_, transport, _)) = self.get_client_settings(&options.client_id).await.unwrap_or(None) {
-                (chosen_transport, auto_selected) = select_managed_transport(&transport, &supported_transports);
-            } else {
-                chosen_transport = supported_transports.first().map(|transport| (*transport).to_string());
-                auto_selected = chosen_transport.is_some();
-            }
+            let supported_transports = available_managed_transports(transports.as_ref());
+            let selected_transport = selected_managed_transport(transports.as_ref());
+            (chosen_transport, auto_selected) = select_managed_transport(&supported_transports, selected_transport);
         }
         let mut servers = self.prepare_servers(&options).await?;
         let backup_policy = self.get_backup_policy(&options.client_id).await?;
 
         if matches!(options.mode, ConfigMode::Native) {
-            if let Some(ref rules) = format_rules {
+            if let Some(ref rules) = transports {
                 let supported: HashSet<String> = rules.keys().map(|transport| transport.to_string()).collect();
                 let before = servers.len();
                 servers.retain(|server| supported.contains(&server.transport));
@@ -337,4 +339,44 @@ struct ProbeEntry {
     args_len: u32,
     has_url: bool,
     has_command: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{available_managed_transports, selected_managed_transport};
+    use crate::clients::models::FormatRule;
+    use std::collections::HashMap;
+
+    #[test]
+    fn available_managed_transports_returns_only_canonical_keys() {
+        let mut transports = HashMap::new();
+        transports.insert("http".to_string(), FormatRule::default());
+        transports.insert("streamable_http".to_string(), FormatRule::default());
+        transports.insert("stdio".to_string(), FormatRule::default());
+
+        let available = available_managed_transports(Some(&transports));
+
+        assert_eq!(available, vec!["streamable_http", "stdio"]);
+    }
+
+    #[test]
+    fn selected_managed_transport_ignores_alias_keys() {
+        let mut transports = HashMap::new();
+        transports.insert(
+            "http".to_string(),
+            FormatRule {
+                selected: Some(true),
+                ..FormatRule::default()
+            },
+        );
+        transports.insert(
+            "streamable_http".to_string(),
+            FormatRule {
+                selected: Some(true),
+                ..FormatRule::default()
+            },
+        );
+
+        assert_eq!(selected_managed_transport(Some(&transports)), Some("streamable_http"));
+    }
 }

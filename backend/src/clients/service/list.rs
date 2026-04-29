@@ -52,7 +52,6 @@ impl ClientConfigService {
                 config_path: resolved_path,
                 config_exists,
                 detected_at,
-                managed: state.managed(),
             });
         }
 
@@ -78,7 +77,6 @@ impl ClientConfigService {
                         config_path: detected.config_path.clone(),
                         config_exists: false,
                         detected_at: Some(detected.detected_at),
-                        managed: state_row.managed(),
                     });
                 }
                 Err(err) => {
@@ -173,7 +171,6 @@ mod tests {
 
         assert_eq!(state.identifier, "test.unknown");
         assert_eq!(state.name, "Test Unknown");
-        assert_eq!(state.managed, 0);
         assert_eq!(state.approval_status.as_deref(), Some("pending"));
         assert!(state.template_id.is_none());
         assert!(state.is_pending_approval());
@@ -229,6 +226,6 @@ mod tests {
 
         assert!(descriptor.template.is_none());
         assert_eq!(descriptor.state.display_name(), "custom.runtime");
-        assert!(descriptor.managed);
+        assert!(descriptor.state.is_approved());
     }
 }

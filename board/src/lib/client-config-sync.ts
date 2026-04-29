@@ -68,7 +68,6 @@ export function canApplyClientConfigWithState(input: {
 	if (input.writableConfig === false) return false;
 	return (
 		input.approvalStatus !== "pending" &&
-		input.approvalStatus !== "rejected" &&
 		input.approvalStatus !== "suspended"
 	);
 }

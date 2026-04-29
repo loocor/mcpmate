@@ -3,13 +3,15 @@ use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    BackupPolicySetting, ClientCapabilityConfig, ClientConfigFileParse, ClientConnectionMode, ClientGovernanceKind,
-    ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule, ManagedEndpointConfig,
-    MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
+    AttachmentState, BackupPolicySetting, ClientCapabilityConfig, ClientConfigFileParse, ClientConnectionMode,
+    ClientGovernanceKind, ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule,
+    ManagedEndpointConfig, MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
 };
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
 use crate::clients::source::{ClientConfigSource, DbTemplateSource};
+use crate::clients::utils::get_nested_value_mut;
+use crate::common::constants::{client_headers, profile_keys};
 use crate::system::paths::{PathService, get_path_service};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -102,7 +104,6 @@ pub struct ClientStateRow {
     pub(super) name: String,
     pub(super) display_name: Option<String>,
     pub(super) config_path: Option<String>,
-    pub(super) managed: i64,
     pub(super) config_mode: Option<String>,
     pub(super) transport: Option<String>,
     pub(super) client_version: Option<String>,
@@ -116,6 +117,7 @@ pub struct ClientStateRow {
     pub(super) custom_profile_id: Option<String>,
     pub(super) unify_direct_exposure_intent: Option<String>,
     pub(super) approval_status: Option<String>,
+    pub(super) attachment_state: Option<String>,
     #[allow(dead_code)]
     pub(super) template_id: Option<String>,
     #[allow(dead_code)]
@@ -133,7 +135,7 @@ pub struct ClientStateRow {
     pub(super) merge_strategy: Option<String>,
     pub(super) keep_original_config: Option<i64>,
     pub(super) managed_source: Option<String>,
-    pub(super) format_rules: Option<String>,
+    pub(super) transports: Option<String>,
     pub(super) config_file_parse: Option<String>,
 }
 
@@ -153,6 +155,64 @@ pub struct RuntimeClientMetadata {
     pub category: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(super) struct PersistedTemplateConfig {
+    pub(super) config_format: Option<String>,
+    pub(super) protocol_revision: Option<String>,
+    pub(super) container_type: Option<String>,
+    pub(super) container_keys: Option<String>,
+    pub(super) storage_kind: Option<String>,
+    pub(super) storage_adapter: Option<String>,
+    pub(super) storage_path_strategy: Option<String>,
+    pub(super) merge_strategy: Option<String>,
+    pub(super) keep_original_config: Option<i64>,
+    pub(super) managed_source: Option<String>,
+    pub(super) transports: Option<String>,
+    pub(super) config_file_parse: Option<String>,
+}
+
+impl PersistedTemplateConfig {
+    pub(super) fn from_template(template: &ClientTemplate) -> Self {
+        Self {
+            config_format: Some(template.format.as_str().to_string()),
+            protocol_revision: template.protocol_revision.clone(),
+            container_type: Some(
+                match template.config_mapping.container_type {
+                    crate::clients::models::ContainerType::ObjectMap => "object",
+                    crate::clients::models::ContainerType::Array => "array",
+                }
+                .to_string(),
+            ),
+            container_keys: serde_json::to_string(&template.config_mapping.container_keys).ok(),
+            storage_kind: Some(
+                match template.storage.kind {
+                    crate::clients::models::StorageKind::File => "file",
+                    crate::clients::models::StorageKind::Kv => "kv",
+                    crate::clients::models::StorageKind::Custom => "custom",
+                }
+                .to_string(),
+            ),
+            storage_adapter: template.storage.adapter.clone(),
+            storage_path_strategy: template.storage.path_strategy.clone(),
+            merge_strategy: Some(
+                match template.config_mapping.merge_strategy {
+                    crate::clients::models::MergeStrategy::Replace => "replace",
+                    crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
+                }
+                .to_string(),
+            ),
+            keep_original_config: Some(template.config_mapping.keep_original_config as i64),
+            managed_source: template.config_mapping.managed_source.clone(),
+            transports: if template.config_mapping.format_rules.is_empty() {
+                None
+            } else {
+                serde_json::to_string(&template.config_mapping.format_rules).ok()
+            },
+            config_file_parse: None,
+        }
+    }
+}
+
 impl ClientStateRow {
     pub fn identifier(&self) -> &str {
         &self.identifier
@@ -165,17 +225,24 @@ impl ClientStateRow {
         )
     }
 
-    pub fn managed(&self) -> bool {
-        self.managed != 0
-    }
-
     #[allow(dead_code)]
-    pub(super) fn is_approved(&self) -> bool {
+    pub fn is_approved(&self) -> bool {
         matches!(self.approval_status.as_deref(), Some("approved") | None)
     }
 
     pub fn approval_status(&self) -> &str {
         self.approval_status.as_deref().unwrap_or("approved")
+    }
+
+    pub fn attachment_state(&self) -> AttachmentState {
+        if !self.has_local_config_target() {
+            return AttachmentState::NotApplicable;
+        }
+
+        self.attachment_state
+            .as_deref()
+            .and_then(|value| value.parse::<AttachmentState>().ok())
+            .unwrap_or_default()
     }
 
     pub fn connection_mode(&self) -> ClientConnectionMode {
@@ -208,7 +275,7 @@ impl ClientStateRow {
     }
 
     pub fn has_local_config_target(&self) -> bool {
-        self.connection_mode() != ClientConnectionMode::RemoteHttp && self.config_path().is_some()
+        self.connection_mode() == ClientConnectionMode::LocalConfigDetected && self.config_path().is_some()
     }
 
     #[allow(dead_code)]
@@ -311,8 +378,8 @@ impl ClientStateRow {
         self.managed_source.as_deref().filter(|v| !v.trim().is_empty())
     }
 
-    pub fn format_rules(&self) -> ConfigResult<Option<serde_json::Value>> {
-        let Some(raw) = self.format_rules.as_deref() else {
+    pub fn transports(&self) -> ConfigResult<Option<serde_json::Value>> {
+        let Some(raw) = self.transports.as_deref() else {
             return Ok(None);
         };
 
@@ -322,16 +389,16 @@ impl ClientStateRow {
 
         serde_json::from_str::<serde_json::Value>(raw)
             .map(Some)
-            .map_err(|e| ConfigError::DataAccessError(format!("Failed to parse format_rules: {}", e)))
+            .map_err(|e| ConfigError::DataAccessError(format!("Failed to parse transports: {}", e)))
     }
 
-    pub fn parsed_format_rules(&self) -> ConfigResult<std::collections::HashMap<String, FormatRule>> {
-        let Some(value) = self.format_rules()? else {
+    pub fn parsed_transports(&self) -> ConfigResult<std::collections::HashMap<String, FormatRule>> {
+        let Some(value) = self.transports()? else {
             return Ok(std::collections::HashMap::new());
         };
 
         serde_json::from_value::<std::collections::HashMap<String, FormatRule>>(value)
-            .map_err(|e| ConfigError::DataAccessError(format!("Failed to decode format_rules: {}", e)))
+            .map_err(|e| ConfigError::DataAccessError(format!("Failed to decode transports: {}", e)))
     }
 
     pub fn config_file_parse_override(&self) -> ConfigResult<Option<ClientConfigFileParse>> {
@@ -375,20 +442,18 @@ impl ClientStateRow {
     }
 }
 
-fn effective_format_rules_for_state(state: &ClientStateRow) -> ConfigResult<HashMap<String, FormatRule>> {
+fn effective_transports_for_state(state: &ClientStateRow) -> ConfigResult<HashMap<String, FormatRule>> {
     Ok(state
-        .parsed_format_rules()?
+        .parsed_transports()?
         .into_iter()
         .map(|(transport, rule)| (transport, rule.normalized()))
         .collect())
 }
 
-pub(crate) fn supported_transports_from_format_rules(format_rules: &HashMap<String, FormatRule>) -> Vec<String> {
-    let keymap = crate::clients::keymap::registry();
-
+pub(crate) fn supported_transports_from_transports(transports: &HashMap<String, FormatRule>) -> Vec<String> {
     ["streamable_http", "sse", "stdio"]
         .into_iter()
-        .filter(|transport| keymap.has_rule(format_rules, transport))
+        .filter(|transport| transports.contains_key(*transport))
         .map(str::to_string)
         .collect()
 }
@@ -402,7 +467,6 @@ pub struct ClientDescriptor {
     pub config_path: Option<String>,
     pub config_exists: bool,
     pub detected_at: Option<DateTime<Utc>>,
-    pub managed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -526,17 +590,17 @@ impl ClientConfigService {
             )));
         }
 
-        let format_rules = effective_format_rules_for_state(state)?;
-        let supported_transports = supported_transports_from_format_rules(&format_rules);
+        let transports = effective_transports_for_state(state)?;
+        let supported_transports = supported_transports_from_transports(&transports);
         if supported_transports.is_empty() {
             return Err(ConfigError::DataAccessError(format!(
-                "Client '{}' is missing persisted format_rules; cannot render configuration",
+                "Client '{}' is missing persisted transports; cannot render configuration",
                 state.identifier()
             )));
         }
 
         for transport in supported_transports {
-            if let Some(rule) = format_rules.get(&transport) {
+            if let Some(rule) = transports.get(&transport) {
                 rule.validate_for_transport(&transport)
                     .map_err(ConfigError::DataAccessError)?;
             } else {
@@ -561,7 +625,7 @@ impl ClientConfigService {
             }),
             managed_source: state.managed_source().map(str::to_string),
             parse: Some(parse.clone()),
-            format_rules,
+            format_rules: transports,
         };
 
         let storage = StorageConfig {
@@ -596,6 +660,83 @@ impl ClientConfigService {
             .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", client_id)))?;
         let storage = self.template_engine.storage_for_client(&state)?;
         storage.read(config_path).await
+    }
+
+    fn parse_detach_config(
+        raw_content: &str,
+        format: &str,
+    ) -> ConfigResult<serde_json::Value> {
+        match format {
+            "json5" => json5::from_str(raw_content)
+                .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}"))),
+            "yaml" => serde_yaml::from_str(raw_content)
+                .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}"))),
+            "toml" => {
+                let value: toml::Value = toml::from_str(raw_content)
+                    .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}")))?;
+                serde_json::to_value(value)
+                    .map_err(|err| ConfigError::DataAccessError(format!("Failed to convert TOML for detach: {err}")))
+            }
+            _ => serde_json::from_str(raw_content)
+                .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}"))),
+        }
+    }
+
+    fn serialize_detach_config(
+        value: &serde_json::Value,
+        format: &str,
+    ) -> ConfigResult<String> {
+        match format {
+            "json5" => json5::to_string(value)
+                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
+            "yaml" => serde_yaml::to_string(value)
+                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
+            "toml" => toml::to_string(value)
+                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
+            _ => serde_json::to_string_pretty(value)
+                .map(|content| content.replace("\\/", "/"))
+                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
+        }
+    }
+
+    /// Detach MCPMate from a client's external configuration while preserving MCPMate-side settings.
+    pub async fn detach_client(
+        &self,
+        client_id: &str,
+    ) -> ConfigResult<bool> {
+        let state = self
+            .fetch_state(client_id)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} not found", client_id)))?;
+        let config_path = state
+            .config_path()
+            .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", client_id)))?;
+        if !state.has_local_config_target() {
+            return Err(ConfigError::DataAccessError(format!(
+                "Client {} does not have an attachable local config target",
+                client_id
+            )));
+        }
+        let raw_content = self.read_current_config(client_id).await?.ok_or_else(|| {
+            ConfigError::FileOperationError(format!("Config file not found for client {}", client_id))
+        })?;
+
+        let format = state.config_format().unwrap_or("json");
+        let parsed = Self::parse_detach_config(&raw_content, format)?;
+        let container_keys = state.container_keys().unwrap_or_default();
+        let is_array = state.container_type() == Some("array");
+        let (filtered, changed) = filter_mcp_mate_entries(parsed, &container_keys, is_array);
+
+        if changed {
+            let output = Self::serialize_detach_config(&filtered, format)?;
+            let storage = self.template_engine.storage_for_client(&state)?;
+            storage
+                .write_atomic(client_id, config_path, &output, &BackupPolicySetting::default())
+                .await?;
+        }
+
+        self.mark_client_detached(client_id).await?;
+        Ok(changed)
     }
 
     /// Get resolved configuration path for a client on current platform
@@ -751,37 +892,7 @@ impl ClientConfigService {
             let display_name = template.display_name.as_deref().unwrap_or(&template.identifier);
             let config_path = Self::extract_runtime_config_path_from_template(template);
             let id = crate::generate_id!("clnt");
-
-            // Extract template configuration fields for persistence (same as create_state_row)
-            let config_format = template.format.as_str().to_string();
-            let protocol_revision = template.protocol_revision.clone();
-            let container_type = match template.config_mapping.container_type {
-                crate::clients::models::ContainerType::ObjectMap => "object",
-                crate::clients::models::ContainerType::Array => "array",
-            };
-            let container_keys = serde_json::to_string(&template.config_mapping.container_keys).ok();
-            let storage_kind = match template.storage.kind {
-                crate::clients::models::StorageKind::File => "file",
-                crate::clients::models::StorageKind::Kv => "kv",
-                crate::clients::models::StorageKind::Custom => "custom",
-            };
-            let storage_adapter = template.storage.adapter.clone();
-            let storage_path_strategy = template.storage.path_strategy.clone();
-            let merge_strategy = match template.config_mapping.merge_strategy {
-                crate::clients::models::MergeStrategy::Replace => "replace",
-                crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
-            };
-            let keep_original_config = if template.config_mapping.keep_original_config {
-                1_i64
-            } else {
-                0_i64
-            };
-            let managed_source = template.config_mapping.managed_source.clone();
-            let format_rules = if template.config_mapping.format_rules.is_empty() {
-                None
-            } else {
-                serde_json::to_string(&template.config_mapping.format_rules).ok()
-            };
+            let persisted_config = PersistedTemplateConfig::from_template(template);
 
             let runtime_metadata = serde_json::json!({
                 "runtime_client": {
@@ -798,14 +909,15 @@ impl ClientConfigService {
             sqlx::query(
                 r#"
                 INSERT INTO client (
-                    id, name, display_name, identifier, config_path, managed, backup_policy, backup_limit,
+                    id, name, display_name, identifier, config_path, backup_policy, backup_limit,
                     capability_source, governance_kind, connection_mode, approval_status, template_identifier,
                     config_format, protocol_revision, container_type, container_keys,
                     storage_kind, storage_adapter, storage_path_strategy,
-                    merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse, approval_metadata
+                    merge_strategy, keep_original_config, managed_source, transports, config_file_parse,
+                    approval_metadata, attachment_state
                 )
-                VALUES (?, ?, ?, ?, ?, 1, 'keep_n', 5, 'activated', 'passive', 'local_config_detected', 'approved', ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'keep_n', 5, 'activated', 'passive', 'local_config_detected', 'approved', ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'attached')
                 ON CONFLICT(identifier) DO UPDATE SET
                     display_name = COALESCE(NULLIF(client.display_name, ''), excluded.display_name),
                     config_path = COALESCE(NULLIF(client.config_path, ''), excluded.config_path),
@@ -820,7 +932,7 @@ impl ClientConfigService {
                     merge_strategy = excluded.merge_strategy,
                     keep_original_config = excluded.keep_original_config,
                     managed_source = excluded.managed_source,
-                    format_rules = COALESCE(client.format_rules, excluded.format_rules),
+                    transports = COALESCE(client.transports, excluded.transports),
                     config_file_parse = COALESCE(client.config_file_parse, excluded.config_file_parse),
                     approval_metadata = COALESCE(client.approval_metadata, excluded.approval_metadata),
                     updated_at = CURRENT_TIMESTAMP
@@ -832,18 +944,18 @@ impl ClientConfigService {
             .bind(&template.identifier)
             .bind(config_path)
             .bind(&template.identifier)
-            .bind(config_format)
-            .bind(protocol_revision)
-            .bind(container_type)
-            .bind(container_keys)
-            .bind(storage_kind)
-            .bind(storage_adapter)
-            .bind(storage_path_strategy)
-            .bind(merge_strategy)
-            .bind(keep_original_config)
-            .bind(managed_source)
-            .bind(format_rules)
-            .bind(Option::<String>::None)
+            .bind(persisted_config.config_format)
+            .bind(persisted_config.protocol_revision)
+            .bind(persisted_config.container_type)
+            .bind(persisted_config.container_keys)
+            .bind(persisted_config.storage_kind)
+            .bind(persisted_config.storage_adapter)
+            .bind(persisted_config.storage_path_strategy)
+            .bind(persisted_config.merge_strategy)
+            .bind(persisted_config.keep_original_config)
+            .bind(persisted_config.managed_source)
+            .bind(persisted_config.transports)
+            .bind(persisted_config.config_file_parse)
             .bind(approval_metadata)
             .execute(db_pool)
             .await
@@ -866,6 +978,58 @@ impl ClientConfigService {
     }
 }
 
+fn filter_mcp_mate_entries(
+    mut value: serde_json::Value,
+    container_keys: &[String],
+    is_array: bool,
+) -> (serde_json::Value, bool) {
+    let mut changed = false;
+    for key in container_keys {
+        if let Some(container) = get_nested_value_mut(&mut value, key) {
+            if is_array {
+                if let Some(entries) = container.as_array_mut() {
+                    let before_len = entries.len();
+                    entries.retain(|entry| !is_attached_server_entry(entry));
+                    changed |= entries.len() != before_len;
+                }
+            } else if let Some(entries) = container.as_object_mut() {
+                let before_len = entries.len();
+                entries.retain(|name, entry| !is_attached_server_name(name) && !is_attached_server_entry(entry));
+                changed |= entries.len() != before_len;
+            }
+        }
+    }
+    (value, changed)
+}
+
+fn is_attached_server_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case(profile_keys::MCPMATE)
+}
+
+fn is_attached_server_entry(entry: &serde_json::Value) -> bool {
+    let Some(object) = entry.as_object() else {
+        return false;
+    };
+
+    if object
+        .get("name")
+        .and_then(|name| name.as_str())
+        .map(is_attached_server_name)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    object
+        .get("headers")
+        .and_then(|headers| headers.as_object())
+        .map(|headers| {
+            headers.contains_key(client_headers::MCPMATE_CLIENT_ID)
+                || headers.contains_key(client_headers::MCPMATE_PROFILE_ID)
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod render_definition_tests {
     use super::*;
@@ -880,7 +1044,7 @@ mod render_definition_tests {
             config_format: Some("json".to_string()),
             container_type: Some("object".to_string()),
             container_keys: Some("[\"context_servers\"]".to_string()),
-            format_rules: Some(
+            transports: Some(
                 serde_json::json!({
                     "stdio": {
                         "template": {
@@ -911,7 +1075,7 @@ mod render_definition_tests {
     }
 
     #[test]
-    fn build_render_definition_derives_supported_transports_from_format_rules() {
+    fn build_render_definition_derives_supported_transports_from_transports() {
         let state = ClientStateRow {
             identifier: "cursor".to_string(),
             config_path: Some("~/.cursor/mcp.json".to_string()),
@@ -924,7 +1088,7 @@ mod render_definition_tests {
             storage_path_strategy: Some("config_path".to_string()),
             merge_strategy: Some("replace".to_string()),
             managed_source: Some("profile".to_string()),
-            format_rules: Some(
+            transports: Some(
                 serde_json::json!({
                     "streamable_http": {
                         "template": {
@@ -946,8 +1110,85 @@ mod render_definition_tests {
         assert!(definition.config_mapping.format_rules.contains_key("streamable_http"));
     }
 
+    #[test]
+    fn build_render_definition_requires_canonical_transport_keys() {
+        let state = ClientStateRow {
+            identifier: "cursor".to_string(),
+            config_path: Some("~/.cursor/mcp.json".to_string()),
+            connection_mode: Some("local_config_detected".to_string()),
+            template_identifier: Some("cursor".to_string()),
+            config_format: Some("json".to_string()),
+            container_type: Some("object".to_string()),
+            container_keys: Some("[\"mcpServers\"]".to_string()),
+            storage_kind: Some("file".to_string()),
+            storage_path_strategy: Some("config_path".to_string()),
+            merge_strategy: Some("replace".to_string()),
+            managed_source: Some("profile".to_string()),
+            transports: Some(
+                serde_json::json!({
+                    "http": {
+                        "template": {
+                            "type": "streamable_http",
+                            "url": "{{{url}}}"
+                        },
+                        "include_type": false
+                    }
+                })
+                .to_string(),
+            ),
+            approval_metadata: None,
+            ..ClientStateRow::default()
+        };
+
+        let error = ClientConfigService::build_render_definition_from_state(&state)
+            .expect_err("alias transport keys should be rejected");
+
+        assert!(error.to_string().contains("missing persisted transports"));
+    }
+
+    #[test]
+    fn filter_mcp_mate_entries_removes_attached_object_entry_from_recorded_container() {
+        let config = serde_json::json!({
+            "servers": {
+                "MCPMate": {
+                    "type": "streamable_http",
+                    "url": "http://127.0.0.1:8000/mcp?client_id=client"
+                },
+                "other": {
+                    "type": "stdio",
+                    "command": "other"
+                }
+            }
+        });
+
+        let (filtered, changed) = filter_mcp_mate_entries(config, &["servers".to_string()], false);
+
+        assert!(changed);
+        assert!(filtered["servers"].get("MCPMate").is_none());
+        assert!(filtered["servers"].get("other").is_some());
+    }
+
+    #[test]
+    fn filter_mcp_mate_entries_removes_attached_array_entry_from_recorded_nested_container() {
+        let config = serde_json::json!({
+            "mcp": {
+                "servers": [
+                    { "name": "MCPMate", "type": "stdio" },
+                    { "name": "other", "type": "stdio" }
+                ]
+            }
+        });
+
+        let (filtered, changed) = filter_mcp_mate_entries(config, &["mcp.servers".to_string()], true);
+
+        assert!(changed);
+        let servers = filtered["mcp"]["servers"].as_array().expect("servers array");
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0]["name"], "other");
+    }
+
     #[tokio::test]
-    async fn seed_client_runtime_rows_persists_format_rules_without_transport_metadata() {
+    async fn seed_client_runtime_rows_persists_transports_without_transport_metadata() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -956,8 +1197,8 @@ mod render_definition_tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("init client table");
-        let mut format_rules = HashMap::new();
-        format_rules.insert(
+        let mut transports = HashMap::new();
+        transports.insert(
             "streamable_http".to_string(),
             FormatRule {
                 template: serde_json::json!({
@@ -985,7 +1226,7 @@ mod render_definition_tests {
                 managed_endpoint: None,
                 managed_source: Some("profile".to_string()),
                 parse: None,
-                format_rules,
+                format_rules: transports,
             },
             ..Default::default()
         };
@@ -993,19 +1234,19 @@ mod render_definition_tests {
         ClientConfigService::seed_client_runtime_rows_from_templates(&pool, &[template])
             .await
             .expect("seed client runtime row");
-        let (approval_metadata, persisted_format_rules): (String, String) =
-            sqlx::query_as("SELECT approval_metadata, format_rules FROM client WHERE identifier = ?")
+        let (approval_metadata, persisted_transports): (String, String) =
+            sqlx::query_as("SELECT approval_metadata, transports FROM client WHERE identifier = ?")
                 .bind("cursor")
                 .fetch_one(&pool)
                 .await
                 .expect("load client row");
         let value: serde_json::Value = serde_json::from_str(&approval_metadata).expect("approval metadata json");
         let persisted_rules: HashMap<String, FormatRule> =
-            serde_json::from_str(&persisted_format_rules).expect("persisted format rules json");
+            serde_json::from_str(&persisted_transports).expect("persisted transports json");
 
         assert!(value["runtime_client"].get("supported_transports").is_none());
         assert_eq!(
-            supported_transports_from_format_rules(&persisted_rules),
+            supported_transports_from_transports(&persisted_rules),
             vec!["streamable_http".to_string()]
         );
     }

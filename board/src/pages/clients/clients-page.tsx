@@ -1,21 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	BookCopy,
-	Check,
-	CheckCircle2,
-	Clock,
-	FileText,
-	Globe,
-	PenLine,
-	Plus,
-	RefreshCw,
-	ShieldX,
-	ToggleLeft,
-} from "lucide-react";
-import React, { type MouseEvent, useState } from "react";
+import { Check, Plus, RefreshCw, ToggleLeft } from "lucide-react";
+import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
 import { EmptyState, PageLayout } from "../../components/page-layout";
@@ -26,13 +13,6 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
 import type { Entity } from "../../components/ui/page-toolbar";
-import { Switch } from "../../components/ui/switch";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipProvider,
-	TooltipTrigger,
-} from "../../components/ui/tooltip";
 import type { SegmentOption } from "../../components/ui/segment";
 import {
 	Select,
@@ -48,6 +28,36 @@ import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { ClientListDefaultFilter } from "../../lib/store";
 import type { ClientInfo } from "../../lib/types";
+import {
+	getClientAttentionClasses,
+	getGovernanceStatus,
+	type ClientGovernanceStatus,
+} from "./client-governance";
+import { ClientCard } from "./components/client-card";
+
+const EMPTY_CLIENTS: ClientInfo[] = [];
+
+function renderGovernanceBadge(
+	status: ClientGovernanceStatus,
+	label: string,
+): React.ReactNode {
+	switch (status) {
+		case "pending":
+			return (
+				<Badge variant="destructive" className="bg-amber-500 hover:bg-amber-600">
+					{label}
+				</Badge>
+			);
+		case "denied":
+			return <Badge variant="destructive">{label}</Badge>;
+		default:
+			return (
+				<span className="flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+					<Check className="mr-1 h-3 w-3" /> {label}
+				</span>
+			);
+	}
+}
 
 export function ClientsPage() {
 	const navigate = useNavigate();
@@ -88,17 +98,14 @@ export function ClientsPage() {
 		refetchOnReconnect: false,
 	});
 
-	// Use a stable empty array reference to avoid re-render loops when data is undefined or on errors
-	const EMPTY: ClientInfo[] = React.useMemo(() => [], []);
-	const clients: ClientInfo[] = data?.client ?? EMPTY;
+	const clients: ClientInfo[] = data?.client ?? EMPTY_CLIENTS;
 	const detectedCount = clients.filter((c) => !!c.detected).length;
-	const managedCount = clients.filter((c) => !!c.managed).length;
-	const pendingCount = clients.filter((c) => c.approval_status === "pending").length;
+	const approvedCount = clients.filter((c) => getGovernanceStatus(c) === "allowed").length;
+	const pendingCount = clients.filter((c) => getGovernanceStatus(c) === "pending").length;
 
 	type ClientToolbarEntity = Entity & {
 		identifier: string;
 		display_name: string;
-		managed: boolean;
 		detected: boolean;
 		approval_status?: string | null;
 	};
@@ -109,12 +116,11 @@ export function ClientsPage() {
 			name: client.display_name || client.identifier || "",
 			identifier: client.identifier,
 			display_name: client.display_name,
-			managed: client.managed,
 			detected: client.detected,
 			approval_status: client.approval_status,
 			description: client.description ?? undefined,
 		}));
-		// Default stable sort by name A→Z, tie-breaker by id
+		// Default stable sort by name A-Z, tie-breaker by id
 		mapped.sort((a, b) => {
 			const byName = a.name.localeCompare(b.name, undefined, {
 				sensitivity: "base",
@@ -132,32 +138,27 @@ export function ClientsPage() {
 	// Apply visibility filter from toolbar
 	const filteredClientsAsEntities = React.useMemo<ClientToolbarEntity[]>(() => {
 		if (filter === "allowed") {
-			return clientsAsEntities.filter(
-				(c) =>
-					c.approval_status !== "pending" &&
-					c.approval_status !== "rejected" &&
-					c.approval_status !== "suspended",
-			);
+			return clientsAsEntities.filter((c) => {
+				const sourceClient = clientsByIdentifier.get(c.identifier);
+				return sourceClient ? getGovernanceStatus(sourceClient) === "allowed" : false;
+			});
 		}
 		if (filter === "pending") {
-			return clientsAsEntities.filter((c) => c.approval_status === "pending");
+			return clientsAsEntities.filter((c) => {
+				const sourceClient = clientsByIdentifier.get(c.identifier);
+				return sourceClient ? getGovernanceStatus(sourceClient) === "pending" : false;
+			});
 		}
 		if (filter === "denied") {
-			return clientsAsEntities.filter(
-				(c) => c.approval_status === "rejected" || c.approval_status === "suspended",
-			);
+			return clientsAsEntities.filter((c) => {
+				const sourceClient = clientsByIdentifier.get(c.identifier);
+				return sourceClient ? getGovernanceStatus(sourceClient) === "denied" : false;
+			});
 		}
 		return clientsAsEntities;
-	}, [clientsAsEntities, filter]);
+	}, [clientsAsEntities, clientsByIdentifier, filter]);
 
-	const getGovernanceStatus = (client: ClientInfo) => {
-		if (client.approval_status === "pending") return "pending";
-		if (client.approval_status === "suspended") return "denied";
-		if (client.approval_status === "rejected") return "denied";
-		return "allowed";
-	};
-
-	const getGovernanceStatusLabel = (status: "allowed" | "pending" | "denied") => {
+	const getGovernanceStatusLabel = (status: ClientGovernanceStatus) => {
 		if (status === "pending") {
 			return t("entity.badge.pending", { defaultValue: "Pending" });
 		}
@@ -167,46 +168,21 @@ export function ClientsPage() {
 		return t("entity.badge.allowed", { defaultValue: "Allowed" });
 	};
 
-	const getClientAttentionClasses = (approvalStatus?: string | null) => {
-		if (approvalStatus === "pending") {
-			return {
-				cardClassName:
-					"border-amber-300/90 hover:border-amber-400 dark:border-amber-700/80 dark:hover:border-amber-600",
-				titleClassName: "text-amber-700 dark:text-amber-400",
-			};
-		}
-
-		if (approvalStatus === "rejected" || approvalStatus === "suspended") {
-			return {
-				cardClassName:
-					"border-red-300/90 hover:border-red-400 dark:border-red-800/80 dark:hover:border-red-700",
-				titleClassName: "text-red-700 dark:text-red-400",
-			};
-		}
-
-		return {
-			cardClassName: "",
-			titleClassName: "",
-		};
-	};
-
 	const [sortedClients, setSortedClients] = React.useState<ClientToolbarEntity[]>(
 		filteredClientsAsEntities,
 	);
 
-	const manageMutation = useMutation({
+	const governanceMutation = useMutation({
 		mutationFn: async ({
 			identifier,
-			managed,
+			approved,
 		}: {
 			identifier: string;
-			managed: boolean;
+			approved: boolean;
 		}) => {
-			const result = await clientsApi.manage(
-				identifier,
-				managed ? "enable" : "disable",
-			);
-			return result;
+			return approved
+				? clientsApi.approveRecord({ identifier })
+				: clientsApi.suspendRecord({ identifier });
 		},
 		onSuccess: async () => {
 			try {
@@ -257,7 +233,7 @@ export function ClientsPage() {
 		});
 		const governanceStatus = getGovernanceStatus(client);
 		const governanceLabel = getGovernanceStatusLabel(governanceStatus);
-		const attentionClasses = getClientAttentionClasses(client.approval_status);
+		const attentionClasses = getClientAttentionClasses(governanceStatus);
 
 		const recordKindLabel = client.governed_by_default_policy
 			? t("entity.badge.defaultPolicy", { defaultValue: "Default Policy" })
@@ -284,253 +260,28 @@ export function ClientsPage() {
 					<span key="recordKind" className="text-slate-500">• {recordKindLabel}</span>,
 					writableConfigLabel && <span key="writable" className="text-slate-500">• {writableConfigLabel}</span>
 				].filter(Boolean)}
-				statusBadge={
-					governanceStatus === "pending" ? (
-						<Badge variant="destructive" className="bg-amber-500 hover:bg-amber-600">
-							{governanceLabel}
-						</Badge>
-					) : governanceStatus === "denied" ? (
-						<Badge variant="destructive">{governanceLabel}</Badge>
-					) : (
-						<span className="flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
-							<Check className="mr-1 h-3 w-3" /> {governanceLabel}
-						</span>
-					)
-				}
+				statusBadge={renderGovernanceBadge(governanceStatus, governanceLabel)}
 				enableSwitch={{
-					checked: client.managed,
+					checked: governanceStatus === "allowed",
 					onChange: (checked) =>
-						manageMutation.mutate({ identifier, managed: checked }),
-					disabled: manageMutation.isPending,
+						governanceMutation.mutate({ identifier, approved: checked }),
+					disabled: governanceMutation.isPending || governanceStatus === "pending",
 				}}
 				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName}`.trim()}
-				onClick={() => navigate(`/clients/${encodeURIComponent(identifier)}`)}
-			/>
-		);
-	};
-
-	const renderClientCard = (client: ClientInfo) => {
-		const displayName =
-			client.display_name ||
-			client.identifier ||
-			t("entity.fallbackName", { defaultValue: "Client" });
-		const identifier = client.identifier || "—";
-		const avatarInitial =
-			(displayName.trim() || identifier).charAt(0).toUpperCase() || "C";
-		const description =
-			client.description ?? client.template?.description ?? undefined;
-		const homepageUrl =
-			client.homepage_url ?? client.template?.homepage_url ?? null;
-		const statItems = [
-			{
-				label: t("entity.stats.servers", { defaultValue: "Servers" }),
-				value: (client.mcp_servers_count ?? 0).toString(),
-			},
-			{
-				label: t("entity.stats.managed", { defaultValue: "Managed" }),
-				value: client.managed
-					? t("states.on", { defaultValue: "On" })
-					: t("states.off", { defaultValue: "Off" }),
-			},
-			{
-				label: t("entity.stats.detected", { defaultValue: "Detected" }),
-				value: client.detected
-					? t("states.yes", { defaultValue: "Yes" })
-					: t("states.no", { defaultValue: "No" }),
-			},
-			{
-				label: t("entity.stats.config", { defaultValue: "Config" }),
-				value: client.has_mcp_config
-					? t("states.present", { defaultValue: "Present" })
-					: t("states.missing", { defaultValue: "Missing" }),
-			},
-		];
-
-		const governanceStatus = getGovernanceStatus(client);
-		const attentionClasses = getClientAttentionClasses(client.approval_status);
-
-		const allowedLabel = t("entity.badge.allowed", { defaultValue: "Allowed" });
-		const pendingLabel = t("entity.badge.pending", { defaultValue: "Pending" });
-		const deniedLabel = t("entity.badge.denied", { defaultValue: "Denied" });
-
-		const governanceIcon =
-			governanceStatus === "pending" ? (
-				<Clock className="h-4 w-4" aria-hidden />
-			) : governanceStatus === "denied" ? (
-				<ShieldX className="h-4 w-4" aria-hidden />
-			) : (
-				<CheckCircle2 className="h-4 w-4" aria-hidden />
-			);
-
-		const governanceStatusLabel =
-			governanceStatus === "pending"
-				? pendingLabel
-				: governanceStatus === "denied"
-					? deniedLabel
-					: allowedLabel;
-
-		const governanceIconClass =
-			governanceStatus === "pending"
-				? "text-amber-600 dark:text-amber-400"
-				: governanceStatus === "denied"
-					? "text-destructive"
-					: "text-emerald-600 dark:text-emerald-400";
-
-		const yesLabel = t("states.yes", { defaultValue: "Yes" });
-		const noLabel = t("states.no", { defaultValue: "No" });
-
-		const governanceTooltip = t("entity.tooltip.governanceStatus", {
-			status: governanceStatusLabel,
-			defaultValue: "Governance status: {{status}}",
-		});
-
-		const defaultPolicyTooltip = t("entity.tooltip.defaultPolicy", {
-			answer: client.governed_by_default_policy === true ? yesLabel : noLabel,
-			defaultValue: "Default policy: {{answer}}",
-		});
-
-		const explicitRecordTooltip = t("entity.tooltip.explicitRecord", {
-			answer: client.governed_by_default_policy === true ? noLabel : yesLabel,
-			defaultValue: "Explicit record: {{answer}}",
-		});
-
-		const writableTooltip = t("entity.tooltip.writableConfig", {
-			answer: client.writable_config === true ? yesLabel : noLabel,
-			defaultValue: "Writable config: {{answer}}",
-		});
-
-		const iconButtonClass =
-			"inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-0 bg-transparent p-0 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50";
-
-		const quickLinks = (
-			[
-				{
-					label: t("detail.overview.labels.homepage", {
-						defaultValue: "Homepage",
-					}),
-					url: homepageUrl,
-					icon: Globe,
-				},
-			] as const
-		).filter((link) => !!link.url);
-
-		const handleQuickLink = (event: MouseEvent, url: string) => {
-			event.stopPropagation();
-			if (!url) return;
-			try {
-				window.open(url, "_blank", "noopener,noreferrer");
-			} catch {
-				/* noop */
-			}
-		};
-
-		return (
-			<EntityCard
-				key={`client-card-${identifier}`}
-				id={identifier}
-				title={displayName}
-				description={description}
-				avatar={{
-					src: client.logo_url ?? undefined,
-					alt: displayName,
-					fallback: avatarInitial,
-				}}
-				avatarShape="rounded"
-				stats={statItems}
-				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName}`.trim()}
-				titleClassName={attentionClasses.titleClassName}
-				topRightBadge={
-					quickLinks.length > 0 ? (
-						<>
-							{quickLinks.map((link) => (
-								<button
-									key={`${identifier}-${link.label}`}
-									type="button"
-									className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-transparent bg-transparent text-slate-400 transition hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:text-slate-500 dark:hover:text-slate-300"
-									onClick={(event) => handleQuickLink(event, link.url!)}
-									title={link.label}
-								>
-									<link.icon className="h-4 w-4" aria-hidden />
-									<span className="sr-only">{link.label}</span>
-								</button>
-							))}
-						</>
-					) : undefined
-				}
-				bottomLeft={
-					<TooltipProvider delayDuration={200}>
-						<div className="flex max-w-full flex-nowrap items-center gap-2 overflow-hidden text-foreground">
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<button
-										type="button"
-										className={`${iconButtonClass} ${governanceIconClass}`}
-										aria-label={governanceTooltip}
-										onClick={(e) => e.stopPropagation()}
-									>
-										{governanceIcon}
-									</button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{governanceTooltip}</TooltipContent>
-							</Tooltip>
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<button
-										type="button"
-										className={`${iconButtonClass} text-foreground ${client.governed_by_default_policy === true ? "opacity-100" : "opacity-25"}`}
-										aria-label={defaultPolicyTooltip}
-										onClick={(e) => e.stopPropagation()}
-									>
-										<BookCopy className="h-4 w-4" aria-hidden />
-									</button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{defaultPolicyTooltip}</TooltipContent>
-							</Tooltip>
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<button
-										type="button"
-										className={`${iconButtonClass} text-foreground ${client.governed_by_default_policy === true ? "opacity-25" : "opacity-100"}`}
-										aria-label={explicitRecordTooltip}
-										onClick={(e) => e.stopPropagation()}
-									>
-										<FileText className="h-4 w-4" aria-hidden />
-									</button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{explicitRecordTooltip}</TooltipContent>
-							</Tooltip>
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<button
-										type="button"
-										className={`${iconButtonClass} text-foreground ${client.writable_config === true ? "opacity-100" : "opacity-25"}`}
-										aria-label={writableTooltip}
-										onClick={(e) => e.stopPropagation()}
-									>
-										<PenLine className="h-4 w-4" aria-hidden />
-									</button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{writableTooltip}</TooltipContent>
-							</Tooltip>
-						</div>
-					</TooltipProvider>
-				}
-				bottomRight={
-					<Switch
-						checked={client.managed}
-						onCheckedChange={(checked) =>
-							manageMutation.mutate({ identifier, managed: checked })
-						}
-						onClick={(e) => e.stopPropagation()}
-						disabled={manageMutation.isPending}
-					/>
-				}
 				onClick={() => navigate(`/clients/${encodeURIComponent(identifier)}`)}
 			/>
 		);
 	};
 
 	const handleRefresh = async () => {
+		notifyInfo(
+			t("toolbar.actions.refresh.notificationTitle", {
+				defaultValue: "Refresh triggered",
+			}),
+			t("toolbar.actions.refresh.notificationMessage", {
+				defaultValue: "Latest client state will sync to the list",
+			}),
+		);
 		setRefreshing(true);
 		try {
 			await clientsApi.list(true);
@@ -563,12 +314,12 @@ export function ClientsPage() {
 				}),
 			},
 			{
-				title: t("statsCards.managed.title", {
-					defaultValue: "Managed",
+				title: t("statsCards.approved.title", {
+					defaultValue: "Approved",
 				}),
-				value: managedCount,
-				description: t("statsCards.managed.description", {
-					defaultValue: "management enabled",
+				value: approvedCount,
+				description: t("statsCards.approved.description", {
+					defaultValue: "governance allowed",
 				}),
 			},
 			{
@@ -584,7 +335,7 @@ export function ClientsPage() {
 		[
 			clients.length,
 			detectedCount,
-			managedCount,
+			approvedCount,
 			pendingCount,
 			i18n.language,
 		],
@@ -649,10 +400,10 @@ export function ClientsPage() {
 		</Card>
 	);
 
-	// 展开状态
+	// Toolbar expansion state
 	const [expanded, setExpanded] = useState(false);
 
-	// 工具栏配置
+	// Toolbar configuration
 	const toolbarConfig = React.useMemo(
 		() => ({
 			data: filteredClientsAsEntities,
@@ -706,13 +457,6 @@ export function ClientsPage() {
 						}),
 						defaultDirection: "asc" as const,
 					},
-					{
-						value: "managed",
-						label: t("toolbar.sort.options.managed", {
-							defaultValue: "Management Status",
-						}),
-						defaultDirection: "desc" as const,
-					},
 				],
 				defaultSort: "display_name",
 			},
@@ -723,12 +467,12 @@ export function ClientsPage() {
 		[filteredClientsAsEntities, i18n.language, t],
 	);
 
-	// 工具栏状态
+	// Toolbar state
 	const toolbarState = {
 		expanded,
 	};
 
-	// 工具栏回调
+	// Toolbar callbacks
 	const toolbarCallbacks: {
 		onViewModeChange: (mode: "grid" | "list") => void;
 		onSortedDataChange: (sortedData: ClientToolbarEntity[]) => void;
@@ -771,7 +515,7 @@ export function ClientsPage() {
 		</div>
 	);
 
-	// 操作按钮（刷新 / 新增）
+	// Toolbar actions
 	const actions = (
 		<div className="flex items-center gap-2">
 			<Button
@@ -780,16 +524,6 @@ export function ClientsPage() {
 				variant="outline"
 				size="sm"
 				className="h-9 w-9 p-0"
-				onMouseUp={() =>
-					notifyInfo(
-						t("toolbar.actions.refresh.notificationTitle", {
-							defaultValue: "Refresh triggered",
-						}),
-						t("toolbar.actions.refresh.notificationMessage", {
-							defaultValue: "Latest client state will sync to the list",
-						}),
-					)
-				}
 				title={t("toolbar.actions.refresh.title", {
 					defaultValue: "Refresh",
 				})}
@@ -836,7 +570,15 @@ export function ClientsPage() {
 				{view === "grid"
 					? sortedClients.map((client) => {
 						const sourceClient = clientsByIdentifier.get(client.identifier);
-						return sourceClient ? renderClientCard(sourceClient) : null;
+						return sourceClient ? (
+							<ClientCard
+								key={sourceClient.identifier}
+								client={sourceClient}
+								onNavigate={(identifier) => navigate(`/clients/${encodeURIComponent(identifier)}`)}
+								onGovernanceChange={(identifier, approved) => governanceMutation.mutate({ identifier, approved })}
+								isGovernancePending={governanceMutation.isPending}
+							/>
+						) : null;
 					})
 					: sortedClients.map((client) => {
 						const sourceClient = clientsByIdentifier.get(client.identifier);

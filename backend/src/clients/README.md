@@ -65,7 +65,7 @@ config_mapping: {
   merge_strategy: "deep_merge",
   keep_original_config: true,
   managed_endpoint: { ... },
-  format_rules: { ... }
+  transports: { ... }
 }
 ```
 
@@ -81,14 +81,14 @@ Note: the historical `"mixed"` mode has been folded into `object_map` semantics.
 
 #### Managed Endpoint
 
-Defines how a “hosted/managed” profile should emit a single proxy server.  The engine infers supported transports from `format_rules` keys and applies a fixed global priority when choosing what to render:
+Defines how a “hosted/managed” profile should emit a single proxy server.  The engine infers supported transports from `transports` keys and applies a fixed global priority when choosing what to render:
 
 - Priority: `streamable_http` → `sse` → `stdio`.
 - If `stdio` is chosen, MCPMate automatically uses the co-located bridge binary to expose its upstream endpoint over stdio, emitting a `command/args/env` entry the client understands. There is no separate `stdio_bridge` transport in templates.
 - `managed_source` – optional descriptor of where metadata comes from (e.g. `"profile"`).
   - Legacy: older templates may use `managed_endpoint: { source: "profile" }`; both forms are supported, but the flattened `managed_source` is preferred.
 
-#### Format Rules
+#### Transports
 
 Describe how to render each transport.  The `template` value is arbitrary JSON/JSON5 with Handlebars placeholders.
 
@@ -133,7 +133,7 @@ All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
 1. Create a JSON5 file under `config/client/<identifier>.json5`.
 2. List detection rules for each platform you want to support.
 3. Describe `config_mapping` so the engine knows where to patch data.
-4. Register any new transports in `format_rules`.
+4. Register any new transports in `transports`.
 5. Optional: add a smoke test similar to those in `clients::service::tests`.
 
 ## Runtime Flow
@@ -148,12 +148,11 @@ MCPMate supports explicit approval states for detected clients, enabling better 
 
 ### Approval States
 
-Clients can be in one of four approval states:
+Clients can be in one of three approval states:
 
 - **`approved`** — Default state. Client is fully functional and can be configured/managed
 - **`pending`** — Client detected but awaiting approval (typically for unknown clients without templates)
 - **`suspended`** — Client explicitly disabled from management operations
-- **`rejected`** — Client explicitly rejected and excluded from lists
 
 ### Unknown Client Detection
 
@@ -161,11 +160,10 @@ When `ClientConfigService::list_clients()` detects an installed application with
 
 1. **Automatic Row Creation** — `ensure_pending_unknown_row()` creates a database record with:
    - `approval_status = 'pending'`
-   - `managed = 0` (disabled by default)
    - `template_id = NULL` (no template binding)
 
 2. **Synthetic Template** — A minimal `ClientTemplate` is generated in-memory with:
-   - Empty `detection`, `config_mapping`, and `format_rules`
+   - Empty `detection`, `config_mapping`, and `transports`
    - Identifier matching the detected client
    - Display name from detection results
 
@@ -177,16 +175,12 @@ When `ClientConfigService::list_clients()` detects an installed application with
 ### Approval API Endpoints
 
 - **`POST /api/client/manage/approve`**
-  - Sets `approval_status = 'approved'` and `managed = 1`
+  - Sets `approval_status = 'approved'`
   - Enables configuration operations for the client
   
 - **`POST /api/client/manage/suspend`**
-  - Sets `approval_status = 'suspended'` and `managed = 0`
+  - Sets `approval_status = 'suspended'`
   - Disables management without deleting the record
-
-- **`POST /api/client/manage/reject`**
-  - Sets `approval_status = 'rejected'`
-  - Client is excluded from future listings
 
 ### Operation Guards
 
@@ -210,11 +204,13 @@ Approved clients can be bound to templates later by:
 
 The `template_id` field decouples record identity (`identifier`) from template binding, allowing flexible evolution of client definitions.
 
-## Management & Backup APIs
+## Governance, Attachment & Backup APIs
 
-- `/api/client/manage` (POST) toggles whether MCPMate manages a client (`enable` / `disable`).  Disabled clients are skipped during update calls and surface with `managed: false` in responses.
+- `/api/client/manage/approve` (POST) sets `approval_status = 'approved'` and allows configuration operations.
+- `/api/client/manage/suspend` (POST) sets `approval_status = 'suspended'` and blocks configuration operations without deleting MCPMate-side settings.
+- `/api/client/detach` (POST) removes MCPMate entries from the external client configuration and marks `attachment_state = 'detached'`.
 - `/api/client/backups/list` (GET) lists stored backups, optionally filtered by `identifier`.
 - `/api/client/backups/restore` / `/api/client/backups/delete` (POST) restore or remove a backup snapshot.
 - `/api/client/backups/policy` (GET/POST) reads or updates the retention policy described above.
 
-All state is persisted in the lightweight `client` table so that backups and management preferences survive restarts without reintroducing the legacy config tables. Transport alias keymaps are also shipped as built-in code defaults rather than external user files.
+All state is persisted in the lightweight `client` table so that backups and management preferences survive restarts without reintroducing the legacy config tables. Transport rules are persisted with canonical transport keys so record data stays authoritative and deterministic.

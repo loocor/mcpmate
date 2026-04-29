@@ -56,10 +56,10 @@ pub enum AuditAction {
     ProfileDelete,
     ProfileActivate,
     ProfileDeactivate,
-    ClientManageEnable,
-    ClientManageDisable,
     ClientSettingsUpdate,
     ClientConfigApply,
+    ClientConfigAttach,
+    ClientConfigDetach,
     ClientConfigRestore,
     ClientConfigImport,
     ClientCapabilityUpdate,
@@ -67,7 +67,6 @@ pub enum AuditAction {
     ClientBackupDelete,
     ClientBackupPolicyUpdate,
     ClientApprove,
-    ClientReject,
     ClientSuspend,
     OnboardingPolicyUpdate,
     FirstContactBehaviorUpdate,
@@ -127,10 +126,10 @@ impl AuditAction {
             | Self::ProfileDelete
             | Self::ProfileActivate
             | Self::ProfileDeactivate => AuditCategory::ProfileConfig,
-            Self::ClientManageEnable
-            | Self::ClientManageDisable
-            | Self::ClientSettingsUpdate
+            Self::ClientSettingsUpdate
             | Self::ClientConfigApply
+            | Self::ClientConfigAttach
+            | Self::ClientConfigDetach
             | Self::ClientConfigRestore
             | Self::ClientConfigImport
             | Self::ClientCapabilityUpdate
@@ -138,7 +137,6 @@ impl AuditAction {
             | Self::ClientBackupDelete
             | Self::ClientBackupPolicyUpdate
             | Self::ClientApprove
-            | Self::ClientReject
             | Self::ClientSuspend => AuditCategory::ClientConfig,
             Self::CoreSourceApply
             | Self::LocalCoreServiceStart

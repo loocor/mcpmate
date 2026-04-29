@@ -239,7 +239,6 @@ pub enum ApprovalStatus {
     #[default]
     Approved,
     Suspended,
-    Rejected,
 }
 
 impl ApprovalStatus {
@@ -248,7 +247,6 @@ impl ApprovalStatus {
             ApprovalStatus::Pending => "pending",
             ApprovalStatus::Approved => "approved",
             ApprovalStatus::Suspended => "suspended",
-            ApprovalStatus::Rejected => "rejected",
         }
     }
 }
@@ -270,7 +268,6 @@ impl FromStr for ApprovalStatus {
             "pending" => Ok(ApprovalStatus::Pending),
             "approved" => Ok(ApprovalStatus::Approved),
             "suspended" => Ok(ApprovalStatus::Suspended),
-            "rejected" => Ok(ApprovalStatus::Rejected),
             _ => Err(ParseApprovalStatusError),
         }
     }
@@ -289,6 +286,61 @@ impl fmt::Display for ParseApprovalStatusError {
 }
 
 impl std::error::Error for ParseApprovalStatusError {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentState {
+    #[default]
+    Attached,
+    Detached,
+    NotApplicable,
+}
+
+impl AttachmentState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AttachmentState::Attached => "attached",
+            AttachmentState::Detached => "detached",
+            AttachmentState::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+impl fmt::Display for AttachmentState {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for AttachmentState {
+    type Err = ParseAttachmentStateError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "attached" => Ok(AttachmentState::Attached),
+            "detached" => Ok(AttachmentState::Detached),
+            "not_applicable" => Ok(AttachmentState::NotApplicable),
+            _ => Err(ParseAttachmentStateError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseAttachmentStateError;
+
+impl fmt::Display for ParseAttachmentStateError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid attachment state")
+    }
+}
+
+impl std::error::Error for ParseAttachmentStateError {}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -607,6 +659,8 @@ pub struct FormatRule {
     pub extra_fields: serde_json::Map<String, serde_json::Value>,
     #[serde(default, alias = "requires_type_field")]
     pub include_type: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
 }
 
 impl FormatRule {

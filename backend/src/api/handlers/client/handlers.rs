@@ -4,22 +4,24 @@ use super::backups::parse_policy_payload;
 use super::config::{analyze_config_content, get_config_last_modified};
 use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
-    ClientBackupActionData, ClientBackupActionResp, ClientCapabilityConfigData, ClientCapabilityConfigReq,
-    ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq, ClientCheckResp, ClientConfigData,
-    ClientConfigFileParseData, ClientConfigFileParseInspectData, ClientConfigFileParseInspectExistingReq,
-    ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq, ClientConfigFileParseInspectResp,
-    ClientConfigFileParseValidationData, ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp,
-    ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected,
-    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientFormatRuleData, ClientImportSummary,
-    ClientImportedServer, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
+    ClientAttachData, ClientAttachReq, ClientAttachResp, ClientBackupActionData, ClientBackupActionResp,
+    ClientCapabilityConfigData, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq,
+    ClientCheckResp, ClientConfigData, ClientConfigFileParseData, ClientConfigFileParseInspectData,
+    ClientConfigFileParseInspectExistingReq, ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq,
+    ClientConfigFileParseInspectResp, ClientConfigFileParseValidationData, ClientConfigImportData,
+    ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq, ClientConfigResp,
+    ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
+    ClientConfigUpdateResp, ClientDetachData, ClientDetachReq, ClientDetachResp, ClientFormatRuleData,
+    ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
     ClientUnifyDirectExposureData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::models::{
-    ClientCapabilityConfigState, ClientConfigFileParse, ContainerType, TemplateFormat, UnifyDirectExposureConfig,
+    AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
+    TemplateFormat, UnifyDirectExposureConfig,
 };
-use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata, supported_transports_from_format_rules};
+use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
@@ -64,6 +66,24 @@ fn resolve_effective_config_file_parse(state: Option<&ClientStateRow>) -> Option
     }
 
     None
+}
+
+fn build_parse_metadata(
+    state: Option<&ClientStateRow>
+) -> (
+    Option<ClientConfigFileParseData>,
+    Option<ClientConfigFileParseData>,
+    bool,
+) {
+    let effective = resolve_effective_config_file_parse(state)
+        .as_ref()
+        .map(parse_data_from_rule);
+    let override_parse = state
+        .and_then(|s| s.config_file_parse_override().ok().flatten())
+        .as_ref()
+        .map(parse_data_from_rule);
+    let uses_default = override_parse.is_none();
+    (effective, override_parse, uses_default)
 }
 
 fn client_settings_error(
@@ -135,6 +155,7 @@ fn format_rule_data_from_rule(rule: &crate::clients::models::FormatRule) -> Clie
         url_field: rule.url_field.clone(),
         headers_field: rule.headers_field.clone(),
         extra_fields,
+        selected: rule.selected,
     }
 }
 
@@ -156,17 +177,27 @@ fn format_rule_from_api_data(data: &ClientFormatRuleData) -> crate::clients::mod
         url_field: data.url_field.clone(),
         headers_field: data.headers_field.clone(),
         extra_fields,
+        selected: data.selected,
     };
     rule.template = rule.to_template();
     rule
 }
 
-fn parse_api_format_rules(
+fn parse_api_transports(
     rules: &HashMap<String, ClientFormatRuleData>
 ) -> Result<HashMap<String, crate::clients::models::FormatRule>, String> {
     rules
         .iter()
         .map(|(transport, rule)| {
+            match transport.as_str() {
+                "streamable_http" | "sse" | "stdio" => {}
+                _ => {
+                    return Err(format!(
+                        "Invalid transport key '{transport}'; expected one of: streamable_http, sse, stdio"
+                    ));
+                }
+            }
+
             let parsed_rule = format_rule_from_api_data(rule);
             parsed_rule
                 .validate_for_transport(transport)
@@ -177,9 +208,9 @@ fn parse_api_format_rules(
         .collect()
 }
 
-fn format_rules_data_from_state(state: Option<&ClientStateRow>) -> Option<HashMap<String, ClientFormatRuleData>> {
+fn transports_data_from_state(state: Option<&ClientStateRow>) -> Option<HashMap<String, ClientFormatRuleData>> {
     let state = state?;
-    let rules = state.parsed_format_rules().ok()?;
+    let rules = state.parsed_transports().ok()?;
     if rules.is_empty() {
         return None;
     }
@@ -237,14 +268,7 @@ pub async fn config_file_parse_inspect(
         .inspect_config_file_parse(&request.config_path, draft.as_ref())
         .await
         .map_err(|err| {
-            let status = match err {
-                ConfigError::DataAccessError(_)
-                | ConfigError::PathResolutionError(_)
-                | ConfigError::PathNotWritable { .. }
-                | ConfigError::FileOperationError(_)
-                | ConfigError::IoError(_) => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
+            let status = map_config_error_status(&err);
             (
                 status,
                 Json(ClientConfigFileParseInspectResp::error_simple(
@@ -302,14 +326,7 @@ pub async fn config_file_parse_inspect_existing(
         .inspect_existing_client_config_file_parse(&request.identifier, draft.as_ref())
         .await
         .map_err(|err| {
-            let status = match err {
-                ConfigError::DataAccessError(_)
-                | ConfigError::PathResolutionError(_)
-                | ConfigError::PathNotWritable { .. }
-                | ConfigError::FileOperationError(_)
-                | ConfigError::IoError(_) => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
+            let status = map_config_error_status(&err);
             (
                 status,
                 Json(ClientConfigFileParseInspectExistingResp::error_simple(
@@ -444,20 +461,6 @@ pub async fn config_details(
         })
         .or_else(|| infer_config_type_from_path(config_path.as_deref()));
 
-    let managed = match service.is_client_managed(&request.identifier).await {
-        Ok(state) => state,
-        Err(err) => {
-            tracing::warn!(
-                client = %request.identifier,
-                error = %err,
-                "Falling back to disabled managed state after lookup failure"
-            );
-            warnings.push(format!("Failed to load managed state: {}", err));
-            degraded_reasons.push("managed_state_lookup_failed_default_false".to_string());
-            false
-        }
-    };
-
     let (imported_servers, import_summary) = (None, None);
     let runtime_metadata = state
         .as_ref()
@@ -498,6 +501,10 @@ pub async fn config_details(
         .map(|row| row.governed_by_default_policy())
         .unwrap_or(true);
     let approval_status = state.as_ref().map(|row| row.approval_status().to_string());
+    let attachment_state = state
+        .as_ref()
+        .map(|row| row.attachment_state().as_str().to_string())
+        .unwrap_or_else(|| "not_applicable".to_string());
     let writable_config = service
         .has_verified_local_config_target(&request.identifier)
         .await
@@ -517,7 +524,7 @@ pub async fn config_details(
         .as_ref()
         .map(parse_data_from_rule);
     let uses_template_parse_default = config_file_parse_override.is_none();
-    let format_rules = format_rules_data_from_state(state.as_ref());
+    let transports = transports_data_from_state(state.as_ref());
 
     let data = ClientConfigData {
         config_path: config_path.unwrap_or_default(),
@@ -530,9 +537,7 @@ pub async fn config_details(
         imported_servers,
         import_summary,
         template: build_client_template_metadata(state.as_ref(), &runtime_metadata),
-        supported_transports: state.as_ref().map_or_else(Vec::new, extract_supported_transports),
-        format_rules,
-        managed,
+        transports,
         description,
         homepage_url,
         docs_url,
@@ -543,6 +548,7 @@ pub async fn config_details(
         custom_profile_id: capability_config.custom_profile_id,
         custom_profile_missing,
         approval_status,
+        attachment_state: Some(attachment_state),
         governance_kind,
         connection_mode,
         governed_by_default_policy,
@@ -574,7 +580,50 @@ pub async fn config_apply(
     Json(request): Json<ClientConfigUpdateReq>,
 ) -> Result<Json<ClientConfigUpdateResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
+    let mark_attached_on_apply = !matches!(request.mode, ClientConfigMode::Transparent);
+    let applied_config =
+        apply_client_config_request(&service, &request, "config_apply", mark_attached_on_apply).await?;
+    let data = applied_config.data;
 
+    tracing::info!(
+        client = %request.identifier,
+        applied = data.applied,
+        preview = %request.preview,
+        scheduled = data.scheduled.unwrap_or(false),
+        "config_apply succeeded"
+    );
+
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientConfigApply,
+        AuditStatus::Success,
+        "/api/client/config/apply",
+        &request.identifier,
+        Some(request.identifier.clone()),
+        Some(json!({
+            "mode": request.mode,
+            "preview": request.preview,
+            "applied": data.applied,
+            "scheduled": data.scheduled.unwrap_or(false),
+            "selected_config": request.selected_config,
+        })),
+        None,
+    )
+    .await;
+
+    Ok(Json(ClientConfigUpdateResp::success(data)))
+}
+
+struct AppliedClientConfig {
+    data: ClientConfigUpdateData,
+}
+
+async fn apply_client_config_request(
+    service: &ClientConfigService,
+    request: &ClientConfigUpdateReq,
+    operation: &'static str,
+    mark_attached_on_apply: bool,
+) -> Result<AppliedClientConfig, StatusCode> {
     let requested_backup_policy = if request.preview {
         None
     } else {
@@ -582,7 +631,7 @@ pub async fn config_apply(
     };
 
     let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
-        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before apply");
+        tracing::error!(client = %request.identifier, operation, error = %err, "Failed to load client state before apply");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -590,6 +639,7 @@ pub async fn config_apply(
         if state.approval_status() != "approved" {
             tracing::warn!(
                 client = %request.identifier,
+                operation,
                 approval_status = %state.approval_status(),
                 "Rejected config apply for non-approved client"
             );
@@ -607,6 +657,7 @@ pub async fn config_apply(
             {
                 tracing::warn!(
                     client = %request.identifier,
+                    operation,
                     "Rejected config apply without runtime local config target"
                 );
                 return Err(StatusCode::FORBIDDEN);
@@ -615,6 +666,7 @@ pub async fn config_apply(
         Err(err) => {
             tracing::warn!(
                 client = %request.identifier,
+                operation,
                 error = %err,
                 "Rejected config apply without a verified local config target"
             );
@@ -623,31 +675,26 @@ pub async fn config_apply(
     }
 
     let client_name = service.resolve_client_name(&request.identifier).await.map_err(|err| {
-        tracing::error!(client = %request.identifier, error = %err, "Failed to resolve client name");
+        tracing::error!(client = %request.identifier, operation, error = %err, "Failed to resolve client name");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
     match existing_state.as_ref() {
         Some(state) => {
             service
-                .ensure_active_state_row_with_name(
-                    &request.identifier,
-                    &client_name,
-                    None,
-                    Some(state.approval_status()),
-                )
+                .ensure_active_state_row_with_name(&request.identifier, &client_name, Some(state.approval_status()))
                 .await
                 .map_err(|err| {
-                    tracing::error!(client = %request.identifier, error = %err, "Failed to refresh active client state before apply");
+                    tracing::error!(client = %request.identifier, operation, error = %err, "Failed to refresh active client state before apply");
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
         }
         None => {
             service
-                .ensure_active_state_row_with_name(&request.identifier, &client_name, Some(true), Some("approved"))
+                .ensure_active_state_row_with_name(&request.identifier, &client_name, Some("approved"))
                 .await
                 .map_err(|err| {
-                    tracing::error!(client = %request.identifier, error = %err, "Failed to create active client state before apply");
+                    tracing::error!(client = %request.identifier, operation, error = %err, "Failed to create active client state before apply");
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
         }
@@ -660,6 +707,7 @@ pub async fn config_apply(
             .map_err(|err| {
                 tracing::error!(
                     client = %request.identifier,
+                    operation,
                     error = %err,
                     "Failed to persist backup policy before apply"
                 );
@@ -667,24 +715,18 @@ pub async fn config_apply(
             })?;
     }
 
-    let options = build_render_options(&request);
+    let options = build_render_options(request);
     let outcome = service.apply_with_deferred(options).await.map_err(|err| {
-        let status = match err {
-            ConfigError::ClientDisabled { .. } => StatusCode::FORBIDDEN,
-            ConfigError::DataAccessError(_)
-            | ConfigError::PathResolutionError(_)
-            | ConfigError::PathNotWritable { .. }
-            | ConfigError::FileOperationError(_) => StatusCode::BAD_REQUEST,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
+        let status = map_config_error_status(&err);
         tracing::error!(
             client = %request.identifier,
+            operation,
             mode = ?request.mode,
             preview = %request.preview,
             selected = ?request.selected_config,
             status = %status.as_u16(),
             error = %err,
-            "config_apply failed"
+            "config apply failed"
         );
         status
     })?;
@@ -699,63 +741,50 @@ pub async fn config_apply(
         content: outcome.preview.after.clone().unwrap_or_default(),
     };
 
-    // Get config_format from state for preview parsing
     let state = service.fetch_state(&request.identifier).await.map_err(|err| {
-        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state for preview");
+        tracing::error!(client = %request.identifier, operation, error = %err, "Failed to load client state for preview");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let config_format = state.as_ref().and_then(|s| s.config_format());
-
-    let config_path = state.as_ref().and_then(|s| s.config_path());
+    let config_format = state.as_ref().and_then(|state| state.config_format());
+    let config_path = state.as_ref().and_then(|state| state.config_path());
     let preview = build_update_preview(config_format, config_path, &synthetic);
     let mut warnings = outcome.warnings.clone();
-    warnings.extend(outcome.preview.summary.clone().into_iter());
-    let diff_format = Some(outcome.preview.format.as_str().to_string());
-    let diff_before = outcome.preview.before.clone();
-    let diff_after = outcome.preview.after.clone();
+    warnings.extend(outcome.preview.summary.clone());
     let applied = outcome.applied && !request.preview;
-    let backup_path = outcome.backup_path.clone();
 
-    let data = ClientConfigUpdateData {
-        success: true,
-        preview,
-        applied,
-        backup_path,
-        warnings,
-        diff_format,
-        diff_before,
-        diff_after,
-        scheduled: Some(outcome.scheduled),
-        scheduled_reason: outcome.scheduled_reason,
-    };
+    if applied && mark_attached_on_apply {
+        service.mark_client_attached(&request.identifier).await.map_err(|err| {
+            tracing::error!(client = %request.identifier, operation, error = %err, "Failed to persist attached state after config apply");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    }
 
-    tracing::info!(
-        client = %request.identifier,
-        applied = outcome.applied,
-        preview = %request.preview,
-        scheduled = outcome.scheduled,
-        "config_apply succeeded"
-    );
+    Ok(AppliedClientConfig {
+        data: ClientConfigUpdateData {
+            success: true,
+            preview,
+            applied,
+            backup_path: outcome.backup_path.clone(),
+            warnings,
+            diff_format: Some(outcome.preview.format.as_str().to_string()),
+            diff_before: outcome.preview.before.clone(),
+            diff_after: outcome.preview.after.clone(),
+            scheduled: Some(outcome.scheduled),
+            scheduled_reason: outcome.scheduled_reason,
+        },
+    })
+}
 
-    emit_client_audit_event(
-        &app_state,
-        AuditAction::ClientConfigApply,
-        AuditStatus::Success,
-        "/api/client/config/apply",
-        &request.identifier,
-        Some(request.identifier.clone()),
-        Some(json!({
-            "mode": request.mode,
-            "preview": request.preview,
-            "applied": applied,
-            "scheduled": outcome.scheduled,
-            "selected_config": request.selected_config,
-        })),
-        None,
-    )
-    .await;
-
-    Ok(Json(ClientConfigUpdateResp::success(data)))
+fn map_config_error_status(err: &ConfigError) -> StatusCode {
+    match err {
+        ConfigError::ClientDisabled { .. } => StatusCode::FORBIDDEN,
+        ConfigError::DataAccessError(_)
+        | ConfigError::PathResolutionError(_)
+        | ConfigError::PathNotWritable { .. }
+        | ConfigError::FileOperationError(_)
+        | ConfigError::IoError(_) => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 /// Handler for POST /api/client/config/restore
@@ -782,7 +811,7 @@ pub async fn config_restore(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     service
-        .ensure_active_state_row_with_name(&request.identifier, &client_name, Some(true), Some("approved"))
+        .ensure_active_state_row_with_name(&request.identifier, &client_name, Some("approved"))
         .await
         .map_err(|err| {
             tracing::error!(client = %request.identifier, error = %err, "Failed to activate client state before restore");
@@ -1107,10 +1136,10 @@ pub async fn update_settings(
         "update_settings: received request"
     );
 
-    let parsed_format_rules = request
-        .format_rules
+    let parsed_transports = request
+        .transports
         .as_ref()
-        .map(parse_api_format_rules)
+        .map(parse_api_transports)
         .transpose()
         .map_err(|err| client_settings_error(StatusCode::UNPROCESSABLE_ENTITY, err))?;
 
@@ -1131,19 +1160,13 @@ pub async fn update_settings(
                 logo_url: request.logo_url.clone(),
                 config_file_parse: request.config_file_parse.as_ref().map(parse_rule_from_api_data),
                 clear_config_file_parse: request.clear_config_file_parse,
-                format_rules: parsed_format_rules,
-                clear_format_rules: request.clear_format_rules,
+                transports: parsed_transports,
+                clear_transports: request.clear_transports,
             },
         )
         .await
         .map_err(|err| {
-            let status = match err {
-                ConfigError::DataAccessError(_)
-                | ConfigError::PathResolutionError(_)
-                | ConfigError::PathNotWritable { .. }
-                | ConfigError::FileOperationError(_) => StatusCode::BAD_REQUEST,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
+            let status = map_config_error_status(&err);
             tracing::error!(
                 client = %request.identifier,
                 error = %err,
@@ -1174,17 +1197,9 @@ pub async fn update_settings(
         })?
         .ok_or_else(|| client_settings_error(StatusCode::NOT_FOUND, "Client state not found"))?;
     let runtime_metadata = state.runtime_client_metadata();
-    let config_file_parse_effective = resolve_effective_config_file_parse(Some(&state))
-        .as_ref()
-        .map(parse_data_from_rule);
-    let config_file_parse_override = state
-        .config_file_parse_override()
-        .ok()
-        .flatten()
-        .as_ref()
-        .map(parse_data_from_rule);
-    let uses_template_parse_default = config_file_parse_override.is_none();
-    let format_rules = format_rules_data_from_state(Some(&state));
+    let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
+        build_parse_metadata(Some(&state));
+    let transports = transports_data_from_state(Some(&state));
 
     let data = crate::api::models::client::ClientSettingsUpdateData {
         identifier: request.identifier,
@@ -1194,8 +1209,7 @@ pub async fn update_settings(
         client_version: version,
         connection_mode: Some(state.connection_mode().as_str().to_string()),
         config_path: state.config_path().map(str::to_string),
-        supported_transports: extract_supported_transports(&state),
-        format_rules,
+        transports,
         description: runtime_metadata.description.clone(),
         homepage_url: runtime_metadata.homepage_url.clone(),
         docs_url: runtime_metadata.docs_url.clone(),
@@ -1225,7 +1239,7 @@ pub async fn update_settings(
             "display_name": data.display_name,
             "connection_mode": data.connection_mode,
             "config_path": data.config_path,
-            "supported_transports": data.supported_transports,
+            "transports": data.transports,
             "config_file_parse_effective": data.config_file_parse_effective,
             "config_file_parse_override": data.config_file_parse_override,
         })),
@@ -1312,6 +1326,167 @@ pub async fn get_capability_config(
     )))
 }
 
+/// Handler for POST /api/client/detach
+pub async fn client_detach(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientDetachReq>,
+) -> Result<Json<ClientDetachResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+
+    let changed = service.detach_client(&request.identifier).await.map_err(|err| {
+        let status = match err {
+            ConfigError::DataAccessError(_) | ConfigError::PathResolutionError(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        tracing::error!(client = %request.identifier, status = %status.as_u16(), error = %err, "Failed to detach client");
+        status
+    })?;
+    super::manage::invalidate_client_runtime_visibility(&request.identifier).await;
+
+    tracing::info!(client = %request.identifier, changed, "Client detached from MCPMate config");
+
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientConfigDetach,
+        AuditStatus::Success,
+        "/api/client/detach",
+        &request.identifier,
+        Some(request.identifier.clone()),
+        Some(json!({
+            "detach": true,
+            "changed": changed,
+            "attachment_state": "detached",
+        })),
+        None,
+    )
+    .await;
+
+    Ok(Json(ClientDetachResp::success(ClientDetachData {
+        identifier: request.identifier,
+        attachment_state: "detached".to_string(),
+        changed,
+    })))
+}
+
+fn resolve_persisted_apply_selection(
+    mode: ClientConfigMode,
+    cap: &ClientCapabilityConfigState,
+) -> Result<ClientConfigSelected, ConfigError> {
+    match mode {
+        ClientConfigMode::Unify => Ok(ClientConfigSelected::Default),
+        ClientConfigMode::Hosted | ClientConfigMode::Transparent => {
+            if cap.capability_config.capability_source == CapabilitySource::Custom {
+                if cap.custom_profile_missing || cap.capability_config.custom_profile_id.is_none() {
+                    return Err(ConfigError::DataAccessError(
+                        "Custom workspace profile is missing; fix capability configuration before attaching MCPMate."
+                            .to_string(),
+                    ));
+                }
+                Ok(ClientConfigSelected::Profile {
+                    profile_id: cap.capability_config.custom_profile_id.clone().unwrap(),
+                })
+            } else {
+                Ok(ClientConfigSelected::Default)
+            }
+        }
+    }
+}
+
+fn client_config_mode_from_effective(mode: &str) -> Result<ClientConfigMode, StatusCode> {
+    match mode.to_ascii_lowercase().as_str() {
+        "unify" => Ok(ClientConfigMode::Unify),
+        "hosted" => Ok(ClientConfigMode::Hosted),
+        "transparent" => Ok(ClientConfigMode::Transparent),
+        _ => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Handler for POST /api/client/attach
+pub async fn client_attach(
+    State(app_state): State<Arc<AppState>>,
+    Json(request): Json<ClientAttachReq>,
+) -> Result<Json<ClientAttachResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+
+    let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
+        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before attach");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let Some(state) = existing_state.as_ref() else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    if state.attachment_state() != AttachmentState::Detached {
+        tracing::warn!(
+            client = %request.identifier,
+            attachment = ?state.attachment_state(),
+            "Rejected client attach while not detached"
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let effective_mode = service.get_effective_config_mode(&request.identifier).await.map_err(|err| {
+        tracing::error!(client = %request.identifier, error = %err, "Failed to resolve effective config mode for attach");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let api_mode = client_config_mode_from_effective(&effective_mode)?;
+
+    let cap_state = service
+        .get_capability_config_state(&request.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(client = %request.identifier, error = %err, "Failed to load capability config for attach");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let selected_config = resolve_persisted_apply_selection(api_mode.clone(), &cap_state).map_err(|err| {
+        tracing::warn!(client = %request.identifier, error = %err, "Invalid capability selection for attach");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let apply_request = ClientConfigUpdateReq {
+        identifier: request.identifier.clone(),
+        mode: api_mode,
+        preview: false,
+        selected_config,
+        backup_policy: None,
+    };
+
+    let applied_config = apply_client_config_request(&service, &apply_request, "client_attach", true).await?;
+    if !applied_config.data.applied {
+        tracing::error!(client = %request.identifier, "client_attach produced no applied write");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    tracing::info!(client = %request.identifier, "Client MCPMate entry re-attached to external config");
+
+    emit_client_audit_event(
+        &app_state,
+        AuditAction::ClientConfigAttach,
+        AuditStatus::Success,
+        "/api/client/attach",
+        &request.identifier,
+        Some(request.identifier.clone()),
+        Some(json!({
+            "attach": true,
+            "applied": applied_config.data.applied,
+            "mode": apply_request.mode,
+            "selected_config": apply_request.selected_config,
+            "attachment_state": "attached",
+        })),
+        None,
+    )
+    .await;
+
+    Ok(Json(ClientAttachResp::success(ClientAttachData {
+        identifier: request.identifier,
+        attachment_state: "attached".to_string(),
+        changed: applied_config.data.applied,
+    })))
+}
+
 async fn descriptor_to_client_info(
     service: &ClientConfigService,
     _app_state: &AppState,
@@ -1319,17 +1494,9 @@ async fn descriptor_to_client_info(
 ) -> Result<ClientInfo, StatusCode> {
     let state = descriptor.state.clone();
     let runtime_metadata = state.runtime_client_metadata();
-    let config_file_parse_effective = resolve_effective_config_file_parse(Some(&state))
-        .as_ref()
-        .map(parse_data_from_rule);
-    let config_file_parse_override = state
-        .config_file_parse_override()
-        .ok()
-        .flatten()
-        .as_ref()
-        .map(parse_data_from_rule);
-    let uses_template_parse_default = config_file_parse_override.is_none();
-    let format_rules = format_rules_data_from_state(Some(&state));
+    let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
+        build_parse_metadata(Some(&state));
+    let transports = transports_data_from_state(Some(&state));
     let identifier = state.identifier().to_string();
     let display_name = state.display_name().to_string();
     let logo_url = runtime_metadata.logo_url.clone();
@@ -1338,7 +1505,6 @@ async fn descriptor_to_client_info(
         .as_deref()
         .and_then(ClientCategory::parse)
         .unwrap_or_default();
-    let supported_transports = extract_supported_transports(&state);
     let description = runtime_metadata.description.clone();
     let homepage_url = runtime_metadata.homepage_url.clone();
     let docs_url = runtime_metadata.docs_url.clone();
@@ -1411,11 +1577,15 @@ async fn descriptor_to_client_info(
     let governance_kind = Some(state.governance_kind().as_str().to_string());
     let connection_mode = Some(state.connection_mode().as_str().to_string());
     let governed_by_default_policy = state.governed_by_default_policy();
-    let config_mode = service
+
+    let (config_mode, transport, client_version) = service
         .get_client_settings(state.identifier())
         .await
         .ok()
-        .and_then(|o| o.and_then(|(mode, _, _)| mode));
+        .flatten()
+        .map(|(mode, transport, version)| (mode, Some(transport), version))
+        .unwrap_or((None, Some("auto".to_string()), None));
+
     let writable_config = service
         .has_verified_local_config_target(state.identifier())
         .await
@@ -1427,30 +1597,20 @@ async fn descriptor_to_client_info(
         display_name,
         logo_url,
         category,
-        enabled: descriptor.managed,
-        managed: descriptor.managed,
+        enabled: state.is_approved(),
         detected: descriptor.detection.is_some(),
         install_path: None,
         config_path: descriptor.config_path.unwrap_or_default(),
         config_exists: descriptor.config_exists,
         has_mcp_config,
-        supported_transports,
-        format_rules,
+        transports,
         description,
         homepage_url,
         docs_url,
         support_url,
         config_mode,
-        transport: service
-            .get_client_settings(state.identifier())
-            .await
-            .ok()
-            .map(|o| o.map(|(_, tr, _)| tr).unwrap_or_else(|| "auto".to_string())),
-        client_version: service
-            .get_client_settings(state.identifier())
-            .await
-            .ok()
-            .and_then(|o| o.and_then(|(_, _, ver)| ver)),
+        transport,
+        client_version,
         capability_source: capability_config.capability_source,
         selected_profile_ids: capability_config.selected_profile_ids,
         custom_profile_id: capability_config.custom_profile_id,
@@ -1461,6 +1621,7 @@ async fn descriptor_to_client_info(
         mcp_servers_count: Some(mcp_servers_count),
         template: build_client_template_metadata(Some(&state), &runtime_metadata),
         approval_status,
+        attachment_state: Some(state.attachment_state().as_str().to_string()),
         governance_kind,
         connection_mode,
         governed_by_default_policy,
@@ -1473,12 +1634,6 @@ async fn descriptor_to_client_info(
 }
 
 // moved to POST /api/client/config/import
-
-fn extract_supported_transports(state: &ClientStateRow) -> Vec<String> {
-    state
-        .parsed_format_rules()
-        .map_or_else(|_| Vec::new(), |rules| supported_transports_from_format_rules(&rules))
-}
 
 fn build_runtime_template_metadata(
     state: Option<&ClientStateRow>,
@@ -2493,7 +2648,6 @@ mod tests {
                 display_name: None,
                 connection_mode: None,
                 config_path: None,
-                supported_transports: None,
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -2501,8 +2655,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -2539,7 +2693,6 @@ mod tests {
                 display_name: None,
                 connection_mode: None,
                 config_path: None,
-                supported_transports: None,
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -2547,8 +2700,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -2556,6 +2709,53 @@ mod tests {
 
         assert!(response.success);
         assert_no_client_visible_change_event(&mut rx, "client-a").await;
+    }
+
+    #[tokio::test]
+    async fn update_settings_rejects_alias_transport_keys() {
+        let context = create_test_context().await;
+
+        let result = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: None,
+                client_version: None,
+                display_name: None,
+                connection_mode: None,
+                config_path: None,
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                transports: Some(HashMap::from([(
+                    "http".to_string(),
+                    ClientFormatRuleData {
+                        command_field: None,
+                        args_field: None,
+                        env_field: None,
+                        include_type: false,
+                        type_value: None,
+                        url_field: Some("url".to_string()),
+                        headers_field: None,
+                        extra_fields: None,
+                        selected: Some(true),
+                    },
+                )])),
+                clear_transports: false,
+            }),
+        )
+        .await;
+
+        let (status, Json(response)) = result.expect_err("alias transport key should be rejected");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(!response.success);
+        let error = response.error.expect("error details");
+        assert!(error.message.contains("Invalid transport key 'http'"));
     }
 
     #[tokio::test]
@@ -2993,7 +3193,7 @@ mod tests {
         assert!(!data.governed_by_default_policy);
         assert!(!data.writable_config);
         assert!(data.warnings.is_empty());
-        assert!(data.supported_transports.is_empty());
+        assert!(data.transports.is_none());
         assert_eq!(data.description.as_deref(), Some("Runtime-only client"));
         assert_eq!(data.template.format, "json");
         assert_eq!(data.template.storage.kind, "file");
@@ -3017,7 +3217,6 @@ mod tests {
                 display_name: Some("Custom Runtime".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: Some("Custom runtime client".to_string()),
                 homepage_url: Some("https://example.com".to_string()),
                 docs_url: Some("https://example.com/docs".to_string()),
@@ -3025,8 +3224,8 @@ mod tests {
                 logo_url: Some("https://example.com/logo.png".to_string()),
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -3036,7 +3235,7 @@ mod tests {
         let data = response.data.expect("response data");
         assert_eq!(data.display_name, "Custom Runtime");
         assert_eq!(data.connection_mode.as_deref(), Some("local_config_detected"));
-        assert!(data.supported_transports.is_empty());
+        assert!(data.transports.is_none());
         assert_eq!(data.description.as_deref(), Some("Custom runtime client"));
 
         let state = context
@@ -3058,12 +3257,12 @@ mod tests {
         assert_eq!(state.config_format(), None);
         assert_eq!(state.container_keys().expect("container keys"), Vec::<String>::new());
         assert_eq!(state.managed_source(), None);
-        let format_rules = state.parsed_format_rules().expect("format rules");
-        assert!(format_rules.is_empty());
+        let transports = state.parsed_transports().expect("transports");
+        assert!(transports.is_empty());
     }
 
     #[tokio::test]
-    async fn config_details_derives_supported_transports_from_format_rules() {
+    async fn config_details_returns_transports_as_support_source() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("template-client.json");
         tokio::fs::write(&config_path, "{}")
@@ -3080,7 +3279,6 @@ mod tests {
                 display_name: Some("Client A".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["stdio".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3092,7 +3290,7 @@ mod tests {
                     container_keys: vec!["mcpServers".to_string()],
                 }),
                 clear_config_file_parse: false,
-                format_rules: Some(HashMap::from([(
+                transports: Some(HashMap::from([(
                     "streamable_http".to_string(),
                     crate::api::models::client::ClientFormatRuleData {
                         include_type: true,
@@ -3102,7 +3300,7 @@ mod tests {
                         ..Default::default()
                     },
                 )])),
-                clear_format_rules: false,
+                clear_transports: false,
             }),
         )
         .await
@@ -3121,7 +3319,12 @@ mod tests {
 
         assert!(details_response.success);
         let details = details_response.data.expect("details data");
-        assert_eq!(details.supported_transports, vec!["streamable_http".to_string()]);
+        assert!(
+            details
+                .transports
+                .as_ref()
+                .is_some_and(|transports| transports.contains_key("streamable_http"))
+        );
 
         let Json(list_response) = list(
             State(context.app_state.clone()),
@@ -3137,11 +3340,16 @@ mod tests {
             .into_iter()
             .find(|client| client.identifier == "client-a")
             .expect("client-a in list response");
-        assert_eq!(listed_client.supported_transports, vec!["streamable_http".to_string()]);
+        assert!(
+            listed_client
+                .transports
+                .as_ref()
+                .is_some_and(|transports| transports.contains_key("streamable_http"))
+        );
     }
 
     #[test]
-    fn supported_transports_from_format_rules_does_not_infer_sse_from_http_keys() {
+    fn transport_support_derivation_rejects_alias_http_keys() {
         let mut rules: HashMap<String, crate::clients::models::FormatRule> = HashMap::new();
         rules.insert(
             "http".to_string(),
@@ -3156,8 +3364,8 @@ mod tests {
             },
         );
 
-        let transports = supported_transports_from_format_rules(&rules);
-        assert_eq!(transports, vec!["streamable_http".to_string()]);
+        let transports = crate::clients::service::core::supported_transports_from_transports(&rules);
+        assert!(transports.is_empty());
     }
 
     #[tokio::test]
@@ -3175,7 +3383,6 @@ mod tests {
                 display_name: Some("Invalid Runtime".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(missing_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3183,8 +3390,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await;
@@ -3211,7 +3418,6 @@ mod tests {
                 display_name: Some("Clear Runtime".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3219,8 +3425,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -3237,7 +3443,6 @@ mod tests {
                 display_name: Some("Clear Runtime".to_string()),
                 connection_mode: Some("manual".to_string()),
                 config_path: None,
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3245,8 +3450,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -3279,7 +3484,6 @@ mod tests {
                 display_name: Some("Empty Clear Runtime".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3287,8 +3491,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -3305,7 +3509,6 @@ mod tests {
                 display_name: Some("Empty Clear Runtime".to_string()),
                 connection_mode: None,
                 config_path: Some("   ".to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3313,8 +3516,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -3347,7 +3550,7 @@ mod tests {
             .expect("seed client settings");
 
         sqlx::query(
-            "UPDATE client SET connection_mode = 'local_config_detected', config_path = ?, managed = 1, approval_status = 'approved' WHERE identifier = ?",
+            "UPDATE client SET connection_mode = 'local_config_detected', config_path = ?, approval_status = 'approved' WHERE identifier = ?",
         )
         .bind(context._temp_dir.path().join("stale-missing.json").to_string_lossy().to_string())
         .bind("client-a")
@@ -3400,7 +3603,6 @@ mod tests {
                 display_name: Some("Cherry Studio".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(kv_dir.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3408,8 +3610,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -3442,7 +3644,6 @@ mod tests {
                 display_name: Some("Cherry Studio".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(kv_dir.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: None,
                 homepage_url: None,
                 docs_url: None,
@@ -3450,8 +3651,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await;
@@ -3504,7 +3705,6 @@ mod tests {
                 display_name: Some("Suspended Client".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: Some("Still editable while denied".to_string()),
                 homepage_url: None,
                 docs_url: None,
@@ -3512,8 +3712,8 @@ mod tests {
                 logo_url: None,
                 config_file_parse: None,
                 clear_config_file_parse: false,
-                format_rules: None,
-                clear_format_rules: false,
+                transports: None,
+                clear_transports: false,
             }),
         )
         .await
@@ -3527,7 +3727,6 @@ mod tests {
             .expect("fetch state")
             .expect("state exists");
         assert_eq!(state.approval_status(), "suspended");
-        assert!(!state.managed());
         assert_eq!(state.display_name(), "Suspended Client");
     }
 
@@ -3549,7 +3748,6 @@ mod tests {
                 display_name: Some("Runtime Apply Client".to_string()),
                 connection_mode: Some("local_config_detected".to_string()),
                 config_path: Some(config_path.to_string_lossy().to_string()),
-                supported_transports: Some(vec!["streamable_http".to_string()]),
                 description: Some("Runtime apply test client".to_string()),
                 homepage_url: None,
                 docs_url: None,
@@ -3561,7 +3759,7 @@ mod tests {
                     container_keys: vec!["mcpServers".to_string()],
                 }),
                 clear_config_file_parse: false,
-                format_rules: Some(HashMap::from([(
+                transports: Some(HashMap::from([(
                     "streamable_http".to_string(),
                     crate::api::models::client::ClientFormatRuleData {
                         include_type: true,
@@ -3571,7 +3769,7 @@ mod tests {
                         ..Default::default()
                     },
                 )])),
-                clear_format_rules: false,
+                clear_transports: false,
             }),
         )
         .await
@@ -3586,7 +3784,10 @@ mod tests {
                 mode: ClientConfigMode::Hosted,
                 preview: false,
                 selected_config: ClientConfigSelected::Default,
-                backup_policy: None,
+                backup_policy: Some(crate::api::models::client::ClientBackupPolicyPayload {
+                    policy: "off".to_string(),
+                    limit: None,
+                }),
             }),
         )
         .await
@@ -3603,7 +3804,7 @@ mod tests {
         let parsed: Value = serde_json::from_str(&written).expect("parse written config");
         assert_eq!(parsed["mcpServers"]["MCPMate"]["type"], "streamable_http");
         assert_eq!(
-            parsed["mcpServers"]["MCPMate"]["headers"]["x-mcpmate-client-id"],
+            parsed["mcpServers"]["MCPMate"]["headers"][crate::common::constants::client_headers::MCPMATE_CLIENT_ID],
             "custom.runtime.apply"
         );
 
@@ -3619,6 +3820,7 @@ mod tests {
         assert!(details_response.success);
         let details = details_response.data.expect("details data");
         assert!(details.config_exists);
+        assert_eq!(details.attachment_state.as_deref(), Some("attached"));
         assert_eq!(details.template.managed_source.as_deref(), None);
         assert_eq!(details.content["mcpServers"]["MCPMate"]["type"], "streamable_http");
     }
@@ -3642,9 +3844,9 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO client (
-                id, name, identifier, managed, approval_status, connection_mode, template_identifier
+                id, name, identifier, approval_status, connection_mode, template_identifier
             )
-            VALUES ('clnt001', 'Pending Client', 'pending.client', 0, 'pending', 'manual', NULL)
+            VALUES ('clnt001', 'Pending Client', 'pending.client', 'pending', 'manual', NULL)
             "#,
         )
         .execute(&context.db_pool)
@@ -3688,9 +3890,9 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO client (
-                id, name, identifier, managed, approval_status, connection_mode, template_identifier
+                id, name, identifier, approval_status, connection_mode, template_identifier
             )
-            VALUES ('clnt002', 'Pending Client', 'pending.restore', 0, 'pending', 'manual', NULL)
+            VALUES ('clnt002', 'Pending Client', 'pending.restore', 'pending', 'manual', NULL)
             "#,
         )
         .execute(&context.db_pool)

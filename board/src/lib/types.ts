@@ -260,6 +260,8 @@ export type AuditAction =
   | "client_manage_disable"
   | "client_settings_update"
   | "client_config_apply"
+  | "client_config_attach"
+  | "client_config_detach"
   | "client_config_restore"
   | "client_config_import"
   | "client_capability_update"
@@ -290,7 +292,7 @@ export type AuditAction =
   | "runtime_cache_reset"
   | "client_record_observed"
   | "client_record_approved"
-  | "client_record_rejected"
+  | "client_record_suspended"
   | "audit_policy_update";
 
 
@@ -943,13 +945,12 @@ export interface ClientInfo {
   connection_mode?: "local_config_detected" | "remote_http" | "manual" | string | null;
   category: ClientCategory;
   enabled: boolean;
-  managed: boolean;
   detected: boolean;
   config_path: string;
   config_exists: boolean;
   has_mcp_config: boolean;
-  supported_transports: string[];
-  approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
+  approval_status?: "approved" | "pending" | "suspended" | string | null;
+  attachment_state?: "attached" | "detached" | "not_applicable" | string | null;
   writable_config?: boolean | null;
   governed_by_default_policy?: boolean | null;
   description?: string | null;
@@ -973,7 +974,7 @@ export interface ClientInfo {
   custom_profile_missing?: boolean;
   template: ClientTemplateMetadata;
   mcp_servers_count?: number | null;
-  format_rules?: Record<string, ClientFormatRuleData> | null;
+  transports?: Record<string, TransportRuleData> | null;
 }
 
 export interface ClientCheckData {
@@ -988,21 +989,29 @@ export interface ClientCheckResp {
   success: boolean;
 }
 
-export type ClientManageAction = "enable" | "disable";
+export interface ClientRecordLifecycleResp {
+  identifier: string;
+  status: "approved" | "pending" | "suspended" | string;
+}
 
-export interface ClientManageResp {
+export interface ClientDetachResp {
   data?: {
     identifier: string;
-    managed: boolean;
+    attachment_state: "detached" | string;
+    changed: boolean;
   } | null;
   error?: unknown | null;
   success: boolean;
 }
 
-export interface ClientRecordLifecycleResp {
-  identifier: string;
-  status: "approved" | "pending" | "rejected" | "suspended" | string;
-  managed: boolean;
+export interface ClientAttachResp {
+  data?: {
+    identifier: string;
+    attachment_state: "attached" | string;
+    changed: boolean;
+  } | null;
+  error?: unknown | null;
+  success: boolean;
 }
 
 export interface ClientDeleteResp {
@@ -1126,11 +1135,10 @@ export interface ClientConfigData {
   imported_servers?: ClientImportedServer[] | null;
   import_summary?: ClientImportSummary | null;
   last_modified?: string | null;
-  managed: boolean;
   connection_mode?: ClientConnectionMode | null;
   mcp_servers_count: number;
-  supported_transports: string[];
-  approval_status?: "approved" | "rejected" | "pending" | "suspended" | string | null;
+  approval_status?: "approved" | "pending" | "suspended" | string | null;
+  attachment_state?: "attached" | "detached" | "not_applicable" | string | null;
   writable_config?: boolean | null;
   governed_by_default_policy?: boolean | null;
   template: ClientTemplateMetadata;
@@ -1143,7 +1151,7 @@ export interface ClientConfigData {
   selected_profile_ids?: string[];
   custom_profile_id?: string | null;
   custom_profile_missing?: boolean;
-  format_rules?: Record<string, ClientFormatRuleData> | null;
+  transports?: Record<string, TransportRuleData> | null;
 }
 
 export interface ClientSettingsSourceData {
@@ -1160,14 +1168,13 @@ export interface ClientSettingsUpdateData {
   client_version?: string | null;
   connection_mode?: string | null;
   config_path?: string | null;
-  supported_transports: string[];
   description?: string | null;
   homepage_url?: string | null;
   docs_url?: string | null;
   support_url?: string | null;
   logo_url?: string | null;
   setting_sources?: ClientSettingsSourceData | null;
-  format_rules?: Record<string, ClientFormatRuleData> | null;
+  transports?: Record<string, TransportRuleData> | null;
 }
 
 export interface ClientSettingsUpdateResp {
@@ -1422,7 +1429,7 @@ export interface ClientConfigFileParse {
   container_keys?: string[];
 }
 
-export interface ClientFormatRuleData {
+export interface TransportRuleData {
   command_field?: string | null;
   args_field?: string | null;
   env_field?: string | null;
@@ -1431,6 +1438,7 @@ export interface ClientFormatRuleData {
   url_field?: string | null;
   headers_field?: string | null;
   extra_fields?: Record<string, unknown> | null;
+  selected?: boolean | null;
 }
 
 export interface ClientConfigFileParseInspectReq {
