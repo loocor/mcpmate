@@ -8,6 +8,13 @@ on:
         required: false
         default: "false"
   push:
+    branches: [main, dev, refactor/runtime-contract-and-packaging]
+    paths:
+      - ".github/workflows/docker-publish.yml"
+      - "packaging/docker/**"
+      - "packaging/registry/**"
+      - "backend/**"
+      - "board/**"
     tags:
       - "v*"
 

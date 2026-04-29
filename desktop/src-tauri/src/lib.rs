@@ -1131,7 +1131,10 @@ where
     #[cfg(debug_assertions)]
     window.open_devtools();
 
-    let _ = manager.app_handle().show();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = manager.app_handle().show();
+    }
     let _ = window.show();
     let _ = window.set_focus();
 
