@@ -69,9 +69,9 @@ jobs:
         env:
           INPUT_TARGETS: ${{ github.event.inputs.targets }}
         run: |
-          chmod +x script/macos-build-tauri-release.sh
+          chmod +x ../packaging/desktop/macos-build-tauri-release.sh
           TARGETS="${INPUT_TARGETS:-aarch64-apple-darwin,x86_64-apple-darwin}"
-          ./script/macos-build-tauri-release.sh \
+          ../packaging/desktop/macos-build-tauri-release.sh \
             --targets "${TARGETS}" \
             --bundles dmg \
             --skip-notarize \

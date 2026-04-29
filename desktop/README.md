@@ -10,13 +10,13 @@ This crate provides an early Tauri wrapper around the existing MCPMate backend s
 
 ## Building the Dashboard Assets
 
-The desktop shell loads the compiled dashboard bundle. `tauri.conf.json` runs **`beforeDevCommand` / `beforeBuildCommand`** from `board/` (prefers **Bun**, falls back to **npm**).
+The desktop shell loads the compiled dashboard bundle. `tauri.conf.json` runs **`beforeDevCommand` / `beforeBuildCommand`** from `board/` using Bun.
 
 For a **packaged** macOS build, the **bridge sidecar** must exist at `backend/target/sidecars/bridge` (`tauri.conf.json` `externalBin`). Use the release script (board + notices + bridge + Tauri in one go):
 
 ```bash
 cd desktop
-./script/macos-build-tauri-release.sh --targets aarch64-apple-darwin --skip-notarize
+../packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin --skip-notarize
 ```
 
 Adjust `--targets` for Intel (`x86_64-apple-darwin`) or both. Signing/notarization can wait; see the same script when you enable them.
@@ -68,7 +68,7 @@ cp .env.example .env
 Then run the release helper (no extra flags needed):
 
 ```bash
-./script/macos-build-tauri-release.sh
+../packaging/desktop/macos-build-tauri-release.sh
 ```
 
 The script reads `.env` / `.env.local`, configures codesign & notarization,
@@ -76,7 +76,7 @@ builds the bridge sidecar, and outputs a notarized DMG to `$HOME/Downloads`.
 
 ## Data Directory and Environment Overrides
 
-On startup the shell resolves the per-app data directory through Tauri's `PathResolver::app_data_dir()` and passes that path into MCPMate's runtime (via `MCPMATE_DATA_DIR`). This avoids REDB/SQLite contention with existing CLI instances.
+On startup the shell resolves the backend-owned default MCPMate data directory and passes that path into MCPMate's runtime (via `MCPMATE_DATA_DIR`). Desktop no longer falls back to Tauri-specific storage selection when that default location cannot be prepared.
 
 Both localhost runtime modes use that same base directory: service installs run with the data directory as their working directory, and desktop-managed launches now set the child process working directory explicitly as well. That keeps first-run initialization and bundled preset seeding consistent across the desktop startup paths.
 
@@ -103,8 +103,8 @@ Some Help menu diagnostics for legacy market embedding may still be present; pre
 
 ## Release & Update Resources
 
-- Desktop release & updater workflow: `docs/desktop-release-guide.md`
-- Automation helpers: `script/macos-build-tauri-release.sh`, `script/generate-update-manifest.sh`
+- Desktop release & updater workflow: `docs/desktop/desktop-release-guide.md`
+- Automation helpers: `packaging/desktop/macos-build-tauri-release.sh`, `packaging/desktop/generate-update-manifest.sh`
 - Auto-updater plugin is compiled in but disabled by default (`plugins.updater.active = false`). Replace the placeholder Minisign public key in `tauri.conf.json` and point to real endpoints before turning it on.
 
 ## Next Steps

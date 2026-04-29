@@ -6,10 +6,11 @@
 - Before coding, thoroughly analyze the context, requirements, and existing documentation, and independently formulate the approach and decisions; do not pause frequently during execution to report or seek input unless there is missing information or a major risk.
 - Maintain continuous execution during the coding and testing phases, fully leverage established best practices and tools, and record key assumptions, trade-offs, and dependencies for a consolidated later report.
 - After wrapping a Rust coding session, run `cargo clippy --all-targets --all-features -- -D warnings` to ensure we ship without lint regressions.
+- Run relevant tests and lint checks normally after implementation. If they fail, analyze whether the failure is caused by the current change, by known pre-existing issues, or by temporarily invalid intermediate refactor state; do not skip validation, but also do not chase unrelated failures in ways that derail the approved refactor goal.
 - At the end of the task, deliver a single comprehensive report: implementation results, key decisions and their rationale, validation and testing conclusions, and follow-up recommendations. This keeps momentum while ensuring a complete perspective for review.
 
 ## Project Structure & Module Organization
-- `backend/`: Rust workspace containing the `mcpmate` proxy crate and the `bridge` binary; entrypoints live in `backend/src/main.rs` and `backend/src/bin/bridge.rs`. Core proxy logic sits under `backend/src/core`, HTTP handlers under `backend/src/api`, shared utilities in `backend/src/common`, `backend/src/clients`, and `backend/src/runtime`, with macros in `backend/src/macros`. Presets reside in `backend/config/`, and build helpers in `backend/script/`. Uses the official `rmcp` crate from crates.io for MCP protocol support.
+- `backend/`: Rust workspace containing the `mcpmate` proxy crate and the `bridge` binary; entrypoints live in `backend/src/main.rs` and `backend/src/bin/bridge.rs`. Core proxy logic sits under `backend/src/core`, HTTP handlers under `backend/src/api`, shared utilities in `backend/src/common`, `backend/src/clients`, and `backend/src/runtime`, with macros in `backend/src/macros`. Presets reside in `backend/config/`, and packaging helpers now live in `packaging/standalone/`. Uses the official `rmcp` crate from crates.io for MCP protocol support.
 - `extension/`: Extensions directory for optional integrations and plugins. Currently contains:
   - `cherry/`: Rust library that manages Cherry Studio LevelDB configurations with UTF-16 JSON encoding, exposing typed helpers to list, add, or remove MCP servers for desktop clients.
   - `extension/chrome/`: Chromium extension that detects `mcpServers` snippets and opens `mcpmate://import/server` for the MCPMate desktop app.
@@ -18,7 +19,7 @@
 - `desktop/`: Tauri 2 desktop application wrapping MCPMate backend and dashboard for macOS, Windows, and Linux. See `desktop/` for build instructions and configuration.
 
 ## Build, Test, and Development Commands
-- `backend/`: Run `cargo check` and `cargo clippy --all-targets --all-features -D warnings` for fast feedback, then `cargo fmt --all` before committing. Boot the proxy with `cargo run -- --help` (API 8080, MCP 8000) or `cargo run RUST_LOG=debug`. Execute `cargo test` and `cargo test --features interop`; package via `cargo build --release --features interop` or scripts in `backend/script/` when preparing releases. Uses the official `rmcp` crate from crates.io for MCP protocol support.
+- `backend/`: Run `cargo check` and `cargo clippy --all-targets --all-features -D warnings` for fast feedback, then `cargo fmt --all` before committing. Boot the proxy with `cargo run -- --help` (API 8080, MCP 8000) or `cargo run RUST_LOG=debug`. Execute `cargo test` and `cargo test --features interop`; package via `cargo build --release --features interop` or scripts in `packaging/standalone/` when preparing releases. Uses the official `rmcp` crate from crates.io for MCP protocol support.
 - `extension/cherry/`: Validate with `cargo test`, lint with `cargo clippy -D warnings`, and exercise examples such as `cargo run --example basic_usage` to confirm LevelDB integration.
 - `board/` & `website/`: Prefer Bun. Install dependencies with `bun install`, develop via `bun run dev`, lint with `bun run lint`, and produce bundles through `bun run build` (fallback to `npm` only if Bun is unavailable). Prefer `.env` driven configuration rather than hardcoding API endpoints.
 - `desktop/`: Build with `cargo tauri dev` for development or `cargo tauri build` for production from `desktop/` or `desktop/src-tauri/`. See `desktop/README.md` for detailed build options, signing setup, and platform-specific instructions.
@@ -236,6 +237,7 @@
 - Reasoning: `SequentialThinking` for complex feasibility.
 - MCP: use the standard Inspector validation loop during development and review.
 - Commands (Rust): `cargo clippy --all-targets --all-features -D warnings`, `cargo fmt --all`, `cargo test`.
+- GitHub CLI / remote GitHub operations: if `gh` reports an immediate `Forbidden` when requesting `https://api.github.com/`, treat it as a sandbox network restriction first, not a token/keychain failure. Retry the same `gh` command without sandbox before asking the user to re-authenticate.
 - JS/TS (board, website): Prefer Bun for package management and scripts.
   - Install deps: `bun install`
   - Dev: `bun run dev`
