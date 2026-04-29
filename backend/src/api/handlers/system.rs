@@ -16,7 +16,7 @@ use crate::api::{
     routes::AppState,
 };
 use crate::audit::{AuditAction, AuditStatus};
-use crate::system::config::get_runtime_port_config;
+use crate::system::config::{bind_socket_addr, get_runtime_port_config};
 
 const PROXY_NOT_AVAILABLE_ERROR: &str = "Proxy server not available";
 
@@ -366,8 +366,7 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let mcp_port = get_runtime_port_config().mcp_port;
-    let bind_address: SocketAddr = format!("127.0.0.1:{}", mcp_port)
-        .parse()
+    let bind_address: SocketAddr = bind_socket_addr(mcp_port)
         .map_err(|e| ApiError::InternalError(format!("Invalid MCP bind address: {}", e)))?;
 
     let start_result = proxy.start_unified(bind_address).await;

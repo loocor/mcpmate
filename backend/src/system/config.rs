@@ -3,8 +3,38 @@
 //! This module provides global runtime configuration that can be set from
 //! command line arguments and accessed throughout the application.
 
+use anyhow::{Context, Result};
+use std::{
+    net::SocketAddr,
+    sync::{OnceLock, RwLock},
+};
+
 use crate::common::constants::ports;
-use std::sync::{OnceLock, RwLock};
+
+const LOOPBACK_BIND_HOST: &str = "127.0.0.1";
+const LOOPBACK_URL_HOST: &str = "localhost";
+
+pub fn loopback_bind_host() -> &'static str {
+    LOOPBACK_BIND_HOST
+}
+
+pub fn loopback_url_host() -> &'static str {
+    LOOPBACK_URL_HOST
+}
+
+pub fn bind_socket_addr(port: u16) -> Result<SocketAddr> {
+    format!("{}:{}", loopback_bind_host(), port)
+        .parse()
+        .with_context(|| format!("Failed to parse loopback bind address for port {}", port))
+}
+
+pub fn api_url_from_port(port: u16) -> String {
+    format!("http://{}:{}", loopback_url_host(), port)
+}
+
+pub fn mcp_http_url_from_port(port: u16) -> String {
+    format!("{}/mcp", api_url_from_port(port))
+}
 
 /// Global runtime port configuration
 #[derive(Debug, Clone)]
@@ -26,12 +56,12 @@ impl RuntimePortConfig {
 
     /// Get the API server URL
     pub fn api_url(&self) -> String {
-        format!("http://localhost:{}", self.api_port)
+        api_url_from_port(self.api_port)
     }
 
     /// Get the MCP HTTP endpoint URL
     pub fn mcp_http_url(&self) -> String {
-        format!("http://localhost:{}/mcp", self.mcp_port)
+        mcp_http_url_from_port(self.mcp_port)
     }
 }
 

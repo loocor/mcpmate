@@ -88,11 +88,11 @@ fn backend_fingerprint(context: &BackendBuildContext, binary_name: &str) -> Stri
         rel.to_string_lossy().hash(&mut hasher);
         if let Ok(meta) = fs::metadata(&file) {
             meta.len().hash(&mut hasher);
-            if let Ok(modified) = meta.modified() {
-                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
-                    duration.as_secs().hash(&mut hasher);
-                    duration.subsec_nanos().hash(&mut hasher);
-                }
+            if let Ok(modified) = meta.modified()
+                && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
+            {
+                duration.as_secs().hash(&mut hasher);
+                duration.subsec_nanos().hash(&mut hasher);
             }
         }
     }
@@ -276,14 +276,13 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
         return;
     }
 
-    if sidecar_target.exists() && sidecar_plain.exists() {
-        if let Ok(existing) = fs::read_to_string(&fingerprint_path) {
-            if existing.trim() == fingerprint {
-                sync_plain_sidecar(&sidecar_target);
-                println!("cargo:warning=Reusing cached {binary_name} sidecar");
-                return;
-            }
-        }
+    if sidecar_target.exists() && sidecar_plain.exists()
+        && let Ok(existing) = fs::read_to_string(&fingerprint_path)
+        && existing.trim() == fingerprint
+    {
+        sync_plain_sidecar(&sidecar_target);
+        println!("cargo:warning=Reusing cached {binary_name} sidecar");
+        return;
     }
 
     let mut cargo = Command::new("cargo");
