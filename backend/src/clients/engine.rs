@@ -272,16 +272,12 @@ impl TemplateEngine {
         warnings: &mut Vec<String>,
     ) -> ConfigResult<Value> {
         let transports = &definition.config_mapping.format_rules;
-        let keymap = crate::clients::keymap::registry();
-        let Some(rule_key) = keymap.resolve_rule_key(transports, &server.transport) else {
+        let Some(format_rule) = transports.get(&server.transport) else {
             return Err(ConfigError::TemplateParseError(format!(
                 "Client {} missing format rule for transport {}",
                 definition.identifier, server.transport
             )));
         };
-        let format_rule = transports
-            .get(&rule_key)
-            .ok_or_else(|| ConfigError::TemplateParseError("format rule key resolved but missing".into()))?;
         let rule_template = format_rule.to_template();
 
         let context = serde_json::to_value(server)?;
@@ -569,10 +565,9 @@ const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "sse", "stdio"];
 fn derive_transports_by_priority(
     transports: &std::collections::HashMap<String, crate::clients::models::FormatRule>
 ) -> Vec<&'static str> {
-    let map = crate::clients::keymap::registry();
     let mut list = Vec::new();
     for t in TRANSPORT_PRIORITY {
-        if map.has_rule(transports, t) {
+        if transports.contains_key(*t) {
             list.push(*t);
         }
     }
@@ -955,5 +950,86 @@ mod tests {
         let url = managed.url.expect("managed url");
         assert!(url.contains("client_id=test-client"));
         assert!(url.contains("profile_id=profile-123"));
+    }
+
+    #[tokio::test]
+    async fn managed_mode_rejects_alias_transport_rules() {
+        let mut transports = HashMap::new();
+        transports.insert(
+            "http".to_string(),
+            FormatRule {
+                template: json!({
+                    "type": "streamable_http",
+                    "url": "{{{url}}}"
+                }),
+                include_type: false,
+                ..Default::default()
+            },
+        );
+
+        let template = ClientTemplate {
+            identifier: "test-client".to_string(),
+            format: TemplateFormat::Json,
+            storage: StorageConfig {
+                kind: StorageKind::File,
+                path_strategy: Some("config_path".to_string()),
+                adapter: None,
+            },
+            config_mapping: ConfigMapping {
+                container_keys: vec!["mcpServers".to_string()],
+                container_type: ContainerType::ObjectMap,
+                merge_strategy: MergeStrategy::Replace,
+                keep_original_config: false,
+                managed_endpoint: Some(ManagedEndpointConfig {
+                    source: Some("profile".to_string()),
+                }),
+                managed_source: None,
+                parse: None,
+                format_rules: transports,
+            },
+            ..Default::default()
+        };
+
+        let source = MemorySource {
+            template,
+            config_path: "~/.config/test-client.json".to_string(),
+        };
+        let definition = ClientRenderDefinition {
+            identifier: source.template.identifier.clone(),
+            format: source.template.format,
+            storage: source.template.storage.clone(),
+            config_mapping: source.template.config_mapping.clone(),
+        };
+
+        let engine = TemplateEngine::with_defaults(Arc::new(source));
+        let servers = vec![ServerTemplateInput {
+            name: "server_a".to_string(),
+            display_name: Some("Server A".to_string()),
+            transport: "streamable_http".to_string(),
+            command: Some("uvx".to_string()),
+            args: vec!["run".to_string()],
+            env: HashMap::new(),
+            url: Some("https://example.com".to_string()),
+            headers: HashMap::new(),
+            metadata: HashMap::new(),
+        }];
+
+        let policy = BackupPolicySetting::default();
+        let mut warnings = Vec::new();
+        let request = RenderRequest {
+            client_id: "test-client",
+            servers: &servers,
+            mode: ConfigMode::Native,
+            definition: &definition,
+            config_path: "~/.config/test-client.json",
+            profile_id: None,
+            dry_run: true,
+            backup_policy: &policy,
+            warnings: &mut warnings,
+            preferred_transport: None,
+        };
+
+        let error = engine.render_config(request).await.expect_err("alias transport key should fail");
+        assert!(error.to_string().contains("missing format rule for transport streamable_http"));
     }
 }

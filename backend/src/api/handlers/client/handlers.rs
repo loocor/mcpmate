@@ -189,6 +189,15 @@ fn parse_api_transports(
     rules
         .iter()
         .map(|(transport, rule)| {
+            match transport.as_str() {
+                "streamable_http" | "sse" | "stdio" => {}
+                _ => {
+                    return Err(format!(
+                        "Invalid transport key '{transport}'; expected one of: streamable_http, sse, stdio"
+                    ));
+                }
+            }
+
             let parsed_rule = format_rule_from_api_data(rule);
             parsed_rule
                 .validate_for_transport(transport)
@@ -2703,6 +2712,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_settings_rejects_alias_transport_keys() {
+        let context = create_test_context().await;
+
+        let result = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: None,
+                client_version: None,
+                display_name: None,
+                connection_mode: None,
+                config_path: None,
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+                config_file_parse: None,
+                clear_config_file_parse: false,
+                transports: Some(HashMap::from([(
+                    "http".to_string(),
+                    ClientFormatRuleData {
+                        command_field: None,
+                        args_field: None,
+                        env_field: None,
+                        include_type: false,
+                        type_value: None,
+                        url_field: Some("url".to_string()),
+                        headers_field: None,
+                        extra_fields: None,
+                        selected: Some(true),
+                    },
+                )])),
+                clear_transports: false,
+            }),
+        )
+        .await;
+
+        let (status, Json(response)) = result.expect_err("alias transport key should be rejected");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(!response.success);
+        let error = response.error.expect("error details");
+        assert!(error.message.contains("Invalid transport key 'http'"));
+    }
+
+    #[tokio::test]
     async fn capability_config_filters_stale_and_ineligible_unify_selections() {
         let context = create_test_context().await;
         insert_unify_server(
@@ -3293,7 +3349,7 @@ mod tests {
     }
 
     #[test]
-    fn transport_support_derivation_does_not_infer_sse_from_http_keys() {
+    fn transport_support_derivation_rejects_alias_http_keys() {
         let mut rules: HashMap<String, crate::clients::models::FormatRule> = HashMap::new();
         rules.insert(
             "http".to_string(),
@@ -3309,7 +3365,7 @@ mod tests {
         );
 
         let transports = crate::clients::service::core::supported_transports_from_transports(&rules);
-        assert_eq!(transports, vec!["streamable_http".to_string()]);
+        assert!(transports.is_empty());
     }
 
     #[tokio::test]
