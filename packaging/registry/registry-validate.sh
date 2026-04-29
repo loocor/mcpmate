@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "${SCRIPT_DIR}/../../backend" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-SERVER_JSON="${ROOT_DIR}/server.json"
+SERVER_JSON="${SCRIPT_DIR}/server.json"
 DOCKERFILE="${ROOT_DIR}/packaging/docker/Dockerfile"
 ENTRYPOINT_SCRIPT="${ROOT_DIR}/packaging/docker/docker-entrypoint.sh"
 

@@ -12,5 +12,5 @@ if ! command -v mcp-publisher >/dev/null 2>&1; then
   exit 1
 fi
 
-cd "${ROOT_DIR}"
+cd "${SCRIPT_DIR}"
 mcp-publisher publish
