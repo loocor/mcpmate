@@ -49,7 +49,7 @@ jobs:
         run: bash packaging/registry/registry-validate.sh
 
       - name: Build local verification image
-        run: docker build -t mcpmate:ci -f backend/Dockerfile .
+        run: docker build -t mcpmate:ci -f packaging/docker/Dockerfile .
 
       - name: Verify image label
         run: |
