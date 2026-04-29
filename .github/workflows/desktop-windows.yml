@@ -8,16 +8,17 @@ on:
         required: false
         default: "msi"
   push:
-    branches: [test/desktop-ci]
+    branches: [main, dev, refactor/runtime-contract-and-packaging]
     paths:
       - ".github/workflows/desktop-windows.yml"
+      - "packaging/desktop/**"
       - "desktop/**"
       - "board/**"
       - "backend/**"
   pull_request:
-    branches: [test/desktop-ci]
     paths:
       - ".github/workflows/desktop-windows.yml"
+      - "packaging/desktop/**"
       - "desktop/**"
       - "board/**"
       - "backend/**"

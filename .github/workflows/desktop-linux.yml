@@ -8,16 +8,17 @@ on:
         required: false
         default: "appimage,deb"
   push:
-    branches: [test/desktop-ci]
+    branches: [main, dev, refactor/runtime-contract-and-packaging]
     paths:
       - ".github/workflows/desktop-linux.yml"
+      - "packaging/desktop/**"
       - "desktop/**"
       - "board/**"
       - "backend/**"
   pull_request:
-    branches: [test/desktop-ci]
     paths:
       - ".github/workflows/desktop-linux.yml"
+      - "packaging/desktop/**"
       - "desktop/**"
       - "board/**"
       - "backend/**"
