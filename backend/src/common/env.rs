@@ -187,7 +187,6 @@ impl Default for EnvironmentManager {
 /// Create runtime-specific environment for uv
 pub fn create_uv_environment(
     bin_path: &Path,
-    version: &str,
 ) -> Result<EnvironmentManager> {
     let paths = global_paths();
     let mut env = EnvironmentManager::new();
@@ -214,8 +213,7 @@ pub fn create_uv_environment(
     }
 
     tracing::debug!(
-        "Created uv environment for version {}: PATH includes {}, cache at {}",
-        version,
+        "Created uv environment: PATH includes {}, cache at {}",
         bin_dir.display(),
         cache_dir.display()
     );
@@ -226,7 +224,6 @@ pub fn create_uv_environment(
 /// Create runtime-specific environment for Bun
 pub fn create_bun_environment(
     bin_path: &Path,
-    version: &str,
 ) -> Result<EnvironmentManager> {
     let paths = global_paths();
     let mut env = EnvironmentManager::new();
@@ -253,8 +250,7 @@ pub fn create_bun_environment(
     }
 
     tracing::debug!(
-        "Created Bun environment for version {}: PATH includes {}, cache at {}",
-        version,
+        "Created Bun environment: PATH includes {}, cache at {}",
         bin_dir.display(),
         cache_dir.display()
     );
@@ -266,15 +262,14 @@ pub fn create_bun_environment(
 pub fn create_runtime_environment(
     runtime_type: &str,
     bin_path: &Path,
-    version: &str,
 ) -> Result<EnvironmentManager> {
     use super::types::RuntimeType;
     use std::str::FromStr;
 
     if let Ok(rt) = RuntimeType::from_str(runtime_type) {
         match rt {
-            RuntimeType::Uv => create_uv_environment(bin_path, version),
-            RuntimeType::Bun => create_bun_environment(bin_path, version),
+            RuntimeType::Uv => create_uv_environment(bin_path),
+            RuntimeType::Bun => create_bun_environment(bin_path),
         }
     } else {
         // Generic runtime environment
@@ -291,9 +286,8 @@ pub fn prepare_command_environment(
     command: &mut Command,
     runtime_type: &str,
     bin_path: &Path,
-    version: &str,
 ) -> Result<()> {
-    let env = create_runtime_environment(runtime_type, bin_path, version)?;
+    let env = create_runtime_environment(runtime_type, bin_path)?;
     env.apply_to_command(command);
     Ok(())
 }

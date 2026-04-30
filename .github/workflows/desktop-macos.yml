@@ -6,20 +6,24 @@ name: Desktop (macOS)
 on:
   workflow_dispatch:
     inputs:
-      targets:
-        description: "Rust triples (comma-separated). Default builds Apple Silicon + Intel."
+      bundles:
+        description: "Tauri bundle types (dmg only)"
         required: false
-        default: "aarch64-apple-darwin,x86_64-apple-darwin"
+        default: "dmg"
   push:
-    branches: [main, dev]
+    branches:
+      - main
+      - dev
     paths:
       - ".github/workflows/desktop-macos.yml"
+      - "packaging/desktop/**"
       - "desktop/**"
       - "board/**"
       - "backend/**"
   pull_request:
     paths:
       - ".github/workflows/desktop-macos.yml"
+      - "packaging/desktop/**"
       - "desktop/**"
       - "board/**"
       - "backend/**"
@@ -33,16 +37,27 @@ env:
 
 jobs:
   build:
-    runs-on: macos-latest
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - arch: x64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -51,12 +66,10 @@ jobs:
             backend -> target
             desktop/src-tauri -> target
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: board/package-lock.json
+          bun-version: latest
 
       - name: Install Tauri CLI
         uses: baptiste0928/cargo-install@v3
@@ -64,23 +77,55 @@ jobs:
           crate: tauri-cli
           locked: true
 
-      - name: Build DMGs (no sign / no notarize)
-        working-directory: desktop
+      - name: Build macOS DMG (no sign / no notarize)
         env:
-          INPUT_TARGETS: ${{ github.event.inputs.targets }}
+          INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
         run: |
-          chmod +x script/macos-build-tauri-release.sh
-          TARGETS="${INPUT_TARGETS:-aarch64-apple-darwin,x86_64-apple-darwin}"
-          ./script/macos-build-tauri-release.sh \
-            --targets "${TARGETS}" \
-            --bundles dmg \
+          BUNDLES="${INPUT_BUNDLES:-dmg}"
+          if [[ "$BUNDLES" != "dmg" ]]; then
+            echo "FAIL: macOS workflow currently supports only bundles=dmg" >&2
+            exit 1
+          fi
+          chmod +x packaging/desktop/macos-build-tauri-release.sh
+          packaging/desktop/macos-build-tauri-release.sh \
+            --target "${{ matrix.target }}" \
+            --bundles "$BUNDLES" \
             --skip-notarize \
-            --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts"
+            --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts/${{ matrix.arch }}"
 
-      - name: Upload DMG artifacts
-        uses: actions/upload-artifact@v4
+      - name: Smoke test (sidecar arch + DMG output)
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          echo "--- bundle layout ---"
+          find "$BUNDLE_ROOT" -type f | head -40 || true
+          echo "--- sidecar architecture ---"
+          for sc in bridge mcpmate-core; do
+            bin=$(find "$BUNDLE_ROOT" -type f \( -name "$sc" -o -name "${sc}-*" \) ! -name "*.fingerprint" | head -1) || true
+            if [[ -z "$bin" ]]; then
+              echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
+              bin="backend/target/sidecars/${sc}-${{ matrix.target }}"
+              test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            fi
+            echo "$sc found at: $bin"
+            arch_info=$(file "$bin")
+            echo "$sc: $arch_info"
+            case "${{ matrix.arch }}" in
+              aarch64) echo "$arch_info" | grep -q "arm64\|aarch64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; } ;;
+              x64)     echo "$arch_info" | grep -q "x86_64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; } ;;
+            esac
+          done
+          echo "--- dmg output ---"
+          dmg=$(find "$BUNDLE_ROOT/dmg" -maxdepth 1 -type f -name "*.dmg" | head -1) || true
+          test -n "$dmg" || { echo "FAIL: missing dmg bundle"; exit 1; }
+          echo "dmg found at: $dmg"
+          hdiutil imageinfo "$dmg" >/dev/null
+          echo "SMOKE OK"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v6
         with:
-          name: mcpmate-macos-dmg
-          path: desktop-macos-artifacts/*.dmg
+          name: mcpmate-macos-${{ matrix.arch }}-dmg
+          path: desktop-macos-artifacts/${{ matrix.arch }}/*.dmg
           if-no-files-found: error
           retention-days: 14

@@ -786,7 +786,8 @@ impl Default for UnifiedHttpServerConfig {
     fn default() -> Self {
         use crate::common::constants::ports;
         Self {
-            bind_address: format!("127.0.0.1:{}", ports::MCP_PORT).parse().unwrap(),
+            bind_address: crate::system::config::bind_socket_addr(ports::MCP_PORT)
+                .expect("default MCP loopback bind address should parse"),
             streamable_http_path: "/mcp".to_string(),
             keep_alive_interval: Some(std::time::Duration::from_secs(15)),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
