@@ -8,7 +8,10 @@ on:
         required: false
         default: "appimage,deb"
   push:
-    branches: [main, dev, refactor/runtime-contract-and-packaging]
+    branches:
+      - main
+      - dev
+      - refactor/runtime-contract-and-packaging
     paths:
       - ".github/workflows/desktop-linux.yml"
       - "packaging/desktop/**"
