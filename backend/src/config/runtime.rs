@@ -60,7 +60,7 @@ pub async fn prepare_command_env_with_db(
                 RuntimeType::Bun => "bun",
             };
 
-            prepare_command_environment(command, runtime_type_str, &runtime_path, "latest").map_err(|e| {
+            prepare_command_environment(command, runtime_type_str, &runtime_path).map_err(|e| {
                 anyhow::anyhow!(
                     "Failed to prepare {} runtime environment for '{}': {}",
                     runtime_type_str,

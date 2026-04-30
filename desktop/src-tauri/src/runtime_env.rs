@@ -7,12 +7,14 @@ pub fn configure_process_environment() -> Result<()> {
     const SKIP_BOARD_STATIC: &str = "MCPMATE_SKIP_BOARD_STATIC";
 
     if env::var_os(SKIP_BOARD_STATIC).is_none() {
+        // Safe here because desktop startup sets process env before the Tauri runtime spawns worker threads.
         unsafe {
             env::set_var(SKIP_BOARD_STATIC, "1");
         }
     }
 
     for (key, value) in desktop_runtime_environment()? {
+        // Safe here because desktop startup sets process env before the Tauri runtime spawns worker threads.
         unsafe {
             env::set_var(key, value);
         }
