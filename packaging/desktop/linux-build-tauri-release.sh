@@ -250,10 +250,24 @@ if [[ ${#artifacts[@]} -eq 0 ]]; then
   exit 1
 fi
 
+# Normalize arch label for release artifact naming
+case "$TARGET" in
+  aarch64-unknown-linux-gnu) ARCH_LABEL="aarch64" ;;
+  x86_64-unknown-linux-gnu)  ARCH_LABEL="x64" ;;
+  *)                         ARCH_LABEL="$TARGET" ;;
+esac
+
 log "copying ${#artifacts[@]} artifact(s) to $OUTPUT_DIR"
 for artifact in "${artifacts[@]}"; do
-  cp -f "$artifact" "$OUTPUT_DIR/"
-  log "copied $(basename "$artifact")"
+  base="$(basename "$artifact")"
+  lower="$(echo "$base" | tr '[:upper:]' '[:lower:]')"
+  case "$lower" in
+    *.appimage) out_name="mcpmate_desktop_linux_${ARCH_LABEL}.AppImage" ;;
+    *.deb)      out_name="mcpmate_desktop_linux_${ARCH_LABEL}.deb" ;;
+    *)          out_name="$base" ;;
+  esac
+  cp -f "$artifact" "$OUTPUT_DIR/$out_name"
+  log "copied $base -> $out_name"
 done
 
 log "build completed successfully"
