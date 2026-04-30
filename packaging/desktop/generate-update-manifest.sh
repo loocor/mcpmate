@@ -17,7 +17,7 @@ Optional (repeatable):
   --pub-date <ISO8601>         Publication timestamp (default: current UTC)
 
 Example:
-  script/generate-update-manifest.sh \
+  packaging/desktop/generate-update-manifest.sh \
     --version 0.1.2 \
     --output dist/update.json \
     --notes "Fix desktop links" \

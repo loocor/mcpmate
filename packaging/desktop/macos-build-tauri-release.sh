@@ -26,9 +26,10 @@ DIAG_DEFAULT=0
 # Load .env files from desktop/ so users don't need to pass flags each time.
 load_env_files() {
   local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local tauri_dir="$(cd "${script_dir}/.." && pwd)"
-  local env_main="${tauri_dir}/.env"
-  local env_local="${tauri_dir}/.env.local"
+  local workspace_root="$(cd "${script_dir}/../.." && pwd)"
+  local desktop_dir="${workspace_root}/desktop"
+  local env_main="${desktop_dir}/.env"
+  local env_local="${desktop_dir}/.env.local"
   set +u
   if [[ -f "$env_main" ]]; then
     set -a; # export all sourced variables
@@ -51,9 +52,10 @@ Usage: macos-build-tauri-release.sh [options]
 
 Options:
   --profile <release|debug>   Cargo profile (default: release)
+  --target <triple>           Single Tauri target triple
   --targets <list>            Comma-separated Tauri targets
                                (default: aarch64-apple-darwin,x86_64-apple-darwin)
-  --bundles <list>            Bundles passed to cargo tauri build (default: dmg)
+  --bundles <list>            Bundles passed to cargo tauri build (dmg only; default: dmg)
   --skip-board                Reuse existing board/dist instead of rebuilding
   --extra "..."               Extra argument forwarded to cargo tauri build (repeatable)
   --output-dir <path>         Directory to collect generated DMG files (default: ~/Downloads)
@@ -70,9 +72,10 @@ Options:
   -h, --help                  Show this help message
 
 Examples:
-  script/macos-build-tauri-release.sh
-  script/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
-  script/macos-build-tauri-release.sh --profile debug --skip-board
+  packaging/desktop/macos-build-tauri-release.sh
+  packaging/desktop/macos-build-tauri-release.sh --target aarch64-apple-darwin --bundles dmg
+  packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
+  packaging/desktop/macos-build-tauri-release.sh --profile debug --skip-board
 
 Notes:
   * Windows targets must be built on Windows with the MSVC toolchain available.
@@ -91,7 +94,7 @@ while [[ $# -gt 0 ]]; do
       PROFILE="$2"
       shift 2
       ;;
-    --targets)
+    --target|--targets)
       TARGETS="$2"
       shift 2
       ;;
@@ -159,11 +162,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-WORKSPACE_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
+if [[ "$BUNDLES" != "dmg" ]]; then
+  echo "[macos-build-tauri-release] unsupported bundles: $BUNDLES (expected: dmg)" >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT_DIR="$(cd "$WORKSPACE_ROOT/desktop" && pwd)"
 BACKEND_DIR="$(cd "$WORKSPACE_ROOT/backend" && pwd)"
 TAURI_SRC_DIR="$(cd "$ROOT_DIR/src-tauri" && pwd)"
-LICENSE_SCRIPT="$ROOT_DIR/script/generate-open-source-notices.sh"
+LICENSE_SCRIPT="$WORKSPACE_ROOT/packaging/desktop/generate-open-source-notices.sh"
 SIDECAR_OUTPUT_DIR="$BACKEND_DIR/target/sidecars"
 # Skip Finder automation by default to avoid DMG AppleScript prompts on recent macOS.
 : "${CI:=true}"
@@ -183,7 +192,7 @@ backend_sidecar_fingerprint() {
     "$BACKEND_DIR/src"
     "$BACKEND_DIR/config"
     "$BACKEND_DIR/crates"
-    "$BACKEND_DIR/script"
+    "$WORKSPACE_ROOT/packaging/standalone"
     "$BACKEND_DIR/src/bin/${binary_name}.rs"
   )
 
@@ -436,19 +445,19 @@ fi
 
 if [[ $BUILD_BOARD -eq 1 ]]; then
   echo "[macos-build-tauri-release] building board/dist"
-  npm --prefix "$BOARD_DIR" install >/dev/null
-	  if [[ -x "$LICENSE_SCRIPT" ]]; then
-	    echo "[macos-build-tauri-release] generating open source notices"
-	    "$LICENSE_SCRIPT" \
-	      --board-dir "$BOARD_DIR" \
-	      --backend-dir "$BACKEND_DIR" \
-	      --tauri-dir "$TAURI_SRC_DIR" \
-	      --output "$BOARD_DIR/public/open-source-notices.json"
+  bun install --cwd "$BOARD_DIR" >/dev/null
+  if [[ -x "$LICENSE_SCRIPT" ]]; then
+    echo "[macos-build-tauri-release] generating open source notices"
+    "$LICENSE_SCRIPT" \
+      --board-dir "$BOARD_DIR" \
+      --backend-dir "$BACKEND_DIR" \
+      --tauri-dir "$TAURI_SRC_DIR" \
+      --output "$BOARD_DIR/public/open-source-notices.json"
   else
     echo "[macos-build-tauri-release] missing license generator at $LICENSE_SCRIPT" >&2
     exit 1
   fi
-  npm --prefix "$BOARD_DIR" run build
+  bun run --cwd "$BOARD_DIR" build
 else
   echo "[macos-build-tauri-release] skipping board build"
 fi
@@ -569,7 +578,10 @@ for TARGET in "${TARGET_LIST[@]}"; do
     cmd+=("${extraFromEnv[@]}")
   fi
 
-  MCPMATE_SKIP_SIDECAR_BUILD=1 "${cmd[@]}"
+  (
+    cd "$ROOT_DIR"
+    MCPMATE_SKIP_SIDECAR_BUILD=1 "${cmd[@]}"
+  )
 
   echo "[macos-build-tauri-release] artifact: src-tauri/target/$TARGET/$PROFILE/bundle"
 
@@ -581,18 +593,15 @@ for TARGET in "${TARGET_LIST[@]}"; do
 
       base="$(basename "$dmg")"
       lower="$(echo "$base" | tr '[:upper:]' '[:lower:]')"
-      # Normalize output filename to GitHub Releases naming convention
-      # - aarch64-apple-darwin  -> mcpmate_preview_aarch64.dmg
-      # - x86_64-apple-darwin   -> mcpmate_preview_x64.dmg
+      # Normalize output filename: mcpmate_desktop_macos_{arch}.dmg
       case "$TARGET" in
         aarch64-apple-darwin)
-          out_name="mcpmate_preview_aarch64.dmg"
+          out_name="mcpmate_desktop_macos_aarch64.dmg"
           ;;
         x86_64-apple-darwin)
-          out_name="mcpmate_preview_x64.dmg"
+          out_name="mcpmate_desktop_macos_x64.dmg"
           ;;
         *)
-          # Fallback: keep tauri bundler's filename (lowercased)
           out_name="$lower"
           ;;
       esac

@@ -32,6 +32,7 @@ use core_service::{
     sync_local_service_definition, uninstall_local_service,
 };
 use deep_link::ImportServerDeepLinkPayload;
+use mcpmate::system::config::api_url_from_port;
 use oauth_callback_access::OAuthCallbackAccessState;
 use shell::{ShellPreferences, ShellState};
 use source_config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
@@ -161,9 +162,7 @@ impl DesktopCoreSourceView {
         local_service: LocalCoreServiceStatusView,
     ) -> Self {
         let api_base_url = match config.selected_source {
-            DesktopCoreSourceKind::Localhost => {
-                format!("http://127.0.0.1:{}", config.localhost.api_port)
-            }
+            DesktopCoreSourceKind::Localhost => api_url_from_port(config.localhost.api_port),
             DesktopCoreSourceKind::Remote => config.remote.base_url.trim().to_string(),
         };
 
@@ -351,7 +350,7 @@ pub fn run() -> Result<()> {
         .plugin(updater_plugin)
         .setup(move |app| {
             initialize_paths(app)?;
-            configure_tauri_environment();
+            configure_tauri_environment()?;
             initialize_menu(app)?;
 
             let data_paths = global_paths().clone();
@@ -1016,8 +1015,8 @@ fn mcp_oauth_open_authorization_url(
     oauth_callback_access::open_authorization_url(&app, &authorization_url)
 }
 
-fn configure_tauri_environment() {
-    runtime_env::configure_process_environment();
+fn configure_tauri_environment() -> Result<()> {
+    runtime_env::configure_process_environment()
 }
 
 fn initialize_menu(app: &mut tauri::App) -> Result<()> {
@@ -1132,7 +1131,10 @@ where
     #[cfg(debug_assertions)]
     window.open_devtools();
 
-    let _ = manager.app_handle().show();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = manager.app_handle().show();
+    }
     let _ = window.show();
     let _ = window.set_focus();
 
@@ -1151,16 +1153,8 @@ fn default_main_window_config() -> WindowConfig {
     }
 }
 
-fn initialize_paths(app: &mut tauri::App) -> Result<()> {
-    let app_handle = app.handle();
-
-    let selected_paths = match try_use_default_paths() {
-        Ok(paths) => paths,
-        Err(err) => {
-            warn!(error = %err, "Falling back to Tauri app data directory for MCPMate storage");
-            use_app_data_paths(app_handle)?
-        }
-    };
+fn initialize_paths(_app: &mut tauri::App) -> Result<()> {
+    let selected_paths = try_use_default_paths()?;
 
     unsafe {
         std::env::set_var("MCPMATE_DATA_DIR", selected_paths.base_dir());
@@ -1174,8 +1168,6 @@ fn initialize_paths(app: &mut tauri::App) -> Result<()> {
             ));
         }
     }
-
-    selected_paths.ensure_directories()?;
 
     info!(
         "Using MCPMate data directory: {}",
@@ -1348,32 +1340,8 @@ fn persist_localhost_ports(config: &DesktopCoreSourceConfig) {
 
 fn try_use_default_paths() -> Result<MCPMatePaths> {
     let paths = MCPMatePaths::new()?;
-    if let Err(err) = paths.ensure_directories() {
-        Err(err.context("failed to prepare default MCPMate directories"))
-    } else {
-        Ok(paths)
-    }
-}
-
-fn use_app_data_paths(app_handle: &tauri::AppHandle) -> Result<MCPMatePaths> {
-    let data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .context("failed to determine Tauri app data directory")?;
-
-    std::fs::create_dir_all(&data_dir).with_context(|| {
-        format!(
-            "failed to create app data directory at {}",
-            data_dir.display()
-        )
-    })?;
-
-    let paths = MCPMatePaths::from_base_dir(&data_dir)?;
-    paths.ensure_directories().with_context(|| {
-        format!(
-            "failed to initialize MCPMate directories under {}",
-            data_dir.display()
-        )
-    })?;
+    paths
+        .ensure_directories()
+        .context("failed to prepare default MCPMate directories")?;
     Ok(paths)
 }

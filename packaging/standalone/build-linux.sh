@@ -3,16 +3,18 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BACKEND_DIR="${WORKSPACE_ROOT}/backend"
+
 BUILD_MODE="${1:-debug}"
 TARGET="${2:-x86_64-unknown-linux-gnu}"
 
 echo "🐧 Building for Linux: $TARGET ($BUILD_MODE)"
 
-# Detect current platform
 CURRENT_ARCH=$(uname -m)
 CURRENT_OS=$(uname -s)
 
-# Check if we're building for the current platform
 IS_NATIVE=false
 if [ "$CURRENT_OS" = "Linux" ]; then
     if [ "$CURRENT_ARCH" = "x86_64" ] && [ "$TARGET" = "x86_64-unknown-linux-gnu" ]; then
@@ -22,34 +24,32 @@ if [ "$CURRENT_OS" = "Linux" ]; then
     fi
 fi
 
-# Choose build command based on whether it's native or cross-compilation
 if [ "$IS_NATIVE" = "true" ]; then
     echo "Building natively for current platform"
-    BUILD_CMD="cargo build"
+    BUILD_TOOL=(cargo build)
 else
-    # Check if zigbuild is available for cross-compilation
-    if command -v cargo-zigbuild &> /dev/null; then
-        BUILD_CMD="cargo zigbuild"
+    if command -v cargo-zigbuild >/dev/null 2>&1; then
+        BUILD_TOOL=(cargo zigbuild)
         echo "Using cargo-zigbuild for cross-compilation"
     else
         echo "⚠️  cargo-zigbuild not found, falling back to regular cargo"
-        BUILD_CMD="cargo build"
-
-        # Install target for regular cargo
+        BUILD_TOOL=(cargo build)
         rustup target add "$TARGET" || echo "Failed to install target, continuing..."
     fi
 fi
 
-if [ "$BUILD_MODE" = "release" ]; then
-    BUILD_CMD="$BUILD_CMD --release"
-fi
-
-# Only add target flag if not building natively
+BUILD_ARGS=()
 if [ "$IS_NATIVE" = "false" ]; then
-    BUILD_CMD="$BUILD_CMD --target $TARGET"
+    BUILD_ARGS+=(--target "$TARGET")
+fi
+if [ "$BUILD_MODE" = "release" ]; then
+    BUILD_ARGS+=(--release)
 fi
 
-echo "Running: $BUILD_CMD"
-$BUILD_CMD
+echo "Running: ${BUILD_TOOL[*]} ${BUILD_ARGS[*]}"
+(
+    cd "$BACKEND_DIR"
+    "${BUILD_TOOL[@]}" "${BUILD_ARGS[@]}"
+)
 
 echo "✅ Linux build completed"

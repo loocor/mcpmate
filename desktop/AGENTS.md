@@ -15,7 +15,7 @@ MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the M
 - **Market Proxy**: Streaming reverse proxy for Next.js SSR/RSC apps (e.g., mcp.so)
   - `market_stream.rs`: HTTP streaming proxy with HTML injection
   - `deep_link.rs`: Routes `mcpmate://` URLs (`auth`, `import/server`).
-- **Data Isolation**: Uses Tauri's `app_data_dir()` to avoid REDB/SQLite contention with CLI
+- **Data Isolation**: Uses the backend-owned MCPMate default data directory contract so desktop-managed and service launches share the same base path
 
 ### Streaming Proxy Design
 
@@ -56,12 +56,12 @@ CI=true cargo tauri build --target x86_64-apple-darwin --bundles dmg
 cargo tauri build --target x86_64-pc-windows-msvc --bundles msi
 
 # Use automation script (recommended)
-./script/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
+../packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
 ```
 
 ### Build Script Options
 
-`script/macos-build-tauri-release.sh` supports:
+`packaging/desktop/macos-build-tauri-release.sh` supports:
 - `--profile <release|debug>`: Cargo profile (default: release)
 - `--targets <list>`: Comma-separated targets (default: aarch64,x86_64)
 - `--bundles <list>`: Bundle types (default: dmg)
@@ -142,17 +142,17 @@ bun --cwd ../../board update
 
 ## Release Process
 
-See `docs/desktop-release-guide.md` for full details. Key steps:
+See `docs/desktop/desktop-release-guide.md` for full details. Key steps:
 
 1. Update version in `tauri.conf.json` and `Cargo.toml`
 2. Build dashboard: `bun --cwd ../../board run build`
-3. Run release script: `./script/macos-build-tauri-release.sh`
+3. Run release script: `../packaging/desktop/macos-build-tauri-release.sh`
 4. (macOS) Codesign & notarize: provide either Apple ID or API key creds via flags or environment.
-   - Example (Apple ID): `./script/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --sign-identity "Developer ID Application: Your Org (TEAMID)" --apple-id you@example.com --apple-password abcd-efgh-ijkl-mnop --apple-team-id TEAMID`
-   - Example (API key): `./script/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --sign-identity "Developer ID Application: Your Org (TEAMID)" --apple-api-key ABCDE12345 --apple-api-issuer 00112233-4455-6677-8899-aabbccddeeff --apple-api-key-path ~/AuthKeys/AuthKey_ABCD12345.p8`
+   - Example (Apple ID): `../packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --sign-identity "Developer ID Application: Your Org (TEAMID)" --apple-id you@example.com --apple-password abcd-efgh-ijkl-mnop --apple-team-id TEAMID`
+   - Example (API key): `../packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --sign-identity "Developer ID Application: Your Org (TEAMID)" --apple-api-key ABCDE12345 --apple-api-issuer 00112233-4455-6677-8899-aabbccddeeff --apple-api-key-path ~/AuthKeys/AuthKey_ABCD12345.p8`
    - The script summarizes detected identities and whether notarization is enabled.
 5. Sign bundles for the auto-updater (if enabling updates): `tauri signer sign --private-key key.pem bundle.dmg`
-6. Generate update manifest: `./script/generate-update-manifest.sh`
+6. Generate update manifest: `../packaging/desktop/generate-update-manifest.sh`
 
 ## Known Limitations
 

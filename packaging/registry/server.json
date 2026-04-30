@@ -1,0 +1,75 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.loocor/mcpmate",
+  "title": "MCPMate",
+  "description": "A local MCP proxy that connects multiple MCP servers and AI clients, now packaged with the MCPBoard web console for a complete first-run management experience.",
+  "version": "0.1.0",
+  "websiteUrl": "https://mcp.umate.ai",
+  "repository": {
+    "url": "https://github.com/loocor/MCPMate",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/loocor/mcpmate",
+      "version": "0.1.0",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://localhost:8000/mcp"
+      },
+      "environmentVariables": [
+        {
+          "name": "MCPMATE_API_PORT",
+          "description": "REST API port exposed by the MCPMate management API.",
+          "default": "8080",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCPMATE_MCP_PORT",
+          "description": "Streamable HTTP MCP endpoint port.",
+          "default": "8000",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCPMATE_DASHBOARD_PORT",
+          "description": "Port used by the bundled MCPBoard web console.",
+          "default": "3000",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCPMATE_DATA_DIR",
+          "description": "Directory used for MCPMate SQLite and REDB runtime state.",
+          "default": "/data/.mcpmate",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCPMATE_LOG",
+          "description": "Log level mapped to the mcpmate CLI log-level flag.",
+          "default": "info",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "MCPMATE_TRANSPORT",
+          "description": "Transport mode mapped to the mcpmate CLI transport flag.",
+          "default": "uni",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "tool": "mcp-publisher",
+      "distribution": "ghcr.io/loocor/mcpmate",
+      "source": "MCPMate distribution skeleton"
+    }
+  }
+}
