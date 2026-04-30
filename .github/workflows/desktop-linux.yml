@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Linux system dependencies
         run: |
@@ -137,7 +137,7 @@ jobs:
           echo "SMOKE OK"
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mcpmate-linux-${{ matrix.arch }}-bundles
           path: |
