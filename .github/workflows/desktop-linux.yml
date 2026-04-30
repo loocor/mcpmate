@@ -1,4 +1,4 @@
-name: Desktop (Linux Test)
+name: Desktop (Linux)
 
 on:
   workflow_dispatch:

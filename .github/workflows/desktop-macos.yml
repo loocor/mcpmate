@@ -4,6 +4,12 @@
 name: Desktop (macOS)
 
 on:
+  workflow_dispatch:
+    inputs:
+      bundles:
+        description: "Tauri bundle types (dmg only)"
+        required: false
+        default: "dmg"
   push:
     branches:
       - main
@@ -73,11 +79,18 @@ jobs:
           locked: true
 
       - name: Build macOS DMG (no sign / no notarize)
+        env:
+          INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
         run: |
+          BUNDLES="${INPUT_BUNDLES:-dmg}"
+          if [[ "$BUNDLES" != "dmg" ]]; then
+            echo "FAIL: macOS workflow currently supports only bundles=dmg" >&2
+            exit 1
+          fi
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
-            --targets "${{ matrix.target }}" \
-            --bundles "dmg" \
+            --target "${{ matrix.target }}" \
+            --bundles "$BUNDLES" \
             --skip-notarize \
             --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts/${{ matrix.arch }}"
 
