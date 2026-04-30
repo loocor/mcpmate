@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -86,11 +86,10 @@ jobs:
             --skip-notarize \
             --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts/${{ matrix.arch }}"
 
-      - name: Smoke test (sidecar arch + bundle structure)
+      - name: Smoke test (sidecar arch + DMG output)
         run: |
           set -euo pipefail
           BUNDLE_ROOT="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
-          APP_BUNDLE="${BUNDLE_ROOT}/macos/MCPMate.app"
           echo "--- bundle layout ---"
           find "$BUNDLE_ROOT" -type f | head -40 || true
           echo "--- sidecar architecture ---"
@@ -109,15 +108,15 @@ jobs:
               x64)     echo "$arch_info" | grep -q "x86_64" ;;
             esac
           done
-          echo "--- app bundle structure ---"
-          test -f "${APP_BUNDLE}/Contents/Info.plist"
-          test -f "${APP_BUNDLE}/Contents/MacOS/MCPMate"
-          echo "--- codesign verify ---"
-          codesign -vvv --deep --strict "$APP_BUNDLE" 2>&1 || true
+          echo "--- dmg output ---"
+          dmg=$(find "$BUNDLE_ROOT/dmg" -maxdepth 1 -type f -name "*.dmg" | head -1) || true
+          test -n "$dmg" || { echo "FAIL: missing dmg bundle"; exit 1; }
+          echo "dmg found at: $dmg"
+          hdiutil imageinfo "$dmg" >/dev/null
           echo "SMOKE OK"
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mcpmate-macos-${{ matrix.arch }}-dmg
           path: desktop-macos-artifacts/${{ matrix.arch }}/*.dmg
