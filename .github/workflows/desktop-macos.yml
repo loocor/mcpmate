@@ -4,12 +4,6 @@
 name: Desktop (macOS)
 
 on:
-  workflow_dispatch:
-    inputs:
-      bundles:
-        description: "Tauri bundle types"
-        required: false
-        default: "dmg"
   push:
     branches: [main, dev, refactor/runtime-contract-and-packaging]
     paths:
@@ -76,13 +70,11 @@ jobs:
           locked: true
 
       - name: Build macOS DMG (no sign / no notarize)
-        env:
-          INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
         run: |
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
             --targets "${{ matrix.target }}" \
-            --bundles "${INPUT_BUNDLES:-dmg}" \
+            --bundles "dmg" \
             --skip-notarize \
             --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts/${{ matrix.arch }}"
 
