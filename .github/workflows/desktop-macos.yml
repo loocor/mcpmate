@@ -5,7 +5,10 @@ name: Desktop (macOS)
 
 on:
   push:
-    branches: [main, dev, refactor/runtime-contract-and-packaging]
+    branches:
+      - main
+      - dev
+      - refactor/runtime-contract-and-packaging
     paths:
       - ".github/workflows/desktop-macos.yml"
       - "packaging/desktop/**"
