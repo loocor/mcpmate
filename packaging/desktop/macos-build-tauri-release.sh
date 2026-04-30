@@ -52,9 +52,10 @@ Usage: macos-build-tauri-release.sh [options]
 
 Options:
   --profile <release|debug>   Cargo profile (default: release)
+  --target <triple>           Single Tauri target triple
   --targets <list>            Comma-separated Tauri targets
                                (default: aarch64-apple-darwin,x86_64-apple-darwin)
-  --bundles <list>            Bundles passed to cargo tauri build (default: dmg)
+  --bundles <list>            Bundles passed to cargo tauri build (dmg only; default: dmg)
   --skip-board                Reuse existing board/dist instead of rebuilding
   --extra "..."               Extra argument forwarded to cargo tauri build (repeatable)
   --output-dir <path>         Directory to collect generated DMG files (default: ~/Downloads)
@@ -72,6 +73,7 @@ Options:
 
 Examples:
   packaging/desktop/macos-build-tauri-release.sh
+  packaging/desktop/macos-build-tauri-release.sh --target aarch64-apple-darwin --bundles dmg
   packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
   packaging/desktop/macos-build-tauri-release.sh --profile debug --skip-board
 
@@ -92,7 +94,7 @@ while [[ $# -gt 0 ]]; do
       PROFILE="$2"
       shift 2
       ;;
-    --targets)
+    --target|--targets)
       TARGETS="$2"
       shift 2
       ;;
@@ -159,6 +161,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$BUNDLES" != "dmg" ]]; then
+  echo "[macos-build-tauri-release] unsupported bundles: $BUNDLES (expected: dmg)" >&2
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
