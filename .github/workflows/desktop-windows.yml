@@ -83,6 +83,31 @@ jobs:
             --bundles "${INPUT_BUNDLES:-msi}" \
             --output-dir "${GITHUB_WORKSPACE}/desktop-windows-artifacts/${{ matrix.arch }}"
 
+      - name: Smoke test (sidecar arch + MSI format)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.target }}/release"
+          echo "--- sidecar architecture ---"
+          for sc in bridge.exe mcpmate-core.exe; do
+            bin="${BUNDLE_DIR}/${sc}"
+            test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            arch_info=$(file "$bin")
+            echo "$sc: $arch_info"
+            case "${{ matrix.arch }}" in
+              arm64) echo "$arch_info" | grep -q "ARM64\|aarch64" ;;
+              x64)   echo "$arch_info" | grep -q "x86-64\|Intel" ;;
+            esac
+          done
+          echo "--- MSI format ---"
+          for msi in desktop-windows-artifacts/${{ matrix.arch }}/*.msi; do
+            test -f "$msi" || { echo "SKIP: no MSI"; break; }
+            magic=$(head -c 8 "$msi" | od -An -tx1 | tr -d ' ')
+            echo "$magic" | grep -q "d0cf11e0" || { echo "FAIL: not an OLE2/MSI file"; exit 1; }
+            echo "OK: $(basename "$msi")"
+          done
+          echo "SMOKE OK"
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:

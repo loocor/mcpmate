@@ -583,18 +583,15 @@ for TARGET in "${TARGET_LIST[@]}"; do
 
       base="$(basename "$dmg")"
       lower="$(echo "$base" | tr '[:upper:]' '[:lower:]')"
-      # Normalize output filename to GitHub Releases naming convention
-      # - aarch64-apple-darwin  -> mcpmate_preview_aarch64.dmg
-      # - x86_64-apple-darwin   -> mcpmate_preview_x64.dmg
+      # Normalize output filename: mcpmate_desktop_macos_{arch}.dmg
       case "$TARGET" in
         aarch64-apple-darwin)
-          out_name="mcpmate_preview_aarch64.dmg"
+          out_name="mcpmate_desktop_macos_aarch64.dmg"
           ;;
         x86_64-apple-darwin)
-          out_name="mcpmate_preview_x64.dmg"
+          out_name="mcpmate_desktop_macos_x64.dmg"
           ;;
         *)
-          # Fallback: keep tauri bundler's filename (lowercased)
           out_name="$lower"
           ;;
       esac

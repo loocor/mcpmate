@@ -6,10 +6,10 @@ name: Desktop (macOS)
 on:
   workflow_dispatch:
     inputs:
-      targets:
-        description: "Rust triples (comma-separated). Default builds Apple Silicon + Intel."
+      bundles:
+        description: "Tauri bundle types"
         required: false
-        default: "aarch64-apple-darwin,x86_64-apple-darwin"
+        default: "dmg"
   push:
     branches: [main, dev, refactor/runtime-contract-and-packaging]
     paths:
@@ -35,7 +35,18 @@ env:
 
 jobs:
   build:
-    runs-on: macos-latest
+    name: build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - arch: x64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -44,7 +55,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -52,13 +63,6 @@ jobs:
           workspaces: |
             backend -> target
             desktop/src-tauri -> target
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: board/package-lock.json
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -71,23 +75,43 @@ jobs:
           crate: tauri-cli
           locked: true
 
-      - name: Build DMGs (no sign / no notarize)
-        working-directory: desktop
+      - name: Build macOS DMG (no sign / no notarize)
         env:
-          INPUT_TARGETS: ${{ github.event.inputs.targets }}
+          INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
         run: |
-          chmod +x ../packaging/desktop/macos-build-tauri-release.sh
-          TARGETS="${INPUT_TARGETS:-aarch64-apple-darwin,x86_64-apple-darwin}"
-          ../packaging/desktop/macos-build-tauri-release.sh \
-            --targets "${TARGETS}" \
-            --bundles dmg \
+          chmod +x packaging/desktop/macos-build-tauri-release.sh
+          packaging/desktop/macos-build-tauri-release.sh \
+            --targets "${{ matrix.target }}" \
+            --bundles "${INPUT_BUNDLES:-dmg}" \
             --skip-notarize \
-            --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts"
+            --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts/${{ matrix.arch }}"
 
-      - name: Upload DMG artifacts
+      - name: Smoke test (sidecar arch + bundle structure)
+        run: |
+          set -euo pipefail
+          APP_BUNDLE="desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/MCPMate.app"
+          echo "--- sidecar architecture ---"
+          for sc in bridge mcpmate-core; do
+            bin="${APP_BUNDLE}/Contents/Frameworks/${sc}"
+            test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            arch_info=$(file "$bin")
+            echo "$sc: $arch_info"
+            case "${{ matrix.arch }}" in
+              aarch64) echo "$arch_info" | grep -q "arm64\|aarch64" ;;
+              x64)     echo "$arch_info" | grep -q "x86_64" ;;
+            esac
+          done
+          echo "--- bundle structure ---"
+          test -f "${APP_BUNDLE}/Contents/Info.plist"
+          test -f "${APP_BUNDLE}/Contents/MacOS/MCPMate"
+          echo "--- codesign verify ---"
+          codesign -vvv --deep --strict "$APP_BUNDLE" 2>&1 || true
+          echo "SMOKE OK"
+
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mcpmate-macos-dmg
-          path: desktop-macos-artifacts/*.dmg
+          name: mcpmate-macos-${{ matrix.arch }}-dmg
+          path: desktop-macos-artifacts/${{ matrix.arch }}/*.dmg
           if-no-files-found: error
           retention-days: 14
