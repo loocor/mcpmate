@@ -1,12 +1,12 @@
 FROM node:20-bookworm-slim AS board-builder
 
 WORKDIR /workspace/board
-COPY board/package.json board/bun.lock board/package-lock.json ./
+COPY board/package.json board/package-lock.json ./
 RUN npm ci
 COPY board ./
 RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
-FROM rust:1.88-bookworm AS builder
+FROM rust:stable-bookworm AS builder
 
 WORKDIR /workspace
 
