@@ -43,7 +43,6 @@ use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
-
 const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
 const MENU_ABOUT_ID: &str = "menu.help.about";
 
@@ -287,36 +286,95 @@ pub fn run() -> Result<()> {
         if event.id.as_ref() == MENU_CHECK_UPDATES_ID {
             let handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                let (title, message) = match handle.updater() {
-                    Ok(updater) => match updater.check().await {
-                        Ok(Some(update)) => (
-                            "Update Available".to_string(),
-                            format!(
-                                "Version {} is ready. Auto-update will activate once CDN hosting is connected.",
-                                update.version
-                            ),
-                        ),
-                        Ok(None) => (
-                            "Up To Date".to_string(),
-                            "You are already running the latest MCPMate build.".to_string(),
-                        ),
-                        Err(err) => (
-                            "Update Check Failed".to_string(),
-                            format!("Unable to check for updates right now: {}", err),
-                        ),
-                    },
-                    Err(err) => (
-                        "Updater Unavailable".to_string(),
-                        format!("The updater service is not ready yet. Infrastructure pending: {}", err),
-                    ),
+                let updater = match handle.updater() {
+                    Ok(u) => u,
+                    Err(err) => {
+                        handle
+                            .dialog()
+                            .message(format!("The updater service is not ready: {}", err))
+                            .title("Updater Unavailable")
+                            .buttons(MessageDialogButtons::Ok)
+                            .show(|_| {});
+                        return;
+                    }
                 };
 
-                handle
-                    .dialog()
-                    .message(message)
-                    .title(title)
-                    .buttons(MessageDialogButtons::Ok)
-                    .show(|_| {});
+                match updater.check().await {
+                    Ok(Some(update)) => {
+                        let version = update.version.clone();
+                        let msg = format!(
+                            "Version {} is available (current: {}). Install now?",
+                            update.version, update.current_version,
+                        );
+                        let handle2 = handle.clone();
+                        handle
+                            .dialog()
+                            .message(msg)
+                            .title("Update Available")
+                            .buttons(MessageDialogButtons::OkCancelCustom(
+                                "Install".into(),
+                                "Later".into(),
+                            ))
+                            .show(move |yes| {
+                                if !yes {
+                                    return;
+                                }
+                                let handle3 = handle2.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    match update
+                                        .download_and_install(
+                                            |_chunk_len, _content_len| {},
+                                            || {},
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => {
+                                            handle3
+                                                .dialog()
+                                                .message(format!(
+                                                    "Version {} has been installed. Restart now?",
+                                                    version,
+                                                ))
+                                                .title("Update Installed")
+                                                .buttons(MessageDialogButtons::OkCancelCustom(
+                                                    "Restart".into(),
+                                                    "Later".into(),
+                                                ))
+                                                .show(move |yes| {
+                                                    if yes {
+                                                        handle3.restart();
+                                                    }
+                                                });
+                                        }
+                                        Err(err) => {
+                                            handle3
+                                                .dialog()
+                                                .message(format!("Update failed: {}", err))
+                                                .title("Update Error")
+                                                .buttons(MessageDialogButtons::Ok)
+                                                .show(|_| {});
+                                        }
+                                    }
+                                });
+                            });
+                    }
+                    Ok(None) => {
+                        handle
+                            .dialog()
+                            .message("You are already running the latest MCPMate build.")
+                            .title("Up To Date")
+                            .buttons(MessageDialogButtons::Ok)
+                            .show(|_| {});
+                    }
+                    Err(err) => {
+                        handle
+                            .dialog()
+                            .message(format!("Unable to check for updates: {}", err))
+                            .title("Update Check Failed")
+                            .buttons(MessageDialogButtons::Ok)
+                            .show(|_| {});
+                    }
+                }
             });
         } else if event.id.as_ref() == MENU_ABOUT_ID {
             let handle = app_handle.clone();
@@ -340,7 +398,13 @@ pub fn run() -> Result<()> {
         }
     });
 
-    let updater_plugin = UpdaterPluginBuilder::new().build();
+    let updater_plugin = {
+        let mut builder = UpdaterPluginBuilder::new();
+        if let Ok(pubkey) = std::env::var("MCPMATE_UPDATER_PUBKEY") {
+            builder = builder.pubkey(pubkey);
+        }
+        builder.build()
+    };
 
     let builder = builder
         .plugin(tauri_plugin_dialog::init())

@@ -7,6 +7,7 @@ TARGET="x86_64-unknown-linux-gnu"
 BUNDLES="appimage,deb"
 declare -a EXTRA_ARGS=()
 OUTPUT_DIR="${HOME}/Downloads"
+WITH_UPDATER=0
 
 usage() {
   cat <<'USAGE'
@@ -17,6 +18,7 @@ Options:
   --target <triple>           Rust target triple (default: x86_64-unknown-linux-gnu)
   --bundles <list>            Comma-separated bundle types (default: appimage,deb)
   --skip-board                Reuse existing board/dist instead of rebuilding
+  --with-updater              Enable updater artifact generation (requires TAURI_SIGNING_PRIVATE_KEY)
   --extra "..."               Extra argument forwarded to cargo tauri build (repeatable)
   --output-dir <path>         Directory to collect generated artifacts (default: ~/Downloads)
   -h, --help                  Show this help message
@@ -48,6 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-board)
       BUILD_BOARD=0
+      shift 1
+      ;;
+    --with-updater)
+      WITH_UPDATER=1
       shift 1
       ;;
     --extra)
@@ -197,6 +203,11 @@ build_core_sidecar() {
   chmod +x "$SIDECAR_OUTPUT_DIR/mcpmate-core"
 }
 
+if [[ $WITH_UPDATER -eq 1 && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  echo "[linux-build-tauri-release] --with-updater requires TAURI_SIGNING_PRIVATE_KEY" >&2
+  exit 1
+fi
+
 log "building target=$TARGET profile=$PROFILE bundles=$BUNDLES"
 
 build_bridge_sidecar "$TARGET"
@@ -207,6 +218,10 @@ cmd=(
   --target "$TARGET"
   --bundles "$BUNDLES"
 )
+
+if [[ $WITH_UPDATER -eq 1 ]]; then
+  cmd+=(--config "$TAURI_SRC_DIR/tauri.release-overlay.json")
+fi
 
 if [[ "$PROFILE" == "debug" ]]; then
   cmd+=(--debug)
