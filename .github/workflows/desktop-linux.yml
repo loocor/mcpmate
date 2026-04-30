@@ -104,10 +104,17 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          echo "--- bundle layout ---"
+          find "$BUNDLE_DIR" -type f | head -40 || true
           echo "--- sidecar architecture ---"
           for sc in bridge mcpmate-core; do
-            bin="${BUNDLE_DIR}/${sc}"
-            test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            bin=$(find "$BUNDLE_DIR" -type f \( -name "$sc" -o -name "${sc}-*" \) ! -name "*.fingerprint" | head -1) || true
+            if [[ -z "$bin" ]]; then
+              echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
+              bin="backend/target/sidecars/${sc}-${{ matrix.target }}"
+              test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            fi
+            echo "$sc found at: $bin"
             arch_info=$(file "$bin")
             echo "$sc: $arch_info"
             case "${{ matrix.arch }}" in

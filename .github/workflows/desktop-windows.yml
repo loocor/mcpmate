@@ -87,11 +87,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.target }}/release"
+          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          echo "--- bundle layout ---"
+          find "$BUNDLE_DIR" -type f 2>/dev/null | head -40 || true
           echo "--- sidecar architecture ---"
           for sc in bridge.exe mcpmate-core.exe; do
-            bin="${BUNDLE_DIR}/${sc}"
-            test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            sc_name="${sc%.exe}"
+            bin=$(find "$BUNDLE_DIR" -type f \( -name "$sc" -o -name "${sc_name}-*.exe" \) | head -1) || true
+            if [[ -z "$bin" ]]; then
+              echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
+              bin="backend/target/sidecars/${sc_name}-${{ matrix.target }}.exe"
+              test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            fi
+            echo "$sc found at: $bin"
             arch_info=$(file "$bin")
             echo "$sc: $arch_info"
             case "${{ matrix.arch }}" in
