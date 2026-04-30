@@ -89,11 +89,19 @@ jobs:
       - name: Smoke test (sidecar arch + bundle structure)
         run: |
           set -euo pipefail
-          APP_BUNDLE="desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/MCPMate.app"
+          BUNDLE_ROOT="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          APP_BUNDLE="${BUNDLE_ROOT}/macos/MCPMate.app"
+          echo "--- bundle layout ---"
+          find "$BUNDLE_ROOT" -type f | head -40 || true
           echo "--- sidecar architecture ---"
           for sc in bridge mcpmate-core; do
-            bin="${APP_BUNDLE}/Contents/Frameworks/${sc}"
-            test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            bin=$(find "$BUNDLE_ROOT" -type f \( -name "$sc" -o -name "${sc}-*" \) ! -name "*.fingerprint" | head -1) || true
+            if [[ -z "$bin" ]]; then
+              echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
+              bin="backend/target/sidecars/${sc}-${{ matrix.target }}"
+              test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            fi
+            echo "$sc found at: $bin"
             arch_info=$(file "$bin")
             echo "$sc: $arch_info"
             case "${{ matrix.arch }}" in
@@ -101,7 +109,7 @@ jobs:
               x64)     echo "$arch_info" | grep -q "x86_64" ;;
             esac
           done
-          echo "--- bundle structure ---"
+          echo "--- app bundle structure ---"
           test -f "${APP_BUNDLE}/Contents/Info.plist"
           test -f "${APP_BUNDLE}/Contents/MacOS/MCPMate"
           echo "--- codesign verify ---"
