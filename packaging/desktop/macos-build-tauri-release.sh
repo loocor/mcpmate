@@ -578,7 +578,10 @@ for TARGET in "${TARGET_LIST[@]}"; do
     cmd+=("${extraFromEnv[@]}")
   fi
 
-  MCPMATE_SKIP_SIDECAR_BUILD=1 "${cmd[@]}"
+  (
+    cd "$ROOT_DIR"
+    MCPMATE_SKIP_SIDECAR_BUILD=1 "${cmd[@]}"
+  )
 
   echo "[macos-build-tauri-release] artifact: src-tauri/target/$TARGET/$PROFILE/bundle"
 

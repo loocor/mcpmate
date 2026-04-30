@@ -54,7 +54,7 @@ if package["version"] != cargo_version:
 
 label = f'LABEL io.modelcontextprotocol.server.name="{server["name"]}"'
 if label not in dockerfile:
-    raise SystemExit("backend/Dockerfile MCP Registry label does not match server.json name")
+    raise SystemExit("packaging/docker/Dockerfile MCP Registry label does not match server.json name")
 
 for env_name in ("MCPMATE_API_PORT", "MCPMATE_MCP_PORT", "MCPMATE_DASHBOARD_PORT", "MCPMATE_LOG", "MCPMATE_TRANSPORT"):
     if env_name not in entrypoint:

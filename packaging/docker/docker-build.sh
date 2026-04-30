@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-ROOT_DIR="$(cd "${BACKEND_DIR}/.." && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BACKEND_DIR="$(cd "${ROOT_DIR}/backend" && pwd)"
 
 VERSION="$(python3 - "${BACKEND_DIR}/Cargo.toml" <<'PY'
 import re
@@ -21,7 +21,7 @@ PY
 IMAGE_NAME="${MCPMATE_IMAGE:-ghcr.io/loocor/mcpmate}"
 
 docker build \
-  --file "${BACKEND_DIR}/Dockerfile" \
+  --file "${ROOT_DIR}/packaging/docker/Dockerfile" \
   --tag "${IMAGE_NAME}:${VERSION}" \
   --tag "${IMAGE_NAME}:latest" \
   "${ROOT_DIR}"

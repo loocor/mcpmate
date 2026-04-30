@@ -222,7 +222,10 @@ if [[ -n "${TAURI_BUILD_EXTRA:-}" ]]; then
   cmd+=("${extraFromEnv[@]}")
 fi
 
-"${cmd[@]}"
+(
+  cd "$ROOT_DIR"
+  MCPMATE_SKIP_SIDECAR_BUILD=1 "${cmd[@]}"
+)
 
 log "artifact: src-tauri/target/$TARGET/$PROFILE/bundle"
 
