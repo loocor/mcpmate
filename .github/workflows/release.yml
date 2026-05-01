@@ -71,6 +71,14 @@ jobs:
           crate: tauri-cli
           locked: true
 
+      - name: Inject version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CONF="desktop/src-tauri/tauri.conf.json"
+          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+          mv "$CONF.tmp" "$CONF"
+          echo "tauri.conf.json version → $VERSION"
+
       - name: Build macOS DMG
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -151,6 +159,15 @@ jobs:
           crate: tauri-cli
           locked: true
 
+      - name: Inject version from tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CONF="desktop/src-tauri/tauri.conf.json"
+          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+          mv "$CONF.tmp" "$CONF"
+          echo "tauri.conf.json version → $VERSION"
+
       - name: Build Windows installers
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -184,7 +201,7 @@ jobs:
         with:
           name: updater-windows-${{ matrix.arch }}
           path: updater/*
-          if-no-files-found: error
+          if-no-files-found: warn
 
   build-linux:
     name: Linux (${{ matrix.arch }})
@@ -238,6 +255,14 @@ jobs:
         with:
           crate: tauri-cli
           locked: true
+
+      - name: Inject version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          CONF="desktop/src-tauri/tauri.conf.json"
+          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+          mv "$CONF.tmp" "$CONF"
+          echo "tauri.conf.json version → $VERSION"
 
       - name: Build Linux bundles
         env:
@@ -314,7 +339,7 @@ jobs:
 
           MANIFEST_ARGS=(--version "$VERSION" --output artifacts/update.json)
 
-          find artifacts -name "*.sig" -type f | while read -r sig; do
+          while read -r sig; do
             bundle="${sig%.sig}"
             if [[ -f "$bundle" ]]; then
               base="$(basename "$bundle")"
@@ -338,7 +363,7 @@ jobs:
               asset_url="https://github.com/${RELEASE_REPO}/releases/download/${RELEASE_TAG}/${base}"
               MANIFEST_ARGS+=(--platform "$plat" "$asset_url" "$(cat "$sig")")
             fi
-          done
+          done < <(find artifacts -name "*.sig" -type f)
 
           packaging/desktop/generate-update-manifest.sh "${MANIFEST_ARGS[@]}"
 
@@ -349,14 +374,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "MCPMate ${{ env.RELEASE_TAG }}"
+          name: ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: ${{ contains(env.RELEASE_TAG, '-rc') || contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-alpha') }}
           generate_release_notes: true
           files: |
             artifacts/*.dmg
             artifacts/*.msi
-            artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
             artifacts/*.app.tar.gz

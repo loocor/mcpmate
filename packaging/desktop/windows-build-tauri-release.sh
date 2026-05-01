@@ -258,18 +258,10 @@ if [[ ${#artifacts[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# Normalize arch label for release artifact naming
-case "$TARGET" in
-  aarch64-pc-windows-msvc) ARCH_LABEL="aarch64" ;;
-  x86_64-pc-windows-msvc)  ARCH_LABEL="x64" ;;
-  *)                       ARCH_LABEL="$TARGET" ;;
-esac
-
 log "copying ${#artifacts[@]} artifact(s) to $OUTPUT_DIR"
 for artifact in "${artifacts[@]}"; do
-  out_name="mcpmate_desktop_windows_${ARCH_LABEL}.msi"
-  cp -f "$artifact" "$OUTPUT_DIR/$out_name"
-  log "copied $(basename "$artifact") -> $out_name"
+  cp -f "$artifact" "$OUTPUT_DIR/"
+  log "copied $(basename "$artifact")"
 done
 
 log "build completed successfully"
