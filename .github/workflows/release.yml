@@ -1,0 +1,506 @@
+# Tag-driven desktop release workflow.
+# Triggered on v* tags; builds all desktop platforms, collects updater artifacts,
+# generates update.json, and publishes a GitHub Release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0)"
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CI: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Desktop builds — one per platform/arch target
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - arch: x64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            backend -> target
+            desktop/src-tauri -> target
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Tauri CLI
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: tauri-cli
+          locked: true
+
+      - name: Inject version from tag
+        run: |
+          RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+          CONF="desktop/src-tauri/tauri.conf.json"
+          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+          mv "$CONF.tmp" "$CONF"
+          echo "tauri.conf.json version → $VERSION"
+
+      - name: Build macOS DMG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          chmod +x packaging/desktop/macos-build-tauri-release.sh
+          packaging/desktop/macos-build-tauri-release.sh \
+            --target "${{ matrix.target }}" \
+            --bundles app,dmg \
+            --with-updater \
+            --skip-notarize \
+            --output-dir "${GITHUB_WORKSPACE}/installers"
+
+      - name: Collect updater artifacts
+        run: |
+          chmod +x packaging/desktop/collect-updater-artifacts.sh
+          packaging/desktop/collect-updater-artifacts.sh \
+            --bundle-dir "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
+            --output-dir "${GITHUB_WORKSPACE}/updater"
+
+      - name: Normalize macOS artifact names
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+          case "$TARGET_ARCH" in
+            aarch64) ARCH_SUFFIX="aarch64" ;;
+            x64) ARCH_SUFFIX="x86_64" ;;
+            *) echo "unknown macOS arch: $TARGET_ARCH" >&2; exit 1 ;;
+          esac
+
+          for dmg in installers/*.dmg; do
+            mv "$dmg" "installers/MCPMate_${VERSION}_darwin_${ARCH_SUFFIX}.dmg"
+          done
+
+          for bundle in updater/*.app.tar.gz; do
+            dest="updater/MCPMate_${VERSION}_darwin_${ARCH_SUFFIX}.app.tar.gz"
+            mv "$bundle" "$dest"
+            if [[ -f "${bundle}.sig" ]]; then
+              mv "${bundle}.sig" "${dest}.sig"
+            fi
+          done
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: installers-macos-${{ matrix.arch }}
+          path: installers/*
+          if-no-files-found: error
+
+      - name: Upload updater artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: updater-macos-${{ matrix.arch }}
+          path: updater/*
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            experimental: true
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            backend -> target
+            desktop/src-tauri -> target
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Tauri CLI
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: tauri-cli
+          locked: true
+
+      - name: Inject version from tag
+        shell: bash
+        run: |
+          RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+          CONF="desktop/src-tauri/tauri.conf.json"
+          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+          mv "$CONF.tmp" "$CONF"
+          echo "tauri.conf.json version → $VERSION"
+
+      - name: Build Windows installers
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          chmod +x packaging/desktop/windows-build-tauri-release.sh
+          packaging/desktop/windows-build-tauri-release.sh \
+            --target "${{ matrix.target }}" \
+            --bundles msi \
+            --with-updater \
+            --output-dir "${GITHUB_WORKSPACE}/installers"
+
+      - name: Collect updater artifacts
+        shell: bash
+        run: |
+          chmod +x packaging/desktop/collect-updater-artifacts.sh
+          packaging/desktop/collect-updater-artifacts.sh \
+            --bundle-dir "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
+            --output-dir "${GITHUB_WORKSPACE}/updater"
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: installers-windows-${{ matrix.arch }}
+          path: installers/*
+          if-no-files-found: error
+
+      - name: Upload updater artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: updater-windows-${{ matrix.arch }}
+          path: updater/*
+          if-no-files-found: warn
+
+  build-linux:
+    name: Linux (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: appimage,deb
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential file jq xdg-utils \
+            libayatana-appindicator3-dev libfuse2 librsvg2-dev \
+            libgtk-3-dev libssl-dev libwebkit2gtk-4.1-dev patchelf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            backend -> target
+            desktop/src-tauri -> target
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Tauri CLI
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: tauri-cli
+          locked: true
+
+      - name: Inject version from tag
+        run: |
+          RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+          CONF="desktop/src-tauri/tauri.conf.json"
+          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+          mv "$CONF.tmp" "$CONF"
+          echo "tauri.conf.json version → $VERSION"
+
+      - name: Build Linux bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          chmod +x packaging/desktop/linux-build-tauri-release.sh
+          packaging/desktop/linux-build-tauri-release.sh \
+            --target "${{ matrix.target }}" \
+            --bundles "${{ matrix.bundles }}" \
+            --with-updater \
+            --output-dir "${GITHUB_WORKSPACE}/installers"
+
+      - name: Collect updater artifacts
+        if: contains(matrix.bundles, 'appimage')
+        run: |
+          chmod +x packaging/desktop/collect-updater-artifacts.sh
+          packaging/desktop/collect-updater-artifacts.sh \
+            --bundle-dir "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
+            --output-dir "${GITHUB_WORKSPACE}/updater"
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: installers-linux-${{ matrix.arch }}
+          path: installers/*
+          if-no-files-found: error
+
+      - name: Upload updater artifacts
+        if: contains(matrix.bundles, 'appimage')
+        uses: actions/upload-artifact@v6
+        with:
+          name: updater-linux-${{ matrix.arch }}
+          path: updater/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Publish release — depends on all build jobs completing
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish Release
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-22.04
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_REPO: ${{ github.repository }}
+      DISPATCH_TAG: ${{ github.event.inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve release tag
+        run: |
+          if [[ -n "$DISPATCH_TAG" ]]; then
+            echo "RELEASE_TAG=${DISPATCH_TAG}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List collected artifacts
+        run: find artifacts -type f | sort
+
+      - name: Normalize release asset names
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+
+          rename_pair() {
+            local old_name="$1"
+            local new_name="$2"
+            if [[ -f "artifacts/${old_name}" ]]; then
+              mv "artifacts/${old_name}" "artifacts/${new_name}"
+            fi
+            if [[ -f "artifacts/${old_name}.sig" ]]; then
+              mv "artifacts/${old_name}.sig" "artifacts/${new_name}.sig"
+            fi
+          }
+
+          rename_pair "MCPMate_${VERSION}_darwin_aarch64.dmg" "MCPMate_${VERSION}_macos_aarch64.dmg"
+          rename_pair "MCPMate_${VERSION}_darwin_aarch64.app.tar.gz" "MCPMate_${VERSION}_macos_aarch64.app.tar.gz"
+          rename_pair "MCPMate_${VERSION}_darwin_x86_64.dmg" "MCPMate_${VERSION}_macos_x86_64.dmg"
+          rename_pair "MCPMate_${VERSION}_darwin_x86_64.app.tar.gz" "MCPMate_${VERSION}_macos_x86_64.app.tar.gz"
+          rename_pair "MCPMate_${VERSION}_x64_en-US.msi" "MCPMate_${VERSION}_windows_x64.msi"
+          rename_pair "MCPMate_${VERSION}_arm64_en-US.msi" "MCPMate_${VERSION}_windows_arm64.msi"
+          rename_pair "MCPMate_${VERSION}_amd64.AppImage" "MCPMate_${VERSION}_linux_x64.AppImage"
+          rename_pair "MCPMate_${VERSION}_aarch64.AppImage" "MCPMate_${VERSION}_linux_arm64.AppImage"
+          rename_pair "MCPMate_${VERSION}_amd64.deb" "MCPMate_${VERSION}_linux_x64.deb"
+          rename_pair "MCPMate_${VERSION}_arm64.deb" "MCPMate_${VERSION}_linux_arm64.deb"
+
+          find artifacts -type f | sort
+
+      - name: Generate update manifest
+        run: |
+          chmod +x packaging/desktop/generate-update-manifest.sh
+
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+
+          MANIFEST_ARGS=(--version "$VERSION" --output artifacts/update.json)
+
+          while read -r sig; do
+            bundle="${sig%.sig}"
+            if [[ -f "$bundle" ]]; then
+              base="$(basename "$bundle")"
+              case "$base" in
+                *aarch64*|*arm64*)
+                  case "$base" in
+                    *darwin*|*macos*|*.app.tar.gz) plat="darwin-aarch64" ;;
+                    *linux*|*.AppImage)            plat="linux-aarch64" ;;
+                    *windows*|*.nsis*|*.msi*)      plat="windows-aarch64" ;;
+                    *) echo "WARN: skip $base" >&2; continue ;;
+                  esac ;;
+                *)
+                  case "$base" in
+                    *darwin*|*macos*|*.app.tar.gz) plat="darwin-x86_64" ;;
+                    *linux*|*.AppImage)            plat="linux-x86_64" ;;
+                    *windows*|*.nsis*|*.msi*)      plat="windows-x86_64" ;;
+                    *) echo "WARN: skip $base" >&2; continue ;;
+                  esac ;;
+              esac
+
+              asset_url="https://github.com/${RELEASE_REPO}/releases/download/${RELEASE_TAG}/${base}"
+              MANIFEST_ARGS+=(--platform "$plat" "$asset_url" "$(cat "$sig")")
+            fi
+          done < <(find artifacts -name "*.sig" -type f)
+
+          packaging/desktop/generate-update-manifest.sh "${MANIFEST_ARGS[@]}"
+
+          echo "--- update.json ---"
+          cat artifacts/update.json
+
+      - name: Bundle signature files
+        run: |
+          if compgen -G "artifacts/*.sig" >/dev/null; then
+            zip -j "artifacts/signatures.zip" artifacts/*.sig
+            rm -f artifacts/*.sig
+          fi
+
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_tag=$(gh release list --limit 20 --json tagName --jq '.[].tagName' | grep -Fxv "$RELEASE_TAG" | head -n1 || true)
+
+          if [[ -n "$previous_tag" ]]; then
+            gh api -X POST "repos/${RELEASE_REPO}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" \
+              -f previous_tag_name="$previous_tag" \
+              --jq '.body' > artifacts/release-notes.md
+            compare_range="${previous_tag}...${RELEASE_TAG}"
+          else
+            gh api -X POST "repos/${RELEASE_REPO}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" \
+              --jq '.body' > artifacts/release-notes.md
+            compare_range=""
+          fi
+
+          if ! grep -Eq '^[*-] ' artifacts/release-notes.md; then
+            if [[ -n "$compare_range" ]]; then
+              mapfile -t commits < <(
+                gh api "repos/${RELEASE_REPO}/compare/${compare_range}" --jq '.commits[].commit.message | split("\n")[0]' |
+                  while IFS= read -r subject; do
+                    case "$subject" in
+                      ""|"Merge pull request"*) continue ;;
+                    esac
+                    printf '%s\n' "$subject"
+                  done
+              )
+            else
+              mapfile -t commits < <(git log -1 --format=%s)
+            fi
+
+            {
+              printf '%s\n' "## What's Changed"
+              if ((${#commits[@]})); then
+                for subject in "${commits[@]}"; do
+                  printf -- '- %s\n' "$subject"
+                done
+              else
+                printf '%s\n' '- Release notes fallback generated from tag comparison.'
+              fi
+              printf '\n'
+              cat artifacts/release-notes.md
+            } > artifacts/release-notes.tmp
+            mv artifacts/release-notes.tmp artifacts/release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          draft: false
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+          body_path: artifacts/release-notes.md
+          files: |
+            artifacts/*.dmg
+            artifacts/*.msi
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/*.app.tar.gz
+            artifacts/*.nsis.zip
+            artifacts/signatures.zip
+            artifacts/update.json

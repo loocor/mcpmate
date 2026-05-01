@@ -1,4 +1,8 @@
-FROM node:20-bookworm-slim AS board-builder
+ARG NODE_IMAGE=node:20-bookworm-slim
+ARG RUST_IMAGE=rust:1-bookworm
+ARG RUNTIME_IMAGE=debian:bookworm-slim
+
+FROM ${NODE_IMAGE} AS board-builder
 
 WORKDIR /workspace/board
 COPY board/package.json board/package-lock.json ./
@@ -6,7 +10,7 @@ RUN npm ci
 COPY board ./
 RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
-FROM rust:stable-bookworm AS builder
+FROM ${RUST_IMAGE} AS builder
 
 WORKDIR /workspace
 
@@ -15,7 +19,7 @@ COPY backend ./backend
 WORKDIR /workspace/backend
 RUN cargo build --release --bin mcpmate --bin bridge
 
-FROM debian:bookworm-slim AS runtime
+FROM ${RUNTIME_IMAGE} AS runtime
 
 LABEL org.opencontainers.image.title="MCPMate"
 LABEL org.opencontainers.image.description="Local MCP proxy and management server for AI clients"

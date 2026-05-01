@@ -7,6 +7,7 @@ TARGET="x86_64-pc-windows-msvc"
 BUNDLES="msi"
 declare -a EXTRA_ARGS=()
 OUTPUT_DIR="${USERPROFILE}/Downloads"
+WITH_UPDATER=0
 
 usage() {
   cat <<'USAGE'
@@ -17,6 +18,7 @@ Options:
   --target <triple>           Rust target triple (default: x86_64-pc-windows-msvc)
   --bundles <list>            Comma-separated bundle types (default: msi)
   --skip-board                Reuse existing board/dist instead of rebuilding
+  --with-updater              Enable updater artifact generation (requires TAURI_SIGNING_PRIVATE_KEY)
   --extra "..."               Extra argument forwarded to cargo tauri build (repeatable)
   --output-dir <path>         Directory to collect generated artifacts (default: ~/Downloads)
   -h, --help                  Show this help message
@@ -49,6 +51,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-board)
       BUILD_BOARD=0
+      shift 1
+      ;;
+    --with-updater)
+      WITH_UPDATER=1
       shift 1
       ;;
     --extra)
@@ -194,6 +200,11 @@ build_core_sidecar() {
   cp "$built_path" "$SIDECAR_OUTPUT_DIR/mcpmate-core.exe"
 }
 
+if [[ $WITH_UPDATER -eq 1 && -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  echo "[windows-build-tauri-release] --with-updater requires TAURI_SIGNING_PRIVATE_KEY" >&2
+  exit 1
+fi
+
 log "building target=$TARGET profile=$PROFILE bundles=$BUNDLES"
 
 build_bridge_sidecar "$TARGET"
@@ -204,6 +215,10 @@ cmd=(
   --target "$TARGET"
   --bundles "$BUNDLES"
 )
+
+if [[ $WITH_UPDATER -eq 1 ]]; then
+  cmd+=(--config "$TAURI_SRC_DIR/tauri.release-overlay.json")
+fi
 
 if [[ "$PROFILE" == "debug" ]]; then
   cmd+=(--debug)
@@ -243,18 +258,10 @@ if [[ ${#artifacts[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# Normalize arch label for release artifact naming
-case "$TARGET" in
-  aarch64-pc-windows-msvc) ARCH_LABEL="aarch64" ;;
-  x86_64-pc-windows-msvc)  ARCH_LABEL="x64" ;;
-  *)                       ARCH_LABEL="$TARGET" ;;
-esac
-
 log "copying ${#artifacts[@]} artifact(s) to $OUTPUT_DIR"
 for artifact in "${artifacts[@]}"; do
-  out_name="mcpmate_desktop_windows_${ARCH_LABEL}.msi"
-  cp -f "$artifact" "$OUTPUT_DIR/$out_name"
-  log "copied $(basename "$artifact") -> $out_name"
+  cp -f "$artifact" "$OUTPUT_DIR/"
+  log "copied $(basename "$artifact")"
 done
 
 log "build completed successfully"
