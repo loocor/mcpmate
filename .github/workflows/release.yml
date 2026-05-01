@@ -106,8 +106,21 @@ jobs:
           if-no-files-found: error
 
   build-windows:
-    name: Windows (x64)
-    runs-on: windows-latest
+    name: Windows (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            experimental: false
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -118,7 +131,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -146,7 +159,7 @@ jobs:
         run: |
           chmod +x packaging/desktop/windows-build-tauri-release.sh
           packaging/desktop/windows-build-tauri-release.sh \
-            --target x86_64-pc-windows-msvc \
+            --target "${{ matrix.target }}" \
             --bundles msi \
             --with-updater \
             --output-dir "${GITHUB_WORKSPACE}/installers"
@@ -156,20 +169,20 @@ jobs:
         run: |
           chmod +x packaging/desktop/collect-updater-artifacts.sh
           packaging/desktop/collect-updater-artifacts.sh \
-            --bundle-dir "desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle" \
+            --bundle-dir "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
             --output-dir "${GITHUB_WORKSPACE}/updater"
 
       - name: Upload installers
         uses: actions/upload-artifact@v6
         with:
-          name: installers-windows-x64
+          name: installers-windows-${{ matrix.arch }}
           path: installers/*
           if-no-files-found: error
 
       - name: Upload updater artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: updater-windows-x64
+          name: updater-windows-${{ matrix.arch }}
           path: updater/*
           if-no-files-found: error
 
@@ -182,6 +195,11 @@ jobs:
           - arch: x64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: deb
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
@@ -194,8 +212,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev librsvg2-dev patchelf
+            build-essential file jq \
+            libayatana-appindicator3-dev libfuse2 librsvg2-dev \
+            libgtk-3-dev libssl-dev libwebkit2gtk-4.1-dev patchelf
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -228,11 +247,12 @@ jobs:
           chmod +x packaging/desktop/linux-build-tauri-release.sh
           packaging/desktop/linux-build-tauri-release.sh \
             --target "${{ matrix.target }}" \
-            --bundles "appimage,deb" \
+            --bundles "${{ matrix.bundles }}" \
             --with-updater \
             --output-dir "${GITHUB_WORKSPACE}/installers"
 
       - name: Collect updater artifacts
+        if: contains(matrix.bundles, 'appimage')
         run: |
           chmod +x packaging/desktop/collect-updater-artifacts.sh
           packaging/desktop/collect-updater-artifacts.sh \
@@ -247,6 +267,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload updater artifacts
+        if: contains(matrix.bundles, 'appimage')
         uses: actions/upload-artifact@v6
         with:
           name: updater-linux-${{ matrix.arch }}
