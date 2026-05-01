@@ -75,6 +75,7 @@ jobs:
         run: |
           RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
           CONF="desktop/src-tauri/tauri.conf.json"
           jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
           mv "$CONF.tmp" "$CONF"
@@ -165,6 +166,7 @@ jobs:
         run: |
           RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
           CONF="desktop/src-tauri/tauri.conf.json"
           jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
           mv "$CONF.tmp" "$CONF"
@@ -262,6 +264,7 @@ jobs:
         run: |
           RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
           CONF="desktop/src-tauri/tauri.conf.json"
           jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
           mv "$CONF.tmp" "$CONF"
@@ -339,6 +342,7 @@ jobs:
           chmod +x packaging/desktop/generate-update-manifest.sh
 
           VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
 
           MANIFEST_ARGS=(--version "$VERSION" --output artifacts/update.json)
 
