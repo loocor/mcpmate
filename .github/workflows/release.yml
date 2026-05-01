@@ -258,7 +258,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential file jq \
+            build-essential file jq xdg-utils \
             libayatana-appindicator3-dev libfuse2 librsvg2-dev \
             libgtk-3-dev libssl-dev libwebkit2gtk-4.1-dev patchelf
 
