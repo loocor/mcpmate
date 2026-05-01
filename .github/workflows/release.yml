@@ -362,6 +362,35 @@ jobs:
       - name: List collected artifacts
         run: find artifacts -type f | sort
 
+      - name: Normalize release asset names
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+
+          rename_pair() {
+            local old_name="$1"
+            local new_name="$2"
+            if [[ -f "artifacts/${old_name}" ]]; then
+              mv "artifacts/${old_name}" "artifacts/${new_name}"
+            fi
+            if [[ -f "artifacts/${old_name}.sig" ]]; then
+              mv "artifacts/${old_name}.sig" "artifacts/${new_name}.sig"
+            fi
+          }
+
+          rename_pair "MCPMate_${VERSION}_darwin_aarch64.dmg" "MCPMate_${VERSION}_macos_aarch64.dmg"
+          rename_pair "MCPMate_${VERSION}_darwin_aarch64.app.tar.gz" "MCPMate_${VERSION}_macos_aarch64.app.tar.gz"
+          rename_pair "MCPMate_${VERSION}_darwin_x86_64.dmg" "MCPMate_${VERSION}_macos_x86_64.dmg"
+          rename_pair "MCPMate_${VERSION}_darwin_x86_64.app.tar.gz" "MCPMate_${VERSION}_macos_x86_64.app.tar.gz"
+          rename_pair "MCPMate_${VERSION}_x64_en-US.msi" "MCPMate_${VERSION}_windows_x64.msi"
+          rename_pair "MCPMate_${VERSION}_arm64_en-US.msi" "MCPMate_${VERSION}_windows_arm64.msi"
+          rename_pair "MCPMate_${VERSION}_amd64.AppImage" "MCPMate_${VERSION}_linux_x64.AppImage"
+          rename_pair "MCPMate_${VERSION}_aarch64.AppImage" "MCPMate_${VERSION}_linux_arm64.AppImage"
+          rename_pair "MCPMate_${VERSION}_amd64.deb" "MCPMate_${VERSION}_linux_x64.deb"
+          rename_pair "MCPMate_${VERSION}_arm64.deb" "MCPMate_${VERSION}_linux_arm64.deb"
+
+          find artifacts -type f | sort
+
       - name: Generate update manifest
         run: |
           chmod +x packaging/desktop/generate-update-manifest.sh
@@ -402,6 +431,13 @@ jobs:
           echo "--- update.json ---"
           cat artifacts/update.json
 
+      - name: Bundle signature files
+        run: |
+          if compgen -G "artifacts/*.sig" >/dev/null; then
+            zip -j "artifacts/signatures.zip" artifacts/*.sig
+            rm -f artifacts/*.sig
+          fi
+
       - name: Generate release notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -413,25 +449,10 @@ jobs:
               -f tag_name="$RELEASE_TAG" \
               -f previous_tag_name="$previous_tag" \
               --jq '.body' > artifacts/release-notes.md
-            contributors=$(gh api "repos/${RELEASE_REPO}/compare/${previous_tag}...${RELEASE_TAG}" --jq '.commits[].author.login' | grep -v '^null$' | sort -u || true)
           else
             gh api -X POST "repos/${RELEASE_REPO}/releases/generate-notes" \
               -f tag_name="$RELEASE_TAG" \
               --jq '.body' > artifacts/release-notes.md
-            contributors=""
-          fi
-
-          if ! grep -q '^## Contributors' artifacts/release-notes.md; then
-            {
-              printf '\n\n## Contributors\n'
-              if [[ -n "$contributors" ]]; then
-                while read -r login; do
-                  [[ -n "$login" ]] && printf '%s\n' "- @${login}"
-                done <<< "$contributors"
-              else
-                printf '%s\n' '- @loocor'
-              fi
-            } >> artifacts/release-notes.md
           fi
 
       - name: Create GitHub Release
@@ -440,7 +461,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           draft: false
-          prerelease: ${{ contains(env.RELEASE_TAG, '-rc') || contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-alpha') }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           body_path: artifacts/release-notes.md
           files: |
             artifacts/*.dmg
@@ -449,5 +470,5 @@ jobs:
             artifacts/*.deb
             artifacts/*.app.tar.gz
             artifacts/*.nsis.zip
-            artifacts/*.sig
+            artifacts/signatures.zip
             artifacts/update.json
