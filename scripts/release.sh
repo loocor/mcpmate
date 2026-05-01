@@ -99,6 +99,7 @@ required_files=(
   "packaging/desktop/windows-build-tauri-release.sh"
   "packaging/desktop/collect-updater-artifacts.sh"
   "packaging/desktop/generate-update-manifest.sh"
+  "desktop/src-tauri/tauri.release-overlay.json"
 )
 missing=0
 for f in "${required_files[@]}"; do
@@ -114,7 +115,7 @@ fi
 log "  ✓ key release files present"
 
 # 6. Latest CI on main is green
-latest_run=$(gh run list --branch main --workflow=ci.yml --limit=1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "")
+latest_run=$(gh run list --branch main --workflow=desktop-macos.yml --limit=1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "")
 if [[ "$latest_run" == "failure" ]]; then
   err "latest CI on main failed. Fix CI before releasing."
   exit 1

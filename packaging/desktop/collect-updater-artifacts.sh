@@ -79,7 +79,7 @@ done < <(find "$BUNDLE_DIR" -type f \( -name "*.nsis.zip.sig" -o -name "*.msi.zi
 if [[ $collected -eq 0 ]]; then
   log "warning: no updater artifacts found in $BUNDLE_DIR"
   log "bundle layout:"
-  find "$BUNDLE_DIR" -type f -name "*.sig" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.nsis.zip" -o -name "*.msi.zip" -o -name "*.msi" | head -20 || true
+  find "$BUNDLE_DIR" -type f \( -name "*.sig" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.nsis.zip" -o -name "*.msi.zip" -o -name "*.msi" \) | head -20 || true
 fi
 
 log "collected $collected updater artifact pair(s) to $OUTPUT_DIR"
