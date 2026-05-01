@@ -77,6 +77,17 @@ jobs:
           crate: tauri-cli
           locked: true
 
+      - name: Inject MSI-safe app version
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONF="desktop/src-tauri/tauri.conf.json"
+          VERSION=$(jq -r '.version' "$CONF")
+          VERSION="${VERSION%%-*}"
+          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+          mv "$CONF.tmp" "$CONF"
+          echo "tauri.conf.json version → $VERSION"
+
       - name: Build Windows desktop artifacts
         shell: bash
         env:
