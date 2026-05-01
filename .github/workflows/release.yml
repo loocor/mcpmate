@@ -460,9 +460,8 @@ jobs:
           if ! grep -Eq '^[*-] ' artifacts/release-notes.md; then
             if [[ -n "$compare_range" ]]; then
               mapfile -t commits < <(
-                gh api "repos/${RELEASE_REPO}/compare/${compare_range}" --jq '.commits[].commit.message' |
-                  while IFS= read -r message; do
-                    subject="${message%%$'\n'*}"
+                gh api "repos/${RELEASE_REPO}/compare/${compare_range}" --jq '.commits[].commit.message | split("\n")[0]' |
+                  while IFS= read -r subject; do
                     case "$subject" in
                       ""|"Merge pull request"*) continue ;;
                     esac
