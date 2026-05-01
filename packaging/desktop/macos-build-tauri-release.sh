@@ -56,7 +56,7 @@ Options:
   --target <triple>           Single Tauri target triple
   --targets <list>            Comma-separated Tauri targets
                                (default: aarch64-apple-darwin,x86_64-apple-darwin)
-  --bundles <list>            Bundles passed to cargo tauri build (dmg only; default: dmg)
+  --bundles <list>            Bundles passed to cargo tauri build (allowed: dmg or app,dmg; default: dmg)
   --skip-board                Reuse existing board/dist instead of rebuilding
   --with-updater              Enable updater artifact generation (requires TAURI_SIGNING_PRIVATE_KEY)
   --extra "..."               Extra argument forwarded to cargo tauri build (repeatable)
@@ -76,7 +76,7 @@ Options:
 Examples:
   packaging/desktop/macos-build-tauri-release.sh
   packaging/desktop/macos-build-tauri-release.sh --target aarch64-apple-darwin --bundles dmg
-  packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles dmg
+  packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --bundles app,dmg --with-updater
   packaging/desktop/macos-build-tauri-release.sh --profile debug --skip-board
 
 Notes:
@@ -85,6 +85,40 @@ Notes:
   * Signing/notarization logs hide team id, API issuer, and identity strings by default; set
     MCPMATE_BUILD_LOG_SIGNING_DETAILS=1 for the previous verbose output (avoid in public CI).
 USAGE
+}
+
+validate_bundles() {
+  local has_app=0
+  local has_dmg=0
+  local bundle
+  local -a bundle_list=()
+
+  IFS=',' read -r -a bundle_list <<< "$BUNDLES"
+
+  for bundle in "${bundle_list[@]}"; do
+    case "$bundle" in
+      dmg)
+        has_dmg=1
+        ;;
+      app)
+        has_app=1
+        ;;
+      *)
+        echo "[macos-build-tauri-release] unsupported bundle: $bundle (allowed: app,dmg)" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ $has_dmg -ne 1 ]]; then
+    echo "[macos-build-tauri-release] unsupported bundles: $BUNDLES (must include dmg)" >&2
+    exit 1
+  fi
+
+  if [[ $WITH_UPDATER -eq 1 && $has_app -ne 1 ]]; then
+    echo "[macos-build-tauri-release] --with-updater on macOS requires --bundles app,dmg" >&2
+    exit 1
+  fi
 }
 
 # Preload environment defaults from .env files (if present)
@@ -168,10 +202,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$BUNDLES" != "dmg" ]]; then
-  echo "[macos-build-tauri-release] unsupported bundles: $BUNDLES (expected: dmg)" >&2
-  exit 1
-fi
+validate_bundles
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
