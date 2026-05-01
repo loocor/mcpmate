@@ -3,14 +3,18 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: release.sh [patch|minor|major]
+Usage: release.sh [patch|minor|major] [type]
 
 Bumps the version, creates a git tag, and pushes to trigger the release workflow.
 
-Version is derived from the latest semver tag (vX.Y.Z).
+Version is derived from the latest stable semver tag (vX.Y.Z).
   patch  0.1.0 → 0.1.1  (default)
   minor  0.1.0 → 0.2.0
   major  0.1.0 → 1.0.0
+
+Tag forms:
+  vX.Y.Z                         Stable release (default)
+  vX.Y.Z-YYYYMMDDHHMMSS-type     Timestamped pre-release/test tag
 
 Pre-flight checks:
   - Clean working tree
@@ -21,12 +25,14 @@ Pre-flight checks:
   - Latest CI on main is green
 
 Example:
-  scripts/release.sh           # patch bump
-  scripts/release.sh minor     # minor bump
+  scripts/release.sh           # stable patch bump
+  scripts/release.sh minor     # stable minor bump
+  scripts/release.sh patch test
 USAGE
 }
 
 BUMP="${1:-patch}"
+TAG_TYPE="${2:-}"
 
 if [[ "$BUMP" == "-h" || "$BUMP" == "--help" ]]; then
   usage
@@ -35,6 +41,12 @@ fi
 
 if [[ "$BUMP" != "patch" && "$BUMP" != "minor" && "$BUMP" != "major" ]]; then
   echo "error: bump must be one of: patch, minor, major" >&2
+  usage >&2
+  exit 1
+fi
+
+if [[ -n "$TAG_TYPE" && ! "$TAG_TYPE" =~ ^[a-z0-9]+$ ]]; then
+  echo "error: type must be lowercase letters or digits only" >&2
   usage >&2
   exit 1
 fi
@@ -127,13 +139,19 @@ fi
 
 # ── Compute next version ─────────────────────────────────────────────────────
 
-latest_tag="$(git -C "$REPO_ROOT" tag --list 'v*' --sort=-version:refname | head -n1)"
+latest_tag="$(git -C "$REPO_ROOT" tag --list 'v*' --sort=-version:refname | while IFS= read -r t; do
+  case "${t#v}" in
+    *-*|*[^0-9.]*) ;;
+    *) printf '%s\n' "$t"; break ;;
+  esac
+ done)"
 if [[ -z "$latest_tag" ]]; then
   base_version="0.0.0"
-  log "no existing semver tags found, starting from 0.0.0"
+  log "no existing stable semver tags found, starting from 0.0.0"
 else
   base_version="${latest_tag#v}"
-  log "latest tag: $latest_tag (version $base_version)"
+  base_version="${base_version%%-*}"
+  log "latest tag: $latest_tag (base version $base_version)"
 fi
 
 IFS='.' read -r major minor patch <<< "$base_version"
@@ -145,6 +163,10 @@ esac
 
 next_version="${major}.${minor}.${patch}"
 next_tag="v${next_version}"
+if [[ -n "$TAG_TYPE" ]]; then
+  timestamp="$(date +%Y%m%d%H%M%S)"
+  next_tag="${next_tag}-${timestamp}-${TAG_TYPE}"
+fi
 
 # Check tag doesn't already exist
 if git -C "$REPO_ROOT" tag --list "$next_tag" | grep -q .; then
