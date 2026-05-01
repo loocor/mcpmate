@@ -101,6 +101,31 @@ jobs:
             --bundle-dir "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
             --output-dir "${GITHUB_WORKSPACE}/updater"
 
+      - name: Normalize macOS artifact names
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+          case "$TARGET_ARCH" in
+            aarch64) ARCH_SUFFIX="aarch64" ;;
+            x64) ARCH_SUFFIX="x86_64" ;;
+            *) echo "unknown macOS arch: $TARGET_ARCH" >&2; exit 1 ;;
+          esac
+
+          for dmg in installers/*.dmg; do
+            mv "$dmg" "installers/MCPMate_${VERSION}_darwin_${ARCH_SUFFIX}.dmg"
+          done
+
+          for bundle in updater/*.app.tar.gz; do
+            dest="updater/MCPMate_${VERSION}_darwin_${ARCH_SUFFIX}.app.tar.gz"
+            mv "$bundle" "$dest"
+            if [[ -f "${bundle}.sig" ]]; then
+              mv "${bundle}.sig" "${dest}.sig"
+            fi
+          done
+
       - name: Upload installers
         uses: actions/upload-artifact@v6
         with:
@@ -220,7 +245,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
-            bundles: deb
+            bundles: appimage,deb
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:
@@ -377,6 +402,38 @@ jobs:
           echo "--- update.json ---"
           cat artifacts/update.json
 
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_tag=$(gh release list --limit 20 --json tagName --jq '.[].tagName' | grep -Fxv "$RELEASE_TAG" | head -n1 || true)
+
+          if [[ -n "$previous_tag" ]]; then
+            gh api -X POST "repos/${RELEASE_REPO}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" \
+              -f previous_tag_name="$previous_tag" \
+              --jq '.body' > artifacts/release-notes.md
+            contributors=$(gh api "repos/${RELEASE_REPO}/compare/${previous_tag}...${RELEASE_TAG}" --jq '.commits[].author.login' | grep -v '^null$' | sort -u || true)
+          else
+            gh api -X POST "repos/${RELEASE_REPO}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" \
+              --jq '.body' > artifacts/release-notes.md
+            contributors=""
+          fi
+
+          if ! grep -q '^## Contributors' artifacts/release-notes.md; then
+            {
+              printf '\n\n## Contributors\n'
+              if [[ -n "$contributors" ]]; then
+                while read -r login; do
+                  [[ -n "$login" ]] && printf '%s\n' "- @${login}"
+                done <<< "$contributors"
+              else
+                printf '%s\n' '- @loocor'
+              fi
+            } >> artifacts/release-notes.md
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -384,7 +441,7 @@ jobs:
           name: ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: ${{ contains(env.RELEASE_TAG, '-rc') || contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-alpha') }}
-          generate_release_notes: true
+          body_path: artifacts/release-notes.md
           files: |
             artifacts/*.dmg
             artifacts/*.msi
