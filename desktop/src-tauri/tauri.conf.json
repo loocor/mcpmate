@@ -63,7 +63,7 @@
 			"endpoints": [
 				"https://github.com/loocor/mcpmate/releases/latest/download/update.json"
 			],
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY2QkJCNzQwN0Q0NDMzRTUKUldUbE0wUjlRTGU3WmlKLy9ibkhQd3d2VGM3VDR2bzQycTA2bkVhQzluKzBhSFIwcUs1VjRjRngK",
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ4MTI2ODAwNTEyRTgwMjAKUldRZ2dDNVJBR2dTU1BGNUJxU2Y5SWt4OFJYeGJGTjhkaXhnUDhyeGtJUCtjKzhEMEJYQklyd3cK",
 			"windows": {
 				"installMode": "passive"
 			}

@@ -79,7 +79,7 @@ jobs:
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
             --target "${{ matrix.target }}" \
-            --bundles dmg \
+            --bundles app,dmg \
             --with-updater \
             --skip-notarize \
             --output-dir "${GITHUB_WORKSPACE}/installers"
