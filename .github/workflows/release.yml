@@ -73,7 +73,8 @@ jobs:
 
       - name: Inject version from tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${RELEASE_TAG#v}"
           CONF="desktop/src-tauri/tauri.conf.json"
           jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
           mv "$CONF.tmp" "$CONF"
@@ -162,7 +163,8 @@ jobs:
       - name: Inject version from tag
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${RELEASE_TAG#v}"
           CONF="desktop/src-tauri/tauri.conf.json"
           jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
           mv "$CONF.tmp" "$CONF"
@@ -258,7 +260,8 @@ jobs:
 
       - name: Inject version from tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          RELEASE_TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${RELEASE_TAG#v}"
           CONF="desktop/src-tauri/tauri.conf.json"
           jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
           mv "$CONF.tmp" "$CONF"
