@@ -67,7 +67,7 @@ while IFS= read -r -d '' sig; do
   fi
 done < <(find "$BUNDLE_DIR" -type f -name "*.AppImage.sig" -print0 2>/dev/null) || true
 
-# Windows updater bundles: .nsis.zip + .nsis.zip.sig (or .msi.zip + .msi.zip.sig)
+# Windows updater bundles: .nsis.zip + .nsis.zip.sig, or .msi + .msi.sig (Tauri MSI bundler)
 while IFS= read -r -d '' sig; do
   bundle="${sig%.sig}"
   if [[ -f "$bundle" ]]; then
@@ -76,12 +76,12 @@ while IFS= read -r -d '' sig; do
     log "collected $(basename "$bundle") + sig"
     ((collected++)) || true
   fi
-done < <(find "$BUNDLE_DIR" -type f \( -name "*.nsis.zip.sig" -o -name "*.msi.zip.sig" \) -print0 2>/dev/null) || true
+done < <(find "$BUNDLE_DIR" -type f \( -name "*.nsis.zip.sig" -o -name "*.msi.zip.sig" -o -name "*.msi.sig" \) -print0 2>/dev/null) || true
 
 if [[ $collected -eq 0 ]]; then
   log "warning: no updater artifacts found in $BUNDLE_DIR"
   log "bundle layout:"
-  find "$BUNDLE_DIR" -type f -name "*.sig" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.nsis.zip" -o -name "*.msi.zip" | head -20 || true
+  find "$BUNDLE_DIR" -type f -name "*.sig" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.nsis.zip" -o -name "*.msi.zip" -o -name "*.msi" | head -20 || true
 fi
 
 log "collected $collected updater artifact pair(s) to $OUTPUT_DIR"
