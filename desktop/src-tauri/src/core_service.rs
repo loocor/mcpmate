@@ -79,30 +79,28 @@ fn service_manager() -> Result<Box<dyn ServiceManager>> {
 
 pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
     let exe_suffix = std::env::consts::EXE_SUFFIX;
-    let target = std::env::var("TAURI_ENV_TARGET_TRIPLE")
-        .or_else(|_| std::env::var("TARGET"))
-        .unwrap_or_else(|_| {
-            format!(
-                "{}-unknown-{}",
-                std::env::consts::ARCH,
-                std::env::consts::OS
-            )
-        });
+    let target = env!("MCPMATE_BUILD_TARGET");
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     info!(target = %target, exe_suffix = %exe_suffix, "Resolving local MCPMate core binary");
 
-    // For release builds, check MacOS directory first (where Tauri bundles sidecars)
-    // The app bundle structure is: MCPMate.app/Contents/MacOS/mcpmate-core
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(exe_dir) = current_exe.parent()
+    {
+        candidates.push(exe_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
+        candidates.push(exe_dir.join(format!("mcpmate-core{exe_suffix}")));
+    }
+
     if let Ok(resource_dir) = app.path().resource_dir() {
-        // Try MacOS directory (sibling to Resources)
-        if let Some(contents_dir) = resource_dir.parent() {
-            let macos_dir = contents_dir.join("MacOS");
-            candidates.push(macos_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
-            candidates.push(macos_dir.join(format!("mcpmate-core{exe_suffix}")));
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(contents_dir) = resource_dir.parent() {
+                let macos_dir = contents_dir.join("MacOS");
+                candidates.push(macos_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
+                candidates.push(macos_dir.join(format!("mcpmate-core{exe_suffix}")));
+            }
         }
 
-        // Also check Resources directory (standard Tauri resource location)
         candidates.push(resource_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
         candidates.push(resource_dir.join(format!("mcpmate-core{exe_suffix}")));
     }
@@ -115,7 +113,7 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         candidates.push(
             workspace_root
                 .join("backend/target")
-                .join(&target)
+                .join(target)
                 .join(profile_dir)
                 .join(format!("mcpmate{exe_suffix}")),
         );

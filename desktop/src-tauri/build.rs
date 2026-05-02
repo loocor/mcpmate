@@ -102,6 +102,10 @@ fn backend_fingerprint(context: &BackendBuildContext, binary_name: &str) -> Stri
 
 fn main() {
     emit_env_rerun_hints();
+    println!(
+        "cargo:rustc-env=MCPMATE_BUILD_TARGET={}",
+        env::var("TARGET").expect("TARGET")
+    );
     embed_auth_config_from_env_file();
     ensure_local_core_sidecar();
     ensure_bridge_sidecar();
