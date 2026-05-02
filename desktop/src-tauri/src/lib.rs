@@ -223,7 +223,28 @@ async fn sync_shell_service_state(
         .await
 }
 
+#[cfg(target_os = "windows")]
+fn log_core_state_view(context: &str, view: &DesktopCoreSourceView) {
+    info!(
+        context,
+        selected_source = ?view.selected_source,
+        localhost_runtime_mode = ?view.localhost_runtime_mode,
+        localhost_api_port = view.localhost_api_port,
+        localhost_mcp_port = view.localhost_mcp_port,
+        api_base_url = %view.api_base_url,
+        local_service_status = ?view.local_service.status,
+        local_service_running = view.local_service.running,
+        local_service_label = %view.local_service.label,
+        remote_available = view.remote_available,
+        "Desktop core state view"
+    );
+}
+
+#[cfg(not(target_os = "windows"))]
+fn log_core_state_view(_context: &str, _view: &DesktopCoreSourceView) {}
+
 fn emit_core_state_changed(app: &tauri::AppHandle, view: &DesktopCoreSourceView) {
+    log_core_state_view("emit_core_state_changed", view);
     if let Err(err) = app.emit(shell::EVENT_CORE_STATE_CHANGED, view) {
         warn!(error = %err, "Failed to emit core-state-changed event");
     }
@@ -862,9 +883,11 @@ async fn mcp_shell_read_core_source(
     managed_state: tauri::State<'_, DesktopManagedCoreState>,
 ) -> Result<DesktopCoreSourceView, String> {
     let config = DesktopCoreSourceConfig::load(global_paths()).map_err(|err| err.to_string())?;
-    read_core_state_view(&config, managed_state.inner())
+    let view = read_core_state_view(&config, managed_state.inner())
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    log_core_state_view("mcp_shell_read_core_source", &view);
+    Ok(view)
 }
 
 #[tauri::command]
