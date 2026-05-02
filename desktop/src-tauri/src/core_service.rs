@@ -1,6 +1,7 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
+use tracing::{info, warn};
 use mcpmate::common::global_paths;
 use mcpmate::system::config::{api_url_from_port, bind_socket_addr};
 use service_manager::{
@@ -89,6 +90,8 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         });
     let mut candidates: Vec<PathBuf> = Vec::new();
 
+    info!(target = %target, exe_suffix = %exe_suffix, "Resolving local MCPMate core binary");
+
     // For release builds, check MacOS directory first (where Tauri bundles sidecars)
     // The app bundle structure is: MCPMate.app/Contents/MacOS/mcpmate-core
     if let Ok(resource_dir) = app.path().resource_dir() {
@@ -128,10 +131,22 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         );
     }
 
-    candidates
-        .into_iter()
-        .find(|path| path.exists())
-        .context("unable to resolve local MCPMate core service binary")
+    let candidate_strings: Vec<String> = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    let resolved = candidates.into_iter().find(|path| path.exists());
+
+    match resolved {
+        Some(path) => {
+            info!(binary = %path.display(), "Resolved local MCPMate core binary");
+            Ok(path)
+        }
+        None => {
+            warn!(candidates = ?candidate_strings, "Unable to resolve local MCPMate core service binary");
+            anyhow::bail!("unable to resolve local MCPMate core service binary")
+        }
+    }
 }
 
 pub async fn install_local_service(
@@ -256,11 +271,13 @@ pub async fn probe_localhost_core(api_port: u16) -> bool {
 pub async fn wait_for_localhost_core(api_port: u16) -> Result<()> {
     for _ in 0..20 {
         if probe_localhost_core(api_port).await {
+            info!(api_port, "Local MCPMate core health check succeeded");
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
+    warn!(api_port, "Local MCPMate core health check timed out");
     anyhow::bail!("localhost core service did not become ready in time")
 }
 
