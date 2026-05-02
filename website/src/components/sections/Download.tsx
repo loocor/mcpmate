@@ -23,6 +23,9 @@ const QuickStartSection = () => {
     return attachAssetsToBuildRows(releaseState.latest);
   }, [releaseState]);
 
+  const historyUnavailable = releaseState.status === "ok" && releaseState.allReleases === null;
+  const showRetry = releaseState.status === "error" || historyUnavailable;
+
   const onDownloadClick = useCallback((rowId: string, url: string) => {
     trackMCPMateEvents.downloadClick(rowId);
     trackMCPMateEvents.externalLinkClick(url);
@@ -76,7 +79,7 @@ const QuickStartSection = () => {
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <h3 className="text-lg font-semibold">{t("download.official_builds")}</h3>
               <div className="flex items-center gap-2">
-                {releaseState.status === "error" ? (
+                {showRetry ? (
                   <button
                     type="button"
                     onClick={() => releaseState.refetch()}
@@ -136,7 +139,9 @@ const QuickStartSection = () => {
                     const hasAsset = Boolean(row.asset);
                     const loading = releaseState.status === "loading";
                     const unstable = row.tier === "unstable";
-                    const lifetimeDownloads = releaseState.status === "ok" ? cumulativeDownloadsForRow(releaseState.allReleases, row) : null;
+                    const lifetimeDownloads = releaseState.status === "ok" && releaseState.allReleases !== null
+                      ? cumulativeDownloadsForRow(releaseState.allReleases, row)
+                      : null;
 
                     return (
                       <tr key={row.id} className="text-slate-800 dark:text-slate-200">
@@ -145,10 +150,12 @@ const QuickStartSection = () => {
                         <td className="px-2 py-1">
                           {loading ? (
                             <span className="text-slate-400">{t("download.loading")}</span>
-                          ) : unstable ? (
-                            <span className="text-amber-700 dark:text-amber-400 font-medium">{t("download.status_unstable")}</span>
                           ) : hasAsset ? (
-                            <span className="text-emerald-700 dark:text-emerald-400">{t("download.available")}</span>
+                            unstable ? (
+                              <span className="text-amber-700 dark:text-amber-400 font-medium">{t("download.status_unstable")}</span>
+                            ) : (
+                              <span className="text-emerald-700 dark:text-emerald-400">{t("download.available")}</span>
+                            )
                           ) : (
                             <span className="text-slate-500">{t("download.coming_soon")}</span>
                           )}

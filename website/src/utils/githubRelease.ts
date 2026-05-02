@@ -10,6 +10,7 @@ export interface GitHubLatestRelease {
 	html_url: string;
 	assets: GitHubReleaseAsset[];
 	draft?: boolean;
+	prerelease?: boolean;
 }
 
 export const MCPMATE_GITHUB_OWNER = "loocor";
@@ -107,7 +108,7 @@ export function attachAssetsToBuildRows(
 	}));
 }
 
-/** Sum `download_count` for this row’s installer pattern across every release (drafts skipped by caller). */
+/** Sum `download_count` for this row’s installer pattern across every published release. */
 export function cumulativeDownloadsForRow(
 	releases: readonly Pick<GitHubLatestRelease, "assets">[],
 	row: DesktopBuildRow,
@@ -126,7 +127,7 @@ const RELEASES_PER_PAGE = 100;
 const MAX_RELEASE_PAGES = 50;
 
 /**
- * Paginates `GET /repos/.../releases` (newest first). Skips draft releases.
+ * Paginates `GET /repos/.../releases` (newest first). Skips draft and prerelease entries.
  */
 export async function fetchAllPublishedReleases(signal: AbortSignal): Promise<GitHubLatestRelease[]> {
 	const out: GitHubLatestRelease[] = [];
@@ -144,7 +145,7 @@ export async function fetchAllPublishedReleases(signal: AbortSignal): Promise<Gi
 			break;
 		}
 		for (const r of batch) {
-			if (r?.draft === true) {
+			if (r?.draft === true || r?.prerelease === true) {
 				continue;
 			}
 			if (r?.tag_name && Array.isArray(r.assets)) {
