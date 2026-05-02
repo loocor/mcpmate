@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url><loc>https://mcpmate.dev</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://mcpmate.dev/privacy</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://mcpmate.dev/terms</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://mcpmate.dev/docs/en/quickstart</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/quickstart"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/quickstart"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/quickstart"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/quickstart"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/features-overview</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/features-overview"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/features-overview"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/features-overview"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/features-overview"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/centralized-config</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/centralized-config"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/centralized-config"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/centralized-config"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/centralized-config"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/resource-optimization</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/resource-optimization"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/resource-optimization"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/resource-optimization"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/resource-optimization"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/inspector</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/inspector"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/inspector"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/inspector"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/inspector"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/context-switching</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/context-switching"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/context-switching"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/context-switching"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/context-switching"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/protocol-bridging</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/protocol-bridging"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/protocol-bridging"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/protocol-bridging"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/protocol-bridging"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/marketplace</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/marketplace"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/marketplace"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/marketplace"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/marketplace"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/granular-controls</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/granular-controls"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/granular-controls"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/granular-controls"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/granular-controls"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/auto-discovery</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/auto-discovery"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/auto-discovery"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/auto-discovery"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/auto-discovery"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/uni-import</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/uni-import"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/uni-import"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/uni-import"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/uni-import"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/guides-overview</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/guides-overview"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/guides-overview"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/guides-overview"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/guides-overview"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/dashboard</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/dashboard"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/dashboard"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/dashboard"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/dashboard"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/profile</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/profile"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/profile"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/profile"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/profile"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/profile-presets</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/profile-presets"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/profile-presets"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/profile-presets"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/profile-presets"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/profile-detail-overview</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/profile-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/profile-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/profile-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/profile-detail-overview"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/profile-capabilities</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/profile-capabilities"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/profile-capabilities"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/profile-capabilities"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/profile-capabilities"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/clients</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/clients"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/clients"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/clients"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/clients"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/client-detail-overview</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/client-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/client-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/client-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/client-detail-overview"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/client-configuration</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/client-configuration"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/client-configuration"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/client-configuration"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/client-configuration"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/client-backups</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/client-backups"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/client-backups"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/client-backups"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/client-backups"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/servers</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/servers"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/servers"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/servers"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/servers"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/server-import-preview</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/server-import-preview"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/server-import-preview"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/server-import-preview"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/server-import-preview"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/server-detail-overview</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/server-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/server-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/server-detail-overview"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/server-detail-overview"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/server-capabilities</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/server-capabilities"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/server-capabilities"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/server-capabilities"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/server-capabilities"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/server-inspector</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/server-inspector"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/server-inspector"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/server-inspector"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/server-inspector"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/server-instances</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/server-instances"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/server-instances"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/server-instances"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/server-instances"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/market</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/market"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/market"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/market"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/market"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/runtime</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/runtime"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/runtime"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/runtime"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/runtime"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/settings</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/settings"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/settings"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/settings"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/settings"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/logs</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/logs"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/logs"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/logs"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/logs"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/api-docs</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/api-docs"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/api-docs"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/api-docs"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/api-docs"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/changelog</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/changelog"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/changelog"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/changelog"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/changelog"/>
+  </url>
+  <url><loc>https://mcpmate.dev/docs/en/roadmap</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcpmate.dev/docs/en/roadmap"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcpmate.dev/docs/zh/roadmap"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcpmate.dev/docs/ja/roadmap"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcpmate.dev/docs/en/roadmap"/>
+  </url>
+</urlset>

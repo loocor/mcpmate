@@ -1,7 +1,10 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { DocProvider } from "../context/DocContext";
 import Sidebar from "./Sidebar";
 import ToC from "./ToC";
+import SchemaOrg from "../../components/SchemaOrg";
+import { setDocumentMeta } from "../../utils/seo";
+import { buildBreadcrumbList } from "../../utils/schema";
 
 export type DocMeta = {
 	title: string;
@@ -13,11 +16,42 @@ type Props = {
 	children: React.ReactNode;
 };
 
+const SITE_URL = "https://mcpmate.dev";
+
+function deriveBreadcrumbs(pathname: string, title: string) {
+	const segments = pathname.split("/").filter(Boolean);
+	// /docs/:locale/:slug
+	const locale = segments[1] ?? "en";
+	const crumbs = [
+		{ name: "Home", url: SITE_URL },
+		{ name: "Documentation", url: `${SITE_URL}/docs/${locale}/quickstart` },
+		{ name: title, url: `${SITE_URL}${pathname}` },
+	];
+	return crumbs;
+}
+
 export default function DocLayout({ meta, children }: Props) {
-	// Minimal SEO: set document title; can be replaced by react-helmet later
+	const breadcrumbs = useMemo(
+		() =>
+			meta?.title
+				? buildBreadcrumbList(
+						deriveBreadcrumbs(window.location.pathname, meta.title),
+					)
+				: null,
+		[meta?.title],
+	);
+
 	React.useEffect(() => {
-		if (meta?.title) document.title = `${meta.title} · MCPMate`;
-	}, [meta?.title]);
+		if (!meta?.title) {
+			return;
+		}
+
+		setDocumentMeta({
+			title: `${meta.title} · MCPMate`,
+			description: meta.description,
+			pathname: window.location.pathname,
+		});
+	}, [meta?.description, meta?.title]);
 
 	// Fade-in effect for content to smooth page transitions
 	const [fadeIn, setFadeIn] = React.useState(false);
@@ -57,6 +91,7 @@ export default function DocLayout({ meta, children }: Props) {
 
 	return (
 		<DocProvider>
+			{breadcrumbs && <SchemaOrg schema={breadcrumbs} />}
 			<div
 				className="relative mx-auto w-full max-w-7xl px-4 md:px-6 py-8 md:py-10"
 				style={{ paddingTop: padTop }}

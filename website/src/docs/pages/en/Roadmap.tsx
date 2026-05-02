@@ -2,69 +2,64 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
-		title: "OAuth integrations",
+		title: "Desktop release pipeline",
 		description:
-			"We plan to accept external tokens, map scopes, and refresh sessions without custom plumbing.",
+			"We are tightening the GitHub Releases-first delivery path, including updater behavior, prerelease handling, and packaging consistency across macOS, Windows, and Linux.",
 	},
 	{
-		title: "Client-specific safeguards",
+		title: "Platform maturity catch-up",
 		description:
-			"Granular tool visibility and session isolation are being polished so each client only sees what it should.",
+			"macOS is the most stable shell today; current work is focused on bringing Windows and Linux installers, runtime behavior, and desktop polish closer to that bar.",
 	},
 	{
-		title: "Cross-platform packaging",
+		title: "Container and split deployment",
 		description:
-			"macOS, Windows, and Linux installers with auto-updates and system service support are on the way.",
+			"We are strengthening container-friendly core delivery and the separated core-server/UI story for remote or multi-machine operation.",
 	},
 	{
-		title: "Configuration history",
+		title: "Client governance polish",
 		description:
-			"Building on the current backup system, we plan to add preview, diff, and rollback options so teams can review before restoring.",
+			"Detected-client rollout, writable target validation, and apply or cleanup flows are being refined so managed client changes are easier to trust.",
 	},
 	{
-		title: "Smart profile suggestions",
+		title: "Docs and onboarding alignment",
 		description:
-			"We're refining recommendations that turn natural-language requests into ready-to-use tool bundles without manual toggling.",
+			"The website, Quick Start, and dashboard wording are being kept in sync with shipped behavior so setup paths stay clear while release workflows evolve.",
 	},
 ];
 
-const onTheHorizon = [
+const exploringNext = [
 	{
-		title: "Built-in services",
+		title: "Built-in auto-update polish",
 		description:
-			"Richer in-place MCP management services that streamline day-to-day maintenance without leaving the dashboard.",
+			"Now that the first release pipeline is in place, the next step is making desktop updates feel smoother and more routine.",
 	},
 	{
 		title: "Profile sharing",
 		description:
-			"Publish and import curated profile bundles so teams can reuse proven tool sets with a single click.",
+			"We want teams to be able to package and reuse proven profile bundles instead of rebuilding the same capability sets repeatedly.",
 	},
 	{
-		title: "Cost center",
+		title: "Lightweight account layer",
 		description:
-			"Track and reconcile token consumption per MCP server, giving finance and ops a clear view of usage.",
+			"Optional account-linked helpers and cloud-backed sync remain interesting, as long as MCPMate keeps its local-first boundaries explicit.",
 	},
 	{
-		title: "Account layer",
+		title: "Safer sandboxing",
 		description:
-			"Lightweight cloud sync and hosted options that keep configurations aligned across environments.",
+			"Additional guardrails for higher-risk tools are being evaluated so operators can expose powerful capabilities more deliberately.",
 	},
 	{
-		title: "Master-follower mode",
+		title: "Usage and cost visibility",
 		description:
-			"Designate follower nodes to mirror a primary instance, enabling coordinated rollouts inside larger teams.",
-	},
-	{
-		title: "Sandbox mode",
-		description:
-			"Isolated environments with rate limits and capability allowlists to safely exercise high-risk tools.",
+			"Longer term, we want better operator-facing visibility into server-level usage patterns and token cost tradeoffs.",
 	},
 ];
 
 const Roadmap = () => {
 	const meta = {
 		title: "Roadmap",
-		description: "Snapshot of upcoming MCPMate experiences.",
+		description: "What MCPMate is actively improving next.",
 	};
 
 	return (
@@ -72,8 +67,8 @@ const Roadmap = () => {
 			<div className="space-y-6">
 				<h2>In Progress</h2>
 				<p>
-					These initiatives are actively being shaped. Expect early previews and
-					alpha access as we validate the experience with real workflows.
+					This is the work closest to users right now: release delivery,
+					platform maturity, client rollout safety, and clearer onboarding.
 				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
@@ -84,33 +79,40 @@ const Roadmap = () => {
 				<h2>Recently Delivered</h2>
 				<ul className="space-y-2">
 					<li>
-						Core server + UI separated operation mode is now available, so the
-						control-plane backend can run independently from web/desktop shells.
+						OAuth upstream support now works for Streamable HTTP MCP servers,
+						including metadata discovery, authorization flow, and token refresh.
 					</li>
 					<li>
-						Audit Logs is now live with filtering and cursor pagination for large
-						operation timelines.
+						Audit Logs is live with filtering and cursor pagination, and core
+						server plus UI can now run separately for split deployments.
+					</li>
+					<li>
+						Market and import flows now carry richer registry metadata, better
+						preview detail, and browser-assisted snippet capture.
+					</li>
+					<li>
+						Desktop distribution now has a GitHub Releases-driven path with
+						consolidated packaging and container publishing coverage.
 					</li>
 				</ul>
 
-				<h2>On the Horizon</h2>
+				<h2>Exploring Next</h2>
 				<p>
-					Below is the longer-term wishlist. We’re listening for feedback to
-					help us confirm sequencing, so feel free to reach out if something
-					catches your eye.
+					These are strong candidates, not hard promises. We use real user
+					feedback and rollout constraints to decide sequencing.
 				</p>
 				<ul className="space-y-2">
-					{onTheHorizon.map((item) => (
+					{exploringNext.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
 				</ul>
 
 				<div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
-					<h4>Stay in the Loop</h4>
+					<h4>Follow the moving pieces</h4>
 					<p className="text-sm text-slate-600 dark:text-slate-300">
-						We share milestones and early access sign-ups through release notes
-						and the community newsletter. Subscribe or drop us a line if you’d
-						like to pilot a specific capability.
+						If you want the freshest signal, watch GitHub Releases and the
+						changelog first. They reflect what has already landed, while this
+						page captures the direction we are actively shaping.
 					</p>
 				</div>
 			</div>

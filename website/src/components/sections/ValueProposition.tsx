@@ -5,7 +5,7 @@ import { useLanguage } from '../LanguageProvider';
 const ValueProposition = () => {
   const { t } = useLanguage();
   return (
-    <Section className="bg-white dark:bg-slate-900 border-t border-slate-200/70 dark:border-slate-800/60" id="why">
+    <Section className="border-t border-slate-200/70 dark:border-slate-800/60" id="why">
       <div className="max-w-5xl mx-auto">
         <h2 className="text-4xl font-bold text-center mb-3">{t('value.title')}</h2>
         <p className="text-lg text-slate-600 dark:text-slate-400 text-center mb-10">{t('value.subtitle')}</p>
