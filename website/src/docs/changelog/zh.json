@@ -1,5 +1,34 @@
 [
 	{
+		"version": "0.1.12",
+		"date": "2026-05-02",
+		"highlights": [
+			"MCPMate 同步收紧了客户端 / 运行时契约，并完成首条基于 GitHub Releases 的桌面自动更新发布链路，贯通打包、CI 与文档。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "客户端治理、配置语义与仪表盘流程现已统一到新的客户端 API、规范化传输规则与持久化运行时状态之上，让已检测客户端的投放路径更容易理解。"
+			},
+			{
+				"type": "feat",
+				"text": "直达暴露与 surface fingerprint 工作流已在 core、proxy 与仪表盘之间简化，补齐稳定的 capability 标识、更清晰的选择流程，以及审批变化后的运行时可见性刷新。"
+			},
+			{
+				"type": "feat",
+				"text": "桌面分发现已具备基于 GitHub Releases 的自动更新流水线，并整合 macOS、Windows、Linux 与容器发布所需的打包脚本和工作流覆盖。"
+			},
+			{
+				"type": "fix",
+				"text": "发布与打包修复统一了资源命名、tag/version 处理、Docker 构建路径、Windows CI 应用版本、Linux AppImage 前置依赖，以及预发布 MSI 兼容性。"
+			},
+			{
+				"type": "docs",
+				"text": "网站下载区与 Quick Start 文案现已对齐当前发布模型：优先从 GitHub Releases 获取桌面安装包，源码构建保持为可选路径，并在各语言中同步平台成熟度说明。"
+			}
+		]
+	},
+	{
 		"version": "0.1.11",
 		"date": "2026-04-13",
 		"highlights": [

@@ -1,13 +1,13 @@
 const en = {
 	// Site
-	"site.title": "MCPMate - Your MCP Assistant",
+	"site.title": "MCPMate - Local MCP control plane",
+	"site.description": "MCPMate is a local-first MCP control plane for managing servers, profiles, clients, runtime dependencies, and imports in one place.",
 
 	// Nav
 	"nav.home": "Home",
 	"nav.features": "Features",
 	"nav.documentation": "Documentation",
 	"nav.contact": "Contact",
-	"nav.waitlist": "Join Waitlist",
 	"nav.preview": "Quick Start",
 	"nav.download": "Quick Start",
 	"nav.why": "Why MCPMate?",
@@ -15,12 +15,11 @@ const en = {
 
 	// Hero
 	"hero.early_access": "Now Open Source",
-	"hero.title": "Your MCP Assistant",
-	"hero.subtitle": "One configuration. Multiple services. Maximum efficiency.",
+	"hero.title": "Local MCP control plane",
+	"hero.subtitle": "Manage servers, profiles, clients, and runtime from one place.",
 	"hero.description":
-		"MCPMate handles MCP complexity so you can focus on building and creating.",
-	"hero.cta.waitlist": "Join Waitlist",
-	"hero.cta.download": "View on GitHub",
+		"MCPMate is an open-source local control plane that organizes servers, profiles, client connections, and runtime dependencies so you spend less time editing config files.",
+	"hero.cta.download": "View Releases",
 	"hero.cta.learn": "Learn More",
 	"hero.stats.configValue": "One Endpoint",
 	"hero.stats.config": "One proxy endpoint for all AI clients",
@@ -37,35 +36,39 @@ const en = {
 
 	// Download
 	"download.title": "Quick Start",
-	"download.expired": "Public preview is paused while we finish the refactor.",
-	"download.expires_in": "Preview expires in",
 	"download.subtitle":
-		"Build from source with Rust. macOS is available now; Windows and Linux builds are planned.",
-	"download.for": "Download for",
-	"download.version": "Version",
-	"download.early_access": "(Preview)",
+		"Official installers are listed below; fork the repository on GitHub and build from source with Rust whenever you want full control.",
 	"download.macos.arm64": "Apple Silicon (arm64)",
 	"download.macos.x64": "Intel (x64)",
 	"download.windows": "Windows",
 	"download.linux": "Linux",
 	"download.btn": "Download",
 	"download.coming_soon": "Coming Soon",
-	"download.preview_paused": "Preview paused",
-	"download.copy": "Copy",
-	"download.sha256": "SHA256",
 	"download.quick_start": "Quick Start",
-	"download.install_cli": "Install via command line",
-	"download.cli_coming_soon": "CLI installer is coming soon.",
+	"download.official_builds": "Official desktop builds",
+	"download.col_platform": "Platform",
+	"download.col_arch": "Architecture",
+	"download.col_status": "Status",
+	"download.col_downloads": "Downloads",
+	"download.status_unstable": "Unstable",
+	"download.available": "Available",
+	"download.loading": "Loading…",
+	"download.all_releases": "All releases",
+	"download.load_error": "Release metadata could not be loaded. You can still open the releases page.",
+	"download.retry": "Retry",
+	"download.table_caption": "MCPMate desktop installers linked to the latest GitHub release",
+	"download.platform_availability_note":
+		"Windows and Linux are under active improvement. Installers are available to download, but features may be unavailable or unstable until those platforms catch up.",
+	"download.latest_label": "Latest",
+	"download.platform_macos": "macOS",
+	"download.platform_windows": "Windows",
+	"download.platform_linux": "Linux",
+	"download.arch_arm64": "arm64",
+	"download.arch_x64": "x64",
 	"download.getting_started": "Getting Started",
 	"download.getting_started.desc":
 		"Follow our quick start guide to set up MCPMate and connect your first MCP service.",
 	"download.read_guide": "Read the Guide",
-	"download.notarize_notice":
-		"The public preview is paused while we finish the architecture refactor.",
-	"download.contact_intro": "Need access in the meantime? Email",
-	"download.contact_or": "or join",
-	"download.contact_discord": "our Discord community",
-	"download.contact_suffix": "and we’ll share builds case by case.",
 
 	// Features
 	"features.title": "Powerful Features",
@@ -84,6 +87,7 @@ const en = {
 	"features.feedback_welcome":
 		"We'd love to hear your feedback and suggestions!",
 	"features.read_more": "Read more",
+	"features.explore_all": "Explore all feature guides",
 	"features.context": "Seamless Context Switching",
 	"features.context.desc":
 		"Switch shared profiles or task presets instead of rebuilding capability sets by hand.",
@@ -149,7 +153,22 @@ const en = {
 		"Local-first boundaries with explicit control over what gets exposed.",
 	"arch.values.security.p1": "Capability-level exposure through profiles and client selection",
 	"arch.values.security.p2": "Use Transparent mode when direct native output is the safer fit",
-	"arch.values.security.p3": "Audit and validation surfaces before broad rollout",
+	"arch.values.security.p3": "Operational event logging before broad rollout",
+
+	// Architecture stack table
+	"arch.stack.title": "Technology Stack",
+	"arch.stack.backend": "Backend",
+	"arch.stack.backendValue": "Rust (Axum), SQLite",
+	"arch.stack.frontend": "Frontend",
+	"arch.stack.frontendValue": "React 18, TypeScript, Vite, Tailwind CSS",
+	"arch.stack.api": "API",
+	"arch.stack.apiValue": "REST API (port 8080), MCP endpoint (port 8000)",
+	"arch.stack.protocols": "Protocols",
+	"arch.stack.protocolsValue": "stdio, Streamable HTTP",
+	"arch.stack.license": "License",
+	"arch.stack.licenseValue": "AGPL-3.0",
+	"arch.stack.clients": "Client modes",
+	"arch.stack.clientsValue": "Hosted, Unify, Transparent",
 
 	// Contact
 	"contact.title": "Get in Touch",
@@ -175,7 +194,7 @@ const en = {
 
 	// Footer
 	"footer.description":
-		"A 'Maybe All-in-One' MCP Service Manager for developers and creators.",
+		"A local-first MCP control plane for managing servers, profiles, clients, and runtime in one place.",
 	"footer.copyright": "© {year} MCPMate. All rights reserved.",
 	"footer.product": "Product",
 	"footer.resources": "Resources",
@@ -189,30 +208,61 @@ const en = {
 
 	// FAQ
 	"faq.title": "Frequently Asked Questions",
+	"faq.group.basics": "Why people choose MCPMate",
+	"faq.group.setup": "How to get started smoothly",
+	"faq.group.control": "What stays under your control",
+	"faq.group.compare": "How it fits your workflow",
 	"faq.opensource.title": "Is MCPMate open source?",
 	"faq.opensource.answer":
 		"Yes! MCPMate is open source under the AGPL-3.0 license. Check out the code at github.com/loocor/mcpmate",
-	"faq.expiry.title": "What happens when the preview expires?",
-	"faq.expiry.answer":
-    	"Pull the latest changes from GitHub and rebuild to get the newest version.",
+	"faq.functions.title": "What does MCPMate actually do?",
+	"faq.functions.answer":
+		"MCPMate organizes MCP servers, reusable profiles, client connections, runtime dependencies, and configuration imports in one local dashboard. You can inspect live tool calls, switch profiles without editing files, and import server configs from existing clients.",
+	"faq.usage.title": "Who is MCPMate for?",
+	"faq.usage.answer":
+		"MCPMate is for developers who manage multiple MCP-compatible AI clients and want a single place to control which servers, tools, and prompts each client sees without scattered config files.",
 	"faq.platforms.title": "Which platforms are supported?",
 	"faq.platforms.answer":
-		"macOS (Apple Silicon, Intel) is available now. Windows and Linux builds are planned.",
+		"macOS installers are the most stable today. Windows and Linux installers are available from GitHub Releases, but those platforms are still catching up and some features may be incomplete or unstable.",
 	"faq.security.title": "How does MCPMate handle security?",
 	"faq.security.answer":
-		"The core is built in Rust with a focus on safety. MCPMate orchestrates your tools and continues to harden sandboxing and validations before GA.",
+		"The core is built in Rust and runs entirely on your machine. MCPMate lets you control which capabilities are exposed per profile and per client.",
 	"faq.privacy.title": "What about privacy and telemetry?",
 	"faq.privacy.answer":
-		"Your MCP configurations run locally; MCPMate does not send tool content to our servers. Optional, privacy‑respecting crash and usage metrics may be added before GA with clear disclosure.",
+		"Your MCP configurations run locally and MCPMate does not send tool content to external servers.",
 	"faq.updates.title": "How do I update MCPMate?",
 	"faq.updates.answer":
-		"Pull the latest changes from GitHub and rebuild with `cargo build --release`.",
+		"Today, the simplest path is to download the latest installer from GitHub Releases. Built-in desktop auto-update is nearly ready, so this flow should get even smoother soon. If you run MCPMate from source, pull the latest changes from GitHub and rebuild with `cargo build --release`.",
 	"faq.different.title": "What makes MCPMate different from other solutions?",
 	"faq.different.answer":
 		"MCPMate combines profile-based capability control, flexible client rollout modes, import preview, and live inspection in one local-first control plane.",
 	"faq.compatible.title": "Can I use MCPMate with my existing MCP tools?",
 	"faq.compatible.answer":
 		"Yes. MCPMate works with MCP-compatible clients and gives you Unify, Hosted, and Transparent paths, so you can choose between session-local UCAN control, deeper managed control, and direct native client output.",
+	"faq.clients.title": "Can MCPMate manage multiple AI clients?",
+	"faq.clients.answer":
+		"Yes. MCPMate detects installed MCP-compatible clients and lets you manage each one independently from the same dashboard. You can apply different profiles and choose Hosted, Unify, or Transparent mode per client for tools like Claude Code, Cursor, and VS Code.",
+	"faq.runtime.title": "Does MCPMate need external runtimes?",
+	"faq.runtime.answer":
+		"Some MCP servers require runtimes like Node.js, Python (uv), or Bun. MCPMate includes a Runtime page that checks which runtimes are installed and offers install or repair actions when a server needs one.",
+	"faq.migration.title": "How do I move my existing MCP configuration into MCPMate?",
+	"faq.migration.answer":
+		"Use the Import from client action on the Clients page to pull existing MCP configs from a detected client. You can also drag and drop JSON or TOML snippets, or use the built-in Market to browse and install server entries.",
+	"faq.hotreload.title": "Do I need to restart MCPMate after changing a profile?",
+	"faq.hotreload.answer":
+		"Profile changes take effect for new sessions immediately. Active Hosted-mode sessions pick up the updated profile on next tool list refresh without requiring a restart.",
+	"faq.languages.title": "What languages does the MCPMate UI support?",
+	"faq.languages.answer":
+		"The website and dashboard support English, Simplified Chinese, and Japanese.",
+	"faq.contributing.title": "How can I contribute to MCPMate?",
+	"faq.contributing.answer":
+		"Fork the repository on GitHub, make your changes, and open a pull request. Bug reports and feature suggestions via GitHub Issues are also welcome.",
+	"faq.vs_claude_desktop.title": "How is MCPMate different from Claude Desktop's MCP support?",
+	"faq.vs_claude_desktop.answer":
+		"Claude Desktop manages MCP servers for its own session only. MCPMate is a standalone control plane that manages servers, profiles, and client connections across multiple AI clients — Claude Desktop, Cursor, VS Code, and others — from one dashboard with reusable profile switching.",
+	"faq.vs_manual.title": "How is MCPMate different from editing config files manually?",
+	"faq.vs_manual.answer":
+		"Manual config editing works for one client at a time and offers no preview, validation, or rollback. MCPMate provides a unified import pipeline with preview and validation, reusable profiles that can be applied across clients, and an inspector to verify live behavior before committing changes.",
 
 	// Notice ribbon (site updating)
 	"notice.construction.ribbon": "Updating",
