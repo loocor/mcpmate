@@ -47,18 +47,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x64
-            runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            experimental: false
-          - arch: arm64
-            runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            experimental: true
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.arch == 'all' || github.event.inputs.arch == matrix.arch }}
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.experimental }}
+        arch: ${{ fromJSON(github.event_name == 'workflow_dispatch' && (inputs.arch == 'all' && '["x64","arm64"]' || format('["{0}"]', inputs.arch)) || '["x64","arm64"]') }}
+    runs-on: ${{ matrix.arch == 'x64' && 'windows-latest' || 'windows-11-arm' }}
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -67,7 +58,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -105,7 +96,7 @@ jobs:
         run: |
           chmod +x packaging/desktop/windows-build-tauri-release.sh
           bash packaging/desktop/windows-build-tauri-release.sh \
-            --target "${{ matrix.target }}" \
+            --target "${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}" \
             --bundles "${INPUT_BUNDLES:-msi}" \
             --output-dir "${GITHUB_WORKSPACE}/desktop-windows-artifacts/${{ matrix.arch }}"
 
@@ -113,7 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}/release/bundle"
           echo "--- bundle layout ---"
           find "$BUNDLE_DIR" -type f 2>/dev/null | head -40 || true
           echo "--- sidecar architecture ---"
@@ -122,7 +113,7 @@ jobs:
             bin=$(find "$BUNDLE_DIR" -type f \( -name "$sc" -o -name "${sc_name}-*.exe" \) | head -1) || true
             if [[ -z "$bin" ]]; then
               echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
-              bin="backend/target/sidecars/${sc_name}-${{ matrix.target }}.exe"
+              bin="backend/target/sidecars/${sc_name}-${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}.exe"
               test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
             fi
             echo "$sc found at: $bin"
