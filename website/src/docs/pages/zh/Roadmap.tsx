@@ -2,76 +2,73 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
-		title: "OAuth 对接",
+		title: "桌面发布链路",
 		description:
-			"计划支持外部身份体系接入，实现令牌校验、刷新与能力映射。",
+			"我们正在继续打磨以 GitHub Releases 为起点的交付路径，包括自动更新行为、预发布处理，以及 macOS、Windows、Linux 三端的打包一致性。",
 	},
 	{
-		title: "客户端隔离",
+		title: "平台成熟度补齐",
 		description:
-			"我们正在完善工具清单隔离与会话策略，确保不同客户端只看到自己的能力范围。",
+			"当前 macOS 仍是最稳定的桌面外壳；接下来的重点，是让 Windows 与 Linux 在安装包、运行时表现和桌面体验上尽快追平。",
 	},
 	{
-		title: "跨平台发行",
+		title: "容器与分离部署",
 		description:
-			"macOS、Windows、Linux 的原生安装包、自动更新与系统服务集成已在规划中。",
+			"我们正在增强适合容器化交付的核心服务形态，并继续完善 Core Server / UI 分离运行的远程与多机部署路径。",
 	},
 	{
-		title: "配置历史管理",
+		title: "客户端治理打磨",
 		description:
-			"在当前配置历史备份管理的基础上提供预览、差异比对、回滚能力，方便恢复评估。",
+			"针对已检测客户端的发布流程、可写目标校验，以及应用 / 清理路径，我们还在持续优化，让托管式变更更容易信任。",
 	},
 	{
-		title: "智能配置推荐",
+		title: "文档与引导对齐",
 		description:
-			"正在打磨的自然语言配置助手，将自动组合工具套件并一键激活，无需手动切换开关。",
+			"网站、快速开始和仪表盘文案会继续随着真实已交付行为保持同步，避免发布链路变化后出现过时引导。",
 	},
 ];
 
-const onTheHorizon = [
+const exploringNext = [
 	{
-		title: "内置服务",
+		title: "内置自动更新体验",
 		description:
-			"提供更完备的内置 MCP 管理服务，可在控制台内完成丝滑的就地管理。",
+			"在首条发布链路已经成形之后，下一步是把桌面更新做得更顺手、更接近日常习惯。",
 	},
 	{
 		title: "配置集共享",
 		description:
-			"允许将自己组合的配置集分享给他人导入，打造更高效的协作流程。",
+			"我们希望团队可以复用已经验证过的配置集组合，而不是每次都重新搭一遍能力集合。",
 	},
 	{
-		title: "成本中心",
+		title: "轻量账户层",
 		description:
-			"记录并核算每个 MCP 服务器的 Token 消耗，帮助团队掌握运营成本。",
+			"可选的账户关联能力与轻量云同步仍然值得探索，但前提是继续保持 MCPMate 的本地优先边界。",
 	},
 	{
-		title: "账户体系",
+		title: "更安全的沙箱控制",
 		description:
-			"提供配置同步、云端轻量托管等能力，让多端保持一致体验。",
+			"对于高风险工具，我们在评估更细的隔离与审批护栏，让能力暴露更可控。",
 	},
 	{
-		title: "主从管理",
+		title: "用量与成本可见性",
 		description:
-			"支持设置从属模式，方便团队在多节点之间协作与统一管理。",
-	},
-	{
-		title: "沙箱模式",
-		description:
-			"隔离的执行环境、速率限制与能力白名单将为高风险工具提供更多保障。",
+			"更长期来看，我们希望让运维侧更容易看清服务器级别的使用模式与 Token 成本权衡。",
 	},
 ];
 
 const Roadmap = () => {
 	const meta = {
 		title: "开发规划",
-		description: "面向用户的 MCPMate 远景概览。",
+		description: "MCPMate 接下来重点改进的方向。",
 	};
 
 	return (
 		<DocLayout meta={meta}>
 			<div className="space-y-6">
 				<h2>进行中</h2>
-				<p>这些能力正在打磨阶段，后续会第一时间通过内测邀请或更新日志向大家开放。</p>
+				<p>
+					这一组工作最贴近当前用户体验：发布交付、平台成熟度、客户端治理安全性，以及更清晰的上手路径。
+				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
@@ -81,25 +78,33 @@ const Roadmap = () => {
 				<h2>近期已交付</h2>
 				<ul className="space-y-2">
 					<li>
-						Core Server + UI 分离运行模式已上线，后端核心服务可独立部署，Web/桌面壳按需连接。
+						现已支持面向 Streamable HTTP MCP 服务的 OAuth 上游能力，包括元数据发现、授权流程与令牌刷新。
 					</li>
 					<li>
-						审计日志页面已上线，支持筛选与游标分页，适配高频操作留痕场景。
+						审计日志已经上线，支持筛选与游标分页；同时，Core Server 与 UI 也已经可以分离运行，适合拆分部署。
+					</li>
+					<li>
+						服务源与导入流程现在带有更丰富的注册表元数据、更完整的预览细节，以及浏览器辅助片段捕获能力。
+					</li>
+					<li>
+						桌面分发现已具备基于 GitHub Releases 的交付路径，并整合了打包流程与容器发布覆盖。
 					</li>
 				</ul>
 
-				<h2>规划中</h2>
-				<p>以下是中长期的愿望清单，我们会根据用户反馈与落地难度不断调整顺序。</p>
+				<h2>继续评估中的方向</h2>
+				<p>
+					下面这些更像明确的候选方向，而不是硬性承诺。我们会结合真实反馈与发布约束来决定先后顺序。
+				</p>
 				<ul className="space-y-2">
-					{onTheHorizon.map((item) => (
+					{exploringNext.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
 				</ul>
 
 				<div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
-					<h4>欢迎持续关注</h4>
+					<h4>跟踪最新进展</h4>
 					<p className="text-sm text-slate-600 dark:text-slate-300">
-						我们会通过版本公告与社区通讯分享最新进度。如希望抢先体验某一项功能，欢迎与我们联系。
+						如果你想看最接近真实落地状态的信号，优先关注 GitHub Releases 与更新日志；那里反映的是已经交付的内容，而本页更多描述的是我们正在塑形的方向。
 					</p>
 				</div>
 			</div>
