@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { isTauriEnvironmentSync } from "./platform";
 
 export interface DesktopCoreSourceResponse {
@@ -23,14 +22,9 @@ export interface DesktopCoreSourceResponse {
 type Action = "start" | "stop" | "status" | "install" | "uninstall";
 
 export function useDesktopCoreState() {
-	const queryClient = useQueryClient();
 	const isTauriShell = isTauriEnvironmentSync();
 	const [coreView, setCoreView] = useState<DesktopCoreSourceResponse | null>(null);
 	const [busyAction, setBusyAction] = useState<Action | null>(null);
-
-	const invalidateSystemStatus = useCallback(async () => {
-		await queryClient.invalidateQueries({ queryKey: ["systemStatus"] });
-	}, [queryClient]);
 
 	const refreshCoreView = useCallback(async () => {
 		if (!isTauriShell) return null;
@@ -50,13 +44,12 @@ export function useDesktopCoreState() {
 					action,
 				})) as DesktopCoreSourceResponse;
 				setCoreView(resp);
-				await invalidateSystemStatus();
 				return resp;
 			} finally {
 				setBusyAction(null);
 			}
 		},
-		[invalidateSystemStatus, isTauriShell],
+		[isTauriShell],
 	);
 
 	useEffect(() => {
@@ -74,7 +67,6 @@ export function useDesktopCoreState() {
 				unlisten = await listen("mcpmate://core/status-changed", (event) => {
 					if (cancelled) return;
 					setCoreView(event.payload as DesktopCoreSourceResponse);
-					void invalidateSystemStatus();
 				});
 			} catch (error) {
 				if (import.meta.env.DEV) {
@@ -88,7 +80,7 @@ export function useDesktopCoreState() {
 			cancelled = true;
 			if (unlisten) void unlisten();
 		};
-	}, [invalidateSystemStatus, isTauriShell]);
+	}, [isTauriShell]);
 
 	return {
 		isTauriShell,
