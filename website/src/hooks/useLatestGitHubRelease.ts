@@ -4,11 +4,16 @@ import { LATEST_RELEASE_API_URL, fetchAllPublishedReleases } from "../utils/gith
 
 export type ReleaseFetchState =
 	| { status: "loading" }
-	| { status: "ok"; latest: GitHubLatestRelease; allReleases: GitHubLatestRelease[] }
-	| { status: "error"; message: string };
+	| { status: "error"; message: string }
+	| {
+			status: "ok";
+			latest: GitHubLatestRelease;
+			allReleases: GitHubLatestRelease[] | null;
+			historyError?: string;
+	  };
 
 /**
- * Loads the latest release (install URLs) plus all published releases (cumulative download counts).
+ * Loads the latest release (install URLs) plus published release history (cumulative download counts).
  */
 export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => void } {
 	const [state, setState] = useState<ReleaseFetchState>({ status: "loading" });
@@ -20,13 +25,10 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 
 		void (async () => {
 			try {
-				const [latestRes, allReleases] = await Promise.all([
-					fetch(LATEST_RELEASE_API_URL, {
-						signal: ac.signal,
-						headers: { Accept: "application/vnd.github+json" },
-					}),
-					fetchAllPublishedReleases(ac.signal),
-				]);
+				const latestRes = await fetch(LATEST_RELEASE_API_URL, {
+					signal: ac.signal,
+					headers: { Accept: "application/vnd.github+json" },
+				});
 
 				if (ac.signal.aborted) {
 					return;
@@ -35,12 +37,30 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 					setState({ status: "error", message: `latest HTTP ${latestRes.status}` });
 					return;
 				}
+
 				const latest = (await latestRes.json()) as GitHubLatestRelease;
 				if (!latest?.tag_name || !Array.isArray(latest.assets)) {
 					setState({ status: "error", message: "Invalid latest payload" });
 					return;
 				}
-				setState({ status: "ok", latest, allReleases });
+
+				try {
+					const allReleases = await fetchAllPublishedReleases(ac.signal);
+					if (ac.signal.aborted) {
+						return;
+					}
+					setState({ status: "ok", latest, allReleases });
+				} catch (e) {
+					if (ac.signal.aborted) {
+						return;
+					}
+					setState({
+						status: "ok",
+						latest,
+						allReleases: null,
+						historyError: (e as Error).message || "fetch failed",
+					});
+				}
 			} catch (e) {
 				if (ac.signal.aborted) {
 					return;
