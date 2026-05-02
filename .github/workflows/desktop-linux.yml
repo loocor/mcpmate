@@ -3,6 +3,15 @@ name: Desktop (Linux)
 on:
   workflow_dispatch:
     inputs:
+      arch:
+        description: "Architecture to build"
+        type: choice
+        required: false
+        default: "all"
+        options:
+          - all
+          - x64
+          - arm64
       bundles:
         description: "Tauri bundle types"
         required: false
@@ -47,6 +56,7 @@ jobs:
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             bundles: deb
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.arch == 'all' || github.event.inputs.arch == matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:

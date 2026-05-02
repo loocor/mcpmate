@@ -37,6 +37,7 @@ tokio-stream = "0.1"
 futures-util = "0.3"
 bytes = "1"
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 async-stream = "0.3"
 twoway = "0.2"
 tauri-plugin-deep-link = "2"
