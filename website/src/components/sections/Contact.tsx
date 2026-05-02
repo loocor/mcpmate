@@ -92,7 +92,7 @@ const ContactSection = () => {
   };
 
   return (
-    <Section className="bg-slate-50 dark:bg-slate-800/40 border-t border-slate-200/70 dark:border-slate-700/50">
+    <Section className="border-t border-slate-200/70 dark:border-slate-800/60">
       <div className="max-w-4xl mx-auto text-center mb-16">
         <h2 className="text-4xl font-bold mb-6">{t('contact.title')}</h2>
         <p className="text-xl text-slate-600 dark:text-slate-400">

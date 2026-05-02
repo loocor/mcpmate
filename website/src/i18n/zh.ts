@@ -1,13 +1,13 @@
 const zh = {
 	// 网站
-	"site.title": "MCPMate - 您的 MCP 伙伴",
+	"site.title": "MCPMate - 本地 MCP 控制平面",
+	"site.description": "MCPMate 是一个本地优先的 MCP 控制平面，在一处管理服务器、配置集、客户端、运行时依赖和导入。",
 
 	// 导航
 	"nav.home": "首页",
 	"nav.features": "功能特点",
 	"nav.documentation": "用户文档",
 	"nav.contact": "联系我们",
-	"nav.waitlist": "加入等待名单",
 	"nav.preview": "快速开始",
 	"nav.download": "快速开始",
 	"nav.why": "为什么选择 MCPMate？",
@@ -15,12 +15,11 @@ const zh = {
 
 	// 英雄区
 	"hero.early_access": "现已开源",
-	"hero.title": "您的 MCP 伙伴",
-	"hero.subtitle": "一次配置，多处复用，效率最大化。",
+	"hero.title": "本地 MCP 控制平面",
+	"hero.subtitle": "在一处管理服务器、配置集、客户端和运行时。",
 	"hero.description":
-		"MCPMate 处理 MCP 的复杂性，让您专注于构建和创作。",
-	"hero.cta.waitlist": "加入等待名单",
-	"hero.cta.download": "查看 GitHub",
+		"MCPMate 是一个开源的本地控制平面，帮你组织服务器、配置集、客户端连接和运行时依赖，把编辑分散配置的时间还给真正的开发。",
+	"hero.cta.download": "查看 Releases",
 	"hero.cta.learn": "了解更多",
 	"hero.stats.configValue": "一通百通",
 	"hero.stats.config": "一个代理端点，服务所有 AI 客户端",
@@ -36,36 +35,40 @@ const zh = {
 	"hero.slide.market": "市场 — 发现服务并捕获配置片段",
 
 	"download.title": "快速开始",
-	"download.expired": "预览通道暂未开放，敬请期待。",
-	"download.expires_in": "预览版倒计时",
-	"download.subtitle":
-		"使用 Rust 从源码构建。macOS 现已可用；Windows 与 Linux 版本仍在规划中。",
-	"download.for": "下载",
-	"download.version": "版本",
-	"download.early_access": "（预览版）",
-	"download.macos.arm64": "Apple 芯片（arm64）",
+			"download.subtitle":
+		"下方列出官方安装包；若希望完全自控，也可在 GitHub fork 仓库后用 Rust 从源码自行构建。",
+				"download.macos.arm64": "Apple 芯片（arm64）",
 	"download.macos.x64": "Intel（x64）",
 	"download.windows": "Windows",
 	"download.linux": "Linux",
 	"download.btn": "下载",
 	"download.coming_soon": "即将推出",
-	"download.preview_paused": "预览暂停",
-	"download.copy": "复制",
-	"download.sha256": "SHA256",
 	"download.quick_start": "快速开始",
-	"download.install_cli": "命令行安装",
-	"download.cli_coming_soon": "命令行安装器即将提供。",
-	"download.getting_started": "新手引导",
+	"download.official_builds": "官方桌面构建",
+	"download.col_platform": "平台",
+	"download.col_arch": "架构",
+	"download.col_status": "状态",
+	"download.col_downloads": "下载",
+	"download.status_unstable": "不稳定",
+	"download.available": "可用",
+	"download.loading": "加载中…",
+	"download.all_releases": "所有版本",
+	"download.load_error": "无法加载版本信息，你仍可直接打开 Releases 页面下载。",
+	"download.retry": "重试",
+	"download.table_caption": "指向 GitHub 最新版本的 MCPMate 桌面安装包",
+	"download.platform_availability_note":
+		"Windows、Linux 正在积极完善中：当前安装包可下载，但功能可能不可用或不稳定。",
+	"download.latest_label": "最新版本",
+	"download.platform_macos": "macOS",
+	"download.platform_windows": "Windows",
+	"download.platform_linux": "Linux",
+	"download.arch_arm64": "arm64",
+	"download.arch_x64": "x64",
+		"download.getting_started": "新手引导",
 	"download.getting_started.desc":
 		"按照快速开始指南完成 MCPMate 安装，并连接你的第一个 MCP 服务。",
 	"download.read_guide": "查看指南",
-	"download.notarize_notice":
-		"预览发布阶段已告一段落，我们正集中精力进行架构重构与功能迭代。",
-	"download.contact_intro": "如需体验，可邮件",
-	"download.contact_or": "或加入",
-	"download.contact_discord": "Discord 社区",
-	"download.contact_suffix": "与我们联系，我们会视需求酌情提供最新构建。",
-
+							
 	// 功能区
 	"features.title": "强大功能",
 	"features.subtitle": "MCPMate 把零散的 MCP 配置工作，变成一个本地控制平面里的导入、投放、检视与切换流程。",
@@ -79,6 +82,7 @@ const zh = {
 	"features.more_coming": "更多强大功能正在规划开发中",
 	"features.feedback_welcome": "同时期待您的反馈与建议！",
 	"features.read_more": "查看更多",
+	"features.explore_all": "查看全部功能指南",
 	"features.context": "无缝上下文切换",
 	"features.context.desc": "通过共享配置集与任务预设切换工作模式，而不是手动重建能力组合。",
 	"features.bridge": "协议桥接",
@@ -132,7 +136,22 @@ const zh = {
 	"arch.values.security.desc": "本地优先，并明确控制什么会被真正暴露出去。",
 	"arch.values.security.p1": "通过配置集与客户端选择做能力级暴露控制",
 	"arch.values.security.p2": "需要时提供透明模式，输出更直接的原生客户端配置",
-	"arch.values.security.p3": "在大范围投放前先做校验、预览与审计",
+	"arch.values.security.p3": "在大范围投放前先做校验、预览与运营事件日志",
+
+	// 技术栈表
+	"arch.stack.title": "技术栈",
+	"arch.stack.backend": "后端",
+	"arch.stack.backendValue": "Rust（Axum）、SQLite",
+	"arch.stack.frontend": "前端",
+	"arch.stack.frontendValue": "React 18、TypeScript、Vite、Tailwind CSS",
+	"arch.stack.api": "API",
+	"arch.stack.apiValue": "REST API（端口 8080）、MCP 端点（端口 8000）",
+	"arch.stack.protocols": "协议",
+	"arch.stack.protocolsValue": "stdio、Streamable HTTP",
+	"arch.stack.license": "许可证",
+	"arch.stack.licenseValue": "AGPL-3.0",
+	"arch.stack.clients": "客户端模式",
+	"arch.stack.clientsValue": "托管、统一、透明",
 
 	// 联系
 	"contact.title": "联系我们",
@@ -155,7 +174,7 @@ const zh = {
 	"contact.success.message": "感谢您联系我们。我们会尽快回复您。",
 
 	// 页脚
-	"footer.description": "一个适用于开发者和创作者的“可能全能” MCP 服务管理器。",
+	"footer.description": "一个本地优先的 MCP 控制平面，在一处管理服务器、配置集、客户端和运行时。",
 	"footer.copyright": "© {year} MCPMate. 保留所有权利",
 	"footer.product": "产品",
 	"footer.resources": "资源",
@@ -169,30 +188,61 @@ const zh = {
 
 	// 常见问题
 	"faq.title": "常见问题",
+	"faq.group.basics": "为什么大家会选择 MCPMate",
+	"faq.group.setup": "如何更顺畅地开始使用",
+	"faq.group.control": "哪些事情始终由你掌控",
+	"faq.group.compare": "它如何融入你现有的工作流",
 	"faq.opensource.title": "是否开源？",
 	"faq.opensource.answer":
 		"是的！MCPMate 已在 AGPL-3.0 许可下开源，代码见 github.com/loocor/mcpmate",
-	"faq.expiry.title": "预览版到期会怎样？",
-	"faq.expiry.answer":
-		"从 GitHub 拉取最新代码并重新构建即可获得最新版本。",
+	"faq.functions.title": "MCPMate 具体做什么？",
+	"faq.functions.answer":
+		"MCPMate 在一个本地仪表盘里组织 MCP 服务器、可复用配置集、客户端连接、运行时依赖和配置导入。你可以检视实时工具调用，在不改文件的情况下切换配置集，也可以从已有客户端导入服务器配置。",
+	"faq.usage.title": "MCPMate 适合谁用？",
+	"faq.usage.answer":
+		"MCPMate 适合管理多个 MCP 兼容 AI 客户端的开发者，希望在一处控制每个客户端能看到哪些服务器、工具和提示词，而不是到处改分散的配置文件。",
 	"faq.platforms.title": "支持哪些平台？",
 	"faq.platforms.answer":
-		"目前提供 macOS（Apple Silicon、Intel），Windows 与 Linux 版本仍在规划中。",
+			"当前 macOS 安装包最稳定。Windows 与 Linux 安装包也已在 GitHub Releases 提供下载，但这些平台仍在持续完善中，部分功能可能不完整或不稳定。",
 	"faq.security.title": "安全如何保障？",
 	"faq.security.answer":
-		"核心采用 Rust 实现，强调内存安全与稳定性。我们会在正式版前持续完善隔离和校验机制",
+		"核心采用 Rust 实现，完全在本机运行。MCPMate 让你按配置集和客户端控制哪些能力被暴露。",
 	"faq.privacy.title": "隐私与遥测？",
 	"faq.privacy.answer":
-		"MCPMate 本地运行，不会将工具内容上传到我们的服务器。若引入统计将遵循最小化与透明原则",
+		"MCP 配置在本地运行，MCPMate 不会将工具内容发送到外部服务器。",
 	"faq.updates.title": "如何更新？",
 	"faq.updates.answer":
-		"从 GitHub 拉取最新代码，使用 `cargo build --release` 重新构建。",
+			"目前最简单的方式，是直接从 GitHub Releases 下载最新安装包。我们也正在完成桌面端内置自动更新，已经接近可用，后续升级会更顺手。如果你是以源码方式运行 MCPMate，请拉取最新代码后使用 `cargo build --release` 重新构建。",
 	"faq.different.title": "是什么让 MCPMate 与其他解决方案不同？",
 	"faq.different.answer":
 		"MCPMate 把配置集能力控制、客户端投放模式、导入预览和实时检视组合成了一个本地优先的控制平面，而不是只做“把 MCP 接上”。",
 	"faq.compatible.title": "我可以将 MCPMate 与现有的 MCP 工具一起使用吗？",
 	"faq.compatible.answer":
 		"可以。MCPMate 既支持和现有 MCP 客户端协同工作，也提供统一模式、托管模式、透明模式三条路径，让你在会话内 UCAN 控制、更强托管控制与原生输出之间自行选择。",
+	"faq.clients.title": "MCPMate 能同时管理多个 AI 客户端吗？",
+	"faq.clients.answer":
+		"可以。MCPMate 会检测已安装的 MCP 兼容客户端，并允许你在同一个仪表盘里分别管理它们。你可以按客户端独立应用配置集，并选择托管、统一或透明模式，适配 Claude Code、Cursor、VS Code 等不同工作流。",
+	"faq.runtime.title": "MCPMate 需要额外的运行时吗？",
+	"faq.runtime.answer":
+		"部分 MCP 服务器需要 Node.js、Python（uv）或 Bun 等运行时。MCPMate 内置了运行时页面，可以检测已安装的运行时，并在服务器需要时提供安装或修复操作。",
+	"faq.migration.title": "如何把已有的 MCP 配置迁移到 MCPMate？",
+	"faq.migration.answer":
+		"在客户端页面使用「从客户端导入」操作，拉取已检测客户端的现有 MCP 配置。你也可以拖拽 JSON 或 TOML 片段，或使用内置市场浏览并安装服务器条目。",
+	"faq.hotreload.title": "修改配置集后需要重启 MCPMate 吗？",
+	"faq.hotreload.answer":
+		"配置集变更会立即对新会话生效。已有的托管模式会话会在下次工具列表刷新时获取更新后的配置集，无需重启。",
+	"faq.languages.title": "MCPMate 界面支持哪些语言？",
+	"faq.languages.answer":
+		"网站和仪表盘支持英文、简体中文和日文。",
+	"faq.contributing.title": "如何参与 MCPMate 的开发？",
+	"faq.contributing.answer":
+		"在 GitHub 上 fork 仓库，修改后提交 Pull Request。也欢迎通过 GitHub Issues 提交 bug 报告和功能建议。",
+	"faq.vs_claude_desktop.title": "MCPMate 和 Claude Desktop 自带的 MCP 支持有什么区别？",
+	"faq.vs_claude_desktop.answer":
+		"Claude Desktop 只为自身会话管理 MCP 服务器。MCPMate 是一个独立的控制平面，能跨多个 AI 客户端（Claude Desktop、Cursor、VS Code 等）统一管理服务器、配置集和客户端连接，并支持可复用的配置集切换。",
+	"faq.vs_manual.title": "MCPMate 和手动编辑配置文件有什么区别？",
+	"faq.vs_manual.answer":
+		"手动编辑配置文件一次只能处理一个客户端，没有预览、校验或回滚能力。MCPMate 提供统一的导入管线（含预览和校验）、可跨客户端复用的配置集，以及检视器用于在提交变更前验证实际行为。",
 
 	// 站点更新提示斜角标
 	"notice.construction.ribbon": "建设中",

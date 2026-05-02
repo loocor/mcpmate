@@ -1,5 +1,34 @@
 [
 	{
+		"version": "0.1.12",
+		"date": "2026-05-02",
+		"highlights": [
+			"MCPMate tightened client/runtime contracts while finishing the first GitHub Releases-based desktop updater pipeline across packaging, CI, and docs."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Client governance, config semantics, and board flows now align on the updated client API, canonical transport rules, and persisted runtime state, making detected-client rollout easier to reason about."
+			},
+			{
+				"type": "feat",
+				"text": "Direct exposure and surface fingerprint workflows were simplified across core, proxy, and board, with stable capability identifiers, clearer selection flows, and runtime visibility updates when approvals change."
+			},
+			{
+				"type": "feat",
+				"text": "Desktop distribution now includes a GitHub Releases-driven updater pipeline, plus consolidated packaging scripts and workflow coverage for macOS, Windows, Linux, and container publishing."
+			},
+			{
+				"type": "fix",
+				"text": "Release and packaging fixes now normalize asset naming, tag/version handling, Docker builder paths, Windows CI app versions, Linux AppImage prerequisites, and MSI compatibility for prerelease builds."
+			},
+			{
+				"type": "docs",
+				"text": "Website download and Quick Start copy now reflect the current release model: desktop installers come from GitHub Releases first, source builds remain optional, and platform maturity notes stay aligned across locales."
+			}
+		]
+	},
+	{
 		"version": "0.1.11",
 		"date": "2026-04-13",
 		"highlights": [
