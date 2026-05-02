@@ -50,11 +50,6 @@ export const trackMCPMateEvents = {
   // navigation events
   navClick: (section: string) => trackEvent('Navigation', 'click', section),
 
-  // waitlist events
-  waitlistSubmit: () => trackEvent('Waitlist', 'submit', 'Join Waitlist'),
-  waitlistSuccess: () => trackEvent('Waitlist', 'success', 'Waitlist Joined'),
-  waitlistError: (error: string) => trackEvent('Waitlist', 'error', error),
-
   // contact form events
   contactSubmit: () => trackEvent('Contact', 'submit', 'Contact Form'),
   contactSuccess: () => trackEvent('Contact', 'success', 'Contact Form Submitted'),
