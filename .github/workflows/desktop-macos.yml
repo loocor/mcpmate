@@ -83,6 +83,7 @@ jobs:
       - name: Build macOS DMG (no sign / no notarize)
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
+          TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           BUNDLES="${INPUT_BUNDLES:-app,dmg}"
           chmod +x packaging/desktop/macos-build-tauri-release.sh

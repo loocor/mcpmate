@@ -93,6 +93,7 @@ jobs:
         shell: bash
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
+          TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           chmod +x packaging/desktop/windows-build-tauri-release.sh
           bash packaging/desktop/windows-build-tauri-release.sh \

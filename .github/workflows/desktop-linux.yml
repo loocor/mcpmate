@@ -96,6 +96,7 @@ jobs:
       - name: Build Linux desktop artifacts
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
+          TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           chmod +x packaging/desktop/linux-build-tauri-release.sh
           BUNDLES="${INPUT_BUNDLES:-appimage,deb}"
