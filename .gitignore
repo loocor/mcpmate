@@ -27,6 +27,9 @@ node-compile-cache/
 **/.env.local
 **/.env.*.local
 
+# Tauri auto-generated schemas
+**/src-tauri/gen/schemas/
+
 # external projects
 auth/
 rmcp/
