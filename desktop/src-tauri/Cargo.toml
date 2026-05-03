@@ -55,6 +55,7 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
+devtools = ["tauri/devtools"]
 
 [[bin]]
 name = "mcpmate"

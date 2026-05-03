@@ -1240,7 +1240,7 @@ where
 
     let window = builder.build()?;
 
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "devtools"))]
     window.open_devtools();
 
     #[cfg(target_os = "macos")]
