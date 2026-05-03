@@ -75,20 +75,34 @@ jobs:
             --skip-notarize \
             --output-dir "${GITHUB_WORKSPACE}/desktop-macos-artifacts/${{ matrix.arch }}"
 
-      - name: Smoke test (sidecar arch)
-        uses: ./.github/actions/verify-sidecar-arch
-        with:
-          bundle-dir: "desktop/src-tauri/target/${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}/release/bundle"
-          target-arch: ${{ matrix.arch }}
-          platform: macos
-          rust-target: ${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
-
-      - name: Verify bundle format
-        uses: ./.github/actions/verify-bundle-format
-        with:
-          artifacts-dir: "desktop-macos-artifacts/${{ matrix.arch }}"
-          platform: macos
-          bundle-types: "dmg"
+      - name: Smoke test (sidecar arch + DMG output)
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="desktop/src-tauri/target/${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}/release/bundle"
+          echo "--- bundle layout ---"
+          find "$BUNDLE_ROOT" -type f | head -40 || true
+          echo "--- sidecar architecture ---"
+          for sc in bridge mcpmate-core; do
+            bin=$(find "$BUNDLE_ROOT" -type f \( -name "$sc" -o -name "${sc}-*" \) ! -name "*.fingerprint" | head -1) || true
+            if [[ -z "$bin" ]]; then
+              echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
+              bin="backend/target/sidecars/${sc}-${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}"
+              test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
+            fi
+            echo "$sc found at: $bin"
+            arch_info=$(file "$bin")
+            echo "$sc: $arch_info"
+            case "${{ matrix.arch }}" in
+              aarch64) echo "$arch_info" | grep -q "arm64\|aarch64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; } ;;
+              x64)     echo "$arch_info" | grep -q "x86_64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; } ;;
+            esac
+          done
+          echo "--- dmg output ---"
+          dmg=$(find "$BUNDLE_ROOT/dmg" -maxdepth 1 -type f -name "*.dmg" | head -1) || true
+          test -n "$dmg" || { echo "FAIL: missing dmg bundle"; exit 1; }
+          echo "dmg found at: $dmg"
+          hdiutil imageinfo "$dmg" >/dev/null
+          echo "SMOKE OK"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v6
