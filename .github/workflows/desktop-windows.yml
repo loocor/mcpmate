@@ -60,7 +60,7 @@ jobs:
         with:
           rust-target: ${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}
 
-      - name: Inject MSI-safe app version
+      - name: Inject app version
         uses: ./.github/actions/inject-version
 
       - name: Build Windows desktop artifacts

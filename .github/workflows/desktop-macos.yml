@@ -62,6 +62,9 @@ jobs:
         with:
           rust-target: ${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}
 
+      - name: Inject app version
+        uses: ./.github/actions/inject-version
+
       - name: Build macOS DMG (no sign / no notarize)
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}

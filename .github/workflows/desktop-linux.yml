@@ -75,6 +75,9 @@ jobs:
         with:
           rust-target: ${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}
 
+      - name: Inject app version
+        uses: ./.github/actions/inject-version
+
       - name: Build Linux desktop artifacts
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
