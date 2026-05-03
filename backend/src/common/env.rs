@@ -322,8 +322,9 @@ impl AllowedOrigins {
             "https://127.0.0.1:*".into(),
             "http://[::1]:*".into(),
             "https://[::1]:*".into(),
-            // embedded desktop shell (Tauri v2 uses the tauri://localhost origin)
+            // embedded desktop shell
             "tauri://localhost".into(),
+            "http://tauri.localhost".into(),
         ];
         if let Ok(raw) = std::env::var(constants::MCPMATE_ALLOWED_ORIGINS) {
             for part in raw.split(',') {
@@ -438,4 +439,24 @@ pub async fn origin_guard_middleware(
     }
 
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AllowedOrigins;
+
+    #[test]
+    fn default_allowed_origins_include_desktop_shell_origins() {
+        let origins = AllowedOrigins::load_from_env();
+
+        assert!(origins.is_allowed("tauri://localhost"));
+        assert!(origins.is_allowed("http://tauri.localhost"));
+    }
+
+    #[test]
+    fn default_allowed_origins_reject_external_origins() {
+        let origins = AllowedOrigins::load_from_env();
+
+        assert!(!origins.is_allowed("http://rejected-origin.invalid"));
+    }
 }
