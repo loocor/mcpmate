@@ -92,7 +92,7 @@ jobs:
             --output-dir "${GITHUB_WORKSPACE}/installers"
 
       - name: Collect updater artifacts
-        uses: ./.github/actions/collect-updater-artifacts
+        uses: ./.github/actions/collect-updater
         with:
           bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           output-dir: "${{ github.workspace }}/updater"
@@ -185,7 +185,7 @@ jobs:
             --output-dir "${GITHUB_WORKSPACE}/installers"
 
       - name: Collect updater artifacts
-        uses: ./.github/actions/collect-updater-artifacts
+        uses: ./.github/actions/collect-updater
         with:
           bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           output-dir: "${{ github.workspace }}/updater"
@@ -260,7 +260,7 @@ jobs:
 
       - name: Collect updater artifacts
         if: contains(matrix.bundles, 'appimage')
-        uses: ./.github/actions/collect-updater-artifacts
+        uses: ./.github/actions/collect-updater
         with:
           bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           output-dir: "${{ github.workspace }}/updater"
