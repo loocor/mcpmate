@@ -153,18 +153,29 @@ impl RuntimeInstaller {
     }
 
     /// Install UV runtime
+    ///
+    /// UV publishes `.zip` on Windows and `.tar.gz` on macOS/Linux.
     async fn install_uv(
         &self,
-        tar_file: &Path,
+        archive_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
         // Ensure target directory exists
         tokio::fs::create_dir_all(target_dir).await?;
 
-        // Extract tar.gz file
+        // Extract archive (zip on Windows, tar.gz on macOS/Linux)
         let extract_dir = Self::unique_temp_dir("mcpmate-uv-extract");
         self.prepare_extract_dir(&extract_dir).await?;
-        self.extract_tar_gz(tar_file, &extract_dir).await?;
+
+        let is_zip = archive_file
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+
+        if is_zip {
+            self.extract_zip(archive_file, &extract_dir).await?;
+        } else {
+            self.extract_tar_gz(archive_file, &extract_dir).await?;
+        }
 
         // Find uv executable in extracted directory
         let uv_exe = self.find_uv_executable(&extract_dir)?;
