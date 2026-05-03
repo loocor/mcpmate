@@ -29,6 +29,7 @@ mod runtime_env;
 mod runtime_ports;
 mod shell;
 mod source_config;
+mod utils;
 use core_service::{
     LocalCoreServiceStatusView, install_local_service, read_local_service_status,
     resolve_local_core_binary, restart_local_service, start_local_service, stop_local_service,
@@ -48,36 +49,12 @@ use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 use tracing_subscriber::{self, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
-use url::Url;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
 const MENU_ABOUT_ID: &str = "menu.help.about";
-
-/// Sanitize URL for logging by removing credentials, tokens, and query parameters
-fn sanitize_url_for_logging(url: &str) -> String {
-    match Url::parse(url) {
-        Ok(parsed) => {
-            let mut sanitized = String::new();
-            sanitized.push_str(parsed.scheme());
-            sanitized.push_str("://");
-
-            if let Some(host) = parsed.host_str() {
-                sanitized.push_str(host);
-            }
-
-            if let Some(port) = parsed.port() {
-                sanitized.push(':');
-                sanitized.push_str(&port.to_string());
-            }
-
-            sanitized
-        }
-        Err(_) => "[invalid-url]".to_string(),
-    }
-}
 
 #[derive(Clone, Default)]
 pub(crate) struct DeepLinkState {
@@ -221,8 +198,9 @@ async fn sync_shell_service_state(
         .await
 }
 
-#[cfg(target_os = "windows")]
 fn log_core_state_view(context: &str, view: &DesktopCoreSourceView) {
+    use utils::sanitize_url_for_logging;
+
     info!(
         context,
         selected_source = ?view.selected_source,
@@ -237,9 +215,6 @@ fn log_core_state_view(context: &str, view: &DesktopCoreSourceView) {
         "Desktop core state view"
     );
 }
-
-#[cfg(not(target_os = "windows"))]
-fn log_core_state_view(_context: &str, _view: &DesktopCoreSourceView) {}
 
 fn emit_core_state_changed(app: &tauri::AppHandle, view: &DesktopCoreSourceView) {
     log_core_state_view("emit_core_state_changed", view);
