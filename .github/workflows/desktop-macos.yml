@@ -84,11 +84,7 @@ jobs:
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
         run: |
-          BUNDLES="${INPUT_BUNDLES:-dmg}"
-          if [[ "$BUNDLES" != "dmg" ]]; then
-            echo "FAIL: macOS workflow currently supports only bundles=dmg" >&2
-            exit 1
-          fi
+          BUNDLES="${INPUT_BUNDLES:-app,dmg}"
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
             --target "${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}" \
