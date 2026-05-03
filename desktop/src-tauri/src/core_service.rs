@@ -1,6 +1,7 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
+use tracing::{info, warn};
 use mcpmate::common::global_paths;
 use mcpmate::system::config::{api_url_from_port, bind_socket_addr};
 use service_manager::{
@@ -78,28 +79,28 @@ fn service_manager() -> Result<Box<dyn ServiceManager>> {
 
 pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
     let exe_suffix = std::env::consts::EXE_SUFFIX;
-    let target = std::env::var("TAURI_ENV_TARGET_TRIPLE")
-        .or_else(|_| std::env::var("TARGET"))
-        .unwrap_or_else(|_| {
-            format!(
-                "{}-unknown-{}",
-                std::env::consts::ARCH,
-                std::env::consts::OS
-            )
-        });
+    let target = env!("MCPMATE_BUILD_TARGET");
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    // For release builds, check MacOS directory first (where Tauri bundles sidecars)
-    // The app bundle structure is: MCPMate.app/Contents/MacOS/mcpmate-core
+    info!(target = %target, exe_suffix = %exe_suffix, "Resolving local MCPMate core binary");
+
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(exe_dir) = current_exe.parent()
+    {
+        candidates.push(exe_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
+        candidates.push(exe_dir.join(format!("mcpmate-core{exe_suffix}")));
+    }
+
     if let Ok(resource_dir) = app.path().resource_dir() {
-        // Try MacOS directory (sibling to Resources)
-        if let Some(contents_dir) = resource_dir.parent() {
-            let macos_dir = contents_dir.join("MacOS");
-            candidates.push(macos_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
-            candidates.push(macos_dir.join(format!("mcpmate-core{exe_suffix}")));
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(contents_dir) = resource_dir.parent() {
+                let macos_dir = contents_dir.join("MacOS");
+                candidates.push(macos_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
+                candidates.push(macos_dir.join(format!("mcpmate-core{exe_suffix}")));
+            }
         }
 
-        // Also check Resources directory (standard Tauri resource location)
         candidates.push(resource_dir.join(format!("mcpmate-core-{target}{exe_suffix}")));
         candidates.push(resource_dir.join(format!("mcpmate-core{exe_suffix}")));
     }
@@ -112,7 +113,7 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         candidates.push(
             workspace_root
                 .join("backend/target")
-                .join(&target)
+                .join(target)
                 .join(profile_dir)
                 .join(format!("mcpmate{exe_suffix}")),
         );
@@ -128,10 +129,22 @@ pub fn resolve_local_core_binary(app: &AppHandle) -> Result<PathBuf> {
         );
     }
 
-    candidates
-        .into_iter()
-        .find(|path| path.exists())
-        .context("unable to resolve local MCPMate core service binary")
+    let candidate_strings: Vec<String> = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect();
+    let resolved = candidates.into_iter().find(|path| path.exists());
+
+    match resolved {
+        Some(path) => {
+            info!(binary = %path.display(), "Resolved local MCPMate core binary");
+            Ok(path)
+        }
+        None => {
+            warn!(candidates = ?candidate_strings, "Unable to resolve local MCPMate core service binary");
+            anyhow::bail!("unable to resolve local MCPMate core service binary")
+        }
+    }
 }
 
 pub async fn install_local_service(
@@ -256,11 +269,13 @@ pub async fn probe_localhost_core(api_port: u16) -> bool {
 pub async fn wait_for_localhost_core(api_port: u16) -> Result<()> {
     for _ in 0..20 {
         if probe_localhost_core(api_port).await {
+            info!(api_port, "Local MCPMate core health check succeeded");
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
+    warn!(api_port, "Local MCPMate core health check timed out");
     anyhow::bail!("localhost core service did not become ready in time")
 }
 

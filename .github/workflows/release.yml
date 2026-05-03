@@ -25,10 +25,30 @@ env:
   CI: "true"
 
 jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Validate dispatch tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if ! git ls-remote --exit-code --tags --refs "https://github.com/${REPOSITORY}.git" "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::Tag ${RELEASE_TAG} does not exist in ${REPOSITORY}" >&2
+            exit 1
+          fi
+
+      - name: Skip tag validation on push
+        if: github.event_name != 'workflow_dispatch'
+        run: echo "Skipping tag validation for push trigger."
+
   # ---------------------------------------------------------------------------
   # Desktop builds — one per platform/arch target
   # ---------------------------------------------------------------------------
   build-macos:
+    needs: validate-tag
     name: macOS (${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -141,6 +161,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: validate-tag
     name: Windows (${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -233,6 +254,7 @@ jobs:
           if-no-files-found: warn
 
   build-linux:
+    needs: validate-tag
     name: Linux (${{ matrix.arch }})
     strategy:
       fail-fast: false

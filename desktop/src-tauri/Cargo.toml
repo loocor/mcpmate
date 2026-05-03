@@ -37,12 +37,14 @@ tokio-stream = "0.1"
 futures-util = "0.3"
 bytes = "1"
 hyper-util = { version = "0.1", features = ["server", "tokio"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 async-stream = "0.3"
 twoway = "0.2"
 tauri-plugin-deep-link = "2"
 uuid = { version = "1.22.0", features = ["v4"] }
 hostname = "0.4"
 service-manager = { git = "https://github.com/loocor/service-manager-rs", rev = "9c1200af240e5820c3e2d62344cf17d60e907efa" }
+tracing-appender = "0.2.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
@@ -53,6 +55,7 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
+devtools = ["tauri/devtools"]
 
 [[bin]]
 name = "mcpmate"
