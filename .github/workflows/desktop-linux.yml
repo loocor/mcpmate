@@ -61,6 +61,7 @@ jobs:
             build-essential \
             file \
             jq \
+            xdg-utils \
             libayatana-appindicator3-dev \
             libfuse2 \
             librsvg2-dev \

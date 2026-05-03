@@ -99,7 +99,7 @@ collect_rust_section() {
 			]) as $direct_ids
 		| {
 			id: $id,
-			label: $label,
+			"label": $label,
 			packages: (
 				[
 					$meta.packages[]
