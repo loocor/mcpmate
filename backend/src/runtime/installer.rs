@@ -4,8 +4,13 @@
 //! Replaces the complex installers/ directory with a simple, focused implementation.
 
 use anyhow::{Context, Result};
+use flate2::read::GzDecoder;
+use std::fs::File as StdFile;
+use std::io;
 use std::path::{Path, PathBuf};
-use tokio::process::Command;
+use tar::Archive;
+use tokio::task;
+use zip::ZipArchive;
 
 use super::downloader::RuntimeDownloader;
 use super::manager::RuntimeManager;
@@ -37,7 +42,12 @@ impl RuntimeInstaller {
         self.manager.ensure_runtimes_dir()?;
 
         // Create temporary download directory
-        let temp_dir = std::env::temp_dir().join("mcpmate-runtime-install");
+        let temp_dir = std::env::temp_dir().join(format!("mcpmate-runtime-install-{}", std::process::id()));
+        if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+            if e.kind() != io::ErrorKind::NotFound {
+                tracing::warn!("Failed to clean existing temp directory: {}", e);
+            }
+        }
         tokio::fs::create_dir_all(&temp_dir)
             .await
             .context("Failed to create temp directory")?;
@@ -72,7 +82,7 @@ impl RuntimeInstaller {
     async fn extract_and_install(
         &self,
         runtime_type: RuntimeType,
-        downloaded_file: &PathBuf,
+        downloaded_file: &Path,
     ) -> Result<PathBuf> {
         let runtimes_dir = self.manager.runtimes_dir();
 
@@ -91,14 +101,15 @@ impl RuntimeInstaller {
     /// Install Bun runtime
     async fn install_bun(
         &self,
-        zip_file: &PathBuf,
+        zip_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
         // Ensure target directory exists
         tokio::fs::create_dir_all(target_dir).await?;
 
         // Extract zip file
-        let extract_dir = std::env::temp_dir().join("mcpmate-bun-extract");
+        let extract_dir = std::env::temp_dir().join(format!("mcpmate-bun-extract-{}", std::process::id()));
+        self.prepare_extract_dir(&extract_dir).await?;
         self.extract_zip(zip_file, &extract_dir).await?;
 
         // Find bun executable in extracted directory
@@ -148,14 +159,15 @@ impl RuntimeInstaller {
     /// Install UV runtime
     async fn install_uv(
         &self,
-        tar_file: &PathBuf,
+        tar_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
         // Ensure target directory exists
         tokio::fs::create_dir_all(target_dir).await?;
 
         // Extract tar.gz file
-        let extract_dir = std::env::temp_dir().join("mcpmate-uv-extract");
+        let extract_dir = std::env::temp_dir().join(format!("mcpmate-uv-extract-{}", std::process::id()));
+        self.prepare_extract_dir(&extract_dir).await?;
         self.extract_tar_gz(tar_file, &extract_dir).await?;
 
         // Find uv executable in extracted directory
@@ -201,56 +213,82 @@ impl RuntimeInstaller {
         Ok(target_path)
     }
 
-    /// Extract zip file using system unzip command
+    async fn prepare_extract_dir(
+        &self,
+        target_dir: &Path,
+    ) -> Result<()> {
+        if let Err(e) = tokio::fs::remove_dir_all(target_dir).await {
+            if e.kind() != io::ErrorKind::NotFound {
+                return Err(e).context("Failed to clean extract directory");
+            }
+        }
+
+        tokio::fs::create_dir_all(target_dir)
+            .await
+            .context("Failed to create extract directory")?;
+        Ok(())
+    }
+
+    /// Extract zip file using Rust zip support
     async fn extract_zip(
         &self,
-        zip_file: &PathBuf,
-        target_dir: &PathBuf,
+        zip_file: &Path,
+        target_dir: &Path,
     ) -> Result<()> {
-        tokio::fs::create_dir_all(target_dir).await?;
+        let zip_file = zip_file.to_path_buf();
+        let target_dir = target_dir.to_path_buf();
 
-        let output = Command::new("unzip")
-            .arg("-q")
-            .arg(zip_file)
-            .arg("-d")
-            .arg(target_dir)
-            .output()
-            .await
-            .context("Failed to run unzip command")?;
+        task::spawn_blocking(move || -> Result<()> {
+            let file = StdFile::open(&zip_file).context("Failed to open zip file")?;
+            let mut archive = ZipArchive::new(file).context("Failed to read zip archive")?;
 
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "Unzip failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).context("Failed to read zip entry")?;
+                let Some(safe_path) = entry.enclosed_name().map(|path| target_dir.join(path)) else {
+                    continue;
+                };
+
+                if entry.name().ends_with('/') {
+                    std::fs::create_dir_all(&safe_path).context("Failed to create zip directory")?;
+                    continue;
+                }
+
+                if let Some(parent) = safe_path.parent() {
+                    std::fs::create_dir_all(parent).context("Failed to create zip parent directory")?;
+                }
+
+                let mut output = StdFile::create(&safe_path).context("Failed to create extracted zip file")?;
+                io::copy(&mut entry, &mut output).context("Failed to extract zip entry")?;
+            }
+
+            Ok(())
+        })
+        .await
+        .context("Failed to join zip extraction task")??;
 
         Ok(())
     }
 
-    /// Extract tar.gz file using system tar command
+    /// Extract tar.gz file using Rust tar support
     async fn extract_tar_gz(
         &self,
-        tar_file: &PathBuf,
-        target_dir: &PathBuf,
+        tar_file: &Path,
+        target_dir: &Path,
     ) -> Result<()> {
-        tokio::fs::create_dir_all(target_dir).await?;
+        let tar_file = tar_file.to_path_buf();
+        let target_dir = target_dir.to_path_buf();
 
-        let output = Command::new("tar")
-            .arg("-xzf")
-            .arg(tar_file)
-            .arg("-C")
-            .arg(target_dir)
-            .output()
-            .await
-            .context("Failed to run tar command")?;
-
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "Tar extraction failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        task::spawn_blocking(move || -> Result<()> {
+            let file = StdFile::open(&tar_file).context("Failed to open tar.gz file")?;
+            let decoder = GzDecoder::new(file);
+            let mut archive = Archive::new(decoder);
+            archive
+                .unpack(&target_dir)
+                .context("Failed to extract tar.gz archive")?;
+            Ok(())
+        })
+        .await
+        .context("Failed to join tar extraction task")??;
 
         Ok(())
     }
@@ -313,5 +351,76 @@ impl RuntimeInstaller {
 impl Default for RuntimeInstaller {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::{Compression, write::GzEncoder};
+    use std::{fs, io::Write as _};
+    use tar::Builder;
+    use zip::write::SimpleFileOptions;
+
+    #[tokio::test]
+    async fn extract_zip_reads_archive_without_system_unzip() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let zip_path = temp_dir.path().join("bun.zip");
+        let file = StdFile::create(&zip_path).expect("create zip");
+        let mut zip = zip::ZipWriter::new(file);
+
+        zip.start_file("bun-windows-x64/bun.exe", SimpleFileOptions::default())
+            .expect("start zip file");
+        zip.write_all(b"bun").expect("write zip file");
+        zip.finish().expect("finish zip");
+
+        let target_dir = temp_dir.path().join("extract");
+        let installer = RuntimeInstaller::new();
+        installer
+            .prepare_extract_dir(&target_dir)
+            .await
+            .expect("prepare extract dir");
+        installer
+            .extract_zip(&zip_path, &target_dir)
+            .await
+            .expect("extract zip");
+
+        assert_eq!(
+            fs::read(target_dir.join("bun-windows-x64").join("bun.exe")).expect("read bun"),
+            b"bun"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_tar_gz_reads_archive_without_system_tar() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let tar_path = temp_dir.path().join("uv.tar.gz");
+        let file = StdFile::create(&tar_path).expect("create tar.gz");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+
+        header.set_path("uv-x86_64-pc-windows-msvc/uv.exe").expect("set path");
+        header.set_size(2);
+        header.set_cksum();
+        builder.append(&header, &b"uv"[..]).expect("append uv");
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip");
+
+        let target_dir = temp_dir.path().join("extract");
+        let installer = RuntimeInstaller::new();
+        installer
+            .prepare_extract_dir(&target_dir)
+            .await
+            .expect("prepare extract dir");
+        installer
+            .extract_tar_gz(&tar_path, &target_dir)
+            .await
+            .expect("extract tar.gz");
+
+        assert_eq!(
+            fs::read(target_dir.join("uv-x86_64-pc-windows-msvc").join("uv.exe")).expect("read uv"),
+            b"uv"
+        );
     }
 }

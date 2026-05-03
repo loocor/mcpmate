@@ -161,7 +161,7 @@ async fn runtime_install_core(
         .or_else(|e| {
             Ok(RuntimeInstallResp::success(RuntimeInstallData {
                 success: false,
-                message: format!("Installation failed: {e}"),
+                message: format!("Installation failed: {e:#}"),
                 runtime_type: request.runtime_type.clone(),
             }))
         })
