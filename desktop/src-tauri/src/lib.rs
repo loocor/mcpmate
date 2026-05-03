@@ -1,8 +1,6 @@
 use std::{
-    fs::OpenOptions,
-    io::{self, Write as IoWrite},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 #[cfg(target_os = "windows")]
@@ -49,12 +47,37 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 use tracing_subscriber::{self, EnvFilter};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use url::Url;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
 const MENU_ABOUT_ID: &str = "menu.help.about";
+
+/// Sanitize URL for logging by removing credentials, tokens, and query parameters
+fn sanitize_url_for_logging(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(parsed) => {
+            let mut sanitized = String::new();
+            sanitized.push_str(parsed.scheme());
+            sanitized.push_str("://");
+
+            if let Some(host) = parsed.host_str() {
+                sanitized.push_str(host);
+            }
+
+            if let Some(port) = parsed.port() {
+                sanitized.push(':');
+                sanitized.push_str(&port.to_string());
+            }
+
+            sanitized
+        }
+        Err(_) => "[invalid-url]".to_string(),
+    }
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct DeepLinkState {
@@ -112,31 +135,6 @@ struct DesktopCoreSourceView {
     remote_available: bool,
 }
 
-#[derive(Clone)]
-struct DesktopLogWriter {
-    file: Arc<Mutex<std::fs::File>>,
-}
-
-impl IoWrite for DesktopLogWriter {
-    fn write(
-        &mut self,
-        buf: &[u8],
-    ) -> io::Result<usize> {
-        let _ = std::io::stdout().write_all(buf);
-        if let Ok(mut file) = self.file.lock() {
-            let _ = file.write_all(buf);
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        let _ = std::io::stdout().flush();
-        if let Ok(mut file) = self.file.lock() {
-            let _ = file.flush();
-        }
-        Ok(())
-    }
-}
 
 #[derive(Clone, Default)]
 struct DesktopManagedCoreState {
@@ -231,7 +229,7 @@ fn log_core_state_view(context: &str, view: &DesktopCoreSourceView) {
         localhost_runtime_mode = ?view.localhost_runtime_mode,
         localhost_api_port = view.localhost_api_port,
         localhost_mcp_port = view.localhost_mcp_port,
-        api_base_url = %view.api_base_url,
+        api_base_url = %sanitize_url_for_logging(&view.api_base_url),
         local_service_status = ?view.local_service.status,
         local_service_running = view.local_service.running,
         local_service_label = %view.local_service.label,
@@ -1297,16 +1295,15 @@ fn initialize_desktop_logging() -> Result<std::path::PathBuf> {
     std::fs::create_dir_all(&logs_dir)
         .with_context(|| format!("failed to create desktop logs dir {}", logs_dir.display()))?;
 
-    let log_path = logs_dir.join("desktop-shell.log");
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .with_context(|| format!("failed to open desktop log file {}", log_path.display()))?;
+    // Use daily log rotation, keep max 7 days of logs
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .max_log_files(7)
+        .filename_prefix("desktop-shell")
+        .filename_suffix("log")
+        .build(&logs_dir)
+        .with_context(|| format!("failed to create rolling log appender in {}", logs_dir.display()))?;
 
-    let writer = DesktopLogWriter {
-        file: Arc::new(Mutex::new(file)),
-    };
     let env_filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else {
@@ -1316,9 +1313,10 @@ fn initialize_desktop_logging() -> Result<std::path::PathBuf> {
     let _ = tracing_subscriber::fmt()
         .with_ansi(false)
         .with_env_filter(env_filter)
-        .with_writer(move || writer.clone())
+        .with_writer(file_appender)
         .try_init();
 
+    let log_path = logs_dir.join("desktop-shell.log");
     Ok(log_path)
 }
 
