@@ -3,6 +3,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 use anyhow::{Context, Error, Result};
 use mcpmate::common::{MCPMatePaths, global_paths, set_global_paths};
 use serde_json::json;
@@ -26,6 +29,7 @@ mod runtime_env;
 mod runtime_ports;
 mod shell;
 mod source_config;
+mod utils;
 use core_service::{
     LocalCoreServiceStatusView, install_local_service, read_local_service_status,
     resolve_local_core_binary, restart_local_service, start_local_service, stop_local_service,
@@ -43,6 +47,12 @@ use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
+use tracing_subscriber::{self, EnvFilter};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
 const MENU_ABOUT_ID: &str = "menu.help.about";
 
@@ -101,6 +111,7 @@ struct DesktopCoreSourceView {
     local_service: LocalCoreServiceStatusView,
     remote_available: bool,
 }
+
 
 #[derive(Clone, Default)]
 struct DesktopManagedCoreState {
@@ -187,7 +198,26 @@ async fn sync_shell_service_state(
         .await
 }
 
+fn log_core_state_view(context: &str, view: &DesktopCoreSourceView) {
+    use utils::sanitize_url_for_logging;
+
+    info!(
+        context,
+        selected_source = ?view.selected_source,
+        localhost_runtime_mode = ?view.localhost_runtime_mode,
+        localhost_api_port = view.localhost_api_port,
+        localhost_mcp_port = view.localhost_mcp_port,
+        api_base_url = %sanitize_url_for_logging(&view.api_base_url),
+        local_service_status = ?view.local_service.status,
+        local_service_running = view.local_service.running,
+        local_service_label = %view.local_service.label,
+        remote_available = view.remote_available,
+        "Desktop core state view"
+    );
+}
+
 fn emit_core_state_changed(app: &tauri::AppHandle, view: &DesktopCoreSourceView) {
+    log_core_state_view("emit_core_state_changed", view);
     if let Err(err) = app.emit(shell::EVENT_CORE_STATE_CHANGED, view) {
         warn!(error = %err, "Failed to emit core-state-changed event");
     }
@@ -414,6 +444,16 @@ pub fn run() -> Result<()> {
         .plugin(updater_plugin)
         .setup(move |app| {
             initialize_paths(app)?;
+            let desktop_log_path = initialize_desktop_logging()?;
+            info!(log_path = %desktop_log_path.display(), "Desktop shell logging initialized");
+            info!(
+                current_exe = ?std::env::current_exe().ok(),
+                resource_dir = ?app.path().resource_dir().ok(),
+                identifier = %app.config().identifier,
+                xdg_current_desktop = ?std::env::var("XDG_CURRENT_DESKTOP").ok(),
+                appimage = ?std::env::var("APPIMAGE").ok(),
+                "Desktop shell startup context"
+            );
             configure_tauri_environment()?;
             initialize_menu(app)?;
 
@@ -683,12 +723,18 @@ pub fn run() -> Result<()> {
                 stop_service_item.clone(),
             ))?;
 
-            tauri::async_runtime::block_on(initialize_selected_core_source(
-                app.handle().clone(),
-                shell_state.clone(),
-                desktop_managed_core_state.clone(),
-            ))?;
             spawn_main_window(app)?;
+
+            {
+                let handle = app.handle().clone();
+                let shell_state = shell_state.clone();
+                let managed_state = desktop_managed_core_state.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = initialize_selected_core_source(handle, shell_state, managed_state).await {
+                        warn!(error = %err, "Failed to initialize selected core source");
+                    }
+                });
+            }
 
             {
                 let handle = app.handle().clone();
@@ -810,9 +856,11 @@ async fn mcp_shell_read_core_source(
     managed_state: tauri::State<'_, DesktopManagedCoreState>,
 ) -> Result<DesktopCoreSourceView, String> {
     let config = DesktopCoreSourceConfig::load(global_paths()).map_err(|err| err.to_string())?;
-    read_core_state_view(&config, managed_state.inner())
+    let view = read_core_state_view(&config, managed_state.inner())
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    log_core_state_view("mcp_shell_read_core_source", &view);
+    Ok(view)
 }
 
 #[tauri::command]
@@ -1192,7 +1240,7 @@ where
 
     let window = builder.build()?;
 
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "devtools"))]
     window.open_devtools();
 
     #[cfg(target_os = "macos")]
@@ -1215,6 +1263,36 @@ fn default_main_window_config() -> WindowConfig {
         create: false,
         ..Default::default()
     }
+}
+
+fn initialize_desktop_logging() -> Result<std::path::PathBuf> {
+    let logs_dir = global_paths().logs_dir().to_path_buf();
+    std::fs::create_dir_all(&logs_dir)
+        .with_context(|| format!("failed to create desktop logs dir {}", logs_dir.display()))?;
+
+    // Use daily log rotation, keep max 7 days of logs
+    let file_appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .max_log_files(7)
+        .filename_prefix("desktop-shell")
+        .filename_suffix("log")
+        .build(&logs_dir)
+        .with_context(|| format!("failed to create rolling log appender in {}", logs_dir.display()))?;
+
+    let env_filter = if std::env::var("RUST_LOG").is_ok() {
+        EnvFilter::from_default_env()
+    } else {
+        EnvFilter::new("info,tao=warn,wry=warn,hyper=warn,reqwest=warn,tokio=warn")
+    };
+
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_env_filter(env_filter)
+        .with_writer(file_appender)
+        .try_init();
+
+    let log_path = logs_dir.join("desktop-shell.log");
+    Ok(log_path)
 }
 
 fn initialize_paths(_app: &mut tauri::App) -> Result<()> {
@@ -1247,6 +1325,13 @@ async fn initialize_selected_core_source(
     managed_state: DesktopManagedCoreState,
 ) -> Result<()> {
     let config = DesktopCoreSourceConfig::load(global_paths())?;
+    info!(
+        selected_source = ?config.selected_source,
+        localhost_runtime_mode = ?config.localhost_runtime_mode,
+        api_port = config.localhost.api_port,
+        mcp_port = config.localhost.mcp_port,
+        "Initializing selected desktop core source"
+    );
     let status = match config.localhost_runtime_mode {
         LocalCoreRuntimeMode::Service => read_local_service_status(&config).await?,
         LocalCoreRuntimeMode::DesktopManaged => {
@@ -1269,7 +1354,14 @@ fn spawn_desktop_managed_core(
 ) -> Result<Child> {
     let binary = resolve_local_core_binary(app)?;
     let base_dir = global_paths().base_dir().to_path_buf();
-    let mut command = Command::new(binary);
+    info!(
+        binary = %binary.display(),
+        working_directory = %base_dir.display(),
+        api_port = config.localhost.api_port,
+        mcp_port = config.localhost.mcp_port,
+        "Spawning desktop-managed localhost core"
+    );
+    let mut command = Command::new(&binary);
     command
         .arg("--api-port")
         .arg(config.localhost.api_port.to_string())
@@ -1284,9 +1376,14 @@ fn spawn_desktop_managed_core(
         .env("MCPMATE_MCP_PORT", config.localhost.mcp_port.to_string());
     configure_desktop_managed_stdio(&mut command);
 
-    command
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let child = command
         .spawn()
-        .context("failed to spawn desktop-managed localhost core")
+        .context("failed to spawn desktop-managed localhost core")?;
+    info!(pid = child.id(), "Spawned desktop-managed localhost core process");
+    Ok(child)
 }
 
 fn configure_desktop_managed_stdio(command: &mut Command) {
@@ -1338,6 +1435,7 @@ async fn start_desktop_managed_core(
         return read_desktop_managed_status(state, config).await;
     }
     let child = spawn_desktop_managed_core(app, config)?;
+    info!("Desktop-managed localhost core spawn returned successfully");
     state.replace(child).await;
 
     spawn_core_ready_notification(app.clone(), state.clone(), config.clone());
@@ -1351,10 +1449,8 @@ fn spawn_core_ready_notification(
     config: DesktopCoreSourceConfig,
 ) {
     tauri::async_runtime::spawn(async move {
-        if core_service::wait_for_localhost_core(config.localhost.api_port)
-            .await
-            .is_err()
-        {
+        if let Err(err) = core_service::wait_for_localhost_core(config.localhost.api_port).await {
+            warn!(error = %err, api_port = config.localhost.api_port, "Desktop-managed localhost core did not become ready in time");
             return;
         }
 

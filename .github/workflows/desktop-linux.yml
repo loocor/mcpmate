@@ -3,6 +3,15 @@ name: Desktop (Linux)
 on:
   workflow_dispatch:
     inputs:
+      arch:
+        description: "Architecture to build"
+        type: choice
+        required: false
+        default: "all"
+        options:
+          - all
+          - x64
+          - arm64
       bundles:
         description: "Tauri bundle types"
         required: false
@@ -38,16 +47,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x64
-            runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            bundles: appimage,deb
-          - arch: arm64
-            runner: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
-            bundles: deb
-    runs-on: ${{ matrix.runner }}
+        arch: ${{ fromJSON(github.event_name == 'workflow_dispatch' && (inputs.arch == 'all' && '["x64","arm64"]' || format('["{0}"]', inputs.arch)) || '["x64","arm64"]') }}
+    runs-on: ${{ matrix.arch == 'x64' && 'ubuntu-22.04' || 'ubuntu-22.04-arm' }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -60,6 +61,7 @@ jobs:
             build-essential \
             file \
             jq \
+            xdg-utils \
             libayatana-appindicator3-dev \
             libfuse2 \
             librsvg2-dev \
@@ -71,7 +73,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -94,18 +96,19 @@ jobs:
       - name: Build Linux desktop artifacts
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
+          TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           chmod +x packaging/desktop/linux-build-tauri-release.sh
-          BUNDLES="${INPUT_BUNDLES:-${{ matrix.bundles }}}"
+          BUNDLES="${INPUT_BUNDLES:-appimage,deb}"
           packaging/desktop/linux-build-tauri-release.sh \
-            --target "${{ matrix.target }}" \
+            --target "${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}" \
             --bundles "${BUNDLES}" \
             --output-dir "${GITHUB_WORKSPACE}/desktop-linux-artifacts/${{ matrix.arch }}"
 
       - name: Smoke test (sidecar arch + bundle format)
         run: |
           set -euo pipefail
-          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}/release/bundle"
           echo "--- bundle layout ---"
           find "$BUNDLE_DIR" -type f | head -40 || true
           echo "--- sidecar architecture ---"
@@ -113,7 +116,7 @@ jobs:
             bin=$(find "$BUNDLE_DIR" -type f \( -name "$sc" -o -name "${sc}-*" \) ! -name "*.fingerprint" | head -1) || true
             if [[ -z "$bin" ]]; then
               echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
-              bin="backend/target/sidecars/${sc}-${{ matrix.target }}"
+              bin="backend/target/sidecars/${sc}-${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}"
               test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
             fi
             echo "$sc found at: $bin"

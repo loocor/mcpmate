@@ -22,6 +22,18 @@ function applyDesktopApiBaseUrl(apiBaseUrl: string): void {
 	notificationsService.reconnectAfterApiBaseChanged();
 }
 
+async function invalidateDesktopCoreQueries(
+	queryClient: ReturnType<typeof useQueryClient>,
+): Promise<void> {
+	await Promise.all([
+		queryClient.invalidateQueries({ queryKey: ["systemStatus"] }),
+		queryClient.invalidateQueries({ queryKey: ["systemMetrics"] }),
+		queryClient.invalidateQueries({ queryKey: ["servers"] }),
+		queryClient.invalidateQueries({ queryKey: ["clients"] }),
+		queryClient.invalidateQueries({ queryKey: ["configSuits"] }),
+	]);
+}
+
 function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw: unknown): void {
 	if (!raw || typeof raw !== "object") {
 		return;
@@ -126,6 +138,7 @@ export function Layout() {
 				};
 				if (!cancelled && typeof source.apiBaseUrl === "string") {
 					applyDesktopApiBaseUrl(source.apiBaseUrl);
+					void invalidateDesktopCoreQueries(queryClient);
 				}
 			} catch (error) {
 				if (import.meta.env.DEV) {
@@ -143,7 +156,7 @@ export function Layout() {
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [queryClient]);
 
 	React.useEffect(() => {
 		let unlistenSettings: (() => void) | undefined;
@@ -182,6 +195,7 @@ export function Layout() {
 							: undefined;
 					if (typeof payload?.apiBaseUrl === "string") {
 						applyDesktopApiBaseUrl(payload.apiBaseUrl);
+						void invalidateDesktopCoreQueries(queryClient);
 					}
 				});
 
@@ -209,7 +223,7 @@ export function Layout() {
 				void unlistenCoreState();
 			}
 		};
-	}, [navigate]);
+	}, [navigate, queryClient]);
 
 	const sidebarOpenRef = React.useRef(sidebarOpen);
 	React.useEffect(() => {
