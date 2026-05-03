@@ -5,9 +5,10 @@
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
+use nanoid::nanoid;
 use std::fs::File as StdFile;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tar::Archive;
 use tokio::task;
 use zip::ZipArchive;
@@ -42,12 +43,7 @@ impl RuntimeInstaller {
         self.manager.ensure_runtimes_dir()?;
 
         // Create temporary download directory
-        let temp_dir = std::env::temp_dir().join(format!("mcpmate-runtime-install-{}", std::process::id()));
-        if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
-            if e.kind() != io::ErrorKind::NotFound {
-                tracing::warn!("Failed to clean existing temp directory: {}", e);
-            }
-        }
+        let temp_dir = Self::unique_temp_dir("mcpmate-runtime-install");
         tokio::fs::create_dir_all(&temp_dir)
             .await
             .context("Failed to create temp directory")?;
@@ -108,7 +104,7 @@ impl RuntimeInstaller {
         tokio::fs::create_dir_all(target_dir).await?;
 
         // Extract zip file
-        let extract_dir = std::env::temp_dir().join(format!("mcpmate-bun-extract-{}", std::process::id()));
+        let extract_dir = Self::unique_temp_dir("mcpmate-bun-extract");
         self.prepare_extract_dir(&extract_dir).await?;
         self.extract_zip(zip_file, &extract_dir).await?;
 
@@ -166,7 +162,7 @@ impl RuntimeInstaller {
         tokio::fs::create_dir_all(target_dir).await?;
 
         // Extract tar.gz file
-        let extract_dir = std::env::temp_dir().join(format!("mcpmate-uv-extract-{}", std::process::id()));
+        let extract_dir = Self::unique_temp_dir("mcpmate-uv-extract");
         self.prepare_extract_dir(&extract_dir).await?;
         self.extract_tar_gz(tar_file, &extract_dir).await?;
 
@@ -211,6 +207,32 @@ impl RuntimeInstaller {
         }
 
         Ok(target_path)
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("{}-{}-{}", prefix, std::process::id(), nanoid!(10)))
+    }
+
+    fn safe_archive_entry_path(
+        target_dir: &Path,
+        entry_path: &Path,
+    ) -> Result<PathBuf> {
+        let mut relative_path = PathBuf::new();
+
+        for component in entry_path.components() {
+            match component {
+                Component::Normal(path) => relative_path.push(path),
+                Component::CurDir => {}
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Archive entry path escapes target directory: {}",
+                        entry_path.display()
+                    ));
+                }
+            }
+        }
+
+        Ok(target_dir.join(relative_path))
     }
 
     async fn prepare_extract_dir(
@@ -282,9 +304,49 @@ impl RuntimeInstaller {
             let file = StdFile::open(&tar_file).context("Failed to open tar.gz file")?;
             let decoder = GzDecoder::new(file);
             let mut archive = Archive::new(decoder);
-            archive
-                .unpack(&target_dir)
-                .context("Failed to extract tar.gz archive")?;
+
+            for entry in archive.entries().context("Failed to read tar entries")? {
+                let mut entry = entry.context("Failed to read tar entry")?;
+                let entry_path = entry.path().context("Failed to read tar entry path")?.to_path_buf();
+                let safe_path =
+                    Self::safe_archive_entry_path(&target_dir, &entry_path).context("Invalid tar entry path")?;
+
+                let file_type = entry.header().entry_type();
+
+                if file_type.is_dir() {
+                    std::fs::create_dir_all(&safe_path)
+                        .with_context(|| format!("Failed to create tar directory: {}", safe_path.display()))?;
+                    continue;
+                }
+
+                if !file_type.is_file() {
+                    return Err(anyhow::anyhow!(
+                        "Unsupported tar entry type for {}: expected regular file or directory",
+                        entry_path.display()
+                    ));
+                }
+
+                if let Some(parent) = safe_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("Failed to create tar parent directory: {}", parent.display()))?;
+                }
+
+                entry
+                    .unpack(&safe_path)
+                    .with_context(|| format!("Failed to extract tar entry: {}", safe_path.display()))?;
+
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(mode) = entry.header().mode() {
+                        std::fs::set_permissions(&safe_path, std::fs::Permissions::from_mode(mode))
+                            .with_context(|| {
+                                format!("Failed to set tar entry permissions: {}", safe_path.display())
+                            })?;
+                    }
+                }
+            }
+
             Ok(())
         })
         .await
@@ -359,7 +421,7 @@ mod tests {
     use super::*;
     use flate2::{Compression, write::GzEncoder};
     use std::{fs, io::Write as _};
-    use tar::Builder;
+    use tar::{Builder, EntryType};
     use zip::write::SimpleFileOptions;
 
     #[tokio::test]
@@ -421,6 +483,47 @@ mod tests {
         assert_eq!(
             fs::read(target_dir.join("uv-x86_64-pc-windows-msvc").join("uv.exe")).expect("read uv"),
             b"uv"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_tar_gz_rejects_symlink_entries() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let tar_path = temp_dir.path().join("uv.tar.gz");
+        let file = StdFile::create(&tar_path).expect("create tar.gz");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+
+        header.set_entry_type(EntryType::Symlink);
+        header.set_path("uv-x86_64-pc-windows-msvc/uv.exe").expect("set path");
+        header.set_link_name("../../outside").expect("set link path");
+        header.set_size(0);
+        header.set_cksum();
+        builder.append(&header, std::io::empty()).expect("append symlink");
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip");
+
+        let target_dir = temp_dir.path().join("extract");
+        let installer = RuntimeInstaller::new();
+        installer
+            .prepare_extract_dir(&target_dir)
+            .await
+            .expect("prepare extract dir");
+
+        let err = installer
+            .extract_tar_gz(&tar_path, &target_dir)
+            .await
+            .expect_err("reject symlink");
+
+        assert!(err.to_string().contains("Unsupported tar entry type"));
+    }
+
+    #[test]
+    fn unique_temp_dir_creates_distinct_paths() {
+        assert_ne!(
+            RuntimeInstaller::unique_temp_dir("mcpmate-test"),
+            RuntimeInstaller::unique_temp_dir("mcpmate-test")
         );
     }
 }
