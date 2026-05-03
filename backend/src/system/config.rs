@@ -12,7 +12,7 @@ use std::{
 use crate::common::constants::ports;
 
 const LOOPBACK_BIND_HOST: &str = "127.0.0.1";
-const LOOPBACK_URL_HOST: &str = "localhost";
+const LOOPBACK_URL_HOST: &str = "127.0.0.1";
 
 pub fn loopback_bind_host() -> &'static str {
     LOOPBACK_BIND_HOST
@@ -123,8 +123,8 @@ mod tests {
     fn test_runtime_port_config_urls() {
         let config = RuntimePortConfig::new(9080, 9000);
 
-        assert_eq!(config.api_url(), "http://localhost:9080");
-        assert_eq!(config.mcp_http_url(), "http://localhost:9000/mcp");
+        assert_eq!(config.api_url(), "http://127.0.0.1:9080");
+        assert_eq!(config.mcp_http_url(), "http://127.0.0.1:9000/mcp");
     }
 
     #[test]
