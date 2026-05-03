@@ -1,0 +1,104 @@
+# Composite action: Verify sidecar binary architecture
+# Ensures sidecar binaries match the target architecture
+
+name: Verify Sidecar Architecture
+description: Verify that sidecar binaries match the target architecture
+
+inputs:
+  bundle-dir:
+    description: "Path to bundle directory"
+    required: true
+  target-arch:
+    description: "Target architecture (x64, arm64, aarch64)"
+    required: true
+  platform:
+    description: "Platform (linux, macos, windows)"
+    required: true
+  rust-target:
+    description: "Rust target triple (e.g., x86_64-unknown-linux-gnu)"
+    required: true
+  sidecars:
+    description: "Space-separated list of sidecar names to verify"
+    required: false
+    default: "bridge mcpmate-core"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Verify sidecar architecture
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        BUNDLE_DIR="${{ inputs.bundle-dir }}"
+        TARGET_ARCH="${{ inputs.target-arch }}"
+        PLATFORM="${{ inputs.platform }}"
+        RUST_TARGET="${{ inputs.rust-target }}"
+        SIDECARS="${{ inputs.sidecars }}"
+
+        echo "--- Bundle layout ---"
+        find "$BUNDLE_DIR" -type f | head -40 || true
+
+        echo "--- Verifying sidecar architecture ---"
+        for sc in $SIDECARS; do
+          # Platform-specific binary extension
+          if [[ "$PLATFORM" == "windows" ]]; then
+            sc_pattern="${sc}*.exe"
+            sc_name="${sc}.exe"
+          else
+            sc_pattern="${sc}*"
+            sc_name="$sc"
+          fi
+
+          # Find binary in bundle or sidecar output dir
+          bin=$(find "$BUNDLE_DIR" -type f -name "$sc_pattern" ! -name "*.fingerprint" | head -1) || true
+          if [[ -z "$bin" ]]; then
+            echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
+            if [[ "$PLATFORM" == "windows" ]]; then
+              bin="backend/target/sidecars/${sc}-${RUST_TARGET}.exe"
+            else
+              bin="backend/target/sidecars/${sc}-${RUST_TARGET}"
+            fi
+            test -f "$bin" || { echo "FAIL: missing sidecar $sc at $bin"; exit 1; }
+          fi
+
+          echo "$sc found at: $bin"
+          arch_info=$(file "$bin")
+          echo "$sc: $arch_info"
+
+          # Platform-specific architecture validation
+          case "$PLATFORM" in
+            linux)
+              case "$TARGET_ARCH" in
+                arm64|aarch64)
+                  echo "$arch_info" | grep -q "aarch64\|ARM aarch64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; }
+                  ;;
+                x64)
+                  echo "$arch_info" | grep -q "x86-64\|x86_64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; }
+                  ;;
+              esac
+              ;;
+            macos)
+              case "$TARGET_ARCH" in
+                aarch64|arm64)
+                  echo "$arch_info" | grep -q "arm64\|aarch64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; }
+                  ;;
+                x64)
+                  echo "$arch_info" | grep -q "x86_64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; }
+                  ;;
+              esac
+              ;;
+            windows)
+              case "$TARGET_ARCH" in
+                arm64)
+                  echo "$arch_info" | grep -q "ARM64\|aarch64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; }
+                  ;;
+                x64)
+                  echo "$arch_info" | grep -q "x86-64\|Intel" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; }
+                  ;;
+              esac
+              ;;
+          esac
+
+          echo "OK: $sc architecture verified"
+        done

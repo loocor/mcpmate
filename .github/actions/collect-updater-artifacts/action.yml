@@ -1,0 +1,102 @@
+# Composite action: Collect updater artifacts
+# Gathers updater bundles (.app.tar.gz, .nsis.zip) and signatures
+
+name: Collect Updater Artifacts
+description: Collect updater bundles and signatures for release
+
+inputs:
+  bundle-dir:
+    description: "Path to bundle directory (e.g., desktop/src-tauri/target/.../release/bundle)"
+    required: true
+  output-dir:
+    description: "Output directory for collected artifacts"
+    required: true
+  platform:
+    description: "Platform (linux, macos, windows)"
+    required: true
+
+outputs:
+  has-updater:
+    description: "Whether updater artifacts were found (true/false)"
+    value: ${{ steps.collect.outputs.has-updater }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Collect updater artifacts
+      id: collect
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        BUNDLE_DIR="${{ inputs.bundle-dir }}"
+        OUTPUT_DIR="${{ inputs.output-dir }}"
+        PLATFORM="${{ inputs.platform }}"
+
+        mkdir -p "$OUTPUT_DIR"
+        has_updater=false
+
+        echo "--- Collecting updater artifacts ---"
+        echo "Bundle dir: $BUNDLE_DIR"
+        echo "Output dir: $OUTPUT_DIR"
+
+        case "$PLATFORM" in
+          macos)
+            # Collect .app.tar.gz bundles
+            for bundle in "$BUNDLE_DIR/dmg"/*.app.tar.gz "$BUNDLE_DIR"/*.app.tar.gz; do
+              test -f "$bundle" || continue
+              cp "$bundle" "$OUTPUT_DIR/"
+              has_updater=true
+              echo "Collected: $(basename "$bundle")"
+              # Collect signature if exists
+              if [[ -f "${bundle}.sig" ]]; then
+                cp "${bundle}.sig" "$OUTPUT_DIR/"
+                echo "Collected: $(basename "$bundle").sig"
+              fi
+            done
+            ;;
+
+          linux)
+            # Collect .AppImage bundles (updater format)
+            for bundle in "$BUNDLE_DIR/appimage"/*.AppImage "$BUNDLE_DIR"/*.AppImage; do
+              test -f "$bundle" || continue
+              cp "$bundle" "$OUTPUT_DIR/"
+              has_updater=true
+              echo "Collected: $(basename "$bundle")"
+              # Collect signature if exists
+              if [[ -f "${bundle}.sig" ]]; then
+                cp "${bundle}.sig" "$OUTPUT_DIR/"
+                echo "Collected: $(basename "$bundle").sig"
+              fi
+            done
+            ;;
+
+          windows)
+            # Collect .nsis.zip bundles
+            for bundle in "$BUNDLE_DIR/nsis"/*.nsis.zip "$BUNDLE_DIR"/*.nsis.zip; do
+              test -f "$bundle" || continue
+              cp "$bundle" "$OUTPUT_DIR/"
+              has_updater=true
+              echo "Collected: $(basename "$bundle")"
+              # Collect signature if exists
+              if [[ -f "${bundle}.sig" ]]; then
+                cp "${bundle}.sig" "$OUTPUT_DIR/"
+                echo "Collected: $(basename "$bundle").sig"
+              fi
+            done
+            ;;
+
+          *)
+            echo "::error::Unsupported platform: $PLATFORM" >&2
+            exit 1
+            ;;
+        esac
+
+        echo "has-updater=$has_updater" >> "$GITHUB_OUTPUT"
+
+        if [[ "$has_updater" == "true" ]]; then
+          echo "Collected updater artifacts:"
+          ls -lh "$OUTPUT_DIR/"
+        else
+          echo "No updater artifacts found"
+        fi

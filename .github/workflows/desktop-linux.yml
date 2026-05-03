@@ -70,28 +70,10 @@ jobs:
             libwebkit2gtk-4.1-dev \
             patchelf
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup build environment
+        uses: ./.github/actions/setup-desktop-build
         with:
-          targets: ${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            backend -> target
-            desktop/src-tauri -> target
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install Tauri CLI
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: tauri-cli
-          locked: true
+          rust-target: ${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}
 
       - name: Build Linux desktop artifacts
         env:
@@ -105,41 +87,20 @@ jobs:
             --bundles "${BUNDLES}" \
             --output-dir "${GITHUB_WORKSPACE}/desktop-linux-artifacts/${{ matrix.arch }}"
 
-      - name: Smoke test (sidecar arch + bundle format)
-        run: |
-          set -euo pipefail
-          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}/release/bundle"
-          echo "--- bundle layout ---"
-          find "$BUNDLE_DIR" -type f | head -40 || true
-          echo "--- sidecar architecture ---"
-          for sc in bridge mcpmate-core; do
-            bin=$(find "$BUNDLE_DIR" -type f \( -name "$sc" -o -name "${sc}-*" \) ! -name "*.fingerprint" | head -1) || true
-            if [[ -z "$bin" ]]; then
-              echo "WARN: sidecar $sc not in bundle, checking sidecar output dir"
-              bin="backend/target/sidecars/${sc}-${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}"
-              test -f "$bin" || { echo "FAIL: missing sidecar $sc"; exit 1; }
-            fi
-            echo "$sc found at: $bin"
-            arch_info=$(file "$bin")
-            echo "$sc: $arch_info"
-            case "${{ matrix.arch }}" in
-              arm64) echo "$arch_info" | grep -q "aarch64\|ARM aarch64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; } ;;
-              x64)   echo "$arch_info" | grep -q "x86-64\|x86_64" || { echo "FAIL: arch mismatch for $sc: $arch_info"; exit 1; } ;;
-            esac
-          done
-          echo "--- deb format ---"
-          for deb in desktop-linux-artifacts/${{ matrix.arch }}/*.deb; do
-            test -f "$deb" || { echo "SKIP: no .deb"; break; }
-            dpkg-deb --info "$deb" >/dev/null
-            echo "OK: $(basename "$deb")"
-          done
-          echo "--- AppImage format ---"
-          for appimg in desktop-linux-artifacts/${{ matrix.arch }}/*.AppImage; do
-            test -f "$appimg" || { echo "SKIP: no AppImage"; break; }
-            head -c 4 "$appimg" | od -An -tx1 | grep -q "7f 45 4c 46" || { echo "FAIL: not an ELF"; exit 1; }
-            echo "OK: $(basename "$appimg")"
-          done
-          echo "SMOKE OK"
+      - name: Smoke test (sidecar arch)
+        uses: ./.github/actions/verify-sidecar-arch
+        with:
+          bundle-dir: "desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}/release/bundle"
+          target-arch: ${{ matrix.arch }}
+          platform: linux
+          rust-target: ${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}
+
+      - name: Verify bundle format
+        uses: ./.github/actions/verify-bundle-format
+        with:
+          artifacts-dir: "desktop-linux-artifacts/${{ matrix.arch }}"
+          platform: linux
+          bundle-types: "appimage,deb"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v6

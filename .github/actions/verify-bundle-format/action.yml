@@ -1,0 +1,127 @@
+# Composite action: Verify bundle format
+# Validates platform-specific bundle formats (deb, AppImage, dmg, msi)
+
+name: Verify Bundle Format
+description: Verify platform-specific bundle format integrity
+
+inputs:
+  artifacts-dir:
+    description: "Path to artifacts directory"
+    required: true
+  platform:
+    description: "Platform (linux, macos, windows)"
+    required: true
+  bundle-types:
+    description: "Comma-separated list of bundle types to verify"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Verify bundle format
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        ARTIFACTS_DIR="${{ inputs.artifacts-dir }}"
+        PLATFORM="${{ inputs.platform }}"
+        BUNDLE_TYPES="${{ inputs.bundle-types }}"
+
+        echo "--- Verifying bundle formats ---"
+        echo "Platform: $PLATFORM"
+        echo "Bundle types: $BUNDLE_TYPES"
+
+        verify_passed=true
+
+        # Split comma-separated bundle types
+        IFS=',' read -ra TYPES <<< "$BUNDLE_TYPES"
+
+        for bundle_type in "${TYPES[@]}"; do
+          bundle_type=$(echo "$bundle_type" | tr -d ' ')  # trim whitespace
+
+          case "$PLATFORM:$bundle_type" in
+            linux:deb)
+              echo "Verifying .deb files..."
+              deb_count=0
+              for deb in "$ARTIFACTS_DIR"/*.deb; do
+                test -f "$deb" || { echo "SKIP: no .deb files found"; break; }
+                if dpkg-deb --info "$deb" >/dev/null 2>&1; then
+                  echo "OK: $(basename "$deb")"
+                  ((deb_count++))
+                else
+                  echo "FAIL: invalid .deb: $(basename "$deb")"
+                  verify_passed=false
+                fi
+              done
+              if [[ $deb_count -eq 0 ]]; then
+                echo "WARN: no .deb files to verify"
+              fi
+              ;;
+
+            linux:appimage)
+              echo "Verifying .AppImage files..."
+              appimage_count=0
+              for appimg in "$ARTIFACTS_DIR"/*.AppImage; do
+                test -f "$appimg" || { echo "SKIP: no .AppImage files found"; break; }
+                if head -c 4 "$appimg" | od -An -tx1 | grep -q "7f 45 4c 46"; then
+                  echo "OK: $(basename "$appimg")"
+                  ((appimage_count++))
+                else
+                  echo "FAIL: not an ELF: $(basename "$appimg")"
+                  verify_passed=false
+                fi
+              done
+              if [[ $appimage_count -eq 0 ]]; then
+                echo "WARN: no .AppImage files to verify"
+              fi
+              ;;
+
+            macos:dmg)
+              echo "Verifying .dmg files..."
+              dmg_count=0
+              for dmg in "$ARTIFACTS_DIR"/*.dmg; do
+                test -f "$dmg" || { echo "SKIP: no .dmg files found"; break; }
+                if hdiutil imageinfo "$dmg" >/dev/null 2>&1; then
+                  echo "OK: $(basename "$dmg")"
+                  ((dmg_count++))
+                else
+                  echo "FAIL: invalid .dmg: $(basename "$dmg")"
+                  verify_passed=false
+                fi
+              done
+              if [[ $dmg_count -eq 0 ]]; then
+                echo "WARN: no .dmg files to verify"
+              fi
+              ;;
+
+            windows:msi)
+              echo "Verifying .msi files..."
+              msi_count=0
+              for msi in "$ARTIFACTS_DIR"/*.msi; do
+                test -f "$msi" || { echo "SKIP: no .msi files found"; break; }
+                magic=$(head -c 8 "$msi" | od -An -tx1 | tr -d ' ')
+                if echo "$magic" | grep -q "d0cf11e0"; then
+                  echo "OK: $(basename "$msi")"
+                  ((msi_count++))
+                else
+                  echo "FAIL: not an OLE2/MSI: $(basename "$msi")"
+                  verify_passed=false
+                fi
+              done
+              if [[ $msi_count -eq 0 ]]; then
+                echo "WARN: no .msi files to verify"
+              fi
+              ;;
+
+            *)
+              echo "WARN: unknown bundle type '$bundle_type' for platform '$PLATFORM'"
+              ;;
+          esac
+        done
+
+        if [[ "$verify_passed" == "false" ]]; then
+          echo "FAIL: bundle format verification failed"
+          exit 1
+        fi
+
+        echo "All bundle format verifications passed"

@@ -1,0 +1,48 @@
+# Composite action: Inject version into tauri.conf.json
+# Handles version extraction from tag or release input
+
+name: Inject Version
+description: Extract version from git tag or workflow input and inject into tauri.conf.json
+
+inputs:
+  release-tag:
+    description: "Release tag (e.g., v0.1.0). If empty, uses github.ref_name"
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: "Extracted version (without v prefix)"
+    value: ${{ steps.inject.outputs.version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Inject version into tauri.conf.json
+      id: inject
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Determine release tag
+        RELEASE_TAG="${{ inputs.release-tag }}"
+        if [[ -z "$RELEASE_TAG" ]]; then
+          RELEASE_TAG="${{ github.ref_name }}"
+        fi
+
+        # Extract version (remove v prefix and any pre-release suffix)
+        VERSION="${RELEASE_TAG#v}"
+        VERSION="${VERSION%%-*}"
+
+        # Update tauri.conf.json
+        CONF="desktop/src-tauri/tauri.conf.json"
+        if [[ ! -f "$CONF" ]]; then
+          echo "::error::tauri.conf.json not found at $CONF" >&2
+          exit 1
+        fi
+
+        jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
+        mv "$CONF.tmp" "$CONF"
+
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "tauri.conf.json version → $VERSION"
