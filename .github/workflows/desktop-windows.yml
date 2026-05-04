@@ -38,6 +38,9 @@ concurrency:
   group: desktop-windows-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CI: "true"
 
@@ -55,39 +58,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup build environment
+        uses: ./.github/actions/setup-desktop-build
         with:
-          targets: ${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}
+          rust-target: ${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}
 
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            backend -> target
-            desktop/src-tauri -> target
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install Tauri CLI
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: tauri-cli
-          locked: true
-
-      - name: Inject MSI-safe app version
-        shell: bash
-        run: |
-          set -euo pipefail
-          CONF="desktop/src-tauri/tauri.conf.json"
-          VERSION=$(jq -r '.version' "$CONF")
-          VERSION="${VERSION%%-*}"
-          jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"
-          mv "$CONF.tmp" "$CONF"
-          echo "tauri.conf.json version → $VERSION"
+      - name: Inject app version
+        uses: ./.github/actions/inject-version
 
       - name: Build Windows desktop artifacts
         shell: bash
