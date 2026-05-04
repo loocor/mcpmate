@@ -72,17 +72,34 @@ runs:
             ;;
 
           windows)
-            # Collect .nsis.zip bundles
+            # Collect .nsis.zip bundles + signatures
             for bundle in "$BUNDLE_DIR/nsis"/*.nsis.zip "$BUNDLE_DIR"/*.nsis.zip; do
               test -f "$bundle" || continue
               cp "$bundle" "$OUTPUT_DIR/"
               has_updater=true
               echo "Collected: $(basename "$bundle")"
-              # Collect signature if exists
               if [[ -f "${bundle}.sig" ]]; then
                 cp "${bundle}.sig" "$OUTPUT_DIR/"
                 echo "Collected: $(basename "$bundle").sig"
               fi
+            done
+            # Collect .msi.zip bundles + signatures (MSI updater format)
+            for bundle in "$BUNDLE_DIR/msi"/*.msi.zip "$BUNDLE_DIR"/*.msi.zip; do
+              test -f "$bundle" || continue
+              cp "$bundle" "$OUTPUT_DIR/"
+              has_updater=true
+              echo "Collected: $(basename "$bundle")"
+              if [[ -f "${bundle}.sig" ]]; then
+                cp "${bundle}.sig" "$OUTPUT_DIR/"
+                echo "Collected: $(basename "$bundle").sig"
+              fi
+            done
+            # Collect standalone .msi.sig files (direct MSI signatures)
+            for sig in "$BUNDLE_DIR/msi"/*.msi.sig "$BUNDLE_DIR"/*.msi.sig; do
+              test -f "$sig" || continue
+              cp "$sig" "$OUTPUT_DIR/"
+              has_updater=true
+              echo "Collected: $(basename "$sig")"
             done
             ;;
 
