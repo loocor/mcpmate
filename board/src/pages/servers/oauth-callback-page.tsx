@@ -48,7 +48,7 @@ export function OAuthCallbackPage() {
 			const targetOrigin = window.location.origin;
 
 			runSafely(() => {
-				window.localStorage.setItem("mcpmate.oauth.callback", JSON.stringify(payload));
+				window.sessionStorage.setItem("mcpmate.oauth.callback", JSON.stringify(payload));
 			});
 
 			runSafely(() => {
