@@ -1087,6 +1087,7 @@ export interface ClientImportSummary {
   skipped_count: number;
   failed_count: number;
   errors?: Record<string, string> | null;
+  skipped_servers?: SkippedServer[] | null;
 }
 
 export interface ClientConfigImportItem {

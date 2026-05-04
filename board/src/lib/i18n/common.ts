@@ -34,6 +34,21 @@ export const commonTranslations = {
 			recent: "Most Recently Hidden",
 			name: "Name (A-Z)",
 		},
+		serverImport: {
+			nameList: {
+				more: "+{{count}} more",
+			},
+			queryLabels: {
+				existing: "Existing query",
+				incoming: "Incoming query",
+			},
+			skippedReasons: {
+				duplicateName: "Duplicate name",
+				duplicateFingerprint: "Duplicate fingerprint",
+				urlQueryMismatch: "URL query mismatch",
+				unknown: "Unknown reason",
+			},
+		},
 		pagination: {
 			first: "First",
 			previous: "Previous",
@@ -42,15 +57,12 @@ export const commonTranslations = {
 			perPage: "Per page",
 			page: "Page {{page}}",
 			showing: "Showing {{start}}-{{end}} items",
-			/** When the backend reports total item count */
 			showingOfTotal: "Showing {{start}}-{{end}} of {{total}} items",
 			showingEmpty: "No items on this page",
-			/** Left summary when total count is known (no per-page range) */
 			totalItems: "Total {{total}} items",
 			summary: "{{start}}–{{end}} · {{page}}",
 			summaryTitle: "Items {{start}}–{{end}}, page {{page}}",
 			pageWord: "Page",
-			/** Shown between page number and “of total” (empty in English) */
 			pageSuffix: "",
 			ofTotal: "of {{total}}",
 			goToPage: "Go to page",
@@ -90,6 +102,21 @@ export const commonTranslations = {
 		sort: {
 			recent: "最近隐藏时间",
 			name: "名称 (A-Z)",
+		},
+		serverImport: {
+			nameList: {
+				more: "另有 {{count}} 项",
+			},
+			queryLabels: {
+				existing: "现有查询参数",
+				incoming: "传入查询参数",
+			},
+			skippedReasons: {
+				duplicateName: "名称重复",
+				duplicateFingerprint: "指纹重复",
+				urlQueryMismatch: "URL 查询参数不匹配",
+				unknown: "未知原因",
+			},
 		},
 		pagination: {
 			first: "首页",
@@ -144,6 +171,21 @@ export const commonTranslations = {
 		sort: {
 			recent: "最近非表示",
 			name: "名前 (A-Z)",
+		},
+		serverImport: {
+			nameList: {
+				more: "他 {{count}} 件",
+			},
+			queryLabels: {
+				existing: "既存のクエリ",
+				incoming: "入力クエリ",
+			},
+			skippedReasons: {
+				duplicateName: "名前の重複",
+				duplicateFingerprint: "フィンガープリントの重複",
+				urlQueryMismatch: "URL クエリ不一致",
+				unknown: "不明な理由",
+			},
 		},
 		pagination: {
 			first: "最初",

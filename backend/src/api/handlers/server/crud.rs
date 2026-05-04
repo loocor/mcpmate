@@ -14,8 +14,7 @@ use crate::{
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
     config::server::{
-        ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import::server_meta_from_payload,
-        import_batch,
+        ConflictPolicy, ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch,
     },
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
@@ -710,21 +709,7 @@ pub async fn import_servers(
 }
 
 fn skipped_server_to_api(source: SkippedServer) -> SkippedServerData {
-    let (reason, existing_query, incoming_query) = match source.reason {
-        SkipReason::DuplicateName => ("duplicate_name".to_string(), None, None),
-        SkipReason::DuplicateFingerprint => ("duplicate_fingerprint".to_string(), None, None),
-        SkipReason::UrlQueryMismatch {
-            existing_query,
-            incoming_query,
-        } => ("url_query_mismatch".to_string(), existing_query, incoming_query),
-    };
-
-    SkippedServerData {
-        name: source.name,
-        reason,
-        existing_query,
-        incoming_query,
-    }
+    SkippedServerData::from(source)
 }
 
 /// Disconnect server instances from connection pool

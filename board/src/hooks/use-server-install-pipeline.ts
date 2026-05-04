@@ -40,7 +40,7 @@ interface PreviewState {
 export function useServerInstallPipeline(
 	opts: UseServerInstallPipelineOptions = {},
 ) {
-	const { t } = useTranslation("servers");
+	const { t, i18n } = useTranslation("servers");
 	const [isDrawerOpen, setDrawerOpen] = useState(false);
 	const [drafts, setDrafts] = useState<ServerInstallDraft[]>([]);
 	const [source, setSource] = useState<InstallSource | null>(null);
@@ -216,7 +216,8 @@ export function useServerInstallPipeline(
 	);
 
 	const performDryRun = useCallback(async () => {
-		if (!drafts.length) return;
+		void i18n.language;
+			if (!drafts.length) return;
 		try {
 			setDryRunLoading(true);
 			setDryRunError(null);
@@ -233,8 +234,8 @@ export function useServerInstallPipeline(
 			const stats = extractImportStats(result);
 			setDryRunStats(stats);
 
-			const skipSummary = summarizeSkipped(stats.skippedDetails);
-			const skipFallback = formatNameList(stats.skippedServers);
+			const skipSummary = summarizeSkipped(stats.skippedDetails, t);
+			const skipFallback = formatNameList(stats.skippedServers, t);
 			if (stats.skippedCount > 0) {
 				const baseKey =
 					stats.skippedCount === 1
@@ -256,7 +257,7 @@ export function useServerInstallPipeline(
 
 			// Check if dry-run indicates any issues
 			if (stats.failedCount > 0) {
-				const failedNames = formatNameList(stats.failedServers);
+				const failedNames = formatNameList(stats.failedServers, t);
 				setDryRunError(
 					t("wizard.result.failedSummary", {
 						count: stats.failedCount,
@@ -283,10 +284,11 @@ export function useServerInstallPipeline(
 		} finally {
 			setDryRunLoading(false);
 		}
-	}, [drafts, buildImportPayload, targetProfileId]);
+	}, [drafts, buildImportPayload, targetProfileId, t, i18n.language]);
 
 	const confirmImport = useCallback(async () => {
-		if (!drafts.length) return false;
+		void i18n.language;
+			if (!drafts.length) return false;
 		try {
 			setImporting(true);
 			setCurrentStep("result");
@@ -306,8 +308,8 @@ export function useServerInstallPipeline(
 				const stats = extractImportStats(result);
 				const { importedCount, skippedCount, skippedServers, skippedDetails } =
 					stats;
-				const skippedSummary = summarizeSkipped(skippedDetails);
-				const fallbackList = formatNameList(skippedServers);
+				const skippedSummary = summarizeSkipped(skippedDetails, t);
+				const fallbackList = formatNameList(skippedServers, t);
 				const skippedDescription = skippedSummary
 					? skippedSummary
 					: skippedCount > 0
@@ -346,7 +348,7 @@ export function useServerInstallPipeline(
 		} finally {
 			setImporting(false);
 		}
-	}, [drafts, buildImportPayload, opts, targetProfileId]);
+	}, [drafts, buildImportPayload, opts, targetProfileId, t, i18n.language]);
 
 	const state = useMemo(
 		() => ({
