@@ -99,6 +99,7 @@ pub enum AuditAction {
     RuntimeCacheReset,
     // Audit configuration
     AuditPolicyUpdate,
+    InspectorTimeoutUpdate,
 }
 
 impl AuditAction {
@@ -151,7 +152,8 @@ impl AuditAction {
             | Self::RuntimeCacheReset
             | Self::AuditPolicyUpdate
             | Self::OnboardingPolicyUpdate
-            | Self::FirstContactBehaviorUpdate => AuditCategory::Management,
+            | Self::FirstContactBehaviorUpdate
+            | Self::InspectorTimeoutUpdate => AuditCategory::Management,
             Self::CapabilityGrant | Self::CapabilityRevoke => AuditCategory::ProfileConfig,
             Self::ProfileServerEnable | Self::ProfileServerDisable | Self::ProfileServerRemove => {
                 AuditCategory::ProfileConfig

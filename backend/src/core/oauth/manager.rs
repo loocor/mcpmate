@@ -286,17 +286,10 @@ impl OAuthManager {
         }
 
         {
-            let endpoint_url = Url::parse(&config.token_endpoint)
-                .context("Invalid OAuth token_endpoint URL")?;
-            let is_loopback = matches!(
-                endpoint_url.host_str(),
-                Some("localhost" | "127.0.0.1" | "::1")
-            );
+            let endpoint_url = Url::parse(&config.token_endpoint).context("Invalid OAuth token_endpoint URL")?;
+            let is_loopback = matches!(endpoint_url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
             if endpoint_url.scheme() != "https" && !is_loopback {
-                bail!(
-                    "OAuth token endpoint must use HTTPS: {}",
-                    config.token_endpoint
-                );
+                bail!("OAuth token endpoint must use HTTPS: {}", config.token_endpoint);
             }
         }
 

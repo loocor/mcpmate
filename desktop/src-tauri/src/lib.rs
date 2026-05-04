@@ -26,7 +26,6 @@ mod core_service;
 mod deep_link;
 mod oauth_callback_access;
 mod runtime_env;
-mod runtime_ports;
 mod shell;
 mod source_config;
 mod utils;
@@ -37,6 +36,7 @@ use core_service::{
 };
 use deep_link::ImportServerDeepLinkPayload;
 use mcpmate::system::config::api_url_from_port;
+use mcpmate::system::settings::{get_settings_sync_for_paths, set_settings_sync_for_paths};
 use oauth_callback_access::OAuthCallbackAccessState;
 use shell::{ShellPreferences, ShellState};
 use source_config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
@@ -880,8 +880,12 @@ async fn mcp_shell_apply_core_source(
     config.remote.base_url = payload.remote_base_url.trim().to_string();
     config.apply_constraints();
 
+    let mut settings = get_settings_sync_for_paths(global_paths()).map_err(|err| err.to_string())?;
+    settings.api_port = config.localhost.api_port;
+    settings.mcp_port = config.localhost.mcp_port;
+    set_settings_sync_for_paths(global_paths(), &settings).map_err(|err| err.to_string())?;
+
     DesktopCoreSourceConfig::save(global_paths(), &config).map_err(|err| err.to_string())?;
-    persist_localhost_ports(&config);
 
     handle_localhost_source_transition(managed_state.inner(), &previous, &config).await;
 
@@ -1485,17 +1489,6 @@ async fn stop_desktop_managed_core(
     }
 
     read_desktop_managed_status(state, config).await
-}
-
-fn persist_localhost_ports(config: &DesktopCoreSourceConfig) {
-    let persisted = runtime_ports::PersistedRuntimePorts {
-        api_port: config.localhost.api_port,
-        mcp_port: config.localhost.mcp_port,
-    };
-
-    if let Err(err) = runtime_ports::PersistedRuntimePorts::save(global_paths(), &persisted) {
-        warn!(error = %err, "Failed to persist localhost core ports");
-    }
 }
 
 fn try_use_default_paths() -> Result<MCPMatePaths> {

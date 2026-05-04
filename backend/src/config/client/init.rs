@@ -11,7 +11,6 @@ const DEFAULT_CONNECTION_MODE: &str = "local_config_detected";
 const DEFAULT_GOVERNANCE_KIND: &str = "passive";
 pub(crate) const CLIENT_RUNTIME_SETTINGS_TABLE: &str = "client_runtime_settings";
 pub(crate) const CLIENT_TEMPLATE_RUNTIME_TABLE: &str = "client_template_runtime";
-pub(crate) const FIRST_CONTACT_BEHAVIOR_SETTING_KEY: &str = "first_contact_behavior";
 pub(crate) const DEFAULT_CONFIG_MODE_SETTING_KEY: &str = "default_config_mode";
 pub(crate) const DEFAULT_CONFIG_MODE: &str = "unify";
 const OPTIONAL_CONFIG_MODE_SCHEMA_FRAGMENT: &str =
@@ -286,36 +285,18 @@ WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'a
 }
 
 pub async fn resolve_default_client_config_mode(pool: &Pool<Sqlite>) -> Result<String> {
-    let mode: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT value FROM {table} WHERE key = ?",
-        table = CLIENT_RUNTIME_SETTINGS_TABLE,
-    ))
-    .bind(DEFAULT_CONFIG_MODE_SETTING_KEY)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(mode.unwrap_or_else(|| DEFAULT_CONFIG_MODE.to_string()))
+    crate::system::settings::get_default_config_mode(pool)
+        .await
+        .map_err(|err| anyhow::anyhow!(err.to_string()))
 }
 
 pub async fn set_default_client_config_mode(
     pool: &Pool<Sqlite>,
     mode: &str,
 ) -> Result<()> {
-    anyhow::ensure!(
-        matches!(mode, "unify" | "hosted" | "transparent"),
-        "invalid default client config mode: {mode}"
-    );
-
-    sqlx::query(&format!(
-        "INSERT INTO {table} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        table = CLIENT_RUNTIME_SETTINGS_TABLE,
-    ))
-    .bind(DEFAULT_CONFIG_MODE_SETTING_KEY)
-    .bind(mode)
-    .execute(pool)
-    .await?;
-
-    Ok(())
+    crate::system::settings::set_default_config_mode(pool, mode)
+        .await
+        .map_err(|err| anyhow::anyhow!(err.to_string()))
 }
 
 async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> Result<()> {
@@ -602,104 +583,23 @@ async fn ensure_column(
     }
 }
 
-pub async fn initialize_system_settings_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Initializing system_settings table");
+/// Ensures the on-disk system settings store exists (JSON). Does not create or touch any SQLite
+/// `system_settings` table; schema changes for existing installs are handled out-of-band.
+pub async fn initialize_system_settings(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Initializing system settings store");
 
-    sqlx::query(&format!(
-        r#"
-        CREATE TABLE IF NOT EXISTS {table} (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        "#,
-        table = tables::SYSTEM_SETTINGS,
-    ))
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create {} table: {}", tables::SYSTEM_SETTINGS, e);
-        anyhow::anyhow!("Failed to create {} table: {}", tables::SYSTEM_SETTINGS, e)
-    })?;
-
-    sqlx::query(&format!(
-        r#"
-        INSERT OR IGNORE INTO {table} (key, value)
-        VALUES ('onboarding_policy', 'auto_manage')
-        "#,
-        table = tables::SYSTEM_SETTINGS,
-    ))
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to insert default onboarding_policy: {}", e);
-        anyhow::anyhow!("Failed to insert default onboarding_policy: {}", e)
-    })?;
-
-    let existing_first_contact_behavior = sqlx::query_scalar::<_, String>(&format!(
-        r#"SELECT value FROM {table} WHERE key = ?"#,
-        table = tables::SYSTEM_SETTINGS,
-    ))
-    .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to read first_contact_behavior: {}", e);
-        anyhow::anyhow!("Failed to read first_contact_behavior: {}", e)
-    })?;
-
-    if existing_first_contact_behavior.is_none() {
-        let onboarding_policy = sqlx::query_scalar::<_, String>(&format!(
-            r#"SELECT value FROM {table} WHERE key = 'onboarding_policy'"#,
-            table = tables::SYSTEM_SETTINGS,
-        ))
-        .fetch_optional(pool)
+    crate::system::settings::initialize_settings_file(pool)
         .await
-        .map_err(|e| {
-            tracing::error!(
-                "Failed to read onboarding_policy for first_contact_behavior migration: {}",
-                e
-            );
-            anyhow::anyhow!(
-                "Failed to read onboarding_policy for first_contact_behavior migration: {}",
-                e
-            )
-        })?;
-
-        let initial_behavior = match onboarding_policy.as_deref() {
-            Some("require_approval") => "review",
-            Some("manual") => "deny",
-            Some("auto_manage") => "review",
-            Some(_) | None => "review",
-        };
-
-        sqlx::query(&format!(
-            r#"
-            INSERT INTO {table} (key, value)
-            VALUES (?, ?)
-            "#,
-            table = tables::SYSTEM_SETTINGS,
-        ))
-        .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
-        .bind(initial_behavior)
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to insert default first_contact_behavior: {}", e);
-            anyhow::anyhow!("Failed to insert default first_contact_behavior: {}", e)
-        })?;
-    }
-
-    tracing::debug!("{} table initialized", tables::SYSTEM_SETTINGS);
-    Ok(())
+        .map_err(|err| anyhow::anyhow!(err.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_CONTACT_BEHAVIOR_SETTING_KEY, initialize_client_table, initialize_system_settings_table,
-        resolve_default_client_config_mode, set_default_client_config_mode,
+        initialize_client_table, initialize_system_settings, resolve_default_client_config_mode,
+        set_default_client_config_mode,
     };
+    use crate::clients::models::FirstContactBehavior;
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_pool() -> sqlx::Pool<sqlx::Sqlite> {
@@ -712,9 +612,9 @@ mod tests {
         initialize_client_table(&pool)
             .await
             .expect("failed to initialize client tables");
-        initialize_system_settings_table(&pool)
+        initialize_system_settings(&pool)
             .await
-            .expect("failed to initialize system settings table");
+            .expect("failed to initialize system settings store");
 
         pool
     }
@@ -756,30 +656,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn first_contact_behavior_backfills_from_existing_onboarding_policy() {
+    async fn initialize_system_settings_file_creates_default_behavior() {
         let pool = setup_pool().await;
 
-        sqlx::query("DELETE FROM system_settings WHERE key = ?")
-            .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
-            .execute(&pool)
+        let settings = crate::system::settings::get_settings(&pool)
             .await
-            .expect("delete first_contact_behavior");
+            .expect("failed to read system settings");
 
-        sqlx::query("UPDATE system_settings SET value = 'manual' WHERE key = 'onboarding_policy'")
-            .execute(&pool)
-            .await
-            .expect("update onboarding policy");
-
-        initialize_system_settings_table(&pool)
-            .await
-            .expect("reinitialize system settings");
-
-        let behavior = sqlx::query_scalar::<_, String>("SELECT value FROM system_settings WHERE key = ?")
-            .bind(FIRST_CONTACT_BEHAVIOR_SETTING_KEY)
-            .fetch_one(&pool)
-            .await
-            .expect("fetch first_contact_behavior");
-
-        assert_eq!(behavior, "deny");
+        assert_eq!(settings.first_contact_behavior, FirstContactBehavior::Review);
+        assert_eq!(settings.api_port, crate::common::constants::ports::API_PORT);
+        assert_eq!(settings.mcp_port, crate::common::constants::ports::MCP_PORT);
+        assert_eq!(settings.inspector_timeout_ms, 8_000);
+        assert_eq!(settings.default_config_mode, "unify");
     }
 }
