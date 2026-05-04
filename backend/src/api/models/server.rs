@@ -2,6 +2,7 @@
 // Contains data models for MCP server endpoints
 
 use crate::common::server::ServerType;
+use crate::config::server::import::{SkipReason, SkippedServer};
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -890,6 +891,26 @@ pub struct SkippedServerData {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Incoming query string (after filtering)")]
     pub incoming_query: Option<String>,
+}
+
+impl From<SkippedServer> for SkippedServerData {
+    fn from(source: SkippedServer) -> Self {
+        let (reason, existing_query, incoming_query) = match source.reason {
+            SkipReason::DuplicateName => ("duplicate_name".to_string(), None, None),
+            SkipReason::DuplicateFingerprint => ("duplicate_fingerprint".to_string(), None, None),
+            SkipReason::UrlQueryMismatch {
+                existing_query,
+                incoming_query,
+            } => ("url_query_mismatch".to_string(), existing_query, incoming_query),
+        };
+
+        Self {
+            name: source.name,
+            reason,
+            existing_query,
+            incoming_query,
+        }
+    }
 }
 
 // ==========================================

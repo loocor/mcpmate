@@ -1,5 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { extractImportStats, serversApi } from "../lib/api";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
@@ -69,6 +70,7 @@ export function ServerImportDrawer({
 	const [text, setText] = useState<string>(sample());
 	const [preview, setPreview] = useState<PreviewResult | null>(null);
 	const [importing, setImporting] = useState(false);
+	const { t } = useTranslation();
 
 	useEffect(() => {
 		if (!open) {
@@ -176,8 +178,8 @@ export function ServerImportDrawer({
 			if (didSucceed) {
 				const { importedCount, skippedCount, skippedServers, skippedDetails } =
 					stats;
-				const skippedSummary = summarizeSkipped(skippedDetails);
-				const fallbackList = formatNameList(skippedServers);
+				const skippedSummary = summarizeSkipped(skippedDetails, t);
+				const fallbackList = formatNameList(skippedServers, t);
 				const skippedDescription = skippedSummary
 					? skippedSummary
 					: skippedCount > 0
