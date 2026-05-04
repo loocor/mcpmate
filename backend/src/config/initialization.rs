@@ -1,7 +1,7 @@
 // Database initialization coordinator for MCPMate
 // Coordinates initialization of all database modules
 
-use crate::config::client::init::{initialize_client_table, initialize_system_settings_table};
+use crate::config::client::init::{initialize_client_table, initialize_system_settings};
 use crate::config::profile::init::initialize_profile_tables;
 use crate::config::registry::init::initialize_registry_cache_table;
 use crate::config::server::init::initialize_server_tables;
@@ -23,7 +23,7 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
 
     // Initialize system settings table
     tracing::debug!("Initializing system settings table");
-    initialize_system_settings_table(pool).await?;
+    initialize_system_settings(pool).await?;
 
     // Initialize profile-related tables
     tracing::debug!("Initializing profile-related tables");

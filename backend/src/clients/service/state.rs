@@ -174,69 +174,37 @@ impl ClientConfigService {
     }
 
     pub async fn get_onboarding_policy(&self) -> ConfigResult<crate::clients::models::OnboardingPolicy> {
-        Ok(match self.get_first_contact_behavior().await? {
-            FirstContactBehavior::Allow => crate::clients::models::OnboardingPolicy::AutoManage,
-            FirstContactBehavior::Review => crate::clients::models::OnboardingPolicy::RequireApproval,
-            FirstContactBehavior::Deny => crate::clients::models::OnboardingPolicy::Manual,
-        })
+        let behavior = crate::system::settings::get_first_contact_behavior(&self.db_pool).await?;
+        Ok(crate::system::settings::onboarding_policy_from_behavior(behavior))
     }
 
     pub async fn get_first_contact_behavior(&self) -> ConfigResult<FirstContactBehavior> {
-        let result: Option<(String,)> =
-            sqlx::query_as("SELECT value FROM system_settings WHERE key = 'first_contact_behavior'")
-                .fetch_optional(&*self.db_pool)
-                .await
-                .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        match result {
-            Some((value,)) => value
-                .parse()
-                .map_err(|_| ConfigError::DataAccessError("Invalid first_contact_behavior value".to_string())),
-            None => Ok(FirstContactBehavior::default()),
-        }
+        crate::system::settings::get_first_contact_behavior(&self.db_pool).await
     }
 
     pub async fn set_first_contact_behavior(
         &self,
         behavior: FirstContactBehavior,
     ) -> ConfigResult<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO system_settings (key, value, updated_at)
-            VALUES ('first_contact_behavior', ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(behavior.as_str())
-        .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        crate::system::settings::set_first_contact_behavior(&self.db_pool, behavior).await
+    }
 
-        Ok(())
+    pub async fn get_inspector_timeout_ms(&self) -> ConfigResult<u64> {
+        crate::system::settings::get_inspector_timeout_ms(&self.db_pool).await
+    }
+
+    pub async fn set_inspector_timeout_ms(
+        &self,
+        timeout_ms: u64,
+    ) -> ConfigResult<()> {
+        crate::system::settings::set_inspector_timeout_ms(&self.db_pool, timeout_ms).await
     }
 
     pub async fn set_onboarding_policy(
         &self,
         policy: crate::clients::models::OnboardingPolicy,
     ) -> ConfigResult<()> {
-        let behavior = match policy {
-            crate::clients::models::OnboardingPolicy::AutoManage => FirstContactBehavior::Allow,
-            crate::clients::models::OnboardingPolicy::RequireApproval => FirstContactBehavior::Review,
-            crate::clients::models::OnboardingPolicy::Manual => FirstContactBehavior::Deny,
-        };
-
-        sqlx::query(
-            r#"
-            INSERT INTO system_settings (key, value, updated_at)
-            VALUES ('onboarding_policy', ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(policy.as_str())
-        .execute(&*self.db_pool)
-        .await
-        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
+        let behavior = crate::system::settings::behavior_from_onboarding_policy(policy);
         self.set_first_contact_behavior(behavior).await
     }
 
@@ -552,7 +520,7 @@ mod tests {
     use crate::clients::models::OnboardingPolicy;
     use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
     use crate::config::{
-        client::init::{initialize_client_table, initialize_system_settings_table},
+        client::init::{initialize_client_table, initialize_system_settings},
         profile::init::initialize_profile_tables,
         server::init::initialize_server_tables,
     };
@@ -577,7 +545,7 @@ mod tests {
             .await
             .expect("init profile tables");
         initialize_client_table(pool.as_ref()).await.expect("init client table");
-        initialize_system_settings_table(pool.as_ref())
+        initialize_system_settings(pool.as_ref())
             .await
             .expect("init system settings table");
 
@@ -876,7 +844,10 @@ mod tests {
             .expect_err("alias observed transport should be rejected");
 
         let message = error.to_string();
-        assert!(message.contains("Invalid") || message.contains("transport"), "unexpected error: {message}");
+        assert!(
+            message.contains("Invalid") || message.contains("transport"),
+            "unexpected error: {message}"
+        );
     }
 
     #[tokio::test]

@@ -81,7 +81,7 @@ export const settingsTranslations = {
       serviceActionFailedTitle: "Could not manage local core service",
       portsReloadFailedTitle: "Could not load ports from shell",
       portsReloadFailedDescription:
-        "Showing cached values if any. Check the desktop app is healthy and try Reload again.",
+        "Check the desktop app is healthy and try Reload again.",
       localhostRunning:
         "The local service is running. In Desktop mode it stops only when MCPMate truly quits.",
       localhostStopped:
@@ -391,7 +391,7 @@ export const settingsTranslations = {
       serviceActionFailedTitle: "无法管理本地 Core 服务",
       portsReloadFailedTitle: "无法从桌面壳读取端口",
       portsReloadFailedDescription:
-        "如有缓存将显示缓存值。请确认应用正常后再次点击重新加载。",
+        "请确认应用正常后再次点击重新加载。",
       localhostRunning:
         "本地服务正在运行；在 Desktop 模式下，只有真正退出 MCPMate 才会停止。",
       localhostStopped:
@@ -682,7 +682,7 @@ export const settingsTranslations = {
       serviceActionFailedTitle: "Local core サービスを管理できませんでした",
       portsReloadFailedTitle: "シェルからポートを読み込めませんでした",
       portsReloadFailedDescription:
-        "キャッシュがあればそれを表示します。アプリの状態を確認のうえ、再読み込みを試してください。",
+        "アプリの状態を確認のうえ、再読み込みを試してください。",
       localhostRunning:
         "ローカルサービスは実行中です。Desktop モードでは MCPMate を本当に終了したときだけ停止します。",
       localhostStopped:

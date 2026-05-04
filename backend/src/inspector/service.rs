@@ -384,6 +384,11 @@ pub async fn close_session(
     }
 }
 
+async fn get_inspector_timeout_default(state: &Arc<AppState>) -> Option<u64> {
+    let db = state.database.as_ref()?;
+    crate::system::settings::get_inspector_timeout_ms(&db.pool).await.ok()
+}
+
 async fn start_tool_call_internal(
     state: &Arc<AppState>,
     req: &InspectorToolCallReq,
@@ -392,7 +397,12 @@ async fn start_tool_call_internal(
         ensure_native_allowed()?;
     }
 
-    let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(60_000));
+    let timeout = if let Some(timeout_ms) = req.timeout_ms {
+        Duration::from_millis(timeout_ms)
+    } else {
+        let default_ms = get_inspector_timeout_default(state).await.unwrap_or(60_000);
+        Duration::from_millis(default_ms)
+    };
 
     let active_session =
         if let Some(session_id) = req.session_id.as_ref() {

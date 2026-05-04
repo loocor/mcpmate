@@ -159,6 +159,7 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::RuntimeCacheReset
         | AuditAction::CapabilityGrant
         | AuditAction::CapabilityRevoke
-        | AuditAction::AuditPolicyUpdate => "",
+        | AuditAction::AuditPolicyUpdate
+        | AuditAction::InspectorTimeoutUpdate => "",
     }
 }
