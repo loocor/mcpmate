@@ -28,7 +28,6 @@ use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
 use crate::common::ClientCategory;
-use crate::config::server::import::SkipReason;
 use crate::core::proxy::server::ProxyServer;
 use axum::{
     extract::{Json, Query, State},
@@ -979,25 +978,7 @@ pub async fn config_import(
         })
         .collect();
 
-    let skipped_servers: Vec<SkippedServerData> = skipped
-        .into_iter()
-        .map(|s| SkippedServerData {
-            name: s.name,
-            reason: match &s.reason {
-                SkipReason::DuplicateName => "duplicate_name".to_string(),
-                SkipReason::DuplicateFingerprint => "duplicate_fingerprint".to_string(),
-                SkipReason::UrlQueryMismatch { .. } => "url_query_mismatch".to_string(),
-            },
-            existing_query: match &s.reason {
-                SkipReason::UrlQueryMismatch { existing_query, .. } => existing_query.clone(),
-                _ => None,
-            },
-            incoming_query: match &s.reason {
-                SkipReason::UrlQueryMismatch { incoming_query, .. } => incoming_query.clone(),
-                _ => None,
-            },
-        })
-        .collect();
+    let skipped_servers: Vec<SkippedServerData> = skipped.into_iter().map(SkippedServerData::from).collect();
 
     let skipped_count = skipped_servers.len() as u32;
 

@@ -497,30 +497,8 @@ pub async fn install_server(
         skipped_servers: outcome
             .skipped
             .iter()
-            .map(|s| crate::api::models::server::SkippedServerData {
-                name: s.name.clone(),
-                reason: match s.reason {
-                    crate::config::server::import::SkipReason::DuplicateName => "duplicate_name".to_string(),
-                    crate::config::server::import::SkipReason::DuplicateFingerprint => {
-                        "duplicate_fingerprint".to_string()
-                    }
-                    crate::config::server::import::SkipReason::UrlQueryMismatch { .. } => {
-                        "url_query_mismatch".to_string()
-                    }
-                },
-                existing_query: match &s.reason {
-                    crate::config::server::import::SkipReason::UrlQueryMismatch { existing_query, .. } => {
-                        existing_query.clone()
-                    }
-                    _ => None,
-                },
-                incoming_query: match &s.reason {
-                    crate::config::server::import::SkipReason::UrlQueryMismatch { incoming_query, .. } => {
-                        incoming_query.clone()
-                    }
-                    _ => None,
-                },
-            })
+            .cloned()
+            .map(crate::api::models::server::SkippedServerData::from)
             .collect(),
         failed_count,
         failed_servers: outcome.failed.keys().cloned().collect(),
