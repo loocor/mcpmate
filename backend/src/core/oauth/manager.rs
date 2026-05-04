@@ -285,6 +285,21 @@ impl OAuthManager {
             form.push(("client_secret", secret.clone()));
         }
 
+        {
+            let endpoint_url = Url::parse(&config.token_endpoint)
+                .context("Invalid OAuth token_endpoint URL")?;
+            let is_loopback = matches!(
+                endpoint_url.host_str(),
+                Some("localhost" | "127.0.0.1" | "::1")
+            );
+            if endpoint_url.scheme() != "https" && !is_loopback {
+                bail!(
+                    "OAuth token endpoint must use HTTPS: {}",
+                    config.token_endpoint
+                );
+            }
+        }
+
         let encoded_body = {
             let mut serializer = url::form_urlencoded::Serializer::new(String::new());
             for (key, value) in &form {
@@ -786,5 +801,36 @@ mod tests {
         let resource = oauth_resource_from_server(&server).expect("normalize oauth resource");
 
         assert_eq!(resource, "https://example.com");
+    }
+
+    #[tokio::test]
+    async fn exchange_code_rejects_non_loopback_http_endpoint() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_http").await;
+
+        manager
+            .upsert_config(
+                "serv_http",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://auth.example.com/authorize".to_string(),
+                    token_endpoint: "http://evil.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: Some("secret".to_string()),
+                    scopes: None,
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+
+        let initiate = manager.initiate("serv_http").await.expect("initiate oauth");
+        let error = manager
+            .exchange_code(&initiate.state, "code-123")
+            .await
+            .expect_err("non-loopback HTTP endpoint should be rejected");
+        assert!(
+            error.to_string().contains("must use HTTPS"),
+            "unexpected error: {error}"
+        );
     }
 }
