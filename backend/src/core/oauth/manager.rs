@@ -285,6 +285,16 @@ impl OAuthManager {
             form.push(("client_secret", secret.clone()));
         }
 
+        if !config.token_endpoint.starts_with("https://")
+            && !config.token_endpoint.starts_with("http://localhost")
+            && !config.token_endpoint.starts_with("http://127.0.0.1")
+        {
+            bail!(
+                "OAuth token endpoint must use HTTPS: {}",
+                config.token_endpoint
+            );
+        }
+
         let encoded_body = {
             let mut serializer = url::form_urlencoded::Serializer::new(String::new());
             for (key, value) in &form {
