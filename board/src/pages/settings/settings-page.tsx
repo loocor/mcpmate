@@ -233,24 +233,6 @@ const MENU_BAR_ICON_OPTIONS: ReadonlyArray<{
 		},
 	];
 
-function persistLocalPorts(api: number, mcp: number): void {
-	try {
-		window.localStorage?.setItem("mcpmate.system.api_port", String(api));
-		window.localStorage?.setItem("mcpmate.system.mcp_port", String(mcp));
-	} catch {
-		// LocalStorage write is best-effort
-	}
-}
-
-function readCachedLocalPort(raw: string | null | undefined): number | undefined {
-	if (!raw) {
-		return undefined;
-	}
-
-	const value = Number(raw);
-	return !Number.isNaN(value) && value > 0 ? value : undefined;
-}
-
 function getServiceInstallLabel(params: {
 	busyAction: string | null;
 	installed: boolean;
@@ -566,45 +548,15 @@ export function SettingsPage() {
 			setLocalService(response.localService);
 			setApiPort(response.localhostApiPort);
 			setMcpPort(response.localhostMcpPort);
-			persistLocalPorts(response.localhostApiPort, response.localhostMcpPort);
 		},
 		[],
 	);
 
-	const seedPortsFromLocalStorage = useCallback(() => {
-		try {
-			const cachedApi = window.localStorage?.getItem("mcpmate.system.api_port");
-			const cachedMcp = window.localStorage?.getItem("mcpmate.system.mcp_port");
-			const nextApiPort = readCachedLocalPort(cachedApi);
-			const nextMcpPort = readCachedLocalPort(cachedMcp);
-
-			if (nextApiPort !== undefined) {
-				setApiPort(nextApiPort);
-				if (isTauriShell) {
-					setApiBaseUrl(`http://127.0.0.1:${nextApiPort}`);
-				}
-			}
-
-			if (nextMcpPort !== undefined) {
-				setMcpPort(nextMcpPort);
-			}
-		} catch {
-			// Cache read is best-effort
-		}
-	}, [isTauriShell]);
-
 	const wireDashboardToCoreSource = useCallback(
-		async (
-			apiBaseUrl: string,
-			api?: number,
-			mcp?: number,
-		) => {
+		async (apiBaseUrl: string) => {
 			setApiBaseUrl(apiBaseUrl);
 			notificationsService.reconnectAfterApiBaseChanged();
 			await queryClient.invalidateQueries({ predicate: () => true });
-			if (typeof api === "number" && typeof mcp === "number") {
-				persistLocalPorts(api, mcp);
-			}
 		},
 		[queryClient],
 	);
@@ -615,7 +567,6 @@ export function SettingsPage() {
 			const applyAuthorityPorts = (api: number, mcp: number) => {
 				setApiPort(api);
 				setMcpPort(mcp);
-				persistLocalPorts(api, mcp);
 				setCoreSource("localhost");
 				setLocalhostRuntimeMode("desktop_managed");
 				setRemoteBaseUrl("");
@@ -645,14 +596,13 @@ export function SettingsPage() {
 						setApiBaseUrl(resp.apiBaseUrl || `http://127.0.0.1:${resp.localhostApiPort}`);
 					}
 				} catch {
-					seedPortsFromLocalStorage();
 					notifyError(
 						t("settings:system.portsReloadFailedTitle", {
 							defaultValue: "Could not load ports from shell",
 						}),
 						t("settings:system.portsReloadFailedDescription", {
 							defaultValue:
-								"Showing cached values if any. Check the desktop app is healthy and try Reload again.",
+								"Check the desktop app is healthy and try Reload again.",
 						}),
 					);
 				}
@@ -672,12 +622,11 @@ export function SettingsPage() {
 				return;
 			}
 
-			seedPortsFromLocalStorage();
 		} finally {
 			setLoadingPorts(false);
 		}
 		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
-	}, [applyCoreSourceView, refreshCoreView, seedPortsFromLocalStorage, isTauriShell, t, i18n.language]);
+	}, [applyCoreSourceView, refreshCoreView, isTauriShell, t, i18n.language]);
 
 	const runtimeModeOptions = useMemo<SegmentOption[]>(
 		() => [
@@ -745,7 +694,7 @@ export function SettingsPage() {
 				});
 				setApiPort(settings.api_port);
 				setMcpPort(settings.mcp_port);
-				await wireDashboardToCoreSource("", settings.api_port, settings.mcp_port);
+				await wireDashboardToCoreSource("");
 				setWebDialogOpen(true);
 				return;
 			}
@@ -762,11 +711,7 @@ export function SettingsPage() {
 			})) as DesktopCoreSourceResponse;
 
 			applyCoreSourceView(response);
-			await wireDashboardToCoreSource(
-				response.apiBaseUrl,
-				response.localhostApiPort,
-				response.localhostMcpPort,
-			);
+			await wireDashboardToCoreSource(response.apiBaseUrl);
 			notifySuccess(
 				t("settings:system.applySuccessTitle", {
 					defaultValue: "Core source updated",
