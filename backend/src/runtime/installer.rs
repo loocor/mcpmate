@@ -351,9 +351,7 @@ impl RuntimeInstaller {
                     use std::os::unix::fs::PermissionsExt;
                     if let Ok(mode) = entry.header().mode() {
                         std::fs::set_permissions(&safe_path, std::fs::Permissions::from_mode(mode))
-                            .with_context(|| {
-                                format!("Failed to set tar entry permissions: {}", safe_path.display())
-                            })?;
+                            .with_context(|| format!("Failed to set tar entry permissions: {}", safe_path.display()))?;
                     }
                 }
             }

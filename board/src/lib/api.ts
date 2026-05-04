@@ -81,7 +81,6 @@ import type {
 	ServerSummary,
 	ServersImportData,
 	SkippedServer,
-	DefaultClientPolicyUpdateReq,
 	SystemMetrics,
 	SystemStatus,
 	CapabilityTokenLedgerResponse,
@@ -1590,45 +1589,51 @@ export const toolsApi = {
 export const systemApi = {
 	getStatus: () => fetchApi<SystemStatus>("/api/system/status"),
 	getMetrics: () => fetchApi<SystemMetrics>("/api/system/metrics"),
-	getDefaultClientMode: async (): Promise<{
-		default_config_mode: "unify" | "hosted" | "transparent";
+	getSettings: async (): Promise<{
+		api_port: number;
+		mcp_port: number;
+		api_url: string;
+		mcp_http_url: string;
+		first_contact_behavior: "deny" | "review" | "allow" | string;
+		onboarding_policy: "auto_manage" | "require_approval" | "manual" | string;
+		inspector_timeout_ms: number;
+		default_config_mode: "unify" | "hosted" | "transparent" | string;
 	}> => {
 		const response = await fetchApi<
 			ApiWrapper<{
-				default_config_mode: "unify" | "hosted" | "transparent";
+				api_port: number;
+				mcp_port: number;
+				api_url: string;
+				mcp_http_url: string;
+				first_contact_behavior: "deny" | "review" | "allow" | string;
+				onboarding_policy: "auto_manage" | "require_approval" | "manual" | string;
+				inspector_timeout_ms: number;
+				default_config_mode: "unify" | "hosted" | "transparent" | string;
 			}>
-		>("/api/system/client-default-mode");
+		>("/api/system/settings");
 		return extractApiData(response);
 	},
-	setDefaultClientMode: async (default_config_mode: "unify" | "hosted" | "transparent") => {
+	setSettings: async (payload: {
+		api_port?: number;
+		mcp_port?: number;
+		first_contact_behavior?: "deny" | "review" | "allow" | string;
+		inspector_timeout_ms?: number;
+		default_config_mode?: "unify" | "hosted" | "transparent" | string;
+	}) => {
 		const response = await fetchApi<
 			ApiWrapper<{
-				default_config_mode: "unify" | "hosted" | "transparent";
+				api_port: number;
+				mcp_port: number;
+				api_url: string;
+				mcp_http_url: string;
+				first_contact_behavior: "deny" | "review" | "allow" | string;
+				onboarding_policy: "auto_manage" | "require_approval" | "manual" | string;
+				inspector_timeout_ms: number;
+				default_config_mode: "unify" | "hosted" | "transparent" | string;
 			}>
-		>("/api/system/client-default-mode", {
+		>("/api/system/settings", {
 			method: "POST",
-			body: JSON.stringify({ default_config_mode }),
-		});
-		return extractApiData(response);
-	},
-	getFirstContactBehavior: async (): Promise<{
-		behavior: "deny" | "review" | "allow" | string;
-	}> => {
-		const response = await fetchApi<
-			ApiWrapper<{
-				behavior: "deny" | "review" | "allow" | string;
-			}>
-		>("/api/system/settings/first-contact-behavior");
-		return extractApiData(response);
-	},
-	setFirstContactBehavior: async (behavior: "deny" | "review" | "allow" | string) => {
-		const response = await fetchApi<
-			ApiWrapper<{
-				behavior: "deny" | "review" | "allow" | string;
-			}>
-		>("/api/system/settings/first-contact-behavior", {
-			method: "POST",
-			body: JSON.stringify({ behavior }),
+			body: JSON.stringify(payload),
 		});
 		return extractApiData(response);
 	},
@@ -2344,65 +2349,6 @@ export const clientsApi = {
 			},
 		);
 		return extractApiData(resp);
-	},
-	getDefaultPolicy: async () => {
-		const [mode, firstContact] = await Promise.all([
-			systemApi.getDefaultClientMode(),
-			systemApi.getFirstContactBehavior(),
-		]);
-		return {
-			config_mode: mode.default_config_mode,
-			capability_source: "activated" as const,
-			first_contact_behavior: normalizeFirstContactBehavior(firstContact.behavior),
-		};
-	},
-	updateDefaultPolicy: async (
-		payload: DefaultClientPolicyUpdateReq,
-		before?: { config_mode: string; first_contact_behavior: string } | null,
-	) => {
-		const modeT = payload.config_mode as "unify" | "hosted" | "transparent";
-		const modeChanged = !before || before.config_mode !== payload.config_mode;
-		const prevFc = before
-			? normalizeFirstContactBehavior(before.first_contact_behavior)
-			: null;
-		const nextFc = normalizeFirstContactBehavior(String(payload.first_contact_behavior));
-		const fcChanged = !before || prevFc !== nextFc;
-
-		if (!modeChanged && !fcChanged) {
-			return {
-				config_mode: payload.config_mode,
-				capability_source: payload.capability_source,
-				first_contact_behavior: nextFc,
-			};
-		}
-
-		let mode: { default_config_mode: "unify" | "hosted" | "transparent" };
-		let firstContact: { behavior: string };
-
-		if (modeChanged && fcChanged) {
-			[mode, firstContact] = await Promise.all([
-				systemApi.setDefaultClientMode(modeT),
-				systemApi.setFirstContactBehavior(payload.first_contact_behavior),
-			]);
-		} else if (modeChanged) {
-			mode = await systemApi.setDefaultClientMode(modeT);
-			firstContact = { behavior: before!.first_contact_behavior };
-		} else {
-			firstContact = await systemApi.setFirstContactBehavior(payload.first_contact_behavior);
-			mode = { default_config_mode: modeT };
-		}
-
-		return {
-			config_mode: mode.default_config_mode,
-			capability_source: payload.capability_source,
-			first_contact_behavior: normalizeFirstContactBehavior(firstContact.behavior),
-		};
-	},
-	setDefaultPolicy: async (
-		payload: DefaultClientPolicyUpdateReq,
-		before?: { config_mode: string; first_contact_behavior: string } | null,
-	) => {
-		return clientsApi.updateDefaultPolicy(payload, before);
 	},
 	getCapabilityConfig: async (identifier: string) => {
 		const q = new URLSearchParams({ identifier });

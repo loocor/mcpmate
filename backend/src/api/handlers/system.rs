@@ -10,15 +10,29 @@ use super::ApiError;
 use crate::api::models::system::ManagementActionResp;
 use crate::api::{
     models::system::{
-        SystemDefaultClientModeData, SystemDefaultClientModeReq, SystemDefaultClientModeResp, SystemMetricsResp,
-        SystemPortsResp, SystemStatusResp,
+        SystemMetricsResp, SystemSettingsData, SystemSettingsResp, SystemSettingsUpdateReq, SystemStatusResp,
     },
     routes::AppState,
 };
 use crate::audit::{AuditAction, AuditStatus};
-use crate::system::config::{bind_socket_addr, get_runtime_port_config};
+use crate::system::config::{
+    api_url_from_port, bind_socket_addr, get_runtime_port_config, init_port_config, mcp_http_url_from_port,
+};
 
 const PROXY_NOT_AVAILABLE_ERROR: &str = "Proxy server not available";
+
+fn system_settings_data(settings: crate::system::settings::SystemSettings) -> SystemSettingsData {
+    SystemSettingsData {
+        api_port: settings.api_port,
+        mcp_port: settings.mcp_port,
+        api_url: api_url_from_port(settings.api_port),
+        mcp_http_url: mcp_http_url_from_port(settings.mcp_port),
+        first_contact_behavior: settings.first_contact_behavior.as_str().to_string(),
+        onboarding_policy: settings.onboarding_policy().as_str().to_string(),
+        inspector_timeout_ms: settings.inspector_timeout_ms,
+        default_config_mode: settings.default_config_mode,
+    }
+}
 
 fn build_management_action_data(
     operation: &str,
@@ -92,51 +106,78 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Result<Json<Syste
     }))
 }
 
-/// Runtime API and MCP ports (for dashboard Settings and dev tooling).
-pub async fn get_ports(State(_state): State<Arc<AppState>>) -> Result<Json<SystemPortsResp>, ApiError> {
-    let cfg = get_runtime_port_config();
-    Ok(Json(SystemPortsResp {
-        api_port: cfg.api_port,
-        mcp_port: cfg.mcp_port,
-        api_url: cfg.api_url(),
-        mcp_http_url: cfg.mcp_http_url(),
-    }))
-}
-
-pub async fn get_default_client_mode(
-    State(state): State<Arc<AppState>>
-) -> Result<Json<SystemDefaultClientModeResp>, ApiError> {
+pub async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<SystemSettingsResp>, ApiError> {
     let db = state
         .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
 
-    let default_config_mode = crate::config::client::init::resolve_default_client_config_mode(&db.pool)
+    let settings = crate::system::settings::get_settings(&db.pool)
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
-    Ok(Json(SystemDefaultClientModeResp::success(
-        SystemDefaultClientModeData { default_config_mode },
-    )))
+    Ok(Json(SystemSettingsResp::success(system_settings_data(settings))))
 }
 
-pub async fn set_default_client_mode(
+pub async fn set_settings(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<SystemDefaultClientModeReq>,
-) -> Result<Json<SystemDefaultClientModeResp>, ApiError> {
+    Json(request): Json<SystemSettingsUpdateReq>,
+) -> Result<Json<SystemSettingsResp>, ApiError> {
     let db = state
         .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
 
-    crate::config::client::init::set_default_client_config_mode(&db.pool, &request.default_config_mode)
+    let mut settings = crate::system::settings::get_settings(&db.pool)
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
+
+    let previous_ports = (settings.api_port, settings.mcp_port);
+
+    if let Some(api_port) = request.api_port {
+        settings.api_port = api_port;
+    }
+
+    if let Some(mcp_port) = request.mcp_port {
+        settings.mcp_port = mcp_port;
+    }
+
+    if let Some(first_contact_behavior) = request.first_contact_behavior {
+        settings.first_contact_behavior = first_contact_behavior
+            .parse()
+            .map_err(|_| ApiError::BadRequest("Invalid first contact behavior".to_string()))?;
+    }
+
+    if let Some(inspector_timeout_ms) = request.inspector_timeout_ms {
+        settings.inspector_timeout_ms = inspector_timeout_ms;
+    }
+
+    if let Some(default_config_mode) = request.default_config_mode {
+        settings.default_config_mode = default_config_mode;
+    }
+
+    let settings = crate::system::settings::set_settings(&db.pool, &settings)
+        .await
+        .map_err(|err| ApiError::InternalError(err.to_string()))?;
+
+    if previous_ports != (settings.api_port, settings.mcp_port) {
+        init_port_config(settings.api_port, settings.mcp_port);
+    }
 
     let mut data = Map::new();
+    data.insert("api_port".to_string(), Value::from(settings.api_port));
+    data.insert("mcp_port".to_string(), Value::from(settings.mcp_port));
+    data.insert(
+        "first_contact_behavior".to_string(),
+        Value::String(settings.first_contact_behavior.as_str().to_string()),
+    );
+    data.insert(
+        "inspector_timeout_ms".to_string(),
+        Value::from(settings.inspector_timeout_ms),
+    );
     data.insert(
         "default_config_mode".to_string(),
-        Value::String(request.default_config_mode.clone()),
+        Value::String(settings.default_config_mode.clone()),
     );
 
     crate::audit::interceptor::emit_event(
@@ -145,7 +186,7 @@ pub async fn set_default_client_mode(
             AuditAction::ClientSettingsUpdate,
             AuditStatus::Success,
             "POST",
-            "/api/system/client-default-mode",
+            "/api/system/settings",
             None,
             None,
             None,
@@ -155,11 +196,7 @@ pub async fn set_default_client_mode(
     )
     .await;
 
-    Ok(Json(SystemDefaultClientModeResp::success(
-        SystemDefaultClientModeData {
-            default_config_mode: request.default_config_mode,
-        },
-    )))
+    Ok(Json(SystemSettingsResp::success(system_settings_data(settings))))
 }
 
 /// Get system metrics
@@ -366,8 +403,8 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     let mcp_port = get_runtime_port_config().mcp_port;
-    let bind_address: SocketAddr = bind_socket_addr(mcp_port)
-        .map_err(|e| ApiError::InternalError(format!("Invalid MCP bind address: {}", e)))?;
+    let bind_address: SocketAddr =
+        bind_socket_addr(mcp_port).map_err(|e| ApiError::InternalError(format!("Invalid MCP bind address: {}", e)))?;
 
     let start_result = proxy.start_unified(bind_address).await;
 
@@ -459,98 +496,4 @@ fn get_uptime_seconds() -> u64 {
 
     // Calculate uptime
     now.saturating_sub(start_time)
-}
-
-pub async fn get_onboarding_policy(
-    State(state): State<Arc<AppState>>
-) -> Result<Json<crate::api::models::client::OnboardingPolicyResponse>, axum::http::StatusCode> {
-    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
-
-    let policy = service.get_onboarding_policy().await.map_err(|err| {
-        tracing::error!("Failed to fetch onboarding policy: {}", err);
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    Ok(Json(crate::api::models::client::OnboardingPolicyResponse {
-        policy: policy.as_str().to_string(),
-    }))
-}
-
-pub async fn get_first_contact_behavior(
-    State(state): State<Arc<AppState>>
-) -> Result<Json<crate::api::models::client::FirstContactBehaviorResp>, axum::http::StatusCode> {
-    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
-
-    let behavior = service.get_first_contact_behavior().await.map_err(|err| {
-        tracing::error!("Failed to fetch first contact behavior: {}", err);
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    Ok(Json(crate::api::models::client::FirstContactBehaviorResp::success(
-        crate::api::models::client::FirstContactBehaviorData {
-            behavior: behavior.as_str().to_string(),
-        },
-    )))
-}
-
-pub async fn set_onboarding_policy(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<crate::api::models::client::OnboardingPolicyRequest>,
-) -> Result<Json<crate::api::models::client::OnboardingPolicyResponse>, axum::http::StatusCode> {
-    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
-
-    let policy: crate::clients::models::OnboardingPolicy = request.policy.parse().map_err(|_| {
-        tracing::error!("Invalid onboarding policy: {}", request.policy);
-        axum::http::StatusCode::BAD_REQUEST
-    })?;
-
-    service.set_onboarding_policy(policy).await.map_err(|err| {
-        tracing::error!("Failed to set onboarding policy: {}", err);
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    crate::audit::interceptor::emit_event(
-        state.audit_service.as_ref(),
-        crate::audit::AuditEvent::new(AuditAction::OnboardingPolicyUpdate, AuditStatus::Success)
-            .with_http_route("POST", "/api/system/settings/onboarding-policy")
-            .with_data(serde_json::json!({ "policy": policy.as_str() }))
-            .build(),
-    )
-    .await;
-
-    Ok(Json(crate::api::models::client::OnboardingPolicyResponse {
-        policy: policy.as_str().to_string(),
-    }))
-}
-
-pub async fn set_first_contact_behavior(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<crate::api::models::client::FirstContactBehaviorRequest>,
-) -> Result<Json<crate::api::models::client::FirstContactBehaviorResp>, axum::http::StatusCode> {
-    let service = crate::api::handlers::client::handlers::get_client_service(&state)?;
-
-    let behavior: crate::clients::models::FirstContactBehavior = request.behavior.parse().map_err(|_| {
-        tracing::error!("Invalid first contact behavior: {}", request.behavior);
-        axum::http::StatusCode::BAD_REQUEST
-    })?;
-
-    service.set_first_contact_behavior(behavior).await.map_err(|err| {
-        tracing::error!("Failed to set first contact behavior: {}", err);
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    crate::audit::interceptor::emit_event(
-        state.audit_service.as_ref(),
-        crate::audit::AuditEvent::new(AuditAction::FirstContactBehaviorUpdate, AuditStatus::Success)
-            .with_http_route("POST", "/api/system/settings/first-contact-behavior")
-            .with_data(serde_json::json!({ "behavior": behavior.as_str() }))
-            .build(),
-    )
-    .await;
-
-    Ok(Json(crate::api::models::client::FirstContactBehaviorResp::success(
-        crate::api::models::client::FirstContactBehaviorData {
-            behavior: behavior.as_str().to_string(),
-        },
-    )))
 }

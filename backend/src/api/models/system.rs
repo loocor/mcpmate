@@ -20,20 +20,6 @@ pub struct SystemStatusResp {
     pub connected_servers: usize,
 }
 
-/// Active REST and MCP listener ports (from runtime configuration).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Runtime API and MCP proxy ports")]
-pub struct SystemPortsResp {
-    #[schemars(description = "REST API port")]
-    pub api_port: u16,
-    #[schemars(description = "MCP proxy port")]
-    pub mcp_port: u16,
-    #[schemars(description = "Base URL for the REST API")]
-    pub api_url: String,
-    #[schemars(description = "MCP Streamable HTTP endpoint URL")]
-    pub mcp_http_url: String,
-}
-
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System metrics response")]
 pub struct SystemMetricsResp {
@@ -115,19 +101,14 @@ pub struct ServerConnectionStatus {
     pub enabled_in_profile: bool,
 }
 
-// Management responses (shutdown/restart) now co-located under system models
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Response for management control actions (shutdown/restart)")]
 pub struct ManagementActionResp {
-    /// Action status label (e.g., "shutting_down", "restarted")
     pub status: String,
-    /// Optional human-readable message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// MCP port when (re)started
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_port: Option<u16>,
-    /// Transport mode hint (e.g., "uni")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transport: Option<String>,
 }
@@ -156,21 +137,48 @@ impl ManagementActionResp {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "System default client management mode payload")]
-pub struct SystemDefaultClientModeData {
+#[schemars(description = "Structured system settings payload")]
+pub struct SystemSettingsData {
+    #[schemars(description = "REST API port")]
+    pub api_port: u16,
+    #[schemars(description = "MCP proxy port")]
+    pub mcp_port: u16,
+    #[schemars(description = "Base URL for the REST API")]
+    pub api_url: String,
+    #[schemars(description = "MCP Streamable HTTP endpoint URL")]
+    pub mcp_http_url: String,
+    #[schemars(description = "Behavior for first contact clients: deny, review, or allow")]
+    pub first_contact_behavior: String,
+    #[schemars(description = "Derived onboarding policy: auto_manage, require_approval, or manual")]
+    pub onboarding_policy: String,
+    #[schemars(description = "Default Inspector timeout in milliseconds")]
+    pub inspector_timeout_ms: u64,
     #[schemars(description = "Default mode for unrecognized or unconfigured clients")]
     pub default_config_mode: String,
 }
 
-api_resp!(
-    SystemDefaultClientModeResp,
-    SystemDefaultClientModeData,
-    "System default client management mode response"
-);
-
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Request to update system default client management mode")]
-pub struct SystemDefaultClientModeReq {
-    #[schemars(description = "Default mode: unify|hosted|transparent")]
-    pub default_config_mode: String,
+#[schemars(description = "Request to update one or more system settings fields")]
+pub struct SystemSettingsUpdateReq {
+    #[schemars(description = "REST API port")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_port: Option<u16>,
+    #[schemars(description = "MCP proxy port")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_port: Option<u16>,
+    #[schemars(description = "Behavior for first contact clients: deny, review, or allow")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_contact_behavior: Option<String>,
+    #[schemars(description = "Default Inspector timeout in milliseconds")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspector_timeout_ms: Option<u64>,
+    #[schemars(description = "Default mode for unrecognized or unconfigured clients")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_config_mode: Option<String>,
 }
+
+api_resp!(
+    SystemSettingsResp,
+    SystemSettingsData,
+    "Structured system settings response"
+);

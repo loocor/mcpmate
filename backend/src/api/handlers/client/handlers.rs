@@ -1864,7 +1864,7 @@ mod tests {
     };
     use crate::common::profile::{ProfileRole, ProfileType};
     use crate::config::{
-        client::init::{initialize_client_table, initialize_system_settings_table},
+        client::init::{initialize_client_table, initialize_system_settings},
         database::Database,
         models::Profile,
         profile::{self, init::initialize_profile_tables},
@@ -1953,9 +1953,9 @@ mod tests {
         initialize_server_tables(&db_pool).await.expect("init server tables");
         initialize_profile_tables(&db_pool).await.expect("init profile tables");
         initialize_client_table(&db_pool).await.expect("init client table");
-        initialize_system_settings_table(&db_pool)
+        initialize_system_settings(&db_pool)
             .await
-            .expect("init system settings table");
+            .expect("init system settings store");
 
         let database = Arc::new(Database {
             pool: db_pool.clone(),
@@ -3843,18 +3843,14 @@ mod tests {
     #[tokio::test]
     async fn config_apply_rejects_pending_client() {
         use crate::clients::models::OnboardingPolicy;
-        use crate::common::constants::database::tables;
 
         let context = create_test_context().await;
 
-        sqlx::query(&format!(
-            "UPDATE {} SET value = ? WHERE key = 'onboarding_policy'",
-            tables::SYSTEM_SETTINGS
-        ))
-        .bind(OnboardingPolicy::RequireApproval.as_str())
-        .execute(&context.db_pool)
-        .await
-        .expect("set onboarding policy");
+        context
+            .client_service
+            .set_onboarding_policy(OnboardingPolicy::RequireApproval)
+            .await
+            .expect("set onboarding policy");
 
         sqlx::query(
             r#"
@@ -3889,18 +3885,14 @@ mod tests {
     #[tokio::test]
     async fn config_restore_rejects_pending_client() {
         use crate::clients::models::OnboardingPolicy;
-        use crate::common::constants::database::tables;
 
         let context = create_test_context().await;
 
-        sqlx::query(&format!(
-            "UPDATE {} SET value = ? WHERE key = 'onboarding_policy'",
-            tables::SYSTEM_SETTINGS
-        ))
-        .bind(OnboardingPolicy::RequireApproval.as_str())
-        .execute(&context.db_pool)
-        .await
-        .expect("set onboarding policy");
+        context
+            .client_service
+            .set_onboarding_policy(OnboardingPolicy::RequireApproval)
+            .await
+            .expect("set onboarding policy");
 
         sqlx::query(
             r#"
