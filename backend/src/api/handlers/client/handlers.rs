@@ -15,6 +15,7 @@ use crate::api::models::client::{
     ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
     ClientUnifyDirectExposureData,
 };
+use crate::api::models::server::SkippedServerData;
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::models::{
@@ -977,12 +978,17 @@ pub async fn config_import(
         })
         .collect();
 
+    let skipped_servers: Vec<SkippedServerData> = skipped.into_iter().map(SkippedServerData::from).collect();
+
+    let skipped_count = skipped_servers.len() as u32;
+
     let summary = ClientImportSummary {
         attempted: true,
         imported_count: imported_servers.len() as u32,
-        skipped_count: skipped.len() as u32,
+        skipped_count,
         failed_count: failed.len() as u32,
         errors: if failed.is_empty() { None } else { Some(failed) },
+        skipped_servers,
     };
 
     let data = ClientConfigImportData {

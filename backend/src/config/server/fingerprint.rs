@@ -47,15 +47,16 @@ pub struct UrlSignature {
     pub fingerprint: String,
     pub base: String,
     pub filtered_query: String,
+    pub display_filtered_query: String,
     pub raw_query: Option<String>,
 }
 
 impl UrlSignature {
     pub fn display_query(&self) -> Option<String> {
-        if !self.filtered_query.is_empty() {
-            Some(self.filtered_query.clone())
+        if self.display_filtered_query.is_empty() {
+            None
         } else {
-            self.raw_query.clone()
+            Some(self.display_filtered_query.clone())
         }
     }
 }
@@ -95,7 +96,7 @@ pub(crate) fn url_signature(raw: &str) -> UrlSignature {
 
         let base = format!("{}{}{}", host, port_part, path);
 
-        let (raw_query, filtered_query) = canonicalize_query(url.query());
+        let (raw_query, filtered_query, display_filtered_query) = canonicalize_query(url.query());
         let fingerprint = if filtered_query.is_empty() {
             base.clone()
         } else {
@@ -106,6 +107,7 @@ pub(crate) fn url_signature(raw: &str) -> UrlSignature {
             fingerprint,
             base,
             filtered_query,
+            display_filtered_query,
             raw_query,
         }
     } else {
@@ -113,6 +115,7 @@ pub(crate) fn url_signature(raw: &str) -> UrlSignature {
             fingerprint: raw.to_string(),
             base: raw.to_string(),
             filtered_query: String::new(),
+            display_filtered_query: String::new(),
             raw_query: None,
         }
     }
@@ -517,17 +520,46 @@ const QUERY_IGNORE_KEYS: &[&str] = &[
     "session",
 ];
 
-fn canonicalize_query(query: Option<&str>) -> (Option<String>, String) {
+const DISPLAY_QUERY_IGNORE_KEYS: &[&str] = &[
+    "token",
+    "access_token",
+    "auth",
+    "auth_token",
+    "signature",
+    "sig",
+    "timestamp",
+    "ts",
+    "nonce",
+    "api_key",
+    "apikey",
+    "session",
+    "secret",
+    "client_secret",
+    "password",
+    "passwd",
+    "private_key",
+    "refresh_token",
+    "id_token",
+    "key",
+];
+
+fn canonicalize_query(query: Option<&str>) -> (Option<String>, String, String) {
     if let Some(q) = query {
         let mut pairs: Vec<(String, String)> = url::form_urlencoded::parse(q.as_bytes()).into_owned().collect();
         if pairs.is_empty() {
-            return (None, String::new());
+            return (None, String::new(), String::new());
         }
         pairs.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
         let filtered_pairs: Vec<(String, String)> = pairs
             .iter()
             .filter(|(k, _)| !should_ignore_query_key(k))
+            .cloned()
+            .collect();
+
+        let display_filtered_pairs: Vec<(String, String)> = filtered_pairs
+            .iter()
+            .filter(|(k, _)| !should_ignore_display_query_key(k))
             .cloned()
             .collect();
 
@@ -549,14 +581,30 @@ fn canonicalize_query(query: Option<&str>) -> (Option<String>, String) {
                 .join("&")
         };
 
-        (raw_query, filtered_query)
+        let display_filtered_query = if display_filtered_pairs.is_empty() {
+            String::new()
+        } else {
+            display_filtered_pairs
+                .into_iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("&")
+        };
+
+        (raw_query, filtered_query, display_filtered_query)
     } else {
-        (None, String::new())
+        (None, String::new(), String::new())
     }
 }
 
 fn should_ignore_query_key(key: &str) -> bool {
     QUERY_IGNORE_KEYS.iter().any(|ignore| key.eq_ignore_ascii_case(ignore))
+}
+
+fn should_ignore_display_query_key(key: &str) -> bool {
+    DISPLAY_QUERY_IGNORE_KEYS
+        .iter()
+        .any(|ignore| key.eq_ignore_ascii_case(ignore))
 }
 
 fn extract_node_package_spec(
@@ -710,6 +758,31 @@ mod tests {
         assert_eq!(sig.filtered_query, "workspace=alpha");
         assert_eq!(sig.fingerprint, "example.com/data?workspace=alpha");
         assert_eq!(sig.display_query(), Some("workspace=alpha".to_string()));
+    }
+
+    #[test]
+    fn url_signature_hides_queries_when_only_sensitive_params_remain() {
+        let sig = url_signature("https://example.com/data?api_key=ABC123&token=XYZ");
+        assert_eq!(sig.filtered_query, "");
+        assert_eq!(sig.display_query(), None);
+    }
+
+    #[test]
+    fn url_signature_hides_display_only_sensitive_params_without_changing_fingerprint() {
+        let sig = url_signature("https://example.com/data?client_secret=ABC123&password=XYZ&workspace=alpha");
+        assert_eq!(sig.filtered_query, "client_secret=ABC123&password=XYZ&workspace=alpha");
+        assert_eq!(
+            sig.fingerprint,
+            "example.com/data?client_secret=ABC123&password=XYZ&workspace=alpha"
+        );
+        assert_eq!(sig.display_query(), Some("workspace=alpha".to_string()));
+    }
+
+    #[test]
+    fn url_signature_hides_display_when_only_display_sensitive_params_remain() {
+        let sig = url_signature("https://example.com/data?client_secret=ABC123&password=XYZ");
+        assert_eq!(sig.filtered_query, "client_secret=ABC123&password=XYZ");
+        assert_eq!(sig.display_query(), None);
     }
 
     #[test]

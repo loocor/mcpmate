@@ -408,6 +408,9 @@ pub struct ClientImportSummary {
     #[schemars(description = "Optional per-server error messages for failures")]
     #[serde(default)]
     pub errors: Option<std::collections::HashMap<String, String>>,
+    #[schemars(description = "Detailed reason for each skipped server")]
+    #[serde(default)]
+    pub skipped_servers: Vec<crate::api::models::server::SkippedServerData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1062,3 +1065,4 @@ api_resp!(
     FirstContactBehaviorData,
     "First contact behavior API response"
 );
+
