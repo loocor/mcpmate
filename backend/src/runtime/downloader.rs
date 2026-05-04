@@ -106,6 +106,8 @@ impl RuntimeDownloader {
     }
 
     /// Get UV download URL
+    ///
+    /// UV publishes `.zip` for Windows and `.tar.gz` for macOS/Linux.
     fn get_uv_download_url(
         &self,
         env: &crate::common::env::Environment,
@@ -121,9 +123,14 @@ impl RuntimeDownloader {
             Architecture::Aarch64 => "aarch64",
         };
 
+        let ext = match env.os {
+            OperatingSystem::Windows => "zip",
+            _ => "tar.gz",
+        };
+
         Ok(format!(
-            "https://github.com/astral-sh/uv/releases/latest/download/uv-{}-{}.tar.gz",
-            arch, platform
+            "https://github.com/astral-sh/uv/releases/latest/download/uv-{}-{}.{}",
+            arch, platform, ext
         ))
     }
 
@@ -157,7 +164,11 @@ impl RuntimeDownloader {
                     Architecture::X86_64 => "x86_64",
                     Architecture::Aarch64 => "aarch64",
                 };
-                Ok(format!("uv-{}-{}.tar.gz", arch, platform))
+                let ext = match env.os {
+                    OperatingSystem::Windows => "zip",
+                    _ => "tar.gz",
+                };
+                Ok(format!("uv-{}-{}.{}", arch, platform, ext))
             }
         }
     }
