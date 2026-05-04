@@ -41,6 +41,9 @@ concurrency:
   group: desktop-macos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CI: "true"
 
