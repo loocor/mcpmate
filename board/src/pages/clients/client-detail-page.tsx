@@ -3350,6 +3350,43 @@ export function ClientDetailPage() {
 										</pre>
 									</details>
 								) : null}
+								{(importPreviewData.summary?.skipped_count ?? 0) > 0 &&
+								importPreviewData.summary?.skipped_servers?.length ? (
+									<details className="mt-2">
+										<summary className="text-xs text-slate-500 cursor-pointer">
+											{t("detail.importPreview.sections.skippedDetails", {
+												defaultValue:
+													"Skip details ({{count}} servers)",
+												count: importPreviewData.summary.skipped_count,
+											})}
+										</summary>
+										<ul className="mt-2 space-y-2">
+											{importPreviewData.summary.skipped_servers.map(
+												(s, idx) => (
+													<li
+														key={`skipped-${idx}-${s.name}`}
+														className="text-xs p-2 bg-slate-50 dark:bg-slate-900 rounded"
+													>
+														<span className="font-medium">{s.name}</span>
+														<span className="text-slate-500 ml-2">
+															&mdash; {s.reason}
+														</span>
+														{s.existing_query && (
+															<div className="mt-1 text-slate-400">
+																existing query: {s.existing_query}
+															</div>
+														)}
+														{s.incoming_query && (
+															<div className="mt-1 text-slate-400">
+																incoming query: {s.incoming_query}
+															</div>
+														)}
+													</li>
+												),
+											)}
+										</ul>
+									</details>
+								) : null}
 								<details className="mt-2 flex-1 min-h-0">
 									<summary className="text-xs text-slate-500 cursor-pointer">
 										{t("detail.importPreview.sections.raw", {
