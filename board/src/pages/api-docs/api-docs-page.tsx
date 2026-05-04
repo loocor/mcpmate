@@ -5,18 +5,7 @@ import { API_BASE_CHANGED_EVENT, API_BASE_URL } from "../../lib/api";
 
 function resolveApiDocsUrl(): string {
 	try {
-		let base = API_BASE_URL;
-		if (!base) {
-			const cachedPort = window.localStorage?.getItem("mcpmate.system.api_port");
-			const parsedPort = Number(cachedPort);
-			const apiPort =
-				Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 8080;
-			const host = window.location.hostname || "127.0.0.1";
-			const isLocalHost = host === "localhost" || host === "127.0.0.1";
-			base = isLocalHost
-				? `${window.location.protocol}//${host}:${apiPort}`
-				: "http://127.0.0.1:8080";
-		}
+		const base = API_BASE_URL || "http://127.0.0.1:8080";
 		return new URL("/docs", base).toString();
 	} catch {
 		return "http://127.0.0.1:8080/docs";
@@ -64,7 +53,7 @@ export function ApiDocsPage() {
 							<p className="text-xs text-muted-foreground">
 								{t("settings:system.portsReloadFailedDescription", {
 									defaultValue:
-										"Showing cached values if any. Check the desktop app is healthy and try Reload again.",
+										"Check the desktop app is healthy and try Reload again.",
 								})}
 							</p>
 						</div>
