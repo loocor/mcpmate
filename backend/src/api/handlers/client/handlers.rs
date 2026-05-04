@@ -913,7 +913,16 @@ pub async fn config_import(
 
     // Build standard import payload from parsed config
     let items =
-        build_import_payload_from_value(&json_value, resolve_effective_config_file_parse(Some(&state)).as_ref());
+        build_import_payload_from_value(&json_value, resolve_effective_config_file_parse(Some(&state)).as_ref())
+            .map_err(|err| {
+                tracing::error!(
+                    client = %request.identifier,
+                    status = 422u16,
+                    error = %err,
+                    "client config import parse rule is invalid"
+                );
+                StatusCode::UNPROCESSABLE_ENTITY
+            })?;
     let opts = crate::config::server::ImportOptions {
         by_name: true,
         by_fingerprint: true,
