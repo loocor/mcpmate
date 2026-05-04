@@ -53,26 +53,47 @@ pub fn build_import_payload_from_value(
 
 fn locate_parse_container<'a>(
     config: &'a Value,
-    parse_rule: &ClientConfigFileParse,
+    container_key: &str,
 ) -> Option<&'a Value> {
-    for container_key in &parse_rule.container_keys {
-        let mut current = config;
-        let mut matched = true;
+    let mut current = config;
 
-        for segment in container_key.split('.') {
-            let Some(next) = current.get(segment) else {
-                matched = false;
-                break;
-            };
-            current = next;
-        }
-
-        if matched {
-            return Some(current);
-        }
+    for segment in container_key.split('.') {
+        current = current.get(segment)?;
     }
 
-    None
+    Some(current)
+}
+
+fn collect_servers_from_container(
+    servers: &mut HashMap<String, ServerConfigParsed>,
+    container: &Value,
+    container_type: ContainerType,
+) {
+    match container_type {
+        ContainerType::ObjectMap => {
+            if let Some(entries) = container.as_object() {
+                for (name, sc) in entries {
+                    if let Some(parsed) = parse_server_config(sc) {
+                        servers.insert(name.clone(), parsed);
+                    }
+                }
+            }
+        }
+        ContainerType::Array => {
+            if let Some(array) = container.as_array() {
+                for (idx, sc) in array.iter().enumerate() {
+                    let name = sc
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("server_{}", idx));
+                    if let Some(parsed) = parse_server_config(sc) {
+                        servers.insert(name, parsed);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn extract_servers(
@@ -82,35 +103,12 @@ fn extract_servers(
     let mut servers = HashMap::new();
 
     if let Some(parse_rule) = parse_rule {
-        if let Some(container) = locate_parse_container(config, parse_rule) {
-            match parse_rule.container_type {
-                ContainerType::ObjectMap => {
-                    if let Some(entries) = container.as_object() {
-                        for (name, sc) in entries {
-                            if let Some(parsed) = parse_server_config(sc) {
-                                servers.insert(name.clone(), parsed);
-                            }
-                        }
-                        return Ok(servers);
-                    }
-                }
-                ContainerType::Array => {
-                    if let Some(array) = container.as_array() {
-                        for (idx, sc) in array.iter().enumerate() {
-                            let name = sc
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| format!("server_{}", idx));
-                            if let Some(parsed) = parse_server_config(sc) {
-                                servers.insert(name, parsed);
-                            }
-                        }
-                        return Ok(servers);
-                    }
-                }
+        for container_key in &parse_rule.container_keys {
+            if let Some(container) = locate_parse_container(config, container_key) {
+                collect_servers_from_container(&mut servers, container, parse_rule.container_type);
             }
         }
+        return Ok(servers);
     }
 
     // Object form (e.g., Claude Desktop)
@@ -271,5 +269,56 @@ mod tests {
             server.env.as_ref().and_then(|env| env.get("DEBUG")),
             Some(&"1".to_string())
         );
+    }
+
+    #[test]
+    fn build_import_payload_does_not_fallback_when_parse_rule_is_set() {
+        let config = serde_json::json!({
+            "context_servers": {
+                "zed-mcp": {"url": "http://localhost:8000/mcp"}
+            },
+            "mcpServers": {
+                "wrong-node": {"command": "uvx", "args": ["wrong.py"]}
+            },
+            "agent_servers": {
+                "registry-entry": {"type": "registry"}
+            }
+        });
+
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["context_servers".to_string()],
+        };
+
+        let payload = build_import_payload_from_value(&config, Some(&parse_rule));
+
+        assert!(payload.contains_key("zed-mcp"));
+        assert!(!payload.contains_key("wrong-node"));
+        assert!(!payload.contains_key("registry-entry"));
+    }
+
+    #[test]
+    fn build_import_payload_combines_multiple_config_nodes() {
+        let config = serde_json::json!({
+            "primary": {
+                "one": {"command": "uvx", "args": ["one.py"]}
+            },
+            "secondary": {
+                "two": {"url": "http://localhost:9000/mcp"}
+            }
+        });
+
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["primary".to_string(), "secondary".to_string()],
+        };
+
+        let payload = build_import_payload_from_value(&config, Some(&parse_rule));
+
+        assert!(payload.contains_key("one"));
+        assert!(payload.contains_key("two"));
+        assert_eq!(payload.len(), 2);
     }
 }
