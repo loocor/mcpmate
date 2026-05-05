@@ -1,5 +1,42 @@
 [
 	{
+		"version": "0.1.13",
+		"date": "2026-05-05",
+		"highlights": [
+			"Added managed Node.js runtime support alongside uv and Bun. System settings converged under a typed backend store with streamlined board proxy routing. Client import gained config node awareness and transparent skip reporting. Desktop startup, log management, and cross-platform runtime stability were hardened across the board."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Managed Node.js runtime: Node.js (via node-bin) is now a first-class managed runtime alongside uv and Bun, with versioned download, installation, cache management, and dashboard install reporting."
+			},
+			{
+				"type": "feat",
+				"text": "System settings now persist through a unified typed backend store, converging local port cache, client reapply flows, and board proxy routing under shared settings APIs."
+			},
+			{
+				"type": "feat",
+				"text": "Client import parser now honors config node rules during parsing, surfaces invalid config node rules, and exposes reasons when servers are skipped during import."
+			},
+			{
+				"type": "fix",
+				"text": "OAuth security hardening: callback data moved from URL to sessionStorage, HTTPS enforced for token endpoint, and Copilot review feedback addressed."
+			},
+			{
+				"type": "fix",
+				"text": "Runtime installation hardened: correct archive extension per platform, safer temp paths, and shell-based extraction removed in favor of native library calls."
+			},
+			{
+				"type": "fix",
+				"text": "Desktop startup reliability: dashboard resync after core startup, IPv4 loopback URLs, Tauri localhost origin, and log rotation with URL sanitization for safer diagnostics."
+			},
+			{
+				"type": "refactor",
+				"text": "CI: desktop workflows unified with reusable composite actions for consistent build/test/release across platforms."
+			}
+		]
+	},
+	{
 		"version": "0.1.12",
 		"date": "2026-05-02",
 		"highlights": [
