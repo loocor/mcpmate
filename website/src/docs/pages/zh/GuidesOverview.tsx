@@ -69,7 +69,7 @@ export default function GuidesOverview() {
 					<strong>市场</strong> —— 浏览官方/自建门户、搜索筛选条目并一键送入安装向导。
 				</Li>
 				<Li>
-					<strong>运行时</strong> —— 监控 uv 与 Bun 状态、清理缓存、查看能力缓存统计。
+					<strong>运行时</strong> —— 监控 Node.js、uv 与 Bun 状态、清理缓存、查看能力缓存统计。
 				</Li>
 				<Li>
 					<strong>审计日志</strong> —— 通过游标分页查看配置集、客户端、服务器变更及安全相关事件时间线。

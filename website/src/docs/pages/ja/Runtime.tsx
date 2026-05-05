@@ -13,13 +13,13 @@ export default function RuntimeJA() {
 			}}
 		>
 			<P>
-				ランタイム画面では、MCPMateがMCPサーバー用に管理する組み込み環境（現在は<strong>uv</strong>と<strong>Bun</strong>）を公開します。これを使用して、新しいトランスポートやサーバーのアップグレードをテストする際に、インストールの確認、キャッシュのクリア、機能状態のリセットを行います。
+				ランタイム画面では、MCPMateがMCPサーバー用に管理する組み込み環境（現在は<strong>Node.js</strong>、<strong>uv</strong>、<strong>Bun</strong>）を公開します。これを使用して、新しいトランスポートやサーバーのアップグレードをテストする際に、インストールの確認、キャッシュのクリア、機能状態のリセットを行います。
 			</P>
 
 			<DocScreenshot
 				lightSrc="/screenshot/runtime-light.png"
 				darkSrc="/screenshot/runtime-dark.png"
-				alt="Runtime page with uv, Bun, and capabilities cache stats"
+				alt="Runtime page with Node.js, uv, Bun, and capabilities cache stats"
 			/>
 
 			<H2>ランタイム ステータスカード</H2>
@@ -51,7 +51,7 @@ export default function RuntimeJA() {
 			<H2>推奨されるメンテナンスフロー</H2>
 			<H3>新しいサーバーをインポートする前に</H3>
 			<P>
-				両方のランタイムが適切なバージョンで<em>実行中（running）</em>と表示されていることを確認します。ステータスバッジが<em>停止（stopped）</em>の場合は、最初に「インストール / 修復」を実行します。
+				Node.js、uv、Bun の全ランタイムが適切なバージョンで<em>実行中（running）</em>と表示されていることを確認します。ステータスバッジが<em>停止（stopped）</em>の場合は、最初に「インストール / 修復」を実行します。
 			</P>
 
 			<H3>プロファイルの大幅な編集後</H3>
@@ -60,7 +60,7 @@ export default function RuntimeJA() {
 			</P>
 
 			<Callout type="warning" title="キャッシュのリセットはダウンロードしたパッケージを削除します">
-				uvまたはBunのキャッシュをリセットすると、仮想環境のコンテンツが削除されます。その後のサーバー呼び出しでは依存関係が再インストールされ、時間がかかる場合があります。エンドユーザーが接続している間ではなく、メンテナンスウィンドウ中または自動テストを実行する前にリセットをスケジュールしてください。
+				Node.js、uv、Bun のキャッシュをリセットすると、仮想環境のコンテンツが削除されます。その後のサーバー呼び出しでは依存関係が再インストールされ、時間がかかる場合があります。エンドユーザーが接続している間ではなく、メンテナンスウィンドウ中または自動テストを実行する前にリセットをスケジュールしてください。
 			</Callout>
 		</DocLayout>
 	);

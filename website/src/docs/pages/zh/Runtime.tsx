@@ -7,14 +7,14 @@ export default function RuntimeZH() {
 	return (
 		<DocLayout meta={{ title: "运行时", description: "运行控制与健康状态" }}>
 			<P>
-				运行时页面展示 MCPMate 所管理的嵌入式环境（目前涵盖 <strong>uv</strong> 与{" "}
+				运行时页面展示 MCPMate 所管理的嵌入式环境（目前涵盖 <strong>Node.js</strong>、<strong>uv</strong> 与{" "}
 				<strong>Bun</strong>）。可在此确认安装情况、清理缓存，并在测试新服务器或传输协议时重置能力缓存。
 			</P>
 
 			<DocScreenshot
 				lightSrc="/screenshot/runtime-light.png"
 				darkSrc="/screenshot/runtime-dark.png"
-				alt="运行时：uv、Bun 与能力缓存统计"
+				alt="运行时：Node.js、uv、Bun 与能力缓存统计"
 			/>
 
 			<H2>运行时卡片</H2>
@@ -37,7 +37,7 @@ export default function RuntimeZH() {
 
 			<H2>运维建议</H2>
 			<H3>导入前检查</H3>
-			<P>在导入新服务器之前，确认 uv 与 Bun 状态均为“运行中”且版本合理；若为“已停止”，优先执行安装 / 修复。</P>
+			<P>在导入新服务器之前，确认 Node.js、uv 与 Bun 状态均为“运行中”且版本合理；若为“已停止”，优先执行安装 / 修复。</P>
 
 			<H3>大规模调整后</H3>
 			<P>
@@ -45,7 +45,7 @@ export default function RuntimeZH() {
 			</P>
 
 			<Callout type="warning" title="重置缓存会删除已下载的依赖">
-				清理 uv 或 Bun 缓存会移除虚拟环境下的安装包。后续首次访问服务器时会重新安装，可能耗时较长。请尽量在维护窗口或自动化测试前操作，避免对使用中的会话造成影响。
+				清理 Node.js、uv 或 Bun 缓存会移除虚拟环境下的安装包。后续首次访问服务器时会重新安装，可能耗时较长。请尽量在维护窗口或自动化测试前操作，避免对使用中的会话造成影响。
 			</Callout>
 		</DocLayout>
 	);

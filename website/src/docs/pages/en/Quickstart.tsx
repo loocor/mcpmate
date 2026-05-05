@@ -231,7 +231,7 @@ export default function Quickstart() {
 				</Li>
 				<Li>
 					Use <strong>Install / Repair</strong> to provision required runtimes
-					like uv and Bun, and clear caches from the same page if you suspect
+					like Node.js, uv and Bun, and clear caches from the same page if you suspect
 					stale data.
 				</Li>
 			</Ul>
