@@ -781,6 +781,88 @@ mod tests {
         assert!(!target_dir.join("node-v24.15.0-darwin-arm64/bin/npm").exists());
     }
 
+    #[tokio::test]
+    async fn install_node_creates_expected_runtime_layout() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let installer = RuntimeInstaller::new();
+        let target_dir = temp_dir.path().join("node-runtime");
+
+        #[cfg(unix)]
+        let archive_path = {
+            let archive_path = temp_dir.path().join("node.tar.gz");
+            let file = StdFile::create(&archive_path).expect("create tar.gz");
+            let encoder = GzEncoder::new(file, Compression::default());
+            let mut builder = Builder::new(encoder);
+
+            let mut node_header = tar::Header::new_gnu();
+            node_header
+                .set_path("node-v24.15.0-darwin-arm64/bin/node")
+                .expect("set node path");
+            node_header.set_mode(0o755);
+            node_header.set_size(4);
+            node_header.set_cksum();
+            builder
+                .append(&node_header, &b"node"[..])
+                .expect("append node binary");
+
+            let encoder = builder.into_inner().expect("finish tar");
+            encoder.finish().expect("finish gzip");
+            archive_path
+        };
+
+        #[cfg(windows)]
+        let archive_path = {
+            let archive_path = temp_dir.path().join("node.zip");
+            let file = StdFile::create(&archive_path).expect("create zip");
+            let mut zip = zip::ZipWriter::new(file);
+
+            zip.start_file(
+                "node-v24.15.0-win-x64/node.exe",
+                SimpleFileOptions::default(),
+            )
+            .expect("start node.exe");
+            zip.write_all(b"node").expect("write node.exe");
+
+            zip.start_file(
+                "node-v24.15.0-win-x64/npm.cmd",
+                SimpleFileOptions::default(),
+            )
+            .expect("start npm.cmd");
+            zip.write_all(b"npm").expect("write npm.cmd");
+
+            zip.start_file(
+                "node-v24.15.0-win-x64/npx.cmd",
+                SimpleFileOptions::default(),
+            )
+            .expect("start npx.cmd");
+            zip.write_all(b"npx").expect("write npx.cmd");
+
+            zip.finish().expect("finish zip");
+            archive_path
+        };
+
+        let installed_path = installer
+            .install_node(&archive_path, &target_dir)
+            .await
+            .expect("install node runtime");
+
+        assert!(installed_path.exists(), "installed node path should exist");
+
+        #[cfg(unix)]
+        {
+            assert!(target_dir.join("node").exists(), "node shim should exist");
+            assert!(target_dir.join("npm").exists(), "npm shim should exist");
+            assert!(target_dir.join("npx").exists(), "npx shim should exist");
+        }
+
+        #[cfg(windows)]
+        {
+            assert!(target_dir.join("node.exe").exists(), "node.exe should exist");
+            assert!(target_dir.join("npm.cmd").exists(), "npm.cmd should exist");
+            assert!(target_dir.join("npx.cmd").exists(), "npx.cmd should exist");
+        }
+    }
+
     #[test]
     fn unique_temp_dir_creates_distinct_paths() {
         assert_ne!(
