@@ -1650,7 +1650,9 @@ fn apply_client_audit_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::client::init::initialize_client_table;
+    use crate::config::client::init::{
+        initialize_client_table, initialize_system_settings, set_default_client_config_mode,
+    };
     use crate::config::database::Database;
     use crate::core::models::Config;
     use crate::core::proxy::server::common::{ClientIdentitySource, ClientTransport};
@@ -1686,6 +1688,9 @@ mod tests {
             .await
             .expect("enable foreign keys");
         initialize_client_table(&pool).await.expect("init client table");
+        initialize_system_settings(&pool)
+            .await
+            .expect("init system settings store");
 
         let database = Arc::new(Database {
             pool: pool.clone(),
@@ -1889,10 +1894,7 @@ mod tests {
     async fn resolve_effective_config_mode_prefers_explicit_client_mode() {
         let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
 
-        sqlx::query("UPDATE client_runtime_settings SET value = ? WHERE key = ?")
-            .bind("transparent")
-            .bind("default_config_mode")
-            .execute(&pool)
+        set_default_client_config_mode(&pool, "transparent")
             .await
             .expect("set default mode");
 
@@ -1963,10 +1965,7 @@ mod tests {
     async fn resolve_effective_config_mode_uses_settings_default_for_recognized_client_without_explicit_mode() {
         let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
 
-        sqlx::query("UPDATE client_runtime_settings SET value = ? WHERE key = ?")
-            .bind("transparent")
-            .bind("default_config_mode")
-            .execute(&pool)
+        set_default_client_config_mode(&pool, "transparent")
             .await
             .expect("set default mode");
 
@@ -1997,10 +1996,7 @@ mod tests {
     async fn resolve_effective_config_mode_uses_settings_default_for_unrecognized_client() {
         let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
 
-        sqlx::query("UPDATE client_runtime_settings SET value = ? WHERE key = ?")
-            .bind("transparent")
-            .bind("default_config_mode")
-            .execute(&pool)
+        set_default_client_config_mode(&pool, "transparent")
             .await
             .expect("set default mode");
 

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 
+use mcpmate::common::constants::ports;
 use mcpmate::config::registry::start_registry_sync_service;
 use mcpmate::core::proxy::{
     Args,
@@ -8,11 +9,21 @@ use mcpmate::core::proxy::{
     startup::{start_api_server, start_background_connections, start_proxy_server},
 };
 use mcpmate::system::config::init_port_config;
+use mcpmate::system::settings::get_settings_sync;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
-    let args = Args::parse();
+    let mut args = Args::parse();
+
+    if let Ok(settings) = get_settings_sync() {
+        if args.api_port == ports::API_PORT {
+            args.api_port = settings.api_port;
+        }
+        if args.mcp_port == ports::MCP_PORT {
+            args.mcp_port = settings.mcp_port;
+        }
+    }
 
     // Validate command line arguments
     if let Err(e) = args.validate() {
@@ -58,9 +69,24 @@ async fn main() -> Result<()> {
 
     tracing::info!("Servers started. Press Ctrl+C to stop.");
 
-    // Wait for Ctrl+C
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Received Ctrl+C, shutting down...");
+    // Wait for shutdown signal: Ctrl+C or SIGTERM
+    #[cfg(unix)]
+    {
+        let mut term_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received Ctrl+C, shutting down...");
+            }
+            _ = term_signal.recv() => {
+                tracing::info!("Received SIGTERM, shutting down...");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        tracing::info!("Received Ctrl+C, shutting down...");
+    }
 
     // Step 1: Initiate MCP server shutdown first
     tracing::info!("Step 1: Initiating MCP server shutdown...");

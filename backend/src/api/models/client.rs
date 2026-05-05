@@ -1065,4 +1065,3 @@ api_resp!(
     FirstContactBehaviorData,
     "First contact behavior API response"
 );
-

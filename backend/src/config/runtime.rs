@@ -44,43 +44,45 @@ pub async fn prepare_command_env_with_db(
     };
 
     // 2. Use RuntimeManager to find runtime paths
-    if let Some(rt_type) = runtime_type {
-        let manager = RuntimeManager::new();
+    let Some(rt_type) = runtime_type else {
+        tracing::debug!(
+            "No runtime type mapping for {}, preparing basic environment",
+            command_str
+        );
+        return prepare_basic_command_env(command, command_str);
+    };
 
-        if let Some(runtime_path) = manager.get_executable_path(rt_type) {
-            tracing::debug!(
-                "Using MCPMate managed runtime for '{}': {}",
-                command_str,
-                runtime_path.display()
-            );
+    let manager = RuntimeManager::new();
+    let Some(runtime_path) = manager.get_executable_path(rt_type) else {
+        tracing::debug!(
+            "No MCPMate-managed runtime found for {}, preparing basic environment",
+            command_str
+        );
+        return prepare_basic_command_env(command, command_str);
+    };
 
-            // Use shared environment management system
-            let runtime_type_str = match rt_type {
-                RuntimeType::Uv => "uv",
-                RuntimeType::Bun => "bun",
-            };
+    tracing::debug!(
+        "Using MCPMate managed runtime for '{}': {}",
+        command_str,
+        runtime_path.display()
+    );
 
-            prepare_command_environment(command, runtime_type_str, &runtime_path).map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to prepare {} runtime environment for '{}': {}",
-                    runtime_type_str,
-                    command_str,
-                    e
-                )
-            })?;
+    // Use shared environment management system
+    let runtime_type_str = rt_type.as_str();
 
-            tracing::debug!(
-                "Successfully prepared {} environment using simplified system",
-                runtime_type_str
-            );
-        } else {
-            tracing::debug!("No MCPMate-managed runtime found for {}, preparing basic environment", command_str);
-            prepare_basic_command_env(command, command_str)?;
-        }
-    } else {
-        tracing::debug!("No runtime type mapping for {}, preparing basic environment", command_str);
-        prepare_basic_command_env(command, command_str)?;
-    }
+    prepare_command_environment(command, runtime_type_str, &runtime_path).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to prepare {} runtime environment for '{}': {}",
+            runtime_type_str,
+            command_str,
+            e
+        )
+    })?;
+
+    tracing::debug!(
+        "Successfully prepared {} environment using simplified system",
+        runtime_type_str
+    );
 
     Ok(())
 }
