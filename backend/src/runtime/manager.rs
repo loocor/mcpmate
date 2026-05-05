@@ -33,74 +33,60 @@ impl RuntimeManager {
         self.get_executable_path(runtime_type).is_some()
     }
 
-    /// Get the executable path for a runtime
+    /// Get the executable path for a runtime.
     pub fn get_executable_path(
         &self,
         runtime_type: RuntimeType,
     ) -> Option<PathBuf> {
-        // Check for MCPMate managed executables (preferred for version consistency and security)
-        match runtime_type {
-            RuntimeType::Uv => {
-                let runtime_dir = self.runtimes_dir.join(runtime_type.as_str());
+        let candidates: &[&str] = match runtime_type {
+            RuntimeType::Uv => &[commands::UV, commands::UVX],
+            RuntimeType::Bun => &[commands::BUN, commands::BUNX],
+            RuntimeType::Node => &[commands::NODE, commands::NPM, commands::NPX],
+        };
 
-                // Check for uvx first (preferred for MCP servers)
-                let uvx_name = runtime_type.executable_name_for_command(commands::UVX);
-                let uvx_path = runtime_dir.join(uvx_name);
-                if uvx_path.exists() {
-                    return Some(uvx_path);
-                }
-
-                // Fall back to uv
-                let runtime_name = runtime_type.executable_name();
-                let runtime_path = runtime_dir.join(runtime_name);
-                if runtime_path.exists() {
-                    Some(runtime_path)
-                } else {
-                    None
-                }
-            }
-            RuntimeType::Bun => {
-                let runtime_dir = self.runtimes_dir.join(runtime_type.as_str());
-
-                // Check for bunx first (preferred)
-                let bunx_name = runtime_type.executable_name_for_command(commands::BUNX);
-                let bunx_path = runtime_dir.join(bunx_name);
-                if bunx_path.exists() {
-                    return Some(bunx_path);
-                }
-
-                // Fall back to bun
-                let runtime_name = runtime_type.executable_name();
-                let runtime_path = runtime_dir.join(runtime_name);
-                if runtime_path.exists() {
-                    Some(runtime_path)
-                } else {
-                    None
-                }
-            }
-        }
+        candidates
+            .iter()
+            .find_map(|command| self.resolve_command_path(runtime_type, command))
     }
 
-    /// Get runtime path for a command (uvx -> Uv, bunx -> Bun)
-    /// Note: npx is handled by command transformation to bunx
+    /// Get the executable path for an exact command alias.
+    pub fn get_command_path(
+        &self,
+        command: &str,
+    ) -> Option<PathBuf> {
+        let runtime_type = RuntimeType::from_command(command)?;
+        self.resolve_command_path(runtime_type, command)
+    }
+
+    /// Get runtime path for a command alias.
     pub fn get_runtime_for_command(
         &self,
         command: &str,
     ) -> Option<PathBuf> {
-        let runtime_type = match command {
-            commands::UVX => RuntimeType::Uv,
-            commands::BUNX => RuntimeType::Bun,
-            _ => return None,
-        };
+        self.get_command_path(command)
+    }
 
-        self.get_executable_path(runtime_type)
+    fn resolve_command_path(
+        &self,
+        runtime_type: RuntimeType,
+        command: &str,
+    ) -> Option<PathBuf> {
+        let runtime_dir = self.runtimes_dir.join(runtime_type.as_str());
+        let executable_name = runtime_type.executable_name_for_command(command);
+        let mut candidates = vec![runtime_dir.join(&executable_name)];
+
+        if matches!(runtime_type, RuntimeType::Node) {
+            candidates.push(runtime_dir.join("bin").join(&executable_name));
+        }
+
+        candidates.into_iter().find(|path| path.exists())
     }
 
     /// List all installed runtimes
     pub fn list_installed(&self) -> Vec<RuntimeInfo> {
         let mut runtimes = Vec::new();
 
-        for runtime_type in [RuntimeType::Uv, RuntimeType::Bun] {
+        for &runtime_type in RuntimeType::all() {
             let info = RuntimeInfo {
                 runtime_type,
                 available: self.is_installed(runtime_type),

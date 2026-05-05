@@ -9,8 +9,9 @@ use nanoid::nanoid;
 use std::fs::File as StdFile;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use tar::Archive;
+use tar::{Archive, EntryType};
 use tokio::task;
+use walkdir::WalkDir;
 use zip::ZipArchive;
 
 use super::downloader::RuntimeDownloader;
@@ -36,34 +37,34 @@ impl RuntimeInstaller {
     pub async fn install_runtime(
         &self,
         runtime_type: RuntimeType,
+        version: Option<&str>,
     ) -> Result<PathBuf> {
-        tracing::info!("Installing runtime: {}", runtime_type.as_str());
+        tracing::info!(
+            "Installing runtime: {}{}",
+            runtime_type.as_str(),
+            version.map(|value| format!(" ({})", value.trim())).unwrap_or_default()
+        );
 
-        // Ensure runtimes directory exists
         self.manager.ensure_runtimes_dir()?;
 
-        // Create temporary download directory
         let temp_dir = Self::unique_temp_dir("mcpmate-runtime-install");
         tokio::fs::create_dir_all(&temp_dir)
             .await
             .context("Failed to create temp directory")?;
 
-        // Download the runtime
         let downloaded_file = self
             .downloader
-            .download_runtime(runtime_type, &temp_dir)
+            .download_runtime(runtime_type, version, &temp_dir)
             .await
             .context("Failed to download runtime")?;
 
-        // Extract and install
         let installed_path = self
             .extract_and_install(runtime_type, &downloaded_file)
             .await
             .context("Failed to extract and install runtime")?;
 
-        // Clean up temp directory
-        if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
-            tracing::warn!("Failed to clean up temp directory: {}", e);
+        if let Err(error) = tokio::fs::remove_dir_all(&temp_dir).await {
+            tracing::warn!("Failed to clean up temp directory: {}", error);
         }
 
         tracing::info!(
@@ -81,16 +82,12 @@ impl RuntimeInstaller {
         downloaded_file: &Path,
     ) -> Result<PathBuf> {
         let runtimes_dir = self.manager.runtimes_dir();
-
-        // Create runtime-specific subdirectory
-        let target_dir = match runtime_type {
-            RuntimeType::Bun => runtimes_dir.join("bun"),
-            RuntimeType::Uv => runtimes_dir.join("uv"),
-        };
+        let target_dir = runtimes_dir.join(runtime_type.as_str());
 
         match runtime_type {
             RuntimeType::Bun => self.install_bun(downloaded_file, &target_dir).await,
             RuntimeType::Uv => self.install_uv(downloaded_file, &target_dir).await,
+            RuntimeType::Node => self.install_node(downloaded_file, &target_dir).await,
         }
     }
 
@@ -100,33 +97,20 @@ impl RuntimeInstaller {
         zip_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
-        // Ensure target directory exists
         tokio::fs::create_dir_all(target_dir).await?;
 
-        // Extract zip file
         let extract_dir = Self::unique_temp_dir("mcpmate-bun-extract");
         self.prepare_extract_dir(&extract_dir).await?;
         self.extract_zip(zip_file, &extract_dir).await?;
 
-        // Find bun executable in extracted directory
         let bun_exe = self.find_bun_executable(&extract_dir)?;
-
-        // Copy to target directory
         let target_path = target_dir.join(if cfg!(windows) { "bun.exe" } else { "bun" });
         tokio::fs::copy(&bun_exe, &target_path)
             .await
             .context("Failed to copy bun executable")?;
 
-        // Make executable on Unix systems
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = tokio::fs::metadata(&target_path).await?.permissions();
-            perms.set_mode(0o755);
-            tokio::fs::set_permissions(&target_path, perms).await?;
-        }
+        Self::set_executable_permissions(&target_path).await?;
 
-        // Create bunx symlink/copy
         let bunx_path = target_dir.join(if cfg!(windows) { "bunx.exe" } else { "bunx" });
         #[cfg(unix)]
         {
@@ -144,9 +128,52 @@ impl RuntimeInstaller {
                 .context("Failed to copy bunx executable")?;
         }
 
-        // Clean up extract directory
-        if let Err(e) = tokio::fs::remove_dir_all(&extract_dir).await {
-            tracing::warn!("Failed to clean up extract directory: {}", e);
+        Self::set_executable_permissions(&bunx_path).await?;
+
+        if let Err(error) = tokio::fs::remove_dir_all(&extract_dir).await {
+            tracing::warn!("Failed to clean up extract directory: {}", error);
+        }
+
+        Ok(target_path)
+    }
+
+    async fn install_node(
+        &self,
+        archive_file: &Path,
+        target_dir: &Path,
+    ) -> Result<PathBuf> {
+        let extract_dir = Self::unique_temp_dir("mcpmate-node-extract");
+        self.prepare_extract_dir(&extract_dir).await?;
+        self.prepare_extract_dir(target_dir).await?;
+
+        let is_zip = archive_file
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
+
+        if is_zip {
+            self.extract_zip(archive_file, &extract_dir).await?;
+        } else {
+            self.extract_tar_gz_skipping_links(archive_file, &extract_dir).await?;
+        }
+
+        let install_root = self.find_node_install_root(&extract_dir)?;
+        self.copy_directory_contents(&install_root, target_dir).await?;
+
+        #[cfg(unix)]
+        self.create_node_unix_shims(target_dir).await?;
+
+        let target_path = target_dir.join(RuntimeType::Node.executable_name());
+        if !target_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Installed Node.js executable not found at {}",
+                target_path.display()
+            ));
+        }
+
+        Self::set_executable_permissions(&target_path).await?;
+
+        if let Err(error) = tokio::fs::remove_dir_all(&extract_dir).await {
+            tracing::warn!("Failed to clean up extract directory: {}", error);
         }
 
         Ok(target_path)
@@ -160,10 +187,8 @@ impl RuntimeInstaller {
         archive_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
-        // Ensure target directory exists
         tokio::fs::create_dir_all(target_dir).await?;
 
-        // Extract archive (zip on Windows, tar.gz on macOS/Linux)
         let extract_dir = Self::unique_temp_dir("mcpmate-uv-extract");
         self.prepare_extract_dir(&extract_dir).await?;
 
@@ -177,25 +202,14 @@ impl RuntimeInstaller {
             self.extract_tar_gz(archive_file, &extract_dir).await?;
         }
 
-        // Find uv executable in extracted directory
         let uv_exe = self.find_uv_executable(&extract_dir)?;
-
-        // Copy uv to target directory
         let target_path = target_dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
         tokio::fs::copy(&uv_exe, &target_path)
             .await
             .context("Failed to copy uv executable")?;
 
-        // Make executable on Unix systems
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = tokio::fs::metadata(&target_path).await?.permissions();
-            perms.set_mode(0o755);
-            tokio::fs::set_permissions(&target_path, perms).await?;
-        }
+        Self::set_executable_permissions(&target_path).await?;
 
-        // Find and copy uvx executable (official uvx binary from the package)
         let uvx_exe = self.find_uvx_executable(&extract_dir)?;
         let uvx_path = target_dir.join(if cfg!(windows) { "uvx.exe" } else { "uvx" });
 
@@ -203,18 +217,10 @@ impl RuntimeInstaller {
             .await
             .context("Failed to copy uvx executable")?;
 
-        // Make uvx executable on Unix systems
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = tokio::fs::metadata(&uvx_path).await?.permissions();
-            perms.set_mode(0o755);
-            tokio::fs::set_permissions(&uvx_path, perms).await?;
-        }
+        Self::set_executable_permissions(&uvx_path).await?;
 
-        // Clean up extract directory
-        if let Err(e) = tokio::fs::remove_dir_all(&extract_dir).await {
-            tracing::warn!("Failed to clean up extract directory: {}", e);
+        if let Err(error) = tokio::fs::remove_dir_all(&extract_dir).await {
+            tracing::warn!("Failed to clean up extract directory: {}", error);
         }
 
         Ok(target_path)
@@ -250,15 +256,27 @@ impl RuntimeInstaller {
         &self,
         target_dir: &Path,
     ) -> Result<()> {
-        if let Err(e) = tokio::fs::remove_dir_all(target_dir).await {
-            if e.kind() != io::ErrorKind::NotFound {
-                return Err(e).context("Failed to clean extract directory");
+        if let Err(error) = tokio::fs::remove_dir_all(target_dir).await {
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(error).context("Failed to clean extract directory");
             }
         }
 
         tokio::fs::create_dir_all(target_dir)
             .await
             .context("Failed to create extract directory")?;
+        Ok(())
+    }
+
+    async fn set_executable_permissions(path: &Path) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = tokio::fs::metadata(path).await?.permissions();
+            perms.set_mode(0o755);
+            tokio::fs::set_permissions(path, perms).await?;
+        }
+
         Ok(())
     }
 
@@ -308,6 +326,22 @@ impl RuntimeInstaller {
         tar_file: &Path,
         target_dir: &Path,
     ) -> Result<()> {
+        Self::extract_tar_gz_internal(tar_file, target_dir, false).await
+    }
+
+    async fn extract_tar_gz_skipping_links(
+        &self,
+        tar_file: &Path,
+        target_dir: &Path,
+    ) -> Result<()> {
+        Self::extract_tar_gz_internal(tar_file, target_dir, true).await
+    }
+
+    async fn extract_tar_gz_internal(
+        tar_file: &Path,
+        target_dir: &Path,
+        skip_links: bool,
+    ) -> Result<()> {
         let tar_file = tar_file.to_path_buf();
         let target_dir = target_dir.to_path_buf();
 
@@ -327,6 +361,14 @@ impl RuntimeInstaller {
                 if file_type.is_dir() {
                     std::fs::create_dir_all(&safe_path)
                         .with_context(|| format!("Failed to create tar directory: {}", safe_path.display()))?;
+                    continue;
+                }
+
+                if skip_links && (file_type == EntryType::Symlink || file_type == EntryType::Link) {
+                    tracing::debug!(
+                        "Skipping tar link entry during runtime install: {}",
+                        entry_path.display()
+                    );
                     continue;
                 }
 
@@ -364,6 +406,177 @@ impl RuntimeInstaller {
         Ok(())
     }
 
+    async fn copy_directory_contents(
+        &self,
+        source_dir: &Path,
+        target_dir: &Path,
+    ) -> Result<()> {
+        let source_dir = source_dir.to_path_buf();
+        let target_dir = target_dir.to_path_buf();
+
+        task::spawn_blocking(move || -> Result<()> {
+            std::fs::create_dir_all(&target_dir)
+                .with_context(|| format!("Failed to create target dir: {}", target_dir.display()))?;
+
+            for entry in WalkDir::new(&source_dir) {
+                let entry = entry.context("Failed to walk source directory")?;
+                let path = entry.path();
+                let relative_path = path
+                    .strip_prefix(&source_dir)
+                    .with_context(|| format!("Failed to relativize path: {}", path.display()))?;
+
+                if relative_path.as_os_str().is_empty() {
+                    continue;
+                }
+
+                let destination = target_dir.join(relative_path);
+                let file_type = entry.file_type();
+
+                if file_type.is_dir() {
+                    std::fs::create_dir_all(&destination).with_context(|| {
+                        format!("Failed to create destination directory: {}", destination.display())
+                    })?;
+                    continue;
+                }
+
+                if !file_type.is_file() {
+                    continue;
+                }
+
+                if let Some(parent) = destination.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("Failed to create destination parent: {}", parent.display()))?;
+                }
+
+                std::fs::copy(path, &destination).with_context(|| {
+                    format!(
+                        "Failed to copy runtime file from {} to {}",
+                        path.display(),
+                        destination.display()
+                    )
+                })?;
+
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(path)
+                        .with_context(|| format!("Failed to read metadata for {}", path.display()))?
+                        .permissions()
+                        .mode();
+                    std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(mode))
+                        .with_context(|| format!("Failed to set permissions on {}", destination.display()))?;
+                }
+            }
+
+            Ok(())
+        })
+        .await
+        .context("Failed to join runtime copy task")??;
+
+        Ok(())
+    }
+
+    fn find_node_install_root(
+        &self,
+        extract_dir: &Path,
+    ) -> Result<PathBuf> {
+        if cfg!(windows) {
+            for entry in WalkDir::new(extract_dir) {
+                let entry = entry?;
+                if entry.file_name() == "node.exe" {
+                    let parent = entry.path().parent().ok_or_else(|| {
+                        anyhow::anyhow!("Node.js install root missing for {}", entry.path().display())
+                    })?;
+                    return Ok(parent.to_path_buf());
+                }
+            }
+        } else {
+            for entry in WalkDir::new(extract_dir) {
+                let entry = entry?;
+                if entry.file_name() == "node"
+                    && entry
+                        .path()
+                        .parent()
+                        .and_then(Path::file_name)
+                        .is_some_and(|part| part == "bin")
+                {
+                    let root = entry
+                        .path()
+                        .parent()
+                        .and_then(Path::parent)
+                        .ok_or_else(|| anyhow::anyhow!("Node.js install root missing"))?;
+                    return Ok(root.to_path_buf());
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("Node.js install root not found in extracted files"))
+    }
+
+    #[cfg(unix)]
+    async fn create_node_unix_shims(
+        &self,
+        target_dir: &Path,
+    ) -> Result<()> {
+        let bin_node = target_dir.join("bin").join("node");
+        let root_node = target_dir.join("node");
+        let npm_path = target_dir.join("npm");
+        let npx_path = target_dir.join("npx");
+
+        if !bin_node.exists() {
+            return Err(anyhow::anyhow!("Extracted Node.js archive does not contain bin/node"));
+        }
+
+        Self::recreate_hard_link_or_copy(&bin_node, &root_node).await?;
+        Self::set_executable_permissions(&root_node).await?;
+
+        let npm_script = r#"#!/bin/sh
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$DIR/node" "$DIR/lib/node_modules/npm/bin/npm-cli.js" "$@"
+"#;
+        tokio::fs::write(&npm_path, npm_script)
+            .await
+            .context("Failed to write npm launcher")?;
+        Self::set_executable_permissions(&npm_path).await?;
+
+        let npx_script = r#"#!/bin/sh
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$DIR/node" "$DIR/lib/node_modules/npm/bin/npx-cli.js" "$@"
+"#;
+        tokio::fs::write(&npx_path, npx_script)
+            .await
+            .context("Failed to write npx launcher")?;
+        Self::set_executable_permissions(&npx_path).await?;
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    async fn recreate_hard_link_or_copy(
+        source: &Path,
+        destination: &Path,
+    ) -> Result<()> {
+        if destination.exists() {
+            tokio::fs::remove_file(destination)
+                .await
+                .with_context(|| format!("Failed to remove existing file: {}", destination.display()))?;
+        }
+
+        match tokio::fs::hard_link(source, destination).await {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                tokio::fs::copy(source, destination).await.with_context(|| {
+                    format!(
+                        "Failed to copy runtime binary from {} to {}",
+                        source.display(),
+                        destination.display()
+                    )
+                })?;
+                Ok(())
+            }
+        }
+    }
+
     /// Find bun executable in extracted directory
     fn find_bun_executable(
         &self,
@@ -371,8 +584,7 @@ impl RuntimeInstaller {
     ) -> Result<PathBuf> {
         let exe_name = if cfg!(windows) { "bun.exe" } else { "bun" };
 
-        // Look for bun executable recursively
-        for entry in walkdir::WalkDir::new(extract_dir) {
+        for entry in WalkDir::new(extract_dir) {
             let entry = entry?;
             if entry.file_name() == exe_name {
                 return Ok(entry.path().to_path_buf());
@@ -389,8 +601,7 @@ impl RuntimeInstaller {
     ) -> Result<PathBuf> {
         let exe_name = if cfg!(windows) { "uv.exe" } else { "uv" };
 
-        // Look for uv executable recursively
-        for entry in walkdir::WalkDir::new(extract_dir) {
+        for entry in WalkDir::new(extract_dir) {
             let entry = entry?;
             if entry.file_name() == exe_name {
                 return Ok(entry.path().to_path_buf());
@@ -407,8 +618,7 @@ impl RuntimeInstaller {
     ) -> Result<PathBuf> {
         let exe_name = if cfg!(windows) { "uvx.exe" } else { "uvx" };
 
-        // Look for uvx executable recursively
-        for entry in walkdir::WalkDir::new(extract_dir) {
+        for entry in WalkDir::new(extract_dir) {
             let entry = entry?;
             if entry.file_name() == exe_name {
                 return Ok(entry.path().to_path_buf());
@@ -526,6 +736,53 @@ mod tests {
             .expect_err("reject symlink");
 
         assert!(err.to_string().contains("Unsupported tar entry type"));
+    }
+
+    #[tokio::test]
+    async fn extract_tar_gz_skips_symlink_entries_for_node_archives() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let tar_path = temp_dir.path().join("node.tar.gz");
+        let file = StdFile::create(&tar_path).expect("create tar.gz");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+
+        let mut file_header = tar::Header::new_gnu();
+        file_header
+            .set_path("node-v24.15.0-darwin-arm64/bin/node")
+            .expect("set file path");
+        file_header.set_mode(0o755);
+        file_header.set_size(4);
+        file_header.set_cksum();
+        builder.append(&file_header, &b"node"[..]).expect("append node");
+
+        let mut link_header = tar::Header::new_gnu();
+        link_header.set_entry_type(EntryType::Symlink);
+        link_header
+            .set_path("node-v24.15.0-darwin-arm64/bin/npm")
+            .expect("set link path");
+        link_header
+            .set_link_name("../lib/node_modules/npm/bin/npm-cli.js")
+            .expect("set link name");
+        link_header.set_size(0);
+        link_header.set_cksum();
+        builder.append(&link_header, std::io::empty()).expect("append symlink");
+
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip");
+
+        let target_dir = temp_dir.path().join("extract");
+        let installer = RuntimeInstaller::new();
+        installer
+            .prepare_extract_dir(&target_dir)
+            .await
+            .expect("prepare extract dir");
+        installer
+            .extract_tar_gz_skipping_links(&tar_path, &target_dir)
+            .await
+            .expect("extract tar.gz while skipping links");
+
+        assert!(target_dir.join("node-v24.15.0-darwin-arm64/bin/node").exists());
+        assert!(!target_dir.join("node-v24.15.0-darwin-arm64/bin/npm").exists());
     }
 
     #[test]

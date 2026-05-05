@@ -13,20 +13,20 @@ use crate::common::constants::commands;
 /// determine appropriate connection timeout based on command type
 pub fn get_connection_timeout(command: &str) -> Duration {
     match command {
-        commands::DOCKER => Duration::from_secs(120), // Docker operations can take longer
-        commands::NPX => Duration::from_secs(60),     // npm operations can take time (handled by transformation)
-        commands::UVX | commands::BUNX => Duration::from_secs(30), // Runtime commands may need more time
-        _ => Duration::from_secs(10),                 // Regular commands
+        commands::DOCKER => Duration::from_secs(120),
+        commands::NODE | commands::NPM | commands::NPX => Duration::from_secs(60),
+        commands::UV | commands::UVX | commands::BUN | commands::BUNX => Duration::from_secs(30),
+        _ => Duration::from_secs(10),
     }
 }
 
 /// determine appropriate tools listing timeout based on command type
 pub fn get_tools_timeout(command: &str) -> Duration {
     match command {
-        commands::DOCKER => Duration::from_secs(60), // Docker operations can take longer
-        commands::NPX => Duration::from_secs(60),    // npm timeout (handled by transformation)
-        commands::UVX | commands::BUNX => Duration::from_secs(20), // Runtime commands may need more time
-        _ => Duration::from_secs(10),                // Regular commands
+        commands::DOCKER => Duration::from_secs(60),
+        commands::NODE | commands::NPM | commands::NPX => Duration::from_secs(60),
+        commands::UV | commands::UVX | commands::BUN | commands::BUNX => Duration::from_secs(20),
+        _ => Duration::from_secs(10),
     }
 }
 
@@ -175,17 +175,23 @@ pub fn prepare_command(
     cmd
 }
 
-/// check if a command needs runtime setup (python, etc.)
-/// Note: npx is handled by command transformation to bunx
+/// Check if a command needs MCPMate runtime environment setup.
 pub fn needs_runtime_setup(command: &str) -> bool {
-    matches!(command, commands::UVX | commands::BUNX | commands::DOCKER)
+    matches!(
+        command,
+        commands::UV
+            | commands::UVX
+            | commands::BUN
+            | commands::BUNX
+            | commands::NODE
+            | commands::NPM
+            | commands::NPX
+            | commands::DOCKER
+    )
 }
 
-/// Transform npx commands to bunx for better performance and compatibility
+/// Preserve the user-provided command alias for runtime resolution.
 pub fn transform_command(command: &str) -> String {
-    if command.eq_ignore_ascii_case("npx") {
-        tracing::debug!("Respecting user-provided 'npx' command without bunx rewrite");
-    }
     command.to_string()
 }
 

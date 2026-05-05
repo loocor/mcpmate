@@ -7,7 +7,7 @@ use crate::macros::resp::api_resp;
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for runtime installation")]
 pub struct RuntimeInstallReq {
-    #[schemars(description = "Runtime type to install (uv or bun)")]
+    #[schemars(description = "Runtime type to install (uv, bun, or node)")]
     pub runtime_type: String,
     #[schemars(description = "Specific version to install (optional)")]
     pub version: Option<String>,
@@ -35,7 +35,7 @@ pub struct RuntimeInstallData {
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Runtime status information")]
 pub struct RuntimeStatus {
-    #[schemars(description = "Runtime type (uv or bun)")]
+    #[schemars(description = "Runtime type (uv, bun, or node)")]
     pub runtime_type: String,
     #[schemars(description = "Whether runtime is available")]
     pub available: bool,
@@ -54,6 +54,8 @@ pub struct RuntimeStatusData {
     pub uv: RuntimeStatus,
     #[schemars(description = "Bun runtime status")]
     pub bun: RuntimeStatus,
+    #[schemars(description = "Node.js runtime status")]
+    pub node: RuntimeStatus,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -87,13 +89,15 @@ pub struct RuntimeCacheData {
     pub uv: RuntimeCacheItem,
     #[schemars(description = "Bun cache details")]
     pub bun: RuntimeCacheItem,
+    #[schemars(description = "Node.js cache details")]
+    pub node: RuntimeCacheItem,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for cache reset operation")]
 pub struct RuntimeCacheResetReq {
     #[serde(default = "super::default_all")]
-    #[schemars(description = "Cache type to reset: all, uv, or bun (default: all)")]
+    #[schemars(description = "Cache type to reset: all, uv, bun, or node (default: all)")]
     pub cache_type: String,
 }
 

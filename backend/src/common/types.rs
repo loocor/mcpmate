@@ -69,20 +69,24 @@ impl FromStr for ClientCategory {
 pub enum RuntimeType {
     /// uv runtime (Python package manager and environment manager)
     Uv,
-    /// Bun.js runtime (supports bunx and bun x for npx compatibility)
+    /// Bun.js runtime
     Bun,
+    /// Node.js runtime
+    Node,
 }
 
 impl RuntimeType {
     // Default version constants
     pub const DEFAULT_BUN_VERSION: &'static str = "latest";
     pub const DEFAULT_UV_VERSION: &'static str = "latest";
+    pub const DEFAULT_NODE_VERSION: &'static str = "lts";
 
     /// Get the string representation of the runtime type
     pub fn as_str(&self) -> &'static str {
         match self {
             RuntimeType::Uv => "uv",
             RuntimeType::Bun => "bun",
+            RuntimeType::Node => "node",
         }
     }
 
@@ -91,13 +95,36 @@ impl RuntimeType {
         match self {
             RuntimeType::Uv => Self::DEFAULT_UV_VERSION,
             RuntimeType::Bun => Self::DEFAULT_BUN_VERSION,
+            RuntimeType::Node => Self::DEFAULT_NODE_VERSION,
+        }
+    }
+
+    /// Resolve a runtime type from a command alias or runtime name.
+    pub fn from_command(command: &str) -> Option<Self> {
+        use super::constants::commands;
+
+        match command.trim().to_ascii_lowercase().as_str() {
+            commands::UV | commands::UVX => Some(RuntimeType::Uv),
+            "bunjs" | commands::BUN | commands::BUNX => Some(RuntimeType::Bun),
+            "nodejs" | commands::NODE | commands::NPM | commands::NPX => Some(RuntimeType::Node),
+            _ => None,
+        }
+    }
+
+    /// Get the canonical executable command for the runtime.
+    pub fn canonical_command(&self) -> &'static str {
+        use super::constants::commands;
+
+        match self {
+            RuntimeType::Uv => commands::UV,
+            RuntimeType::Bun => commands::BUN,
+            RuntimeType::Node => commands::NODE,
         }
     }
 
     /// Get the executable name
     pub fn executable_name(&self) -> String {
-        let base_name = self.as_str();
-        format!("{}{}", base_name, Self::executable_extension())
+        self.executable_name_for_command(self.canonical_command())
     }
 
     /// Get the platform-specific executable extension
@@ -112,18 +139,20 @@ impl RuntimeType {
     ) -> String {
         use super::constants::commands;
 
-        let exe_name = match command {
-            commands::UVX => "uvx",
-            commands::BUNX => "bunx",
-            _ => self.as_str(),
-        };
-
-        format!("{}{}", exe_name, Self::executable_extension())
+        match (self, command.trim().to_ascii_lowercase().as_str()) {
+            (RuntimeType::Uv, commands::UVX) => format!("{}{}", commands::UVX, Self::executable_extension()),
+            (RuntimeType::Bun, commands::BUNX) => format!("{}{}", commands::BUNX, Self::executable_extension()),
+            (RuntimeType::Node, commands::NPM) if cfg!(windows) => format!("{}.cmd", commands::NPM),
+            (RuntimeType::Node, commands::NPX) if cfg!(windows) => format!("{}.cmd", commands::NPX),
+            (RuntimeType::Node, commands::NPM) => format!("{}{}", commands::NPM, Self::executable_extension()),
+            (RuntimeType::Node, commands::NPX) => format!("{}{}", commands::NPX, Self::executable_extension()),
+            _ => format!("{}{}", self.canonical_command(), Self::executable_extension()),
+        }
     }
 
     /// Get all supported runtime types
     pub fn all() -> &'static [RuntimeType] {
-        &[RuntimeType::Uv, RuntimeType::Bun]
+        &[RuntimeType::Uv, RuntimeType::Bun, RuntimeType::Node]
     }
 }
 
@@ -135,6 +164,7 @@ impl fmt::Display for RuntimeType {
         match self {
             RuntimeType::Uv => write!(f, "uv"),
             RuntimeType::Bun => write!(f, "bun"),
+            RuntimeType::Node => write!(f, "node"),
         }
     }
 }
@@ -143,14 +173,7 @@ impl FromStr for RuntimeType {
     type Err = RuntimeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use super::constants::commands;
-
-        match s.to_lowercase().as_str() {
-            "uv" | commands::UVX => Ok(RuntimeType::Uv),
-            "bun" | "bunjs" | commands::BUNX => Ok(RuntimeType::Bun),
-            "node" | "nodejs" | "npm" | commands::NPX => Ok(RuntimeType::Bun),
-            _ => Err(RuntimeError::UnsupportedRuntimeType(s.to_string())),
-        }
+        Self::from_command(s).ok_or_else(|| RuntimeError::UnsupportedRuntimeType(s.to_string()))
     }
 }
 
@@ -244,5 +267,31 @@ mod tests {
 
         assert_eq!(app_deserialized, app);
         assert_eq!(ext_deserialized, ext);
+    }
+
+    #[test]
+    fn test_runtime_type_from_command_aliases() {
+        assert_eq!(RuntimeType::from_command("uv"), Some(RuntimeType::Uv));
+        assert_eq!(RuntimeType::from_command("uvx"), Some(RuntimeType::Uv));
+        assert_eq!(RuntimeType::from_command("bun"), Some(RuntimeType::Bun));
+        assert_eq!(RuntimeType::from_command("bunx"), Some(RuntimeType::Bun));
+        assert_eq!(RuntimeType::from_command("node"), Some(RuntimeType::Node));
+        assert_eq!(RuntimeType::from_command("nodejs"), Some(RuntimeType::Node));
+        assert_eq!(RuntimeType::from_command("npm"), Some(RuntimeType::Node));
+        assert_eq!(RuntimeType::from_command("npx"), Some(RuntimeType::Node));
+        assert_eq!(RuntimeType::from_command("python"), None);
+    }
+
+    #[test]
+    fn test_runtime_type_defaults_and_executable_names() {
+        assert_eq!(RuntimeType::Node.default_version(), "lts");
+        assert_eq!(
+            RuntimeType::Node.executable_name(),
+            format!("node{}", RuntimeType::executable_extension())
+        );
+        let expected_npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+        let expected_npx = if cfg!(windows) { "npx.cmd" } else { "npx" };
+        assert_eq!(RuntimeType::Node.executable_name_for_command("npm"), expected_npm);
+        assert_eq!(RuntimeType::Node.executable_name_for_command("npx"), expected_npx);
     }
 }

@@ -767,6 +767,7 @@ export interface RuntimeStatusItem {
 export interface RuntimeStatusResponse {
   uv: RuntimeStatusItem;
   bun: RuntimeStatusItem;
+  node: RuntimeStatusItem;
 }
 
 export interface RuntimeCacheItem {
@@ -785,10 +786,11 @@ export interface RuntimeCacheResponse {
   summary: RuntimeCacheSummaryInfo;
   uv: RuntimeCacheItem;
   bun: RuntimeCacheItem;
+  node: RuntimeCacheItem;
 }
 
 export interface InstallRuntimeRequest {
-  runtime_type: string; // "uv" | "bun"
+  runtime_type: string; // "uv" | "bun" | "node"
   version?: string;
   timeout?: number;
   max_retries?: number;

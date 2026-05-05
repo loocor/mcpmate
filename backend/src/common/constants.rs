@@ -5,16 +5,28 @@
 
 /// Runtime command constants
 pub mod commands {
+    /// UV runtime command
+    pub const UV: &str = "uv";
+
     /// UV package executor command
     pub const UVX: &str = "uvx";
+
+    /// Bun runtime command
+    pub const BUN: &str = "bun";
 
     /// Bun package executor command
     pub const BUNX: &str = "bunx";
 
+    /// Node.js runtime command
+    pub const NODE: &str = "node";
+
+    /// NPM package manager command
+    pub const NPM: &str = "npm";
+
     /// Docker command
     pub const DOCKER: &str = "docker";
 
-    /// NPX command, only used for npx compatibility
+    /// NPX command
     pub const NPX: &str = "npx";
 }
 
@@ -34,6 +46,9 @@ pub mod env_vars {
 
     /// Bun cache directory
     pub const BUN_INSTALL_CACHE_DIR: &str = "BUN_INSTALL_CACHE_DIR";
+
+    /// Node/NPM cache directory
+    pub const NPM_CONFIG_CACHE: &str = "NPM_CONFIG_CACHE";
 
     /// System PATH environment variable
     pub const PATH: &str = "PATH";

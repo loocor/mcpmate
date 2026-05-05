@@ -1710,17 +1710,37 @@ export const runtimeApi = {
 		return extractApiData(response);
 	},
 
-	resetCache: (cacheType?: "all" | "uv" | "bun") =>
-		fetchApi<ClearCacheResponse>("/api/runtime/cache/reset", {
-			method: "POST",
-			body: JSON.stringify({ cache_type: cacheType || "all" }),
-		}),
+	async resetCache(
+		cacheType?: "all" | "uv" | "bun" | "node",
+	): Promise<ClearCacheResponse> {
+		const response = await fetchApi<ApiWrapper<ClearCacheResponse>>(
+			"/api/runtime/cache/reset",
+			{
+				method: "POST",
+				body: JSON.stringify({ cache_type: cacheType || "all" }),
+			},
+		);
+		const data = extractApiData(response);
+		if (!data.success) {
+			throw new Error("Runtime cache reset failed");
+		}
+		return data;
+	},
 
-	install: (req: InstallRuntimeRequest) =>
-		fetchApi<InstallResponse>("/api/runtime/install", {
-			method: "POST",
-			body: JSON.stringify(req),
-		}),
+	async install(req: InstallRuntimeRequest): Promise<InstallResponse> {
+		const response = await fetchApi<ApiWrapper<InstallResponse>>(
+			"/api/runtime/install",
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		);
+		const data = extractApiData(response);
+		if (!data.success) {
+			throw new Error(data.message || "Runtime installation failed");
+		}
+		return data;
+	},
 };
 
 // Capabilities Cache API
