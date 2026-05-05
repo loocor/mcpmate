@@ -16,12 +16,47 @@ fi
 
 require_command cargo
 require_command bun
+require_command lsof
+
+report_port_conflict() {
+  local port="$1"
+  local name="$2"
+  local expected_dir="$3"
+  local pid cwd command scope
+
+  pid="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+
+  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+  command="$(ps -p "$pid" -o command= 2>/dev/null | sed -e 's/^[[:space:]]*//')"
+
+  if [[ -n "$cwd" && "$cwd" == "$expected_dir"* ]]; then
+    scope="this worktree"
+  else
+    scope="another worktree or project"
+  fi
+
+  printf 'Port %s for %s is already in use by PID %s (%s).\n' "$port" "$name" "$pid" "$scope" >&2
+  if [[ -n "$cwd" ]]; then
+    printf 'Working directory: %s\n' "$cwd" >&2
+  fi
+  if [[ -n "$command" ]]; then
+    printf 'Command: %s\n' "$command" >&2
+  fi
+  printf 'Stop the existing process before running ./scripts/dev-all in %s.\n' "$ROOT_DIR" >&2
+  exit 1
+}
 
 cleanup() {
   jobs -p | xargs -r kill >/dev/null 2>&1 || true
 }
 
 trap cleanup EXIT INT TERM
+
+report_port_conflict 8080 backend "$(project_dir backend)"
+report_port_conflict 5173 board "$(project_dir board)"
 
 print_section "backend"
 (cd "$(project_dir backend)" && cargo run --) &
