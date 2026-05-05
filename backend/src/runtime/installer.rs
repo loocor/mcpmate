@@ -145,49 +145,52 @@ impl RuntimeInstaller {
         archive_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
-        // Use a staging directory so we never destroy a working installation
-        // mid-flight. If extraction or setup fails, the existing target_dir
-        // remains intact.
         let staging_dir = Self::prepare_staging_dir(target_dir, "staging").await?;
-
-        let is_zip = archive_file
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
-
-        if is_zip {
-            self.extract_zip(archive_file, &staging_dir).await?;
-        } else {
-            self.extract_tar_gz_skipping_links(archive_file, &staging_dir).await?;
-        }
-
-        let install_root = self.find_node_install_root(&staging_dir)?;
         let final_staging = Self::staging_name(target_dir, "final");
 
-        // Clean any leftover final dir, then rename install_root -> final_staging
-        Self::clean_dir(&final_staging).await?;
-        tokio::fs::rename(&install_root, &final_staging).await?;
+        let result = async {
+            let is_zip = archive_file
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
 
-        #[cfg(unix)]
-        self.create_node_unix_shims(&final_staging).await?;
+            if is_zip {
+                self.extract_zip(archive_file, &staging_dir).await?;
+            } else {
+                self.extract_tar_gz_skipping_links(archive_file, &staging_dir).await?;
+            }
 
-        let target_path = final_staging.join(RuntimeType::Node.executable_name());
-        if !target_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Installed Node.js executable not found at {}",
-                target_path.display()
-            ));
+            let install_root = self.find_node_install_root(&staging_dir)?;
+
+            Self::clean_dir(&final_staging).await?;
+            tokio::fs::rename(&install_root, &final_staging).await?;
+
+            #[cfg(unix)]
+            self.create_node_unix_shims(&final_staging).await?;
+
+            let target_path = final_staging.join(RuntimeType::Node.executable_name());
+            if !target_path.exists() {
+                return Err(anyhow::anyhow!(
+                    "Installed Node.js executable not found at {}",
+                    target_path.display()
+                ));
+            }
+
+            Self::set_executable_permissions(&target_path).await?;
+            Self::clean_dir(&staging_dir).await?;
+            Self::commit_staging(&final_staging, target_dir).await?;
+
+            Ok(target_dir.join(RuntimeType::Node.executable_name()))
         }
+        .await;
 
-        Self::set_executable_permissions(&target_path).await?;
-
-        // Clean up first-stage staging
-        let _ = Self::clean_dir(&staging_dir).await;
-
-        // Atomic swap
-        Self::commit_staging(&final_staging, target_dir).await?;
-
-        let final_path = target_dir.join(RuntimeType::Node.executable_name());
-        Ok(final_path)
+        match result {
+            Ok(final_path) => Ok(final_path),
+            Err(error) => {
+                let _ = Self::clean_dir(&staging_dir).await;
+                let _ = Self::clean_dir(&final_staging).await;
+                Err(error)
+            }
+        }
     }
 
     /// Install UV runtime
@@ -861,6 +864,77 @@ mod tests {
             assert!(target_dir.join("npm.cmd").exists(), "npm.cmd should exist");
             assert!(target_dir.join("npx.cmd").exists(), "npx.cmd should exist");
         }
+    }
+
+    #[tokio::test]
+    async fn install_node_keeps_existing_runtime_when_archive_is_invalid() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let installer = RuntimeInstaller::new();
+        let target_dir = temp_dir.path().join("node-runtime");
+        fs::create_dir_all(&target_dir).expect("create existing runtime dir");
+
+        #[cfg(unix)]
+        let existing_binary = target_dir.join("node");
+        #[cfg(windows)]
+        let existing_binary = target_dir.join("node.exe");
+
+        fs::write(&existing_binary, b"old-node").expect("seed existing runtime");
+
+        #[cfg(unix)]
+        let archive_path = {
+            let archive_path = temp_dir.path().join("broken-node.tar.gz");
+            let file = StdFile::create(&archive_path).expect("create tar.gz");
+            let encoder = GzEncoder::new(file, Compression::default());
+            let mut builder = Builder::new(encoder);
+
+            let mut readme_header = tar::Header::new_gnu();
+            readme_header
+                .set_path("node-v24.15.0-darwin-arm64/README.md")
+                .expect("set readme path");
+            readme_header.set_size(6);
+            readme_header.set_cksum();
+            builder
+                .append(&readme_header, &b"broken"[..])
+                .expect("append readme");
+
+            let encoder = builder.into_inner().expect("finish tar");
+            encoder.finish().expect("finish gzip");
+            archive_path
+        };
+
+        #[cfg(windows)]
+        let archive_path = {
+            let archive_path = temp_dir.path().join("broken-node.zip");
+            let file = StdFile::create(&archive_path).expect("create zip");
+            let mut zip = zip::ZipWriter::new(file);
+
+            zip.start_file(
+                "node-v24.15.0-win-x64/README.md",
+                SimpleFileOptions::default(),
+            )
+            .expect("start readme");
+            zip.write_all(b"broken").expect("write readme");
+
+            zip.finish().expect("finish zip");
+            archive_path
+        };
+
+        let error = installer
+            .install_node(&archive_path, &target_dir)
+            .await
+            .expect_err("invalid archive should fail");
+
+        assert!(
+            error.to_string().contains("install root not found"),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(
+            fs::read(&existing_binary).expect("read existing runtime"),
+            b"old-node"
+        );
+        assert!(!RuntimeInstaller::staging_name(&target_dir, "staging").exists());
+        assert!(!RuntimeInstaller::staging_name(&target_dir, "final").exists());
+        assert!(!RuntimeInstaller::staging_name(&target_dir, "old").exists());
     }
 
     #[test]
