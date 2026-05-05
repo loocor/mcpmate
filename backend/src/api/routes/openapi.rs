@@ -400,7 +400,7 @@ macro_rules! aide_wrapper_query {
 ///     runtime::install,                                                   // Handler function path
 ///     RuntimeInstallReq,                                                  // Payload body type
 ///     RuntimeInstallResp,                                                 // Response type
-///     "Install runtime package (UV or Bun) with optional configuration"   // Description
+///     "Install runtime package (UV, Bun, or Node.js) with optional configuration"   // Description
 /// );
 /// ```
 #[macro_export]

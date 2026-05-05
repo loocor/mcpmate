@@ -21,11 +21,15 @@ aide_wrapper_payload!(
     runtime::install,
     RuntimeInstallReq,
     RuntimeInstallResp,
-    "Install runtime package (UV or Bun) with optional configuration"
+    "Install runtime package (UV, Bun, or Node.js) with optional configuration"
 );
 
 // Generate aide-compatible wrapper for runtime status (no parameters)
-aide_wrapper!(runtime::status, RuntimeStatusResp, "Get runtime status for UV and Bun");
+aide_wrapper!(
+    runtime::status,
+    RuntimeStatusResp,
+    "Get runtime status for UV, Bun, and Node.js"
+);
 
 // Generate aide-compatible wrapper for runtime cache (no parameters)
 aide_wrapper!(
@@ -39,7 +43,7 @@ aide_wrapper_payload!(
     runtime::reset_cache,
     RuntimeCacheResetReq,
     RuntimeCacheResetResp,
-    "Reset runtime cache. Payload: {cache_type: 'all'|'uv'|'bun'} (default: 'all')"
+    "Reset runtime cache. Payload: {cache_type: 'all'|'uv'|'bun'|'node'} (default: 'all')"
 );
 
 pub fn routes(state: Arc<AppState>) -> ApiRouter {

@@ -21,7 +21,7 @@ pub async fn install(
     let started_at = std::time::Instant::now();
     let runtime_type = request.runtime_type.clone();
 
-    let result = runtime_install_core(&request, &app_state).await;
+    let result = runtime_install_core(&request).await;
 
     let (audit_status, audit_error) = match &result {
         Ok(resp) => {
@@ -124,66 +124,61 @@ pub async fn reset_cache(
     result.map(Json)
 }
 
-async fn runtime_install_core(
-    request: &RuntimeInstallReq,
-    app_state: &AppState,
-) -> Result<RuntimeInstallResp, StatusCode> {
+async fn runtime_install_core(request: &RuntimeInstallReq) -> Result<RuntimeInstallResp, StatusCode> {
     let runtime_type: RuntimeType = request.runtime_type.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let manager = RuntimeManager::new();
+    let existing_installation = manager.is_installed(runtime_type);
 
-    // Early return if already installed
-    if manager.is_installed(runtime_type) {
-        tracing::info!("Runtime {} already installed", runtime_type);
-
-        return Ok(RuntimeInstallResp::success(RuntimeInstallData {
-            success: true,
-            message: format!("Runtime {} already installed", runtime_type),
-            runtime_type: request.runtime_type.clone(),
-        }));
-    }
-
-    // Proceed with installation
     tracing::info!(
-        "Runtime {} not found, proceeding with download and installation",
-        runtime_type
+        "Runtime {} {}",
+        runtime_type,
+        if existing_installation {
+            "already exists, proceeding with repair/reinstall"
+        } else {
+            "not found, proceeding with download and installation"
+        }
     );
 
-    perform_installation(app_state, request, runtime_type)
-        .await
-        .map(|_| {
-            RuntimeInstallResp::success(RuntimeInstallData {
-                success: true,
-                message: format!("Successfully downloaded and installed {}", request.runtime_type),
-                runtime_type: request.runtime_type.clone(),
-            })
-        })
-        .or_else(|e| {
-            Ok(RuntimeInstallResp::success(RuntimeInstallData {
-                success: false,
-                message: format!("Installation failed: {e:#}"),
-                runtime_type: request.runtime_type.clone(),
-            }))
-        })
+    let install_result = perform_installation(request, runtime_type).await;
+
+    let data = match install_result {
+        Ok(()) => RuntimeInstallData {
+            success: true,
+            message: format!("Successfully downloaded and installed {}", runtime_type),
+            runtime_type: runtime_type.to_string(),
+        },
+        Err(error) => RuntimeInstallData {
+            success: false,
+            message: format!("Installation failed: {error:#}"),
+            runtime_type: runtime_type.to_string(),
+        },
+    };
+
+    Ok(RuntimeInstallResp::success(data))
 }
 
 async fn perform_installation(
-    _state: &AppState,
-    _request: &RuntimeInstallReq,
+    request: &RuntimeInstallReq,
     runtime_type: RuntimeType,
 ) -> Result<(), anyhow::Error> {
-    RuntimeInstaller::new().install_runtime(runtime_type).await.map(|_| ())
+    RuntimeInstaller::new()
+        .install_runtime(runtime_type, request.version.as_deref())
+        .await
+        .map(|_| ())
 }
 
 async fn runtime_status_core(_app_state: &AppState) -> Result<RuntimeStatusResp, StatusCode> {
-    let (uv_status, bun_status) = tokio::join!(
+    let (uv_status, bun_status, node_status) = tokio::join!(
         create_runtime_status(RuntimeType::Uv),
-        create_runtime_status(RuntimeType::Bun)
+        create_runtime_status(RuntimeType::Bun),
+        create_runtime_status(RuntimeType::Node)
     );
 
     Ok(RuntimeStatusResp::success(RuntimeStatusData {
         uv: uv_status,
         bun: bun_status,
+        node: node_status,
     }))
 }
 
@@ -217,15 +212,20 @@ async fn create_runtime_status(runtime_type: RuntimeType) -> RuntimeStatus {
 }
 
 async fn runtime_cache_core(_app_state: &AppState) -> Result<RuntimeCacheResp, StatusCode> {
-    let (uv_cache, bun_cache) = tokio::join!(get_cache_info(RuntimeType::Uv), get_cache_info(RuntimeType::Bun));
+    let (uv_cache, bun_cache, node_cache) = tokio::join!(
+        get_cache_info(RuntimeType::Uv),
+        get_cache_info(RuntimeType::Bun),
+        get_cache_info(RuntimeType::Node)
+    );
 
     Ok(RuntimeCacheResp::success(RuntimeCacheData {
         summary: RuntimeCacheSummary {
-            total_size_bytes: uv_cache.size_bytes + bun_cache.size_bytes,
+            total_size_bytes: uv_cache.size_bytes + bun_cache.size_bytes + node_cache.size_bytes,
             last_cleanup: get_last_cleanup_time(),
         },
         uv: uv_cache,
         bun: bun_cache,
+        node: node_cache,
     }))
 }
 
@@ -256,9 +256,11 @@ async fn reset_cache_core(
     let cache_paths = match request.cache_type.as_str() {
         "uv" => vec![base.join(RuntimeType::Uv.as_str())],
         "bun" => vec![base.join(RuntimeType::Bun.as_str())],
+        "node" => vec![base.join(RuntimeType::Node.as_str())],
         _ => vec![
             base.join(RuntimeType::Uv.as_str()),
             base.join(RuntimeType::Bun.as_str()),
+            base.join(RuntimeType::Node.as_str()),
         ],
     };
 
@@ -300,9 +302,52 @@ async fn get_version_from_exec_async(path: &std::path::Path) -> Option<String> {
 
     output.status.success().then(|| {
         let version_string = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-        (!version_string.is_empty()).then_some(version_string)
+        normalize_version_output(&version_string)
     })?
+}
+
+fn normalize_version_output(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized = trimmed
+        .split_whitespace()
+        .map(|segment| segment.trim_matches(|c: char| matches!(c, ',' | ';' | '(' | ')')))
+        .find_map(|segment| {
+            let candidate = segment.strip_prefix('v').unwrap_or(segment);
+            candidate
+                .chars()
+                .next()
+                .filter(|ch| ch.is_ascii_digit())
+                .map(|_| candidate.to_string())
+        });
+
+    normalized.or_else(|| Some(trimmed.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_version_output;
+
+    #[test]
+    fn normalizes_plain_node_version_output() {
+        assert_eq!(normalize_version_output("v24.15.0"), Some("24.15.0".to_string()));
+    }
+
+    #[test]
+    fn normalizes_bun_version_output() {
+        assert_eq!(normalize_version_output("1.2.15"), Some("1.2.15".to_string()));
+    }
+
+    #[test]
+    fn normalizes_tool_prefixed_version_output() {
+        assert_eq!(
+            normalize_version_output("uv 0.7.13 (Homebrew 2025-01-01)"),
+            Some("0.7.13".to_string())
+        );
+    }
 }
 
 #[derive(Default)]

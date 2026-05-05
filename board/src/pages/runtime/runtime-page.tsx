@@ -15,27 +15,58 @@ import { capabilitiesApi, runtimeApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import type {
-	CapabilitiesStatsResponse,
 	ClearCacheResponse,
 	InstallResponse,
-	RuntimeCacheResponse,
-	RuntimeStatusResponse,
 } from "../../lib/types";
 import { formatBytes, formatLocalDateTime } from "../../lib/utils";
 
+type RuntimeKind = "uv" | "bun" | "node";
+
+const RUNTIME_KINDS: RuntimeKind[] = ["node", "bun", "uv"];
+
+type ConfirmState =
+	| { type: "resetAll" }
+	| { type: "resetOne"; key: RuntimeKind }
+	| { type: "install"; key: RuntimeKind }
+	| { type: "capabilitiesReset" }
+	| null;
+
+function normalizeRuntimeKind(
+	runtimeType: string | null | undefined,
+): RuntimeKind | null {
+	switch (runtimeType?.trim().toLowerCase()) {
+		case "node":
+			return "node";
+		case "bun":
+			return "bun";
+		case "uv":
+			return "uv";
+		default:
+			return null;
+	}
+}
+
+function getRuntimeFolder(path: string | null | undefined): string {
+	if (!path) {
+		return "";
+	}
+
+	const normalizedPath = path.replace(/\\/g, "/");
+	const lastSlashIndex = normalizedPath.lastIndexOf("/");
+
+	if (lastSlashIndex === -1) {
+		return "";
+	}
+
+	return normalizedPath.slice(0, lastSlashIndex);
+}
+
 export function RuntimePage() {
 	usePageTranslations("runtime");
-    const { t } = useTranslation();
+	const { t } = useTranslation();
 	const qc = useQueryClient();
-	const [confirm, setConfirm] = React.useState<
-		| { type: "resetAll" }
-		| { type: "resetOne"; key: "uv" | "bun" }
-		| { type: "install"; key: "uv" | "bun" }
-		| { type: "capabilitiesReset" }
-		| null
-	>(null);
+	const [confirm, setConfirm] = React.useState<ConfirmState>(null);
 
-	// Queries
 	const runtimeStatusQ = useQuery({
 		queryKey: ["runtimeStatus"],
 		queryFn: runtimeApi.getStatus,
@@ -60,65 +91,173 @@ export function RuntimePage() {
 		refetchOnWindowFocus: false,
 	});
 
-	// Mutations
 	const resetAllM = useMutation<{ success: boolean }, Error, void>({
 		mutationFn: async () => runtimeApi.resetCache("all"),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
-			notifySuccess("Caches reset", "All runtime caches cleared.");
+			notifySuccess(
+				t("runtime:toasts.resetAllTitle", {
+					defaultValue: "Caches reset",
+				}),
+				t("runtime:toasts.resetAllDescription", {
+					defaultValue: "All runtime caches cleared.",
+				}),
+			);
 			setConfirm(null);
 		},
-		onError: (e) => notifyError("Reset failed", e.message),
+		onError: (e) => {
+			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
+			notifyError(
+				t("runtime:toasts.errorResetTitle", {
+					defaultValue: "Reset failed",
+				}),
+				e.message,
+			);
+		},
 	});
 
-	const resetOneM = useMutation<ClearCacheResponse, Error, "uv" | "bun">({
+	const resetOneM = useMutation<ClearCacheResponse, Error, RuntimeKind>({
 		mutationFn: async (kind) => runtimeApi.resetCache(kind),
 		onSuccess: (_data, kind) => {
 			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
-			notifySuccess("Cache reset", `${kind.toUpperCase()} cache cleared.`);
+			notifySuccess(
+				t("runtime:toasts.resetOneTitle", {
+					defaultValue: "Cache reset",
+				}),
+				t("runtime:toasts.resetOneDescription", {
+					defaultValue: "{{runtime}} cache cleared.",
+					runtime: getRuntimeLabel(kind),
+				}),
+			);
 			setConfirm(null);
 		},
-		onError: (e) => notifyError("Reset failed", e.message),
+		onError: (e) => {
+			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
+			notifyError(
+				t("runtime:toasts.errorResetTitle", {
+					defaultValue: "Reset failed",
+				}),
+				e.message,
+			);
+		},
 	});
 
-	const installM = useMutation<InstallResponse, Error, "uv" | "bun">({
+	const installM = useMutation<InstallResponse, Error, RuntimeKind>({
 		mutationFn: async (kind) =>
 			runtimeApi.install({ runtime_type: kind, verbose: true }),
 		onSuccess: (data, kind) => {
 			qc.invalidateQueries({ queryKey: ["runtimeStatus"] });
+			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
+
+			const resolvedKind = normalizeRuntimeKind(data.runtime_type);
+			if (resolvedKind !== kind) {
+				notifyError(
+					t("runtime:toasts.errorInstallTitle", {
+						defaultValue: "Install failed",
+					}),
+					t("runtime:toasts.installTargetMismatch", {
+						defaultValue:
+							"Requested {{requested}}, but the server reported {{actual}}.",
+						requested: getRuntimeLabel(kind),
+						actual: resolvedKind ? getRuntimeLabel(resolvedKind) : data.runtime_type,
+					}),
+				);
+				setConfirm(null);
+				return;
+			}
+
 			notifySuccess(
-				"Install complete",
-				`${kind.toUpperCase()}: ${data.message}`,
+				t("runtime:toasts.installTitle", {
+					defaultValue: "Install complete",
+				}),
+				t("runtime:toasts.installDescription", {
+					defaultValue: "{{runtime}}: {{message}}",
+					runtime: getRuntimeLabel(kind),
+					message: data.message,
+				}),
 			);
 			setConfirm(null);
 		},
-		onError: (e) => notifyError("Install failed", e.message),
+		onError: (e) => {
+			qc.invalidateQueries({ queryKey: ["runtimeStatus"] });
+			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
+			notifyError(
+				t("runtime:toasts.errorInstallTitle", {
+					defaultValue: "Install failed",
+				}),
+				e.message,
+			);
+		},
 	});
 
-	// Capabilities cache reset
 	const capResetM = useMutation<ClearCacheResponse, Error, void>({
 		mutationFn: async () => capabilitiesApi.reset(),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["capabilities", "stats"] });
 			notifySuccess(
-				"Capabilities cache cleared",
-				"Capability data will be rehydrated on next access.",
+				t("runtime:toasts.capabilitiesResetTitle", {
+					defaultValue: "Capabilities cache cleared",
+				}),
+				t("runtime:toasts.capabilitiesResetDescription", {
+					defaultValue:
+						"Capability data will be rehydrated on next access.",
+				}),
 			);
 			setConfirm(null);
 		},
-		onError: (e) => notifyError("Reset failed", e.message),
+		onError: (e) =>
+			notifyError(
+				t("runtime:toasts.errorResetTitle", {
+					defaultValue: "Reset failed",
+				}),
+				e.message,
+			),
 	});
 
 	const isBusy =
 		resetAllM.isPending || resetOneM.isPending || installM.isPending;
+	const status = runtimeStatusQ.data;
+	const cache = runtimeCacheQ.data;
+	const capStats = capabilitiesStatsQ.data;
+	const getRuntimeLabel = (kind: RuntimeKind) =>
+		t(`runtime:types.${kind}`, { defaultValue: kind.toUpperCase() });
 
-	const status = runtimeStatusQ.data as RuntimeStatusResponse | undefined;
-	const cache = runtimeCacheQ.data as RuntimeCacheResponse | undefined;
-	const capStats = capabilitiesStatsQ.data as
-		| CapabilitiesStatsResponse
-		| undefined;
+	let confirmTitle = t("runtime:capabilities.resetConfirmTitle", {
+		defaultValue: "Reset capabilities cache?",
+	});
+	let confirmDescription = t("runtime:capabilities.resetConfirmDesc", {
+		defaultValue:
+			"This clears both memory and on-disk capability cache. It will be repopulated on next access.",
+	});
+	let confirmLabel = t("runtime:dialogs.confirm");
+	let confirmVariant: "default" | "destructive" = "destructive";
+	let confirmLoading = false;
 
-	const kinds: Array<"uv" | "bun"> = ["uv", "bun"];
+	if (confirm?.type === "resetAll") {
+		confirmTitle = t("runtime:dialogs.resetAllTitle");
+		confirmDescription = t("runtime:dialogs.resetAllDescription");
+		confirmLoading = resetAllM.isPending;
+	} else if (confirm?.type === "resetOne") {
+		confirmTitle = t("runtime:dialogs.resetOneTitle", {
+			key: getRuntimeLabel(confirm.key),
+		});
+		confirmDescription = t("runtime:dialogs.resetOneDescription", {
+			key: getRuntimeLabel(confirm.key),
+		});
+		confirmLoading = resetOneM.isPending;
+	} else if (confirm?.type === "install") {
+		confirmTitle = t("runtime:dialogs.installTitle", {
+			key: getRuntimeLabel(confirm.key),
+		});
+		confirmDescription = t("runtime:dialogs.installDescription", {
+			key: getRuntimeLabel(confirm.key),
+		});
+		confirmLabel = t("runtime:dialogs.installRepair");
+		confirmVariant = "default";
+		confirmLoading = installM.isPending;
+	} else if (confirm?.type === "capabilitiesReset") {
+		confirmLoading = capResetM.isPending;
+	}
 
 	return (
 		<div className="space-y-4">
@@ -142,8 +281,8 @@ export function RuntimePage() {
 			</div>
 
 			{runtimeStatusQ.isLoading || runtimeCacheQ.isLoading ? (
-				<div className="grid gap-4 md:grid-cols-2">
-					{[0, 1].map((i) => (
+				<div className="grid gap-4 md:grid-cols-3">
+					{[0, 1, 2].map((i) => (
 						<div
 							key={i}
 							className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
@@ -170,15 +309,12 @@ export function RuntimePage() {
 					))}
 				</div>
 			) : (
-				<div className="grid gap-4 md:grid-cols-2">
-					{kinds.map((key) => {
+				<div className="grid gap-4 md:grid-cols-3">
+					{RUNTIME_KINDS.map((key) => {
 						const st = status?.[key];
 						const c = cache?.[key];
 						const statusStr = st?.available ? "running" : "stopped";
-						const p = st?.path ? st.path.replace(/\\/g, "/") : "";
-						const folder = p.includes("/")
-							? p.slice(0, p.lastIndexOf("/"))
-							: "";
+						const folder = getRuntimeFolder(st?.path);
 
 						return (
 							<div
@@ -200,7 +336,12 @@ export function RuntimePage() {
 										<span className="text-slate-500">
 											{t("runtime:labels.version")}
 										</span>
-										<span>{st?.version || "N/A"}</span>
+										<span>
+										{st?.version ||
+											t("runtime:fallbacks.notAvailable", {
+												defaultValue: "N/A",
+											})}
+									</span>
 									</div>
 									{folder ? (
 										<div className="flex items-center justify-between">
@@ -220,7 +361,7 @@ export function RuntimePage() {
 											className="truncate max-w-[60%]"
 											title={st?.message || ""}
 										>
-											{st?.message || "—"}
+											{st?.message || t("runtime:fallbacks.empty", { defaultValue: "—" })}
 										</span>
 									</div>
 
@@ -246,7 +387,7 @@ export function RuntimePage() {
 										<span>
                                 {c?.last_modified
                                     ? formatLocalDateTime(c.last_modified)
-                                    : "—"}
+                                    : t("runtime:fallbacks.empty", { defaultValue: "—" })}
 										</span>
 									</div>
 								</div>
@@ -318,7 +459,7 @@ export function RuntimePage() {
 										className="truncate max-w-[60%]"
 										title={capStats?.storage?.db_path || ""}
 									>
-										{capStats?.storage?.db_path || "—"}
+										{capStats?.storage?.db_path || t("runtime:fallbacks.empty", { defaultValue: "—" })}
 									</span>
 								</div>
 								<div className="flex items-center justify-between">
@@ -334,7 +475,7 @@ export function RuntimePage() {
 									<span>
                                 {capStats.storage.last_cleanup
                                     ? formatLocalDateTime(capStats.storage.last_cleanup)
-                                    : "—"}
+                                    : t("runtime:fallbacks.empty", { defaultValue: "—" })}
 									</span>
 								</div>
 								<div className="flex items-center justify-between">
@@ -435,71 +576,28 @@ export function RuntimePage() {
 				</CardContent>
 			</Card>
 			{/* Global confirmation dialog */}
-			<ConfirmDialog
-				isOpen={confirm !== null}
-				onClose={() => setConfirm(null)}
-				onConfirm={async () => {
-					if (!confirm) return;
-					if (confirm.type === "resetAll") {
-						resetAllM.mutate();
-					} else if (confirm.type === "resetOne") {
-						resetOneM.mutate(confirm.key);
-					} else if (confirm.type === "install") {
-						installM.mutate(confirm.key);
-					} else if (confirm.type === "capabilitiesReset") {
-						capResetM.mutate();
-					}
-				}}
-				title={
-					confirm?.type === "resetAll"
-						? t("runtime:dialogs.resetAllTitle")
-						: confirm?.type === "resetOne"
-							? t("runtime:dialogs.resetOneTitle", {
-									key: confirm.key.toUpperCase(),
-								})
-							: confirm?.type === "install"
-								? t("runtime:dialogs.installTitle", {
-										key: confirm.key.toUpperCase(),
-									})
-								: t("runtime:capabilities.resetConfirmTitle", {
-										defaultValue: "Reset capabilities cache?",
-									})
-				}
-				description={
-					confirm?.type === "resetAll"
-						? t("runtime:dialogs.resetAllDescription")
-						: confirm?.type === "resetOne"
-							? t("runtime:dialogs.resetOneDescription", {
-									key: confirm.key.toUpperCase(),
-								})
-							: confirm?.type === "install"
-								? t("runtime:dialogs.installDescription", {
-										key: confirm.key.toUpperCase(),
-									})
-								: t("runtime:capabilities.resetConfirmDesc", {
-										defaultValue:
-											"This clears both memory and on-disk capability cache. It will be repopulated on next access.",
-									})
-				}
-				confirmLabel={
-					confirm?.type === "install"
-						? t("runtime:dialogs.installRepair")
-						: t("runtime:dialogs.confirm")
-				}
-				cancelLabel={t("runtime:dialogs.cancel")}
-				variant={confirm?.type === "install" ? "default" : "destructive"}
-				isLoading={
-					confirm?.type === "resetAll"
-						? resetAllM.isPending
-						: confirm?.type === "resetOne"
-							? resetOneM.isPending
-							: confirm?.type === "install"
-								? installM.isPending
-								: confirm?.type === "capabilitiesReset"
-									? capResetM.isPending
-									: false
-				}
-			/>
+				<ConfirmDialog
+					isOpen={confirm !== null}
+					onClose={() => setConfirm(null)}
+					onConfirm={async () => {
+						if (!confirm) return;
+						if (confirm.type === "resetAll") {
+							resetAllM.mutate();
+						} else if (confirm.type === "resetOne") {
+							resetOneM.mutate(confirm.key);
+						} else if (confirm.type === "install") {
+							installM.mutate(confirm.key);
+						} else if (confirm.type === "capabilitiesReset") {
+							capResetM.mutate();
+						}
+					}}
+					title={confirmTitle}
+					description={confirmDescription}
+					confirmLabel={confirmLabel}
+					cancelLabel={t("runtime:dialogs.cancel")}
+					variant={confirmVariant}
+					isLoading={confirmLoading}
+				/>
 		</div>
 	);
 }

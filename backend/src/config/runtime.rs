@@ -36,53 +36,50 @@ pub async fn prepare_command_env_with_db(
         command.as_std().get_program().to_string_lossy()
     );
 
-    // 1. Determine runtime type (npx is handled by command transformation, not here)
-    let runtime_type = match command_str {
-        commands::UVX => Some(RuntimeType::Uv),
-        commands::BUNX => Some(RuntimeType::Bun),
-        _ => None,
-    };
+    // 1. Determine runtime type from the command alias.
+    let runtime_type = RuntimeType::from_command(command_str);
 
     // 2. Use RuntimeManager to find runtime paths
-    let Some(rt_type) = runtime_type else {
+    if let Some(rt_type) = runtime_type {
+        let manager = RuntimeManager::new();
+
+        if let Some(runtime_path) = manager.get_command_path(command_str) {
+            tracing::debug!(
+                "Using MCPMate managed runtime for '{}': {}",
+                command_str,
+                runtime_path.display()
+            );
+
+            // Use shared environment management system
+            let runtime_type_str = rt_type.as_str();
+
+            prepare_command_environment(command, runtime_type_str, &runtime_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to prepare {} runtime environment for '{}': {}",
+                    runtime_type_str,
+                    command_str,
+                    e
+                )
+            })?;
+
+            tracing::debug!(
+                "Successfully prepared {} environment using simplified system",
+                runtime_type_str
+            );
+        } else {
+            tracing::debug!(
+                "No MCPMate-managed runtime found for {}, preparing basic environment",
+                command_str
+            );
+            prepare_basic_command_env(command, command_str)?;
+        }
+    } else {
         tracing::debug!(
             "No runtime type mapping for {}, preparing basic environment",
             command_str
         );
-        return prepare_basic_command_env(command, command_str);
-    };
-
-    let manager = RuntimeManager::new();
-    let Some(runtime_path) = manager.get_executable_path(rt_type) else {
-        tracing::debug!(
-            "No MCPMate-managed runtime found for {}, preparing basic environment",
-            command_str
-        );
-        return prepare_basic_command_env(command, command_str);
-    };
-
-    tracing::debug!(
-        "Using MCPMate managed runtime for '{}': {}",
-        command_str,
-        runtime_path.display()
-    );
-
-    // Use shared environment management system
-    let runtime_type_str = rt_type.as_str();
-
-    prepare_command_environment(command, runtime_type_str, &runtime_path).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to prepare {} runtime environment for '{}': {}",
-            runtime_type_str,
-            command_str,
-            e
-        )
-    })?;
-
-    tracing::debug!(
-        "Successfully prepared {} environment using simplified system",
-        runtime_type_str
-    );
+        prepare_basic_command_env(command, command_str)?;
+    }
 
     Ok(())
 }
@@ -96,19 +93,25 @@ fn prepare_basic_command_env(
 
     let paths = global_paths();
 
-    // Set basic cache directories based on command type (npx handled by transformation)
+    // Set basic cache directories based on command type.
     match command_str {
-        commands::UVX => {
+        commands::UV | commands::UVX => {
             let cache_dir = paths.runtime_cache_dir("uv");
             std::fs::create_dir_all(&cache_dir)?;
             command.env("UV_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
             tracing::debug!("Set UV_CACHE_DIR to: {}", cache_dir.display());
         }
-        commands::BUNX => {
+        commands::BUN | commands::BUNX => {
             let cache_dir = paths.runtime_cache_dir("bun");
             std::fs::create_dir_all(&cache_dir)?;
             command.env("BUN_INSTALL_CACHE_DIR", cache_dir.to_string_lossy().as_ref());
             tracing::debug!("Set BUN_INSTALL_CACHE_DIR to: {}", cache_dir.display());
+        }
+        commands::NODE | commands::NPM | commands::NPX => {
+            let cache_dir = paths.runtime_cache_dir("node");
+            std::fs::create_dir_all(&cache_dir)?;
+            command.env("NPM_CONFIG_CACHE", cache_dir.to_string_lossy().as_ref());
+            tracing::debug!("Set NPM_CONFIG_CACHE to: {}", cache_dir.display());
         }
         _ => {
             tracing::debug!("No specific environment setup for command: {}", command_str);

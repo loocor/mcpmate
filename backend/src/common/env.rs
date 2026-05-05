@@ -254,6 +254,29 @@ pub fn create_bun_environment(bin_path: &Path) -> Result<EnvironmentManager> {
     Ok(env)
 }
 
+/// Create runtime-specific environment for Node.js
+pub fn create_node_environment(bin_path: &Path) -> Result<EnvironmentManager> {
+    let paths = global_paths();
+    let mut env = EnvironmentManager::new();
+
+    let bin_dir = bin_path.parent().unwrap_or(bin_path);
+    env.prepend_path(bin_dir);
+
+    let cache_dir = paths.runtime_cache_dir(RuntimeType::Node.as_str());
+    std::fs::create_dir_all(&cache_dir)?;
+
+    env.set_var(constants::NPM_CONFIG_CACHE, cache_dir.to_string_lossy());
+    env.set_var(constants::MCP_RUNTIME_BIN, bin_path.to_string_lossy());
+
+    tracing::debug!(
+        "Created Node.js environment: PATH includes {}, cache at {}",
+        bin_dir.display(),
+        cache_dir.display()
+    );
+
+    Ok(env)
+}
+
 /// Create environment for a specific runtime type
 pub fn create_runtime_environment(
     runtime_type: &str,
@@ -266,6 +289,7 @@ pub fn create_runtime_environment(
         match rt {
             RuntimeType::Uv => create_uv_environment(bin_path),
             RuntimeType::Bun => create_bun_environment(bin_path),
+            RuntimeType::Node => create_node_environment(bin_path),
         }
     } else {
         // Generic runtime environment
