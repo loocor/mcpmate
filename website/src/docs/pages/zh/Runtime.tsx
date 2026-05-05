@@ -45,7 +45,7 @@ export default function RuntimeZH() {
 			</P>
 
 			<Callout type="warning" title="重置缓存会删除已下载的依赖">
-				清理 Node.js、uv 或 Bun 缓存会移除虚拟环境下的安装包。后续首次访问服务器时会重新安装，可能耗时较长。请尽量在维护窗口或自动化测试前操作，避免对使用中的会话造成影响。
+				清理 Node.js、uv 或 Bun 缓存会移除该运行时已下载的包与缓存内容。后续首次访问服务器时会重新安装，可能耗时较长。请尽量在维护窗口或自动化测试前操作，避免对使用中的会话造成影响。
 			</Callout>
 		</DocLayout>
 	);

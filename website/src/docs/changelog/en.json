@@ -20,7 +20,7 @@
 			},
 			{
 				"type": "fix",
-				"text": "OAuth security hardening: callback data moved from URL to sessionStorage, HTTPS enforced for token endpoint, and Copilot review feedback addressed."
+				"text": "OAuth security hardening: callback data moved from URL to sessionStorage, HTTPS enforced for token endpoint, and security review feedback addressed."
 			},
 			{
 				"type": "fix",

@@ -78,10 +78,11 @@ export default function RuntimeEN() {
 			</P>
 
 			<Callout type="warning" title="Cache resets remove downloaded packages">
-				Resetting Node.js, uv or Bun caches deletes the virtual environment contents. Any
-				subsequent server call will reinstall dependencies, which may take time.
-				Schedule resets during maintenance windows or before running automated
-				tests rather than while end users are connected.
+				Resetting Node.js, uv or Bun caches removes that runtime's downloaded
+				packages and cache contents. Any subsequent server call will reinstall
+				dependencies, which may take time. Schedule resets during maintenance
+				windows or before running automated tests rather than while end users
+				are connected.
 			</Callout>
 		</DocLayout>
 	);
