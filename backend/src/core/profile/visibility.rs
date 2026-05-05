@@ -1135,7 +1135,7 @@ mod tests {
         initialize_server_tables(&pool).await.expect("init server tables");
         initialize_profile_tables(&pool).await.expect("init profile tables");
         initialize_client_table(&pool).await.expect("init client table");
-        crate::config::client::init::initialize_system_settings_table(&pool)
+        crate::config::client::init::initialize_system_settings(&pool)
             .await
             .expect("init system settings table");
 

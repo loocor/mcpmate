@@ -7,8 +7,12 @@ use chrono::Utc;
 use nanoid::nanoid;
 use std::ffi::OsStr;
 #[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
 use std::path::PrefixComponent;
 use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
 use tokio::fs;
 
 /// Unified path service for consistent path handling across the application
@@ -155,18 +159,66 @@ impl PathService {
             backup_path = Some(candidate);
         }
 
-        match fs::rename(&tmp_path, &target_buf).await {
-            Ok(_) => Ok(backup_path),
+        match replace_existing_file(&tmp_path, &target_buf) {
+            Ok(()) => Ok(backup_path),
             Err(err) => {
                 let _ = fs::remove_file(&tmp_path).await;
                 if let Some(ref backup) = backup_path {
                     let _ = fs::copy(backup, &target_buf).await;
                 }
-                Err(anyhow::anyhow!(
-                    "Failed to replace file {}: {}",
-                    target_buf.display(),
-                    err
-                ))
+                Err(err)
+            }
+        }
+    }
+
+    pub fn atomic_write_with_backup_sync(
+        &self,
+        target: &Path,
+        content: &[u8],
+        max_backups: Option<usize>,
+        identifier: Option<&str>,
+    ) -> Result<Option<PathBuf>> {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .context(format!("Failed to create parent directories for: {}", target.display()))?;
+        }
+
+        let tmp_suffix = nanoid!(8);
+        let tmp_path = target.with_extension(format!("tmp.{}", tmp_suffix));
+        std::fs::write(&tmp_path, content)
+            .context(format!("Failed to write temporary file: {}", tmp_path.display()))?;
+
+        let target_buf = target.to_path_buf();
+        let exists = target_buf.exists();
+        let mut backup_path = None;
+
+        if exists {
+            let timestamp = Utc::now().format("%Y%m%d%H%M%S").to_string();
+            let (backup_dir, candidate, file_prefix) =
+                self.build_backup_destination(identifier, &target_buf, &timestamp)?;
+
+            std::fs::create_dir_all(&backup_dir)
+                .context(format!("Failed to create backup directory: {}", backup_dir.display()))?;
+
+            std::fs::copy(&target_buf, &candidate)
+                .context(format!("Failed to create backup file: {}", candidate.display()))?;
+
+            let retention = max_backups.unwrap_or(MAX_BACKUPS_PER_FILE);
+            if let Err(err) = self.prune_old_backups_sync(&backup_dir, &file_prefix, retention) {
+                tracing::warn!("Failed to prune old backups in {}: {}", backup_dir.display(), err);
+            }
+
+            backup_path = Some(candidate);
+        }
+
+        match replace_existing_file(&tmp_path, &target_buf) {
+            Ok(()) => Ok(backup_path),
+            Err(err) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                if let Some(ref backup) = backup_path {
+                    let _ = std::fs::copy(backup, &target_buf);
+                }
+                Err(err)
             }
         }
     }
@@ -326,6 +378,42 @@ impl PathService {
         Ok(())
     }
 
+    fn prune_old_backups_sync(
+        &self,
+        dir: &Path,
+        file_prefix: &str,
+        retention: usize,
+    ) -> Result<()> {
+        let mut backups = Vec::new();
+        for entry in std::fs::read_dir(dir)
+            .context(format!("Failed to read backup directory: {}", dir.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name().and_then(|os| os.to_str()) {
+                    if name.starts_with(file_prefix) && name.ends_with(".bak") {
+                        backups.push(path);
+                    }
+                }
+            }
+        }
+
+        if backups.len() <= retention {
+            return Ok(());
+        }
+
+        backups.sort();
+        let remove_count = backups.len() - retention;
+        for path in backups.into_iter().take(remove_count) {
+            if let Err(err) = std::fs::remove_file(&path) {
+                tracing::warn!("Failed to remove old backup {}: {}", path.display(), err);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Validate that a path exists and is accessible
     /// This adds consistent path validation across the application
     pub async fn validate_path_exists(
@@ -343,6 +431,46 @@ impl PathService {
     pub fn path_mapper(&self) -> &PathMapper {
         &self.path_mapper
     }
+}
+
+#[cfg(windows)]
+fn replace_existing_file(
+    source: &Path,
+    target: &Path,
+) -> Result<()> {
+    let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let target_wide: Vec<u16> = target.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+    let replaced = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            target_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+
+    if replaced == 0 {
+        return Err(std::io::Error::last_os_error()).context(format!(
+            "Failed to replace file {} with {}",
+            target.display(),
+            source.display()
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_existing_file(
+    source: &Path,
+    target: &Path,
+) -> Result<()> {
+    std::fs::rename(source, target).context(format!(
+        "Failed to replace file {} with {}",
+        target.display(),
+        source.display()
+    ))?;
+    Ok(())
 }
 
 impl Default for PathService {

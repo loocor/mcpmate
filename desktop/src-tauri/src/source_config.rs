@@ -1,6 +1,6 @@
-use crate::runtime_ports::PersistedRuntimePorts;
 use anyhow::{Context, Result};
 use mcpmate::common::{constants::ports, MCPMatePaths};
+use mcpmate::system::settings::get_settings_sync_for_paths;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
@@ -59,7 +59,7 @@ pub struct DesktopCoreSourceConfig {
     pub selected_source: DesktopCoreSourceKind,
     #[serde(default)]
     pub localhost_runtime_mode: LocalCoreRuntimeMode,
-    #[serde(default)]
+    #[serde(skip)]
     pub localhost: LocalhostCoreConfig,
     #[serde(default)]
     pub remote: RemoteCoreConfig,
@@ -87,12 +87,7 @@ impl DesktopCoreSourceConfig {
         let path = Self::path(paths);
         if !path.exists() {
             let mut fallback = Self::default();
-            if let Some(ports) = PersistedRuntimePorts::load(paths) {
-                fallback.localhost = LocalhostCoreConfig {
-                    api_port: ports.api_port,
-                    mcp_port: ports.mcp_port,
-                };
-            }
+            fallback.apply_shared_ports(paths);
             fallback.apply_constraints();
             return Ok(fallback);
         }
@@ -100,6 +95,7 @@ impl DesktopCoreSourceConfig {
         let data = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
         let mut parsed: Self = serde_json::from_slice(&data)
             .with_context(|| format!("failed to parse {}", path.display()))?;
+        parsed.apply_shared_ports(paths);
         parsed.apply_constraints();
         Ok(parsed)
     }
@@ -123,5 +119,12 @@ impl DesktopCoreSourceConfig {
     pub fn apply_constraints(&mut self) {
         self.localhost.apply_constraints();
         self.remote.base_url = self.remote.base_url.trim().to_string();
+    }
+
+    fn apply_shared_ports(&mut self, paths: &MCPMatePaths) {
+        if let Ok(settings) = get_settings_sync_for_paths(paths) {
+            self.localhost.api_port = settings.api_port;
+            self.localhost.mcp_port = settings.mcp_port;
+        }
     }
 }

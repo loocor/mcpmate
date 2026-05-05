@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { Button } from "../../components/ui/button";
 import {
 	Card,
@@ -30,14 +30,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../../components/ui/card";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Segment, type SegmentOption } from "../../components/ui/segment";
@@ -57,10 +49,10 @@ import {
 } from "../../components/ui/tabs";
 import {
 	auditApi,
-	API_BASE_URL,
-	clientsApi,
 	notificationsService,
 	setApiBaseUrl,
+	syncApiBaseUrlForRuntimePort,
+	systemApi,
 } from "../../lib/api";
 import {
 	type DesktopCoreSourceResponse,
@@ -233,24 +225,6 @@ const MENU_BAR_ICON_OPTIONS: ReadonlyArray<{
 		},
 	];
 
-function persistLocalPorts(api: number, mcp: number): void {
-	try {
-		window.localStorage?.setItem("mcpmate.system.api_port", String(api));
-		window.localStorage?.setItem("mcpmate.system.mcp_port", String(mcp));
-	} catch {
-		// LocalStorage write is best-effort
-	}
-}
-
-function readCachedLocalPort(raw: string | null | undefined): number | undefined {
-	if (!raw) {
-		return undefined;
-	}
-
-	const value = Number(raw);
-	return !Number.isNaN(value) && value > 0 ? value : undefined;
-}
-
 function getServiceInstallLabel(params: {
 	busyAction: string | null;
 	installed: boolean;
@@ -274,19 +248,6 @@ function getServiceInstallLabel(params: {
 	});
 }
 
-function buildSettingsTabSearchParams(
-	searchParams: URLSearchParams,
-	value: string,
-): URLSearchParams {
-	const next = new URLSearchParams(searchParams);
-	if (value === "about") {
-		next.set("tab", "about");
-	} else {
-		next.delete("tab");
-	}
-	return next;
-}
-
 export function SettingsPage() {
 	usePageTranslations("settings");
 	const queryClient = useQueryClient();
@@ -301,8 +262,6 @@ export function SettingsPage() {
 		refreshCoreView,
 		manageLocalCore,
 	} = useDesktopCoreState();
-	const [searchParams, setSearchParams] = useSearchParams();
-
 	const theme = useAppStore((state) => state.theme);
 	const setTheme = useAppStore((state) => state.setTheme);
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
@@ -357,8 +316,7 @@ export function SettingsPage() {
 		],
 		[t, i18n.language],
 	);
-	const [webDialogOpen, setWebDialogOpen] = useState(false);
-	const [policyType, setPolicyType] = useState<string>("combined");
+		const [policyType, setPolicyType] = useState<string>("combined");
 	const [policyDays, setPolicyDays] = useState<number>(30);
 	const [policyCount, setPolicyCount] = useState<number>(100000);
 	const [sweepInterval, setSweepInterval] = useState<number>(3600);
@@ -370,8 +328,60 @@ export function SettingsPage() {
 
 	const defaultClientPolicyQuery = useQuery({
 		queryKey: ["client", "policy", "default"],
-		queryFn: () => clientsApi.getDefaultPolicy(),
+		queryFn: async () => {
+			const settings = await systemApi.getSettings();
+			return {
+				config_mode: settings.default_config_mode,
+				capability_source: "activated" as const,
+				first_contact_behavior: settings.first_contact_behavior as
+					| "deny"
+					| "review"
+					| "allow",
+			};
+		},
 	});
+
+	const systemSettingsQuery = useQuery({
+		queryKey: ["system", "settings"],
+		queryFn: () => systemApi.getSettings(),
+	});
+
+	const inspectorTimeoutMutation = useMutation({
+		mutationFn: (timeout_ms: number) =>
+			systemApi.setSettings({ inspector_timeout_ms: timeout_ms }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["system", "settings"] });
+			notifySuccess(
+				t("settings:developer.inspectorTimeoutSaved", {
+					defaultValue: "Inspector timeout updated",
+				}),
+			);
+		},
+		onError: (_error: unknown) => {
+			notifyError(
+				t("settings:developer.inspectorTimeoutSaveError", {
+					defaultValue: "Failed to save inspector timeout",
+				}),
+			);
+		},
+	});
+
+	const [inspectorTimeoutInput, setInspectorTimeoutInput] = useState<number>(8000);
+
+	useEffect(() => {
+		if (systemSettingsQuery.data) {
+			setInspectorTimeoutInput(systemSettingsQuery.data.inspector_timeout_ms);
+		}
+	}, [systemSettingsQuery.data]);
+
+	const handleInspectorTimeoutChange = (ms: number) => {
+		const clamped = Math.max(1000, Math.min(300000, ms));
+		setInspectorTimeoutInput(clamped);
+	};
+
+	const handleInspectorTimeoutSave = () => {
+		inspectorTimeoutMutation.mutate(inspectorTimeoutInput);
+	};
 
 	useEffect(() => {
 		if (policyQuery.data) {
@@ -415,14 +425,45 @@ export function SettingsPage() {
 	});
 
 	const defaultClientPolicyMutation = useMutation({
-		mutationFn: (payload: {
+		mutationFn: async (payload: {
 			config_mode: ClientDefaultMode;
 			capability_source: CapabilitySource;
 			first_contact_behavior: "deny" | "review" | "allow";
 			policySnapshot?: { config_mode: string; first_contact_behavior: string } | null;
 		}) => {
-			const { policySnapshot, ...body } = payload;
-			return clientsApi.setDefaultPolicy(body, policySnapshot);
+			const {
+				config_mode,
+				capability_source,
+				first_contact_behavior,
+				policySnapshot,
+			} = payload;
+			const modeChanged =
+				!policySnapshot || policySnapshot.config_mode !== config_mode;
+			const behaviorChanged =
+				!policySnapshot ||
+				policySnapshot.first_contact_behavior !== first_contact_behavior;
+
+			if (!modeChanged && !behaviorChanged) {
+				return {
+					config_mode,
+					capability_source,
+					first_contact_behavior,
+				};
+			}
+
+			const settings = await systemApi.setSettings({
+				default_config_mode: config_mode,
+				first_contact_behavior,
+			});
+
+			return {
+				config_mode: settings.default_config_mode as ClientDefaultMode,
+				capability_source,
+				first_contact_behavior: settings.first_contact_behavior as
+					| "deny"
+					| "review"
+					| "allow",
+			};
 		},
 		onSuccess: (data) => {
 			if (!data) {
@@ -483,56 +524,18 @@ export function SettingsPage() {
 			setLocalService(response.localService);
 			setApiPort(response.localhostApiPort);
 			setMcpPort(response.localhostMcpPort);
-			persistLocalPorts(response.localhostApiPort, response.localhostMcpPort);
 		},
 		[],
 	);
 
-	const seedPortsFromLocalStorage = useCallback(() => {
-		try {
-			const cachedApi = window.localStorage?.getItem("mcpmate.system.api_port");
-			const cachedMcp = window.localStorage?.getItem("mcpmate.system.mcp_port");
-			const nextApiPort = readCachedLocalPort(cachedApi);
-			const nextMcpPort = readCachedLocalPort(cachedMcp);
-
-			if (nextApiPort !== undefined) {
-				setApiPort(nextApiPort);
-				if (isTauriShell) {
-					setApiBaseUrl(`http://127.0.0.1:${nextApiPort}`);
-				}
-			}
-
-			if (nextMcpPort !== undefined) {
-				setMcpPort(nextMcpPort);
-			}
-		} catch {
-			// Cache read is best-effort
-		}
-	}, [isTauriShell]);
-
 	const wireDashboardToCoreSource = useCallback(
-		async (
-			apiBaseUrl: string,
-			api?: number,
-			mcp?: number,
-		) => {
+		async (apiBaseUrl: string) => {
 			setApiBaseUrl(apiBaseUrl);
 			notificationsService.reconnectAfterApiBaseChanged();
 			await queryClient.invalidateQueries({ predicate: () => true });
-			if (typeof api === "number" && typeof mcp === "number") {
-				persistLocalPorts(api, mcp);
-			}
 		},
 		[queryClient],
 	);
-
-	const devUrl =
-		typeof window !== "undefined" && window.location?.origin?.includes(":")
-			? window.location.origin
-			: "http://localhost:5173";
-
-	const effectiveApiPort = typeof apiPort === "number" ? apiPort : 8080;
-	const effectiveMcpPort = typeof mcpPort === "number" ? mcpPort : 8000;
 
 	const loadRuntimePorts = useCallback(async () => {
 		setLoadingPorts(true);
@@ -540,7 +543,6 @@ export function SettingsPage() {
 			const applyAuthorityPorts = (api: number, mcp: number) => {
 				setApiPort(api);
 				setMcpPort(mcp);
-				persistLocalPorts(api, mcp);
 				setCoreSource("localhost");
 				setLocalhostRuntimeMode("desktop_managed");
 				setRemoteBaseUrl("");
@@ -551,11 +553,7 @@ export function SettingsPage() {
 					running: false,
 					installed: false,
 				}));
-				if (isTauriShell) {
-					setApiBaseUrl(`http://127.0.0.1:${api}`);
-				} else {
-					setApiBaseUrl("");
-				}
+				syncApiBaseUrlForRuntimePort(api);
 			};
 
 			if (isTauriEnvironmentSync()) {
@@ -570,50 +568,32 @@ export function SettingsPage() {
 						setApiBaseUrl(resp.apiBaseUrl || `http://127.0.0.1:${resp.localhostApiPort}`);
 					}
 				} catch {
-					seedPortsFromLocalStorage();
 					notifyError(
 						t("settings:system.portsReloadFailedTitle", {
 							defaultValue: "Could not load ports from shell",
 						}),
 						t("settings:system.portsReloadFailedDescription", {
 							defaultValue:
-								"Showing cached values if any. Check the desktop app is healthy and try Reload again.",
+								"Check the desktop app is healthy and try Reload again.",
 						}),
 					);
 				}
 				return;
 			}
 
-			const apiBase = API_BASE_URL || "";
-			const url = apiBase ? `${apiBase}/api/system/ports` : `/api/system/ports`;
-			const response = await fetch(url, { cache: "no-store" });
-			if (response.ok) {
-				const data = (await response.json()) as unknown;
-				let raw: unknown = data;
-				if (
-					data &&
-					typeof data === "object" &&
-					"data" in data &&
-					(data as { data?: unknown }).data !== undefined
-				) {
-					raw = (data as { data: unknown }).data;
-				}
-				const d = raw as { api_port?: unknown; mcp_port?: unknown };
-				if (
-					typeof d?.api_port === "number" &&
-					typeof d?.mcp_port === "number"
-				) {
-					applyAuthorityPorts(d.api_port, d.mcp_port);
-					return;
-				}
+			const settings = await systemApi.getSettings();
+			if (
+				typeof settings.api_port === "number" &&
+				typeof settings.mcp_port === "number"
+			) {
+				applyAuthorityPorts(settings.api_port, settings.mcp_port);
+				return;
 			}
 
-			seedPortsFromLocalStorage();
 		} finally {
 			setLoadingPorts(false);
 		}
-		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
-	}, [applyCoreSourceView, refreshCoreView, seedPortsFromLocalStorage, isTauriShell, t, i18n.language]);
+	}, [applyCoreSourceView, refreshCoreView, t, i18n.language]);
 
 	const runtimeModeOptions = useMemo<SegmentOption[]>(
 		() => [
@@ -645,6 +625,7 @@ export function SettingsPage() {
 		[localhostRuntimeMode, t, i18n.language],
 	);
 
+	const isSystemReadonlyInWeb = !isTauriShell;
 	const applyDisabled =
 		applyBusy ||
 		typeof apiPort !== "number" ||
@@ -667,22 +648,13 @@ export function SettingsPage() {
 	});
 
 	const handleApplyCoreSource = useCallback(async () => {
-		if (typeof apiPort !== "number" || typeof mcpPort !== "number") {
-			return;
-		}
-
-		if (!isTauriShell) {
-			void wireDashboardToCoreSource(
-				"",
-				apiPort,
-				mcpPort,
-			);
-			setWebDialogOpen(true);
+		if (!isTauriShell || typeof apiPort !== "number" || typeof mcpPort !== "number") {
 			return;
 		}
 
 		try {
 			setApplyBusy(true);
+
 			const { invoke } = await import("@tauri-apps/api/core");
 			const response = (await invoke("mcp_shell_apply_core_source", {
 				payload: {
@@ -695,11 +667,7 @@ export function SettingsPage() {
 			})) as DesktopCoreSourceResponse;
 
 			applyCoreSourceView(response);
-			await wireDashboardToCoreSource(
-				response.apiBaseUrl,
-				response.localhostApiPort,
-				response.localhostMcpPort,
-			);
+			await wireDashboardToCoreSource(response.apiBaseUrl);
 			notifySuccess(
 				t("settings:system.applySuccessTitle", {
 					defaultValue: "Core source updated",
@@ -1005,27 +973,39 @@ export function SettingsPage() {
 	}, [isTauriShell, updateDashboardSettings]);
 
 	const showLicenseTab = licenseLoaded && licenseDocument !== null;
-	const requestedTab = searchParams.get("tab");
-	const [activeTab, setActiveTab] = useState("general");
-
-	useEffect(() => {
-		if (requestedTab === "about" && showLicenseTab) {
-			setActiveTab("about");
-			return;
-		}
-		if (activeTab === "about" && !showLicenseTab) {
-			setActiveTab("general");
-		}
-	}, [activeTab, requestedTab, showLicenseTab]);
-
-	const handleTabChange = useCallback(
-		(value: string) => {
-			setActiveTab(value);
-			const next = buildSettingsTabSearchParams(searchParams, value);
-			setSearchParams(next, { replace: true });
-		},
-		[searchParams, setSearchParams],
+	const settingsTabs = useMemo(
+		() =>
+			showLicenseTab
+				? [
+					"general",
+					"appearance",
+					"servers",
+					"clients",
+					"profile",
+					"market",
+					"develop",
+					"audit",
+					"system",
+					"about",
+				]
+				: [
+					"general",
+					"appearance",
+					"servers",
+					"clients",
+					"profile",
+					"market",
+					"develop",
+					"audit",
+					"system",
+				],
+		[showLicenseTab],
 	);
+	const { activeTab, setActiveTab } = useUrlTab({
+		paramName: "tab",
+		defaultTab: "general",
+		validTabs: settingsTabs,
+	});
 
 	return (
 		<div className="space-y-4">
@@ -1037,7 +1017,7 @@ export function SettingsPage() {
 
 			<Tabs
 				value={activeTab}
-				onValueChange={handleTabChange}
+				onValueChange={setActiveTab}
 				orientation="vertical"
 				className="flex items-start gap-4"
 			>
@@ -1857,12 +1837,13 @@ export function SettingsPage() {
 											<Segment
 												value={coreSource}
 												onValueChange={(value) => {
-													if (value === "localhost") {
+													if (!isSystemReadonlyInWeb && value === "localhost") {
 														setCoreSource("localhost");
 													}
 												}}
 												options={sourceOptions}
 												showDots={false}
+												disabled={isSystemReadonlyInWeb}
 											/>
 										</div>
 									</div>
@@ -1937,6 +1918,7 @@ export function SettingsPage() {
 														)
 													}
 													options={runtimeModeOptions}
+													disabled={isSystemReadonlyInWeb}
 													showDots={false}
 												/>
 											</div>
@@ -2014,6 +1996,7 @@ export function SettingsPage() {
 											type="number"
 											min={1}
 											value={apiPort}
+										readOnly={isSystemReadonlyInWeb}
 											onChange={(e) =>
 												setApiPort(
 													e.target.value === "" ? "" : Number(e.target.value),
@@ -2045,6 +2028,7 @@ export function SettingsPage() {
 											type="number"
 											min={1}
 											value={mcpPort}
+										readOnly={isSystemReadonlyInWeb}
 											onChange={(e) =>
 												setMcpPort(
 													e.target.value === "" ? "" : Number(e.target.value),
@@ -2068,21 +2052,23 @@ export function SettingsPage() {
 													? t("loading", { defaultValue: "Loading…" })
 													: t("reload", { defaultValue: "Reload" })}
 											</Button>
-											<Button
-												variant="default"
-												disabled={applyDisabled}
-												onClick={() => {
-													void handleApplyCoreSource();
-												}}
-											>
-												{applyBusy
-													? t("settings:system.applyButtonBusy", {
-														defaultValue: "Applying…",
-													})
-													: t("settings:system.apply", {
-														defaultValue: "Apply Core Source",
-													})}
-											</Button>
+											{isTauriShell ? (
+												<Button
+													variant="default"
+													disabled={applyDisabled}
+													onClick={() => {
+														void handleApplyCoreSource();
+													}}
+												>
+													{applyBusy
+														? t("settings:system.applyButtonBusy", {
+															defaultValue: "Applying…",
+														})
+														: t("settings:system.apply", {
+															defaultValue: "Apply Core Source",
+														})}
+												</Button>
+											) : null}
 										</div>
 									</div>
 									{applyBusy && isTauriShell ? (
@@ -2097,93 +2083,6 @@ export function SettingsPage() {
 							</CardContent>
 						</Card>
 					</TabsContent>
-
-					{/* Web-mode helper dialog for Apply & Restart */}
-					<Dialog open={webDialogOpen} onOpenChange={setWebDialogOpen}>
-						<DialogContent>
-							<DialogHeader>
-								<DialogTitle>
-									{t("settings:system.webDialogTitle", {
-										defaultValue: "Apply & Restart (Web)",
-									})}
-								</DialogTitle>
-								<DialogDescription>
-									{t("settings:system.webDialogDesc", {
-										defaultValue:
-											"The browser cannot restart the backend. Use one of the commands below with the selected ports.",
-									})}
-								</DialogDescription>
-							</DialogHeader>
-							<div className="space-y-3">
-								<div>
-									<p className="mb-1 text-sm font-medium">
-										{t("settings:system.optionCargoTitle", {
-											defaultValue: "Option A — cargo run (dev)",
-										})}
-									</p>
-									<div className="rounded-md bg-slate-950/90 p-3 font-mono text-xs text-slate-100">
-										{`MCPMATE_API_PORT=${effectiveApiPort} MCPMATE_MCP_PORT=${effectiveMcpPort} MCPMATE_ALLOWED_ORIGINS=${devUrl} cargo run -p app-mcpmate`}
-									</div>
-									<div className="mt-2 flex gap-2">
-										<Button
-											variant="secondary"
-											onClick={() =>
-												navigator.clipboard.writeText(
-													`MCPMATE_API_PORT=${effectiveApiPort} MCPMATE_MCP_PORT=${effectiveMcpPort} MCPMATE_ALLOWED_ORIGINS=${devUrl} cargo run -p app-mcpmate`,
-												)
-											}
-										>
-											{t("settings:system.copy", { defaultValue: "Copy" })}
-										</Button>
-										<Button
-											variant="outline"
-											onClick={async () => {
-												const url = API_BASE_URL
-													? `${API_BASE_URL}/api/system/shutdown`
-													: "/api/system/shutdown";
-												try {
-													await fetch(url, { method: "POST" });
-												} catch {
-													// Shutdown request is fire-and-forget
-												}
-											}}
-										>
-											{t("settings:system.stopCurrent", {
-												defaultValue: "Stop current backend",
-											})}
-										</Button>
-									</div>
-								</div>
-								<div>
-									<p className="mb-1 text-sm font-medium">
-										{t("settings:system.optionBinaryTitle", {
-											defaultValue: "Option B — binary (release)",
-										})}
-									</p>
-									<div className="rounded-md bg-slate-950/90 p-3 font-mono text-xs text-slate-100">
-										{`./app-mcpmate --api-port ${effectiveApiPort} --mcp-port ${effectiveMcpPort}`}
-									</div>
-									<div className="mt-2">
-										<Button
-											variant="secondary"
-											onClick={() =>
-												navigator.clipboard.writeText(
-													`./app-mcpmate --api-port ${effectiveApiPort} --mcp-port ${effectiveMcpPort}`,
-												)
-											}
-										>
-											{t("settings:system.copy", { defaultValue: "Copy" })}
-										</Button>
-									</div>
-								</div>
-							</div>
-							<DialogFooter>
-								<Button onClick={() => setWebDialogOpen(false)}>
-									{t("settings:system.close", { defaultValue: "Close" })}
-								</Button>
-							</DialogFooter>
-						</DialogContent>
-					</Dialog>
 
 					<TabsContent value="develop" className="mt-0 h-full">
 						<Card className="h-full">
@@ -2309,6 +2208,56 @@ export function SettingsPage() {
 											setDashboardSetting("showDefaultHeaders", checked)
 										}
 									/>
+								</div>
+
+								{/* Inspector Timeout */}
+								<div className="flex items-center justify-between gap-4">
+									<div>
+										<h3 className="text-base font-medium">
+											{t("settings:developer.inspectorTimeoutTitle", {
+												defaultValue: "Inspector Timeout (ms)",
+											})}
+										</h3>
+										<p className="text-sm text-muted-foreground">
+											{t("settings:developer.inspectorTimeoutDescription", {
+												defaultValue:
+													"Default timeout for tool/resource/prompt calls in the Inspector drawer.",
+											})}
+										</p>
+									</div>
+									<div className="flex items-center gap-2">
+										<Input
+											type="number"
+											min={1000}
+											max={300000}
+											step={500}
+											value={inspectorTimeoutInput}
+											onChange={(e) =>
+												handleInspectorTimeoutChange(
+													parseInt(e.target.value, 10) || 8000,
+												)
+											}
+											className="w-32"
+										/>
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={handleInspectorTimeoutSave}
+											disabled={
+												inspectorTimeoutMutation.isPending ||
+												inspectorTimeoutInput ===
+													(systemSettingsQuery.data?.inspector_timeout_ms ?? 8000)
+											}
+										>
+											{inspectorTimeoutMutation.isPending
+												? t("settings:developer.saving", {
+														defaultValue: "Saving...",
+													})
+												: t("settings:developer.save", {
+														defaultValue: "Save",
+													})}
+										</Button>
+									</div>
 								</div>
 							</CardContent>
 						</Card>

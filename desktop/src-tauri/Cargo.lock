@@ -3235,6 +3235,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "which 6.0.3",
+ "windows-sys 0.59.0",
  "zip 2.4.2",
 ]
 
@@ -3254,6 +3255,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "keyring",
+ "libc",
  "mcpmate",
  "once_cell",
  "plist",

@@ -185,9 +185,7 @@ impl Default for EnvironmentManager {
 }
 
 /// Create runtime-specific environment for uv
-pub fn create_uv_environment(
-    bin_path: &Path,
-) -> Result<EnvironmentManager> {
+pub fn create_uv_environment(bin_path: &Path) -> Result<EnvironmentManager> {
     let paths = global_paths();
     let mut env = EnvironmentManager::new();
 
@@ -222,9 +220,7 @@ pub fn create_uv_environment(
 }
 
 /// Create runtime-specific environment for Bun
-pub fn create_bun_environment(
-    bin_path: &Path,
-) -> Result<EnvironmentManager> {
+pub fn create_bun_environment(bin_path: &Path) -> Result<EnvironmentManager> {
     let paths = global_paths();
     let mut env = EnvironmentManager::new();
 

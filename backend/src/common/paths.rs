@@ -75,6 +75,11 @@ impl MCPMatePaths {
         self.base_dir.join(constants::paths::DATABASE_FILE_NAME)
     }
 
+    /// Get the system settings file path (~/.mcpmate/config.json)
+    pub fn config_path(&self) -> PathBuf {
+        self.base_dir.join("config.json")
+    }
+
     /// Get the database URL for SQLite
     pub fn database_url(&self) -> String {
         format!("sqlite:{}", self.database_path().display())
@@ -128,7 +133,10 @@ impl MCPMatePaths {
         &self,
         runtime_type: &str,
     ) -> Result<()> {
-        let dirs = [self.runtime_type_dir(runtime_type), self.runtime_cache_dir(runtime_type)];
+        let dirs = [
+            self.runtime_type_dir(runtime_type),
+            self.runtime_cache_dir(runtime_type),
+        ];
 
         for dir in &dirs {
             std::fs::create_dir_all(dir).with_context(|| format!("Failed to create directory: {}", dir.display()))?;

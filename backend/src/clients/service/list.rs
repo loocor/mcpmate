@@ -99,7 +99,7 @@ mod tests {
     use crate::clients::models::OnboardingPolicy;
     use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
     use crate::config::{
-        client::init::{initialize_client_table, initialize_system_settings_table},
+        client::init::{initialize_client_table, initialize_system_settings},
         profile::init::initialize_profile_tables,
         server::init::initialize_server_tables,
     };
@@ -124,7 +124,7 @@ mod tests {
             .await
             .expect("init profile tables");
         initialize_client_table(pool.as_ref()).await.expect("init client table");
-        initialize_system_settings_table(pool.as_ref())
+        initialize_system_settings(pool.as_ref())
             .await
             .expect("init system settings table");
 

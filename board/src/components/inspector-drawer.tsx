@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { inspectorApi } from "../lib/api";
+import { inspectorApi, systemApi } from "../lib/api";
 import { writeClipboardText } from "../lib/clipboard";
 import { smartFormat } from "../lib/format";
 import { usePageTranslations } from "../lib/i18n/usePageTranslations";
@@ -325,6 +325,21 @@ export function InspectorDrawer({
 	usePageTranslations("inspector");
 	const drawerContentRef = useRef<HTMLDivElement | null>(null);
 	const [timeoutMs, setTimeoutMs] = useState<number>(8000);
+	const [timeoutInitialized, setTimeoutInitialized] = useState(false);
+
+	useEffect(() => {
+		if (open && !timeoutInitialized) {
+			systemApi
+				.getSettings()
+				.then((settings) => {
+					setTimeoutMs(settings.inspector_timeout_ms);
+					setTimeoutInitialized(true);
+				})
+				.catch(() => {
+					setTimeoutInitialized(true);
+				});
+		}
+	}, [open, timeoutInitialized]);
 	const [argsJson, setArgsJson] = useState<string>("{}");
 	const [useRaw, setUseRaw] = useState(false);
 	const [fields, setFields] = useState<Field[]>([]);

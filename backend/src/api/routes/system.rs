@@ -10,16 +10,11 @@ use aide::axum::{
 
 use super::AppState;
 use crate::api::handlers::system;
-use crate::api::models::client::{
-    FirstContactBehaviorRequest, FirstContactBehaviorResp, OnboardingPolicyRequest, OnboardingPolicyResponse,
-};
 use crate::api::models::system::{
-    ManagementActionResp, SystemDefaultClientModeReq, SystemDefaultClientModeResp, SystemMetricsResp, SystemPortsResp,
-    SystemStatusResp,
+    ManagementActionResp, SystemMetricsResp, SystemSettingsResp, SystemSettingsUpdateReq, SystemStatusResp,
 };
 use crate::{aide_wrapper, aide_wrapper_payload};
 
-// Generate aide-compatible wrappers for system handlers
 aide_wrapper!(
     system::get_status,
     SystemStatusResp,
@@ -33,25 +28,18 @@ aide_wrapper!(
 );
 
 aide_wrapper!(
-    system::get_ports,
-    SystemPortsResp,
-    "Get runtime REST and MCP listener ports"
-);
-
-aide_wrapper!(
-    system::get_default_client_mode,
-    SystemDefaultClientModeResp,
-    "Get default client management mode used for unrecognized or unconfigured clients"
+    system::get_settings,
+    SystemSettingsResp,
+    "Get structured system settings"
 );
 
 aide_wrapper_payload!(
-    system::set_default_client_mode,
-    SystemDefaultClientModeReq,
-    SystemDefaultClientModeResp,
-    "Set default client management mode used for unrecognized or unconfigured clients"
+    system::set_settings,
+    SystemSettingsUpdateReq,
+    SystemSettingsResp,
+    "Update one or more structured system settings fields"
 );
 
-// Management controls under system group for consistency
 aide_wrapper!(
     system::shutdown,
     ManagementActionResp,
@@ -64,54 +52,15 @@ aide_wrapper!(
     "Restart MCP proxy service on configured port"
 );
 
-aide_wrapper!(
-    system::get_onboarding_policy,
-    OnboardingPolicyResponse,
-    "Get current client onboarding policy"
-);
-
-aide_wrapper_payload!(
-    system::set_onboarding_policy,
-    OnboardingPolicyRequest,
-    OnboardingPolicyResponse,
-    "Set client onboarding policy"
-);
-
-aide_wrapper!(
-    system::get_first_contact_behavior,
-    FirstContactBehaviorResp,
-    "Get current first contact behavior"
-);
-
-aide_wrapper_payload!(
-    system::set_first_contact_behavior,
-    FirstContactBehaviorRequest,
-    FirstContactBehaviorResp,
-    "Set first contact behavior"
-);
-
-/// Create system management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/system/status", get_with(get_status_aide, get_status_docs))
-        .api_route("/system/ports", get_with(get_ports_aide, get_ports_docs))
         .api_route(
-            "/system/client-default-mode",
-            get_with(get_default_client_mode_aide, get_default_client_mode_docs)
-                .post_with(set_default_client_mode_aide, set_default_client_mode_docs),
+            "/system/settings",
+            get_with(get_settings_aide, get_settings_docs).post_with(set_settings_aide, set_settings_docs),
         )
         .api_route("/system/metrics", get_with(get_metrics_aide, get_metrics_docs))
         .api_route("/system/shutdown", post_with(shutdown_aide, shutdown_docs))
         .api_route("/system/restart", post_with(restart_aide, restart_docs))
-        .api_route(
-            "/system/settings/onboarding-policy",
-            get_with(get_onboarding_policy_aide, get_onboarding_policy_docs)
-                .post_with(set_onboarding_policy_aide, set_onboarding_policy_docs),
-        )
-        .api_route(
-            "/system/settings/first-contact-behavior",
-            get_with(get_first_contact_behavior_aide, get_first_contact_behavior_docs)
-                .post_with(set_first_contact_behavior_aide, set_first_contact_behavior_docs),
-        )
         .with_state(state)
 }

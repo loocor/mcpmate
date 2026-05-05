@@ -50,6 +50,9 @@ tracing-appender = "0.2.5"
 keyring = { version = "3", features = ["apple-native"] }
 plist = "1.1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

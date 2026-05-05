@@ -5,3 +5,4 @@ pub mod config;
 pub mod detection;
 pub mod metrics;
 pub mod paths;
+pub mod settings;

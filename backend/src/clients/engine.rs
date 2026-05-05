@@ -1029,7 +1029,14 @@ mod tests {
             preferred_transport: None,
         };
 
-        let error = engine.render_config(request).await.expect_err("alias transport key should fail");
-        assert!(error.to_string().contains("missing format rule for transport streamable_http"));
+        let error = engine
+            .render_config(request)
+            .await
+            .expect_err("alias transport key should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("missing format rule for transport streamable_http")
+        );
     }
 }
