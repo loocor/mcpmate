@@ -13,6 +13,22 @@ const packageJson = JSON.parse(
 const appVersion =
 	typeof packageJson.version === "string" ? packageJson.version : "";
 
+const devApiBaseUrl =
+	typeof process.env.VITE_API_BASE_URL === "string" &&
+	process.env.VITE_API_BASE_URL.trim().length > 0
+		? process.env.VITE_API_BASE_URL.trim()
+		: "http://127.0.0.1:8080";
+
+const devWsBaseUrl = (() => {
+	try {
+		const parsed = new URL(devApiBaseUrl);
+		parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+		return parsed.toString();
+	} catch {
+		return "ws://127.0.0.1:8080";
+	}
+})();
+
 type HttpProxyError = Error & { code?: string };
 
 type HttpProxyResponse = {
@@ -63,6 +79,18 @@ function attachBackendStartupProxyHandler(proxy: HttpProxyServer): void {
 	});
 }
 
+function removeOriginHeader(proxyReq: ClientRequest): void {
+	if (!proxyReq || typeof proxyReq.removeHeader !== "function") {
+		return;
+	}
+
+	try {
+		proxyReq.removeHeader("origin");
+	} catch {
+		/* noop */
+	}
+}
+
 export default defineConfig({
 	define: {
 		"import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
@@ -78,38 +106,48 @@ export default defineConfig({
 	},
 	server: {
 		proxy: {
-			"/api": {
-				target: "http://127.0.0.1:8080",
+			"^/api(?:/|$)": {
+				target: devApiBaseUrl,
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => {
 					attachBackendStartupProxyHandler(proxy);
 					proxy.on("proxyReq", (proxyReq: ClientRequest) => {
-						if (proxyReq && typeof proxyReq.removeHeader === "function") {
-							try {
-								proxyReq.removeHeader("origin");
-							} catch {
-								/* noop */
-							}
-						}
+						removeOriginHeader(proxyReq);
 					});
 				},
 			},
-			"/ws": {
-				target: "ws://127.0.0.1:8080",
+			"^/docs(?:/|$)": {
+				target: devApiBaseUrl,
+				changeOrigin: true,
+				secure: false,
+				configure: (proxy: HttpProxyServer) => {
+					attachBackendStartupProxyHandler(proxy);
+					proxy.on("proxyReq", (proxyReq: ClientRequest) => {
+						removeOriginHeader(proxyReq);
+					});
+				},
+			},
+			"^/openapi\\.json$": {
+				target: devApiBaseUrl,
+				changeOrigin: true,
+				secure: false,
+				configure: (proxy: HttpProxyServer) => {
+					attachBackendStartupProxyHandler(proxy);
+					proxy.on("proxyReq", (proxyReq: ClientRequest) => {
+						removeOriginHeader(proxyReq);
+					});
+				},
+			},
+			"^/ws(?:/|$)": {
+				target: devWsBaseUrl,
 				ws: true,
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => {
 					attachBackendStartupProxyHandler(proxy);
 					proxy.on("proxyReqWs", (proxyReq: ClientRequest) => {
-						if (proxyReq && typeof proxyReq.removeHeader === "function") {
-							try {
-								proxyReq.removeHeader("origin");
-							} catch {
-								/* noop */
-							}
-						}
+						removeOriginHeader(proxyReq);
 					});
 				},
 			},

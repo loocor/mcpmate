@@ -1,15 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle } from "lucide-react";
-import { API_BASE_CHANGED_EVENT, API_BASE_URL } from "../../lib/api";
+import { API_BASE_CHANGED_EVENT, resolveApiUrl } from "../../lib/api";
 
 function resolveApiDocsUrl(): string {
-	try {
-		const base = API_BASE_URL || "http://127.0.0.1:8080";
-		return new URL("/docs", base).toString();
-	} catch {
-		return "http://127.0.0.1:8080/docs";
-	}
+	return resolveApiUrl("/docs");
 }
 
 export function ApiDocsPage() {

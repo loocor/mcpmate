@@ -94,48 +94,71 @@ import { useQuery } from "@tanstack/react-query";
 
 // Base API configuration
 // Prefer VITE_API_BASE_URL; otherwise infer from runtime context with sane fallbacks.
-// For desktop (Tauri), allow runtime override so Settings can change ports without full reload.
+// Persist a single frontend bridge source (`apiBaseUrl`) when runtime port discovery needs to
+// outlive a page reload (desktop shell or localhost browser workflows).
 const API_BASE_OVERRIDE_KEY = "mcpmate.api_base_override";
 export const API_BASE_CHANGED_EVENT = "mcpmate:api-base-changed";
 
-const resolveApiBaseUrl = (): string => {
+const readEnvApiBaseUrl = (): string | null => {
 	const envBase =
 		typeof import.meta !== "undefined" ? import.meta.env?.VITE_API_BASE_URL : undefined;
+	if (typeof envBase !== "string") {
+		return null;
+	}
+	const trimmed = envBase.trim();
+	return trimmed.length > 0 ? trimmed : null;
+};
 
-	if (typeof envBase === "string" && envBase.trim().length > 0) {
-		return envBase.trim();
+const isDesktopShellProtocol = (protocol: string): boolean =>
+	protocol === "tauri:" || protocol === "app:" || protocol === "file:";
+
+const readStoredApiBaseUrl = (): string | null => {
+	if (typeof window === "undefined") {
+		return null;
+	}
+	try {
+		const stored = window.localStorage?.getItem(API_BASE_OVERRIDE_KEY)?.trim();
+		return stored ? stored : null;
+	} catch {
+		return null;
+	}
+};
+
+const canReuseStoredApiBaseUrl = (): boolean => {
+	if (typeof window === "undefined" || typeof window.location === "undefined") {
+		return false;
 	}
 
-	try {
-		if (isTauriEnvironmentSync() && typeof window !== "undefined" && window.localStorage) {
-			const override = window.localStorage.getItem(API_BASE_OVERRIDE_KEY);
-			if (override && override.trim().length > 0) {
-				return override.trim();
-			}
-		}
-	} catch {
-		// ignore storage access issues
+	const protocol = window.location.protocol.toLowerCase();
+	return isDesktopShellProtocol(protocol);
+};
+
+const resolveApiBaseUrl = (): string => {
+	const envBase = readEnvApiBaseUrl();
+	if (envBase) {
+		return envBase;
+	}
+
+	const storedBase = readStoredApiBaseUrl();
+	if (storedBase && canReuseStoredApiBaseUrl()) {
+		return storedBase;
 	}
 
 	if (typeof window !== "undefined" && typeof window.location !== "undefined") {
 		const protocol = window.location.protocol.toLowerCase();
 
-		// Tauri / desktop shells use a custom protocol (e.g. tauri://localhost)
-		if (protocol === "tauri:" || protocol === "app:" || protocol === "file:") {
-			// default desktop port (may be overridden at runtime via localStorage)
+		if (isDesktopShellProtocol(protocol)) {
 			return "http://127.0.0.1:8080";
 		}
 
-		// In web dev/prod environments stick to same-origin relative requests so Vite/Tauri proxies work.
 		return "";
 	}
 
-	// Server-side fall back to local proxy port
 	return "http://127.0.0.1:8080";
 };
 
-// Mutable API base URL with runtime setter for desktop shells
 export let API_BASE_URL = resolveApiBaseUrl();
+
 export function requireApiBaseUrl(context: string): string {
 	const trimmed = API_BASE_URL.trim();
 	if (trimmed.length > 0) {
@@ -144,13 +167,25 @@ export function requireApiBaseUrl(context: string): string {
 	throw new Error(`Missing MCPMate API base URL for ${context}`);
 }
 
+export function resolveApiUrl(path: string): string {
+	const trimmed = API_BASE_URL.trim();
+	if (trimmed.length === 0) {
+		return path;
+	}
+
+	try {
+		return new URL(path, trimmed).toString();
+	} catch {
+		return path;
+	}
+}
+
 export function setApiBaseUrl(newBase: string | null | undefined) {
 	const candidate = (newBase ?? "").trim();
-	const shouldPersistOverride = isTauriEnvironmentSync();
 	if (candidate.length > 0) {
 		API_BASE_URL = candidate;
 		try {
-			if (shouldPersistOverride) {
+			if (isTauriEnvironmentSync()) {
 				window.localStorage?.setItem(API_BASE_OVERRIDE_KEY, candidate);
 			} else {
 				window.localStorage?.removeItem(API_BASE_OVERRIDE_KEY);
@@ -163,7 +198,6 @@ export function setApiBaseUrl(newBase: string | null | undefined) {
 		}
 		return;
 	}
-	// Clear override and recompute
 	try {
 		window.localStorage?.removeItem(API_BASE_OVERRIDE_KEY);
 	} catch {
@@ -179,6 +213,18 @@ export function setApiBaseUrl(newBase: string | null | undefined) {
 	} catch {
 		// ignore event dispatch errors
 	}
+}
+
+export function syncApiBaseUrlForRuntimePort(apiPort: number) {
+	if (readEnvApiBaseUrl()) {
+		return;
+	}
+
+	if (!isTauriEnvironmentSync()) {
+		return;
+	}
+
+	setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
 }
 
 const resolveWebSocketUrl = (): string => {
@@ -685,15 +731,14 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 			typeof enhanced?.headers === "object" && enhanced?.headers !== null
 				? (enhanced.headers as Record<string, string>)
 				: undefined,
-		meta: enhanced?.meta,
-		icons: enhanced?.icons,
+		meta: normalizeServerMeta(enhanced?.meta),
+		icons: normalizeServerIconList(enhanced?.icons),
 	};
 }
 
 // Core API request function
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
-	const isRelative = !API_BASE_URL;
-	const url = isRelative ? endpoint : `${API_BASE_URL}${endpoint}`;
+	const url = resolveApiUrl(endpoint);
 	const headers =
 		options?.headers instanceof Headers
 			? options.headers
@@ -2314,17 +2359,6 @@ export class NotificationsService {
 }
 
 export const notificationsService = new NotificationsService();
-
-/** Maps legacy API values to the simplified deny | review | allow model. */
-function normalizeFirstContactBehavior(raw: string): "deny" | "review" | "allow" {
-	if (raw === "pending_review" || raw === "allow_then_review") {
-		return "review";
-	}
-	if (raw === "deny" || raw === "review" || raw === "allow") {
-		return raw;
-	}
-	return "review";
-}
 
 // Clients Management API
 export const clientsApi = {

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { Button } from "../../components/ui/button";
 import {
 	Card,
@@ -30,14 +30,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../../components/ui/card";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Segment, type SegmentOption } from "../../components/ui/segment";
@@ -57,9 +49,9 @@ import {
 } from "../../components/ui/tabs";
 import {
 	auditApi,
-	API_BASE_URL,
 	notificationsService,
 	setApiBaseUrl,
+	syncApiBaseUrlForRuntimePort,
 	systemApi,
 } from "../../lib/api";
 import {
@@ -256,19 +248,6 @@ function getServiceInstallLabel(params: {
 	});
 }
 
-function buildSettingsTabSearchParams(
-	searchParams: URLSearchParams,
-	value: string,
-): URLSearchParams {
-	const next = new URLSearchParams(searchParams);
-	if (value === "about") {
-		next.set("tab", "about");
-	} else {
-		next.delete("tab");
-	}
-	return next;
-}
-
 export function SettingsPage() {
 	usePageTranslations("settings");
 	const queryClient = useQueryClient();
@@ -283,8 +262,6 @@ export function SettingsPage() {
 		refreshCoreView,
 		manageLocalCore,
 	} = useDesktopCoreState();
-	const [searchParams, setSearchParams] = useSearchParams();
-
 	const theme = useAppStore((state) => state.theme);
 	const setTheme = useAppStore((state) => state.setTheme);
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
@@ -339,8 +316,7 @@ export function SettingsPage() {
 		],
 		[t, i18n.language],
 	);
-	const [webDialogOpen, setWebDialogOpen] = useState(false);
-	const [policyType, setPolicyType] = useState<string>("combined");
+		const [policyType, setPolicyType] = useState<string>("combined");
 	const [policyDays, setPolicyDays] = useState<number>(30);
 	const [policyCount, setPolicyCount] = useState<number>(100000);
 	const [sweepInterval, setSweepInterval] = useState<number>(3600);
@@ -577,11 +553,7 @@ export function SettingsPage() {
 					running: false,
 					installed: false,
 				}));
-				if (isTauriShell) {
-					setApiBaseUrl(`http://127.0.0.1:${api}`);
-				} else {
-					setApiBaseUrl("");
-				}
+				syncApiBaseUrlForRuntimePort(api);
 			};
 
 			if (isTauriEnvironmentSync()) {
@@ -609,24 +581,19 @@ export function SettingsPage() {
 				return;
 			}
 
-			const apiBase = API_BASE_URL || "";
 			const settings = await systemApi.getSettings();
 			if (
 				typeof settings.api_port === "number" &&
 				typeof settings.mcp_port === "number"
 			) {
 				applyAuthorityPorts(settings.api_port, settings.mcp_port);
-				if (apiBase && settings.api_url) {
-					setApiBaseUrl(settings.api_url);
-				}
 				return;
 			}
 
 		} finally {
 			setLoadingPorts(false);
 		}
-		// API_BASE_URL is a live module binding; reads inside this async fn stay current without listing it in deps.
-	}, [applyCoreSourceView, refreshCoreView, isTauriShell, t, i18n.language]);
+	}, [applyCoreSourceView, refreshCoreView, t, i18n.language]);
 
 	const runtimeModeOptions = useMemo<SegmentOption[]>(
 		() => [
@@ -658,6 +625,7 @@ export function SettingsPage() {
 		[localhostRuntimeMode, t, i18n.language],
 	);
 
+	const isSystemReadonlyInWeb = !isTauriShell;
 	const applyDisabled =
 		applyBusy ||
 		typeof apiPort !== "number" ||
@@ -680,24 +648,12 @@ export function SettingsPage() {
 	});
 
 	const handleApplyCoreSource = useCallback(async () => {
-		if (typeof apiPort !== "number" || typeof mcpPort !== "number") {
+		if (!isTauriShell || typeof apiPort !== "number" || typeof mcpPort !== "number") {
 			return;
 		}
 
 		try {
 			setApplyBusy(true);
-
-			if (!isTauriShell) {
-				const settings = await systemApi.setSettings({
-					api_port: apiPort,
-					mcp_port: mcpPort,
-				});
-				setApiPort(settings.api_port);
-				setMcpPort(settings.mcp_port);
-				await wireDashboardToCoreSource("");
-				setWebDialogOpen(true);
-				return;
-			}
 
 			const { invoke } = await import("@tauri-apps/api/core");
 			const response = (await invoke("mcp_shell_apply_core_source", {
@@ -1017,27 +973,39 @@ export function SettingsPage() {
 	}, [isTauriShell, updateDashboardSettings]);
 
 	const showLicenseTab = licenseLoaded && licenseDocument !== null;
-	const requestedTab = searchParams.get("tab");
-	const [activeTab, setActiveTab] = useState("general");
-
-	useEffect(() => {
-		if (requestedTab === "about" && showLicenseTab) {
-			setActiveTab("about");
-			return;
-		}
-		if (activeTab === "about" && !showLicenseTab) {
-			setActiveTab("general");
-		}
-	}, [activeTab, requestedTab, showLicenseTab]);
-
-	const handleTabChange = useCallback(
-		(value: string) => {
-			setActiveTab(value);
-			const next = buildSettingsTabSearchParams(searchParams, value);
-			setSearchParams(next, { replace: true });
-		},
-		[searchParams, setSearchParams],
+	const settingsTabs = useMemo(
+		() =>
+			showLicenseTab
+				? [
+					"general",
+					"appearance",
+					"servers",
+					"clients",
+					"profile",
+					"market",
+					"develop",
+					"audit",
+					"system",
+					"about",
+				]
+				: [
+					"general",
+					"appearance",
+					"servers",
+					"clients",
+					"profile",
+					"market",
+					"develop",
+					"audit",
+					"system",
+				],
+		[showLicenseTab],
 	);
+	const { activeTab, setActiveTab } = useUrlTab({
+		paramName: "tab",
+		defaultTab: "general",
+		validTabs: settingsTabs,
+	});
 
 	return (
 		<div className="space-y-4">
@@ -1049,7 +1017,7 @@ export function SettingsPage() {
 
 			<Tabs
 				value={activeTab}
-				onValueChange={handleTabChange}
+				onValueChange={setActiveTab}
 				orientation="vertical"
 				className="flex items-start gap-4"
 			>
@@ -1869,12 +1837,13 @@ export function SettingsPage() {
 											<Segment
 												value={coreSource}
 												onValueChange={(value) => {
-													if (value === "localhost") {
+													if (!isSystemReadonlyInWeb && value === "localhost") {
 														setCoreSource("localhost");
 													}
 												}}
 												options={sourceOptions}
 												showDots={false}
+												disabled={isSystemReadonlyInWeb}
 											/>
 										</div>
 									</div>
@@ -1949,6 +1918,7 @@ export function SettingsPage() {
 														)
 													}
 													options={runtimeModeOptions}
+													disabled={isSystemReadonlyInWeb}
 													showDots={false}
 												/>
 											</div>
@@ -2026,6 +1996,7 @@ export function SettingsPage() {
 											type="number"
 											min={1}
 											value={apiPort}
+										readOnly={isSystemReadonlyInWeb}
 											onChange={(e) =>
 												setApiPort(
 													e.target.value === "" ? "" : Number(e.target.value),
@@ -2057,6 +2028,7 @@ export function SettingsPage() {
 											type="number"
 											min={1}
 											value={mcpPort}
+										readOnly={isSystemReadonlyInWeb}
 											onChange={(e) =>
 												setMcpPort(
 													e.target.value === "" ? "" : Number(e.target.value),
@@ -2080,21 +2052,23 @@ export function SettingsPage() {
 													? t("loading", { defaultValue: "Loading…" })
 													: t("reload", { defaultValue: "Reload" })}
 											</Button>
-											<Button
-												variant="default"
-												disabled={applyDisabled}
-												onClick={() => {
-													void handleApplyCoreSource();
-												}}
-											>
-												{applyBusy
-													? t("settings:system.applyButtonBusy", {
-														defaultValue: "Applying…",
-													})
-													: t("settings:system.apply", {
-														defaultValue: "Apply Core Source",
-													})}
-											</Button>
+											{isTauriShell ? (
+												<Button
+													variant="default"
+													disabled={applyDisabled}
+													onClick={() => {
+														void handleApplyCoreSource();
+													}}
+												>
+													{applyBusy
+														? t("settings:system.applyButtonBusy", {
+															defaultValue: "Applying…",
+														})
+														: t("settings:system.apply", {
+															defaultValue: "Apply Core Source",
+														})}
+												</Button>
+											) : null}
 										</div>
 									</div>
 									{applyBusy && isTauriShell ? (
@@ -2109,89 +2083,6 @@ export function SettingsPage() {
 							</CardContent>
 						</Card>
 					</TabsContent>
-
-					{/* Web-mode helper dialog for Apply & Restart */}
-					<Dialog open={webDialogOpen} onOpenChange={setWebDialogOpen}>
-						<DialogContent>
-							<DialogHeader>
-								<DialogTitle>
-									{t("settings:system.webDialogTitle", {
-										defaultValue: "Apply & Restart (Web)",
-									})}
-								</DialogTitle>
-								<DialogDescription>
-									{t("settings:system.webDialogDesc", {
-										defaultValue:
-											"The selected ports were saved to ~/.mcpmate/config.json. Restart the backend with one of the commands below.",
-									})}
-								</DialogDescription>
-							</DialogHeader>
-							<div className="space-y-3">
-								<div>
-									<p className="mb-1 text-sm font-medium">
-										{t("settings:system.optionCargoTitle", {
-											defaultValue: "Option A — cargo run (dev)",
-										})}
-									</p>
-									<div className="rounded-md bg-slate-950/90 p-3 font-mono text-xs text-slate-100">
-										{`cargo run -p app-mcpmate`}
-									</div>
-									<div className="mt-2 flex gap-2">
-										<Button
-											variant="secondary"
-											onClick={() =>
-												navigator.clipboard.writeText(`cargo run -p app-mcpmate`)
-											}
-										>
-											{t("settings:system.copy", { defaultValue: "Copy" })}
-										</Button>
-										<Button
-											variant="outline"
-											onClick={async () => {
-												const url = API_BASE_URL
-													? `${API_BASE_URL}/api/system/shutdown`
-													: "/api/system/shutdown";
-												try {
-													await fetch(url, { method: "POST" });
-												} catch {
-													// Shutdown request is fire-and-forget
-												}
-											}}
-										>
-											{t("settings:system.stopCurrent", {
-												defaultValue: "Stop current backend",
-											})}
-										</Button>
-									</div>
-								</div>
-								<div>
-									<p className="mb-1 text-sm font-medium">
-										{t("settings:system.optionBinaryTitle", {
-											defaultValue: "Option B — binary (release)",
-										})}
-									</p>
-									<div className="rounded-md bg-slate-950/90 p-3 font-mono text-xs text-slate-100">
-										{`./app-mcpmate`}
-									</div>
-									<div className="mt-2">
-										<Button
-											variant="secondary"
-											onClick={() =>
-												navigator.clipboard.writeText(`./app-mcpmate`)
-											}
-										>
-											{t("settings:system.copy", { defaultValue: "Copy" })}
-										</Button>
-									</div>
-								</div>
-							</div>
-							<DialogFooter>
-								<Button onClick={() => setWebDialogOpen(false)}>
-									{t("settings:system.close", { defaultValue: "Close" })}
-								</Button>
-							</DialogFooter>
-						</DialogContent>
-					</Dialog>
 
 					<TabsContent value="develop" className="mt-0 h-full">
 						<Card className="h-full">
