@@ -274,6 +274,7 @@ impl RuntimeDownloader {
         }
 
         if requested_parts.len() >= 2
+            && requested_parts.len() <= 3
             && requested_parts
                 .iter()
                 .all(|part| part.chars().all(|ch| ch.is_ascii_digit()))
@@ -385,6 +386,25 @@ mod tests {
         assert_eq!(
             downloader.resolve_node_index_entry(&index, "v24.15.0").unwrap().version,
             "v24.15.0"
+        );
+    }
+
+    #[test]
+    fn rejects_node_versions_with_too_many_segments() {
+        let downloader = RuntimeDownloader::new();
+        let index = vec![
+            entry("v25.1.0", json!(false)),
+            entry("v24.15.0", json!("Krypton")),
+            entry("v24.14.3", json!("Krypton")),
+        ];
+
+        let error = downloader
+            .resolve_node_index_entry(&index, "24.15.0.1")
+            .expect_err("invalid 4-segment version should be rejected");
+
+        assert!(
+            error.to_string().contains("Unsupported Node.js version spec"),
+            "unexpected error: {error:#}"
         );
     }
 

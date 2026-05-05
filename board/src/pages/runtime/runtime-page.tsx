@@ -105,13 +105,15 @@ export function RuntimePage() {
 			);
 			setConfirm(null);
 		},
-		onError: (e) =>
+		onError: (e) => {
+			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
 			notifyError(
 				t("runtime:toasts.errorResetTitle", {
 					defaultValue: "Reset failed",
 				}),
 				e.message,
-			),
+			);
+		},
 	});
 
 	const resetOneM = useMutation<ClearCacheResponse, Error, RuntimeKind>({
@@ -129,13 +131,15 @@ export function RuntimePage() {
 			);
 			setConfirm(null);
 		},
-		onError: (e) =>
+		onError: (e) => {
+			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
 			notifyError(
 				t("runtime:toasts.errorResetTitle", {
 					defaultValue: "Reset failed",
 				}),
 				e.message,
-			),
+			);
+		},
 	});
 
 	const installM = useMutation<InstallResponse, Error, RuntimeKind>({
@@ -174,13 +178,16 @@ export function RuntimePage() {
 			);
 			setConfirm(null);
 		},
-		onError: (e) =>
+		onError: (e) => {
+			qc.invalidateQueries({ queryKey: ["runtimeStatus"] });
+			qc.invalidateQueries({ queryKey: ["runtimeCache"] });
 			notifyError(
 				t("runtime:toasts.errorInstallTitle", {
 					defaultValue: "Install failed",
 				}),
 				e.message,
-			),
+			);
+		},
 	});
 
 	const capResetM = useMutation<ClearCacheResponse, Error, void>({
