@@ -97,7 +97,7 @@ export default function GuidesOverview() {
 					server list.
 				</Li>
 				<Li>
-					<strong>Runtime</strong> &mdash; monitor bundled runtimes (uv, Bun),
+					<strong>Runtime</strong> &mdash; monitor bundled runtimes (Node.js, uv, Bun),
 					reset caches, and view capability cache statistics.
 				</Li>
 				<Li>

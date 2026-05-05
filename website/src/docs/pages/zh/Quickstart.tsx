@@ -141,7 +141,7 @@ export default function QuickstartZH() {
 			<H2>运行时出问题时</H2>
 			<Ul>
 				<Li>如果服务启动失败或工具返回错误，先打开 <strong>运行时</strong> 页面。</Li>
-				<Li>使用 <strong>安装 / 修复</strong> 补齐 uv、Bun 等依赖；如果怀疑缓存陈旧，也可以在同一页清理缓存。</Li>
+				<Li>使用 <strong>安装 / 修复</strong> 补齐 Node.js、uv、Bun 等依赖；如果怀疑缓存陈旧，也可以在同一页清理缓存。</Li>
 			</Ul>
 
 			<H2>用审计日志追踪变更</H2>
