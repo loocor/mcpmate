@@ -172,8 +172,18 @@ impl fmt::Display for RuntimeType {
 impl FromStr for RuntimeType {
     type Err = RuntimeError;
 
+    /// Parse a runtime type from a canonical name only (`uv`, `bun`, `node`).
+    ///
+    /// Unlike `from_command`, this does NOT accept CLI aliases (`uvx`, `bunx`,
+    /// `npm`, `npx`) since it is used for API input parsing where only the
+    /// canonical runtime name is valid.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::from_command(s).ok_or_else(|| RuntimeError::UnsupportedRuntimeType(s.to_string()))
+        match s.trim().to_ascii_lowercase().as_str() {
+            "uv" => Ok(RuntimeType::Uv),
+            "bun" => Ok(RuntimeType::Bun),
+            "node" => Ok(RuntimeType::Node),
+            _ => Err(RuntimeError::UnsupportedRuntimeType(s.to_string())),
+        }
     }
 }
 

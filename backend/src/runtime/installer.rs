@@ -97,21 +97,21 @@ impl RuntimeInstaller {
         zip_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
-        tokio::fs::create_dir_all(target_dir).await?;
+        let staging_dir = Self::prepare_staging_dir(target_dir, "staging").await?;
 
         let extract_dir = Self::unique_temp_dir("mcpmate-bun-extract");
         self.prepare_extract_dir(&extract_dir).await?;
         self.extract_zip(zip_file, &extract_dir).await?;
 
         let bun_exe = self.find_bun_executable(&extract_dir)?;
-        let target_path = target_dir.join(if cfg!(windows) { "bun.exe" } else { "bun" });
+        let target_path = staging_dir.join(if cfg!(windows) { "bun.exe" } else { "bun" });
         tokio::fs::copy(&bun_exe, &target_path)
             .await
             .context("Failed to copy bun executable")?;
 
         Self::set_executable_permissions(&target_path).await?;
 
-        let bunx_path = target_dir.join(if cfg!(windows) { "bunx.exe" } else { "bunx" });
+        let bunx_path = staging_dir.join(if cfg!(windows) { "bunx.exe" } else { "bunx" });
         #[cfg(unix)]
         {
             if bunx_path.exists() {
@@ -134,7 +134,10 @@ impl RuntimeInstaller {
             tracing::warn!("Failed to clean up extract directory: {}", error);
         }
 
-        Ok(target_path)
+        Self::commit_staging(&staging_dir, target_dir).await?;
+
+        let final_path = target_dir.join(if cfg!(windows) { "bun.exe" } else { "bun" });
+        Ok(final_path)
     }
 
     async fn install_node(
@@ -142,27 +145,32 @@ impl RuntimeInstaller {
         archive_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
-        let extract_dir = Self::unique_temp_dir("mcpmate-node-extract");
-        self.prepare_extract_dir(&extract_dir).await?;
-        self.prepare_extract_dir(target_dir).await?;
+        // Use a staging directory so we never destroy a working installation
+        // mid-flight. If extraction or setup fails, the existing target_dir
+        // remains intact.
+        let staging_dir = Self::prepare_staging_dir(target_dir, "staging").await?;
 
         let is_zip = archive_file
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"));
 
         if is_zip {
-            self.extract_zip(archive_file, &extract_dir).await?;
+            self.extract_zip(archive_file, &staging_dir).await?;
         } else {
-            self.extract_tar_gz_skipping_links(archive_file, &extract_dir).await?;
+            self.extract_tar_gz_skipping_links(archive_file, &staging_dir).await?;
         }
 
-        let install_root = self.find_node_install_root(&extract_dir)?;
-        self.copy_directory_contents(&install_root, target_dir).await?;
+        let install_root = self.find_node_install_root(&staging_dir)?;
+        let final_staging = Self::staging_name(target_dir, "final");
+
+        // Clean any leftover final dir, then rename install_root -> final_staging
+        Self::clean_dir(&final_staging).await?;
+        tokio::fs::rename(&install_root, &final_staging).await?;
 
         #[cfg(unix)]
-        self.create_node_unix_shims(target_dir).await?;
+        self.create_node_unix_shims(&final_staging).await?;
 
-        let target_path = target_dir.join(RuntimeType::Node.executable_name());
+        let target_path = final_staging.join(RuntimeType::Node.executable_name());
         if !target_path.exists() {
             return Err(anyhow::anyhow!(
                 "Installed Node.js executable not found at {}",
@@ -172,11 +180,14 @@ impl RuntimeInstaller {
 
         Self::set_executable_permissions(&target_path).await?;
 
-        if let Err(error) = tokio::fs::remove_dir_all(&extract_dir).await {
-            tracing::warn!("Failed to clean up extract directory: {}", error);
-        }
+        // Clean up first-stage staging
+        let _ = Self::clean_dir(&staging_dir).await;
 
-        Ok(target_path)
+        // Atomic swap
+        Self::commit_staging(&final_staging, target_dir).await?;
+
+        let final_path = target_dir.join(RuntimeType::Node.executable_name());
+        Ok(final_path)
     }
 
     /// Install UV runtime
@@ -187,7 +198,7 @@ impl RuntimeInstaller {
         archive_file: &Path,
         target_dir: &Path,
     ) -> Result<PathBuf> {
-        tokio::fs::create_dir_all(target_dir).await?;
+        let staging_dir = Self::prepare_staging_dir(target_dir, "staging").await?;
 
         let extract_dir = Self::unique_temp_dir("mcpmate-uv-extract");
         self.prepare_extract_dir(&extract_dir).await?;
@@ -203,7 +214,7 @@ impl RuntimeInstaller {
         }
 
         let uv_exe = self.find_uv_executable(&extract_dir)?;
-        let target_path = target_dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
+        let target_path = staging_dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
         tokio::fs::copy(&uv_exe, &target_path)
             .await
             .context("Failed to copy uv executable")?;
@@ -211,7 +222,7 @@ impl RuntimeInstaller {
         Self::set_executable_permissions(&target_path).await?;
 
         let uvx_exe = self.find_uvx_executable(&extract_dir)?;
-        let uvx_path = target_dir.join(if cfg!(windows) { "uvx.exe" } else { "uvx" });
+        let uvx_path = staging_dir.join(if cfg!(windows) { "uvx.exe" } else { "uvx" });
 
         tokio::fs::copy(&uvx_exe, &uvx_path)
             .await
@@ -223,7 +234,10 @@ impl RuntimeInstaller {
             tracing::warn!("Failed to clean up extract directory: {}", error);
         }
 
-        Ok(target_path)
+        Self::commit_staging(&staging_dir, target_dir).await?;
+
+        let final_path = target_dir.join(if cfg!(windows) { "uv.exe" } else { "uv" });
+        Ok(final_path)
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
@@ -265,6 +279,57 @@ impl RuntimeInstaller {
         tokio::fs::create_dir_all(target_dir)
             .await
             .context("Failed to create extract directory")?;
+        Ok(())
+    }
+
+    /// Remove a directory tree, ignoring "not found" errors.
+    async fn clean_dir(path: &Path) -> Result<()> {
+        if let Err(error) = tokio::fs::remove_dir_all(path).await {
+            if error.kind() != io::ErrorKind::NotFound {
+                return Err(error).context("Failed to clean directory");
+            }
+        }
+        Ok(())
+    }
+
+    /// Generate a sibling directory name for staging or backup.
+    fn staging_name(target_dir: &Path, suffix: &str) -> PathBuf {
+        target_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(format!(
+                "{}.{}",
+                target_dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+                suffix
+            ))
+    }
+
+    /// Create a clean sibling staging directory for installation work.
+    async fn prepare_staging_dir(target_dir: &Path, suffix: &str) -> Result<PathBuf> {
+        let staging_dir = Self::staging_name(target_dir, suffix);
+        Self::clean_dir(&staging_dir).await?;
+        tokio::fs::create_dir_all(&staging_dir).await?;
+        Ok(staging_dir)
+    }
+
+    /// Atomically swap a fully-prepared staging directory into place.
+    ///
+    /// 1. Rename existing `target_dir` to `{target}.old`
+    /// 2. Rename `staging_dir` to `target_dir` (atomic on same filesystem)
+    /// 3. Clean up old backup
+    async fn commit_staging(staging_dir: &Path, target_dir: &Path) -> Result<()> {
+        let backup_dir = Self::staging_name(target_dir, "old");
+        Self::clean_dir(&backup_dir).await?;
+
+        if target_dir.exists() {
+            tokio::fs::rename(target_dir, &backup_dir).await?;
+        }
+        tokio::fs::rename(staging_dir, target_dir).await?;
+
+        let _ = Self::clean_dir(&backup_dir).await;
         Ok(())
     }
 
@@ -406,75 +471,6 @@ impl RuntimeInstaller {
         Ok(())
     }
 
-    async fn copy_directory_contents(
-        &self,
-        source_dir: &Path,
-        target_dir: &Path,
-    ) -> Result<()> {
-        let source_dir = source_dir.to_path_buf();
-        let target_dir = target_dir.to_path_buf();
-
-        task::spawn_blocking(move || -> Result<()> {
-            std::fs::create_dir_all(&target_dir)
-                .with_context(|| format!("Failed to create target dir: {}", target_dir.display()))?;
-
-            for entry in WalkDir::new(&source_dir) {
-                let entry = entry.context("Failed to walk source directory")?;
-                let path = entry.path();
-                let relative_path = path
-                    .strip_prefix(&source_dir)
-                    .with_context(|| format!("Failed to relativize path: {}", path.display()))?;
-
-                if relative_path.as_os_str().is_empty() {
-                    continue;
-                }
-
-                let destination = target_dir.join(relative_path);
-                let file_type = entry.file_type();
-
-                if file_type.is_dir() {
-                    std::fs::create_dir_all(&destination).with_context(|| {
-                        format!("Failed to create destination directory: {}", destination.display())
-                    })?;
-                    continue;
-                }
-
-                if !file_type.is_file() {
-                    continue;
-                }
-
-                if let Some(parent) = destination.parent() {
-                    std::fs::create_dir_all(parent)
-                        .with_context(|| format!("Failed to create destination parent: {}", parent.display()))?;
-                }
-
-                std::fs::copy(path, &destination).with_context(|| {
-                    format!(
-                        "Failed to copy runtime file from {} to {}",
-                        path.display(),
-                        destination.display()
-                    )
-                })?;
-
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mode = std::fs::metadata(path)
-                        .with_context(|| format!("Failed to read metadata for {}", path.display()))?
-                        .permissions()
-                        .mode();
-                    std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(mode))
-                        .with_context(|| format!("Failed to set permissions on {}", destination.display()))?;
-                }
-            }
-
-            Ok(())
-        })
-        .await
-        .context("Failed to join runtime copy task")??;
-
-        Ok(())
-    }
 
     fn find_node_install_root(
         &self,
@@ -627,8 +623,8 @@ exec "$DIR/node" "$DIR/lib/node_modules/npm/bin/npx-cli.js" "$@"
 
         Err(anyhow::anyhow!("UVX executable not found in extracted files"))
     }
-}
 
+}
 impl Default for RuntimeInstaller {
     fn default() -> Self {
         Self::new()
