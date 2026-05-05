@@ -3,7 +3,8 @@ export const runtimeTranslations = {
         title: "Observe runtime status, queues, and cache",
 		types: {
 			uv: "UV",
-			bun: "BUN",
+			bun: "Bun",
+			node: "Node.js",
 		},
 		status: {
 			running: "running",
@@ -22,6 +23,25 @@ export const runtimeTranslations = {
 			size: "Size",
 			packages: "Packages",
 			lastModified: "Last Modified",
+		},
+		fallbacks: {
+			notAvailable: "N/A",
+			empty: "—",
+		},
+		toasts: {
+			resetAllTitle: "Caches reset",
+			resetAllDescription: "All runtime caches cleared.",
+			resetOneTitle: "Cache reset",
+			resetOneDescription: "{{runtime}} cache cleared.",
+			installTitle: "Install complete",
+			installDescription: "{{runtime}}: {{message}}",
+			installTargetMismatch:
+				"Requested {{requested}}, but the server reported {{actual}}.",
+			capabilitiesResetTitle: "Capabilities cache cleared",
+			capabilitiesResetDescription:
+				"Capability data will be rehydrated on next access.",
+			errorResetTitle: "Reset failed",
+			errorInstallTitle: "Install failed",
 		},
 		capabilities: {
 			title: "Capabilities Cache",
@@ -66,7 +86,8 @@ export const runtimeTranslations = {
         title: "维护内建运行时与缓存",
 		types: {
 			uv: "UV",
-			bun: "BUN",
+			bun: "Bun",
+			node: "Node.js",
 		},
 		status: {
 			running: "运行中",
@@ -85,6 +106,23 @@ export const runtimeTranslations = {
 			size: "大小",
 			packages: "包数量",
 			lastModified: "最后修改",
+		},
+		fallbacks: {
+			notAvailable: "N/A",
+			empty: "—",
+		},
+		toasts: {
+			resetAllTitle: "缓存已重置",
+			resetAllDescription: "所有运行时缓存已清除。",
+			resetOneTitle: "缓存已重置",
+			resetOneDescription: "{{runtime}} 缓存已清除。",
+			installTitle: "安装完成",
+			installDescription: "{{runtime}}：{{message}}",
+			installTargetMismatch: "请求的是 {{requested}}，但服务端返回的是 {{actual}}。",
+			capabilitiesResetTitle: "能力缓存已清除",
+			capabilitiesResetDescription: "能力数据会在下次访问时重新生成。",
+			errorResetTitle: "重置失败",
+			errorInstallTitle: "安装失败",
 		},
 		capabilities: {
 			title: "能力缓存",
@@ -128,7 +166,8 @@ export const runtimeTranslations = {
         title: "ランタイム状態・キュー・キャッシュの監視",
 		types: {
 			uv: "UV",
-			bun: "BUN",
+			bun: "Bun",
+			node: "Node.js",
 		},
 		status: {
 			running: "実行中",
@@ -147,6 +186,25 @@ export const runtimeTranslations = {
 			size: "サイズ",
 			packages: "パッケージ数",
 			lastModified: "最終更新",
+		},
+		fallbacks: {
+			notAvailable: "N/A",
+			empty: "—",
+		},
+		toasts: {
+			resetAllTitle: "キャッシュをリセットしました",
+			resetAllDescription: "すべてのランタイムキャッシュを削除しました。",
+			resetOneTitle: "キャッシュをリセットしました",
+			resetOneDescription: "{{runtime}} キャッシュを削除しました。",
+			installTitle: "インストール完了",
+			installDescription: "{{runtime}}: {{message}}",
+			installTargetMismatch:
+				"{{requested}} を要求しましたが、サーバーは {{actual}} を返しました。",
+			capabilitiesResetTitle: "機能キャッシュを削除しました",
+			capabilitiesResetDescription:
+				"機能データは次回アクセス時に再生成されます。",
+			errorResetTitle: "リセットに失敗しました",
+			errorInstallTitle: "インストールに失敗しました",
 		},
 		capabilities: {
 			title: "機能キャッシュ",
