@@ -14,7 +14,8 @@ export default function RuntimeEN() {
 		>
 			<P>
 				The Runtime screen exposes the embedded environments MCPMate manages for
-				MCP servers (currently <strong>uv</strong> and <strong>Bun</strong>). Use
+				MCP servers (currently <strong>Node.js</strong>, <strong>uv</strong>, and{" "}
+				<strong>Bun</strong>). Use
 				it to confirm installations, clear caches, and reset capability state
 				when testing new transports or server upgrades.
 			</P>
@@ -22,7 +23,7 @@ export default function RuntimeEN() {
 			<DocScreenshot
 				lightSrc="/screenshot/runtime-light.png"
 				darkSrc="/screenshot/runtime-dark.png"
-				alt="Runtime page with uv, Bun, and capabilities cache stats"
+				alt="Runtime page with Node.js, uv, Bun, and capabilities cache stats"
 			/>
 
 			<H2>Runtime status cards</H2>
@@ -77,10 +78,11 @@ export default function RuntimeEN() {
 			</P>
 
 			<Callout type="warning" title="Cache resets remove downloaded packages">
-				Resetting uv or Bun caches deletes the virtual environment contents. Any
-				subsequent server call will reinstall dependencies, which may take time.
-				Schedule resets during maintenance windows or before running automated
-				tests rather than while end users are connected.
+				Resetting Node.js, uv or Bun caches removes that runtime's downloaded
+				packages and cache contents. Any subsequent server call will reinstall
+				dependencies, which may take time. Schedule resets during maintenance
+				windows or before running automated tests rather than while end users
+				are connected.
 			</Callout>
 		</DocLayout>
 	);
