@@ -36,7 +36,7 @@ use core_service::{
 };
 use deep_link::ImportServerDeepLinkPayload;
 use mcpmate::system::config::api_url_from_port;
-use mcpmate::system::settings::{get_settings_sync_for_paths, set_settings_sync_for_paths};
+use mcpmate::system::settings::{apply_settings_with_effects_for_paths, get_settings_sync_for_paths};
 use oauth_callback_access::OAuthCallbackAccessState;
 use shell::{ShellPreferences, ShellState};
 use source_config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
@@ -249,27 +249,16 @@ async fn sync_and_emit_core_state(
 async fn stop_localhost_runtime(
     managed_state: &DesktopManagedCoreState,
     config: &DesktopCoreSourceConfig,
-) {
+) -> Result<(), String> {
     match config.localhost_runtime_mode {
-        LocalCoreRuntimeMode::DesktopManaged => {
-            let _ = stop_desktop_managed_core(managed_state, config).await;
-        }
-        LocalCoreRuntimeMode::Service => {
-            let _ = stop_local_service(config).await;
-        }
-    }
-}
-
-async fn wait_for_port_release(port: u16, label: &str, context: &str) {
-    if let Err(err) = core_service::wait_for_port_available(port).await {
-        warn!(error = %err, port, %label, %context, "Port did not become available");
-    }
-}
-
-async fn wait_for_localhost_ports(config: &DesktopCoreSourceConfig, context: &str) {
-    wait_for_port_release(config.localhost.api_port, "API", context).await;
-    if config.localhost.mcp_port != config.localhost.api_port {
-        wait_for_port_release(config.localhost.mcp_port, "MCP", context).await;
+        LocalCoreRuntimeMode::DesktopManaged => stop_desktop_managed_core(managed_state, config)
+            .await
+            .map(|_| ())
+            .map_err(|err| err.to_string()),
+        LocalCoreRuntimeMode::Service => stop_local_service(config)
+            .await
+            .map(|_| ())
+            .map_err(|err| err.to_string()),
     }
 }
 
@@ -277,15 +266,28 @@ async fn handle_localhost_source_transition(
     managed_state: &DesktopManagedCoreState,
     previous: &DesktopCoreSourceConfig,
     config: &DesktopCoreSourceConfig,
-) {
+) -> Result<(), String> {
     let runtime_mode_changed = previous.selected_source == DesktopCoreSourceKind::Localhost
         && config.selected_source == DesktopCoreSourceKind::Localhost
         && previous.localhost_runtime_mode != config.localhost_runtime_mode;
 
     if runtime_mode_changed {
-        stop_localhost_runtime(managed_state, previous).await;
-        wait_for_localhost_ports(config, "after stopping previous localhost core").await;
-        return;
+        stop_localhost_runtime(managed_state, previous).await?;
+        return Ok(());
+    }
+
+    let localhost_ports_changed = previous.selected_source == DesktopCoreSourceKind::Localhost
+        && config.selected_source == DesktopCoreSourceKind::Localhost
+        && previous.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
+        && config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
+        && (previous.localhost.api_port != config.localhost.api_port
+            || previous.localhost.mcp_port != config.localhost.mcp_port);
+
+    if localhost_ports_changed {
+        stop_desktop_managed_core(managed_state, previous)
+            .await
+            .map_err(|err| err.to_string())?;
+        return Ok(());
     }
 
     let leaving_desktop_managed = previous.selected_source == DesktopCoreSourceKind::Localhost
@@ -293,14 +295,12 @@ async fn handle_localhost_source_transition(
         && config.selected_source != DesktopCoreSourceKind::Localhost;
 
     if leaving_desktop_managed {
-        let _ = stop_desktop_managed_core(managed_state, previous).await;
-        wait_for_port_release(
-            previous.localhost.api_port,
-            "API",
-            "after stopping desktop-managed core",
-        )
-        .await;
+        stop_desktop_managed_core(managed_state, previous)
+            .await
+            .map_err(|err| err.to_string())?;
     }
+
+    Ok(())
 }
 
 pub fn run() -> Result<()> {
@@ -623,8 +623,10 @@ pub fn run() -> Result<()> {
 									let result = match config.localhost_runtime_mode {
 										LocalCoreRuntimeMode::Service => restart_local_service(&handle, &config).await,
 										LocalCoreRuntimeMode::DesktopManaged => {
-											let _ = stop_desktop_managed_core(&managed_state, &config).await;
-											start_desktop_managed_core(&handle, &managed_state, &config).await
+											match stop_desktop_managed_core(&managed_state, &config).await {
+												Ok(_) => start_desktop_managed_core(&handle, &managed_state, &config).await,
+												Err(err) => Err(err),
+											}
 										}
 									};
 									match result {
@@ -791,11 +793,12 @@ pub fn run() -> Result<()> {
                 if let Some(state) = app_handle.try_state::<DesktopManagedCoreState>()
                     && let Ok(config) = DesktopCoreSourceConfig::load(global_paths())
                     && config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
-                {
-                    let _ = tauri::async_runtime::block_on(stop_desktop_managed_core(
+                    && let Err(err) = tauri::async_runtime::block_on(stop_desktop_managed_core(
                         state.inner(),
                         &config,
-                    ));
+                    ))
+                {
+                    warn!(error = %err, "Failed to stop desktop-managed core on exit");
                 }
             }
             _ => {}
@@ -881,13 +884,26 @@ async fn mcp_shell_apply_core_source(
     config.apply_constraints();
 
     let mut settings = get_settings_sync_for_paths(global_paths()).map_err(|err| err.to_string())?;
+    let previous_settings = settings.clone();
     settings.api_port = config.localhost.api_port;
     settings.mcp_port = config.localhost.mcp_port;
-    set_settings_sync_for_paths(global_paths(), &settings).map_err(|err| err.to_string())?;
+
+    let applied = apply_settings_with_effects_for_paths(
+        global_paths(),
+        &previous_settings,
+        &settings,
+        None,
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+
+    if let Some(task) = applied.client_reapply_task {
+        mcpmate::system::settings::spawn_mcp_port_reapply_result_logger(task);
+    }
 
     DesktopCoreSourceConfig::save(global_paths(), &config).map_err(|err| err.to_string())?;
 
-    handle_localhost_source_transition(managed_state.inner(), &previous, &config).await;
+    handle_localhost_source_transition(managed_state.inner(), &previous, &config).await?;
 
     let view = match (config.selected_source, config.localhost_runtime_mode) {
         (DesktopCoreSourceKind::Localhost, LocalCoreRuntimeMode::Service) => {
@@ -897,6 +913,12 @@ async fn mcp_shell_apply_core_source(
             read_core_state_view(&config, managed_state.inner())
                 .await
                 .map_err(|err| err.to_string())?
+        }
+        (DesktopCoreSourceKind::Localhost, LocalCoreRuntimeMode::DesktopManaged) => {
+            let status = start_desktop_managed_core(&app, managed_state.inner(), &config)
+                .await
+                .map_err(|err| err.to_string())?;
+            DesktopCoreSourceView::from_config(&config, status)
         }
         _ => read_core_state_view(&config, managed_state.inner())
             .await
@@ -1019,7 +1041,9 @@ async fn mcp_shell_manage_local_core_service(
                 .map_err(|err| err.to_string())?
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => {
-            let _ = stop_desktop_managed_core(managed_state.inner(), &config).await;
+            stop_desktop_managed_core(managed_state.inner(), &config)
+                .await
+                .map_err(|err| err.to_string())?;
             start_desktop_managed_core(&app, managed_state.inner(), &config)
                 .await
                 .map(|status| DesktopCoreSourceView::from_config(&config, status))
@@ -1470,25 +1494,50 @@ async fn stop_desktop_managed_core(
     config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
     if let Some(mut child) = state.take().await {
-        child
-            .kill()
-            .context("failed to kill desktop-managed localhost core process")?;
-        child
-            .wait()
-            .context("failed to wait for desktop-managed localhost core process exit")?;
+        graceful_stop_child(&mut child).await?;
     }
-
-    let _ = core_service::wait_for_localhost_core_stopped(config.localhost.api_port).await;
-
-    for _ in 0..10 {
-        let status = read_desktop_managed_status(state, config).await?;
-        if !status.running {
-            return Ok(status);
-        }
-        sleep(Duration::from_millis(300)).await;
-    }
-
     read_desktop_managed_status(state, config).await
+}
+
+/// Send SIGTERM first, wait up to 8 s for graceful exit, then SIGKILL on timeout.
+/// On Windows fallback to direct force-kill.
+#[cfg(unix)]
+async fn graceful_stop_child(child: &mut std::process::Child) -> Result<()> {
+    let pid = child.id() as i32;
+
+    // SIGTERM — backend core will run its graceful-shutdown chain
+    // (close listeners, release REDB, kill MCP sub-processes, etc.)
+    unsafe { libc::kill(pid, libc::SIGTERM) };
+
+    // Poll up to 40 × 200 ms = 8 s for clean exit
+    for _ in 0..40 {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => sleep(Duration::from_millis(200)).await,
+            Err(_) => break, // OS error, fall through to force-kill
+        }
+    }
+
+    // Timeout — force-kill
+    child
+        .kill()
+        .context("failed to kill desktop-managed localhost core process")?;
+    child
+        .wait()
+        .context("failed to wait for desktop-managed localhost core process exit")?;
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn graceful_stop_child(child: &mut std::process::Child) -> Result<()> {
+    // Windows: force-kill directly (no portable SIGTERM equivalent)
+    child
+        .kill()
+        .context("failed to kill desktop-managed localhost core process")?;
+    child
+        .wait()
+        .context("failed to wait for desktop-managed localhost core process exit")?;
+    Ok(())
 }
 
 fn try_use_default_paths() -> Result<MCPMatePaths> {

@@ -69,9 +69,24 @@ async fn main() -> Result<()> {
 
     tracing::info!("Servers started. Press Ctrl+C to stop.");
 
-    // Wait for Ctrl+C
-    tokio::signal::ctrl_c().await?;
-    tracing::info!("Received Ctrl+C, shutting down...");
+    // Wait for shutdown signal: Ctrl+C or SIGTERM
+    #[cfg(unix)]
+    {
+        let mut term_signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received Ctrl+C, shutting down...");
+            }
+            _ = term_signal.recv() => {
+                tracing::info!("Received SIGTERM, shutting down...");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await?;
+        tracing::info!("Received Ctrl+C, shutting down...");
+    }
 
     // Step 1: Initiate MCP server shutdown first
     tracing::info!("Step 1: Initiating MCP server shutdown...");

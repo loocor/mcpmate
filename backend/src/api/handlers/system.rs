@@ -6,6 +6,8 @@ use std::{collections::HashMap, sync::Arc};
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
 
+use crate::clients::error::ConfigError;
+
 use super::ApiError;
 use crate::api::models::system::ManagementActionResp;
 use crate::api::{
@@ -15,9 +17,7 @@ use crate::api::{
     routes::AppState,
 };
 use crate::audit::{AuditAction, AuditStatus};
-use crate::system::config::{
-    api_url_from_port, bind_socket_addr, get_runtime_port_config, init_port_config, mcp_http_url_from_port,
-};
+use crate::system::config::{api_url_from_port, bind_socket_addr, get_runtime_port_config, mcp_http_url_from_port};
 
 const PROXY_NOT_AVAILABLE_ERROR: &str = "Proxy server not available";
 
@@ -132,7 +132,7 @@ pub async fn set_settings(
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
-    let previous_ports = (settings.api_port, settings.mcp_port);
+    let previous = settings.clone();
 
     if let Some(api_port) = request.api_port {
         settings.api_port = api_port;
@@ -156,13 +156,23 @@ pub async fn set_settings(
         settings.default_config_mode = default_config_mode;
     }
 
-    let settings = crate::system::settings::set_settings(&db.pool, &settings)
-        .await
-        .map_err(|err| ApiError::InternalError(err.to_string()))?;
+    let applied = crate::system::settings::apply_settings_with_effects(
+        &db.pool,
+        &previous,
+        &settings,
+        state.client_service.clone(),
+    )
+    .await
+    .map_err(|err| match err {
+        ConfigError::DataAccessError(message) => ApiError::BadRequest(message),
+        _ => ApiError::InternalError(err.to_string()),
+    })?;
 
-    if previous_ports != (settings.api_port, settings.mcp_port) {
-        init_port_config(settings.api_port, settings.mcp_port);
+    if let Some(task) = applied.client_reapply_task {
+        crate::system::settings::spawn_mcp_port_reapply_result_logger(task);
     }
+
+    let settings = applied.settings;
 
     let mut data = Map::new();
     data.insert("api_port".to_string(), Value::from(settings.api_port));

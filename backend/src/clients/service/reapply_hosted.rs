@@ -46,13 +46,10 @@ impl ClientConfigService {
                 .and_then(|s| s.config_mode.as_deref())
                 .unwrap_or(default_config_mode.as_str());
             if config_mode.eq_ignore_ascii_case("transparent") {
-                continue;
-            }
-            if !config_mode.eq_ignore_ascii_case("hosted") {
                 tracing::debug!(
                     client = %identifier,
                     config_mode = %config_mode,
-                    "Skipping client reapply: config_mode is neither hosted nor transparent"
+                    "Skipping client reapply: transparent mode"
                 );
                 continue;
             }

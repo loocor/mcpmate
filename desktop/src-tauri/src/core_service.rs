@@ -3,7 +3,7 @@ use std::{ffi::OsString, path::PathBuf, time::Duration};
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 use mcpmate::common::global_paths;
-use mcpmate::system::config::{api_url_from_port, bind_socket_addr};
+use mcpmate::system::config::api_url_from_port;
 use service_manager::{
     RestartPolicy, ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx,
     ServiceStatus, ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
@@ -288,29 +288,6 @@ pub async fn wait_for_localhost_core_stopped(api_port: u16) -> bool {
     }
 
     false
-}
-
-/// Wait for a port to become available (not in use)
-pub async fn wait_for_port_available(port: u16) -> Result<()> {
-    use std::net::TcpListener;
-
-    for attempt in 0..30 {
-        // Try to bind to the port to check if it's available
-        match TcpListener::bind(bind_socket_addr(port)?) {
-            Ok(_) => {
-                // Port is available
-                return Ok(());
-            }
-            Err(_) => {
-                // Port still in use, wait and retry
-                if attempt < 29 {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            }
-        }
-    }
-
-    anyhow::bail!("Port {} did not become available after 15 seconds", port)
 }
 
 pub async fn read_local_service_status(

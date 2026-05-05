@@ -1,15 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::fs;
 
+use crate::clients::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{FirstContactBehavior, OnboardingPolicy};
 use crate::common::MCPMatePaths;
 use crate::common::constants::ports;
 use crate::common::paths::global_paths;
 use crate::config::client::init::DEFAULT_CONFIG_MODE;
+use crate::system::config::init_port_config;
 use crate::system::paths::get_path_service;
 
 pub const DEFAULT_INSPECTOR_TIMEOUT_MS: u64 = 8_000;
@@ -108,6 +113,113 @@ pub async fn set_settings(
     Ok(settings.clone())
 }
 
+/// Outcome of [`apply_settings_with_effects`].
+pub struct SystemSettingsApplyResult {
+    /// `api_port` changed between old and new settings.
+    pub api_port_changed: bool,
+    /// `mcp_port` changed between old and new settings.
+    pub mcp_port_changed: bool,
+    /// Full applied settings snapshot.
+    pub settings: SystemSettings,
+    /// Background re-apply task started for an MCP-port change.
+    pub client_reapply_task: Option<tokio::task::JoinHandle<ConfigResult<crate::clients::HostedClientReapplySummary>>>,
+}
+
+/// Apply system settings with all required side effects.
+///
+/// Converges settings persistence, port-config refresh, and hosted/managed client re-apply
+/// into a single entry point used by both the REST API and the Tauri shell.
+///
+/// - `previous` must be the settings snapshot **before** the change (used to diff ports).
+/// - `client_service` is optional — if absent and `mcp_port_changed` is true, a temporary
+///   service is bootstrapped in the background for the re-apply side effect.
+pub async fn apply_settings_with_effects(
+    pool: &SqlitePool,
+    previous: &SystemSettings,
+    next: &SystemSettings,
+    client_service: Option<Arc<ClientConfigService>>,
+) -> ConfigResult<SystemSettingsApplyResult> {
+    apply_settings_with_effects_at_path(
+        &settings_path(pool),
+        previous,
+        next,
+        client_service,
+        Some(Arc::new(pool.clone())),
+    )
+    .await
+}
+
+pub async fn apply_settings_with_effects_for_paths(
+    paths: &MCPMatePaths,
+    previous: &SystemSettings,
+    next: &SystemSettings,
+    client_service: Option<Arc<ClientConfigService>>,
+) -> ConfigResult<SystemSettingsApplyResult> {
+    apply_settings_with_effects_at_path(&paths.config_path(), previous, next, client_service, None).await
+}
+
+async fn apply_settings_with_effects_at_path(
+    path: &Path,
+    previous: &SystemSettings,
+    next: &SystemSettings,
+    client_service: Option<Arc<ClientConfigService>>,
+    pool: Option<Arc<SqlitePool>>,
+) -> ConfigResult<SystemSettingsApplyResult> {
+    next.validate()?;
+
+    write_settings_path_async(path, next).await?;
+
+    let api_port_changed = previous.api_port != next.api_port;
+    let mcp_port_changed = previous.mcp_port != next.mcp_port;
+
+    if api_port_changed || mcp_port_changed {
+        init_port_config(next.api_port, next.mcp_port);
+    }
+
+    let client_reapply_task = if mcp_port_changed {
+        Some(spawn_mcp_port_reapply(client_service, pool))
+    } else {
+        None
+    };
+
+    Ok(SystemSettingsApplyResult {
+        api_port_changed,
+        mcp_port_changed,
+        settings: next.clone(),
+        client_reapply_task,
+    })
+}
+
+pub fn spawn_mcp_port_reapply_result_logger(
+    task: tokio::task::JoinHandle<ConfigResult<crate::clients::HostedClientReapplySummary>>
+) {
+    tokio::spawn(async move {
+        match task.await {
+            Ok(Ok(summary)) => {
+                tracing::info!(
+                    attempted = summary.attempted,
+                    applied = summary.applied,
+                    scheduled = summary.scheduled,
+                    failures = summary.failures.len(),
+                    "re-applied hosted/managed clients after MCP port change",
+                );
+            }
+            Ok(Err(err)) => {
+                tracing::error!(
+                    error = %err,
+                    "client re-apply after MCP port change failed",
+                );
+            }
+            Err(err) => {
+                tracing::error!(
+                    error = %err,
+                    "client re-apply task after MCP port change panicked",
+                );
+            }
+        }
+    });
+}
+
 pub fn get_settings_sync() -> ConfigResult<SystemSettings> {
     get_settings_sync_for_paths(global_paths())
 }
@@ -198,6 +310,42 @@ async fn write_settings_path_async(
     Ok(())
 }
 
+fn spawn_mcp_port_reapply(
+    client_service: Option<Arc<ClientConfigService>>,
+    pool: Option<Arc<SqlitePool>>,
+) -> tokio::task::JoinHandle<ConfigResult<crate::clients::HostedClientReapplySummary>> {
+    tokio::spawn(async move {
+        let service = if let Some(service) = client_service {
+            service
+        } else if let Some(pool) = pool {
+            match ClientConfigService::bootstrap(pool).await {
+                Ok(service) => Arc::new(service),
+                Err(err) => {
+                    return Err(err);
+                }
+            }
+        } else {
+            let database = match crate::config::database::Database::new().await {
+                Ok(database) => database,
+                Err(err) => {
+                    return Err(ConfigError::DataAccessError(format!(
+                        "failed to open database for MCP port re-apply: {}",
+                        err
+                    )));
+                }
+            };
+            match ClientConfigService::bootstrap(Arc::new(database.pool.clone())).await {
+                Ok(service) => Arc::new(service),
+                Err(err) => {
+                    return Err(err);
+                }
+            }
+        };
+
+        service.reapply_hosted_managed_clients_after_mcp_port_change().await
+    })
+}
+
 fn write_settings_path_sync(
     path: &Path,
     settings: &SystemSettings,
@@ -205,11 +353,15 @@ fn write_settings_path_sync(
     let mut content = serde_json::to_vec_pretty(settings)?;
     content.push(b'\n');
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    get_path_service()
+        .atomic_write_with_backup_sync(
+            path,
+            &content,
+            Some(SETTINGS_BACKUP_LIMIT),
+            Some("system_settings_store"),
+        )
+        .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
-    std::fs::write(path, content)?;
     Ok(())
 }
 
