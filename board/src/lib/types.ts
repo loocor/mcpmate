@@ -1050,12 +1050,6 @@ export interface DefaultClientPolicyResp {
   success: boolean;
 }
 
-export interface DefaultClientPolicyUpdateReq {
-  config_mode: string;
-  capability_source: CapabilitySource;
-  first_contact_behavior: "deny" | "review" | "allow" | string;
-}
-
 // Client config details
 export type ClientConfigMode = "unify" | "hosted" | "transparent" | string;
 export type ClientCapabilitySourceSelection =
