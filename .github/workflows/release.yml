@@ -91,7 +91,15 @@ jobs:
             --skip-notarize \
             --output-dir "${GITHUB_WORKSPACE}/installers"
 
+      - name: List macOS bundles (debug)
+        run: |
+          find "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
+            -type f \
+            \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.sig" \) \
+            | sort || true
+
       - name: Collect updater artifacts
+        id: collect-updater
         uses: ./.github/actions/collect-updater
         with:
           bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
@@ -103,6 +111,8 @@ jobs:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
           TARGET_ARCH: ${{ matrix.arch }}
         run: |
+          shopt -s nullglob
+
           VERSION="${RELEASE_TAG#v}"
           VERSION="${VERSION%%-*}"
           case "$TARGET_ARCH" in
@@ -147,7 +157,7 @@ jobs:
           - arch: x64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
-            experimental: true
+            experimental: false
           - arch: arm64
             runner: windows-11-arm
             target: aarch64-pc-windows-msvc
@@ -184,14 +194,71 @@ jobs:
             --with-updater \
             --output-dir "${GITHUB_WORKSPACE}/installers"
 
+      - name: List Windows bundles (debug)
+        shell: bash
+        run: |
+          find "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
+            -type f \
+            \( -name "*.msi" -o -name "*.msi.zip" -o -name "*.nsis.zip" -o -name "*.sig" \) \
+            | sort || true
+
       - name: Collect updater artifacts
+        id: collect-updater
         uses: ./.github/actions/collect-updater
         with:
           bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
           output-dir: "${{ github.workspace }}/updater"
           platform: windows
 
+      - name: Validate updater artifacts for stable target
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
+          HAS_UPDATER: ${{ steps.collect-updater.outputs.has-updater }}
+        run: |
+          if [[ "$HAS_UPDATER" == "true" ]]; then
+            exit 0
+          fi
+
+          if [[ "$EXPERIMENTAL_TARGET" == "true" ]]; then
+            echo "::warning::No updater artifacts found for experimental Windows ${TARGET_ARCH} target"
+            exit 0
+          fi
+
+          echo "::error::No updater artifacts found for stable Windows ${TARGET_ARCH} target" >&2
+          exit 1
+
+      - name: Collect installer artifacts
+        id: collect-installers
+        shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.target }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
+        run: |
+          mkdir -p installers
+
+          found=false
+          while IFS= read -r -d '' installer; do
+            cp "$installer" installers/
+            found=true
+          done < <(find "desktop/src-tauri/target/${TARGET_TRIPLE}/release/bundle" -type f -name "*.msi" -print0 2>/dev/null)
+
+          echo "has-installers=$found" >> "$GITHUB_OUTPUT"
+
+          if [[ "$found" == "true" ]]; then
+            echo "Collected installer artifacts:"
+            ls -lh installers/
+          elif [[ "$EXPERIMENTAL_TARGET" == "true" ]]; then
+            echo "::warning::No installer artifacts found for experimental Windows ${TARGET_ARCH} target"
+          else
+            echo "::error::No installer artifacts found for Windows ${TARGET_ARCH} target" >&2
+            exit 1
+          fi
+
       - name: Upload installers
+        if: steps.collect-installers.outputs.has-installers == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: installers-windows-${{ matrix.arch }}
@@ -199,11 +266,12 @@ jobs:
           if-no-files-found: error
 
       - name: Upload updater artifacts
+        if: steps.collect-updater.outputs.has-updater == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: updater-windows-${{ matrix.arch }}
           path: updater/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build-linux:
     needs: validate-tag
@@ -258,6 +326,13 @@ jobs:
             --with-updater \
             --output-dir "${GITHUB_WORKSPACE}/installers"
 
+      - name: List Linux bundles (debug)
+        run: |
+          find "desktop/src-tauri/target/${{ matrix.target }}/release/bundle" \
+            -type f \
+            \( -name "*.AppImage" -o -name "*.deb" -o -name "*.sig" \) \
+            | sort || true
+
       - name: Collect updater artifacts
         if: contains(matrix.bundles, 'appimage')
         uses: ./.github/actions/collect-updater
@@ -289,20 +364,13 @@ jobs:
     needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-22.04
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
       RELEASE_REPO: ${{ github.repository }}
-      DISPATCH_TAG: ${{ github.event.inputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
-
-      - name: Resolve release tag
-        run: |
-          if [[ -n "$DISPATCH_TAG" ]]; then
-            echo "RELEASE_TAG=${DISPATCH_TAG}" >> "$GITHUB_ENV"
-          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@v6
@@ -341,6 +409,54 @@ jobs:
           rename_pair "MCPMate_${VERSION}_arm64.deb" "MCPMate_${VERSION}_linux_arm64.deb"
 
           find artifacts -type f | sort
+
+      - name: Assert required release assets
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%%-*}"
+
+          required_assets=(
+            "MCPMate_${VERSION}_macos_aarch64.dmg"
+            "MCPMate_${VERSION}_macos_x86_64.dmg"
+            "MCPMate_${VERSION}_macos_aarch64.app.tar.gz"
+            "MCPMate_${VERSION}_macos_aarch64.app.tar.gz.sig"
+            "MCPMate_${VERSION}_macos_x86_64.app.tar.gz"
+            "MCPMate_${VERSION}_macos_x86_64.app.tar.gz.sig"
+            "MCPMate_${VERSION}_windows_x64.msi"
+            "MCPMate_${VERSION}_linux_x64.AppImage"
+            "MCPMate_${VERSION}_linux_x64.AppImage.sig"
+            "MCPMate_${VERSION}_linux_x64.deb"
+            "MCPMate_${VERSION}_linux_arm64.AppImage"
+            "MCPMate_${VERSION}_linux_arm64.AppImage.sig"
+            "MCPMate_${VERSION}_linux_arm64.deb"
+          )
+
+          missing=0
+          for asset in "${required_assets[@]}"; do
+            if [[ ! -f "artifacts/${asset}" ]]; then
+              echo "::error::Missing required release asset: ${asset}" >&2
+              missing=1
+            fi
+          done
+
+          if [[ ! -f "artifacts/MCPMate_${VERSION}_windows_x64.msi.sig" && ! -f "artifacts/MCPMate_${VERSION}_windows_x64.msi.zip.sig" ]]; then
+            echo "::error::Missing required release asset: MCPMate_${VERSION}_windows_x64.msi.sig or MCPMate_${VERSION}_windows_x64.msi.zip.sig" >&2
+            missing=1
+          fi
+
+          if [[ ! -f "artifacts/MCPMate_${VERSION}_windows_arm64.msi" ]]; then
+            echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi"
+          fi
+
+          if [[ ! -f "artifacts/MCPMate_${VERSION}_windows_arm64.msi.sig" && ! -f "artifacts/MCPMate_${VERSION}_windows_arm64.msi.zip.sig" ]]; then
+            echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi.sig or MCPMate_${VERSION}_windows_arm64.msi.zip.sig"
+          fi
+
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
 
       - name: Generate update manifest
         run: |
@@ -453,5 +569,6 @@ jobs:
             artifacts/*.deb
             artifacts/*.app.tar.gz
             artifacts/*.nsis.zip
+            artifacts/*.msi.zip
             artifacts/signatures.zip
             artifacts/update.json
