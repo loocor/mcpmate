@@ -441,17 +441,35 @@ jobs:
             fi
           done
 
-          if [[ ! -f "artifacts/MCPMate_${VERSION}_windows_x64.msi.sig" && ! -f "artifacts/MCPMate_${VERSION}_windows_x64.msi.zip.sig" ]]; then
+          x64_msi_sig="artifacts/MCPMate_${VERSION}_windows_x64.msi.sig"
+          x64_msi_zip="artifacts/MCPMate_${VERSION}_windows_x64.msi.zip"
+          x64_msi_zip_sig="artifacts/MCPMate_${VERSION}_windows_x64.msi.zip.sig"
+
+          if [[ ! -f "$x64_msi_sig" && ! -f "$x64_msi_zip_sig" ]]; then
             echo "::error::Missing required release asset: MCPMate_${VERSION}_windows_x64.msi.sig or MCPMate_${VERSION}_windows_x64.msi.zip.sig" >&2
             missing=1
           fi
 
-          if [[ ! -f "artifacts/MCPMate_${VERSION}_windows_arm64.msi" ]]; then
+          if [[ -f "$x64_msi_zip_sig" && ! -f "$x64_msi_zip" ]]; then
+            echo "::error::Missing required release asset: MCPMate_${VERSION}_windows_x64.msi.zip" >&2
+            missing=1
+          fi
+
+          arm64_msi="artifacts/MCPMate_${VERSION}_windows_arm64.msi"
+          arm64_msi_zip="artifacts/MCPMate_${VERSION}_windows_arm64.msi.zip"
+          arm64_msi_sig="artifacts/MCPMate_${VERSION}_windows_arm64.msi.sig"
+          arm64_msi_zip_sig="artifacts/MCPMate_${VERSION}_windows_arm64.msi.zip.sig"
+
+          if [[ ! -f "$arm64_msi" ]]; then
             echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi"
           fi
 
-          if [[ ! -f "artifacts/MCPMate_${VERSION}_windows_arm64.msi.sig" && ! -f "artifacts/MCPMate_${VERSION}_windows_arm64.msi.zip.sig" ]]; then
+          if [[ ! -f "$arm64_msi_sig" && ! -f "$arm64_msi_zip_sig" ]]; then
             echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi.sig or MCPMate_${VERSION}_windows_arm64.msi.zip.sig"
+          fi
+
+          if [[ -f "$arm64_msi_zip_sig" && ! -f "$arm64_msi_zip" ]]; then
+            echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi.zip"
           fi
 
           if [[ "$missing" -ne 0 ]]; then

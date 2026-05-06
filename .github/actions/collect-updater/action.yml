@@ -63,9 +63,11 @@ runs:
             ;;
 
           linux)
-            while IFS= read -r -d '' bundle; do
-              collect_bundle_and_signature "$bundle"
-            done < <(find "$BUNDLE_DIR" -type f -name "*.AppImage" -print0 2>/dev/null)
+            while IFS= read -r -d '' sig; do
+              cp "$sig" "$OUTPUT_DIR/"
+              has_updater=true
+              echo "Collected: $(basename "$sig")"
+            done < <(find "$BUNDLE_DIR" -type f -name "*.AppImage.sig" -print0 2>/dev/null)
             ;;
 
           windows)
