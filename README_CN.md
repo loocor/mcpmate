@@ -3,285 +3,232 @@
 **中文** | [English](./README.md)
 
 <p align="center">
-  <img src="./assets/dashboard.png" alt="MCPMate 控制台（浅色）" width="100%">
+  <img src="./assets/dashboard-cn.png" alt="MCPMate 控制台" width="100%">
 </p>
 
-> **一个本地代理，连接 MCP 服务器与 AI 客户端。**
+<p align="center">
+  <strong>一个本地代理，连接 MCP 服务器与 AI 客户端。</strong>
+</p>
 
-在多个客户端重复配置同一批 MCP 服务器既繁琐，也会抬高首次对话的 Token 成本，并且难以观测运行状态。
-MCPMate 通过本地代理汇聚 MCP 服务器、同步客户端配置、按配置集裁剪能力，并记录运行日志。
+<p align="center">
+  <a href="https://github.com/loocor/MCPMate/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/Rust-1.75%2B-orange" alt="Rust">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen" alt="Node.js">
+  <a href="https://modelcontextprotocol.io/specification/2025-06-18"><img src="https://img.shields.io/badge/MCP-2025--06--18-purple" alt="MCP Spec"></a>
+</p>
+
+---
+
+> 在多个客户端重复配置同一批 MCP 服务器既繁琐，也会抬高首次对话的 Token 成本，并且难以观测运行状态。
+> MCPMate 通过本地代理汇聚 MCP 服务器、同步客户端配置、按配置集裁剪能力，并记录运行日志。
 
 这不是一个全新的项目。我从 2024 年 5 月左右开始打磨 MCPMate，在 10 月左右暂停了活跃开发，最近又重新回到这个方向，并且有了更清晰的判断：当 Skills 与 CLI 形态的热度逐渐回落、进入更审慎的反思阶段时，MCP 的长期价值与不可替代性反而变得更容易看清。
 
-MCPMate 此前主要在私下开发，现在重新以开源方式公开。现阶段我最关心的方向是可用性：在 MCPMate 早先基于配置集、按具体场景剔除冗余能力的思路之上，继续把托管模式延伸为一种渐进式披露的智能模式（去年我把它叫“激进托管模式”，不过听起来有点儿怪），目标之一就是把大家在 Skills 与 CLI 体验中感受到的那种更低摩擦、更低首次 Token 消耗的特性，也尽可能迁移到 MCP 本身。
+MCPMate 此前主要在私下开发，现在重新以开源方式公开。现阶段我最关心的方向是可用性：在 MCPMate 早先基于配置集、按具体场景剔除冗余能力的思路之上，继续把托管模式延伸为一种渐进式披露的智能模式（去年我把它叫"激进托管模式"，不过听起来有点儿怪），目标之一就是把大家在 Skills 与 CLI 体验中感受到的那种更低摩擦、更低首次 Token 消耗的特性，也尽可能迁移到 MCP 本身。
 
-## 目录
+## 📑 目录
 
-- [为什么需要 MCPMate？](#为什么需要-mcpmate)
-- [核心组件](#核心组件)
-- [截图](#截图)
-- [快速开始](#快速开始)
-- [部署模式](#部署模式)
-- [架构](#架构)
-- [主要功能](#主要功能)
-- [开发](#开发)
-- [路线图](#路线图)
-- [贡献](#贡献)
-- [许可证](#许可证)
+- [MCPMate](#mcpmate)
+  - [📑 目录](#-目录)
+  - [🤔 为什么需要 MCPMate？](#-为什么需要-mcpmate)
+  - [🔄 工作原理](#-工作原理)
+  - [🚀 主要功能](#-主要功能)
+  - [🛠️ 核心组件](#-核心组件)
+    - [Proxy](#proxy)
+    - [Bridge](#bridge)
+    - [Runtime Manager](#runtime-manager)
+    - [桌面应用](#桌面应用)
+    - [日志](#日志)
+  - [⚡ 快速开始](#-快速开始)
+    - [方式一：下载桌面应用（推荐）](#方式一下载桌面应用推荐)
+    - [方式二：从源码构建](#方式二从源码构建)
+    - [方式三：在线体验](#方式三在线体验)
+  - [🧰 技术栈](#-技术栈)
+  - [🚢 部署模式](#-部署模式)
+  - [🔧 开发](#-开发)
+  - [🗺️ 路线图](#-路线图)
+  - [🤝 贡献](#-贡献)
+  - [📄 许可证](#-许可证)
 
-## 为什么需要 MCPMate？
+## 🤔 为什么需要 MCPMate？
 
 在多个 AI 工具（Claude Desktop、Cursor、Zed、Codex、自定义客户端等）中管理 MCP 服务器面临诸多挑战：
 
-- **配置复杂且重复** — 同一个 MCP 服务器需要在每个客户端中重复配置
-- **高昂的上下文切换成本** — 不同工作场景需要频繁切换 MCP 配置
-- **资源消耗** — 同时运行多个 MCP 服务器会消耗大量系统资源
-- **安全盲区** — 配置错误或安全风险难以被及时发现
-- **管理分散** — 没有统一的地方管理所有 MCP 服务
+| · | 痛点                                        | · | MCPMate 方案                      |
+| --- | ------------------------------------------- | --- | --------------------------------- |
+| ❌   | 同一个 MCP 服务器需要在每个客户端中重复配置 | ✅   | 一个代理，一份统一配置            |
+| ❌   | 不同工作场景需要频繁切换 MCP 配置           | ✅   | 基于配置集的即时切换              |
+| ❌   | 同时运行多个 MCP 服务器消耗大量系统资源     | ✅   | 单个代理聚合所有上游服务器        |
+| ❌   | 配置错误或安全风险难以被及时发现            | ✅   | 实时监控、结构化事件日志          |
+| ❌   | 没有统一的地方管理所有 MCP 服务             | ✅   | Dashboard + REST API + 结构化日志 |
 
-MCPMate 通过本地代理运行，生成一致的客户端配置，按配置集裁剪工具，并保留结构化日志。
+## 🔄 工作原理
 
-## 核心组件
+```mermaid
+flowchart LR
+    subgraph mgmt ["🖥️ 管理界面"]
+        APP["Tauri 桌面应用"]
+        DASH["Web Dashboard"]
+    end
+
+    subgraph proxy ["⚙️ MCPMate 代理"]
+        direction TB
+        UP["上游管理<br/><small>连接池 · OAuth 2.0 + PKCE</small>"]
+        PROF["配置集引擎<br/><small>场景 · 应用 · 动态</small>"]
+        SEC["事件日志与安全<br/><small>结构化日志 · redb 缓存</small>"]
+        UP --> PROF --> SEC
+    end
+
+    subgraph cfg ["🔧 客户端配置"]
+        direction TB
+        DET["探测与适配"]
+        MODES["管理模式<br/><small>Transparent · Hosted · Unify</small>"]
+        DET --> MODES
+    end
+
+    subgraph clients ["📱 AI 客户端"]
+        C["Cursor · VS Code · Zed · ..."]
+    end
+
+    subgraph upstream ["☁️ 上游 MCP 服务器"]
+        S["uvx · bunx · npx<br/>SSE · Streamable HTTP"]
+    end
+
+    subgraph market ["🛒 MCP 市场"]
+        M["官方注册中心"]
+    end
+
+    APP -->|"API"| proxy
+    DASH -->|"API"| proxy
+    market -.->|"安装"| proxy
+    upstream -->|"stdio / HTTP"| proxy
+    proxy -->|"Bridge / HTTP"| cfg
+    MODES --> clients
+
+    classDef mgmt fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef proxy fill:#fff3e0,stroke:#e65100,color:#000
+    classDef cfg fill:#e8f5e9,stroke:#2e7d32,color:#000
+    classDef clients fill:#fce4ec,stroke:#c62828,color:#000
+    classDef upstream fill:#f3e5f5,stroke:#6a1b9a,color:#000
+    classDef market fill:#fff9c4,stroke:#f9a825,color:#000
+
+    class APP,DASH mgmt
+    class UP,PROF,SEC proxy
+    class DET,MODES cfg
+    class C clients
+    class S upstream
+    class M market
+```
+
+MCPMate 作为透明代理位于 AI 客户端和 MCP 服务器之间。**Bridge** 将仅支持 stdio 的客户端（如 Claude Desktop）适配到 HTTP 代理。**配置集引擎**控制哪些工具对哪些客户端可见 — 场景配置集用于工作流上下文，应用配置集用于客户端级调优，动态配置集可在运行时自动调整。客户端配置层覆盖 **Transparent**、**Hosted** 与 **Unify** 三种管理模式。
+
+## 🚀 主要功能
+
+| 功能                      | 说明                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| **配置集裁剪**            | 将 MCP 服务器组织为场景、应用和动态配置集，即时切换无需重启。                             |
+| **多客户端支持**          | 检测、配置和管理 Claude Desktop、Cursor、Zed、Codex 及自定义客户端。                      |
+| **动态客户端治理**        | 数据库优先的 Allow/Deny 治理策略，无静态模板文件，写入需已验证的配置目标。                |
+| **MCP 市场集成**          | 应用内浏览并安装官方 MCP 注册中心的服务器，支持 OAuth 回调授权。                          |
+| **运行时管理器**          | 安装和管理本地 MCP 服务器使用的 Node.js、uv (Python)、Bun 运行时。                        |
+| **上游 OAuth 2.0 (PKCE)** | 支持 Streamable HTTP MCP 服务器的 OAuth 2.0 流程（含 PKCE），含元数据发现和回调处理。     |
+| **内建 redb 缓存**        | 面向能力快照与高频代理状态的 L2 嵌入式缓存。                                              |
+| **结构化日志**            | 独立日志页面，支持游标分页、actor/target/action 元数据和 REST API 查询。                  |
+| **浏览器扩展**            | Chrome/Edge 扩展检测网页中的 `mcpServers` 配置片段并通过 `mcpmate://import/server` 导入。 |
+| **工具检视器**            | 对已连接服务器快速发起工具调用，查看结构化返回结果。                                      |
+
+## 🛠️ 核心组件
 
 ### Proxy
 
-高性能 MCP 代理服务器：
-
-- 连接多个 MCP 服务器并聚合它们的工具
-- 为 AI 客户端提供统一接口
-- 实现 stdio 和 Streamable HTTP 传输协议（符合 MCP 2025-06-18 规范）
-- 接受旧版 SSE 配置的服务器，并自动归一化为 Streamable HTTP 以保持向后兼容
-- 支持上游 Streamable HTTP MCP 服务器的 OAuth 2.1 授权流程，包含元数据发现与回调处理
-- 实时监控并记录 MCP 通信
-- 检测潜在安全风险（如工具投毒）
-- 智能管理服务器资源
-- 提供 RESTful API 用于管理和监控
+高性能 MCP 代理服务器，连接多个 MCP 服务器并聚合工具。实现 stdio 和 Streamable HTTP 传输协议（符合 MCP 2025-06-18 规范），接受旧版 SSE 配置并自动归一化为 Streamable HTTP 以保持向后兼容。
 
 ### Bridge
 
-轻量级桥接组件，将 stdio 模式的 MCP 客户端（如 Claude Desktop）连接到 HTTP 模式的 MCPMate 代理：
-
-- 将 stdio 协议转换为 HTTP 传输，无需修改客户端
-- 自动继承 HTTP 服务的所有功能和工具
-- 极简配置 — 只需服务地址
+轻量级桥接组件，将 stdio 协议转换为 HTTP 传输，无需修改客户端。自动继承 HTTP 服务的所有功能和工具，极简配置 — 只需服务地址。
 
 ### Runtime Manager
 
-智能运行时环境管理工具：
-
-- **智能下载** — 15 秒超时，自动网络诊断
-- **进度追踪** — 实时进度条，显示下载速度
-- **多运行时支持** — Node.js、uv (Python)、Bun.js
-- **环境集成** — 自动配置环境变量
+安装和管理本地 MCP 服务器使用的运行时。支持 Node.js、uv (Python) 和 Bun，并提供下载进度追踪与自动环境变量配置。
 
 ```bash
-# 安装 Node.js（用于 JavaScript MCP 服务器）
-runtime install node
-
-# 安装 uv（用于 Python MCP 服务器）
-runtime install uv
-
-# 列出已安装的运行时
-runtime list
+runtime install node   # 安装 Node.js（用于 JavaScript MCP 服务器）
+runtime install uv     # 安装 uv（用于 Python MCP 服务器）
+runtime install bun    # 安装 Bun
+runtime list           # 列出已安装的运行时
 ```
 
 ### 桌面应用
 
-基于 Tauri 2 的跨平台桌面应用：
-
-- 完整的图形界面，管理 MCP 服务器、配置集和工具
-- 实时监控和状态显示
-- 智能客户端检测和配置生成
-- 系统托盘集成，原生通知
-- macOS 现已可用；Windows 与 Linux 版本仍在规划中
+基于 Tauri 2 的跨平台桌面应用，提供完整的图形界面管理 MCP 服务器、配置集和工具，支持实时监控、智能客户端检测和系统托盘集成。macOS 现已可用；Windows 处于 Beta 阶段；Linux 正在开发中。
 
 ### 日志
 
-面向 MCP 代理活动的结构化运维日志：
+面向 MCP 代理活动的结构化运维日志。将 MCP 操作与管理侧变更汇总为结构化时间线，支持游标分页、REST API 和 Dashboard 中的独立日志页面。
 
-- 将 MCP 操作与管理侧变更汇总为结构化时间线
-- 支持基于游标的分页，适配高频事件场景
-- 提供 REST API，用于查询与回溯日志记录
-- 在 Dashboard 中提供独立的日志页面
+## ⚡ 快速开始
 
-## 截图
+### 方式一：下载桌面应用（推荐）
 
-### Dashboard 概览
+从 [GitHub Releases](https://github.com/loocor/MCPMate/releases) 下载适合你平台的最新版本。
 
-浅色与深色主题布局一致；状态卡片与资源图表会随主题切换配色。
+> **注意**：macOS 构建目前未经签名和公证。首次启动时可能需要右键点击选择"打开"以绕过 Gatekeeper。代码签名和公证将在后续版本中加入。
 
-| 浅色                                       | 深色                                           |
-| ------------------------------------------ | ---------------------------------------------- |
-| ![Dashboard light](./assets/dashboard.png) | ![Dashboard dark](./assets/dashboard-dark.png) |
+### 方式二：从源码构建
 
-### 服务器管理
+**前置要求**：[Rust](https://www.rust-lang.org/tools/install) 工具链 1.75+、[Node.js](https://nodejs.org/) 18+ 或 [Bun](https://bun.sh/)、SQLite 3
 
-![Servers](./assets/servers.png)
-
-### 服务器详情 — 工具
-
-浏览 MCP 服务器暴露的所有工具及其描述。
-
-![Server Tools](./assets/server-tools.png)
-
-### 服务器详情 — 资源
-
-查看 MCP 服务器提供的资源。
-
-![Server Resources](./assets/server-resources.png)
-
-### 配置集概览
-
-每个配置集聚合服务器、工具、资源和提示词，用于特定场景。
-
-![Profile Overview](./assets/profile-detail-overview.png)
-
-### 配置集— 工具配置
-
-在配置集中启用或禁用单个工具。
-
-![Profile Tools](./assets/profile-tools.png)
-
-### 客户端配置
-
-为每个 AI 客户端配置管理模式和能力来源。
-
-![Client Configuration](./assets/client-configuration.png)
-
-- **全部代理**：所有已启用的服务器都保留在内建 UCAN 工具链之后访问。
-- **服务器直达**：在统一模式下，让已标记为直达模式的指定服务器把全部能力直接暴露给客户端。
-- **能力级直达**：打开挂在客户端模块下的独立直达编辑页，只对选中的工具做直达暴露，而不会让侧边栏误高亮到配置集模块。
-- 这三条路径在真正写入客户端配置前，都会经过同一套治理与已验证目标检查。
-
-### MCP 市场
-
-在应用内浏览官方 MCP 注册中心并安装服务器。
-
-- 主关联键：`registry_server_id`（对应官方 `server.name`）
-- `official.serverId` 仅在与 `server.name` 等价时作为别名使用
-- `Repository Entry ID` 仅作为仓库元数据保留，不参与托管服务器关联主链路
-- 对支持 OAuth 的上游服务器，可直接在安装向导内完成回调式授权连接
-- 详见文档：[Market registry linkage keys](./docs/features/market-registry-linkage.md)
-
-![Market](./assets/market.png)
-
-### 工具检视器
-
-针对已连接服务器快速发起工具调用，并在控制台查看结构化返回。
-
-![Tool Inspector](./assets/inspector-tool-call.png)
-
-## 快速开始
-
-### 前置要求
-
-- Rust 工具链 (1.75+)
-- Node.js 18+ 或 Bun
-- SQLite 3
-
-### 安装
+**1. 克隆并构建后端**
 
 ```bash
-# 克隆仓库
 git clone https://github.com/loocor/MCPMate.git
-cd MCPMate
-
-# 构建后端
-cd backend
+cd MCPMate/backend
 cargo build --release
+```
 
-# 运行代理
+**2. 启动代理**
+
+```bash
 cargo run --release
 ```
 
 代理启动后：
-- REST API 在 `http://localhost:8080`
-- MCP 端点在 `http://localhost:8000`
+- **REST API** 在 `http://localhost:8080`
+- **MCP 端点** 在 `http://localhost:8000`
 
-### 使用 Dashboard
+**3. 启动 Dashboard**
 
 ```bash
-# 从仓库根目录
-cd board
+cd ../board
 bun install
 bun run dev
 ```
 
 Dashboard 将在 `http://localhost:5173` 可用。
 
-## 部署模式
+### 方式三：在线体验
 
-MCPMate 同时支持一体化和分离式运行：
+Coming soon。线上环境将允许你在无需本地部署的情况下，探索 Dashboard、配置集和客户端配置流程。
 
-- **一体化模式（桌面端）**：Tauri 将后端与控制台打包，本地即可开箱运行
-- **分离模式（Core Server + UI）**：后端独立运行，Web 控制台或桌面壳可连接到该核心服务
-- **客户端模式兼容**：在控制平面远程运行时，托管/透明等客户端工作流保持可用
+## 🧰 技术栈
 
-## 架构
+| 层级             | 技术                                                     |
+| ---------------- | -------------------------------------------------------- |
+| **代理 / 后端**  | Rust, tokio, rmcp, SQLite（持久化）, redb（L2 能力缓存） |
+| **Dashboard**    | React, Vite, Zustand, React Query, Radix UI              |
+| **桌面应用**     | Tauri 2, 系统托盘, 原生通知                              |
+| **Bridge**       | Rust 二进制, stdio → HTTP 转换                           |
+| **运行时管理器** | 多运行时 (Node.js, uv, Bun)                              |
+| **协议**         | MCP 2025-06-18, stdio + Streamable HTTP                  |
 
-```
-MCPMate/
-├── backend/           # Rust MCP 网关、管理 API、bridge 二进制
-├── board/             # React + Vite 管理 Dashboard
-├── website/           # 营销站点和文档
-├── desktop/           # Tauri 2 桌面应用
-├── extension/cherry/  # Cherry Studio 配置集成
-└── docs/              # 产品文档
-```
+## 🚢 部署模式
 
-每个子项目维护自己的构建系统和依赖。详见各自的 README：
+- **一体化模式（桌面端）** — Tauri 将后端与控制台打包，本地即可开箱运行
+- **分离模式（Core Server + UI）** — 后端独立运行，Web 控制台或桌面壳可连接到该核心服务
+- **客户端模式兼容** — 在控制平面远程运行时，托管/透明等客户端工作流保持可用
 
-- [Backend](./backend/README.md) — 架构、API 和开发指南
-- [Board](./board/README.md) — Dashboard 功能和 UI 开发
-- [Desktop](./desktop/README.md) — 桌面应用构建和配置
-- [Extension/Cherry](./extension/cherry/README.md) — Cherry Studio 集成
-
-## 主要功能
-
-### 基于配置集的配置
-
-将 MCP 服务器组织成不同场景的配置集：
-- **开发** — 编码、调试、测试相关工具
-- **写作** — 内容创作、研究相关工具
-- **分析** — 数据分析、可视化相关工具
-
-在配置集之间即时切换，无需重启服务。
-
-### 多客户端支持
-
-MCPMate 检测、配置并扩展多种 AI 客户端：
-- Claude Desktop
-- Cursor
-- Zed
-- Codex
-- 用户自定义客户端
-
-### 动态客户端治理
-
-- 客户端治理状态现在以 MCPMate 数据库为唯一权威，不再被静态模板文件写死。
-- 新建客户端与被动观察到的客户端，都可以在不回退到模板编辑的前提下提升为可主动管理的记录。
-- Allow / Deny 治理是一条独立的安全放行线：即使客户端当前被禁行，你仍然可以继续调整它的管理模式与投放预期。
-- 只有当客户端已经确认拥有一个已验证的本地配置文件目标时，MCPMate 才会真正写入该客户端自己的 MCP 配置文件；单纯保存治理状态不会凭空创建这个目标。
-- 治理回退流程会拒绝或延后不安全写入，避免部分配置更新让客户端进入不一致状态。
-
-### 浏览器扩展导入
-
-- Chrome/Edge 浏览器扩展会检测网页中可导入的 MCP 配置片段（包含 `mcpServers`），并通过 `mcpmate://import/server` 交给 MCPMate 桌面端导入。
-- 导入时会同时携带来源页面 URL 与片段文本，方便追溯。
-
-### 安全
-
-- 实时 MCP 通信监控
-- 敏感数据检测（实验性）
-- 安全告警和运维日志
-
-### 日志
-
-- 提供独立的 **日志** 页面，可筛选并回溯历史操作
-- 事件记录包含 actor、target、action type、timestamp 等核心字段
-- 支持游标分页，适合大体量日志的渐进式加载
-
-## 开发
+## 🔧 开发
 
 ```bash
 # 运行所有检查
@@ -293,15 +240,14 @@ MCPMate 检测、配置并扩展多种 AI 客户端：
 
 开发指南、编码规范和贡献流程请参阅 [AGENTS.md](./AGENTS.md)。
 
-## 路线图
+## 🗺️ 路线图
 
-1. **基于配置集的能力裁剪**：降低每次对话的 Token 使用
-2. **统一模式（已可用，持续打磨）**：通过渐进式披露，降低 MCP 工作流的首次 Token 成本
-3. **运维日志与监控能力增强**
-4. **智能切换**：基于上下文的自动配置集切换
-5. **团队协作**：配置共享（在用户需求验证后）
+1. **基于账户体系的配置数据备份与恢复**
+2. **以 Skills 模式封装的配置集**
+3. **下游 MCP 客户端 OAuth 授权管理**
+4. **跨平台发布就绪** — 覆盖主要桌面操作系统稳定性、容器化部署与 Homebrew 安装支持
 
-## 贡献
+## 🤝 贡献
 
 欢迎贡献！请：
 
@@ -309,10 +255,12 @@ MCPMate 检测、配置并扩展多种 AI 客户端：
 2. 开 issue 讨论重大变更
 3. 向 `main` 分支提交 pull request
 
-## 许可证
+## 📄 许可证
 
-GNU Affero General Public License v3.0 (AGPL-3.0) — 详见 [LICENSE](./LICENSE)。
+[GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0)
 
 ---
 
-由 [Loocor](https://github.com/loocor) 用 ❤️ 构建
+<p align="center">
+  由 <a href="https://github.com/loocor">Loocor</a> 用 ❤️ 构建
+</p>

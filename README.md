@@ -1,288 +1,234 @@
 # MCPMate
 
-[中文](./README_CN.md) | **English**
+**English** | [中文](./README_CN.md)
 
 <p align="center">
-  <img src="./assets/dashboard.png" alt="MCPMate dashboard (light)" width="100%">
+  <img src="./assets/dashboard.png" alt="MCPMate dashboard" width="100%">
 </p>
 
-> **One local proxy that connects MCP servers and AI clients.**
+<p align="center">
+  <strong>One local proxy that connects MCP servers and AI clients.</strong>
+</p>
 
-Configuring the same MCP servers across multiple clients is repetitive, token-costly, and hard to observe.
-MCPMate proxies MCP servers, syncs client configs, trims capabilities by profile, and logs activity.
+<p align="center">
+  <a href="https://github.com/loocor/MCPMate/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/Rust-1.75%2B-orange" alt="Rust">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen" alt="Node.js">
+  <a href="https://modelcontextprotocol.io/specification/2025-06-18"><img src="https://img.shields.io/badge/MCP-2025--06--18-purple" alt="MCP Spec"></a>
+</p>
+
+---
+
+> Configuring the same MCP servers across multiple clients is repetitive, token-costly, and hard to observe.
+> MCPMate proxies MCP servers, syncs client configs, trims capabilities by profile, and logs activity.
 
 This is not a brand-new project. I started shaping MCPMate around May 2024, paused active development around October, and recently came back to it with a clearer conviction: as the hype around skills- and CLI-shaped workflows settles into a more reflective phase, the long-term, irreplaceable value of MCP becomes easier to see.
 
-MCPMate was previously developed in private and is now being reopened in public. The direction I care about most at this stage is usability: building on MCPMate’s earlier profile-based approach for removing redundant capabilities in specific scenarios, and continuing to extend its hosted mode toward a more progressively disclosed Unify mode (last year I referred to it as a more “aggressive hosted” mode, though the name itself felt somewhat awkward). One goal is to bring some of the lower-friction and lower first-token-cost qualities that people appreciated in skills- and CLI-shaped experiences into MCP itself.
+MCPMate was previously developed in private and is now being reopened in public. The direction I care about most at this stage is usability: building on MCPMate's earlier profile-based approach for removing redundant capabilities in specific scenarios, and continuing to extend its hosted mode toward a more progressively disclosed Unify mode (last year I referred to it as a more "aggressive hosted" mode, though the name itself felt somewhat awkward). One goal is to bring some of the lower-friction and lower first-token-cost qualities that people appreciated in skills- and CLI-shaped experiences into MCP itself.
 
-## Table of Contents
+## 📑 Table of Contents
 
-- [Why MCPMate?](#why-mcpmate)
-- [Core Components](#core-components)
-- [Screenshots](#screenshots)
-- [Quick Start](#quick-start)
-- [Deployment Modes](#deployment-modes)
-- [Architecture](#architecture)
-- [Key Features](#key-features)
-- [Development](#development)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
+- [MCPMate](#mcpmate)
+  - [📑 Table of Contents](#-table-of-contents)
+  - [🤔 Why MCPMate?](#-why-mcpmate)
+  - [🔄 How It Works](#-how-it-works)
+  - [🚀 Key Features](#-key-features)
+  - [🛠️ Core Components](#-core-components)
+    - [Proxy](#proxy)
+    - [Bridge](#bridge)
+    - [Runtime Manager](#runtime-manager)
+    - [Desktop App](#desktop-app)
+    - [Logs](#logs)
+  - [⚡ Quick Start](#-quick-start)
+    - [Option A: Download the Desktop App (Recommended)](#option-a-download-the-desktop-app-recommended)
+    - [Option B: Build from Source](#option-b-build-from-source)
+    - [Option C: Online Demo](#option-c-online-demo)
+  - [🧰 Tech Stack](#-tech-stack)
+  - [🚢 Deployment Modes](#-deployment-modes)
+  - [🔧 Development](#-development)
+  - [🗺️ Roadmap](#-roadmap)
+  - [🤝 Contributing](#-contributing)
+  - [📄 License](#-license)
 
-## Why MCPMate?
+## 🤔 Why MCPMate?
 
 Managing MCP servers across multiple AI tools (Claude Desktop, Cursor, Zed, Codex, and user-defined clients) brings significant challenges:
 
-- **Complex, repetitive configuration** — The same MCP server needs to be configured repeatedly in each client
-- **High context-switching cost** — Different work scenarios require frequent MCP configuration changes
-- **Resource overhead** — Running multiple MCP servers simultaneously consumes system resources
-- **Security blind spots** — Configuration errors or security risks are hard to detect
-- **Fragmented management** — No single place to manage all MCP services
+| · | Pain Point                                                            | · | MCPMate Solution                               |
+| --- | --------------------------------------------------------------------- | --- | ---------------------------------------------- |
+| ❌   | The same MCP server needs to be configured repeatedly in each client  | ✅   | One proxy, one unified configuration           |
+| ❌   | Different work scenarios require frequent MCP configuration changes   | ✅   | Profile-based instant switching                |
+| ❌   | Running multiple MCP servers simultaneously consumes system resources | ✅   | Single proxy aggregates all upstream servers   |
+| ❌   | Configuration errors or security risks are hard to detect             | ✅   | Real-time monitoring, structured event logging |
+| ❌   | No single place to manage all MCP services                            | ✅   | Dashboard + REST API + structured logs         |
 
-MCPMate solves these problems by running a local proxy, generating consistent client configs, trimming tools per profile, and keeping structured Logs.
+## 🔄 How It Works
 
-## Core Components
+```mermaid
+flowchart LR
+    subgraph mgmt ["🖥️ Management"]
+        APP["Tauri Desktop"]
+        DASH["Web Dashboard"]
+    end
+
+    subgraph proxy ["⚙️ MCPMate Proxy"]
+        direction TB
+        UP["Upstream Mgmt<br/><small>Connection Pool · OAuth 2.0 + PKCE</small>"]
+        PROF["Profile Engine<br/><small>Scene · App · Dynamic</small>"]
+        SEC["Event Logs &amp; Security<br/><small>Structured Logs · redb Cache</small>"]
+        UP --> PROF --> SEC
+    end
+
+    subgraph cfg ["🔧 Client Config"]
+        direction TB
+        DET["Detection &amp; Adapter"]
+        MODES["Modes<br/><small>Transparent · Hosted · Unify</small>"]
+        DET --> MODES
+    end
+
+    subgraph clients ["📱 AI Clients"]
+        C["Cursor · VS Code · Zed · ..."]
+    end
+
+    subgraph upstream ["☁️ Upstream MCP Servers"]
+        S["uvx · bunx · npx<br/>SSE · Streamable HTTP"]
+    end
+
+    subgraph market ["🛒 MCP Marketplace"]
+        M["Official Registry"]
+    end
+
+    APP -->|"API"| proxy
+    DASH -->|"API"| proxy
+    market -.->|"Install"| proxy
+    upstream -->|"stdio / HTTP"| proxy
+    proxy -->|"Bridge / HTTP"| cfg
+    MODES --> clients
+
+    classDef mgmt fill:#e3f2fd,stroke:#1565c0,color:#000
+    classDef proxy fill:#fff3e0,stroke:#e65100,color:#000
+    classDef cfg fill:#e8f5e9,stroke:#2e7d32,color:#000
+    classDef clients fill:#fce4ec,stroke:#c62828,color:#000
+    classDef upstream fill:#f3e5f5,stroke:#6a1b9a,color:#000
+    classDef market fill:#fff9c4,stroke:#f9a825,color:#000
+
+    class APP,DASH mgmt
+    class UP,PROF,SEC proxy
+    class DET,MODES cfg
+    class C clients
+    class S upstream
+    class M market
+```
+
+MCPMate sits between your AI clients and MCP servers as a transparent proxy. The **Bridge** adapts stdio-only clients (like Claude Desktop) to the HTTP proxy. The **Profile Engine** controls which tools are visible to which client — scene profiles for workflow context, app profiles for per-client tuning, and dynamic profiles that adjust at runtime. The client configuration layer covers Transparent, Hosted, and Unify management modes.
+
+## 🚀 Key Features
+
+| Feature                       | Description                                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Profile-Based Trimming**    | Organize MCP servers into scene, app, and dynamic profiles. Switch instantly without restarting services.                               |
+| **Multi-Client Support**      | Detect, configure, and manage Claude Desktop, Cursor, Zed, Codex, and user-defined clients.                                             |
+| **Dynamic Client Governance** | Database-first governance with Allow/Deny policies. No static template files. Verified config targets required for writes.              |
+| **Market Integration**        | Browse and install from the official MCP registry without leaving the app. OAuth-capable servers supported with callback authorization. |
+| **Runtime Manager**           | Installs and manages Node.js, uv (Python), and Bun runtimes used by local MCP servers.                                                  |
+| **OAuth 2.0 Upstream (PKCE)** | Supports upstream OAuth 2.0 flows with PKCE for Streamable HTTP MCP servers, including metadata discovery and callback handling.        |
+| **Built-in redb Cache**       | L2 embedded cache for capability snapshots and frequently accessed proxy state.                                                         |
+| **Structured Logs**           | Dedicated Logs page with cursor-based pagination, actor/target/action metadata, and REST API access.                                    |
+| **Browser Extension**         | Chrome/Edge extension detects `mcpServers` snippets on web pages and imports them via `mcpmate://import/server`.                        |
+| **Tool Inspector**            | Run quick tool calls against connected servers and inspect structured responses from the console.                                       |
+
+## 🛠️ Core Components
 
 ### Proxy
 
-A high-performance MCP proxy server that:
-
-- Connects to multiple MCP servers and aggregates their tools
-- Provides a unified interface for AI clients
-- Implements stdio and Streamable HTTP transport protocols (aligned with MCP 2025-06-18 specification)
-- Accepts legacy SSE-configured servers and automatically normalizes them to Streamable HTTP for backward compatibility
-- Supports upstream OAuth 2.1 flows for Streamable HTTP MCP servers, including metadata discovery and callback handling
-- Monitors and logs MCP communication in real time
-- Detects potential security risks (e.g., tool poisoning)
-- Intelligently manages server resources
-- Provides REST APIs for configuration and monitoring
+A high-performance MCP proxy server that connects to multiple MCP servers and aggregates their tools. Implements stdio and Streamable HTTP transport protocols (aligned with MCP 2025-06-18 specification). Accepts legacy SSE-configured servers and automatically normalizes them to Streamable HTTP for backward compatibility.
 
 ### Bridge
 
-A lightweight bridging component that connects stdio-mode MCP clients (like Claude Desktop) to the HTTP-mode MCPMate proxy:
-
-- Converts stdio protocol to HTTP transport without modifying the client
-- Automatically inherits all functions and tools from the HTTP service
-- Minimal configuration — only requires service address
+A lightweight bridging component that converts stdio protocol to HTTP transport without modifying the client. Automatically inherits all functions and tools from the HTTP service. Minimal configuration — only requires service address.
 
 ### Runtime Manager
 
-An intelligent runtime environment management tool:
-
-- **Smart Download** — 15-second timeout with automatic network diagnostics
-- **Progress Tracking** — Real-time progress bars with download speed
-- **Multi-Runtime Support** — Node.js, uv (Python), and Bun.js
-- **Environment Integration** — Automatic environment variable configuration
+Installs and manages runtimes used by local MCP servers. Supports Node.js, uv (Python), and Bun with download progress tracking and automatic environment variable configuration.
 
 ```bash
-# Install Node.js for JavaScript MCP servers
-runtime install node
-
-# Install uv for Python MCP servers
-runtime install uv
-
-# List installed runtimes
-runtime list
+runtime install node   # Install Node.js for JavaScript MCP servers
+runtime install uv     # Install uv for Python MCP servers
+runtime install bun    # Install Bun
+runtime list           # List installed runtimes
 ```
 
 ### Desktop App
 
-Cross-platform desktop application built with Tauri 2:
-
-- Complete graphical interface for managing MCP servers, profiles, and tools
-- Real-time monitoring and status display
-- Intelligent client detection and configuration generation
-- System tray integration with native notifications
-- macOS is available now; Windows and Linux builds are planned
+Cross-platform desktop application built with Tauri 2. Complete graphical interface for managing MCP servers, profiles, and tools with real-time monitoring, intelligent client detection, and system tray integration. macOS is available now; Windows is in beta; Linux is in development.
 
 ### Logs
 
-Structured operational log for MCP proxy activity:
+Structured operational log for MCP proxy activity. Collects MCP operations and management-side changes into a structured timeline with cursor-based pagination, REST APIs, and a dedicated Logs page in the dashboard UI.
 
-- Collects MCP operations and management-side changes into a structured timeline
-- Supports cursor-based pagination for high-volume environments
-- Exposes REST APIs for querying and reviewing log records
-- Provides a dedicated Logs page in the dashboard UI
+## ⚡ Quick Start
 
-## Screenshots
+### Option A: Download the Desktop App (Recommended)
 
-### Dashboard Overview
+Download the latest release for your platform from [GitHub Releases](https://github.com/loocor/MCPMate/releases).
 
-Light and dark themes use the same layout; status cards and the metrics chart adapt to the selected appearance.
+> **Note**: macOS builds are currently unsigned and not notarized. You may need to right-click and select "Open" to bypass Gatekeeper on first launch. Code signing and notarization are planned for a future release.
 
-| Light                                      | Dark                                           |
-| ------------------------------------------ | ---------------------------------------------- |
-| ![Dashboard light](./assets/dashboard.png) | ![Dashboard dark](./assets/dashboard-dark.png) |
+### Option B: Build from Source
 
-### Server Management
+**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) 1.75+, [Node.js](https://nodejs.org/) 18+ or [Bun](https://bun.sh/), SQLite 3
 
-![Servers](./assets/servers.png)
-
-### Server Details — Tools
-
-Browse all tools exposed by an MCP server with descriptions.
-
-![Server Tools](./assets/server-tools.png)
-
-### Server Details — Resources
-
-View resources provided by MCP servers.
-
-![Server Resources](./assets/server-resources.png)
-
-### Profile Overview
-
-Each profile aggregates servers, tools, resources, and prompts for a specific use case.
-
-![Profile Overview](./assets/profile-detail-overview.png)
-
-### Profile — Tool Configuration
-
-Enable or disable individual tools within a profile.
-
-![Profile Tools](./assets/profile-tools.png)
-
-### Client Configuration
-
-Configure management mode and capability source for each AI client.
-
-![Client Configuration](./assets/client-configuration.png)
-
-- **All Proxy** keeps every enabled server behind the builtin UCAN tool flow.
-- **Server Level** lets selected direct-eligible servers expose their full capabilities to the client in Unify mode.
-- **Capability-Level Direct** opens a client-scoped direct editor so selected tools can be exposed without switching the sidebar into the Profiles section.
-- All three paths share the same governance and verified-target checks before MCPMate writes client configuration.
-
-### Market
-
-Browse the official MCP registry and install servers without leaving the app.
-
-- Canonical linkage key: `registry_server_id` (official `server.name`)
-- `official.serverId` is treated as an alias only when equivalent to `server.name`
-- `Repository Entry ID` is preserved as metadata only
-- Upstream OAuth-capable servers can be connected directly from the install wizard with callback-based authorization
-- See docs: [Market registry linkage keys](./docs/features/market-registry-linkage.md)
-
-![Market](./assets/market.png)
-
-### Tool Inspector
-
-Run quick tool calls against a connected server and inspect structured responses from the console.
-
-![Tool Inspector](./assets/inspector-tool-call.png)
-
-## Quick Start
-
-### Prerequisites
-
-- Rust toolchain (1.75+)
-- Node.js 18+ or Bun
-- SQLite 3
-
-### Installation
+**1. Clone & Build the Backend**
 
 ```bash
-# Clone the repository
 git clone https://github.com/loocor/MCPMate.git
-cd MCPMate
-
-# Build the backend
-cd backend
+cd MCPMate/backend
 cargo build --release
+```
 
-# Run the proxy
+**2. Start the Proxy**
+
+```bash
 cargo run --release
 ```
 
 The proxy starts with:
-- REST API on `http://localhost:8080`
-- MCP endpoint on `http://localhost:8000`
+- **REST API** on `http://localhost:8080`
+- **MCP endpoint** on `http://localhost:8000`
 
-### Using the Dashboard
+**3. Launch the Dashboard**
 
 ```bash
-# From the repository root
-cd board
+cd ../board
 bun install
 bun run dev
 ```
 
-The dashboard will be available at `http://localhost:5173`.
+Dashboard available at `http://localhost:5173`.
 
-## Deployment Modes
+### Option C: Online Demo
 
-MCPMate supports both integrated and separated operation modes:
+Coming soon. An online environment will let you explore the dashboard, profiles, and client configuration without a local setup.
+
+## 🧰 Tech Stack
+
+| Layer               | Technology                                                          |
+| ------------------- | ------------------------------------------------------------------- |
+| **Proxy / Backend** | Rust, tokio, rmcp, SQLite (persistence), redb (L2 capability cache) |
+| **Dashboard**       | React, Vite, Zustand, React Query, Radix UI                         |
+| **Desktop**         | Tauri 2, system tray, native notifications                          |
+| **Bridge**          | Rust binary, stdio-to-HTTP conversion                               |
+| **Runtime Manager** | Multi-runtime (Node.js, uv, Bun)                                    |
+| **Protocol**        | MCP 2025-06-18, stdio + Streamable HTTP                             |
+
+## 🚢 Deployment Modes
 
 - **Integrated mode (desktop)** — Tauri bundles backend + dashboard for local all-in-one operation
-- **Separated mode (core server + UI)** — run backend independently and connect either the web dashboard or desktop shell to that core service
-- **Client mode flexibility** — managed clients can continue using hosted/transparent workflows while the control plane runs remotely
+- **Separated mode (core server + UI)** — Run backend independently and connect either the web dashboard or desktop shell to that core service
+- **Client mode flexibility** — Managed clients can continue using hosted/transparent workflows while the control plane runs remotely
 
-## Architecture
-
-```
-MCPMate/
-├── backend/           # Rust MCP gateway, management API, bridge binary
-├── board/             # React + Vite management dashboard
-├── website/           # Marketing site and documentation
-├── desktop/           # Tauri 2 desktop application
-├── extension/cherry/  # Cherry Studio configuration integration
-└── docs/              # Product documentation
-```
-
-Each subproject maintains its own build system and dependencies. See individual READMEs for details:
-
-- [Backend](./backend/README.md) — Architecture, API, and development guide
-- [Board](./board/README.md) — Dashboard features and UI development
-- [Desktop](./desktop/README.md) — Desktop app build and configuration
-- [Extension/Cherry](./extension/cherry/README.md) — Cherry Studio integration
-
-## Key Features
-
-### Profile-Based Configuration
-
-Organize MCP servers into profiles for different scenarios:
-- **Development** — Tools for coding, debugging, and testing
-- **Writing** — Tools for content creation and research
-- **Analysis** — Tools for data analysis and visualization
-
-Switch between profiles instantly without restarting services.
-
-### Multi-Client Support
-
-MCPMate detects, configures, and extends multiple AI clients:
-- Claude Desktop
-- Cursor
-- Zed
-- Codex
-- User-defined clients
-
-### Dynamic Client Governance
-
-- Client governance now lives in MCPMate's database instead of being frozen in static template files.
-- New and observed clients can be promoted into actively managed records without reworking compatibility templates.
-- Allow / Deny governance acts as a dedicated safety line: you can keep editing rollout expectations while still preventing a client from entering the allowed capability circle.
-- Writing to a client's own MCP configuration now requires a verified local config target. Saving governance state alone never creates or infers that target.
-- Governance fallback flows reject or defer unsafe writes so partial configuration updates do not leave clients in an inconsistent state.
-
-### Browser Extension Import
-
-- Chrome/Edge extension detects MCP config snippets containing `mcpServers` and hands them to MCPMate desktop via `mcpmate://import/server`.
-- Includes the source page URL along with the snippet text for import traceability.
-
-### Security
-
-- Real-time MCP communication monitoring
-- Tool poisoning detection
-- Sensitive data detection (experimental)
-- Security alerts and operational logs
-
-### Logs
-
-- Dedicated **Logs** page for filtering and reviewing historical actions
-- Event stream includes actor, target, action type, and timestamp metadata
-- Cursor pagination support for large datasets and incremental loading
-
-## Development
+## 🔧 Development
 
 ```bash
 # Run all checks
@@ -294,15 +240,14 @@ MCPMate detects, configures, and extends multiple AI clients:
 
 See [AGENTS.md](./AGENTS.md) for development guidelines, coding standards, and contribution workflow.
 
-## Roadmap
+## 🗺️ Roadmap
 
-1. **Profile-based capability trimming**: reduce token usage per conversation
-2. **Continue refining Unify mode**: progressive disclosure for lower first-token-cost MCP workflows
-3. **Operational logging and monitoring improvements**
-4. **Smart switching**: context-based automatic profile switching
-5. **Team collaboration**: configuration sharing (when validated by user demand)
+1. **Account-based configuration backup & restore**
+2. **Skills-mode packaged profiles**
+3. **Downstream MCP client OAuth authorization management**
+4. **Cross-platform release readiness** — desktop OS stability, container-based deployment, and Homebrew installation support
 
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome! Please:
 
@@ -310,10 +255,12 @@ Contributions are welcome! Please:
 2. Open an issue to discuss significant changes
 3. Submit pull requests against the `main` branch
 
-## License
+## 📄 License
 
-GNU Affero General Public License v3.0 (AGPL-3.0) — see [LICENSE](./LICENSE) for details.
+[GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0)
 
 ---
 
-Built with ❤️ by [Loocor](https://github.com/loocor)
+<p align="center">
+  Built with ❤️ by <a href="https://github.com/loocor">Loocor</a>
+</p>
