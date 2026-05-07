@@ -34,7 +34,7 @@ MCPMate was previously developed in private and is now being reopened in public.
   - [🤔 Why MCPMate?](#-why-mcpmate)
   - [🔄 How It Works](#-how-it-works)
   - [🚀 Key Features](#-key-features)
-  - [🛠️ Core Components](#️-core-components)
+  - [🛠️ Core Components](#-core-components)
     - [Proxy](#proxy)
     - [Bridge](#bridge)
     - [Runtime Manager](#runtime-manager)
@@ -47,7 +47,7 @@ MCPMate was previously developed in private and is now being reopened in public.
   - [🧰 Tech Stack](#-tech-stack)
   - [🚢 Deployment Modes](#-deployment-modes)
   - [🔧 Development](#-development)
-  - [🗺️ Roadmap](#️-roadmap)
+  - [🗺️ Roadmap](#-roadmap)
   - [🤝 Contributing](#-contributing)
   - [📄 License](#-license)
 
@@ -55,7 +55,7 @@ MCPMate was previously developed in private and is now being reopened in public.
 
 Managing MCP servers across multiple AI tools (Claude Desktop, Cursor, Zed, Codex, and user-defined clients) brings significant challenges:
 
-|     | Pain Point                                                            |     | MCPMate Solution                               |
+| · | Pain Point                                                            | · | MCPMate Solution                               |
 | --- | --------------------------------------------------------------------- | --- | ---------------------------------------------- |
 | ❌   | The same MCP server needs to be configured repeatedly in each client  | ✅   | One proxy, one unified configuration           |
 | ❌   | Different work scenarios require frequent MCP configuration changes   | ✅   | Profile-based instant switching                |
