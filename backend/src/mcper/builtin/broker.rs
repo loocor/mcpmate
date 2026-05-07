@@ -26,9 +26,12 @@ use crate::system::paths::PathService;
 
 use super::{
     ClientBuiltinContext,
+    helpers::{ProfileCapabilityCounts, load_profile_capability_counts, load_profile_detail_components},
     names::{MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL},
     registry::BuiltinService,
 };
+use crate::common::profile::ProfileType;
+use crate::config::profile as profile_repo;
 
 /// Structured error response for UCAN tools, designed for LLM parsing and recovery.
 #[derive(Debug, Clone, Serialize)]
@@ -345,6 +348,24 @@ const UCAN_RELOAD_TTL: Duration = Duration::from_secs(2);
 
 static UCAN_PROMPT_REPO: Lazy<UcanPromptRepository> = Lazy::new(UcanPromptRepository::new);
 
+#[derive(Debug, Clone)]
+pub(crate) struct ProfileToolDescriptions {
+    pub(crate) get: String,
+    pub(crate) set: String,
+    pub(crate) add: String,
+    pub(crate) remove: String,
+}
+
+pub(crate) fn profile_tool_descriptions() -> ProfileToolDescriptions {
+    let config = UCAN_PROMPT_REPO.get_blocking();
+    ProfileToolDescriptions {
+        get: config.profile_get_description,
+        set: config.profile_set_description,
+        add: config.profile_add_description,
+        remove: config.profile_remove_description,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct CatalogToolSummary {
     capability_name: String,
@@ -396,6 +417,14 @@ struct UcanPromptConfig {
     workflow_hints: WorkflowHints,
     #[serde(default = "default_catalog_enrich_from_registry")]
     catalog_enrich_from_registry: bool,
+    #[serde(default = "default_profile_get_description")]
+    profile_get_description: String,
+    #[serde(default = "default_profile_set_description")]
+    profile_set_description: String,
+    #[serde(default = "default_profile_add_description")]
+    profile_add_description: String,
+    #[serde(default = "default_profile_remove_description")]
+    profile_remove_description: String,
 }
 
 fn default_catalog_enrich_from_registry() -> bool {
@@ -411,6 +440,22 @@ fn default_error_recovery_hint() -> String {
     "If a call fails, verify capability_name and capability_kind from catalog, inspect details with detail_level=full, then retry with corrected arguments.".to_string()
 }
 
+fn default_profile_get_description() -> String {
+    "MCPMATE PROFILE STATUS\nROLE: Show which profiles are active for this client.\nUSE_WHEN: Before modifying profiles, or when you need to understand the current selection.\nRETURNS: Current client mode, capability source, and active profile IDs.\nWORKFLOW: get -> (details) -> set/add/remove.\nRULES: Read-only; never changes state.\nExample: mcpmate_profile_get()".to_string()
+}
+
+fn default_profile_set_description() -> String {
+    "MCPMATE PROFILE SWITCH\nROLE: Replace the active profile selection with an exact list.\nUSE_WHEN: The user wants to switch to a different profile or a specific combination.\nRETURNS: The finalized profile selection after replacement.\nWORKFLOW: get -> details -> set. Only set profiles you have inspected.\nRULES: Requires profile_ids with at least one ID. Previous selection is fully replaced.\nExample: mcpmate_profile_set(profile_ids=[\"prof_abc123\"]) or mcpmate_profile_set(profile_ids=[\"prof_abc123\",\"prof_def456\"])".to_string()
+}
+
+fn default_profile_add_description() -> String {
+    "MCPMATE PROFILE EXTEND\nROLE: Add profiles to the active selection without removing existing ones.\nUSE_WHEN: The user wants to layer additional capabilities on top of the current set.\nRETURNS: The merged profile selection after addition.\nWORKFLOW: get -> details -> add. Duplicate IDs are ignored.\nRULES: Requires profile_ids with at least one ID. Existing selection is preserved.\nExample: mcpmate_profile_add(profile_ids=[\"prof_def456\"])".to_string()
+}
+
+fn default_profile_remove_description() -> String {
+    "MCPMATE PROFILE REDUCE\nROLE: Remove profiles from the active selection without deleting the profile definitions.\nUSE_WHEN: The user wants to drop specific profiles from the current working set.\nRETURNS: The remaining profile selection after removal.\nWORKFLOW: get -> remove. IDs not in the current selection are silently skipped.\nRULES: Requires profile_ids with at least one ID. Profile definitions are never deleted.\nExample: mcpmate_profile_remove(profile_ids=[\"prof_def456\"])".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct WorkflowHints {
     #[serde(default = "default_workflow_hints_tool")]
@@ -421,6 +466,8 @@ struct WorkflowHints {
     resource: Vec<String>,
     #[serde(default = "default_workflow_hints_resource_template")]
     resource_template: Vec<String>,
+    #[serde(default = "default_workflow_hints_profile")]
+    profile: Vec<String>,
 }
 
 impl Default for WorkflowHints {
@@ -430,6 +477,7 @@ impl Default for WorkflowHints {
             prompt: default_workflow_hints_prompt(),
             resource: default_workflow_hints_resource(),
             resource_template: default_workflow_hints_resource_template(),
+            profile: default_workflow_hints_profile(),
         }
     }
 }
@@ -440,6 +488,7 @@ impl WorkflowHints {
         self.prompt = normalize_string_list(std::mem::take(&mut self.prompt));
         self.resource = normalize_string_list(std::mem::take(&mut self.resource));
         self.resource_template = normalize_string_list(std::mem::take(&mut self.resource_template));
+        self.profile = normalize_string_list(std::mem::take(&mut self.profile));
     }
 }
 
@@ -471,6 +520,13 @@ fn default_workflow_hints_resource_template() -> Vec<String> {
     ]
 }
 
+fn default_workflow_hints_profile() -> Vec<String> {
+    vec![
+        "Profiles group related capabilities by scenario. Inspect with mcpmate_ucan_details(kind=profile), then activate via mcpmate_profile_set.".to_string(),
+        "After profile selection changes, exposed tools update automatically. Re-fetch tools/list if your client does not auto-refresh.".to_string(),
+    ]
+}
+
 /// Multi-factor sorting weights for catalog relevance ranking.
 /// Lower values = higher priority (sorted first).
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -491,6 +547,8 @@ struct KindWeights {
     resource: u32,
     #[serde(default = "default_kind_weight_resource_template")]
     resource_template: u32,
+    #[serde(default = "default_kind_weight_profile")]
+    profile: u32,
 }
 
 impl Default for KindWeights {
@@ -500,6 +558,7 @@ impl Default for KindWeights {
             prompt: default_kind_weight_prompt(),
             resource: default_kind_weight_resource(),
             resource_template: default_kind_weight_resource_template(),
+            profile: default_kind_weight_profile(),
         }
     }
 }
@@ -515,6 +574,9 @@ fn default_kind_weight_resource() -> u32 {
 }
 fn default_kind_weight_resource_template() -> u32 {
     3
+}
+fn default_kind_weight_profile() -> u32 {
+    0
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -686,6 +748,7 @@ enum UcanCapabilityKind {
     Prompt,
     Resource,
     ResourceTemplate,
+    Profile,
 }
 
 impl UcanCapabilityKind {
@@ -698,6 +761,7 @@ impl UcanCapabilityKind {
             UcanCapabilityKind::Prompt => weights.prompt,
             UcanCapabilityKind::Resource => weights.resource,
             UcanCapabilityKind::ResourceTemplate => weights.resource_template,
+            UcanCapabilityKind::Profile => weights.profile,
         }
     }
 }
@@ -1052,6 +1116,51 @@ impl BrokerService {
             }),
         );
 
+        // In Hosted mode with Profiles source, include profile entries in the catalog.
+        if context.config_mode.as_deref() != Some("unify")
+            && context.capability_source == crate::clients::models::CapabilitySource::Profiles
+        {
+            if let Ok(profiles) = profile_repo::get_all_profile(&self.database.pool).await {
+                for prof in profiles {
+                    if !matches!(prof.profile_type, ProfileType::Shared) {
+                        continue;
+                    }
+                    let Some(ref profile_id) = prof.id else { continue };
+                    let counts = load_profile_capability_counts(&self.database.pool, profile_id)
+                        .await
+                        .unwrap_or(ProfileCapabilityCounts {
+                            server_count: 0,
+                            tool_count: 0,
+                            prompt_count: 0,
+                            resource_count: 0,
+                        });
+                    let count_summary = format!(
+                        "{} servers, {} tools, {} prompts, {} resources",
+                        counts.server_count, counts.tool_count, counts.prompt_count, counts.resource_count
+                    );
+                    let summary_text = match prof.description.clone() {
+                        Some(description) if !description.trim().is_empty() => {
+                            format!("{} — {}", prof.name, description)
+                        }
+                        _ => format!("{} — {}", prof.name, count_summary),
+                    };
+                    summaries.push(CatalogToolSummary {
+                        capability_name: profile_id.clone(),
+                        capability_kind: UcanCapabilityKind::Profile,
+                        summary: Some(summary_text),
+                        action: "inspect_first",
+                        next_step: "details",
+                        server_id: format!("profile:{}", profile_id),
+                        server_name: prof.name.clone(),
+                        interaction_mode: "scope_managed",
+                        detail_hint: "Use mcpmate_ucan_details(kind=profile, capability_name=profile_id) to see all capabilities in this profile. Activate via mcpmate_profile_set(profile_ids=[profile_id]).",
+                        registry_enriched: false,
+                        registry_category: None,
+                    });
+                }
+            }
+        }
+
         let weights = &prompt_config.catalog_sort_weights;
         let pool_snapshot = self.connection_pool.lock().await.get_snapshot();
 
@@ -1092,6 +1201,7 @@ impl BrokerService {
                     UcanCapabilityKind::Prompt => "prompt",
                     UcanCapabilityKind::Resource => "resource",
                     UcanCapabilityKind::ResourceTemplate => "resource_template",
+                    UcanCapabilityKind::Profile => "profile",
                 };
                 allowed_kinds.contains(kind_str)
             });
@@ -1178,6 +1288,13 @@ impl BrokerService {
                 .into_iter()
                 .map(|entry| entry.resource_template.name.to_string())
                 .collect(),
+            UcanCapabilityKind::Profile => profile_repo::get_all_profile(&self.database.pool)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|p| matches!(p.profile_type, ProfileType::Shared))
+                .filter_map(|p| p.id.clone())
+                .collect(),
         };
         Ok(names)
     }
@@ -1195,6 +1312,7 @@ impl BrokerService {
             UcanCapabilityKind::Prompt => prompt_config.workflow_hints.prompt.clone(),
             UcanCapabilityKind::Resource => prompt_config.workflow_hints.resource.clone(),
             UcanCapabilityKind::ResourceTemplate => prompt_config.workflow_hints.resource_template.clone(),
+            UcanCapabilityKind::Profile => prompt_config.workflow_hints.profile.clone(),
         };
 
         let response = match capability_kind {
@@ -1322,6 +1440,75 @@ impl BrokerService {
                     }
                 }
             }
+            UcanCapabilityKind::Profile => {
+                let profiles = profile_repo::get_all_profile(&self.database.pool)
+                    .await
+                    .context("Failed to list profiles")?;
+                let profile = profiles.into_iter().find(|p| {
+                    matches!(p.profile_type, ProfileType::Shared)
+                        && p.id.as_deref().is_some_and(|profile_id| profile_id == capability_name)
+                });
+                match profile {
+                    Some(prof) => {
+                        let profile_id = prof.id.as_deref().unwrap_or_default();
+                        let detail_components = load_profile_detail_components(&self.database.pool, profile_id)
+                            .await
+                            .context("Failed to load profile detail components")?;
+                        let details = serde_json::json!({
+                            "id": profile_id,
+                            "name": prof.name,
+                            "description": prof.description,
+                            "is_active": prof.is_active,
+                            "profile_type": prof.profile_type.to_string(),
+                            "servers": detail_components.servers,
+                            "tools": detail_components.tools,
+                            "prompts": detail_components.prompts,
+                            "resources": detail_components.resources,
+                        });
+                        let detail_value = match detail_level {
+                            UcanDetailLevel::Summary => {
+                                serde_json::json!({
+                                    "id": profile_id,
+                                    "name": prof.name,
+                                    "description": prof.description,
+                                    "is_active": prof.is_active,
+                                    "server_count": detail_components.servers.len(),
+                                    "tool_count": detail_components.tools.len(),
+                                    "prompt_count": detail_components.prompts.len(),
+                                    "resource_count": detail_components.resources.len(),
+                                })
+                            }
+                            UcanDetailLevel::Full => details,
+                        };
+                        CapabilityDetailsResponse {
+                            capability_kind,
+                            capability_name: profile_id.to_string(),
+                            server_id: format!("profile:{}", profile_id),
+                            server_name: prof.name.clone(),
+                            detail_level,
+                            details: detail_value,
+                            workflow_hints,
+                            related_capabilities: Vec::new(),
+                            argument_tips: Vec::new(),
+                            call_requirements: CallRequirements {
+                                accepts_arguments: false,
+                                required_arguments: Vec::new(),
+                                call_ready_without_arguments: true,
+                            },
+                            error_recovery_hint:
+                                "Activate this profile via mcpmate_profile_set, then call exposed tools directly."
+                                    .to_string(),
+                        }
+                    }
+                    None => {
+                        let catalog_names = self.collect_capability_names_for_kind(context, capability_kind).await?;
+                        return Ok(
+                            UcanError::capability_not_found("profile", capability_name, &catalog_names)
+                                .to_call_tool_result(),
+                        );
+                    }
+                }
+            }
         };
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -1430,6 +1617,15 @@ impl BrokerService {
             UcanCapabilityKind::ResourceTemplate => {
                 Ok(UcanError::resource_template_not_invocable(capability_name).to_call_tool_result())
             }
+            UcanCapabilityKind::Profile => Ok(UcanError {
+                error_code: "profile_not_invocable".to_string(),
+                message: format!("Profile '{}' is not directly invocable.", capability_name),
+                recovery_hint: "Activate this profile via mcpmate_profile_set, then call the exposed tools directly."
+                    .to_string(),
+                alternatives: Vec::new(),
+                retry_eligible: false,
+            }
+            .to_call_tool_result()),
         }
     }
 
@@ -2212,7 +2408,7 @@ impl BuiltinService for BrokerService {
                                 "type": "array",
                                 "items": {
                                     "type": "string",
-                                    "enum": ["tool", "prompt", "resource", "resource_template"]
+                                    "enum": ["tool", "prompt", "resource", "resource_template", "profile"]
                                 },
                                 "description": "Filter by capability kind. Returns only matching kinds."
                             }
@@ -2233,7 +2429,7 @@ impl BuiltinService for BrokerService {
                         "properties": {
                             "capability_kind": {
                                 "type": "string",
-                                "enum": ["tool", "prompt", "resource", "resource_template"],
+                                "enum": ["tool", "prompt", "resource", "resource_template", "profile"],
                                 "description": "Capability kind returned by mcpmate_ucan_catalog"
                             },
                             "capability_name": {
@@ -2262,7 +2458,7 @@ impl BuiltinService for BrokerService {
                         "properties": {
                             "capability_kind": {
                                 "type": "string",
-                                "enum": ["tool", "prompt", "resource", "resource_template"],
+                                "enum": ["tool", "prompt", "resource", "resource_template", "profile"],
                                 "description": "Capability kind returned by mcpmate_ucan_catalog"
                             },
                             "capability_name": {
@@ -2389,9 +2585,9 @@ fn default_catalog_page_size() -> usize {
 
 fn default_ucan_prompt_config() -> UcanPromptConfig {
     UcanPromptConfig {
-        catalog_tool_description: "MCPMATE_UCAN_CATALOG\nROLE: Unified capability entry for MCPMate.\nUSE_WHEN: Before starting any task, call this first to find the most relevant capability.\nRETURNS: A paginated capability catalog with lightweight summaries.\nWORKFLOW: catalog -> details -> call.\nRULES: Use the current page first. If you still have not found a good match, request the next page instead of expanding everything at once.".to_string(),
-        details_tool_description: "MCPMATE_UCAN_DETAILS\nROLE: Explain how to use one capability selected from MCPMate's catalog.\nUSE_WHEN: After catalog, before call.\nRETURNS: Summary or full details for the selected capability.\nWORKFLOW: Use summary first for quick judgment. Use full only when you need complete metadata.\nRULES: Do not inspect unrelated capabilities in full.".to_string(),
-        call_tool_description: "MCPMATE_UCAN_CALL\nROLE: Execute one capability selected from MCPMate's catalog.\nUSE_WHEN: Only after you already know which capability to use.\nRETURNS: The execution result produced by the selected capability.\nWORKFLOW: catalog -> details -> call.\nRULES: Call only the capability you intentionally selected. Use details first when arguments or behavior are unclear.".to_string(),
+        catalog_tool_description: "MCPMATE_UCAN_CATALOG\nROLE: Unified capability entry for MCPMate.\nUSE_WHEN: Before starting any task, call this first to find the most relevant capability.\nRETURNS: A paginated capability catalog with lightweight summaries.\nWORKFLOW: catalog -> details -> call.\nRULES: Use the current page first. If you still have not found a good match, request the next page instead of expanding everything at once.\nExample: mcpmate_ucan_catalog(page=1, page_size=10) or mcpmate_ucan_catalog(page=1, page_size=10, kind_filter=[\"tool\"]) or mcpmate_ucan_catalog(page=1, page_size=10, search=\"github\")".to_string(),
+        details_tool_description: "MCPMATE_UCAN_DETAILS\nROLE: Explain how to use one capability selected from MCPMate's catalog.\nUSE_WHEN: After catalog, before call.\nRETURNS: Summary or full details for the selected capability.\nWORKFLOW: Use summary first for quick judgment. Use full only when you need complete metadata.\nRULES: Do not inspect unrelated capabilities in full.\nExample: mcpmate_ucan_details(capability_kind=\"tool\", capability_name=\"github_search\", detail_level=\"summary\")".to_string(),
+        call_tool_description: "MCPMATE_UCAN_CALL\nROLE: Execute one capability selected from MCPMate's catalog.\nUSE_WHEN: Only after you already know which capability to use.\nRETURNS: The execution result produced by the selected capability.\nWORKFLOW: catalog -> details -> call.\nRULES: Call only the capability you intentionally selected. Use details first when arguments or behavior are unclear.\nExample: mcpmate_ucan_call(capability_kind=\"tool\", capability_name=\"github_search\", arguments={\"query\":\"rust mcp\"})".to_string(),
         catalog_usage: "Before starting any task, call mcpmate_ucan_catalog first. Pick the most relevant capability from the current page. If the current page is not enough, request the next page instead of expanding everything at once. Then use mcpmate_ucan_details to inspect the selected capability, and use mcpmate_ucan_call only after you understand how to use it.".to_string(),
         catalog_stale_hint: default_catalog_stale_hint(),
         error_recovery_hint: default_error_recovery_hint(),
@@ -2413,6 +2609,10 @@ fn default_ucan_prompt_config() -> UcanPromptConfig {
         catalog_sort_weights: CatalogSortWeights::default(),
         workflow_hints: WorkflowHints::default(),
         catalog_enrich_from_registry: true,
+        profile_get_description: default_profile_get_description(),
+        profile_set_description: default_profile_set_description(),
+        profile_add_description: default_profile_add_description(),
+        profile_remove_description: default_profile_remove_description(),
     }
 }
 
@@ -2465,6 +2665,10 @@ fn normalize_ucan_prompt_config(mut config: UcanPromptConfig) -> UcanPromptConfi
     config.catalog_usage = normalize_multiline_text(&config.catalog_usage);
     config.catalog_stale_hint = normalize_multiline_text(&config.catalog_stale_hint);
     config.error_recovery_hint = normalize_multiline_text(&config.error_recovery_hint);
+    config.profile_get_description = normalize_multiline_text(&config.profile_get_description);
+    config.profile_set_description = normalize_multiline_text(&config.profile_set_description);
+    config.profile_add_description = normalize_multiline_text(&config.profile_add_description);
+    config.profile_remove_description = normalize_multiline_text(&config.profile_remove_description);
     config.catalog_format = normalize_string_list(config.catalog_format);
     config.workflow_hints.normalize();
     config
@@ -3488,6 +3692,7 @@ mod tests {
             prompt: 1,
             resource: 2,
             resource_template: 3,
+            profile: 0,
         };
 
         let tool_weight = super::UcanCapabilityKind::Tool.weight(&weights);
@@ -3564,6 +3769,7 @@ mod tests {
             prompt: 1,
             resource: 2,
             resource_template: 3,
+            profile: 0,
         };
 
         let tool_a = super::UcanCapabilityKind::Tool.weight(&weights);
@@ -3827,6 +4033,7 @@ mod tests {
                     UcanCapabilityKind::Prompt => "prompt",
                     UcanCapabilityKind::Resource => "resource",
                     UcanCapabilityKind::ResourceTemplate => "resource_template",
+                    UcanCapabilityKind::Profile => "profile",
                 };
                 allowed_kinds.contains(kind_str)
             })

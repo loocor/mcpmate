@@ -10,7 +10,7 @@ use crate::config::profile::basic::get_active_profile;
 use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
 use crate::core::profile::ProfileService;
 use crate::core::proxy::server::ClientContext;
-use crate::mcper::{PROFILE_MODE_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES};
+use crate::mcper::{HOSTED_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES};
 
 fn builtin_tool_surface_ids(
     config_mode: Option<&str>,
@@ -21,7 +21,7 @@ fn builtin_tool_surface_ids(
         Some("transparent") => Vec::new(),
         _ => {
             if capability_source == CapabilitySource::Profiles {
-                PROFILE_MODE_BUILTIN_TOOL_NAMES.to_vec()
+                HOSTED_BUILTIN_TOOL_NAMES.to_vec()
             } else {
                 Vec::new()
             }
