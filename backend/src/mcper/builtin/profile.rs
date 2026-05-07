@@ -21,10 +21,7 @@ use crate::{
 
 use crate::mcper::builtin::{
     helpers::{load_profile_capability_counts, load_profile_detail_components},
-    names::{
-        MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_DISABLE_TOOL,
-        MCPMATE_PROFILE_ENABLE_TOOL, MCPMATE_PROFILE_LIST_TOOL,
-    },
+    names::{MCPMATE_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_LIST_TOOL},
     registry::BuiltinService,
     types::{PromptDetail, ResourceDetail, ServerDetail, ToolDetail},
 };
@@ -123,135 +120,6 @@ impl ProfileService {
             serde_json::to_string_pretty(&preview).context("Failed to serialize response")?,
         )]))
     }
-
-    async fn profile_enable(
-        &self,
-        profile_id: String,
-    ) -> Result<CallToolResult> {
-        let profile = profile::get_profile(&self.database.pool, &profile_id)
-            .await
-            .context("Failed to get profile")?
-            .ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
-
-        if profile.is_active {
-            return Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "message": format!("Profile '{}' is already active", profile.name),
-                    "profile_id": profile_id,
-                    "profile_name": profile.name,
-                    "current_status": profile.is_active,
-                    "refresh_required": false,
-                }))
-                .context("Failed to serialize response")?,
-            )]));
-        }
-
-        profile::set_profile_active(&self.database.pool, &profile_id, true)
-            .await
-            .context("Failed to update profile status")?;
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&serde_json::json!({
-                "success": true,
-                "message": format!("Successfully enabled profile '{}'", profile.name),
-                "profile_id": profile_id,
-                "profile_name": profile.name,
-                "new_status": true,
-                "refresh_required": true,
-                "refresh_hint": "If your client does not refresh tools automatically after MCP notifications, re-fetch tools/list now.",
-            }))
-            .context("Failed to serialize response")?,
-        )]))
-    }
-
-    async fn profile_disable(
-        &self,
-        profile_id: String,
-    ) -> Result<CallToolResult> {
-        let profile = profile::get_profile(&self.database.pool, &profile_id)
-            .await
-            .context("Failed to get profile")?
-            .ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
-
-        if !profile.is_active {
-            return Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "success": false,
-                    "message": format!("Profile '{}' is already inactive", profile.name),
-                    "profile_id": profile_id,
-                    "profile_name": profile.name,
-                    "current_status": profile.is_active,
-                    "refresh_required": false,
-                }))
-                .context("Failed to serialize response")?,
-            )]));
-        }
-
-        profile::set_profile_active(&self.database.pool, &profile_id, false)
-            .await
-            .context("Failed to update profile status")?;
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&serde_json::json!({
-                "success": true,
-                "message": format!("Successfully disabled profile '{}'", profile.name),
-                "profile_id": profile_id,
-                "profile_name": profile.name,
-                "new_status": false,
-                "refresh_required": true,
-                "refresh_hint": "If your client does not refresh tools automatically after MCP notifications, re-fetch tools/list now.",
-            }))
-            .context("Failed to serialize response")?,
-        )]))
-    }
-
-    async fn profile_activate_only(
-        &self,
-        profile_id: String,
-    ) -> Result<CallToolResult> {
-        let target = profile::get_profile(&self.database.pool, &profile_id)
-            .await
-            .context("Failed to get profile")?
-            .ok_or_else(|| anyhow::anyhow!("Profile not found"))?;
-
-        let profiles = profile::get_all_profile(&self.database.pool)
-            .await
-            .context("Failed to list profiles")?;
-
-        for current in profiles {
-            let Some(current_id) = current.id.clone() else {
-                continue;
-            };
-
-            if current_id == profile_id || current.is_default || !current.is_active {
-                continue;
-            }
-
-            profile::set_profile_active(&self.database.pool, &current_id, false)
-                .await
-                .with_context(|| format!("Failed to disable profile '{}'", current.name))?;
-        }
-
-        if !target.is_active {
-            profile::set_profile_active(&self.database.pool, &profile_id, true)
-                .await
-                .context("Failed to activate profile")?;
-        }
-
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
-            serde_json::to_string_pretty(&serde_json::json!({
-                "success": true,
-                "message": format!("Switched active scene to profile '{}'", target.name),
-                "profile_id": profile_id,
-                "profile_name": target.name,
-                "exclusive": true,
-                "refresh_required": true,
-                "refresh_hint": "If your client does not refresh tools automatically after MCP notifications, re-fetch tools/list now.",
-            }))
-            .context("Failed to serialize response")?,
-        )]))
-    }
 }
 
 #[async_trait::async_trait]
@@ -295,63 +163,6 @@ impl BuiltinService for ProfileService {
                     .clone(),
                 ),
             ),
-            Tool::new(
-                MCPMATE_PROFILE_ENABLE_TOOL,
-                "Enable a profile. If the target profile is exclusive, other non-default profiles may be disabled by profile rules.",
-                std::sync::Arc::new(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "profile_id": {
-                                "type": "string",
-                                "description": "Profile ID to enable"
-                            }
-                        },
-                        "required": ["profile_id"]
-                    })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ),
-            ),
-            Tool::new(
-                MCPMATE_PROFILE_DISABLE_TOOL,
-                "Disable a profile and remove it from the active working set.",
-                std::sync::Arc::new(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "profile_id": {
-                                "type": "string",
-                                "description": "Profile ID to disable"
-                            }
-                        },
-                        "required": ["profile_id"]
-                    })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ),
-            ),
-            Tool::new(
-                MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL,
-                "Switch to a single shared scene by keeping only this profile active among non-default profiles.",
-                std::sync::Arc::new(
-                    serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "profile_id": {
-                                "type": "string",
-                                "description": "Profile ID to keep as the only active non-default profile"
-                            }
-                        },
-                        "required": ["profile_id"]
-                    })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                ),
-            ),
         ]
     }
 
@@ -365,18 +176,6 @@ impl BuiltinService for ProfileService {
                 let params = parse_profile_details_params(request)?;
                 self.profile_preview(params.profile_id).await
             }
-            MCPMATE_PROFILE_ENABLE_TOOL => {
-                let params = parse_profile_action_params(request, "Invalid parameters for profile_enable")?;
-                self.profile_enable(params.profile_id).await
-            }
-            MCPMATE_PROFILE_DISABLE_TOOL => {
-                let params = parse_profile_action_params(request, "Invalid parameters for profile_disable")?;
-                self.profile_disable(params.profile_id).await
-            }
-            MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL => {
-                let params = parse_profile_action_params(request, "Invalid parameters for profile_activate_only")?;
-                self.profile_activate_only(params.profile_id).await
-            }
             _ => Err(anyhow::anyhow!("Unknown tool: {}", request.name)),
         }
     }
@@ -387,22 +186,9 @@ struct ProfileDetailsParams {
     profile_id: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ProfileActionParams {
-    profile_id: String,
-}
-
 fn parse_profile_details_params(request: &CallToolRequestParams) -> Result<ProfileDetailsParams> {
     let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
     serde_json::from_value(args).context(format!("Invalid parameters for {MCPMATE_PROFILE_DETAILS_TOOL}"))
-}
-
-fn parse_profile_action_params(
-    request: &CallToolRequestParams,
-    error_message: &'static str,
-) -> Result<ProfileActionParams> {
-    let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-    serde_json::from_value(args).context(error_message)
 }
 
 #[derive(Debug, Serialize)]
