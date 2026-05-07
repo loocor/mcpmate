@@ -3,10 +3,10 @@ use crate::clients::models::CapabilitySource;
 use crate::core::capability::naming::{NamingKind, resolve_unique_name};
 use crate::mcper::builtin::ClientBuiltinContext;
 use crate::mcper::{
-    MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DETAILS_TOOL,
-    MCPMATE_PROFILE_DISABLE_TOOL, MCPMATE_PROFILE_ENABLE_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_SCOPE_ADD_TOOL,
-    MCPMATE_SCOPE_GET_TOOL, MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL, MCPMATE_UCAN_CALL_TOOL,
-    MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL, PROFILE_MODE_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES,
+    HOSTED_BUILTIN_TOOL_NAMES, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ADD_TOOL,
+    MCPMATE_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_GET_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_PROFILE_REMOVE_TOOL,
+    MCPMATE_PROFILE_SET_TOOL, MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL,
+    UNIFY_BUILTIN_TOOL_NAMES,
 };
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
@@ -22,7 +22,7 @@ fn builtin_tool_allowed(
     match config_mode {
         Some("unify") => UNIFY_BUILTIN_TOOL_NAMES.contains(&tool_name),
         Some("transparent") => false,
-        _ => capability_source == CapabilitySource::Profiles && PROFILE_MODE_BUILTIN_TOOL_NAMES.contains(&tool_name),
+        _ => capability_source == CapabilitySource::Profiles && HOSTED_BUILTIN_TOOL_NAMES.contains(&tool_name),
     }
 }
 
@@ -36,20 +36,12 @@ fn direct_managed_tool_call_allowed(
 fn client_aware_builtin_tool_requires_runtime_refresh(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        MCPMATE_PROFILE_ENABLE_TOOL
-            | MCPMATE_PROFILE_DISABLE_TOOL
-            | MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL
-            | MCPMATE_SCOPE_SET_TOOL
-            | MCPMATE_SCOPE_ADD_TOOL
-            | MCPMATE_SCOPE_REMOVE_TOOL
+        MCPMATE_PROFILE_SET_TOOL | MCPMATE_PROFILE_ADD_TOOL | MCPMATE_PROFILE_REMOVE_TOOL
     )
 }
 
-fn builtin_tool_requires_runtime_refresh(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        MCPMATE_PROFILE_ENABLE_TOOL | MCPMATE_PROFILE_DISABLE_TOOL | MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL
-    )
+fn builtin_tool_requires_runtime_refresh(_tool_name: &str) -> bool {
+    false
 }
 
 pub(super) async fn list_tools(
@@ -209,18 +201,14 @@ pub(super) async fn call_tool(
 
     let is_profile_tool = matches!(
         request.name.as_ref(),
-        MCPMATE_PROFILE_LIST_TOOL
-            | MCPMATE_PROFILE_DETAILS_TOOL
-            | MCPMATE_PROFILE_ENABLE_TOOL
-            | MCPMATE_PROFILE_DISABLE_TOOL
-            | MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL
+        MCPMATE_PROFILE_LIST_TOOL | MCPMATE_PROFILE_DETAILS_TOOL
     );
     let is_client_tool = matches!(
         request.name.as_ref(),
-        MCPMATE_SCOPE_GET_TOOL
-            | MCPMATE_SCOPE_SET_TOOL
-            | MCPMATE_SCOPE_ADD_TOOL
-            | MCPMATE_SCOPE_REMOVE_TOOL
+        MCPMATE_PROFILE_GET_TOOL
+            | MCPMATE_PROFILE_SET_TOOL
+            | MCPMATE_PROFILE_ADD_TOOL
+            | MCPMATE_PROFILE_REMOVE_TOOL
             | MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL
             | MCPMATE_UCAN_CATALOG_TOOL
             | MCPMATE_UCAN_DETAILS_TOOL
@@ -561,21 +549,24 @@ mod tests {
     use super::{builtin_tool_allowed, direct_managed_tool_call_allowed};
     use crate::clients::models::{CapabilitySource, UnifyDirectExposureConfig, UnifyDirectToolSurface, UnifyRouteMode};
     use crate::mcper::{
-        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DETAILS_TOOL,
-        MCPMATE_PROFILE_DISABLE_TOOL, MCPMATE_PROFILE_ENABLE_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_SCOPE_ADD_TOOL,
-        MCPMATE_SCOPE_GET_TOOL, MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL, MCPMATE_UCAN_CALL_TOOL,
-        MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL,
+        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ADD_TOOL, MCPMATE_PROFILE_DETAILS_TOOL,
+        MCPMATE_PROFILE_GET_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_PROFILE_REMOVE_TOOL, MCPMATE_PROFILE_SET_TOOL,
+        MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL,
     };
     use std::collections::HashSet;
 
     #[test]
-    fn hosted_profile_listing_tools_are_only_available_for_profiles_source() {
-        let other_tools = [MCPMATE_PROFILE_LIST_TOOL, MCPMATE_PROFILE_DETAILS_TOOL];
+    fn hosted_shared_discovery_tools_are_available_for_profiles_source() {
+        let shared_tools = [
+            MCPMATE_UCAN_CATALOG_TOOL,
+            MCPMATE_UCAN_DETAILS_TOOL,
+            MCPMATE_UCAN_CALL_TOOL,
+        ];
 
-        for tool in other_tools {
+        for tool in shared_tools {
             assert!(
                 builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
-                "{tool} should be available for Profiles"
+                "{tool} should be available for Profiles in hosted mode"
             );
             assert!(
                 !builtin_tool_allowed(None, CapabilitySource::Activated, tool),
@@ -606,31 +597,53 @@ mod tests {
     }
 
     #[test]
-    fn hosted_mode_does_not_expose_scope_get_or_custom_detail_tools() {
-        let hosted_only_denied = [MCPMATE_SCOPE_GET_TOOL, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL];
-
-        for tool in hosted_only_denied {
-            assert!(!builtin_tool_allowed(None, CapabilitySource::Activated, tool));
-            assert!(!builtin_tool_allowed(None, CapabilitySource::Profiles, tool));
-            assert!(!builtin_tool_allowed(None, CapabilitySource::Custom, tool));
-        }
+    fn hosted_mode_exposes_profile_get_for_profiles_source() {
+        assert!(!builtin_tool_allowed(
+            None,
+            CapabilitySource::Activated,
+            MCPMATE_PROFILE_GET_TOOL
+        ));
+        assert!(builtin_tool_allowed(
+            None,
+            CapabilitySource::Profiles,
+            MCPMATE_PROFILE_GET_TOOL
+        ));
+        assert!(!builtin_tool_allowed(
+            None,
+            CapabilitySource::Custom,
+            MCPMATE_PROFILE_GET_TOOL
+        ));
     }
 
     #[test]
-    fn profile_enablement_tools_are_not_exposed_in_hosted_or_transparent_modes() {
-        let profile_tools = [
-            MCPMATE_PROFILE_ENABLE_TOOL,
-            MCPMATE_PROFILE_DISABLE_TOOL,
-            MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL,
-        ];
+    fn hosted_mode_does_not_expose_custom_detail_tools() {
+        assert!(!builtin_tool_allowed(
+            None,
+            CapabilitySource::Activated,
+            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL
+        ));
+        assert!(!builtin_tool_allowed(
+            None,
+            CapabilitySource::Profiles,
+            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL
+        ));
+        assert!(!builtin_tool_allowed(
+            None,
+            CapabilitySource::Custom,
+            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL
+        ));
+    }
 
-        for tool in profile_tools {
-            assert!(!builtin_tool_allowed(None, CapabilitySource::Activated, tool));
+    #[test]
+    fn legacy_profile_list_and_details_are_not_exposed_in_any_mode() {
+        let legacy_tools = [MCPMATE_PROFILE_LIST_TOOL, MCPMATE_PROFILE_DETAILS_TOOL];
+
+        for tool in legacy_tools {
             assert!(!builtin_tool_allowed(None, CapabilitySource::Profiles, tool));
-            assert!(!builtin_tool_allowed(None, CapabilitySource::Custom, tool));
+            assert!(!builtin_tool_allowed(Some("unify"), CapabilitySource::Profiles, tool));
             assert!(!builtin_tool_allowed(
                 Some("transparent"),
-                CapabilitySource::Activated,
+                CapabilitySource::Profiles,
                 tool
             ));
         }
@@ -639,14 +652,15 @@ mod tests {
     #[test]
     fn transparent_mode_exposes_no_runtime_builtin_tools() {
         let transparent_denied = [
-            MCPMATE_PROFILE_LIST_TOOL,
-            MCPMATE_PROFILE_DETAILS_TOOL,
-            MCPMATE_SCOPE_SET_TOOL,
-            MCPMATE_SCOPE_ADD_TOOL,
-            MCPMATE_SCOPE_REMOVE_TOOL,
             MCPMATE_UCAN_CATALOG_TOOL,
             MCPMATE_UCAN_DETAILS_TOOL,
             MCPMATE_UCAN_CALL_TOOL,
+            MCPMATE_PROFILE_GET_TOOL,
+            MCPMATE_PROFILE_SET_TOOL,
+            MCPMATE_PROFILE_ADD_TOOL,
+            MCPMATE_PROFILE_REMOVE_TOOL,
+            MCPMATE_PROFILE_LIST_TOOL,
+            MCPMATE_PROFILE_DETAILS_TOOL,
         ];
 
         for tool in transparent_denied {
@@ -659,8 +673,8 @@ mod tests {
     }
 
     #[test]
-    fn hosted_mode_exposes_only_profile_range_adjustment_tools_for_profiles_source() {
-        let tool = MCPMATE_SCOPE_SET_TOOL;
+    fn hosted_mode_exposes_profile_set_only_for_profiles_source() {
+        let tool = MCPMATE_PROFILE_SET_TOOL;
 
         assert!(!builtin_tool_allowed(None, CapabilitySource::Activated, tool));
         assert!(builtin_tool_allowed(None, CapabilitySource::Profiles, tool));
@@ -670,9 +684,9 @@ mod tests {
     #[test]
     fn client_profiles_tools_are_only_available_for_profiles_source() {
         let profiles_tools = [
-            MCPMATE_SCOPE_SET_TOOL,
-            MCPMATE_SCOPE_ADD_TOOL,
-            MCPMATE_SCOPE_REMOVE_TOOL,
+            MCPMATE_PROFILE_SET_TOOL,
+            MCPMATE_PROFILE_ADD_TOOL,
+            MCPMATE_PROFILE_REMOVE_TOOL,
         ];
 
         for tool in profiles_tools {
@@ -711,51 +725,63 @@ mod tests {
 
     #[test]
     fn unify_mode_only_exposes_ucan_tools() {
-        assert!(builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_UCAN_CATALOG_TOOL
-        ));
-        assert!(builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_UCAN_DETAILS_TOOL
-        ));
-        assert!(builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_UCAN_CALL_TOOL
-        ));
-        assert!(!builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_SCOPE_SET_TOOL
-        ));
-        assert!(!builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_SCOPE_ADD_TOOL
-        ));
-        assert!(!builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_SCOPE_REMOVE_TOOL
-        ));
-        assert!(!builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_PROFILE_ENABLE_TOOL
-        ));
-        assert!(!builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Profiles,
-            MCPMATE_PROFILE_LIST_TOOL
-        ));
-        assert!(!builtin_tool_allowed(
-            Some("unify"),
-            CapabilitySource::Custom,
-            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL
-        ));
+        let unify_allowed = [
+            MCPMATE_UCAN_CATALOG_TOOL,
+            MCPMATE_UCAN_DETAILS_TOOL,
+            MCPMATE_UCAN_CALL_TOOL,
+        ];
+        for tool in unify_allowed {
+            assert!(
+                builtin_tool_allowed(Some("unify"), CapabilitySource::Profiles, tool),
+                "{tool} should be available in unify mode"
+            );
+        }
+
+        let unify_denied = [
+            MCPMATE_PROFILE_GET_TOOL,
+            MCPMATE_PROFILE_SET_TOOL,
+            MCPMATE_PROFILE_ADD_TOOL,
+            MCPMATE_PROFILE_REMOVE_TOOL,
+            MCPMATE_PROFILE_LIST_TOOL,
+            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL,
+        ];
+        for tool in unify_denied {
+            assert!(
+                !builtin_tool_allowed(Some("unify"), CapabilitySource::Profiles, tool),
+                "{tool} should NOT be available in unify mode"
+            );
+        }
+    }
+
+    #[test]
+    fn hosted_mode_exposes_shared_discovery_and_profile_tools() {
+        let hosted_allowed = [
+            MCPMATE_UCAN_CATALOG_TOOL,
+            MCPMATE_UCAN_DETAILS_TOOL,
+            MCPMATE_UCAN_CALL_TOOL,
+            MCPMATE_PROFILE_GET_TOOL,
+            MCPMATE_PROFILE_SET_TOOL,
+            MCPMATE_PROFILE_ADD_TOOL,
+            MCPMATE_PROFILE_REMOVE_TOOL,
+        ];
+        for tool in hosted_allowed {
+            assert!(
+                builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
+                "{tool} should be available in hosted mode with Profiles source"
+            );
+        }
+
+        let hosted_denied = [
+            MCPMATE_PROFILE_LIST_TOOL,
+            MCPMATE_PROFILE_DETAILS_TOOL,
+            MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL,
+        ];
+        for tool in hosted_denied {
+            assert!(
+                !builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
+                "{tool} should NOT be available in hosted mode"
+            );
+        }
     }
 
     #[test]

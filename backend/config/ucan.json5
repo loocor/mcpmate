@@ -1,10 +1,19 @@
 {
-  catalog_tool_description: "MCPMATE CAPABILITY ENTRYPOINT (ALWAYS START HERE).\nGoal: discover the best capability before any execution.\nDo: call mcpmate_ucan_catalog first, scan current page, then choose one candidate.\nNever skip to mcpmate_ucan_call without mcpmate_ucan_details.\nWorkflow: catalog → details → call.\nPagination: use small page_size, move page-by-page to reduce token cost and keep ranking stable.",
-  details_tool_description: "MCPMATE CAPABILITY INSPECTOR (STEP 2).\nGoal: understand exactly how one selected capability should be called.\nInput must come from catalog: capability_kind + capability_name.\nUse detail_level=summary first; switch to full only when argument construction is still ambiguous.\nOutput includes workflow_hints + call_requirements.\nWorkflow: after details is clear, continue to mcpmate_ucan_call.",
-  call_tool_description: "MCPMATE CAPABILITY EXECUTOR (STEP 3).\nGoal: execute one capability selected from catalog and verified by details.\nRequired: capability_kind + capability_name from catalog.\nArguments: provide arguments for tool/prompt; omit or use {} for resource.\nIf execution fails, return to details(detail_level=full), correct arguments, then retry.\nWorkflow: do not use call as discovery; use catalog and details first.",
-  catalog_stale_hint: "Catalog reflects currently enabled and reachable server capabilities. If server status changed, call mcpmate_ucan_catalog again before making a final selection.",
-  error_recovery_hint: "Recovery path: 1) verify capability_name + capability_kind from catalog, 2) inspect same capability via details(detail_level=full), 3) satisfy call_requirements.required_arguments, 4) retry call with corrected arguments.",
-  catalog_usage: "Recommended sequence: 1) mcpmate_ucan_catalog(page=1,page_size=10~20) 2) choose one candidate 3) mcpmate_ucan_details(detail_level=summary) 4) if needed, mcpmate_ucan_details(detail_level=full) 5) mcpmate_ucan_call. This sequence improves selection accuracy and first-call success.",
+  // --- Shared discovery tools (Unify + Hosted) ---
+  catalog_tool_description: "MCPMATE SURFACE DIRECTORY (ALWAYS START HERE).\nGoal: discover the current MCP surface exposed to this client before calling or selecting anything.\nDo: call mcpmate_ucan_catalog first, scan current page, then choose one surface item.\nNever skip to mcpmate_ucan_call without mcpmate_ucan_details.\nWorkflow: directory → details → call or select.\nPagination: use small page_size, move page-by-page to reduce token cost and keep ranking stable.\nExample: mcpmate_ucan_catalog(page=1, page_size=10) or mcpmate_ucan_catalog(page=1, page_size=10, kind_filter=[\"tool\"]) or mcpmate_ucan_catalog(page=1, page_size=10, search=\"github\")",
+  details_tool_description: "MCPMATE SURFACE INSPECTOR (STEP 2).\nGoal: understand exactly how one selected MCP surface item should be called or selected.\nInput must come from the surface directory: capability_kind + capability_name.\nUse detail_level=summary first; switch to full only when argument construction is still ambiguous.\nOutput includes workflow_hints + call_requirements.\nWorkflow: after details is clear, continue to mcpmate_ucan_call for callable items or mcpmate_profile_set for profiles.\nExample: mcpmate_ucan_details(capability_kind=\"tool\", capability_name=\"github_search\", detail_level=\"summary\")",
+  call_tool_description: "MCPMATE SURFACE CALLER (STEP 3).\nGoal: call one callable MCP surface item selected from the directory and verified by details.\nRequired: capability_kind + capability_name from the surface directory.\nArguments: provide arguments for tool/prompt; omit or use {} for resource. Profiles and resource templates are inspect/select guidance, not callable targets.\nIf execution fails, return to details(detail_level=full), correct arguments, then retry.\nWorkflow: do not use call as discovery; use directory and details first.\nExample: mcpmate_ucan_call(capability_kind=\"tool\", capability_name=\"github_search\", arguments={\"query\":\"rust mcp\"})",
+
+  // --- Hosted profile management tools ---
+  profile_get_description: "MCPMATE SURFACE PROFILE STATUS\nROLE: Show which profile bundles shape this client's MCP surface.\nUSE_WHEN: Before modifying profiles, or when you need to understand the current surface selection.\nRETURNS: Current client mode, capability source, and active profile IDs.\nWORKFLOW: get -> directory/details -> set/add/remove.\nRULES: Read-only; never changes state.\nExample: mcpmate_profile_get()",
+  profile_set_description: "MCPMATE SURFACE PROFILE SWITCH\nROLE: Replace the profile bundles that shape this client's MCP surface.\nUSE_WHEN: The user wants to switch to a different profile or a specific combination.\nRETURNS: The finalized profile selection after replacement.\nWORKFLOW: get -> directory(kind_filter=[\"profile\"]) -> details -> set. Only set profiles you have inspected.\nRULES: Requires profile_ids with at least one ID. Previous selection is fully replaced.\nExample: mcpmate_profile_set(profile_ids=[\"prof_abc123\"]) or mcpmate_profile_set(profile_ids=[\"prof_abc123\",\"prof_def456\"])",
+  profile_add_description: "MCPMATE SURFACE PROFILE EXTEND\nROLE: Add profile bundles to the active MCP surface without removing existing ones.\nUSE_WHEN: The user wants to layer additional surface items on top of the current set.\nRETURNS: The merged profile selection after addition.\nWORKFLOW: get -> directory(kind_filter=[\"profile\"]) -> details -> add. Duplicate IDs are ignored.\nRULES: Requires profile_ids with at least one ID. Existing selection is preserved.\nExample: mcpmate_profile_add(profile_ids=[\"prof_def456\"])",
+  profile_remove_description: "MCPMATE SURFACE PROFILE REDUCE\nROLE: Remove profile bundles from the active MCP surface without deleting profile definitions.\nUSE_WHEN: The user wants to drop specific profiles from the current working set.\nRETURNS: The remaining profile selection after removal.\nWORKFLOW: get -> remove. IDs not in the current selection are silently skipped.\nRULES: Requires profile_ids with at least one ID. Profile definitions are never deleted.\nExample: mcpmate_profile_remove(profile_ids=[\"prof_def456\"])",
+
+  // --- Catalog configuration ---
+  catalog_stale_hint: "Surface data reflects currently enabled and reachable server capabilities plus selectable profile bundles. If server status changed, call mcpmate_ucan_catalog again before making a final selection.",
+  error_recovery_hint: "Recovery path: 1) verify capability_name + capability_kind from the surface directory, 2) inspect the same surface item via details(detail_level=full), 3) satisfy call_requirements.required_arguments, 4) retry call with corrected arguments.",
+  catalog_usage: "Recommended sequence: 1) mcpmate_ucan_catalog(page=1,page_size=10~20) 2) choose one surface item 3) mcpmate_ucan_details(detail_level=summary) 4) if needed, mcpmate_ucan_details(detail_level=full) 5) call callable items or select profiles. This sequence improves selection accuracy and first-call success.",
   catalog_format: [
     "capability_name",
     "capability_kind",
@@ -20,27 +29,25 @@
   ],
   catalog_page_size_default: 20,
   catalog_page_size_max: 50,
-  // Enable registry metadata enrichment for catalog entries
-  // When true, catalog entries include registry_enriched and registry_category fields
   catalog_enrich_from_registry: true,
-  // Multi-factor sorting weights for catalog relevance ranking
-  // Lower values = higher priority (sorted first)
+
+  // --- Sort weights ---
   catalog_sort_weights: {
-    // Capability kind weights: tools first, then prompts, resources, resource_templates
     kind: {
+      profile: 0,
       tool: 0,
       prompt: 1,
       resource: 2,
       resource_template: 3,
     },
-    // Server health weights: ready servers first, then reconnecting, then other states
     health: {
       ready: 0,
       reconnecting: 1,
       other: 2,
     },
   },
-  // Workflow hints for each capability kind (shown in details response)
+
+  // --- Workflow hints per surface kind ---
   workflow_hints: {
     tool: [
       "Use mcpmate_ucan_details(detail_level=summary) first, then mcpmate_ucan_details(detail_level=full) only if needed.",
@@ -55,7 +62,11 @@
     ],
     resource_template: [
       "Templates are not directly invocable.",
-      "Use template output as URI guidance; call only concrete resources that appear in catalog.",
+      "Use template output as URI guidance; call only concrete resources that appear in the surface directory.",
+    ],
+    profile: [
+      "Profiles are selectable bundles that shape the MCP surface. Discover with mcpmate_ucan_catalog(kind_filter=[\"profile\"]), then inspect the selected surface item before activating via mcpmate_profile_set.",
+      "After profile selection changes, exposed tools update automatically. Re-fetch tools/list if your client does not auto-refresh.",
     ],
   },
 }

@@ -26,9 +26,13 @@ use crate::system::paths::PathService;
 
 use super::{
     ClientBuiltinContext,
+    helpers::{ProfileCapabilityCounts, load_profile_capability_counts, load_profile_detail_components},
     names::{MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL},
     registry::BuiltinService,
 };
+use crate::clients::models::CapabilitySource;
+use crate::common::profile::ProfileType;
+use crate::config::profile as profile_repo;
 
 /// Structured error response for UCAN tools, designed for LLM parsing and recovery.
 #[derive(Debug, Clone, Serialize)]
@@ -50,20 +54,20 @@ impl UcanError {
     pub fn capability_not_found(
         capability_kind: &str,
         capability_name: &str,
-        catalog_names: &[String],
+        surface_names: &[String],
     ) -> Self {
-        let alternatives = find_similar_names(capability_name, catalog_names, 3);
+        let alternatives = find_similar_names(capability_name, surface_names, 3);
         Self {
             error_code: "capability_not_found".to_string(),
             message: format!(
-                "{} '{}' is not available in the current catalog.",
+                "{} '{}' is not available in the current MCP surface.",
                 capitalize_kind(capability_kind),
                 capability_name
             ),
             recovery_hint: if alternatives.is_empty() {
-                "Use mcpmate_ucan_catalog to list available capabilities.".to_string()
+                "Use mcpmate_ucan_catalog to list available surface items.".to_string()
             } else {
-                "Check the 'alternatives' field for similar capability names, or use mcpmate_ucan_catalog to browse all available capabilities.".to_string()
+                "Check the 'alternatives' field for similar surface item names, or use mcpmate_ucan_catalog to browse the current MCP surface.".to_string()
             },
             alternatives,
             retry_eligible: false,
@@ -95,11 +99,11 @@ impl UcanError {
         Self {
             error_code: "visibility_denied".to_string(),
             message: format!(
-                "{} '{}' is not available in the current catalog.",
+                "{} '{}' is not available in the current MCP surface.",
                 capitalize_kind(capability_kind),
                 capability_name
             ),
-            recovery_hint: "Re-run mcpmate_ucan_catalog to refresh visibility, then choose a capability that appears in the latest catalog.".to_string(),
+            recovery_hint: "Re-run mcpmate_ucan_catalog to refresh visibility, then choose a surface item that appears in the latest directory.".to_string(),
             alternatives: Vec::new(),
             retry_eligible: false,
         }
@@ -113,7 +117,7 @@ impl UcanError {
         Self {
             error_code: "invalid_parameters".to_string(),
             message: format!("Invalid parameters for {}: {}", tool_name, details),
-            recovery_hint: "Check the tool schema for required parameters and their types. Use mcpmate_ucan_details to inspect capability schemas.".to_string(),
+            recovery_hint: "Check the tool schema for required parameters and their types. Use mcpmate_ucan_details to inspect surface item schemas.".to_string(),
             alternatives: Vec::new(),
             retry_eligible: false,
         }
@@ -133,7 +137,7 @@ impl UcanError {
                 capability_name,
                 missing_joined
             ),
-            recovery_hint: "Call mcpmate_ucan_details with detail_level=full for this capability, then retry mcpmate_ucan_call with all required arguments.".to_string(),
+            recovery_hint: "Call mcpmate_ucan_details with detail_level=full for this surface item, then retry mcpmate_ucan_call with all required arguments.".to_string(),
             alternatives: Vec::new(),
             retry_eligible: true,
         }
@@ -164,7 +168,7 @@ impl UcanError {
                 "Upstream server returned an error for {} '{}': {}",
                 capability_kind, capability_name, error_details
             ),
-            recovery_hint: "The upstream MCP server encountered an error. Check the server logs for details. Verify the capability is correctly implemented and the arguments are valid.".to_string(),
+            recovery_hint: "The upstream MCP server encountered an error. Check the server logs for details. Verify the selected surface item is correctly implemented and the arguments are valid.".to_string(),
             alternatives: Vec::new(),
             retry_eligible: false,
         }
@@ -198,7 +202,7 @@ impl UcanError {
                 "Resource template '{}' cannot be invoked directly.",
                 template_name
             ),
-            recovery_hint: "Use mcpmate_ucan_details to inspect the template and extract URI construction rules. Template-derived URIs are not directly invocable through mcpmate_ucan_call unless they appear in catalog as concrete resources.".to_string(),
+            recovery_hint: "Use mcpmate_ucan_details to inspect the template and extract URI construction rules. Template-derived URIs are not directly invocable through mcpmate_ucan_call unless they appear in the surface directory as concrete resources.".to_string(),
             alternatives: Vec::new(),
             retry_eligible: false,
         }
@@ -345,10 +349,28 @@ const UCAN_RELOAD_TTL: Duration = Duration::from_secs(2);
 
 static UCAN_PROMPT_REPO: Lazy<UcanPromptRepository> = Lazy::new(UcanPromptRepository::new);
 
+#[derive(Debug, Clone)]
+pub(crate) struct ProfileToolDescriptions {
+    pub(crate) get: String,
+    pub(crate) set: String,
+    pub(crate) add: String,
+    pub(crate) remove: String,
+}
+
+pub(crate) fn profile_tool_descriptions() -> ProfileToolDescriptions {
+    let config = UCAN_PROMPT_REPO.get_blocking();
+    ProfileToolDescriptions {
+        get: config.profile_get_description,
+        set: config.profile_set_description,
+        add: config.profile_add_description,
+        remove: config.profile_remove_description,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
-struct CatalogToolSummary {
+struct SurfaceDirectoryItem {
     capability_name: String,
-    capability_kind: UcanCapabilityKind,
+    capability_kind: SurfaceKind,
     summary: Option<String>,
     action: &'static str,
     next_step: &'static str,
@@ -363,7 +385,7 @@ struct CatalogToolSummary {
 }
 
 #[derive(Debug, Serialize)]
-struct CatalogPageResponse {
+struct SurfaceDirectoryResponse {
     format: Vec<String>,
     page: usize,
     page_size: usize,
@@ -374,7 +396,7 @@ struct CatalogPageResponse {
     usage: String,
     stale_hint: String,
     error_recovery_hint: String,
-    items: Vec<CatalogToolSummary>,
+    items: Vec<SurfaceDirectoryItem>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -396,6 +418,14 @@ struct UcanPromptConfig {
     workflow_hints: WorkflowHints,
     #[serde(default = "default_catalog_enrich_from_registry")]
     catalog_enrich_from_registry: bool,
+    #[serde(default = "default_profile_get_description")]
+    profile_get_description: String,
+    #[serde(default = "default_profile_set_description")]
+    profile_set_description: String,
+    #[serde(default = "default_profile_add_description")]
+    profile_add_description: String,
+    #[serde(default = "default_profile_remove_description")]
+    profile_remove_description: String,
 }
 
 fn default_catalog_enrich_from_registry() -> bool {
@@ -403,12 +433,28 @@ fn default_catalog_enrich_from_registry() -> bool {
 }
 
 fn default_catalog_stale_hint() -> String {
-    "Catalog data may be stale if server status changed recently. Re-run mcpmate_ucan_catalog before deciding."
+    "Surface data may be stale if server status changed recently. Re-run mcpmate_ucan_catalog before deciding."
         .to_string()
 }
 
 fn default_error_recovery_hint() -> String {
-    "If a call fails, verify capability_name and capability_kind from catalog, inspect details with detail_level=full, then retry with corrected arguments.".to_string()
+    "If a call fails, verify capability_name and capability_kind from the surface directory, inspect details with detail_level=full, then retry with corrected arguments.".to_string()
+}
+
+fn default_profile_get_description() -> String {
+    "MCPMATE SURFACE PROFILE STATUS\nROLE: Show which profile bundles shape this client's MCP surface.\nUSE_WHEN: Before modifying profiles, or when you need to understand the current surface selection.\nRETURNS: Current client mode, capability source, and active profile IDs.\nWORKFLOW: get -> directory/details -> set/add/remove.\nRULES: Read-only; never changes state.\nExample: mcpmate_profile_get()".to_string()
+}
+
+fn default_profile_set_description() -> String {
+    "MCPMATE SURFACE PROFILE SWITCH\nROLE: Replace the profile bundles that shape this client's MCP surface.\nUSE_WHEN: The user wants to switch to a different profile or a specific combination.\nRETURNS: The finalized profile selection after replacement.\nWORKFLOW: get -> directory(kind_filter=[\"profile\"]) -> details -> set. Only set profiles you have inspected.\nRULES: Requires profile_ids with at least one ID. Previous selection is fully replaced.\nExample: mcpmate_profile_set(profile_ids=[\"prof_abc123\"]) or mcpmate_profile_set(profile_ids=[\"prof_abc123\",\"prof_def456\"])".to_string()
+}
+
+fn default_profile_add_description() -> String {
+    "MCPMATE SURFACE PROFILE EXTEND\nROLE: Add profile bundles to the active MCP surface without removing existing ones.\nUSE_WHEN: The user wants to layer additional surface items on top of the current set.\nRETURNS: The merged profile selection after addition.\nWORKFLOW: get -> directory(kind_filter=[\"profile\"]) -> details -> add. Duplicate IDs are ignored.\nRULES: Requires profile_ids with at least one ID. Existing selection is preserved.\nExample: mcpmate_profile_add(profile_ids=[\"prof_def456\"])".to_string()
+}
+
+fn default_profile_remove_description() -> String {
+    "MCPMATE SURFACE PROFILE REDUCE\nROLE: Remove profile bundles from the active MCP surface without deleting profile definitions.\nUSE_WHEN: The user wants to drop specific profiles from the current working set.\nRETURNS: The remaining profile selection after removal.\nWORKFLOW: get -> remove. IDs not in the current selection are silently skipped.\nRULES: Requires profile_ids with at least one ID. Profile definitions are never deleted.\nExample: mcpmate_profile_remove(profile_ids=[\"prof_def456\"])".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -421,6 +467,8 @@ struct WorkflowHints {
     resource: Vec<String>,
     #[serde(default = "default_workflow_hints_resource_template")]
     resource_template: Vec<String>,
+    #[serde(default = "default_workflow_hints_profile")]
+    profile: Vec<String>,
 }
 
 impl Default for WorkflowHints {
@@ -430,6 +478,7 @@ impl Default for WorkflowHints {
             prompt: default_workflow_hints_prompt(),
             resource: default_workflow_hints_resource(),
             resource_template: default_workflow_hints_resource_template(),
+            profile: default_workflow_hints_profile(),
         }
     }
 }
@@ -440,6 +489,7 @@ impl WorkflowHints {
         self.prompt = normalize_string_list(std::mem::take(&mut self.prompt));
         self.resource = normalize_string_list(std::mem::take(&mut self.resource));
         self.resource_template = normalize_string_list(std::mem::take(&mut self.resource_template));
+        self.profile = normalize_string_list(std::mem::take(&mut self.profile));
     }
 }
 
@@ -467,7 +517,14 @@ fn default_workflow_hints_resource() -> Vec<String> {
 fn default_workflow_hints_resource_template() -> Vec<String> {
     vec![
         "Resource templates are not directly invocable.".to_string(),
-        "Use template output as guidance and call only concrete resources listed in catalog.".to_string(),
+        "Use template output as guidance and call only concrete resources listed in the surface directory.".to_string(),
+    ]
+}
+
+fn default_workflow_hints_profile() -> Vec<String> {
+    vec![
+        "Profiles are selectable bundles that shape the MCP surface. Discover with mcpmate_ucan_catalog(kind_filter=[\"profile\"]), then inspect the selected surface item before activating via mcpmate_profile_set.".to_string(),
+        "After profile selection changes, exposed tools update automatically. Re-fetch tools/list if your client does not auto-refresh.".to_string(),
     ]
 }
 
@@ -491,6 +548,8 @@ struct KindWeights {
     resource: u32,
     #[serde(default = "default_kind_weight_resource_template")]
     resource_template: u32,
+    #[serde(default = "default_kind_weight_profile")]
+    profile: u32,
 }
 
 impl Default for KindWeights {
@@ -500,6 +559,7 @@ impl Default for KindWeights {
             prompt: default_kind_weight_prompt(),
             resource: default_kind_weight_resource(),
             resource_template: default_kind_weight_resource_template(),
+            profile: default_kind_weight_profile(),
         }
     }
 }
@@ -515,6 +575,9 @@ fn default_kind_weight_resource() -> u32 {
 }
 fn default_kind_weight_resource_template() -> u32 {
     3
+}
+fn default_kind_weight_profile() -> u32 {
+    0
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -607,9 +670,9 @@ impl UcanPromptRepository {
 
 /// Related capability reference for cross-linking in details response.
 #[derive(Debug, Clone, Serialize)]
-struct RelatedCapability {
+struct RelatedSurfaceItem {
     capability_name: String,
-    capability_kind: UcanCapabilityKind,
+    capability_kind: SurfaceKind,
     summary: Option<String>,
 }
 
@@ -625,8 +688,8 @@ struct ArgumentTip {
 }
 
 #[derive(Debug, Serialize)]
-struct CapabilityDetailsResponse {
-    capability_kind: UcanCapabilityKind,
+struct SurfaceDetailsResponse {
+    capability_kind: SurfaceKind,
     capability_name: String,
     server_id: String,
     server_name: String,
@@ -635,7 +698,7 @@ struct CapabilityDetailsResponse {
     /// Workflow hints for LLM to understand how to use this capability.
     workflow_hints: Vec<String>,
     /// Related capabilities from the same server (max 5).
-    related_capabilities: Vec<RelatedCapability>,
+    related_capabilities: Vec<RelatedSurfaceItem>,
     /// Argument tips extracted from schema (for tools and prompts).
     argument_tips: Vec<ArgumentTip>,
     call_requirements: CallRequirements,
@@ -650,8 +713,8 @@ struct CallRequirements {
 }
 
 #[derive(Debug, Deserialize)]
-struct CapabilityLookupParams {
-    capability_kind: UcanCapabilityKind,
+struct SurfaceLookupParams {
+    capability_kind: SurfaceKind,
     capability_name: String,
     #[serde(default)]
     detail_level: UcanDetailLevel,
@@ -672,8 +735,8 @@ struct CatalogParams {
 }
 
 #[derive(Debug, Deserialize)]
-struct BrokerCapabilityCallParams {
-    capability_kind: UcanCapabilityKind,
+struct SurfaceCallParams {
+    capability_kind: SurfaceKind,
     capability_name: String,
     #[serde(default)]
     arguments: serde_json::Map<String, serde_json::Value>,
@@ -681,23 +744,25 @@ struct BrokerCapabilityCallParams {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
-enum UcanCapabilityKind {
+enum SurfaceKind {
     Tool,
     Prompt,
     Resource,
     ResourceTemplate,
+    Profile,
 }
 
-impl UcanCapabilityKind {
+impl SurfaceKind {
     fn weight(
         &self,
         weights: &KindWeights,
     ) -> u32 {
         match self {
-            UcanCapabilityKind::Tool => weights.tool,
-            UcanCapabilityKind::Prompt => weights.prompt,
-            UcanCapabilityKind::Resource => weights.resource,
-            UcanCapabilityKind::ResourceTemplate => weights.resource_template,
+            SurfaceKind::Tool => weights.tool,
+            SurfaceKind::Prompt => weights.prompt,
+            SurfaceKind::Resource => weights.resource,
+            SurfaceKind::ResourceTemplate => weights.resource_template,
+            SurfaceKind::Profile => weights.profile,
         }
     }
 }
@@ -827,6 +892,11 @@ fn retain_brokered_resource_templates(
             &entry.raw_uri_template,
         )
     });
+}
+
+fn profile_capabilities_visible(context: &ClientBuiltinContext) -> bool {
+    matches!(context.config_mode.as_deref(), None | Some("hosted"))
+        && context.capability_source == CapabilitySource::Profiles
 }
 
 impl BrokerService {
@@ -977,13 +1047,13 @@ impl BrokerService {
             enrichment_map.get(server_id).cloned().unwrap_or((false, None))
         };
 
-        let mut summaries: Vec<CatalogToolSummary> = tools
+        let mut summaries: Vec<SurfaceDirectoryItem> = tools
             .into_iter()
             .map(|entry| {
                 let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
-                CatalogToolSummary {
+                SurfaceDirectoryItem {
                     capability_name: entry.tool.name.to_string(),
-                    capability_kind: UcanCapabilityKind::Tool,
+                    capability_kind: SurfaceKind::Tool,
                     summary: compact_description(entry.tool.description.as_deref()),
                     action: "inspect_first",
                     next_step: "details",
@@ -1000,9 +1070,9 @@ impl BrokerService {
         summaries.extend(
             prompts.into_iter().map(|entry| {
                 let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
-                CatalogToolSummary {
+                SurfaceDirectoryItem {
                     capability_name: entry.prompt.name.to_string(),
-                    capability_kind: UcanCapabilityKind::Prompt,
+                    capability_kind: SurfaceKind::Prompt,
                     summary: compact_description(extract_description_from_value(&entry.prompt).as_deref()),
                     action: "inspect_first",
                     next_step: "details",
@@ -1018,9 +1088,9 @@ impl BrokerService {
 
         summaries.extend(resources.into_iter().map(|entry| {
             let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: entry.resource.uri.to_string(),
-                    capability_kind: UcanCapabilityKind::Resource,
+                    capability_kind: SurfaceKind::Resource,
                     summary: compact_description(extract_description_from_value(&entry.resource).as_deref()),
                     action: "inspect_first",
                     next_step: "details",
@@ -1036,9 +1106,9 @@ impl BrokerService {
         summaries.extend(
             resource_templates.into_iter().map(|entry| {
                 let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
-                CatalogToolSummary {
+                SurfaceDirectoryItem {
                     capability_name: entry.resource_template.name.to_string(),
-                    capability_kind: UcanCapabilityKind::ResourceTemplate,
+                    capability_kind: SurfaceKind::ResourceTemplate,
                     summary: compact_description(extract_description_from_value(&entry.resource_template).as_deref()),
                     action: "inspect_first",
                     next_step: "details",
@@ -1051,6 +1121,49 @@ impl BrokerService {
                 }
             }),
         );
+
+        // In Hosted mode with Profiles source, include profile entries in the catalog.
+        if profile_capabilities_visible(context) {
+            if let Ok(profiles) = profile_repo::get_all_profile(&self.database.pool).await {
+                for prof in profiles {
+                    if !matches!(prof.profile_type, ProfileType::Shared) {
+                        continue;
+                    }
+                    let Some(ref profile_id) = prof.id else { continue };
+                    let counts = load_profile_capability_counts(&self.database.pool, profile_id)
+                        .await
+                        .unwrap_or(ProfileCapabilityCounts {
+                            server_count: 0,
+                            tool_count: 0,
+                            prompt_count: 0,
+                            resource_count: 0,
+                        });
+                    let count_summary = format!(
+                        "{} servers, {} tools, {} prompts, {} resources",
+                        counts.server_count, counts.tool_count, counts.prompt_count, counts.resource_count
+                    );
+                    let summary_text = match prof.description.clone() {
+                        Some(description) if !description.trim().is_empty() => {
+                            format!("{} — {}", prof.name, description)
+                        }
+                        _ => format!("{} — {}", prof.name, count_summary),
+                    };
+                    summaries.push(SurfaceDirectoryItem {
+                        capability_name: profile_id.clone(),
+                        capability_kind: SurfaceKind::Profile,
+                        summary: Some(summary_text),
+                        action: "inspect_first",
+                        next_step: "details",
+                        server_id: format!("profile:{}", profile_id),
+                        server_name: prof.name.clone(),
+                        interaction_mode: "scope_managed",
+                        detail_hint: "Use this surface item's capability_kind and capability_name with mcpmate_ucan_details to see all surface items in this profile. Activate via mcpmate_profile_set(profile_ids=[profile_id]).",
+                        registry_enriched: false,
+                        registry_category: None,
+                    });
+                }
+            }
+        }
 
         let weights = &prompt_config.catalog_sort_weights;
         let pool_snapshot = self.connection_pool.lock().await.get_snapshot();
@@ -1088,10 +1201,11 @@ impl BrokerService {
             let allowed_kinds: HashSet<&str> = kinds.iter().map(|s| s.as_str()).collect();
             summaries.retain(|item| {
                 let kind_str = match item.capability_kind {
-                    UcanCapabilityKind::Tool => "tool",
-                    UcanCapabilityKind::Prompt => "prompt",
-                    UcanCapabilityKind::Resource => "resource",
-                    UcanCapabilityKind::ResourceTemplate => "resource_template",
+                    SurfaceKind::Tool => "tool",
+                    SurfaceKind::Prompt => "prompt",
+                    SurfaceKind::Resource => "resource",
+                    SurfaceKind::ResourceTemplate => "resource_template",
+                    SurfaceKind::Profile => "profile",
                 };
                 allowed_kinds.contains(kind_str)
             });
@@ -1113,7 +1227,7 @@ impl BrokerService {
         } else {
             Vec::new()
         };
-        let response = CatalogPageResponse {
+        let response = SurfaceDirectoryResponse {
             format: if prompt_config.catalog_format.is_empty() {
                 vec![
                     "capability_name".to_string(),
@@ -1148,36 +1262,49 @@ impl BrokerService {
         )]))
     }
 
-    async fn collect_capability_names_for_kind(
+    async fn collect_surface_names_for_kind(
         &self,
         context: &ClientBuiltinContext,
-        kind: UcanCapabilityKind,
+        kind: SurfaceKind,
     ) -> Result<Vec<String>> {
         let names = match kind {
-            UcanCapabilityKind::Tool => self
+            SurfaceKind::Tool => self
                 .visible_tools(context)
                 .await?
                 .into_iter()
                 .map(|entry| entry.tool.name.to_string())
                 .collect(),
-            UcanCapabilityKind::Prompt => self
+            SurfaceKind::Prompt => self
                 .visible_prompts(context)
                 .await?
                 .into_iter()
                 .map(|entry| entry.prompt.name.to_string())
                 .collect(),
-            UcanCapabilityKind::Resource => self
+            SurfaceKind::Resource => self
                 .visible_resources(context)
                 .await?
                 .into_iter()
                 .map(|entry| entry.resource.uri.to_string())
                 .collect(),
-            UcanCapabilityKind::ResourceTemplate => self
+            SurfaceKind::ResourceTemplate => self
                 .visible_resource_templates(context)
                 .await?
                 .into_iter()
                 .map(|entry| entry.resource_template.name.to_string())
                 .collect(),
+            SurfaceKind::Profile => {
+                if !profile_capabilities_visible(context) {
+                    Vec::new()
+                } else {
+                    profile_repo::get_all_profile(&self.database.pool)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|p| matches!(p.profile_type, ProfileType::Shared))
+                        .filter_map(|p| p.id.clone())
+                        .collect()
+                }
+            }
         };
         Ok(names)
     }
@@ -1185,26 +1312,27 @@ impl BrokerService {
     async fn tool_details(
         &self,
         context: &ClientBuiltinContext,
-        capability_kind: UcanCapabilityKind,
+        capability_kind: SurfaceKind,
         capability_name: &str,
         detail_level: UcanDetailLevel,
     ) -> Result<CallToolResult> {
         let prompt_config = self.ucan_prompt_config().await;
         let workflow_hints = match capability_kind {
-            UcanCapabilityKind::Tool => prompt_config.workflow_hints.tool.clone(),
-            UcanCapabilityKind::Prompt => prompt_config.workflow_hints.prompt.clone(),
-            UcanCapabilityKind::Resource => prompt_config.workflow_hints.resource.clone(),
-            UcanCapabilityKind::ResourceTemplate => prompt_config.workflow_hints.resource_template.clone(),
+            SurfaceKind::Tool => prompt_config.workflow_hints.tool.clone(),
+            SurfaceKind::Prompt => prompt_config.workflow_hints.prompt.clone(),
+            SurfaceKind::Resource => prompt_config.workflow_hints.resource.clone(),
+            SurfaceKind::ResourceTemplate => prompt_config.workflow_hints.resource_template.clone(),
+            SurfaceKind::Profile => prompt_config.workflow_hints.profile.clone(),
         };
 
         let response = match capability_kind {
-            UcanCapabilityKind::Tool => match self.find_visible_tool(context, capability_name).await? {
+            SurfaceKind::Tool => match self.find_visible_tool(context, capability_name).await? {
                 Some(tool) => {
                     let related = self
-                        .find_related_capabilities(context, &tool.server_id, capability_name, capability_kind)
+                        .find_related_surface_items(context, &tool.server_id, capability_name, capability_kind)
                         .await;
                     let argument_tips = extract_argument_tips_from_tool(&tool.tool);
-                    CapabilityDetailsResponse {
+                    SurfaceDetailsResponse {
                         capability_kind,
                         capability_name: tool.tool.name.to_string(),
                         server_id: tool.server_id,
@@ -1219,19 +1347,19 @@ impl BrokerService {
                     }
                 }
                 None => {
-                    let catalog_names = self.collect_capability_names_for_kind(context, capability_kind).await?;
+                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
                     return Ok(
-                        UcanError::capability_not_found("tool", capability_name, &catalog_names).to_call_tool_result()
+                        UcanError::capability_not_found("tool", capability_name, &surface_names).to_call_tool_result()
                     );
                 }
             },
-            UcanCapabilityKind::Prompt => match self.find_visible_prompt(context, capability_name).await? {
+            SurfaceKind::Prompt => match self.find_visible_prompt(context, capability_name).await? {
                 Some(prompt) => {
                     let related = self
-                        .find_related_capabilities(context, &prompt.server_id, capability_name, capability_kind)
+                        .find_related_surface_items(context, &prompt.server_id, capability_name, capability_kind)
                         .await;
                     let argument_tips = extract_argument_tips_from_prompt(&prompt.prompt);
-                    CapabilityDetailsResponse {
+                    SurfaceDetailsResponse {
                         capability_kind,
                         capability_name: prompt.prompt.name.to_string(),
                         server_id: prompt.server_id,
@@ -1247,19 +1375,19 @@ impl BrokerService {
                     }
                 }
                 None => {
-                    let catalog_names = self.collect_capability_names_for_kind(context, capability_kind).await?;
+                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
                     return Ok(
-                        UcanError::capability_not_found("prompt", capability_name, &catalog_names)
+                        UcanError::capability_not_found("prompt", capability_name, &surface_names)
                             .to_call_tool_result(),
                     );
                 }
             },
-            UcanCapabilityKind::Resource => match self.find_visible_resource(context, capability_name).await? {
+            SurfaceKind::Resource => match self.find_visible_resource(context, capability_name).await? {
                 Some(resource) => {
                     let related = self
-                        .find_related_capabilities(context, &resource.server_id, capability_name, capability_kind)
+                        .find_related_surface_items(context, &resource.server_id, capability_name, capability_kind)
                         .await;
-                    CapabilityDetailsResponse {
+                    SurfaceDetailsResponse {
                         capability_kind,
                         capability_name: resource.resource.uri.to_string(),
                         server_id: resource.server_id,
@@ -1279,20 +1407,20 @@ impl BrokerService {
                     }
                 }
                 None => {
-                    let catalog_names = self.collect_capability_names_for_kind(context, capability_kind).await?;
+                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
                     return Ok(
-                        UcanError::capability_not_found("resource", capability_name, &catalog_names)
+                        UcanError::capability_not_found("resource", capability_name, &surface_names)
                             .to_call_tool_result(),
                     );
                 }
             },
-            UcanCapabilityKind::ResourceTemplate => {
+            SurfaceKind::ResourceTemplate => {
                 match self.find_visible_resource_template(context, capability_name).await? {
                     Some(template) => {
                         let related = self
-                            .find_related_capabilities(context, &template.server_id, capability_name, capability_kind)
+                            .find_related_surface_items(context, &template.server_id, capability_name, capability_kind)
                             .await;
-                        CapabilityDetailsResponse {
+                        SurfaceDetailsResponse {
                             capability_kind,
                             capability_name: template.resource_template.name.to_string(),
                             server_id: template.server_id,
@@ -1312,13 +1440,90 @@ impl BrokerService {
                         }
                     }
                     None => {
-                        let catalog_names = self.collect_capability_names_for_kind(context, capability_kind).await?;
+                        let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
                         return Ok(UcanError::capability_not_found(
                             "resource_template",
                             capability_name,
-                            &catalog_names,
+                            &surface_names,
                         )
                         .to_call_tool_result());
+                    }
+                }
+            }
+            SurfaceKind::Profile => {
+                if !profile_capabilities_visible(context) {
+                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
+                    return Ok(
+                        UcanError::capability_not_found("profile", capability_name, &surface_names)
+                            .to_call_tool_result(),
+                    );
+                }
+
+                let profiles = profile_repo::get_all_profile(&self.database.pool)
+                    .await
+                    .context("Failed to list profiles")?;
+                let profile = profiles.into_iter().find(|p| {
+                    matches!(p.profile_type, ProfileType::Shared)
+                        && p.id.as_deref().is_some_and(|profile_id| profile_id == capability_name)
+                });
+                match profile {
+                    Some(prof) => {
+                        let profile_id = prof.id.as_deref().unwrap_or_default();
+                        let detail_components = load_profile_detail_components(&self.database.pool, profile_id)
+                            .await
+                            .context("Failed to load profile detail components")?;
+                        let details = serde_json::json!({
+                            "id": profile_id,
+                            "name": prof.name,
+                            "description": prof.description,
+                            "is_active": prof.is_active,
+                            "profile_type": prof.profile_type.to_string(),
+                            "servers": detail_components.servers,
+                            "tools": detail_components.tools,
+                            "prompts": detail_components.prompts,
+                            "resources": detail_components.resources,
+                        });
+                        let detail_value = match detail_level {
+                            UcanDetailLevel::Summary => {
+                                serde_json::json!({
+                                    "id": profile_id,
+                                    "name": prof.name,
+                                    "description": prof.description,
+                                    "is_active": prof.is_active,
+                                    "server_count": detail_components.servers.len(),
+                                    "tool_count": detail_components.tools.len(),
+                                    "prompt_count": detail_components.prompts.len(),
+                                    "resource_count": detail_components.resources.len(),
+                                })
+                            }
+                            UcanDetailLevel::Full => details,
+                        };
+                        SurfaceDetailsResponse {
+                            capability_kind,
+                            capability_name: profile_id.to_string(),
+                            server_id: format!("profile:{}", profile_id),
+                            server_name: prof.name.clone(),
+                            detail_level,
+                            details: detail_value,
+                            workflow_hints,
+                            related_capabilities: Vec::new(),
+                            argument_tips: Vec::new(),
+                            call_requirements: CallRequirements {
+                                accepts_arguments: false,
+                                required_arguments: Vec::new(),
+                                call_ready_without_arguments: true,
+                            },
+                            error_recovery_hint:
+                                "Activate this profile via mcpmate_profile_set, then call exposed tools directly."
+                                    .to_string(),
+                        }
+                    }
+                    None => {
+                        let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
+                        return Ok(
+                            UcanError::capability_not_found("profile", capability_name, &surface_names)
+                                .to_call_tool_result(),
+                        );
                     }
                 }
             }
@@ -1329,22 +1534,22 @@ impl BrokerService {
         )]))
     }
 
-    async fn find_related_capabilities(
+    async fn find_related_surface_items(
         &self,
         context: &ClientBuiltinContext,
         server_id: &str,
         exclude_name: &str,
-        exclude_kind: UcanCapabilityKind,
-    ) -> Vec<RelatedCapability> {
+        exclude_kind: SurfaceKind,
+    ) -> Vec<RelatedSurfaceItem> {
         let mut related = Vec::new();
 
-        if exclude_kind != UcanCapabilityKind::Tool {
+        if exclude_kind != SurfaceKind::Tool {
             if let Ok(tools) = self.visible_tools(context).await {
                 for entry in tools.iter().take(50) {
                     if entry.server_id == server_id && entry.tool.name.as_ref() != exclude_name {
-                        related.push(RelatedCapability {
+                        related.push(RelatedSurfaceItem {
                             capability_name: entry.tool.name.to_string(),
-                            capability_kind: UcanCapabilityKind::Tool,
+                            capability_kind: SurfaceKind::Tool,
                             summary: compact_description(entry.tool.description.as_deref()),
                         });
                         if related.len() >= 5 {
@@ -1355,13 +1560,13 @@ impl BrokerService {
             }
         }
 
-        if related.len() < 5 && exclude_kind != UcanCapabilityKind::Prompt {
+        if related.len() < 5 && exclude_kind != SurfaceKind::Prompt {
             if let Ok(prompts) = self.visible_prompts(context).await {
                 for entry in prompts.iter().take(50) {
                     if entry.server_id == server_id && entry.prompt.name.as_str() != exclude_name {
-                        related.push(RelatedCapability {
+                        related.push(RelatedSurfaceItem {
                             capability_name: entry.prompt.name.to_string(),
-                            capability_kind: UcanCapabilityKind::Prompt,
+                            capability_kind: SurfaceKind::Prompt,
                             summary: compact_description(extract_description_from_value(&entry.prompt).as_deref()),
                         });
                         if related.len() >= 5 {
@@ -1372,13 +1577,13 @@ impl BrokerService {
             }
         }
 
-        if related.len() < 5 && exclude_kind != UcanCapabilityKind::Resource {
+        if related.len() < 5 && exclude_kind != SurfaceKind::Resource {
             if let Ok(resources) = self.visible_resources(context).await {
                 for entry in resources.iter().take(50) {
                     if entry.server_id == server_id && entry.resource.uri.as_str() != exclude_name {
-                        related.push(RelatedCapability {
+                        related.push(RelatedSurfaceItem {
                             capability_name: entry.resource.uri.to_string(),
-                            capability_kind: UcanCapabilityKind::Resource,
+                            capability_kind: SurfaceKind::Resource,
                             summary: compact_description(extract_description_from_value(&entry.resource).as_deref()),
                         });
                         if related.len() >= 5 {
@@ -1389,13 +1594,13 @@ impl BrokerService {
             }
         }
 
-        if related.len() < 5 && exclude_kind != UcanCapabilityKind::ResourceTemplate {
+        if related.len() < 5 && exclude_kind != SurfaceKind::ResourceTemplate {
             if let Ok(templates) = self.visible_resource_templates(context).await {
                 for entry in templates.iter().take(50) {
                     if entry.server_id == server_id && entry.resource_template.name.as_str() != exclude_name {
-                        related.push(RelatedCapability {
+                        related.push(RelatedSurfaceItem {
                             capability_name: entry.resource_template.name.to_string(),
-                            capability_kind: UcanCapabilityKind::ResourceTemplate,
+                            capability_kind: SurfaceKind::ResourceTemplate,
                             summary: compact_description(
                                 extract_description_from_value(&entry.resource_template).as_deref(),
                             ),
@@ -1414,21 +1619,41 @@ impl BrokerService {
     async fn broker_tool_call(
         &self,
         context: &ClientBuiltinContext,
-        capability_kind: UcanCapabilityKind,
+        capability_kind: SurfaceKind,
         capability_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<CallToolResult> {
         match capability_kind {
-            UcanCapabilityKind::Tool => self.broker_tool_call_inner(context, capability_name, arguments).await,
-            UcanCapabilityKind::Prompt => self.broker_prompt_call(context, capability_name, arguments).await,
-            UcanCapabilityKind::Resource => {
+            SurfaceKind::Tool => self.broker_tool_call_inner(context, capability_name, arguments).await,
+            SurfaceKind::Prompt => self.broker_prompt_call(context, capability_name, arguments).await,
+            SurfaceKind::Resource => {
                 if !arguments.is_empty() {
                     return Ok(UcanError::resource_arguments_not_supported(capability_name).to_call_tool_result());
                 }
                 self.broker_resource_read(context, capability_name).await
             }
-            UcanCapabilityKind::ResourceTemplate => {
+            SurfaceKind::ResourceTemplate => {
                 Ok(UcanError::resource_template_not_invocable(capability_name).to_call_tool_result())
+            }
+            SurfaceKind::Profile => {
+                if !profile_capabilities_visible(context) {
+                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
+                    return Ok(
+                        UcanError::capability_not_found("profile", capability_name, &surface_names)
+                            .to_call_tool_result(),
+                    );
+                }
+
+                Ok(UcanError {
+                    error_code: "profile_not_invocable".to_string(),
+                    message: format!("Profile '{}' is not directly invocable.", capability_name),
+                    recovery_hint:
+                        "Activate this profile via mcpmate_profile_set, then call the exposed tools directly."
+                            .to_string(),
+                    alternatives: Vec::new(),
+                    retry_eligible: false,
+                }
+                .to_call_tool_result())
             }
         }
     }
@@ -2196,7 +2421,7 @@ impl BuiltinService for BrokerService {
                             "page": {
                                 "type": "integer",
                                 "minimum": 1,
-                                "description": "Catalog page number. Start with 1."
+                                "description": "Surface directory page number. Start with 1."
                             },
                             "page_size": {
                                 "type": "integer",
@@ -2206,15 +2431,15 @@ impl BuiltinService for BrokerService {
                             },
                             "search": {
                                 "type": "string",
-                                "description": "Case-insensitive substring search in capability_name and summary fields."
+                                "description": "Case-insensitive substring search in surface item name and summary fields."
                             },
                             "kind_filter": {
                                 "type": "array",
                                 "items": {
                                     "type": "string",
-                                    "enum": ["tool", "prompt", "resource", "resource_template"]
+                                    "enum": ["tool", "prompt", "resource", "resource_template", "profile"]
                                 },
-                                "description": "Filter by capability kind. Returns only matching kinds."
+                                "description": "Filter by surface kind. Returns only matching kinds."
                             }
                         },
                         "required": []
@@ -2233,17 +2458,17 @@ impl BuiltinService for BrokerService {
                         "properties": {
                             "capability_kind": {
                                 "type": "string",
-                                "enum": ["tool", "prompt", "resource", "resource_template"],
-                                "description": "Capability kind returned by mcpmate_ucan_catalog"
+                                "enum": ["tool", "prompt", "resource", "resource_template", "profile"],
+                                "description": "Surface kind returned by mcpmate_ucan_catalog"
                             },
                             "capability_name": {
                                 "type": "string",
-                                "description": "Capability name returned by mcpmate_ucan_catalog"
+                                "description": "Surface item name returned by mcpmate_ucan_catalog"
                             },
                             "detail_level": {
                                 "type": "string",
                                 "enum": ["summary", "full"],
-                                "description": "Use summary first. Use full only when summary is not enough for safe execution."
+                                "description": "Use summary first. Use full only when summary is not enough for safe calling or selection."
                             }
                         },
                         "required": ["capability_kind", "capability_name"]
@@ -2262,16 +2487,16 @@ impl BuiltinService for BrokerService {
                         "properties": {
                             "capability_kind": {
                                 "type": "string",
-                                "enum": ["tool", "prompt", "resource", "resource_template"],
-                                "description": "Capability kind returned by mcpmate_ucan_catalog"
+                                "enum": ["tool", "prompt", "resource", "resource_template", "profile"],
+                                "description": "Surface kind returned by mcpmate_ucan_catalog"
                             },
                             "capability_name": {
                                 "type": "string",
-                                "description": "Capability name returned by mcpmate_ucan_catalog"
+                                "description": "Surface item name returned by mcpmate_ucan_catalog"
                             },
                             "arguments": {
                                 "type": "object",
-                                "description": "Arguments for tool/prompt capabilities. Omit or pass {} for resources."
+                                "description": "Arguments for tool/prompt surface items. Omit or pass {} for resources."
                             }
                         },
                         "required": ["capability_kind", "capability_name"]
@@ -2325,7 +2550,7 @@ impl BuiltinService for BrokerService {
             }
             MCPMATE_UCAN_DETAILS_TOOL => {
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                match serde_json::from_value::<CapabilityLookupParams>(args) {
+                match serde_json::from_value::<SurfaceLookupParams>(args) {
                     Ok(params) => {
                         self.tool_details(
                             context,
@@ -2343,7 +2568,7 @@ impl BuiltinService for BrokerService {
             }
             MCPMATE_UCAN_CALL_TOOL => {
                 let args = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
-                match serde_json::from_value::<BrokerCapabilityCallParams>(args) {
+                match serde_json::from_value::<SurfaceCallParams>(args) {
                     Ok(params) => {
                         self.broker_tool_call(
                             context,
@@ -2389,10 +2614,10 @@ fn default_catalog_page_size() -> usize {
 
 fn default_ucan_prompt_config() -> UcanPromptConfig {
     UcanPromptConfig {
-        catalog_tool_description: "MCPMATE_UCAN_CATALOG\nROLE: Unified capability entry for MCPMate.\nUSE_WHEN: Before starting any task, call this first to find the most relevant capability.\nRETURNS: A paginated capability catalog with lightweight summaries.\nWORKFLOW: catalog -> details -> call.\nRULES: Use the current page first. If you still have not found a good match, request the next page instead of expanding everything at once.".to_string(),
-        details_tool_description: "MCPMATE_UCAN_DETAILS\nROLE: Explain how to use one capability selected from MCPMate's catalog.\nUSE_WHEN: After catalog, before call.\nRETURNS: Summary or full details for the selected capability.\nWORKFLOW: Use summary first for quick judgment. Use full only when you need complete metadata.\nRULES: Do not inspect unrelated capabilities in full.".to_string(),
-        call_tool_description: "MCPMATE_UCAN_CALL\nROLE: Execute one capability selected from MCPMate's catalog.\nUSE_WHEN: Only after you already know which capability to use.\nRETURNS: The execution result produced by the selected capability.\nWORKFLOW: catalog -> details -> call.\nRULES: Call only the capability you intentionally selected. Use details first when arguments or behavior are unclear.".to_string(),
-        catalog_usage: "Before starting any task, call mcpmate_ucan_catalog first. Pick the most relevant capability from the current page. If the current page is not enough, request the next page instead of expanding everything at once. Then use mcpmate_ucan_details to inspect the selected capability, and use mcpmate_ucan_call only after you understand how to use it.".to_string(),
+        catalog_tool_description: "MCPMATE SURFACE DIRECTORY\nROLE: Discover the current MCP surface exposed to this client.\nUSE_WHEN: Before starting any task, call this first to find the most relevant surface item.\nRETURNS: A paginated surface directory with lightweight summaries.\nWORKFLOW: directory -> details -> call or select.\nRULES: Use the current page first. If you still have not found a good match, request the next page instead of expanding everything at once.\nExample: mcpmate_ucan_catalog(page=1, page_size=10) or mcpmate_ucan_catalog(page=1, page_size=10, kind_filter=[\"tool\"]) or mcpmate_ucan_catalog(page=1, page_size=10, search=\"github\")".to_string(),
+        details_tool_description: "MCPMATE SURFACE INSPECTOR\nROLE: Explain how to use one surface item selected from MCPMate's surface directory.\nUSE_WHEN: After directory, before call or profile selection.\nRETURNS: Summary or full details for the selected surface item.\nWORKFLOW: Use summary first for quick judgment. Use full only when you need complete metadata.\nRULES: Do not inspect unrelated surface items in full.\nExample: mcpmate_ucan_details(capability_kind=\"tool\", capability_name=\"github_search\", detail_level=\"summary\")".to_string(),
+        call_tool_description: "MCPMATE SURFACE CALLER\nROLE: Call one callable MCP surface item selected from MCPMate's surface directory.\nUSE_WHEN: Only after you already know which surface item to use.\nRETURNS: The execution result produced by the selected surface item.\nWORKFLOW: directory -> details -> call.\nRULES: Call only tool, prompt, or resource items you intentionally selected. Use details first when arguments or behavior are unclear.\nExample: mcpmate_ucan_call(capability_kind=\"tool\", capability_name=\"github_search\", arguments={\"query\":\"rust mcp\"})".to_string(),
+        catalog_usage: "Before starting any task, call mcpmate_ucan_catalog first. Pick the most relevant surface item from the current page. If the current page is not enough, request the next page instead of expanding everything at once. Then use mcpmate_ucan_details to inspect the selected surface item, and use mcpmate_ucan_call only after you understand how to use it.".to_string(),
         catalog_stale_hint: default_catalog_stale_hint(),
         error_recovery_hint: default_error_recovery_hint(),
         catalog_format: vec![
@@ -2413,6 +2638,10 @@ fn default_ucan_prompt_config() -> UcanPromptConfig {
         catalog_sort_weights: CatalogSortWeights::default(),
         workflow_hints: WorkflowHints::default(),
         catalog_enrich_from_registry: true,
+        profile_get_description: default_profile_get_description(),
+        profile_set_description: default_profile_set_description(),
+        profile_add_description: default_profile_add_description(),
+        profile_remove_description: default_profile_remove_description(),
     }
 }
 
@@ -2465,6 +2694,10 @@ fn normalize_ucan_prompt_config(mut config: UcanPromptConfig) -> UcanPromptConfi
     config.catalog_usage = normalize_multiline_text(&config.catalog_usage);
     config.catalog_stale_hint = normalize_multiline_text(&config.catalog_stale_hint);
     config.error_recovery_hint = normalize_multiline_text(&config.error_recovery_hint);
+    config.profile_get_description = normalize_multiline_text(&config.profile_get_description);
+    config.profile_set_description = normalize_multiline_text(&config.profile_set_description);
+    config.profile_add_description = normalize_multiline_text(&config.profile_add_description);
+    config.profile_remove_description = normalize_multiline_text(&config.profile_remove_description);
     config.catalog_format = normalize_string_list(config.catalog_format);
     config.workflow_hints.normalize();
     config
@@ -2687,8 +2920,9 @@ mod tests {
     use super::{
         ClientBuiltinContext, UcanDetailLevel, UcanError, UcanPromptRepository, VisiblePromptEntry,
         VisibleResourceEntry, VisibleResourceTemplateEntry, VisibleToolEntry, capitalize_kind, compact_description,
-        extract_description_from_value, find_similar_names, levenshtein_distance, retain_brokered_prompts,
-        retain_brokered_resource_templates, retain_brokered_resources, retain_brokered_tools, tool_details_value,
+        extract_description_from_value, find_similar_names, levenshtein_distance, profile_capabilities_visible,
+        retain_brokered_prompts, retain_brokered_resource_templates, retain_brokered_resources, retain_brokered_tools,
+        tool_details_value,
     };
     use crate::clients::models::{
         CapabilitySource, UnifyDirectExposureConfig, UnifyDirectPromptSurface, UnifyDirectResourceSurface,
@@ -2701,6 +2935,49 @@ mod tests {
     use tempfile::tempdir;
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    fn test_client_context(
+        config_mode: Option<&str>,
+        capability_source: CapabilitySource,
+    ) -> ClientBuiltinContext {
+        ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: None,
+            config_mode: config_mode.map(str::to_string),
+            capability_source,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: None,
+        }
+    }
+
+    #[test]
+    fn profile_capabilities_are_visible_only_in_hosted_profiles_mode() {
+        assert!(profile_capabilities_visible(&test_client_context(
+            None,
+            CapabilitySource::Profiles
+        )));
+        assert!(profile_capabilities_visible(&test_client_context(
+            Some("hosted"),
+            CapabilitySource::Profiles,
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            Some("unify"),
+            CapabilitySource::Profiles,
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            Some("transparent"),
+            CapabilitySource::Profiles,
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            None,
+            CapabilitySource::Activated
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            None,
+            CapabilitySource::Custom
+        )));
+    }
 
     #[test]
     fn compact_description_keeps_first_non_empty_line() {
@@ -2802,12 +3079,12 @@ mod tests {
 
     #[test]
     fn test_error_capability_not_found_includes_alternatives() {
-        let catalog_names = vec![
+        let surface_names = vec![
             super::MCPMATE_UCAN_CATALOG_TOOL.to_string(),
             super::MCPMATE_UCAN_DETAILS_TOOL.to_string(),
             super::MCPMATE_UCAN_CALL_TOOL.to_string(),
         ];
-        let error = UcanError::capability_not_found("tool", "mcpmate_ucan_catlog", &catalog_names);
+        let error = UcanError::capability_not_found("tool", "mcpmate_ucan_catlog", &surface_names);
 
         assert_eq!(error.error_code, "capability_not_found");
         assert!(error.message.contains("Tool"));
@@ -2824,8 +3101,8 @@ mod tests {
 
     #[test]
     fn test_error_capability_not_found_empty_catalog() {
-        let catalog_names: Vec<String> = vec![];
-        let error = UcanError::capability_not_found("prompt", "unknown_prompt", &catalog_names);
+        let surface_names: Vec<String> = vec![];
+        let error = UcanError::capability_not_found("prompt", "unknown_prompt", &surface_names);
 
         assert_eq!(error.error_code, "capability_not_found");
         assert!(error.alternatives.is_empty());
@@ -3488,12 +3765,13 @@ mod tests {
             prompt: 1,
             resource: 2,
             resource_template: 3,
+            profile: 0,
         };
 
-        let tool_weight = super::UcanCapabilityKind::Tool.weight(&weights);
-        let prompt_weight = super::UcanCapabilityKind::Prompt.weight(&weights);
-        let resource_weight = super::UcanCapabilityKind::Resource.weight(&weights);
-        let template_weight = super::UcanCapabilityKind::ResourceTemplate.weight(&weights);
+        let tool_weight = super::SurfaceKind::Tool.weight(&weights);
+        let prompt_weight = super::SurfaceKind::Prompt.weight(&weights);
+        let resource_weight = super::SurfaceKind::Resource.weight(&weights);
+        let template_weight = super::SurfaceKind::ResourceTemplate.weight(&weights);
 
         assert!(
             tool_weight < prompt_weight,
@@ -3564,10 +3842,11 @@ mod tests {
             prompt: 1,
             resource: 2,
             resource_template: 3,
+            profile: 0,
         };
 
-        let tool_a = super::UcanCapabilityKind::Tool.weight(&weights);
-        let tool_b = super::UcanCapabilityKind::Tool.weight(&weights);
+        let tool_a = super::SurfaceKind::Tool.weight(&weights);
+        let tool_b = super::SurfaceKind::Tool.weight(&weights);
 
         assert_eq!(tool_a, tool_b, "same capability kinds should have equal weights");
     }
@@ -3641,12 +3920,12 @@ mod tests {
 
     #[test]
     fn test_catalog_search_filter_logic() {
-        use super::{CatalogToolSummary, UcanCapabilityKind};
+        use super::{SurfaceDirectoryItem, SurfaceKind};
 
         let summaries = [
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "read_file".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: Some("Read file contents".to_string()),
                 action: "inspect_first",
                 next_step: "details",
@@ -3657,9 +3936,9 @@ mod tests {
                 registry_enriched: false,
                 registry_category: None,
             },
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "write_file".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: Some("Write content to file".to_string()),
                 action: "inspect_first",
                 next_step: "details",
@@ -3670,9 +3949,9 @@ mod tests {
                 registry_enriched: false,
                 registry_category: None,
             },
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "list_directory".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: Some("List directory contents".to_string()),
                 action: "inspect_first",
                 next_step: "details",
@@ -3707,12 +3986,12 @@ mod tests {
 
     #[test]
     fn test_catalog_search_filter_by_summary() {
-        use super::{CatalogToolSummary, UcanCapabilityKind};
+        use super::{SurfaceDirectoryItem, SurfaceKind};
 
         let summaries = [
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "execute_command".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: Some("Run shell commands in terminal".to_string()),
                 action: "inspect_first",
                 next_step: "details",
@@ -3723,9 +4002,9 @@ mod tests {
                 registry_enriched: false,
                 registry_category: None,
             },
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "get_weather".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: Some("Fetch weather data from API".to_string()),
                 action: "inspect_first",
                 next_step: "details",
@@ -3758,13 +4037,13 @@ mod tests {
 
     #[test]
     fn test_catalog_kind_filter_logic() {
-        use super::{CatalogToolSummary, UcanCapabilityKind};
+        use super::{SurfaceDirectoryItem, SurfaceKind};
         use std::collections::HashSet;
 
         let summaries = [
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "tool_one".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: None,
                 action: "inspect_first",
                 next_step: "details",
@@ -3775,9 +4054,9 @@ mod tests {
                 registry_enriched: false,
                 registry_category: None,
             },
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "prompt_one".to_string(),
-                capability_kind: UcanCapabilityKind::Prompt,
+                capability_kind: SurfaceKind::Prompt,
                 summary: None,
                 action: "inspect_first",
                 next_step: "details",
@@ -3788,9 +4067,9 @@ mod tests {
                 registry_enriched: false,
                 registry_category: None,
             },
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "resource_one".to_string(),
-                capability_kind: UcanCapabilityKind::Resource,
+                capability_kind: SurfaceKind::Resource,
                 summary: None,
                 action: "inspect_first",
                 next_step: "details",
@@ -3801,9 +4080,9 @@ mod tests {
                 registry_enriched: false,
                 registry_category: None,
             },
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "template_one".to_string(),
-                capability_kind: UcanCapabilityKind::ResourceTemplate,
+                capability_kind: SurfaceKind::ResourceTemplate,
                 summary: None,
                 action: "inspect_first",
                 next_step: "details",
@@ -3823,36 +4102,33 @@ mod tests {
             .iter()
             .filter(|item| {
                 let kind_str = match item.capability_kind {
-                    UcanCapabilityKind::Tool => "tool",
-                    UcanCapabilityKind::Prompt => "prompt",
-                    UcanCapabilityKind::Resource => "resource",
-                    UcanCapabilityKind::ResourceTemplate => "resource_template",
+                    SurfaceKind::Tool => "tool",
+                    SurfaceKind::Prompt => "prompt",
+                    SurfaceKind::Resource => "resource",
+                    SurfaceKind::ResourceTemplate => "resource_template",
+                    SurfaceKind::Profile => "profile",
                 };
                 allowed_kinds.contains(kind_str)
             })
             .collect();
 
         assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().any(|s| matches!(s.capability_kind, SurfaceKind::Tool)));
         assert!(
             filtered
                 .iter()
-                .any(|s| matches!(s.capability_kind, UcanCapabilityKind::Tool))
-        );
-        assert!(
-            filtered
-                .iter()
-                .any(|s| matches!(s.capability_kind, UcanCapabilityKind::Resource))
+                .any(|s| matches!(s.capability_kind, SurfaceKind::Resource))
         );
     }
 
     #[test]
     fn test_catalog_search_empty_returns_all() {
-        use super::{CatalogToolSummary, UcanCapabilityKind};
+        use super::{SurfaceDirectoryItem, SurfaceKind};
 
         let summaries = [
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "tool_a".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: Some("Tool A".to_string()),
                 action: "inspect_first",
                 next_step: "details",
@@ -3863,9 +4139,9 @@ mod tests {
                 registry_enriched: false,
                 registry_category: None,
             },
-            CatalogToolSummary {
+            SurfaceDirectoryItem {
                 capability_name: "tool_b".to_string(),
-                capability_kind: UcanCapabilityKind::Tool,
+                capability_kind: SurfaceKind::Tool,
                 summary: Some("Tool B".to_string()),
                 action: "inspect_first",
                 next_step: "details",
@@ -3902,11 +4178,11 @@ mod tests {
 
     #[test]
     fn test_catalog_search_case_insensitive() {
-        use super::{CatalogToolSummary, UcanCapabilityKind};
+        use super::{SurfaceDirectoryItem, SurfaceKind};
 
-        let summaries = [CatalogToolSummary {
+        let summaries = [SurfaceDirectoryItem {
             capability_name: "Read_File".to_string(),
-            capability_kind: UcanCapabilityKind::Tool,
+            capability_kind: SurfaceKind::Tool,
             summary: Some("READ FILE CONTENTS".to_string()),
             action: "inspect_first",
             next_step: "details",
@@ -3975,11 +4251,11 @@ mod tests {
 
     #[test]
     fn test_details_includes_related_capabilities() {
-        use super::{RelatedCapability, UcanCapabilityKind};
+        use super::{RelatedSurfaceItem, SurfaceKind};
 
-        let related = RelatedCapability {
+        let related = RelatedSurfaceItem {
             capability_name: "related_tool".to_string(),
-            capability_kind: UcanCapabilityKind::Tool,
+            capability_kind: SurfaceKind::Tool,
             summary: Some("A related tool".to_string()),
         };
 
@@ -4181,11 +4457,11 @@ mod tests {
 
     #[test]
     fn test_catalog_enrichment_fields_in_summary() {
-        use super::{CatalogToolSummary, UcanCapabilityKind};
+        use super::{SurfaceDirectoryItem, SurfaceKind};
 
-        let summary_with_enrichment = CatalogToolSummary {
+        let summary_with_enrichment = SurfaceDirectoryItem {
             capability_name: "registry_tool".to_string(),
-            capability_kind: UcanCapabilityKind::Tool,
+            capability_kind: SurfaceKind::Tool,
             summary: Some("A tool from registry".to_string()),
             action: "inspect_first",
             next_step: "details",
@@ -4203,9 +4479,9 @@ mod tests {
             Some("filesystem".to_string())
         );
 
-        let summary_without_enrichment = CatalogToolSummary {
+        let summary_without_enrichment = SurfaceDirectoryItem {
             capability_name: "local_tool".to_string(),
-            capability_kind: UcanCapabilityKind::Tool,
+            capability_kind: SurfaceKind::Tool,
             summary: Some("A local tool".to_string()),
             action: "inspect_first",
             next_step: "details",

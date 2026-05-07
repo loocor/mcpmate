@@ -13,13 +13,8 @@ use serde::Serialize;
 
 use crate::clients::models::CapabilitySource;
 use crate::mcper::{
-    MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_LIST_TOOL,
-    MCPMATE_SCOPE_ADD_TOOL, MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL,
-};
-#[cfg(test)]
-use crate::mcper::{
-    MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL, MCPMATE_PROFILE_DISABLE_TOOL, MCPMATE_PROFILE_ENABLE_TOOL,
-    MCPMATE_SCOPE_GET_TOOL,
+    MCPMATE_PROFILE_ADD_TOOL, MCPMATE_PROFILE_GET_TOOL, MCPMATE_PROFILE_REMOVE_TOOL, MCPMATE_PROFILE_SET_TOOL,
+    MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL,
 };
 
 /// Result of builtin overhead calculation.
@@ -169,15 +164,15 @@ pub fn estimate_resource_template_tokens(template: &ResourceTemplate) -> u32 {
 ///
 /// # Arguments
 /// * `capability_source` - The capability source mode.
-/// * `has_custom_profile` - Whether a custom profile exists (only relevant for Profiles mode).
+/// * `_has_custom_profile` - Kept for API compatibility; current runtime builtins are source-gated.
 ///
 /// # Returns
 /// `BuiltinOverhead` with token count, tool count, and mode name.
 pub fn calculate_builtin_overhead(
     capability_source: &CapabilitySource,
-    has_custom_profile: bool,
+    _has_custom_profile: bool,
 ) -> BuiltinOverhead {
-    let tools = create_builtin_tools_for_mode(capability_source, has_custom_profile);
+    let tools = create_builtin_tools_for_mode(capability_source);
     let tokens: u32 = tools.iter().map(estimate_tool_tokens).sum();
     let tool_count = tools.len() as u32;
 
@@ -189,35 +184,40 @@ pub fn calculate_builtin_overhead(
 }
 
 /// Create builtin tools for a given capability source mode.
-fn create_builtin_tools_for_mode(
-    capability_source: &CapabilitySource,
-    has_custom_profile: bool,
-) -> Vec<Tool> {
+fn create_builtin_tools_for_mode(capability_source: &CapabilitySource) -> Vec<Tool> {
     match capability_source {
         CapabilitySource::Activated => Vec::new(),
         CapabilitySource::Profiles => vec![
-            create_profile_list_tool(),
-            create_profile_preview_tool(),
-            create_scope_set_tool(),
-            create_scope_add_tool(),
-            create_scope_remove_tool(),
+            create_ucan_catalog_tool(),
+            create_ucan_details_tool(),
+            create_ucan_call_tool(),
+            create_profile_get_tool(),
+            create_profile_set_tool(),
+            create_profile_add_tool(),
+            create_profile_remove_tool(),
         ],
-        CapabilitySource::Custom => has_custom_profile
-            .then_some(vec![create_client_custom_profile_details_tool()])
-            .unwrap_or_default(),
+        CapabilitySource::Custom => Vec::new(),
     }
 }
 
 // --- Builtin tool definitions ---
 
-fn create_profile_list_tool() -> Tool {
+fn create_ucan_catalog_tool() -> Tool {
     Tool::new(
-        MCPMATE_PROFILE_LIST_TOOL,
-        "List profiles with capability counts",
+        MCPMATE_UCAN_CATALOG_TOOL,
+        "MCPMATE SURFACE DIRECTORY. Discover the current MCP surface before calling or selecting anything.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "page": { "type": "integer", "minimum": 1 },
+                    "page_size": { "type": "integer", "minimum": 1, "maximum": 50 },
+                    "search": { "type": "string" },
+                    "kind_filter": {
+                        "type": "array",
+                        "items": { "type": "string", "enum": ["tool", "prompt", "resource", "resource_template", "profile"] }
+                    }
+                },
                 "required": []
             })
             .as_object()
@@ -227,20 +227,19 @@ fn create_profile_list_tool() -> Tool {
     )
 }
 
-fn create_profile_preview_tool() -> Tool {
+fn create_ucan_details_tool() -> Tool {
     Tool::new(
-        MCPMATE_PROFILE_DETAILS_TOOL,
-        "Preview a profile with lightweight capability details for one reusable scene.",
+        MCPMATE_UCAN_DETAILS_TOOL,
+        "MCPMATE SURFACE INSPECTOR. Inspect one MCP surface item before calling or selecting it.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "profile_id": {
-                        "type": "string",
-                        "description": "Profile ID to inspect"
-                    }
+                    "capability_kind": { "type": "string", "enum": ["tool", "prompt", "resource", "resource_template", "profile"] },
+                    "capability_name": { "type": "string" },
+                    "detail_level": { "type": "string", "enum": ["summary", "full"] }
                 },
-                "required": ["profile_id"]
+                "required": ["capability_kind", "capability_name"]
             })
             .as_object()
             .unwrap()
@@ -249,21 +248,19 @@ fn create_profile_preview_tool() -> Tool {
     )
 }
 
-#[cfg(test)]
-fn create_profile_enable_tool() -> Tool {
+fn create_ucan_call_tool() -> Tool {
     Tool::new(
-        MCPMATE_PROFILE_ENABLE_TOOL,
-        "Enable a profile. If the target profile is exclusive, other non-default profiles may be disabled by profile rules.",
+        MCPMATE_UCAN_CALL_TOOL,
+        "MCPMATE SURFACE CALLER. Call one callable MCP surface item selected from the directory and verified by details.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "profile_id": {
-                        "type": "string",
-                        "description": "Profile ID to enable"
-                    }
+                    "capability_kind": { "type": "string", "enum": ["tool", "prompt", "resource", "resource_template", "profile"] },
+                    "capability_name": { "type": "string" },
+                    "arguments": { "type": "object" }
                 },
-                "required": ["profile_id"]
+                "required": ["capability_kind", "capability_name"]
             })
             .as_object()
             .unwrap()
@@ -272,56 +269,9 @@ fn create_profile_enable_tool() -> Tool {
     )
 }
 
-#[cfg(test)]
-fn create_profile_disable_tool() -> Tool {
+fn create_profile_get_tool() -> Tool {
     Tool::new(
-        MCPMATE_PROFILE_DISABLE_TOOL,
-        "Disable a profile and remove it from the active working set.",
-        Arc::new(
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "profile_id": {
-                        "type": "string",
-                        "description": "Profile ID to disable"
-                    }
-                },
-                "required": ["profile_id"]
-            })
-            .as_object()
-            .unwrap()
-            .clone(),
-        ),
-    )
-}
-
-#[cfg(test)]
-fn create_profile_activate_only_tool() -> Tool {
-    Tool::new(
-        MCPMATE_PROFILE_ACTIVATE_ONLY_TOOL,
-        "Switch to a single shared scene by keeping only this profile active among non-default profiles.",
-        Arc::new(
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "profile_id": {
-                        "type": "string",
-                        "description": "Profile ID to keep as the only active non-default profile"
-                    }
-                },
-                "required": ["profile_id"]
-            })
-            .as_object()
-            .unwrap()
-            .clone(),
-        ),
-    )
-}
-
-#[cfg(test)]
-fn create_scope_get_tool() -> Tool {
-    Tool::new(
-        MCPMATE_SCOPE_GET_TOOL,
+        MCPMATE_PROFILE_GET_TOOL,
         "Get the current effective scope for this client, including mode, source, selected profiles, and custom profile ID when present.",
         Arc::new(
             serde_json::json!({
@@ -336,9 +286,9 @@ fn create_scope_get_tool() -> Tool {
     )
 }
 
-fn create_scope_set_tool() -> Tool {
+fn create_profile_set_tool() -> Tool {
     Tool::new(
-        MCPMATE_SCOPE_SET_TOOL,
+        MCPMATE_PROFILE_SET_TOOL,
         "Replace the effective profile scope with an exact list of shared profiles. Use this to switch to a single scene or exact set.",
         Arc::new(
             serde_json::json!({
@@ -359,9 +309,9 @@ fn create_scope_set_tool() -> Tool {
     )
 }
 
-fn create_scope_add_tool() -> Tool {
+fn create_profile_add_tool() -> Tool {
     Tool::new(
-        MCPMATE_SCOPE_ADD_TOOL,
+        MCPMATE_PROFILE_ADD_TOOL,
         "Add shared profiles to the effective profile scope without replacing the existing selection.",
         Arc::new(
             serde_json::json!({
@@ -382,9 +332,9 @@ fn create_scope_add_tool() -> Tool {
     )
 }
 
-fn create_scope_remove_tool() -> Tool {
+fn create_profile_remove_tool() -> Tool {
     Tool::new(
-        MCPMATE_SCOPE_REMOVE_TOOL,
+        MCPMATE_PROFILE_REMOVE_TOOL,
         "Remove shared profiles from the effective profile scope without deleting the profile definitions themselves.",
         Arc::new(
             serde_json::json!({
@@ -397,23 +347,6 @@ fn create_scope_remove_tool() -> Tool {
                     }
                 },
                 "required": ["profile_ids"]
-            })
-            .as_object()
-            .unwrap()
-            .clone(),
-        ),
-    )
-}
-
-fn create_client_custom_profile_details_tool() -> Tool {
-    Tool::new(
-        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL,
-        "Get custom profile details: servers, tools, prompts, resources (custom mode only)",
-        Arc::new(
-            serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "required": []
             })
             .as_object()
             .unwrap()
@@ -447,22 +380,19 @@ mod tests {
 
     #[test]
     fn test_estimate_tool_tokens_known_tool() {
-        let tool = create_profile_list_tool();
+        let tool = create_ucan_catalog_tool();
         let tokens = estimate_tool_tokens(&tool);
 
-        // The tool should have a reasonable token count
-        // Profile list tool: name + description + empty schema
-        // Expected: roughly 30-50 tokens based on the JSON structure
         assert!(tokens > 0, "Tool tokens should be positive");
-        assert!(tokens < 100, "Tool tokens should be reasonable (< 100)");
+        assert!(tokens < 150, "Tool tokens should be reasonable (< 150)");
     }
 
     #[test]
     fn test_estimate_tool_tokens_complex_schema() {
-        let tool = create_profile_activate_only_tool();
+        let tool = create_profile_set_tool();
         let tokens = estimate_tool_tokens(&tool);
 
-        // Profile switch tool has a more complex schema with two properties
+        // Profile set tool has a complex schema with array property
         assert!(tokens > 0, "Tool tokens should be positive");
         assert!(tokens > 30, "Complex tool should have more tokens than simple tool");
     }
@@ -535,8 +465,8 @@ mod tests {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Profiles, false);
 
         assert_eq!(
-            overhead.tool_count, 5,
-            "Profiles mode without custom profile should have 5 tools"
+            overhead.tool_count, 7,
+            "Profiles mode without custom profile should have 7 tools"
         );
         assert_eq!(overhead.mode, "profiles");
         assert!(overhead.tokens > 0, "Token count should be positive");
@@ -547,8 +477,8 @@ mod tests {
         let overhead = calculate_builtin_overhead(&CapabilitySource::Profiles, true);
 
         assert_eq!(
-            overhead.tool_count, 5,
-            "Profiles mode with custom profile should still have 5 tools"
+            overhead.tool_count, 7,
+            "Profiles mode with custom profile should still have 7 tools"
         );
         assert_eq!(overhead.mode, "profiles");
         assert!(overhead.tokens > 0, "Token count should be positive");
@@ -595,23 +525,20 @@ mod tests {
     fn test_tool_token_estimation_range() {
         // Test that all builtin tools fall within expected token ranges
         let tools = vec![
-            create_profile_list_tool(),
-            create_profile_preview_tool(),
-            create_profile_enable_tool(),
-            create_profile_disable_tool(),
-            create_profile_activate_only_tool(),
-            create_scope_get_tool(),
-            create_scope_set_tool(),
-            create_scope_add_tool(),
-            create_scope_remove_tool(),
-            create_client_custom_profile_details_tool(),
+            create_ucan_catalog_tool(),
+            create_ucan_details_tool(),
+            create_ucan_call_tool(),
+            create_profile_get_tool(),
+            create_profile_set_tool(),
+            create_profile_add_tool(),
+            create_profile_remove_tool(),
         ];
 
         for tool in &tools {
             let tokens = estimate_tool_tokens(tool);
             assert!(
-                (20..=100).contains(&tokens),
-                "Tool {} has {} tokens, expected 20-100",
+                (20..=150).contains(&tokens),
+                "Tool {} has {} tokens, expected 20-150",
                 tool.name,
                 tokens
             );

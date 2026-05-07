@@ -18,10 +18,11 @@ use crate::{
 };
 
 use super::{
+    broker::profile_tool_descriptions,
     helpers::load_profile_detail_components,
     names::{
-        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_SCOPE_ADD_TOOL, MCPMATE_SCOPE_GET_TOOL,
-        MCPMATE_SCOPE_REMOVE_TOOL, MCPMATE_SCOPE_SET_TOOL,
+        MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ADD_TOOL, MCPMATE_PROFILE_GET_TOOL,
+        MCPMATE_PROFILE_REMOVE_TOOL, MCPMATE_PROFILE_SET_TOOL,
     },
     registry::BuiltinService,
     types::{PromptDetail, ResourceDetail, ServerDetail, ToolDetail},
@@ -57,7 +58,7 @@ impl ClientService {
         }
     }
 
-    async fn scope_get(
+    async fn profile_get(
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<CallToolResult> {
@@ -82,14 +83,14 @@ impl ClientService {
         )]))
     }
 
-    async fn scope_set(
+    async fn profile_set(
         &self,
         context: &ClientBuiltinContext,
         profile_ids: Vec<String>,
     ) -> Result<CallToolResult> {
         if !matches!(context.capability_source, CapabilitySource::Profiles) {
             return Err(anyhow!(
-                "scope_set is only available for clients using 'profiles' capability source. Current source: {}",
+                "profile_set is only available for clients using 'profiles' capability source. Current source: {}",
                 context.capability_source.as_str()
             ));
         }
@@ -105,7 +106,7 @@ impl ClientService {
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
-                        "Updated the effective profile scope to {} selected profile(s) for '{}'",
+                        "Updated the active profile selection to {} selected profile(s) for '{}'",
                         selected_profile_ids.len(),
                         context.client_id
                     ),
@@ -118,14 +119,14 @@ impl ClientService {
         )]))
     }
 
-    async fn scope_add(
+    async fn profile_add(
         &self,
         context: &ClientBuiltinContext,
         profile_ids: Vec<String>,
     ) -> Result<CallToolResult> {
         if !matches!(context.capability_source, CapabilitySource::Profiles) {
             return Err(anyhow!(
-                "scope_add is only available for clients using 'profiles' capability source. Current source: {}",
+                "profile_add is only available for clients using 'profiles' capability source. Current source: {}",
                 context.capability_source.as_str()
             ));
         }
@@ -146,7 +147,7 @@ impl ClientService {
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
-                        "Added profile(s) to the effective profile scope. '{}' now has {} selected profile(s)",
+                        "Added profile(s) to the active profile selection. '{}' now has {} selected profile(s)",
                         context.client_id,
                         selected_profile_ids.len()
                     ),
@@ -159,14 +160,14 @@ impl ClientService {
         )]))
     }
 
-    async fn scope_remove(
+    async fn profile_remove(
         &self,
         context: &ClientBuiltinContext,
         profile_ids: Vec<String>,
     ) -> Result<CallToolResult> {
         if !matches!(context.capability_source, CapabilitySource::Profiles) {
             return Err(anyhow!(
-                "scope_remove is only available for clients using 'profiles' capability source. Current source: {}",
+                "profile_remove is only available for clients using 'profiles' capability source. Current source: {}",
                 context.capability_source.as_str()
             ));
         }
@@ -189,7 +190,7 @@ impl ClientService {
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
-                        "Removed profile(s) from the effective profile scope without deleting the profile definitions. '{}' now has {} selected profile(s)",
+                        "Removed profile(s) from the active profile selection without deleting profile definitions. '{}' now has {} selected profile(s)",
                         context.client_id,
                         selected_profile_ids.len()
                     ),
@@ -271,11 +272,11 @@ impl ClientService {
                 "2. Unify Mode uses globally enabled servers rather than profile selection.\n",
                 "3. There is no second-level profile selector in the UI for Unify Mode.\n\n",
                 "Tool guidance:\n",
-                "- Use mcpmate_ucan_catalog to browse capabilities from globally enabled servers.\n",
-                "- Use mcpmate_ucan_details to inspect one capability before calling it.\n",
-                "- Use mcpmate_ucan_call to invoke a capability through Unify Mode.\n",
+                "- Use mcpmate_ucan_catalog to browse the MCP surface from globally enabled servers.\n",
+                "- Use mcpmate_ucan_details to inspect one surface item before calling or selecting it.\n",
+                "- Use mcpmate_ucan_call to invoke a callable surface item through Unify Mode.\n",
                 "- If the user needs durable or profile-scoped selection, move to Hosted or Transparent mode instead.\n\n",
-                "After any tool that changes capability visibility, if the client does not refresh tools automatically, ask it to re-fetch tools/list."
+                "After any tool that changes surface visibility, if the client does not refresh tools automatically, ask it to re-fetch tools/list."
             ),
             client_id = context.client_id,
         );
@@ -290,10 +291,10 @@ impl ClientService {
     ) -> GetPromptResult {
         let next_action = match context.capability_source {
             CapabilitySource::Activated => {
-                "Use mcpmate_ucan_catalog to browse the currently available capabilities from globally enabled servers."
+                "Use mcpmate_ucan_catalog to browse the current MCP surface from globally enabled servers."
             }
             CapabilitySource::Profiles => {
-                "Use mcpmate_ucan_catalog and mcpmate_ucan_details to inspect capabilities before calling them."
+                "Use mcpmate_ucan_catalog and mcpmate_ucan_details to inspect surface items before calling or selecting them."
             }
             CapabilitySource::Custom => {
                 "Unify Mode does not use profile-scoped overlays. Prefer Hosted or Transparent mode for profile selection."
@@ -309,7 +310,7 @@ impl ClientService {
                 "{next_action}\n\n",
                 "If the user asks what is available, start with mcpmate_ucan_catalog.\n",
                 "If the user asks for one specific tool, inspect it with mcpmate_ucan_details before calling when needed.\n",
-                "If a tool changes visible capabilities, ask the client to re-fetch tools/list when auto-refresh is not reliable.\n",
+                "If a tool changes visible surface items, ask the client to re-fetch tools/list when auto-refresh is not reliable.\n",
                 "Unify Mode resets when the MCP session ends; promote to Hosted if the user wants durable profile-based behavior."
             ),
             client_id = context.client_id,
@@ -329,10 +330,11 @@ impl BuiltinService for ClientService {
     }
 
     fn tools(&self) -> Vec<Tool> {
+        let descriptions = profile_tool_descriptions();
         vec![
             Tool::new(
-                MCPMATE_SCOPE_GET_TOOL,
-                "Get the current effective scope for this client, including mode, capability source, selected shared profiles, and custom profile ID if present.",
+                MCPMATE_PROFILE_GET_TOOL,
+                descriptions.get,
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -345,8 +347,8 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                MCPMATE_SCOPE_SET_TOOL,
-                "Replace the effective profile scope with an exact list of shared profiles (profiles mode only). Use this to switch to a single scene or exact set.",
+                MCPMATE_PROFILE_SET_TOOL,
+                descriptions.set,
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -354,7 +356,9 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Shared profile IDs to keep in the effective profile scope"
+                                "minItems": 1,
+                                "uniqueItems": true,
+                                "description": "Shared profile IDs to keep as the active surface selection. Replaces the current selection entirely. Use mcpmate_ucan_catalog(kind_filter=[\"profile\"]) to discover available IDs."
                             }
                         },
                         "required": ["profile_ids"]
@@ -365,8 +369,8 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                MCPMATE_SCOPE_ADD_TOOL,
-                "Add shared profiles to the effective profile scope without replacing the existing selection (profiles mode only).",
+                MCPMATE_PROFILE_ADD_TOOL,
+                descriptions.add,
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -374,7 +378,9 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Shared profile IDs to add to the effective profile scope"
+                                "minItems": 1,
+                                "uniqueItems": true,
+                                "description": "Shared profile IDs to add to the active selection. Existing selection is preserved. Duplicate IDs are ignored."
                             }
                         },
                         "required": ["profile_ids"]
@@ -385,8 +391,8 @@ impl BuiltinService for ClientService {
                 ),
             ),
             Tool::new(
-                MCPMATE_SCOPE_REMOVE_TOOL,
-                "Remove shared profiles from the effective profile scope without deleting the profile definitions themselves (profiles mode only).",
+                MCPMATE_PROFILE_REMOVE_TOOL,
+                descriptions.remove,
                 std::sync::Arc::new(
                     serde_json::json!({
                         "type": "object",
@@ -394,7 +400,9 @@ impl BuiltinService for ClientService {
                             "profile_ids": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Shared profile IDs to remove from the effective profile scope"
+                                "minItems": 1,
+                                "uniqueItems": true,
+                                "description": "Shared profile IDs to remove from the active selection. IDs not in the current selection are silently skipped. Profile definitions are never deleted."
                             }
                         },
                         "required": ["profile_ids"]
@@ -430,10 +438,10 @@ impl BuiltinService for ClientService {
         request: &CallToolRequestParams,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            MCPMATE_SCOPE_GET_TOOL
-            | MCPMATE_SCOPE_SET_TOOL
-            | MCPMATE_SCOPE_ADD_TOOL
-            | MCPMATE_SCOPE_REMOVE_TOOL
+            MCPMATE_PROFILE_GET_TOOL
+            | MCPMATE_PROFILE_SET_TOOL
+            | MCPMATE_PROFILE_ADD_TOOL
+            | MCPMATE_PROFILE_REMOVE_TOOL
             | MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL => Err(anyhow!(
                 "Client-aware tool '{}' requires client context. Use call_tool_with_context instead.",
                 request.name
@@ -448,24 +456,24 @@ impl BuiltinService for ClientService {
         context: Option<&ClientBuiltinContext>,
     ) -> Result<CallToolResult> {
         match request.name.as_ref() {
-            MCPMATE_SCOPE_GET_TOOL => {
-                let ctx = require_client_context(context, MCPMATE_SCOPE_GET_TOOL)?;
-                self.scope_get(ctx).await
+            MCPMATE_PROFILE_GET_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_PROFILE_GET_TOOL)?;
+                self.profile_get(ctx).await
             }
-            MCPMATE_SCOPE_SET_TOOL => {
-                let ctx = require_client_context(context, MCPMATE_SCOPE_SET_TOOL)?;
-                let params = parse_profiles_select_params(request, "Invalid parameters for scope_set")?;
-                self.scope_set(ctx, params.profile_ids).await
+            MCPMATE_PROFILE_SET_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_PROFILE_SET_TOOL)?;
+                let params = parse_profiles_select_params(request, "Invalid parameters for profile_set")?;
+                self.profile_set(ctx, params.profile_ids).await
             }
-            MCPMATE_SCOPE_ADD_TOOL => {
-                let ctx = require_client_context(context, MCPMATE_SCOPE_ADD_TOOL)?;
-                let params = parse_profiles_select_params(request, "Invalid parameters for scope_add")?;
-                self.scope_add(ctx, params.profile_ids).await
+            MCPMATE_PROFILE_ADD_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_PROFILE_ADD_TOOL)?;
+                let params = parse_profiles_select_params(request, "Invalid parameters for profile_add")?;
+                self.profile_add(ctx, params.profile_ids).await
             }
-            MCPMATE_SCOPE_REMOVE_TOOL => {
-                let ctx = require_client_context(context, MCPMATE_SCOPE_REMOVE_TOOL)?;
-                let params = parse_profiles_select_params(request, "Invalid parameters for scope_remove")?;
-                self.scope_remove(ctx, params.profile_ids).await
+            MCPMATE_PROFILE_REMOVE_TOOL => {
+                let ctx = require_client_context(context, MCPMATE_PROFILE_REMOVE_TOOL)?;
+                let params = parse_profiles_select_params(request, "Invalid parameters for profile_remove")?;
+                self.profile_remove(ctx, params.profile_ids).await
             }
             MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL => {
                 let ctx = require_client_context(context, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL)?;
