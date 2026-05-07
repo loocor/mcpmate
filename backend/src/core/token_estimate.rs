@@ -205,7 +205,7 @@ fn create_builtin_tools_for_mode(capability_source: &CapabilitySource) -> Vec<To
 fn create_ucan_catalog_tool() -> Tool {
     Tool::new(
         MCPMATE_UCAN_CATALOG_TOOL,
-        "MCPMATE CAPABILITY ENTRYPOINT. Discover capabilities or profiles before execution.",
+        "MCPMATE SURFACE DIRECTORY. Discover the current MCP surface before calling or selecting anything.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -230,7 +230,7 @@ fn create_ucan_catalog_tool() -> Tool {
 fn create_ucan_details_tool() -> Tool {
     Tool::new(
         MCPMATE_UCAN_DETAILS_TOOL,
-        "MCPMATE CAPABILITY INSPECTOR. Inspect one catalog entry before calling or selecting it.",
+        "MCPMATE SURFACE INSPECTOR. Inspect one MCP surface item before calling or selecting it.",
         Arc::new(
             serde_json::json!({
                 "type": "object",
@@ -251,7 +251,7 @@ fn create_ucan_details_tool() -> Tool {
 fn create_ucan_call_tool() -> Tool {
     Tool::new(
         MCPMATE_UCAN_CALL_TOOL,
-        "MCPMATE CAPABILITY EXECUTOR. Execute one capability selected from catalog and verified by details.",
+        "MCPMATE SURFACE CALLER. Call one callable MCP surface item selected from the directory and verified by details.",
         Arc::new(
             serde_json::json!({
                 "type": "object",

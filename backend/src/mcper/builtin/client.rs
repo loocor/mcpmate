@@ -272,11 +272,11 @@ impl ClientService {
                 "2. Unify Mode uses globally enabled servers rather than profile selection.\n",
                 "3. There is no second-level profile selector in the UI for Unify Mode.\n\n",
                 "Tool guidance:\n",
-                "- Use mcpmate_ucan_catalog to browse capabilities from globally enabled servers.\n",
-                "- Use mcpmate_ucan_details to inspect one capability before calling it.\n",
-                "- Use mcpmate_ucan_call to invoke a capability through Unify Mode.\n",
+                "- Use mcpmate_ucan_catalog to browse the MCP surface from globally enabled servers.\n",
+                "- Use mcpmate_ucan_details to inspect one surface item before calling or selecting it.\n",
+                "- Use mcpmate_ucan_call to invoke a callable surface item through Unify Mode.\n",
                 "- If the user needs durable or profile-scoped selection, move to Hosted or Transparent mode instead.\n\n",
-                "After any tool that changes capability visibility, if the client does not refresh tools automatically, ask it to re-fetch tools/list."
+                "After any tool that changes surface visibility, if the client does not refresh tools automatically, ask it to re-fetch tools/list."
             ),
             client_id = context.client_id,
         );
@@ -291,10 +291,10 @@ impl ClientService {
     ) -> GetPromptResult {
         let next_action = match context.capability_source {
             CapabilitySource::Activated => {
-                "Use mcpmate_ucan_catalog to browse the currently available capabilities from globally enabled servers."
+                "Use mcpmate_ucan_catalog to browse the current MCP surface from globally enabled servers."
             }
             CapabilitySource::Profiles => {
-                "Use mcpmate_ucan_catalog and mcpmate_ucan_details to inspect capabilities before calling them."
+                "Use mcpmate_ucan_catalog and mcpmate_ucan_details to inspect surface items before calling or selecting them."
             }
             CapabilitySource::Custom => {
                 "Unify Mode does not use profile-scoped overlays. Prefer Hosted or Transparent mode for profile selection."
@@ -310,7 +310,7 @@ impl ClientService {
                 "{next_action}\n\n",
                 "If the user asks what is available, start with mcpmate_ucan_catalog.\n",
                 "If the user asks for one specific tool, inspect it with mcpmate_ucan_details before calling when needed.\n",
-                "If a tool changes visible capabilities, ask the client to re-fetch tools/list when auto-refresh is not reliable.\n",
+                "If a tool changes visible surface items, ask the client to re-fetch tools/list when auto-refresh is not reliable.\n",
                 "Unify Mode resets when the MCP session ends; promote to Hosted if the user wants durable profile-based behavior."
             ),
             client_id = context.client_id,
@@ -358,7 +358,7 @@ impl BuiltinService for ClientService {
                                 "items": { "type": "string" },
                                 "minItems": 1,
                                 "uniqueItems": true,
-                                "description": "Shared profile IDs to keep as the active selection. Replaces the current selection entirely. Use mcpmate_ucan_catalog(kind_filter=[\"profile\"]) to discover available IDs."
+                                "description": "Shared profile IDs to keep as the active surface selection. Replaces the current selection entirely. Use mcpmate_ucan_catalog(kind_filter=[\"profile\"]) to discover available IDs."
                             }
                         },
                         "required": ["profile_ids"]
