@@ -65,7 +65,7 @@
       "Use template output as URI guidance; call only concrete resources that appear in catalog.",
     ],
     profile: [
-      "Profiles group related capabilities by scenario. Inspect with mcpmate_ucan_details(kind=profile), then activate via mcpmate_profile_set.",
+      "Profiles group related capabilities by scenario. Discover with mcpmate_ucan_catalog(kind_filter=[\"profile\"]), then inspect the selected catalog entry before activating via mcpmate_profile_set.",
       "After profile selection changes, exposed tools update automatically. Re-fetch tools/list if your client does not auto-refresh.",
     ],
   },

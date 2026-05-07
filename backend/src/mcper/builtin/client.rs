@@ -358,7 +358,7 @@ impl BuiltinService for ClientService {
                                 "items": { "type": "string" },
                                 "minItems": 1,
                                 "uniqueItems": true,
-                                "description": "Shared profile IDs to keep as the active selection. Replaces the current selection entirely. Use mcpmate_ucan_catalog(kind=profile) to discover available IDs."
+                                "description": "Shared profile IDs to keep as the active selection. Replaces the current selection entirely. Use mcpmate_ucan_catalog(kind_filter=[\"profile\"]) to discover available IDs."
                             }
                         },
                         "required": ["profile_ids"]

@@ -522,7 +522,7 @@ fn default_workflow_hints_resource_template() -> Vec<String> {
 
 fn default_workflow_hints_profile() -> Vec<String> {
     vec![
-        "Profiles group related capabilities by scenario. Inspect with mcpmate_ucan_details(kind=profile), then activate via mcpmate_profile_set.".to_string(),
+        "Profiles group related capabilities by scenario. Discover with mcpmate_ucan_catalog(kind_filter=[\"profile\"]), then inspect the selected catalog entry before activating via mcpmate_profile_set.".to_string(),
         "After profile selection changes, exposed tools update automatically. Re-fetch tools/list if your client does not auto-refresh.".to_string(),
     ]
 }
@@ -893,6 +893,11 @@ fn retain_brokered_resource_templates(
     });
 }
 
+fn profile_capabilities_visible(context: &ClientBuiltinContext) -> bool {
+    matches!(context.config_mode.as_deref(), None | Some("hosted"))
+        && context.capability_source == crate::clients::models::CapabilitySource::Profiles
+}
+
 impl BrokerService {
     pub fn new(
         database: Arc<Database>,
@@ -1117,9 +1122,7 @@ impl BrokerService {
         );
 
         // In Hosted mode with Profiles source, include profile entries in the catalog.
-        if context.config_mode.as_deref() != Some("unify")
-            && context.capability_source == crate::clients::models::CapabilitySource::Profiles
-        {
+        if profile_capabilities_visible(context) {
             if let Ok(profiles) = profile_repo::get_all_profile(&self.database.pool).await {
                 for prof in profiles {
                     if !matches!(prof.profile_type, ProfileType::Shared) {
@@ -1153,7 +1156,7 @@ impl BrokerService {
                         server_id: format!("profile:{}", profile_id),
                         server_name: prof.name.clone(),
                         interaction_mode: "scope_managed",
-                        detail_hint: "Use mcpmate_ucan_details(kind=profile, capability_name=profile_id) to see all capabilities in this profile. Activate via mcpmate_profile_set(profile_ids=[profile_id]).",
+                        detail_hint: "Use this catalog entry's capability_kind and capability_name with mcpmate_ucan_details to see all capabilities in this profile. Activate via mcpmate_profile_set(profile_ids=[profile_id]).",
                         registry_enriched: false,
                         registry_category: None,
                     });
@@ -1288,13 +1291,19 @@ impl BrokerService {
                 .into_iter()
                 .map(|entry| entry.resource_template.name.to_string())
                 .collect(),
-            UcanCapabilityKind::Profile => profile_repo::get_all_profile(&self.database.pool)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|p| matches!(p.profile_type, ProfileType::Shared))
-                .filter_map(|p| p.id.clone())
-                .collect(),
+            UcanCapabilityKind::Profile => {
+                if !profile_capabilities_visible(context) {
+                    Vec::new()
+                } else {
+                    profile_repo::get_all_profile(&self.database.pool)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|p| matches!(p.profile_type, ProfileType::Shared))
+                        .filter_map(|p| p.id.clone())
+                        .collect()
+                }
+            }
         };
         Ok(names)
     }
@@ -1441,6 +1450,14 @@ impl BrokerService {
                 }
             }
             UcanCapabilityKind::Profile => {
+                if !profile_capabilities_visible(context) {
+                    let catalog_names = self.collect_capability_names_for_kind(context, capability_kind).await?;
+                    return Ok(
+                        UcanError::capability_not_found("profile", capability_name, &catalog_names)
+                            .to_call_tool_result(),
+                    );
+                }
+
                 let profiles = profile_repo::get_all_profile(&self.database.pool)
                     .await
                     .context("Failed to list profiles")?;
@@ -1617,15 +1634,26 @@ impl BrokerService {
             UcanCapabilityKind::ResourceTemplate => {
                 Ok(UcanError::resource_template_not_invocable(capability_name).to_call_tool_result())
             }
-            UcanCapabilityKind::Profile => Ok(UcanError {
-                error_code: "profile_not_invocable".to_string(),
-                message: format!("Profile '{}' is not directly invocable.", capability_name),
-                recovery_hint: "Activate this profile via mcpmate_profile_set, then call the exposed tools directly."
-                    .to_string(),
-                alternatives: Vec::new(),
-                retry_eligible: false,
+            UcanCapabilityKind::Profile => {
+                if !profile_capabilities_visible(context) {
+                    let catalog_names = self.collect_capability_names_for_kind(context, capability_kind).await?;
+                    return Ok(
+                        UcanError::capability_not_found("profile", capability_name, &catalog_names)
+                            .to_call_tool_result(),
+                    );
+                }
+
+                Ok(UcanError {
+                    error_code: "profile_not_invocable".to_string(),
+                    message: format!("Profile '{}' is not directly invocable.", capability_name),
+                    recovery_hint:
+                        "Activate this profile via mcpmate_profile_set, then call the exposed tools directly."
+                            .to_string(),
+                    alternatives: Vec::new(),
+                    retry_eligible: false,
+                }
+                .to_call_tool_result())
             }
-            .to_call_tool_result()),
         }
     }
 
@@ -2891,8 +2919,9 @@ mod tests {
     use super::{
         ClientBuiltinContext, UcanDetailLevel, UcanError, UcanPromptRepository, VisiblePromptEntry,
         VisibleResourceEntry, VisibleResourceTemplateEntry, VisibleToolEntry, capitalize_kind, compact_description,
-        extract_description_from_value, find_similar_names, levenshtein_distance, retain_brokered_prompts,
-        retain_brokered_resource_templates, retain_brokered_resources, retain_brokered_tools, tool_details_value,
+        extract_description_from_value, find_similar_names, levenshtein_distance, profile_capabilities_visible,
+        retain_brokered_prompts, retain_brokered_resource_templates, retain_brokered_resources, retain_brokered_tools,
+        tool_details_value,
     };
     use crate::clients::models::{
         CapabilitySource, UnifyDirectExposureConfig, UnifyDirectPromptSurface, UnifyDirectResourceSurface,
@@ -2905,6 +2934,49 @@ mod tests {
     use tempfile::tempdir;
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    fn test_client_context(
+        config_mode: Option<&str>,
+        capability_source: CapabilitySource,
+    ) -> ClientBuiltinContext {
+        ClientBuiltinContext {
+            client_id: "client-1".to_string(),
+            session_id: None,
+            config_mode: config_mode.map(str::to_string),
+            capability_source,
+            selected_profile_ids: Vec::new(),
+            custom_profile_id: None,
+            unify_workspace: None,
+        }
+    }
+
+    #[test]
+    fn profile_capabilities_are_visible_only_in_hosted_profiles_mode() {
+        assert!(profile_capabilities_visible(&test_client_context(
+            None,
+            CapabilitySource::Profiles
+        )));
+        assert!(profile_capabilities_visible(&test_client_context(
+            Some("hosted"),
+            CapabilitySource::Profiles,
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            Some("unify"),
+            CapabilitySource::Profiles,
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            Some("transparent"),
+            CapabilitySource::Profiles,
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            None,
+            CapabilitySource::Activated
+        )));
+        assert!(!profile_capabilities_visible(&test_client_context(
+            None,
+            CapabilitySource::Custom
+        )));
+    }
 
     #[test]
     fn compact_description_keeps_first_non_empty_line() {
