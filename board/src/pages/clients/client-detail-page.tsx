@@ -355,52 +355,6 @@ function isDeniedApprovalStatus(status?: string | null): boolean {
   return status === "suspended";
 }
 
-function extractServers(obj: unknown): string[] {
-  if (!obj || typeof obj !== "object") return [];
-  const objRecord = obj as Record<string, unknown>;
-  const collected = new Set<string>();
-  const addFromValue = (value: unknown) => {
-    if (!value) return;
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        if (typeof entry === "string") {
-          collected.add(entry);
-        } else if (
-          entry &&
-          typeof entry === "object" &&
-          "name" in entry &&
-          typeof (entry as { name?: unknown }).name === "string"
-        ) {
-          collected.add((entry as { name: string }).name);
-        }
-      }
-      return;
-    }
-    if (typeof value === "object") {
-      for (const key of Object.keys(value as Record<string, unknown>)) {
-        collected.add(key);
-      }
-    }
-  };
-
-  addFromValue(objRecord.mcpServers);
-  addFromValue(objRecord.mcp_servers);
-  addFromValue(objRecord.servers);
-  addFromValue(objRecord.context_servers);
-  addFromValue(objRecord.contextServers);
-  addFromValue(objRecord.agent_servers);
-
-  if (
-    objRecord.mcp &&
-    typeof objRecord.mcp === "object" &&
-    (objRecord.mcp as Record<string, unknown>).servers
-  ) {
-    addFromValue((objRecord.mcp as Record<string, unknown>).servers);
-  }
-
-  return Array.from(collected);
-}
-
 export function ClientDetailPage() {
   const { identifier } = useParams<{ identifier: string }>();
   const qc = useQueryClient();
@@ -1896,20 +1850,7 @@ export function ClientDetailPage() {
     visibleBackups.length === 0 &&
     (policyData?.policy === "off" || policyData?.policy === "none");
 
-  // Heuristic extract current servers from config content for preview
-  const currentServers = useMemo(() => {
-    const c = (configDetails as { content?: unknown })?.content;
-    try {
-      if (!c) return [] as string[];
-      if (typeof c === "string") {
-        const parsed = JSON.parse(c);
-        return extractServers(parsed);
-      }
-      return extractServers(c);
-    } catch {
-      return [] as string[];
-    }
-  }, [configDetails]);
+  const currentServers = configDetails?.configured_servers ?? [];
 
   if (!identifier)
     return (
