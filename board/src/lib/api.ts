@@ -227,7 +227,7 @@ export function syncApiBaseUrlForRuntimePort(apiPort: number) {
 	setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
 }
 
-const resolveWebSocketUrl = (): string => {
+export const resolveWebSocketUrl = (): string => {
 	if (typeof window === "undefined") {
 		return "";
 	}
@@ -2415,8 +2415,17 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
-	list: async (refresh = false) => {
+	list: async (
+		refresh = false,
+		options?: { persistDetected?: boolean; includeDetected?: boolean },
+	) => {
 		const q = new URLSearchParams({ refresh: String(refresh) });
+		if (typeof options?.persistDetected === "boolean") {
+			q.set("persist_detected", String(options.persistDetected));
+		}
+		if (typeof options?.includeDetected === "boolean") {
+			q.set("include_detected", String(options.includeDetected));
+		}
 		const resp = await fetchApi<ClientCheckResp>(`/api/client/list?${q}`);
 		return extractApiData(resp);
 	},
@@ -2481,6 +2490,7 @@ export const clientsApi = {
         support_url?: string;
         logo_url?: string;
 		config_file_parse?: ClientConfigFileParse;
+			clear_config_file_parse?: boolean;
 		transports?: Record<string, TransportRuleData>;
 		clear_transports?: boolean;
 	}) => {

@@ -8,10 +8,13 @@
 		"build": "vite build",
 		"lint": "eslint .",
 		"biome": "bunx @biomejs/biome check .",
-		"preview": "vite preview"
+		"preview": "vite preview",
+		"e2e": "node ./scripts/run-playwright.mjs test",
+		"e2e:headed": "node ./scripts/run-playwright.mjs test --headed"
 	},
 	"dependencies": {
 		"@hookform/resolvers": "^5.0.1",
+		"@icons-pack/react-simple-icons": "^13.13.0",
 		"@radix-ui/react-accordion": "^1.2.12",
 		"@radix-ui/react-alert-dialog": "^1.1.15",
 		"@radix-ui/react-avatar": "^1.0.4",
@@ -64,6 +67,7 @@
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.9.1",
+		"@playwright/test": "^1.54.2",
 		"@types/node": "^24.5.2",
 		"@types/react": "^18.3.5",
 		"@types/react-dom": "^18.3.0",
