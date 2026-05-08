@@ -12,7 +12,7 @@ fn global_redb_cache() -> Result<Arc<RedbCacheManager>> {
     RedbCacheManager::global().map_err(|error| anyhow::anyhow!("Failed to init REDB cache: {}", error))
 }
 
-async fn has_server_configs(pool: &Pool<Sqlite>) -> Result<bool> {
+pub(crate) async fn has_server_configs(pool: &Pool<Sqlite>) -> Result<bool> {
     sqlx::query_scalar::<_, i64>(&format!(
         "SELECT COUNT(*) FROM {}",
         crate::common::constants::database::tables::SERVER_CONFIG

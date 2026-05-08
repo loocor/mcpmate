@@ -9,7 +9,7 @@ use tracing;
 use crate::{
     common::paths::global_paths,
     common::profile::ProfileType,
-    config::{defaults, import, initialization, models},
+    config::{import, initialization, models},
     core::capability::naming,
 };
 
@@ -116,29 +116,7 @@ impl Database {
         // Create database instance
         let db = Self { pool, path: db_path };
 
-        let has_server_configs = match sqlx::query_scalar::<_, i64>(&format!(
-            "SELECT COUNT(*) FROM {}",
-            crate::common::constants::database::tables::SERVER_CONFIG
-        ))
-        .fetch_one(&db.pool)
-        .await
-        {
-            Ok(count) => count > 0,
-            Err(e) => {
-                tracing::error!("Failed to check if server_config table has data: {}", e);
-                false
-            }
-        };
-
-        if !has_server_configs {
-            if let Err(e) = defaults::seed_default_servers(&db.pool).await {
-                tracing::warn!("Failed to import bundled MCP configuration: {}", e);
-            } else {
-                tracing::debug!("Imported bundled MCP server configuration into empty database");
-            }
-        }
-
-        // Initialize default values (after importing servers from config files)
+        // Initialize default values
         if let Err(e) = db.initialize_defaults().await {
             tracing::error!("Failed to initialize default values: {}", e);
             tracing::warn!("Continuing with database initialization");

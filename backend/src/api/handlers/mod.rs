@@ -7,6 +7,7 @@ pub mod audit;
 pub mod client;
 pub mod common;
 pub mod inspector;
+pub mod onboarding;
 pub mod profile;
 pub mod registry;
 pub mod runtime;

@@ -27,6 +27,8 @@ pub struct SystemSettings {
     pub first_contact_behavior: FirstContactBehavior,
     pub inspector_timeout_ms: u64,
     pub default_config_mode: String,
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 impl Default for SystemSettings {
@@ -37,6 +39,7 @@ impl Default for SystemSettings {
             first_contact_behavior: FirstContactBehavior::default(),
             inspector_timeout_ms: DEFAULT_INSPECTOR_TIMEOUT_MS,
             default_config_mode: DEFAULT_CONFIG_MODE.to_string(),
+            onboarding_completed: false,
         }
     }
 }
@@ -92,7 +95,10 @@ pub async fn initialize_settings_file(pool: &SqlitePool) -> ConfigResult<()> {
     let path = settings_path(pool);
 
     match fs::metadata(&path).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            read_settings_async(&path).await?;
+            Ok(())
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             write_settings(pool, &SystemSettings::default()).await
         }
@@ -315,30 +321,14 @@ fn spawn_mcp_port_reapply(
     pool: Option<Arc<SqlitePool>>,
 ) -> tokio::task::JoinHandle<ConfigResult<crate::clients::HostedClientReapplySummary>> {
     tokio::spawn(async move {
-        let service = if let Some(service) = client_service {
-            service
-        } else if let Some(pool) = pool {
-            match ClientConfigService::bootstrap(pool).await {
-                Ok(service) => Arc::new(service),
-                Err(err) => {
-                    return Err(err);
-                }
-            }
-        } else {
-            let database = match crate::config::database::Database::new().await {
-                Ok(database) => database,
-                Err(err) => {
-                    return Err(ConfigError::DataAccessError(format!(
-                        "failed to open database for MCP port re-apply: {}",
-                        err
-                    )));
-                }
-            };
-            match ClientConfigService::bootstrap(Arc::new(database.pool.clone())).await {
-                Ok(service) => Arc::new(service),
-                Err(err) => {
-                    return Err(err);
-                }
+        let service = match (client_service, pool) {
+            (Some(service), _) => service,
+            (None, Some(pool)) => Arc::new(ClientConfigService::bootstrap(pool).await?),
+            (None, None) => {
+                let database = crate::config::database::Database::new().await.map_err(|err| {
+                    ConfigError::DataAccessError(format!("failed to open database for MCP port re-apply: {err}"))
+                })?;
+                Arc::new(ClientConfigService::bootstrap(Arc::new(database.pool.clone())).await?)
             }
         };
 
@@ -394,9 +384,45 @@ fn settings_path(_pool: &SqlitePool) -> PathBuf {
 
 #[cfg(test)]
 fn settings_path(pool: &SqlitePool) -> PathBuf {
-    use std::sync::Arc;
+    struct TestSettingsPath {
+        options: std::sync::Weak<sqlx::sqlite::SqliteConnectOptions>,
+        path: PathBuf,
+    }
 
-    let opts = pool.connect_options();
-    let id = Arc::as_ptr(&opts) as usize;
-    std::env::temp_dir().join(format!("mcpmate-system-settings-test-{id:x}.json"))
+    static SETTINGS_PATHS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<usize, TestSettingsPath>>> =
+        std::sync::OnceLock::new();
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    static TEST_RUN_ID: std::sync::OnceLock<u128> = std::sync::OnceLock::new();
+
+    let options = pool.connect_options();
+    let pool_id = Arc::as_ptr(&options) as usize;
+    let paths = SETTINGS_PATHS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut paths = paths.lock().expect("test settings path lock poisoned");
+
+    if let Some(entry) = paths.get(&pool_id) {
+        if entry.options.upgrade().is_some() {
+            return entry.path.clone();
+        }
+    }
+
+    let sequence = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let run_id = TEST_RUN_ID.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos()
+    });
+    let path = std::env::temp_dir().join(format!(
+        "mcpmate-system-settings-test-{}-{run_id:x}-{sequence}.json",
+        std::process::id()
+    ));
+    paths.insert(
+        pool_id,
+        TestSettingsPath {
+            options: Arc::downgrade(&options),
+            path: path.clone(),
+        },
+    );
+
+    path
 }
