@@ -1,6 +1,6 @@
 // Configuration file processing for client handlers
 
-use crate::clients::analyzer::analyze_config_content as analyze;
+use crate::clients::analyzer::{ConfigAnalysis, analyze_config_content as analyze};
 use crate::common::ConfigChecker;
 
 /// Helper function to analyze config content for MCP information
@@ -9,7 +9,7 @@ pub fn analyze_config_content(
     container_keys: &[String],
     is_array_container: bool,
     format: Option<&str>,
-) -> (bool, u32) {
+) -> ConfigAnalysis {
     analyze(content, container_keys, is_array_container, format)
 }
 
@@ -30,7 +30,7 @@ pub async fn check_mcp_config_exists(
 
     // If basic checks pass, perform more detailed client-specific checks
     match std::fs::read_to_string(config_path) {
-        Ok(content) => analyze_config_content(&content, container_keys, is_array_container, None).0,
+        Ok(content) => analyze_config_content(&content, container_keys, is_array_container, None).has_mcp_config,
         Err(_) => false,
     }
 }

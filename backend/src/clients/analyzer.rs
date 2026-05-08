@@ -1,5 +1,30 @@
 use crate::clients::utils::get_nested_value;
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConfigAnalysis {
+    pub has_mcp_config: bool,
+    pub server_count: u32,
+    pub server_names: Vec<String>,
+}
+
+impl ConfigAnalysis {
+    fn from_server_names(server_names: Vec<String>) -> Self {
+        Self {
+            has_mcp_config: true,
+            server_count: server_names.len() as u32,
+            server_names,
+        }
+    }
+
+    fn present_without_entries() -> Self {
+        Self {
+            has_mcp_config: true,
+            server_count: 0,
+            server_names: Vec::new(),
+        }
+    }
+}
+
 pub fn parse_config_to_json_value(
     content: &str,
     format: Option<&str>,
@@ -24,65 +49,63 @@ pub fn analyze_config_content(
     container_keys: &[String],
     is_array_container: bool,
     format: Option<&str>,
-) -> (bool, u32) {
+) -> ConfigAnalysis {
     if content.is_empty() {
-        return (false, 0);
+        return ConfigAnalysis::default();
     }
-    let keys = container_keys;
-    let is_array = is_array_container;
 
     match parse_config_to_json_value(content, format) {
-        Some(json) => {
-            if is_array {
+        Some(json) => match is_array_container {
+            true => {
                 if let Some(arr) = json.as_array() {
-                    let has = !arr.is_empty()
-                        && arr.iter().any(|it| {
-                            it.get("name").is_some() && (it.get("command").is_some() || it.get("url").is_some())
-                        });
-                    return (has, arr.len() as u32);
+                    return analyze_array_entries(arr);
                 }
-                for key in keys {
+                for key in container_keys {
                     if let Some(val) = get_nested_value(&json, key) {
                         if let Some(arr) = val.as_array() {
-                            let has = !arr.is_empty()
-                                && arr.iter().any(|it| {
-                                    it.get("name").is_some() && (it.get("command").is_some() || it.get("url").is_some())
-                                });
-                            return (has, arr.len() as u32);
+                            return analyze_array_entries(arr);
                         } else if !val.is_null() {
-                            return (true, 0);
+                            return ConfigAnalysis::present_without_entries();
                         }
                     }
                 }
-                (false, 0)
-            } else {
-                for key in keys {
+                ConfigAnalysis::default()
+            }
+            false => {
+                for key in container_keys {
                     if let Some(servers) = get_nested_value(&json, key) {
                         if let Some(obj) = servers.as_object() {
-                            return (true, obj.len() as u32);
+                            return analyze_object_entries(obj);
                         } else if servers.is_null() || servers.is_array() || servers.is_string() {
-                            return (true, 0);
+                            return ConfigAnalysis::present_without_entries();
                         }
                     }
                 }
-                (false, 0)
+                ConfigAnalysis::default()
             }
-        }
-        None => {
-            if is_array {
-                let has = content.contains("[") && (content.contains("\"command\"") || content.contains("\"url\""));
-                return (has, 0);
-            }
-            if keys.is_empty() {
-                return (false, 0);
-            }
-            let has = keys.iter().any(|k| {
-                let leaf = k.rsplit('.').next().unwrap_or(k);
-                content.contains(leaf)
-            });
-            (has, 0)
-        }
+        },
+        None => ConfigAnalysis::default(),
     }
+}
+
+fn analyze_array_entries(entries: &[serde_json::Value]) -> ConfigAnalysis {
+    let server_names: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(|name| name.as_str()).map(str::to_string))
+        .collect();
+    let has_mcp_config = entries
+        .iter()
+        .any(|entry| entry.get("name").is_some() && (entry.get("command").is_some() || entry.get("url").is_some()));
+
+    ConfigAnalysis {
+        has_mcp_config,
+        server_count: entries.len() as u32,
+        server_names,
+    }
+}
+
+fn analyze_object_entries(entries: &serde_json::Map<String, serde_json::Value>) -> ConfigAnalysis {
+    ConfigAnalysis::from_server_names(entries.keys().cloned().collect())
 }
 
 /// Best-effort last modified timestamp extraction in RFC3339.
@@ -99,4 +122,45 @@ pub fn get_config_last_modified(config_path: &str) -> Option<String> {
     let modified = meta.modified().ok()?;
     let dur = modified.duration_since(SystemTime::UNIX_EPOCH).ok()?;
     chrono::DateTime::from_timestamp(dur.as_secs() as i64, 0).map(|dt| dt.to_rfc3339())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn analyze_config_content_returns_object_map_server_names() {
+        let result = analyze_config_content(
+            r#"{"context_servers":{"MCPMate":{},"mcp-server-context7":{"enabled":true}}}"#,
+            &["context_servers".to_string()],
+            false,
+            Some("json"),
+        );
+
+        assert!(result.has_mcp_config);
+        assert_eq!(result.server_count, 2);
+        assert_eq!(
+            result.server_names,
+            vec!["MCPMate".to_string(), "mcp-server-context7".to_string()]
+        );
+    }
+
+    #[test]
+    fn analyze_config_content_ignores_non_matching_containers() {
+        let result = analyze_config_content(
+            r#"{"context_servers":{"MCPMate":{}},"agent_servers":{"claude-acp":{"type":"registry"}}}"#,
+            &["context_servers".to_string()],
+            false,
+            Some("json"),
+        );
+
+        assert_eq!(result.server_names, vec!["MCPMate".to_string()]);
+    }
+
+    #[test]
+    fn analyze_config_content_does_not_guess_when_parse_fails() {
+        let result = analyze_config_content("{not-json", &["context_servers".to_string()], false, Some("json"));
+
+        assert_eq!(result, ConfigAnalysis::default());
+    }
 }

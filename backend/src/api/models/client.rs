@@ -324,6 +324,9 @@ pub struct ClientConfigData {
     pub has_mcp_config: bool,
     #[schemars(description = "Number of configured MCP servers")]
     pub mcp_servers_count: u32,
+    #[schemars(description = "Server names detected from the current config using the effective parse rules")]
+    #[serde(default)]
+    pub configured_servers: Vec<String>,
     #[schemars(description = "ISO 8601 timestamp of last modification")]
     pub last_modified: Option<String>,
     #[schemars(description = "Configuration file format type")]

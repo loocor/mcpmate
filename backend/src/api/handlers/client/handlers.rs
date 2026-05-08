@@ -18,6 +18,7 @@ use crate::api::models::client::{
 use crate::api::models::server::SkippedServerData;
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
+use crate::clients::analyzer::ConfigAnalysis;
 use crate::clients::models::{
     AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
     TemplateFormat, UnifyDirectExposureConfig,
@@ -85,6 +86,24 @@ fn build_parse_metadata(
         .map(parse_data_from_rule);
     let uses_default = override_parse.is_none();
     (effective, override_parse, uses_default)
+}
+
+fn analyze_config_for_state(
+    raw: &str,
+    state: &ClientStateRow,
+    effective_parse: Option<&ClientConfigFileParse>,
+) -> ConfigAnalysis {
+    let container_keys = effective_parse
+        .map(|parse| parse.container_keys.clone())
+        .unwrap_or_else(|| state.container_keys().unwrap_or_default());
+    let is_array_container = effective_parse
+        .map(|parse| parse.container_type == ContainerType::Array)
+        .unwrap_or_else(|| state.container_type() == Some("array"));
+    let format = effective_parse
+        .map(|parse| parse.format.as_str())
+        .or_else(|| state.config_format());
+
+    analyze_config_content(raw, &container_keys, is_array_container, format)
 }
 
 fn client_settings_error(
@@ -431,24 +450,12 @@ pub async fn config_details(
         (None, _) => Value::Null,
     };
 
-    let (has_mcp_config, mcp_servers_count) = match (content.as_deref(), state.as_ref()) {
+    let config_analysis = match (content.as_deref(), state.as_ref()) {
         (Some(raw), Some(state)) => {
             let effective_parse = resolve_effective_config_file_parse(Some(state));
-            let container_keys = effective_parse
-                .as_ref()
-                .map(|parse| parse.container_keys.clone())
-                .unwrap_or_else(|| state.container_keys().unwrap_or_default());
-            let is_array_container = effective_parse
-                .as_ref()
-                .map(|parse| parse.container_type == ContainerType::Array)
-                .unwrap_or_else(|| state.container_type() == Some("array"));
-            let format = effective_parse
-                .as_ref()
-                .map(|parse| parse.format.as_str())
-                .or_else(|| state.config_format());
-            analyze_config_content(raw, &container_keys, is_array_container, format)
+            analyze_config_for_state(raw, state, effective_parse.as_ref())
         }
-        _ => (false, 0),
+        _ => Default::default(),
     };
 
     let last_modified = config_path.as_deref().and_then(get_config_last_modified);
@@ -531,8 +538,9 @@ pub async fn config_details(
         config_path: config_path.unwrap_or_default(),
         config_exists,
         content: parsed_content,
-        has_mcp_config,
-        mcp_servers_count,
+        has_mcp_config: config_analysis.has_mcp_config,
+        mcp_servers_count: config_analysis.server_count,
+        configured_servers: config_analysis.server_names,
         last_modified,
         config_type,
         imported_servers,
@@ -1567,23 +1575,10 @@ async fn descriptor_to_client_info(
         None
     };
 
-    let (has_mcp_config, mcp_servers_count) = match content.as_deref() {
-        Some(raw) => {
-            let container_keys = config_file_parse_effective
-                .as_ref()
-                .map(|parse| parse.container_keys.clone())
-                .unwrap_or_else(|| state.container_keys().unwrap_or_default());
-            let is_array_container = config_file_parse_effective
-                .as_ref()
-                .map(|parse| parse.container_type == crate::api::models::client::ClientConfigType::Array)
-                .unwrap_or_else(|| state.container_type() == Some("array"));
-            let format = config_file_parse_effective
-                .as_ref()
-                .map(|parse| parse.format.as_str())
-                .or_else(|| state.config_format());
-            analyze_config_content(raw, &container_keys, is_array_container, format)
-        }
-        _ => (false, 0),
+    let effective_parse_rule = resolve_effective_config_file_parse(Some(&state));
+    let config_analysis = match content.as_deref() {
+        Some(raw) => analyze_config_for_state(raw, &state, effective_parse_rule.as_ref()),
+        _ => Default::default(),
     };
 
     let last_modified = descriptor.config_path.as_deref().and_then(get_config_last_modified);
@@ -1617,7 +1612,7 @@ async fn descriptor_to_client_info(
         install_path: None,
         config_path: descriptor.config_path.unwrap_or_default(),
         config_exists: descriptor.config_exists,
-        has_mcp_config,
+        has_mcp_config: config_analysis.has_mcp_config,
         transports,
         description,
         homepage_url,
@@ -1633,7 +1628,7 @@ async fn descriptor_to_client_info(
         config_type,
         last_detected: descriptor.detected_at.map(|dt| dt.to_rfc3339()),
         last_modified,
-        mcp_servers_count: Some(mcp_servers_count),
+        mcp_servers_count: Some(config_analysis.server_count),
         template: build_client_template_metadata(Some(&state), &runtime_metadata),
         approval_status,
         attachment_state: Some(state.attachment_state().as_str().to_string()),
@@ -3363,6 +3358,74 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn config_details_uses_effective_parse_for_configured_servers() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("zed-settings.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{
+                "context_servers": {
+                    "MCPMate": {"url": "http://127.0.0.1:8000/mcp"},
+                    "mcp-server-context7": {"enabled": true}
+                },
+                "agent_servers": {
+                    "claude-acp": {"type": "registry"},
+                    "codex-acp": {"type": "registry"}
+                }
+            }"#,
+        )
+        .await
+        .expect("seed zed config file");
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientSettingsUpdateReq {
+                identifier: "zed.strict.inspect".to_string(),
+                config_mode: Some("hosted".to_string()),
+                transport: Some("stdio".to_string()),
+                client_version: None,
+                display_name: Some("Zed Strict Inspect".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                description: None,
+                homepage_url: None,
+                docs_url: None,
+                support_url: None,
+                logo_url: None,
+                config_file_parse: Some(crate::api::models::client::ClientConfigFileParseData {
+                    format: "json".to_string(),
+                    container_type: crate::api::models::client::ClientConfigType::Standard,
+                    container_keys: vec!["context_servers".to_string()],
+                }),
+                clear_config_file_parse: false,
+                transports: None,
+                clear_transports: false,
+            }),
+        )
+        .await
+        .expect("update zed-like client settings");
+
+        assert!(update_response.success);
+
+        let Json(details_response) = config_details(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "zed.strict.inspect".to_string(),
+            }),
+        )
+        .await
+        .expect("load zed-like client details");
+
+        assert!(details_response.success);
+        let details = details_response.data.expect("details data");
+        assert_eq!(
+            details.configured_servers,
+            vec!["MCPMate".to_string(), "mcp-server-context7".to_string()]
+        );
+        assert_eq!(details.mcp_servers_count, 2);
+    }
+
     #[test]
     fn transport_support_derivation_rejects_alias_http_keys() {
         let mut rules: HashMap<String, crate::clients::models::FormatRule> = HashMap::new();
@@ -3838,6 +3901,7 @@ mod tests {
         assert_eq!(details.attachment_state.as_deref(), Some("attached"));
         assert_eq!(details.template.managed_source.as_deref(), None);
         assert_eq!(details.content["mcpServers"]["MCPMate"]["type"], "streamable_http");
+        assert_eq!(details.configured_servers, vec!["MCPMate".to_string()]);
     }
 
     #[tokio::test]
