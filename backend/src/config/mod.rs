@@ -4,7 +4,6 @@
 pub mod audit_database;
 pub mod client;
 pub mod database;
-pub mod defaults;
 pub mod import;
 pub mod initialization;
 pub mod models;

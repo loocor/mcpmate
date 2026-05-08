@@ -19,7 +19,7 @@ impl ClientConfigService {
         profile_id: &str,
     ) -> ConfigResult<()> {
         let states = self.fetch_client_states().await?;
-        let descriptors = self.list_clients(false).await?;
+        let descriptors = self.list_clients(false, false).await?;
         let default_config_mode = resolve_default_client_config_mode(&self.db_pool)
             .await
             .unwrap_or_else(|_| "unify".to_string());

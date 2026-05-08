@@ -3,8 +3,17 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use axum::{Json, extract::State};
-use serde_json::{Map, Value};
+use futures::SinkExt;
+
+use axum::{
+    Json,
+    extract::{
+        State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
+    response::IntoResponse,
+};
+use serde_json::{Map, Value, json};
 
 use crate::clients::error::ConfigError;
 
@@ -20,6 +29,29 @@ use crate::audit::{AuditAction, AuditStatus};
 use crate::system::config::{api_url_from_port, bind_socket_addr, get_runtime_port_config, mcp_http_url_from_port};
 
 const PROXY_NOT_AVAILABLE_ERROR: &str = "Proxy server not available";
+
+pub async fn readiness_ws(
+    State(state): State<Arc<AppState>>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_readiness_ws(socket, state))
+}
+
+async fn handle_readiness_ws(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+) {
+    let status = match (state.database.as_ref(), state.client_service.as_ref()) {
+        (Some(database), Some(_)) => match crate::system::settings::get_settings(&database.pool).await {
+            Ok(_) => json!({ "type": "ready", "status": "ok" }),
+            Err(err) => json!({ "type": "ready", "status": "waiting", "reason": err.to_string() }),
+        },
+        (None, _) => json!({ "type": "ready", "status": "waiting", "reason": "database_unavailable" }),
+        (_, None) => json!({ "type": "ready", "status": "waiting", "reason": "client_service_unavailable" }),
+    };
+    let _ = socket.send(Message::Text(status.to_string().into())).await;
+    let _ = socket.close().await;
+}
 
 fn system_settings_data(settings: crate::system::settings::SystemSettings) -> SystemSettingsData {
     SystemSettingsData {

@@ -933,6 +933,12 @@ pub struct ClientCheckReq {
     #[serde(default)]
     #[schemars(description = "Whether to refresh the client list")]
     pub refresh: bool,
+    #[serde(default)]
+    #[schemars(description = "Whether detected clients should be persisted as observed records")]
+    pub persist_detected: bool,
+    #[serde(default)]
+    #[schemars(description = "Whether to include detected-but-unmanaged client candidates")]
+    pub include_detected: bool,
 }
 
 /// Request for client config details

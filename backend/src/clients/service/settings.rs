@@ -1,14 +1,15 @@
 use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
-    FormatRule, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
+    CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse, ClientTemplate,
+    ContainerType, FormatRule, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
     UnifyDirectExposureIntent, UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic,
     UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface,
     UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic,
     canonical_config_transport_key,
 };
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
+use crate::common::constants::database::tables;
 use crate::common::profile::{ProfileRole, ProfileType};
 use crate::config::database::Database;
 use crate::config::models::Profile;
@@ -407,6 +408,7 @@ impl ClientConfigService {
             client_version = ?update.client_version,
             connection_mode = ?update.connection_mode,
             config_path = ?update.config_path,
+            clear_config_file_parse = %update.clear_config_file_parse,
             "set_active_client_settings: entry"
         );
 
@@ -553,13 +555,9 @@ impl ClientConfigService {
                 .await?;
         }
 
-        if update.clear_config_file_parse || update.config_file_parse.is_some() {
-            self.update_config_file_parse(
-                identifier,
-                update.config_file_parse.as_ref(),
-                update.clear_config_file_parse,
-            )
-            .await?;
+        if clear_config_file_parse || update.config_file_parse.is_some() {
+            self.update_config_file_parse(identifier, update.config_file_parse.as_ref(), clear_config_file_parse)
+                .await?;
         }
 
         if update.clear_transports || update.transports.is_some() {
@@ -784,7 +782,6 @@ impl ClientConfigService {
         config_file_parse: Option<&ClientConfigFileParse>,
         clear_override: bool,
     ) -> ConfigResult<()> {
-        let existing_state = self.fetch_state(identifier).await?;
         let serialized_override = if clear_override {
             None
         } else {
@@ -817,9 +814,9 @@ impl ClientConfigService {
             r#"
             UPDATE client
             SET config_file_parse = ?,
-                config_format = COALESCE(?, config_format),
-                container_type = COALESCE(?, container_type),
-                container_keys = COALESCE(?, container_keys),
+                config_format = ?,
+                container_type = ?,
+                container_keys = ?,
                 governance_kind = 'active',
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
@@ -835,6 +832,36 @@ impl ClientConfigService {
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         Ok(())
+    }
+
+    async fn default_config_file_parse(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<Option<ClientConfigFileParse>> {
+        let payload = sqlx::query_scalar::<_, String>(&format!(
+            "SELECT payload_json FROM {} WHERE identifier = ?",
+            tables::CLIENT_TEMPLATE_RUNTIME
+        ))
+        .bind(identifier)
+        .fetch_optional(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        let Some(payload) = payload else {
+            return Ok(None);
+        };
+        let template: ClientTemplate = serde_json::from_str(&payload).map_err(|err| {
+            ConfigError::TemplateParseError(format!("Failed to parse runtime template payload: {err}"))
+        })?;
+        if template.config_mapping.container_keys.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(ClientConfigFileParse {
+            format: template.format,
+            container_type: template.config_mapping.container_type,
+            container_keys: template.config_mapping.container_keys,
+        }))
     }
 
     async fn update_transports(

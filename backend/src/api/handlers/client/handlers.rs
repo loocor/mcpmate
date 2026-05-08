@@ -177,13 +177,18 @@ pub async fn list(
 ) -> Result<Json<ClientCheckResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let descriptors = service.list_clients(request.refresh).await.map_err(|err| {
-        tracing::error!("Failed to list clients: {}", err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let descriptors = service
+        .list_clients(request.refresh, request.persist_detected)
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to list clients: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let mut client_infos = Vec::with_capacity(descriptors.len());
-    for descriptor in descriptors {
+    for descriptor in descriptors.into_iter().filter(|descriptor| {
+        request.include_detected || (descriptor.persisted && descriptor.state.governance_kind().as_str() == "active")
+    }) {
         match descriptor_to_client_info(service.as_ref(), app_state.as_ref(), descriptor).await {
             Ok(info) => client_infos.push(info),
             Err(status) => return Err(status),
@@ -272,8 +277,20 @@ pub async fn config_details(
     }
     .or_else(|| infer_config_type_from_path(config_path.as_deref()));
 
-    let runtime_metadata = state.runtime_client_metadata();
-    // Meta information comes only from runtime_metadata (approval_metadata.runtime_client)
+    let stored_runtime_metadata = state.runtime_client_metadata();
+    let template_metadata = service
+        .runtime_template_metadata(state.template_identifier().unwrap_or(state.identifier()))
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to resolve runtime template metadata for config details"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let runtime_metadata =
+        RuntimeClientMetadata::resolve_with_template_metadata(&stored_runtime_metadata, template_metadata);
     let description = runtime_metadata.description.clone();
     let homepage_url = runtime_metadata.homepage_url.clone();
     let docs_url = runtime_metadata.docs_url.clone();
@@ -838,6 +855,7 @@ pub async fn update_settings(
         display_name = ?request.display_name,
         connection_mode = ?request.connection_mode,
         config_path = ?request.config_path,
+        clear_config_file_parse = %request.clear_config_file_parse,
         "update_settings: received request"
     );
 
@@ -901,7 +919,20 @@ pub async fn update_settings(
             client_settings_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
         })?
         .ok_or_else(|| client_settings_error(StatusCode::NOT_FOUND, "Client state not found"))?;
-    let runtime_metadata = state.runtime_client_metadata();
+    let stored_runtime_metadata = state.runtime_client_metadata();
+    let template_metadata = service
+        .runtime_template_metadata(state.template_identifier().unwrap_or(state.identifier()))
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %state.identifier(),
+                error = %err,
+                "Failed to resolve runtime template metadata after settings update"
+            );
+            client_settings_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        })?;
+    let runtime_metadata =
+        RuntimeClientMetadata::resolve_with_template_metadata(&stored_runtime_metadata, template_metadata);
     let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
         build_parse_metadata(&state);
     let transports = transports_data_from_state(&state);
@@ -1220,7 +1251,9 @@ async fn descriptor_to_client_info(
     descriptor: ClientDescriptor,
 ) -> Result<ClientInfo, StatusCode> {
     let state = descriptor.state.clone();
-    let runtime_metadata = state.runtime_client_metadata();
+    let stored_runtime_metadata = state.runtime_client_metadata();
+    let runtime_metadata =
+        RuntimeClientMetadata::resolve_for_template(&stored_runtime_metadata, descriptor.template.as_ref());
     let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
         build_parse_metadata(&state);
     let transports = transports_data_from_state(&state);
@@ -2799,6 +2832,136 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_excludes_passive_detected_candidates_by_default() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .ensure_passive_observed_row("test.passive", "Test Passive", None)
+            .await
+            .expect("seed passive client");
+
+        let Json(default_response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: false,
+                include_detected: false,
+            }),
+        )
+        .await
+        .expect("list managed clients");
+
+        assert!(default_response.success);
+        assert!(
+            default_response
+                .data
+                .expect("default data")
+                .client
+                .into_iter()
+                .all(|client| client.governance_kind.as_deref() == Some("active"))
+        );
+
+        let Json(include_response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: false,
+                include_detected: true,
+            }),
+        )
+        .await
+        .expect("list detected candidates");
+
+        assert!(include_response.success);
+        assert!(
+            include_response
+                .data
+                .expect("include data")
+                .client
+                .iter()
+                .any(|client| client.identifier == "test.passive"
+                    && client.governance_kind.as_deref() == Some("passive"))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_uses_template_metadata_for_known_active_client() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("codex.toml");
+        tokio::fs::write(&config_path, "")
+            .await
+            .expect("seed codex config file");
+        let mut template = crate::clients::models::ClientTemplate {
+            identifier: "codex".to_string(),
+            display_name: Some("Codex".to_string()),
+            ..Default::default()
+        };
+        template.metadata.insert(
+            "description".to_string(),
+            serde_json::Value::String(
+                "One agent for everywhere you code—included in ChatGPT Plus, Pro, Business, Edu, and Enterprise plans."
+                    .to_string(),
+            ),
+        );
+        template.metadata.insert(
+            "logo_url".to_string(),
+            serde_json::Value::String("https://openai.com/favicon.ico".to_string()),
+        );
+        sqlx::query("INSERT OR REPLACE INTO client_template_runtime (identifier, payload_json) VALUES (?, ?)")
+            .bind("codex")
+            .bind(serde_json::to_string(&template).expect("serialize codex template"))
+            .execute(&context.db_pool)
+            .await
+            .expect("seed codex runtime template");
+
+        context
+            .client_service
+            .set_active_client_settings(
+                "codex",
+                ActiveClientSettingsUpdate {
+                    connection_mode: Some("local_config_detected".to_string()),
+                    config_path: Some(config_path.to_string_lossy().to_string()),
+                    clear_config_file_parse: true,
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("promote codex");
+
+        sqlx::query("UPDATE client SET approval_metadata = NULL WHERE identifier = ?")
+            .bind("codex")
+            .execute(&context.db_pool)
+            .await
+            .expect("clear stored metadata");
+
+        let Json(response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: false,
+                include_detected: false,
+            }),
+        )
+        .await
+        .expect("list clients");
+
+        let codex = response
+            .data
+            .expect("list data")
+            .client
+            .into_iter()
+            .find(|client| client.identifier == "codex")
+            .expect("codex in managed list");
+        assert_eq!(
+            codex.description.as_deref(),
+            Some(
+                "One agent for everywhere you code—included in ChatGPT Plus, Pro, Business, Edu, and Enterprise plans."
+            )
+        );
+        assert_eq!(codex.logo_url.as_deref(), Some("https://openai.com/favicon.ico"));
+    }
+
+    #[tokio::test]
     async fn update_settings_persists_runtime_only_active_payload_fields() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("custom-runtime-payload.json");
@@ -2902,7 +3065,11 @@ mod tests {
 
         let Json(list_response) = list(
             State(context.app_state.clone()),
-            Query(ClientCheckReq { refresh: false }),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: true,
+                include_detected: false,
+            }),
         )
         .await
         .expect("list clients");
