@@ -1,7 +1,7 @@
 // HTTP handlers for client management API (template-driven)
 
 use super::backups::parse_policy_payload;
-use super::config::{analyze_config_content, get_config_last_modified};
+use super::config::get_config_last_modified;
 use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
     ClientAttachData, ClientAttachReq, ClientAttachResp, ClientBackupActionData, ClientBackupActionResp,
@@ -18,7 +18,7 @@ use crate::api::models::client::{
 use crate::api::models::server::SkippedServerData;
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::analyzer::ConfigAnalysis;
+use crate::clients::analyzer::{ConfigAnalysis, analyze_config_content};
 use crate::clients::models::{
     AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
     TemplateFormat, UnifyDirectExposureConfig,
@@ -93,17 +93,12 @@ fn analyze_config_for_state(
     state: &ClientStateRow,
     effective_parse: Option<&ClientConfigFileParse>,
 ) -> ConfigAnalysis {
-    let container_keys = effective_parse
-        .map(|parse| parse.container_keys.clone())
-        .unwrap_or_else(|| state.container_keys().unwrap_or_default());
-    let is_array_container = effective_parse
-        .map(|parse| parse.container_type == ContainerType::Array)
-        .unwrap_or_else(|| state.container_type() == Some("array"));
-    let format = effective_parse
-        .map(|parse| parse.format.as_str())
-        .or_else(|| state.config_format());
+    let Some(parse_rule) = effective_parse else {
+        return ConfigAnalysis::default();
+    };
+    let transports = state.parsed_transports().ok();
 
-    analyze_config_content(raw, &container_keys, is_array_container, format)
+    analyze_config_content(raw, parse_rule, transports.as_ref())
 }
 
 fn client_settings_error(
@@ -921,17 +916,33 @@ pub async fn config_import(
     let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Build standard import payload from parsed config
-    let items =
-        build_import_payload_from_value(&json_value, resolve_effective_config_file_parse(Some(&state)).as_ref())
-            .map_err(|err| {
-                tracing::error!(
-                    client = %request.identifier,
-                    status = 422u16,
-                    error = %err,
-                    "client config import parse rule is invalid"
-                );
-                StatusCode::UNPROCESSABLE_ENTITY
-            })?;
+    let parse_rule = resolve_effective_config_file_parse(Some(&state)).ok_or_else(|| {
+        tracing::error!(
+            client = %request.identifier,
+            status = 422u16,
+            "config_file_parse is missing; cannot import from known client config"
+        );
+        StatusCode::UNPROCESSABLE_ENTITY
+    })?;
+    let transports = state.parsed_transports().map_err(|err| {
+        tracing::error!(
+            client = %request.identifier,
+            status = 422u16,
+            error = %err,
+            "client transport rules are invalid"
+        );
+        StatusCode::UNPROCESSABLE_ENTITY
+    })?;
+
+    let items = build_import_payload_from_value(&json_value, &parse_rule, &transports).map_err(|err| {
+        tracing::error!(
+            client = %request.identifier,
+            status = 422u16,
+            error = %err,
+            "client config import parse rule is invalid"
+        );
+        StatusCode::UNPROCESSABLE_ENTITY
+    })?;
     let opts = crate::config::server::ImportOptions {
         by_name: true,
         by_fingerprint: true,
@@ -3367,7 +3378,7 @@ mod tests {
             r#"{
                 "context_servers": {
                     "MCPMate": {"url": "http://127.0.0.1:8000/mcp"},
-                    "mcp-server-context7": {"enabled": true}
+                    "mcp-server-context7": {"baseUrl": "https://context7.com/mcp"}
                 },
                 "agent_servers": {
                     "claude-acp": {"type": "registry"},
@@ -3399,7 +3410,20 @@ mod tests {
                     container_keys: vec!["context_servers".to_string()],
                 }),
                 clear_config_file_parse: false,
-                transports: None,
+                transports: Some(HashMap::from([(
+                    "streamable_http".to_string(),
+                    crate::api::models::client::ClientFormatRuleData {
+                        command_field: None,
+                        args_field: None,
+                        env_field: None,
+                        include_type: false,
+                        type_value: None,
+                        url_field: Some("url".to_string()),
+                        headers_field: None,
+                        extra_fields: None,
+                        selected: Some(true),
+                    },
+                )])),
                 clear_transports: false,
             }),
         )

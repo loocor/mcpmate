@@ -1,259 +1,132 @@
 // Client import helpers: parse only. Dedup/write are handled by config::server::import core.
 
 use crate::api::models::server::ServersImportConfig;
-use crate::clients::models::{ClientConfigFileParse, ContainerType};
-use crate::common::constants::config_keys;
+use crate::clients::analyzer::inspect_config_value;
+use crate::clients::models::{ClientConfigFileParse, FormatRule};
 use serde_json::Value;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParsedTransport {
-    Stdio,
-    StreamableHttp,
-}
-
-#[derive(Debug, Clone)]
-struct ServerConfigParsed {
-    transport: ParsedTransport,
-    command: Option<String>,
-    args: Vec<String>,
-    env: std::collections::HashMap<String, String>,
-    url: Option<String>,
-}
-
-/// Build a unified import payload from client config JSON value (object or array form)
+/// Build a unified import payload from a known client config value using its effective
+/// parse rule and transport format rules.
 pub fn build_import_payload_from_value(
     config: &Value,
-    parse_rule: Option<&ClientConfigFileParse>,
+    parse_rule: &ClientConfigFileParse,
+    transports: &HashMap<String, FormatRule>,
 ) -> anyhow::Result<HashMap<String, ServersImportConfig>> {
+    let inspection = inspect_config_value(config, parse_rule, Some(transports)).map_err(anyhow::Error::msg)?;
+    if !inspection.matched_container {
+        anyhow::bail!(
+            "none of the configured config nodes matched: {}",
+            parse_rule.container_keys.join(", ")
+        );
+    }
+
     let mut out = HashMap::new();
-    let map = extract_servers(config, parse_rule)?;
-    for (name, sc) in map.into_iter() {
-        let (kind, command, url) = match sc.transport {
-            ParsedTransport::Stdio => ("stdio".to_string(), sc.command, None),
-            ParsedTransport::StreamableHttp => ("streamable_http".to_string(), None, sc.url),
+    for entry in inspection.entries {
+        let (kind, command, url) = match entry.transport.as_str() {
+            "stdio" => ("stdio".to_string(), entry.command.clone(), None),
+            "streamable_http" | "sse" => ("streamable_http".to_string(), None, entry.url.clone()),
+            _ => continue,
         };
+
+        let mut env = entry.env;
+        let args = merge_key_equals_into_env(entry.args, &mut env);
         out.insert(
-            name,
+            entry.name,
             ServersImportConfig {
                 kind,
                 command,
-                args: Some(sc.args),
+                args: Some(args),
                 url,
-                env: Some(sc.env),
+                env: Some(env),
                 headers: None,
                 registry_server_id: None,
                 meta: None,
             },
         );
     }
+
     Ok(out)
-}
-
-fn locate_parse_container<'a>(
-    config: &'a Value,
-    container_key: &str,
-) -> Option<&'a Value> {
-    let mut current = config;
-
-    for segment in container_key.split('.') {
-        current = current.get(segment)?;
-    }
-
-    Some(current)
-}
-
-fn insert_server_if_absent(
-    servers: &mut HashMap<String, ServerConfigParsed>,
-    name: String,
-    parsed: ServerConfigParsed,
-) {
-    servers.entry(name).or_insert(parsed);
-}
-
-fn collect_servers_from_container(
-    servers: &mut HashMap<String, ServerConfigParsed>,
-    container: &Value,
-    container_type: ContainerType,
-    container_key: &str,
-) -> anyhow::Result<()> {
-    match container_type {
-        ContainerType::ObjectMap => {
-            let Some(entries) = container.as_object() else {
-                anyhow::bail!("configured config node '{container_key}' must resolve to an object map");
-            };
-            for (name, sc) in entries {
-                if let Some(parsed) = parse_server_config(sc) {
-                    insert_server_if_absent(servers, name.clone(), parsed);
-                }
-            }
-        }
-        ContainerType::Array => {
-            let Some(array) = container.as_array() else {
-                anyhow::bail!("configured config node '{container_key}' must resolve to an array");
-            };
-            for (idx, sc) in array.iter().enumerate() {
-                let name = sc
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("server_{}", idx));
-                if let Some(parsed) = parse_server_config(sc) {
-                    insert_server_if_absent(servers, name, parsed);
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn extract_servers(
-    config: &Value,
-    parse_rule: Option<&ClientConfigFileParse>,
-) -> anyhow::Result<HashMap<String, ServerConfigParsed>> {
-    let mut servers = HashMap::new();
-
-    if let Some(parse_rule) = parse_rule {
-        let mut matched_container = false;
-        for container_key in &parse_rule.container_keys {
-            if let Some(container) = locate_parse_container(config, container_key) {
-                matched_container = true;
-                collect_servers_from_container(&mut servers, container, parse_rule.container_type, container_key)?;
-            }
-        }
-
-        if !matched_container {
-            anyhow::bail!(
-                "none of the configured config nodes matched: {}",
-                parse_rule.container_keys.join(", ")
-            );
-        }
-
-        return Ok(servers);
-    }
-
-    // Object form (e.g., Claude Desktop)
-    if let Some(mcp_servers) = config.get(config_keys::MCP_SERVERS) {
-        collect_servers_from_container(
-            &mut servers,
-            mcp_servers,
-            ContainerType::ObjectMap,
-            config_keys::MCP_SERVERS,
-        )?;
-    } else if config.is_array() {
-        // Array form (e.g., Augment)
-        collect_servers_from_container(&mut servers, config, ContainerType::Array, "root")?;
-    }
-
-    Ok(servers)
-}
-
-fn parse_server_config(config: &Value) -> Option<ServerConfigParsed> {
-    let hint = config
-        .get("type")
-        .or_else(|| config.get("transport"))
-        .or_else(|| config.get("kind"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_ascii_lowercase());
-
-    let command = config.get("command").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let url = config.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-    let transport = match (command.as_ref(), url.as_ref(), hint.as_deref()) {
-        (Some(_), _, _) => ParsedTransport::Stdio,
-        (None, Some(_), Some("streamable_http" | "http" | "streamablehttp" | "sse")) => ParsedTransport::StreamableHttp,
-        (None, Some(_), _) => ParsedTransport::StreamableHttp,
-        _ => return None,
-    };
-
-    let mut args: Vec<String> = config
-        .get("args")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect())
-        .unwrap_or_default();
-
-    let mut env = config
-        .get("env")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Merge KEY=VALUE patterns from args into env (safer handling for credentials)
-    args = merge_key_equals_into_env(args, &mut env);
-
-    Some(ServerConfigParsed {
-        transport,
-        command,
-        args,
-        env,
-        url,
-    })
 }
 
 /// Move KEY=VALUE items from args to env. Returns filtered args.
 fn merge_key_equals_into_env(
     args: Vec<String>,
-    env: &mut std::collections::HashMap<String, String>,
+    env: &mut HashMap<String, String>,
 ) -> Vec<String> {
     let mut filtered = Vec::with_capacity(args.len());
-    for a in args.into_iter() {
-        if let Some((k, v)) = parse_env_assignment(&a) {
+    for arg in args {
+        if let Some((key, value)) = parse_env_assignment(&arg) {
             use std::collections::hash_map::Entry;
-            match env.entry(k) {
+            match env.entry(key) {
                 Entry::Occupied(_) => {}
-                Entry::Vacant(e) => {
-                    e.insert(v);
+                Entry::Vacant(entry) => {
+                    entry.insert(value);
                 }
             }
-        } else {
-            filtered.push(a);
+            continue;
         }
+
+        filtered.push(arg);
     }
     filtered
 }
 
-fn parse_env_assignment(s: &str) -> Option<(String, String)> {
-    // Reject flags like --foo=bar
-    if s.starts_with('-') {
+fn parse_env_assignment(raw: &str) -> Option<(String, String)> {
+    if raw.starts_with('-') {
         return None;
     }
-    let eq = s.find('=')?;
-    let (k, v) = s.split_at(eq);
-    if k.is_empty() {
+
+    let eq = raw.find('=')?;
+    let (key, value_with_equals) = raw.split_at(eq);
+    if key.is_empty() {
         return None;
     }
-    // v starts with '='
-    let mut value = v[1..].trim().to_string();
-    // Strip matching quotes
+
+    let mut value = value_with_equals[1..].trim().to_string();
     if ((value.starts_with('"') && value.ends_with('"')) || (value.starts_with('\'') && value.ends_with('\'')))
         && value.len() >= 2
     {
         value = value[1..value.len() - 1].to_string();
     }
-    // Accept typical env var keys
-    let valid_key = {
-        let mut chars = k.chars();
-        match chars.next() {
-            Some(c) if c.is_ascii_alphabetic() || c == '_' => (),
-            _ => return None,
-        };
-        chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-    };
-    if !valid_key {
+
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {}
+        _ => return None,
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return None;
     }
-    Some((k.to_string(), value))
+
+    Some((key.to_string(), value))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat};
+
+    fn transport_rules() -> HashMap<String, FormatRule> {
+        HashMap::from([
+            (
+                "stdio".to_string(),
+                FormatRule {
+                    command_field: Some("command".to_string()),
+                    args_field: Some("args".to_string()),
+                    env_field: Some("env".to_string()),
+                    ..FormatRule::default()
+                },
+            ),
+            (
+                "streamable_http".to_string(),
+                FormatRule {
+                    url_field: Some("url".to_string()),
+                    ..FormatRule::default()
+                },
+            ),
+        ])
+    }
 
     #[test]
     fn build_import_payload_uses_config_file_parse_for_zed_context_servers() {
@@ -273,7 +146,8 @@ mod tests {
             container_keys: vec!["context_servers".to_string()],
         };
 
-        let payload = build_import_payload_from_value(&config, Some(&parse_rule)).expect("zed import payload");
+        let payload =
+            build_import_payload_from_value(&config, &parse_rule, &transport_rules()).expect("zed import payload");
         let server = payload.get("zed-mcp").expect("zed server entry");
 
         assert_eq!(server.kind, "stdio");
@@ -305,7 +179,8 @@ mod tests {
             container_keys: vec!["context_servers".to_string()],
         };
 
-        let payload = build_import_payload_from_value(&config, Some(&parse_rule)).expect("zed import payload");
+        let payload =
+            build_import_payload_from_value(&config, &parse_rule, &transport_rules()).expect("zed import payload");
 
         assert!(payload.contains_key("zed-mcp"));
         assert!(!payload.contains_key("wrong-node"));
@@ -329,7 +204,8 @@ mod tests {
             container_keys: vec!["primary".to_string(), "secondary".to_string()],
         };
 
-        let payload = build_import_payload_from_value(&config, Some(&parse_rule)).expect("multi-node import payload");
+        let payload = build_import_payload_from_value(&config, &parse_rule, &transport_rules())
+            .expect("multi-node import payload");
 
         assert!(payload.contains_key("one"));
         assert!(payload.contains_key("two"));
@@ -353,7 +229,8 @@ mod tests {
             container_keys: vec!["primary".to_string(), "secondary".to_string()],
         };
 
-        let payload = build_import_payload_from_value(&config, Some(&parse_rule)).expect("deduplicated payload");
+        let payload =
+            build_import_payload_from_value(&config, &parse_rule, &transport_rules()).expect("deduplicated payload");
         let server = payload.get("shared").expect("shared server entry");
 
         assert_eq!(server.command.as_deref(), Some("uvx"));
@@ -374,7 +251,8 @@ mod tests {
             container_keys: vec!["missing.node".to_string()],
         };
 
-        let err = build_import_payload_from_value(&config, Some(&parse_rule)).expect_err("missing nodes should error");
+        let err = build_import_payload_from_value(&config, &parse_rule, &transport_rules())
+            .expect_err("missing nodes should error");
 
         assert!(
             err.to_string()
@@ -394,12 +272,58 @@ mod tests {
             container_keys: vec!["context_servers".to_string()],
         };
 
-        let err = build_import_payload_from_value(&config, Some(&parse_rule))
+        let err = build_import_payload_from_value(&config, &parse_rule, &transport_rules())
             .expect_err("invalid container shape should error");
 
         assert!(
             err.to_string()
                 .contains("configured config node 'context_servers' must resolve to an object map")
         );
+    }
+
+    #[test]
+    fn build_import_payload_accepts_base_url_alias_from_inspection_core() {
+        let config = serde_json::json!({
+            "context_servers": {
+                "remote": {
+                    "baseUrl": "https://example.com/mcp"
+                }
+            }
+        });
+
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["context_servers".to_string()],
+        };
+
+        let payload =
+            build_import_payload_from_value(&config, &parse_rule, &transport_rules()).expect("baseUrl import payload");
+        let server = payload.get("remote").expect("remote server entry");
+
+        assert_eq!(server.kind, "streamable_http");
+        assert_eq!(server.url.as_deref(), Some("https://example.com/mcp"));
+    }
+
+    #[test]
+    fn build_import_payload_ignores_array_entries_without_string_name() {
+        let config = serde_json::json!({
+            "servers": [
+                {"name": 7, "command": "uvx"},
+                {"name": "valid", "command": "bun"}
+            ]
+        });
+
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::Array,
+            container_keys: vec!["servers".to_string()],
+        };
+
+        let payload =
+            build_import_payload_from_value(&config, &parse_rule, &transport_rules()).expect("array import payload");
+
+        assert_eq!(payload.len(), 1);
+        assert!(payload.contains_key("valid"));
     }
 }

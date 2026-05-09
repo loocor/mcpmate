@@ -1,17 +1,8 @@
 // Configuration file processing for client handlers
 
-use crate::clients::analyzer::{ConfigAnalysis, analyze_config_content as analyze};
+use crate::clients::analyzer::analyze_config_content;
+use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat};
 use crate::common::ConfigChecker;
-
-/// Helper function to analyze config content for MCP information
-pub fn analyze_config_content(
-    content: &str,
-    container_keys: &[String],
-    is_array_container: bool,
-    format: Option<&str>,
-) -> ConfigAnalysis {
-    analyze(content, container_keys, is_array_container, format)
-}
 
 /// Fallback analysis when database lookup fails
 /// Checks common top-level keys for compatibility
@@ -30,7 +21,28 @@ pub async fn check_mcp_config_exists(
 
     // If basic checks pass, perform more detailed client-specific checks
     match std::fs::read_to_string(config_path) {
-        Ok(content) => analyze_config_content(&content, container_keys, is_array_container, None).has_mcp_config,
+        Ok(content) => {
+            let format = match config_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.to_ascii_lowercase())
+            {
+                Some(ext) if ext == "json5" => TemplateFormat::Json5,
+                Some(ext) if ext == "toml" => TemplateFormat::Toml,
+                Some(ext) if ext == "yaml" || ext == "yml" => TemplateFormat::Yaml,
+                _ => TemplateFormat::Json,
+            };
+            let parse_rule = ClientConfigFileParse {
+                format,
+                container_type: if is_array_container {
+                    ContainerType::Array
+                } else {
+                    ContainerType::ObjectMap
+                },
+                container_keys: container_keys.to_vec(),
+            };
+            analyze_config_content(&content, &parse_rule, None).has_mcp_config
+        }
         Err(_) => false,
     }
 }
