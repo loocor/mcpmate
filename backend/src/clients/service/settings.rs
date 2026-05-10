@@ -737,12 +737,6 @@ impl ClientConfigService {
                     WHEN ? IS NULL THEN connection_mode
                     ELSE NULLIF(?, '')
                 END,
-                attachment_state = CASE
-                    WHEN ? IS NOT NULL AND NULLIF(?, '') IS NOT NULL THEN 'detached'
-                    WHEN ? IN ('manual', 'remote_http') THEN 'not_applicable'
-                    WHEN ? = 'local_config_detected' AND NULLIF(?, '') IS NOT NULL THEN 'detached'
-                    ELSE attachment_state
-                END,
                 governance_kind = COALESCE(?, governance_kind),
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
@@ -754,11 +748,6 @@ impl ClientConfigService {
         .bind(config_path)
         .bind(connection_mode)
         .bind(connection_mode)
-        .bind(config_path)
-        .bind(config_path)
-        .bind(connection_mode)
-        .bind(connection_mode)
-        .bind(config_path)
         .bind(governance_kind)
         .bind(identifier)
         .execute(&*self.db_pool)

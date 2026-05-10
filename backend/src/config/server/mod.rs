@@ -35,4 +35,7 @@ pub use enabled::{
     is_server_enabled_in_any_active_profile, is_server_enabled_in_any_profile, is_server_in_profile,
     update_server_global_status,
 };
-pub use import::{ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch};
+pub use import::{
+    ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, build_import_plan_from_entries,
+    build_import_plan_from_inspection, import_batch,
+};

@@ -7,7 +7,9 @@ use sqlx::{Pool, Sqlite};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::api::models::client::ServerEntryData;
 use crate::api::models::server::{RegistryRepositoryInfo, ServerIcon, ServerMetaPayload, ServersImportConfig};
+use crate::clients::analyzer::{ConfigImportSkipReason, ConfigInspection, InspectedServerEntry};
 use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
 use crate::config::registry::RegistryCacheService;
@@ -76,10 +78,143 @@ pub struct SkippedServer {
 pub enum SkipReason {
     DuplicateName,
     DuplicateFingerprint,
+    ConfigInvalidEntry,
+    ConfigMissingCommand,
+    ConfigMissingUrl,
+    ConfigUnrecognized,
     UrlQueryMismatch {
         existing_query: Option<String>,
         incoming_query: Option<String>,
     },
+}
+
+impl From<ConfigImportSkipReason> for SkipReason {
+    fn from(reason: ConfigImportSkipReason) -> Self {
+        match reason {
+            ConfigImportSkipReason::InvalidEntry => Self::ConfigInvalidEntry,
+            ConfigImportSkipReason::MissingCommand => Self::ConfigMissingCommand,
+            ConfigImportSkipReason::MissingUrl => Self::ConfigMissingUrl,
+            ConfigImportSkipReason::Unrecognized => Self::ConfigUnrecognized,
+        }
+    }
+}
+
+pub struct ClientImportPlan {
+    pub items: HashMap<String, ServersImportConfig>,
+    pub skipped_servers: Vec<SkippedServer>,
+}
+
+fn record_conflict(
+    outcome: &mut ImportOutcome,
+    name: &str,
+    reason: SkipReason,
+    policy: ConflictPolicy,
+) -> bool {
+    match policy {
+        ConflictPolicy::Skip => {
+            outcome.skipped.push(SkippedServer {
+                name: name.to_string(),
+                reason,
+            });
+            true
+        }
+        ConflictPolicy::Error => {
+            outcome.failed.insert(name.to_string(), "duplicate".to_string());
+            true
+        }
+        ConflictPolicy::Update => false,
+    }
+}
+
+fn build_imported_server(
+    name: String,
+    cfg: &ServersImportConfig,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    server_type: &str,
+) -> ImportedServer {
+    ImportedServer {
+        name,
+        command: cfg.command.clone(),
+        args,
+        env,
+        server_type: server_type.to_string(),
+        url: cfg.url.clone(),
+    }
+}
+
+pub fn build_import_plan_from_inspection(
+    inspection: ConfigInspection,
+    container_keys: &[String],
+) -> Result<ClientImportPlan> {
+    if !inspection.matched_container {
+        anyhow::bail!(
+            "none of the configured config nodes matched: {}",
+            container_keys.join(", ")
+        );
+    }
+
+    Ok(build_import_plan(inspection.entries))
+}
+
+pub fn build_import_plan_from_entries(entries: Vec<ServerEntryData>) -> ClientImportPlan {
+    build_import_plan(entries.into_iter().map(Into::into))
+}
+
+fn build_import_plan(entries: impl IntoIterator<Item = InspectedServerEntry>) -> ClientImportPlan {
+    let mut items = HashMap::new();
+    let mut skipped_servers = Vec::new();
+    for entry in entries {
+        match import_config_from_inspected_entry(entry) {
+            Ok((name, config)) => {
+                items.insert(name, config);
+            }
+            Err(skipped) => skipped_servers.push(skipped),
+        }
+    }
+
+    ClientImportPlan { items, skipped_servers }
+}
+
+fn import_config_from_inspected_entry(
+    entry: InspectedServerEntry
+) -> std::result::Result<(String, ServersImportConfig), SkippedServer> {
+    let (kind, command, url) = match entry.resolved_import_transport() {
+        Ok(target) => (
+            target.kind.to_string(),
+            target.command.map(str::to_string),
+            target.url.map(str::to_string),
+        ),
+        Err(reason) => {
+            return Err(SkippedServer {
+                name: entry.name,
+                reason: reason.into(),
+            });
+        }
+    };
+
+    let InspectedServerEntry {
+        name,
+        args,
+        env,
+        headers,
+        ..
+    } = entry;
+    let headers = if headers.is_empty() { None } else { Some(headers) };
+
+    Ok((
+        name,
+        ServersImportConfig {
+            kind,
+            command,
+            args: Some(args),
+            url,
+            env: Some(env),
+            headers,
+            registry_server_id: None,
+            meta: None,
+        },
+    ))
 }
 
 /// Import a batch of servers with consistent deduplication and capability sync.
@@ -100,8 +235,6 @@ pub async fn import_batch(
         "Starting server import batch"
     );
     let existing = ExistingIndex::build(db_pool).await?;
-
-    // We'll need profile association (lazily resolve default if not provided)
 
     for (name, cfg) in items.into_iter() {
         // Validate and normalize
@@ -132,85 +265,53 @@ pub async fn import_batch(
         let by_name_dup = opts.by_name && existing.names.contains(&name);
         let by_fp_dup = opts.by_fingerprint && !fp.is_empty() && existing.fingerprints.contains(&fp);
 
-        if by_fp_dup {
-            match opts.conflict_policy {
-                ConflictPolicy::Skip => {
-                    outcome.skipped.push(SkippedServer {
-                        name,
-                        reason: SkipReason::DuplicateFingerprint,
-                    });
-                    continue;
-                }
-                ConflictPolicy::Error => {
-                    outcome.failed.insert(name, "duplicate".to_string());
-                    continue;
-                }
-                ConflictPolicy::Update => {}
-            }
+        if by_fp_dup
+            && record_conflict(
+                &mut outcome,
+                &name,
+                SkipReason::DuplicateFingerprint,
+                opts.conflict_policy,
+            )
+        {
+            continue;
         }
 
         if opts.by_fingerprint && !by_fp_dup {
             if let Some(sig) = url_signature.as_ref() {
                 if existing.url_bases.contains(&sig.base) {
                     let existing_sig = existing.url_signatures.get(&sig.base);
-                    match opts.conflict_policy {
-                        ConflictPolicy::Skip => {
-                            let existing_query = existing_sig.and_then(|s| s.display_query());
-                            let incoming_query = sig.display_query();
-                            outcome.skipped.push(SkippedServer {
-                                name,
-                                reason: SkipReason::UrlQueryMismatch {
-                                    existing_query,
-                                    incoming_query,
-                                },
-                            });
-                            continue;
-                        }
-                        ConflictPolicy::Error => {
-                            outcome.failed.insert(name, "duplicate".to_string());
-                            continue;
-                        }
-                        ConflictPolicy::Update => {}
+                    if record_conflict(
+                        &mut outcome,
+                        &name,
+                        SkipReason::UrlQueryMismatch {
+                            existing_query: existing_sig.and_then(|s| s.display_query()),
+                            incoming_query: sig.display_query(),
+                        },
+                        opts.conflict_policy,
+                    ) {
+                        continue;
                     }
                 }
             }
         }
 
-        if by_name_dup {
-            match opts.conflict_policy {
-                ConflictPolicy::Skip => {
-                    outcome.skipped.push(SkippedServer {
-                        name,
-                        reason: SkipReason::DuplicateName,
-                    });
-                    continue;
-                }
-                ConflictPolicy::Error => {
-                    outcome.failed.insert(name, "duplicate".to_string());
-                    continue;
-                }
-                ConflictPolicy::Update => {}
-            }
-        }
-
-        // Preview: report would-be imported without DB side-effects
-        if opts.preview {
-            outcome.imported.push(ImportedServer {
-                name,
-                command: cfg.command.clone(),
-                args: cfg.args.clone().unwrap_or_default(),
-                env: cfg.env.clone().unwrap_or_default(),
-                server_type: normalized_kind.to_string(),
-                url: cfg.url.clone(),
-            });
+        if by_name_dup && record_conflict(&mut outcome, &name, SkipReason::DuplicateName, opts.conflict_policy) {
             continue;
         }
 
-        // Normalize args/env: move KEY=VALUE patterns from args into env for safety
+        // Normalize args/env once for both preview and apply.
         let (args_norm, env_norm) = normalize_args_env(
             cfg.args.clone().unwrap_or_default(),
             cfg.env.clone().unwrap_or_default(),
         );
+
+        // Preview: report would-be imported without DB side-effects
+        if opts.preview {
+            outcome
+                .imported
+                .push(build_imported_server(name, &cfg, args_norm, env_norm, &normalized_kind));
+            continue;
+        }
 
         // Apply: upsert server, args, env, headers
         let mut server = match server_type {
@@ -346,14 +447,13 @@ pub async fn import_batch(
         }
         outcome.scheduled = true;
 
-        outcome.imported.push(ImportedServer {
+        outcome.imported.push(build_imported_server(
             name,
-            command: cfg.command.clone(),
-            args: args_norm,
-            env: env_norm,
-            server_type: server_type.client_format().to_string(),
-            url: cfg.url.clone(),
-        });
+            &cfg,
+            args_norm,
+            env_norm,
+            server_type.client_format(),
+        ));
     }
 
     Ok(outcome)
@@ -409,7 +509,7 @@ pub(crate) fn server_meta_from_payload(
     Ok(meta)
 }
 
-fn normalize_args_env(
+pub(crate) fn normalize_args_env(
     args: Vec<String>,
     env: std::collections::HashMap<String, String>,
 ) -> (Vec<String>, std::collections::HashMap<String, String>) {
@@ -851,6 +951,84 @@ pub async fn import_from_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clients::analyzer::inspect_config_value;
+    use crate::clients::models::{ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat};
+
+    fn transport_rules() -> HashMap<String, FormatRule> {
+        HashMap::from([
+            (
+                "stdio".to_string(),
+                FormatRule {
+                    command_field: Some("command".to_string()),
+                    args_field: Some("args".to_string()),
+                    env_field: Some("env".to_string()),
+                    ..FormatRule::default()
+                },
+            ),
+            (
+                "streamable_http".to_string(),
+                FormatRule {
+                    url_field: Some("url".to_string()),
+                    ..FormatRule::default()
+                },
+            ),
+        ])
+    }
+
+    fn import_plan_from_value(
+        config: &serde_json::Value,
+        parse_rule: &ClientConfigFileParse,
+    ) -> Result<ClientImportPlan> {
+        let transports = transport_rules();
+        let inspection = inspect_config_value(config, parse_rule, Some(&transports));
+        build_import_plan_from_inspection(inspection, &parse_rule.container_keys)
+    }
+
+    #[test]
+    fn client_config_import_plan_infers_transport_and_reports_skips() {
+        let config = serde_json::json!({
+            "context_servers": {
+                "MCPMate": {"url": "http://127.0.0.1:8000/mcp"},
+                "shadcn-mcp-server": {"enabled": true}
+            }
+        });
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["context_servers".to_string()],
+        };
+
+        let plan = import_plan_from_value(&config, &parse_rule).expect("import plan");
+
+        let mcpmate = plan.items.get("MCPMate").expect("MCPMate server entry");
+        assert_eq!(mcpmate.kind, "streamable_http");
+        assert_eq!(mcpmate.url.as_deref(), Some("http://127.0.0.1:8000/mcp"));
+        assert_eq!(plan.skipped_servers.len(), 1);
+        assert_eq!(plan.skipped_servers[0].name, "shadcn-mcp-server");
+        assert!(matches!(plan.skipped_servers[0].reason, SkipReason::ConfigUnrecognized));
+    }
+
+    #[test]
+    fn client_config_import_plan_reports_invalid_entries() {
+        let config = serde_json::json!({
+            "context_servers": {
+                "broken": true,
+                "valid": {"command": "uvx"}
+            }
+        });
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["context_servers".to_string()],
+        };
+
+        let plan = import_plan_from_value(&config, &parse_rule).expect("import plan");
+
+        assert!(plan.items.contains_key("valid"));
+        assert_eq!(plan.skipped_servers.len(), 1);
+        assert_eq!(plan.skipped_servers[0].name, "broken");
+        assert!(matches!(plan.skipped_servers[0].reason, SkipReason::ConfigInvalidEntry));
+    }
 
     #[test]
     fn test_npm_package_to_import_config_with_version() {

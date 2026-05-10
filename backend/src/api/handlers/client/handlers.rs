@@ -2,7 +2,6 @@
 
 use super::backups::parse_policy_payload;
 use super::config::get_config_last_modified;
-use super::import::build_import_payload_from_value;
 use crate::api::models::client::{
     ClientAttachData, ClientAttachReq, ClientAttachResp, ClientBackupActionData, ClientBackupActionResp,
     ClientCapabilityConfigData, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq,
@@ -13,14 +12,16 @@ use crate::api::models::client::{
     ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
     ClientConfigUpdateResp, ClientDetachData, ClientDetachReq, ClientDetachResp, ClientFormatRuleData,
     ClientImportSummary, ClientImportedServer, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
-    ClientUnifyDirectExposureData,
+    ClientUnifyDirectExposureData, ServerEntryData,
 };
 use crate::api::models::server::SkippedServerData;
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::analyzer::{ConfigAnalysis, analyze_config_content};
+use crate::clients::analyzer::{
+    ConfigAnalysis, ConfigInspectionReport, inspect_config_content, parse_config_to_json_value,
+};
 use crate::clients::models::{
-    AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
+    AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType, FormatRule,
     TemplateFormat, UnifyDirectExposureConfig,
 };
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
@@ -29,6 +30,7 @@ use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
 use crate::common::ClientCategory;
+use crate::config::server::build_import_plan_from_entries;
 use crate::core::proxy::server::ProxyServer;
 use axum::{
     extract::{Json, Query, State},
@@ -88,17 +90,63 @@ fn build_parse_metadata(
     (effective, override_parse, uses_default)
 }
 
-fn analyze_config_for_state(
-    raw: &str,
+struct ClientConfigInspectionContext {
+    report: ConfigInspectionReport,
+}
+
+fn inspect_client_config_with_state(
+    raw: Option<&str>,
+    parse_rule: ClientConfigFileParse,
+    transports: Option<&HashMap<String, FormatRule>>,
+) -> ClientConfigInspectionContext {
+    let report = inspect_config_content(raw.unwrap_or_default(), &parse_rule, transports);
+
+    ClientConfigInspectionContext { report }
+}
+
+fn inspect_client_config_lenient(
+    raw: Option<&str>,
     state: &ClientStateRow,
-    effective_parse: Option<&ClientConfigFileParse>,
-) -> ConfigAnalysis {
-    let Some(parse_rule) = effective_parse else {
-        return ConfigAnalysis::default();
-    };
+) -> Option<ClientConfigInspectionContext> {
+    let parse_rule = resolve_effective_config_file_parse(Some(state))?;
     let transports = state.parsed_transports().ok();
 
-    analyze_config_content(raw, parse_rule, transports.as_ref())
+    Some(inspect_client_config_with_state(raw, parse_rule, transports.as_ref()))
+}
+
+fn analyze_client_config_lenient(
+    raw: Option<&str>,
+    state: &ClientStateRow,
+) -> ConfigAnalysis {
+    inspect_client_config_lenient(raw, state)
+        .map(|inspected| inspected.report.analysis)
+        .unwrap_or_default()
+}
+
+async fn detect_mcpmate_in_config(
+    service: &ClientConfigService,
+    state: &ClientStateRow,
+) -> Option<bool> {
+    let raw = service.read_current_config(state.identifier()).await.ok()??;
+    let inspected = inspect_client_config_lenient(Some(&raw), state)?;
+    Some(inspected.report.analysis.mcpmate_present)
+}
+
+fn derive_attachment_state(
+    state: Option<&ClientStateRow>,
+    config_analysis: &ConfigAnalysis,
+) -> String {
+    if config_analysis.mcpmate_present {
+        return "attached".to_string();
+    }
+
+    if state.map(ClientStateRow::has_local_config_target).unwrap_or(false) {
+        return "detached".to_string();
+    }
+
+    state
+        .map(|row| row.attachment_state().as_str().to_string())
+        .unwrap_or_else(|| "not_applicable".to_string())
 }
 
 fn client_settings_error(
@@ -393,11 +441,15 @@ pub async fn config_details(
     Query(request): Query<ClientConfigReq>,
 ) -> Result<Json<ClientConfigResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    let state = service.fetch_state(&request.identifier).await.ok().flatten();
-    if state.is_none() {
-        tracing::error!("Failed to resolve client config details for {}", request.identifier);
-        return Err(StatusCode::NOT_FOUND);
-    }
+    let state = service
+        .fetch_state(&request.identifier)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            tracing::error!("Failed to resolve client config details for {}", request.identifier);
+            StatusCode::NOT_FOUND
+        })?;
 
     let config_path = service.config_path(&request.identifier).await.map_err(|err| {
         tracing::error!("Failed to resolve config path for {}: {}", request.identifier, err);
@@ -406,10 +458,7 @@ pub async fn config_details(
 
     let mut warnings: Vec<String> = Vec::new();
     let mut degraded_reasons: Vec<String> = Vec::new();
-    let has_local_config_target = state
-        .as_ref()
-        .map(ClientStateRow::has_local_config_target)
-        .unwrap_or(false);
+    let has_local_config_target = state.has_local_config_target();
     let use_runtime_config_read = !has_local_config_target;
     let content = if use_runtime_config_read {
         read_runtime_config(service.as_ref(), &request.identifier)
@@ -436,39 +485,50 @@ pub async fn config_details(
     };
 
     let config_exists = content.is_some();
-    let parsed_content = match (content.as_deref(), state.as_ref()) {
-        (Some(raw), Some(state)) => match state.config_format() {
-            Some(_) => parse_config_value(raw, state.config_format()),
-            None => parse_runtime_config_value(raw, config_path.as_deref()),
-        },
-        (Some(raw), None) => parse_runtime_config_value(raw, config_path.as_deref()),
-        (None, _) => Value::Null,
+    let inspected_config = inspect_client_config_lenient(content.as_deref(), &state);
+    let parsed_content = if let Some(inspected) = inspected_config.as_ref() {
+        inspected.report.document.clone()
+    } else {
+        match content.as_deref() {
+            Some(raw) => match state.config_format() {
+                Some(_) => parse_config_value(raw, state.config_format()),
+                None => parse_runtime_config_value(raw, config_path.as_deref()),
+            },
+            None => Value::Null,
+        }
     };
 
-    let config_analysis = match (content.as_deref(), state.as_ref()) {
-        (Some(raw), Some(state)) => {
-            let effective_parse = resolve_effective_config_file_parse(Some(state));
-            analyze_config_for_state(raw, state, effective_parse.as_ref())
-        }
-        _ => Default::default(),
-    };
+    let (config_analysis, configured_server_entries) = inspected_config
+        .as_ref()
+        .map(|inspected| {
+            (
+                inspected.report.analysis.clone(),
+                inspected
+                    .report
+                    .inspection
+                    .entries
+                    .clone()
+                    .into_iter()
+                    .map(ServerEntryData::from)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default();
+    let configured_servers = configured_server_entries
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect::<Vec<_>>();
 
     let last_modified = config_path.as_deref().and_then(get_config_last_modified);
 
-    let config_type = state
-        .as_ref()
-        .and_then(|row| match row.container_type() {
-            Some("array") => Some(crate::api::models::client::ClientConfigType::Array),
-            Some("object") => Some(crate::api::models::client::ClientConfigType::Standard),
-            _ => None,
-        })
-        .or_else(|| infer_config_type_from_path(config_path.as_deref()));
+    let config_type = match state.container_type() {
+        Some("array") => Some(crate::api::models::client::ClientConfigType::Array),
+        Some("object") => Some(crate::api::models::client::ClientConfigType::Standard),
+        _ => None,
+    }
+    .or_else(|| infer_config_type_from_path(config_path.as_deref()));
 
-    let (imported_servers, import_summary) = (None, None);
-    let runtime_metadata = state
-        .as_ref()
-        .map(ClientStateRow::runtime_client_metadata)
-        .unwrap_or_default();
+    let runtime_metadata = state.runtime_client_metadata();
     // Meta information comes only from runtime_metadata (approval_metadata.runtime_client)
     let description = runtime_metadata.description.clone();
     let homepage_url = runtime_metadata.homepage_url.clone();
@@ -491,23 +551,11 @@ pub async fn config_details(
         .as_ref()
         .map(|state| state.custom_profile_missing)
         .unwrap_or(false);
-    let governance_kind = state
-        .as_ref()
-        .map(|row| row.governance_kind().as_str().to_string())
-        .or_else(|| Some("passive".to_string()));
-    let connection_mode = state
-        .as_ref()
-        .map(|row| row.connection_mode().as_str().to_string())
-        .or_else(|| Some(default_connection_mode_from_path(config_path.as_deref())));
-    let governed_by_default_policy = state
-        .as_ref()
-        .map(|row| row.governed_by_default_policy())
-        .unwrap_or(true);
-    let approval_status = state.as_ref().map(|row| row.approval_status().to_string());
-    let attachment_state = state
-        .as_ref()
-        .map(|row| row.attachment_state().as_str().to_string())
-        .unwrap_or_else(|| "not_applicable".to_string());
+    let governance_kind = Some(state.governance_kind().as_str().to_string());
+    let connection_mode = Some(state.connection_mode().as_str().to_string());
+    let governed_by_default_policy = state.governed_by_default_policy();
+    let approval_status = Some(state.approval_status().to_string());
+    let attachment_state = derive_attachment_state(Some(&state), &config_analysis);
     let writable_config = service
         .has_verified_local_config_target(&request.identifier)
         .await
@@ -516,18 +564,17 @@ pub async fn config_details(
             degraded_reasons.push("writable_target_verification_failed_default_false".to_string());
             false
         });
-    let config_file_parse_effective = state
-        .as_ref()
-        .and_then(|row| resolve_effective_config_file_parse(Some(row)))
+    let config_file_parse_effective = resolve_effective_config_file_parse(Some(&state))
         .as_ref()
         .map(parse_data_from_rule);
     let config_file_parse_override = state
-        .as_ref()
-        .and_then(|row| row.config_file_parse_override().ok().flatten())
+        .config_file_parse_override()
+        .ok()
+        .flatten()
         .as_ref()
         .map(parse_data_from_rule);
     let uses_template_parse_default = config_file_parse_override.is_none();
-    let transports = transports_data_from_state(state.as_ref());
+    let transports = transports_data_from_state(Some(&state));
 
     let data = ClientConfigData {
         config_path: config_path.unwrap_or_default(),
@@ -535,12 +582,11 @@ pub async fn config_details(
         content: parsed_content,
         has_mcp_config: config_analysis.has_mcp_config,
         mcp_servers_count: config_analysis.server_count,
-        configured_servers: config_analysis.server_names,
+        configured_servers,
+        configured_server_entries,
         last_modified,
         config_type,
-        imported_servers,
-        import_summary,
-        template: build_client_template_metadata(state.as_ref(), &runtime_metadata),
+        template: build_client_template_metadata(Some(&state), &runtime_metadata),
         transports,
         description,
         homepage_url,
@@ -875,14 +921,14 @@ pub async fn config_restore(
 }
 
 /// Handler for POST /api/client/config/import
-/// Preview or import servers from the client's existing configuration
-#[tracing::instrument(skip(app_state, request), level = "debug", fields(client = %request.identifier, preview = %request.preview, profile = ?request.profile_id))]
+/// Import servers from analyzed client configuration entries
+#[tracing::instrument(skip(app_state, request), level = "debug", fields(client = %request.identifier, profile = ?request.profile_id))]
 pub async fn config_import(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientConfigImportReq>,
 ) -> Result<Json<ClientConfigImportResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
-    let state = service
+    service
         .fetch_state(&request.identifier)
         .await
         .map_err(|err| {
@@ -894,73 +940,32 @@ pub async fn config_import(
             StatusCode::NOT_FOUND
         })?;
 
-    let raw = service.read_current_config(&request.identifier).await.map_err(|err| {
-        tracing::error!("Failed to read config for {}: {}", request.identifier, err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let config_format_str = state.config_format().filter(|s| !s.trim().is_empty()).ok_or_else(|| {
-        tracing::error!(
-            client = %request.identifier,
-            status = 422u16,
-            "config_format is missing; cannot parse configuration"
-        );
-        StatusCode::UNPROCESSABLE_ENTITY
-    })?;
-
-    let json_value = raw
-        .as_deref()
-        .map(|raw| parse_config_value(raw, Some(config_format_str)))
-        .unwrap_or(serde_json::Value::Null);
-
     let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    // Build standard import payload from parsed config
-    let parse_rule = resolve_effective_config_file_parse(Some(&state)).ok_or_else(|| {
-        tracing::error!(
-            client = %request.identifier,
-            status = 422u16,
-            "config_file_parse is missing; cannot import from known client config"
-        );
-        StatusCode::UNPROCESSABLE_ENTITY
-    })?;
-    let transports = state.parsed_transports().map_err(|err| {
-        tracing::error!(
-            client = %request.identifier,
-            status = 422u16,
-            error = %err,
-            "client transport rules are invalid"
-        );
-        StatusCode::UNPROCESSABLE_ENTITY
-    })?;
-
-    let items = build_import_payload_from_value(&json_value, &parse_rule, &transports).map_err(|err| {
-        tracing::error!(
-            client = %request.identifier,
-            status = 422u16,
-            error = %err,
-            "client config import parse rule is invalid"
-        );
-        StatusCode::UNPROCESSABLE_ENTITY
-    })?;
+    let import_plan = build_import_plan_from_entries(request.entries);
+    let entry_count = import_plan.items.len() + import_plan.skipped_servers.len();
     let opts = crate::config::server::ImportOptions {
         by_name: true,
         by_fingerprint: true,
         conflict_policy: crate::config::server::ConflictPolicy::Skip,
-        preview: request.preview,
+        preview: false,
         target_profile: request.profile_id.clone(),
     };
-    let outcome =
-        crate::config::server::import_batch(&db.pool, &app_state.connection_pool, &app_state.redb_cache, items, opts)
-            .await
-            .map_err(|err| {
-                tracing::error!("Failed to import via unified core: {}", err);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+    let outcome = crate::config::server::import_batch(
+        &db.pool,
+        &app_state.connection_pool,
+        &app_state.redb_cache,
+        import_plan.items,
+        opts,
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!("Failed to import via unified core: {}", err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Report the profile used for association (actual association is handled in import core)
     let mut profile_used: Option<String> = None;
-    if !request.preview && !outcome.imported.is_empty() {
+    if !outcome.imported.is_empty() {
         let profile_id = if let Some(pid) = &request.profile_id {
             pid.clone()
         } else {
@@ -997,7 +1002,9 @@ pub async fn config_import(
         })
         .collect();
 
-    let skipped_servers: Vec<SkippedServerData> = skipped.into_iter().map(SkippedServerData::from).collect();
+    let mut skipped_domain = import_plan.skipped_servers;
+    skipped_domain.extend(skipped);
+    let skipped_servers: Vec<SkippedServerData> = skipped_domain.into_iter().map(SkippedServerData::from).collect();
 
     let skipped_count = skipped_servers.len() as u32;
 
@@ -1026,7 +1033,7 @@ pub async fn config_import(
         &request.identifier,
         Some(request.identifier.clone()),
         Some(json!({
-            "preview": request.preview,
+            "entry_count": entry_count,
             "profile_id": request.profile_id,
             "imported_count": data.summary.imported_count,
             "skipped_count": data.summary.skipped_count,
@@ -1367,6 +1374,18 @@ pub async fn client_detach(
 ) -> Result<Json<ClientDetachResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Conflict detection: check if MCPMate is actually present before detaching
+    if let Some(state) = service.fetch_state(&request.identifier).await.ok().flatten() {
+        if let Some(present) = detect_mcpmate_in_config(service.as_ref(), &state).await {
+            if !present {
+                warnings
+                    .push("MCPMate entry not found in config file; detach has no effect on file content".to_string());
+            }
+        }
+    }
+
     let changed = service.detach_client(&request.identifier).await.map_err(|err| {
         let status = match err {
             ConfigError::DataAccessError(_) | ConfigError::PathResolutionError(_) => StatusCode::BAD_REQUEST,
@@ -1399,6 +1418,7 @@ pub async fn client_detach(
         identifier: request.identifier,
         attachment_state: "detached".to_string(),
         changed,
+        warnings,
     })))
 }
 
@@ -1450,6 +1470,14 @@ pub async fn client_attach(
     let Some(state) = existing_state.as_ref() else {
         return Err(StatusCode::NOT_FOUND);
     };
+
+    // Conflict detection: check if MCPMate already present in config file
+    let mut warnings: Vec<String> = Vec::new();
+    if let Some(present) = detect_mcpmate_in_config(service.as_ref(), state).await {
+        if present {
+            warnings.push("MCPMate entry already present in config file; attach will overwrite".to_string());
+        }
+    }
 
     if state.attachment_state() != AttachmentState::Detached {
         tracing::warn!(
@@ -1518,6 +1546,7 @@ pub async fn client_attach(
         identifier: request.identifier,
         attachment_state: "attached".to_string(),
         changed: applied_config.data.applied,
+        warnings,
     })))
 }
 
@@ -1586,11 +1615,7 @@ async fn descriptor_to_client_info(
         None
     };
 
-    let effective_parse_rule = resolve_effective_config_file_parse(Some(&state));
-    let config_analysis = match content.as_deref() {
-        Some(raw) => analyze_config_for_state(raw, &state, effective_parse_rule.as_ref()),
-        _ => Default::default(),
-    };
+    let config_analysis = analyze_client_config_lenient(content.as_deref(), &state);
 
     let last_modified = descriptor.config_path.as_deref().and_then(get_config_last_modified);
 
@@ -1719,14 +1744,6 @@ fn build_client_template_metadata(
     }
 }
 
-fn default_connection_mode_from_path(config_path: Option<&str>) -> String {
-    if config_path.unwrap_or_default().is_empty() {
-        "manual".to_string()
-    } else {
-        "local_config_detected".to_string()
-    }
-}
-
 fn parse_config_value(
     content: &str,
     config_format: Option<&str>,
@@ -1736,23 +1753,7 @@ fn parse_config_value(
         return Value::Null;
     }
 
-    let format = match config_format {
-        Some("json") => TemplateFormat::Json,
-        Some("json5") => TemplateFormat::Json5,
-        Some("toml") => TemplateFormat::Toml,
-        Some("yaml") => TemplateFormat::Yaml,
-        _ => return Value::Null,
-    };
-
-    match format {
-        TemplateFormat::Json => serde_json::from_str(trimmed).unwrap_or(Value::Null),
-        TemplateFormat::Json5 => json5::from_str(trimmed).unwrap_or(Value::Null),
-        TemplateFormat::Toml => toml::from_str::<toml::Value>(trimmed)
-            .ok()
-            .and_then(|value| serde_json::to_value(value).ok())
-            .unwrap_or(Value::Null),
-        TemplateFormat::Yaml => serde_yaml::from_str(trimmed).unwrap_or(Value::Null),
-    }
+    parse_config_to_json_value(trimmed, config_format).unwrap_or(Value::Null)
 }
 
 fn parse_runtime_config_value(
@@ -3447,7 +3448,77 @@ mod tests {
             details.configured_servers,
             vec!["MCPMate".to_string(), "mcp-server-context7".to_string()]
         );
+        assert_eq!(details.configured_server_entries.len(), 2);
+        assert_eq!(details.configured_server_entries[0].name, "MCPMate");
+        assert_eq!(details.configured_server_entries[0].transport, "streamable_http");
+        assert_eq!(details.configured_server_entries[0].import_status, "importable");
+        assert_eq!(details.configured_server_entries[1].name, "mcp-server-context7");
+        assert_eq!(details.configured_server_entries[1].transport, "streamable_http");
+        assert_eq!(details.configured_server_entries[1].import_status, "importable");
+        assert_eq!(details.configured_server_entries[1].skip_reason, None);
         assert_eq!(details.mcp_servers_count, 2);
+    }
+
+    #[tokio::test]
+    async fn config_import_uses_supplied_entries_without_reanalyzing_config() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .set_client_settings(
+                "client-a",
+                Some("hosted".to_string()),
+                Some("streamable_http".to_string()),
+                None,
+            )
+            .await
+            .expect("seed client state");
+
+        let Json(import_response) = config_import(
+            State(context.app_state.clone()),
+            Json(crate::api::models::client::ClientConfigImportReq {
+                identifier: "client-a".to_string(),
+                entries: vec![
+                    crate::api::models::client::ServerEntryData {
+                        name: "config-import-entry".to_string(),
+                        transport: "streamable_http".to_string(),
+                        import_status: "skipped".to_string(),
+                        skip_reason: Some("config_unrecognized".to_string()),
+                        issue: None,
+                        command: None,
+                        args: Vec::new(),
+                        env: HashMap::new(),
+                        headers: HashMap::new(),
+                        url: Some("http://127.0.0.1:8123/mcp".to_string()),
+                    },
+                    crate::api::models::client::ServerEntryData {
+                        name: "broken-entry".to_string(),
+                        transport: "unclassified".to_string(),
+                        import_status: "importable".to_string(),
+                        skip_reason: None,
+                        issue: None,
+                        command: None,
+                        args: Vec::new(),
+                        env: HashMap::new(),
+                        headers: HashMap::new(),
+                        url: None,
+                    },
+                ],
+                profile_id: None,
+            }),
+        )
+        .await
+        .expect("import from supplied entries");
+
+        assert!(import_response.success);
+        let data = import_response.data.expect("import data");
+        assert_eq!(data.summary.imported_count, 1);
+        assert_eq!(data.summary.skipped_count, 1);
+        assert_eq!(data.summary.failed_count, 0);
+        assert_eq!(data.imported_servers.len(), 1);
+        assert_eq!(data.imported_servers[0].name, "config-import-entry");
+        assert_eq!(data.summary.skipped_servers.len(), 1);
+        assert_eq!(data.summary.skipped_servers[0].name, "broken-entry");
+        assert_eq!(data.summary.skipped_servers[0].reason, "config_unrecognized");
     }
 
     #[test]
