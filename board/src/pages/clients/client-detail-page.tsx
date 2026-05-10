@@ -85,7 +85,6 @@ import {
 } from "../../lib/client-config-sync";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import {
-  getSkippedQueryFieldLabel,
   getSkippedReasonLabel,
 } from "../../lib/server-import-utils";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
@@ -101,6 +100,8 @@ import type {
   ClientConfigUpdateData,
   ClientInfo,
   ConfigSuit,
+  SkippedServer,
+  ServerEntryData,
   ServerSummary,
   TransportRuleData,
   UnifyDirectCapabilityIds,
@@ -452,8 +453,6 @@ export function ClientDetailPage() {
     useState<ClientCapabilitySourceSelection>("default");
   const [policyOpen, setPolicyOpen] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
-  const [importPreviewData, setImportPreviewData] =
-    useState<ClientConfigImportData | null>(null);
 
   const {
     data: configDetails,
@@ -880,12 +879,12 @@ export function ClientDetailPage() {
         tooltip:
           configDetails?.writable_config === false
             ? t(
-                "detail.configuration.sections.mode.transparentDisabledReason",
-                {
-                  defaultValue:
-                    "Transparent requires a writable local config path.",
-                },
-              )
+              "detail.configuration.sections.mode.transparentDisabledReason",
+              {
+                defaultValue:
+                  "Transparent requires a writable local config path.",
+              },
+            )
             : undefined,
       },
     ];
@@ -1025,8 +1024,8 @@ export function ClientDetailPage() {
           selectedProfiles.length > 0
             ? selectedProfiles
             : ([sharedProfiles.find((p) => p.is_default)?.id].filter(
-                Boolean,
-              ) as string[]);
+              Boolean,
+            ) as string[]);
 
         if (profileIds.length === 0) {
           throw new Error(
@@ -1570,23 +1569,14 @@ export function ClientDetailPage() {
       ),
   });
 
-  const importMutation = useMutation<ClientConfigImportData | null>({
+  const importMutation = useMutation<ClientConfigImportData>({
     mutationFn: async () => {
-      // If no preview yet, generate one first
-      if (!importPreviewData) {
-        if (!identifier) throw new Error("No identifier provided");
-        const res = await clientsApi.importFromClient(identifier, {
-          preview: true,
-        });
-        setImportPreviewData(res);
-        return null; // indicate preview stage; caller handles UI
-      }
       if (!identifier) throw new Error("No identifier provided");
-      return clientsApi.importFromClient(identifier, { preview: false });
+      return clientsApi.importFromClient(identifier, {
+        entries: currentServerEntries,
+      });
     },
     onSuccess: (res) => {
-      // If onSuccess received null means we just did a preview; do not close
-      if (!res) return;
       const imported =
         res.imported_servers?.length ?? res.summary?.imported_count ?? 0;
       if (imported > 0) {
@@ -1596,15 +1586,16 @@ export function ClientDetailPage() {
           }),
           imported === 1
             ? t("detail.notifications.imported.messageSingle", {
-                defaultValue: "{{count}} server imported successfully",
-                count: imported,
-              })
+              defaultValue: "{{count}} server imported successfully",
+              count: imported,
+            })
             : t("detail.notifications.imported.messagePlural", {
-                defaultValue: "{{count}} servers imported successfully",
-                count: imported,
-              }),
+              defaultValue: "{{count}} servers imported successfully",
+              count: imported,
+            }),
         );
         setImportPreviewOpen(false);
+        refetchDetails();
       } else {
         notifyInfo(
           t("detail.notifications.nothingToImport.title", {
@@ -1705,23 +1696,6 @@ export function ClientDetailPage() {
       notifyError(
         t("detail.notifications.governanceFailed.title", {
           defaultValue: "Update failed",
-        }),
-        String(e),
-      ),
-  });
-  const importPreviewMutation = useMutation<ClientConfigImportData>({
-    mutationFn: async () => {
-      if (!identifier) throw new Error("No identifier provided");
-      return clientsApi.importFromClient(identifier, { preview: true });
-    },
-    onSuccess: (res) => {
-      setImportPreviewData(res);
-      setImportPreviewOpen(true);
-    },
-    onError: (e) =>
-      notifyError(
-        t("detail.notifications.previewFailed.title", {
-          defaultValue: "Preview failed",
         }),
         String(e),
       ),
@@ -1850,7 +1824,57 @@ export function ClientDetailPage() {
     visibleBackups.length === 0 &&
     (policyData?.policy === "off" || policyData?.policy === "none");
 
-  const currentServers = configDetails?.configured_servers ?? [];
+  const currentServerEntries = useMemo(
+    () => configDetails?.configured_server_entries ?? [],
+    [configDetails?.configured_server_entries],
+  );
+  const currentServerList = useMemo<ServerEntryData[]>(
+    () => currentServerEntries,
+    [currentServerEntries],
+  );
+  const importPreviewSkippedServers = useMemo<SkippedServer[]>(
+    () =>
+      currentServerEntries
+        .filter((entry) => entry.import_status === "skipped")
+        .map((entry) => ({
+          name: entry.name,
+          reason:
+            entry.skip_reason ?? entry.issue ?? "config_unrecognized",
+        })),
+    [currentServerEntries],
+  );
+  const importPreviewSummary = useMemo(
+    () => ({
+      importableCount: currentServerEntries.filter(
+        (entry) => entry.import_status !== "skipped",
+      ).length,
+      skippedCount: importPreviewSkippedServers.length,
+      failedCount: 0,
+      skippedServers: importPreviewSkippedServers,
+    }),
+    [currentServerEntries, importPreviewSkippedServers],
+  );
+  const importPreviewSnapshot = useMemo(
+    () => ({
+      entries: currentServerEntries,
+      summary: importPreviewSummary,
+    }),
+    [currentServerEntries, importPreviewSummary],
+  );
+  const renderServerEntryMeta = useCallback((entry: ServerEntryData) => {
+    const isSkipped = entry.import_status === "skipped";
+    const variant = isSkipped
+      ? "destructive"
+      : entry.transport === "unclassified"
+        ? "warning"
+        : "secondary";
+
+    return (
+      <Badge variant={variant} className="text-[10px] px-1.5 py-0">
+        {entry.transport}
+      </Badge>
+    );
+  }, []);
 
   if (!identifier)
     return (
@@ -1890,8 +1914,8 @@ export function ClientDetailPage() {
                 {isAttachedClient
                   ? t("detail.badges.attached", { defaultValue: "Attached" })
                   : t("detail.badges.detached", {
-                      defaultValue: "Detached",
-                    })}
+                    defaultValue: "Detached",
+                  })}
               </Badge>
             ) : null}
           </div>
@@ -2103,11 +2127,11 @@ export function ClientDetailPage() {
                             configDetails?.approval_status,
                           )
                             ? t("detail.overview.buttons.allow", {
-                                defaultValue: "Allow",
-                              })
+                              defaultValue: "Allow",
+                            })
                             : t("detail.overview.buttons.deny", {
-                                defaultValue: "Deny",
-                              })}
+                              defaultValue: "Deny",
+                            })}
                         </Button>
                         {isAttachmentApplicable ? (
                           <Button
@@ -2131,11 +2155,11 @@ export function ClientDetailPage() {
                             )}
                             {isAttachedClient
                               ? t("detail.overview.buttons.detach", {
-                                  defaultValue: "Detach",
-                                })
+                                defaultValue: "Detach",
+                              })
                               : t("detail.overview.buttons.attach", {
-                                  defaultValue: "Attach",
-                                })}
+                                defaultValue: "Attach",
+                              })}
                           </Button>
                         ) : null}
                         {supportedTransportOptions.length > 0 ? (
@@ -2214,12 +2238,12 @@ export function ClientDetailPage() {
                                     }),
                                     configApplied
                                       ? t(
-                                          "detail.notifications.applied.message",
-                                          {
-                                            defaultValue:
-                                              "Configuration applied",
-                                          },
-                                        )
+                                        "detail.notifications.applied.message",
+                                        {
+                                          defaultValue:
+                                            "Configuration applied",
+                                        },
+                                      )
                                       : "",
                                   );
                                   await refreshClientCapabilityState();
@@ -2288,7 +2312,7 @@ export function ClientDetailPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => importPreviewMutation.mutate()}
+                      onClick={() => setImportPreviewOpen(true)}
                       disabled={configDetails?.writable_config === false}
                     >
                       <Download className="mr-2 h-4 w-4" />{" "}
@@ -2309,16 +2333,12 @@ export function ClientDetailPage() {
                       />
                     ))}
                   </div>
-                ) : currentServers.length ? (
+                ) : currentServerList.length ? (
                   <CapsuleStripeList>
-                    {currentServers.map((n) => (
-                      <CapsuleStripeListItem key={n}>
-                        <div className="font-mono">{n}</div>
-                        <div className="text-xs text-slate-500">
-                          {t("detail.overview.currentServers.configuredLabel", {
-                            defaultValue: "configured",
-                          })}
-                        </div>
+                    {currentServerList.map((entry) => (
+                      <CapsuleStripeListItem key={entry.name}>
+                        <div className="font-mono">{entry.name}</div>
+                        {renderServerEntryMeta(entry)}
                       </CapsuleStripeListItem>
                     ))}
                   </CapsuleStripeList>
@@ -2612,487 +2632,486 @@ export function ClientDetailPage() {
                     {(mode === "unify" ||
                       mode === "hosted" ||
                       mode === "transparent") && (
-                      <div className="col-span-6">
-                        <div className="mb-3">
-                          <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                            {mode === "unify"
-                              ? t(
+                        <div className="col-span-6">
+                          <div className="mb-3">
+                            <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                              {mode === "unify"
+                                ? t(
                                   "detail.configuration.sections.exposure.title",
                                   {
                                     defaultValue: "3. Direct Exposure",
                                   },
                                 )
-                              : t(
+                                : t(
                                   "detail.configuration.sections.profiles.title",
                                   {
                                     defaultValue: "3. Profiles",
                                   },
                                 )}
-                          </h4>
-                          {mode === "unify" &&
-                            unifyRouteMode === "broker_only" && (
+                            </h4>
+                            {mode === "unify" &&
+                              unifyRouteMode === "broker_only" && (
+                                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                  {t(
+                                    "detail.configuration.sections.exposure.descriptions.broker_only",
+                                    {
+                                      defaultValue:
+                                        "All enabled MCP servers, including servers marked for direct exposure, remain reachable through the builtin UCAN tools in Broker Only mode.",
+                                    },
+                                  )}
+                                </p>
+                              )}
+                            {mode === "unify" &&
+                              unifyRouteMode === "server_level" && (
+                                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                  {t(
+                                    "detail.configuration.sections.exposure.descriptions.server_level",
+                                    {
+                                      defaultValue:
+                                        "Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
+                                    },
+                                  )}
+                                </p>
+                              )}
+                            {mode === "unify" &&
+                              unifyRouteMode === "capability_level" && (
+                                <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                  {t(
+                                    "detail.configuration.sections.exposure.descriptions.capability_level",
+                                    {
+                                      defaultValue:
+                                        "Toggle each eligible server on the left, then use the more button to configure direct exposure at capability level across tools, prompts, resources, and templates. (Advanced)",
+                                    },
+                                  )}
+                                </p>
+                              )}
+                            {/* Dynamic description based on source */}
+                            {mode !== "unify" && selectedConfig === "default" && (
                               <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                {t(
-                                  "detail.configuration.sections.exposure.descriptions.broker_only",
-                                  {
-                                    defaultValue:
-                                      "All enabled MCP servers, including servers marked for direct exposure, remain reachable through the builtin UCAN tools in Broker Only mode.",
-                                  },
-                                )}
-                              </p>
-                            )}
-                          {mode === "unify" &&
-                            unifyRouteMode === "server_level" && (
-                              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                {t(
-                                  "detail.configuration.sections.exposure.descriptions.server_level",
-                                  {
-                                    defaultValue:
-                                      "Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
-                                  },
-                                )}
-                              </p>
-                            )}
-                          {mode === "unify" &&
-                            unifyRouteMode === "capability_level" && (
-                              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                {t(
-                                  "detail.configuration.sections.exposure.descriptions.capability_level",
-                                  {
-                                    defaultValue:
-                                      "Toggle each eligible server on the left, then use the more button to configure direct exposure at capability level across tools, prompts, resources, and templates. (Advanced)",
-                                  },
-                                )}
-                              </p>
-                            )}
-                          {/* Dynamic description based on source */}
-                          {mode !== "unify" && selectedConfig === "default" && (
-                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                              {mode === "transparent"
-                                ? t(
+                                {mode === "transparent"
+                                  ? t(
                                     "detail.configuration.sections.profiles.descriptions.transparentDefault",
                                     {
                                       defaultValue:
                                         "Transparent mode will write the enabled servers from all currently activated profiles directly into this client's MCP configuration.",
                                     },
                                   )
-                                : t(
+                                  : t(
                                     "detail.configuration.sections.profiles.descriptions.default",
                                     {
                                       defaultValue:
                                         "Review the profiles that are already active for this client runtime. This view is read-only to keep the active scene set consistent.",
                                     },
                                   )}
-                            </p>
-                          )}
-                          {mode !== "unify" && selectedConfig === "profile" && (
-                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                              {mode === "transparent"
-                                ? t(
+                              </p>
+                            )}
+                            {mode !== "unify" && selectedConfig === "profile" && (
+                              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                {mode === "transparent"
+                                  ? t(
                                     "detail.configuration.sections.profiles.descriptions.transparentProfile",
                                     {
                                       defaultValue:
                                         "Select which shared profiles contribute enabled servers to this client's MCP configuration in transparent mode.",
                                     },
                                   )
-                                : t(
+                                  : t(
                                     "detail.configuration.sections.profiles.descriptions.profile",
                                     {
                                       defaultValue:
                                         "Choose the reusable shared profiles that define this client's working set.",
                                     },
                                   )}
-                            </p>
-                          )}
-                          {mode !== "unify" && selectedConfig === "custom" && (
-                            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                              {mode === "transparent"
-                                ? t(
+                              </p>
+                            )}
+                            {mode !== "unify" && selectedConfig === "custom" && (
+                              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                                {mode === "transparent"
+                                  ? t(
                                     "detail.configuration.sections.profiles.descriptions.transparentCustom",
                                     {
                                       defaultValue:
                                         "Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
                                     },
                                   )
-                                : t(
+                                  : t(
                                     "detail.configuration.sections.profiles.descriptions.custom",
                                     {
                                       defaultValue:
                                         "Create and maintain client-specific overrides for the current working state.",
                                     },
                                   )}
-                            </p>
-                          )}
-                        </div>
-
-                        {loadingProfiles ? (
-                          <div className="space-y-2">
-                            {[1, 2, 3].map((i) => (
-                              <div
-                                key={i}
-                                className="h-12 bg-slate-200 dark:bg-slate-800 animate-pulse rounded"
-                              />
-                            ))}
+                              </p>
+                            )}
                           </div>
-                        ) : (
-                          <CapsuleStripeList>
-                            {mode === "unify" ? (
-                              unifyRouteMode === "broker_only" ? (
-                                <CapsuleStripeListItem className="items-start">
-                                  <div className="w-full text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                                    {t(
-                                      "detail.configuration.sections.exposure.labels.ucanRoutingDescription",
-                                      {
-                                        defaultValue:
-                                          "In Broker Only mode, all enabled MCP servers — including servers marked for direct exposure — are still accessed through the UCAN catalog and call tools.",
-                                      },
-                                    )}
-                                  </div>
-                                </CapsuleStripeListItem>
-                              ) : eligibleServers.length > 0 ? (
-                                eligibleServers.map((server) => {
-                                  const isSelected =
-                                    unifySelectedServers.includes(server.id);
-                                  const toolSurfaces = getUnifyServerSurfaces(
-                                    effectiveCapabilityConfig
-                                      ?.unify_direct_exposure
-                                      ?.resolved_capabilities
-                                      ?.selected_tool_surfaces ?? [],
-                                    server.id,
-                                  );
-                                  const promptSurfaces = getUnifyServerSurfaces(
-                                    effectiveCapabilityConfig
-                                      ?.unify_direct_exposure
-                                      ?.resolved_capabilities
-                                      ?.selected_prompt_surfaces ?? [],
-                                    server.id,
-                                  );
-                                  const resourceSurfaces =
-                                    getUnifyServerSurfaces(
-                                      effectiveCapabilityConfig
-                                        ?.unify_direct_exposure
-                                        ?.resolved_capabilities
-                                        ?.selected_resource_surfaces ?? [],
-                                      server.id,
-                                    );
-                                  const templateSurfaces =
-                                    getUnifyServerSurfaces(
-                                      effectiveCapabilityConfig
-                                        ?.unify_direct_exposure
-                                        ?.resolved_capabilities
-                                        ?.selected_template_surfaces ?? [],
-                                      server.id,
-                                    );
-                                  const selectedCapabilityCount =
-                                    toolSurfaces.length +
-                                    promptSurfaces.length +
-                                    resourceSurfaces.length +
-                                    templateSurfaces.length;
-                                  const directPath =
-                                    getClientDirectCapabilitiesPath(
-                                      identifier,
-                                      server.id,
-                                    );
-                                  const isMixed = isUnifyServerMixedRouting(
-                                    unifyRouteMode,
-                                    toolSurfaces.length,
-                                    server.capabilities?.tools_count,
-                                  );
-                                  const showDirectSelection =
-                                    unifyRouteMode === "capability_level"
-                                      ? selectedCapabilityCount > 0
-                                      : isSelected;
-                                  const serverDescription =
-                                    server.meta?.description ||
-                                    t(
-                                      "detail.configuration.labels.noDescription",
-                                      {
-                                        defaultValue: "No description",
-                                      },
-                                    );
 
-                                  return (
-                                    <CapsuleStripeListItem
-                                      key={server.id}
-                                      interactive={true}
-                                      className={`group relative transition-colors ${showDirectSelection ? "bg-primary/10 ring-1 ring-primary/40" : ""}`}
-                                      onClick={() => {
-                                        if (
-                                          unifyRouteMode === "capability_level"
-                                        ) {
-                                          directExposureServerMutation.mutate({
-                                            server,
-                                            routeMode: "capability_level",
-                                          });
-                                        } else if (
-                                          unifyRouteMode === "server_level"
-                                        ) {
-                                          if (hasUnifyDraftChanges) {
-                                            setUnifySelectedServers((prev) =>
-                                              toggleSelectedServerIds(
-                                                prev,
-                                                server.id,
-                                              ),
-                                            );
-                                          } else {
-                                            directExposureServerMutation.mutate(
-                                              {
-                                                server,
-                                                routeMode: "server_level",
-                                              },
-                                            );
+                          {loadingProfiles ? (
+                            <div className="space-y-2">
+                              {[1, 2, 3].map((i) => (
+                                <div
+                                  key={i}
+                                  className="h-12 bg-slate-200 dark:bg-slate-800 animate-pulse rounded"
+                                />
+                              ))}
+                            </div>
+                          ) : (
+                            <CapsuleStripeList>
+                              {mode === "unify" ? (
+                                unifyRouteMode === "broker_only" ? (
+                                  <CapsuleStripeListItem className="items-start">
+                                    <div className="w-full text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                                      {t(
+                                        "detail.configuration.sections.exposure.labels.ucanRoutingDescription",
+                                        {
+                                          defaultValue:
+                                            "In Broker Only mode, all enabled MCP servers — including servers marked for direct exposure — are still accessed through the UCAN catalog and call tools.",
+                                        },
+                                      )}
+                                    </div>
+                                  </CapsuleStripeListItem>
+                                ) : eligibleServers.length > 0 ? (
+                                  eligibleServers.map((server) => {
+                                    const isSelected =
+                                      unifySelectedServers.includes(server.id);
+                                    const toolSurfaces = getUnifyServerSurfaces(
+                                      effectiveCapabilityConfig
+                                        ?.unify_direct_exposure
+                                        ?.resolved_capabilities
+                                        ?.selected_tool_surfaces ?? [],
+                                      server.id,
+                                    );
+                                    const promptSurfaces = getUnifyServerSurfaces(
+                                      effectiveCapabilityConfig
+                                        ?.unify_direct_exposure
+                                        ?.resolved_capabilities
+                                        ?.selected_prompt_surfaces ?? [],
+                                      server.id,
+                                    );
+                                    const resourceSurfaces =
+                                      getUnifyServerSurfaces(
+                                        effectiveCapabilityConfig
+                                          ?.unify_direct_exposure
+                                          ?.resolved_capabilities
+                                          ?.selected_resource_surfaces ?? [],
+                                        server.id,
+                                      );
+                                    const templateSurfaces =
+                                      getUnifyServerSurfaces(
+                                        effectiveCapabilityConfig
+                                          ?.unify_direct_exposure
+                                          ?.resolved_capabilities
+                                          ?.selected_template_surfaces ?? [],
+                                        server.id,
+                                      );
+                                    const selectedCapabilityCount =
+                                      toolSurfaces.length +
+                                      promptSurfaces.length +
+                                      resourceSurfaces.length +
+                                      templateSurfaces.length;
+                                    const directPath =
+                                      getClientDirectCapabilitiesPath(
+                                        identifier,
+                                        server.id,
+                                      );
+                                    const isMixed = isUnifyServerMixedRouting(
+                                      unifyRouteMode,
+                                      toolSurfaces.length,
+                                      server.capabilities?.tools_count,
+                                    );
+                                    const showDirectSelection =
+                                      unifyRouteMode === "capability_level"
+                                        ? selectedCapabilityCount > 0
+                                        : isSelected;
+                                    const serverDescription =
+                                      server.meta?.description ||
+                                      t(
+                                        "detail.configuration.labels.noDescription",
+                                        {
+                                          defaultValue: "No description",
+                                        },
+                                      );
+
+                                    return (
+                                      <CapsuleStripeListItem
+                                        key={server.id}
+                                        interactive={true}
+                                        className={`group relative transition-colors ${showDirectSelection ? "bg-primary/10 ring-1 ring-primary/40" : ""}`}
+                                        onClick={() => {
+                                          if (
+                                            unifyRouteMode === "capability_level"
+                                          ) {
+                                            directExposureServerMutation.mutate({
+                                              server,
+                                              routeMode: "capability_level",
+                                            });
+                                          } else if (
+                                            unifyRouteMode === "server_level"
+                                          ) {
+                                            if (hasUnifyDraftChanges) {
+                                              setUnifySelectedServers((prev) =>
+                                                toggleSelectedServerIds(
+                                                  prev,
+                                                  server.id,
+                                                ),
+                                              );
+                                            } else {
+                                              directExposureServerMutation.mutate(
+                                                {
+                                                  server,
+                                                  routeMode: "server_level",
+                                                },
+                                              );
+                                            }
                                           }
-                                        }
-                                      }}
-                                    >
-                                      <CapsuleStripeRowBody
-                                        lead={
-                                          <CapsuleStripeLeadCircle
-                                            variant="toggle"
-                                            selected={showDirectSelection}
-                                          />
-                                        }
-                                        trailing={
-                                          unifyRouteMode ===
-                                          "capability_level" ? (
-                                            <Button
-                                              variant="ghost"
-                                              size="icon"
-                                              className="h-8 w-8 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                if (directPath) {
-                                                  navigate(directPath);
-                                                }
-                                              }}
-                                            >
-                                              <MoreVertical className="h-4 w-4" />
-                                            </Button>
-                                          ) : undefined
-                                        }
+                                        }}
                                       >
-                                        <div className="font-medium text-sm truncate">
-                                          {server.name}
-                                          {unifyRouteMode ===
-                                            "capability_level" &&
-                                            selectedCapabilityCount > 0 && (
-                                              <span className="ml-2 text-xs font-normal text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md">
-                                                {selectedCapabilityCount}{" "}
-                                                {t(
-                                                  "detail.configuration.labels.capabilitiesExposed",
-                                                  {
-                                                    defaultValue:
-                                                      "capabilities exposed",
-                                                  },
-                                                )}
-                                              </span>
-                                            )}
-                                        </div>
-                                        <div className="text-xs text-slate-500 truncate">
-                                          {serverDescription}
-                                        </div>
-                                        {renderUnifyEligibleServerCapabilitySummary(
-                                          server,
-                                          unifyRouteMode,
-                                          toolSurfaces.length,
-                                        )}
-                                        {isMixed && (
-                                          <div className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-500">
-                                            <Info className="h-3 w-3" />
-                                            {t(
-                                              "detail.configuration.warnings.mixedRouting",
-                                              {
-                                                defaultValue:
-                                                  "Mixed routing: splitting stateful workflows may cause issues.",
-                                              },
-                                            )}
+                                        <CapsuleStripeRowBody
+                                          lead={
+                                            <CapsuleStripeLeadCircle
+                                              variant="toggle"
+                                              selected={showDirectSelection}
+                                            />
+                                          }
+                                          trailing={
+                                            unifyRouteMode ===
+                                              "capability_level" ? (
+                                              <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8 text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (directPath) {
+                                                    navigate(directPath);
+                                                  }
+                                                }}
+                                              >
+                                                <MoreVertical className="h-4 w-4" />
+                                              </Button>
+                                            ) : undefined
+                                          }
+                                        >
+                                          <div className="font-medium text-sm truncate">
+                                            {server.name}
+                                            {unifyRouteMode ===
+                                              "capability_level" &&
+                                              selectedCapabilityCount > 0 && (
+                                                <span className="ml-2 text-xs font-normal text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md">
+                                                  {selectedCapabilityCount}{" "}
+                                                  {t(
+                                                    "detail.configuration.labels.capabilitiesExposed",
+                                                    {
+                                                      defaultValue:
+                                                        "capabilities exposed",
+                                                    },
+                                                  )}
+                                                </span>
+                                              )}
                                           </div>
-                                        )}
-                                      </CapsuleStripeRowBody>
-                                    </CapsuleStripeListItem>
-                                  );
-                                })
-                              ) : (
-                                <CapsuleStripeListItem>
-                                  <div className="text-sm text-slate-500 py-4 text-center w-full">
-                                    {t(
-                                      "detail.configuration.sections.exposure.empty.no_eligible",
-                                      {
-                                        defaultValue:
-                                          "No eligible servers found. Enable Unify Direct Exposure on a server first.",
-                                      },
-                                    )}
-                                  </div>
-                                </CapsuleStripeListItem>
-                              )
-                            ) : selectedConfig === "default" ? (
-                              // Show active profiles for default source
-                              activeProfiles.length > 0 ? (
-                                activeProfiles.map((profile) => {
-                                  const capabilities = profileCapabilities.get(
-                                    profile.id,
-                                  );
-                                  return (
-                                    <CapsuleStripeListItem
-                                      key={profile.id}
-                                      className="cursor-default"
-                                    >
-                                      <CapsuleStripeRowBody
-                                        lead={
-                                          <CapsuleStripeLeadCircle variant="readOnlyActive" />
-                                        }
-                                        trailing={getConfigurationProfileTokenSlot(
-                                          profile,
-                                          false,
-                                        )}
-                                      >
-                                        <div className="font-medium text-sm truncate">
-                                          {profile.name}
-                                        </div>
-                                        <div className="text-xs text-slate-500 truncate">
-                                          {profile.description ||
-                                            t(
-                                              "detail.configuration.labels.noDescription",
-                                              {
-                                                defaultValue: "No description",
-                                              },
-                                            )}
-                                        </div>
-                                        {capabilities &&
-                                          renderProfileCapabilitySummary(
-                                            capabilities,
+                                          <div className="text-xs text-slate-500 truncate">
+                                            {serverDescription}
+                                          </div>
+                                          {renderUnifyEligibleServerCapabilitySummary(
+                                            server,
+                                            unifyRouteMode,
+                                            toolSurfaces.length,
                                           )}
-                                      </CapsuleStripeRowBody>
-                                    </CapsuleStripeListItem>
-                                  );
-                                })
-                              ) : (
-                                <CapsuleStripeListItem>
-                                  <div className="text-sm text-slate-500 py-4 text-center w-full">
-                                    {t(
-                                      "detail.configuration.sections.profiles.empty.active",
-                                      {
-                                        defaultValue:
-                                          "No active profiles found",
-                                      },
-                                    )}
-                                  </div>
-                                </CapsuleStripeListItem>
-                              )
-                            ) : selectedConfig === "profile" ? (
-                              // Show shared profiles for profile source
-                              sharedProfiles.length > 0 ? (
-                                sharedProfiles.map((profile) => {
-                                  const capabilities = profileCapabilities.get(
-                                    profile.id,
-                                  );
-                                  const isSelected = selectedProfiles.includes(
-                                    profile.id,
-                                  );
-                                  return (
-                                    <CapsuleStripeListItem
-                                      key={profile.id}
-                                      interactive={
-                                        unifyRouteMode !== "broker_only"
-                                      }
-                                      className={`group relative transition-colors ${
-                                        isSelected
+                                          {isMixed && (
+                                            <div className="mt-1 flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-500">
+                                              <Info className="h-3 w-3" />
+                                              {t(
+                                                "detail.configuration.warnings.mixedRouting",
+                                                {
+                                                  defaultValue:
+                                                    "Mixed routing: splitting stateful workflows may cause issues.",
+                                                },
+                                              )}
+                                            </div>
+                                          )}
+                                        </CapsuleStripeRowBody>
+                                      </CapsuleStripeListItem>
+                                    );
+                                  })
+                                ) : (
+                                  <CapsuleStripeListItem>
+                                    <div className="text-sm text-slate-500 py-4 text-center w-full">
+                                      {t(
+                                        "detail.configuration.sections.exposure.empty.no_eligible",
+                                        {
+                                          defaultValue:
+                                            "No eligible servers found. Enable Unify Direct Exposure on a server first.",
+                                        },
+                                      )}
+                                    </div>
+                                  </CapsuleStripeListItem>
+                                )
+                              ) : selectedConfig === "default" ? (
+                                // Show active profiles for default source
+                                activeProfiles.length > 0 ? (
+                                  activeProfiles.map((profile) => {
+                                    const capabilities = profileCapabilities.get(
+                                      profile.id,
+                                    );
+                                    return (
+                                      <CapsuleStripeListItem
+                                        key={profile.id}
+                                        className="cursor-default"
+                                      >
+                                        <CapsuleStripeRowBody
+                                          lead={
+                                            <CapsuleStripeLeadCircle variant="readOnlyActive" />
+                                          }
+                                          trailing={getConfigurationProfileTokenSlot(
+                                            profile,
+                                            false,
+                                          )}
+                                        >
+                                          <div className="font-medium text-sm truncate">
+                                            {profile.name}
+                                          </div>
+                                          <div className="text-xs text-slate-500 truncate">
+                                            {profile.description ||
+                                              t(
+                                                "detail.configuration.labels.noDescription",
+                                                {
+                                                  defaultValue: "No description",
+                                                },
+                                              )}
+                                          </div>
+                                          {capabilities &&
+                                            renderProfileCapabilitySummary(
+                                              capabilities,
+                                            )}
+                                        </CapsuleStripeRowBody>
+                                      </CapsuleStripeListItem>
+                                    );
+                                  })
+                                ) : (
+                                  <CapsuleStripeListItem>
+                                    <div className="text-sm text-slate-500 py-4 text-center w-full">
+                                      {t(
+                                        "detail.configuration.sections.profiles.empty.active",
+                                        {
+                                          defaultValue:
+                                            "No active profiles found",
+                                        },
+                                      )}
+                                    </div>
+                                  </CapsuleStripeListItem>
+                                )
+                              ) : selectedConfig === "profile" ? (
+                                // Show shared profiles for profile source
+                                sharedProfiles.length > 0 ? (
+                                  sharedProfiles.map((profile) => {
+                                    const capabilities = profileCapabilities.get(
+                                      profile.id,
+                                    );
+                                    const isSelected = selectedProfiles.includes(
+                                      profile.id,
+                                    );
+                                    return (
+                                      <CapsuleStripeListItem
+                                        key={profile.id}
+                                        interactive={
+                                          unifyRouteMode !== "broker_only"
+                                        }
+                                        className={`group relative transition-colors ${isSelected
                                           ? "bg-primary/10 ring-1 ring-primary/40"
                                           : ""
-                                      }`}
-                                      onClick={() => {
-                                        setSelectedProfiles((prev) =>
-                                          prev.includes(profile.id)
-                                            ? prev.filter(
+                                          }`}
+                                        onClick={() => {
+                                          setSelectedProfiles((prev) =>
+                                            prev.includes(profile.id)
+                                              ? prev.filter(
                                                 (id) => id !== profile.id,
                                               )
-                                            : [...prev, profile.id],
-                                        );
-                                      }}
-                                    >
-                                      <CapsuleStripeRowBody
-                                        lead={
-                                          <CapsuleStripeLeadCircle
-                                            variant="toggle"
-                                            selected={isSelected}
-                                          />
-                                        }
-                                        trailing={getConfigurationProfileTokenSlot(
-                                          profile,
-                                          true,
-                                        )}
+                                              : [...prev, profile.id],
+                                          );
+                                        }}
                                       >
-                                        <div className="font-medium text-sm truncate">
-                                          {profile.name}
-                                        </div>
-                                        <div className="text-xs text-slate-500 truncate">
-                                          {profile.description ||
-                                            t(
-                                              "detail.configuration.labels.noDescription",
-                                              {
-                                                defaultValue: "No description",
-                                              },
-                                            )}
-                                        </div>
-                                        {capabilities &&
-                                          renderProfileCapabilitySummary(
-                                            capabilities,
+                                        <CapsuleStripeRowBody
+                                          lead={
+                                            <CapsuleStripeLeadCircle
+                                              variant="toggle"
+                                              selected={isSelected}
+                                            />
+                                          }
+                                          trailing={getConfigurationProfileTokenSlot(
+                                            profile,
+                                            true,
                                           )}
-                                      </CapsuleStripeRowBody>
-                                    </CapsuleStripeListItem>
-                                  );
-                                })
-                              ) : (
-                                <CapsuleStripeListItem>
-                                  <div className="text-sm text-slate-500 py-4 text-center w-full">
-                                    {t(
-                                      "detail.configuration.sections.profiles.empty.shared",
-                                      {
-                                        defaultValue:
-                                          "No shared profiles found",
-                                      },
-                                    )}
-                                  </div>
-                                </CapsuleStripeListItem>
-                              )
-                            ) : null}
+                                        >
+                                          <div className="font-medium text-sm truncate">
+                                            {profile.name}
+                                          </div>
+                                          <div className="text-xs text-slate-500 truncate">
+                                            {profile.description ||
+                                              t(
+                                                "detail.configuration.labels.noDescription",
+                                                {
+                                                  defaultValue: "No description",
+                                                },
+                                              )}
+                                          </div>
+                                          {capabilities &&
+                                            renderProfileCapabilitySummary(
+                                              capabilities,
+                                            )}
+                                        </CapsuleStripeRowBody>
+                                      </CapsuleStripeListItem>
+                                    );
+                                  })
+                                ) : (
+                                  <CapsuleStripeListItem>
+                                    <div className="text-sm text-slate-500 py-4 text-center w-full">
+                                      {t(
+                                        "detail.configuration.sections.profiles.empty.shared",
+                                        {
+                                          defaultValue:
+                                            "No shared profiles found",
+                                        },
+                                      )}
+                                    </div>
+                                  </CapsuleStripeListItem>
+                                )
+                              ) : null}
 
-                            {mode !== "unify" && (
-                              <CapsuleStripeListItem
-                                interactive
-                                className={
-                                  selectedConfig === "custom" && customProfileId
-                                    ? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
-                                    : "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
-                                }
-                                onClick={() => {
-                                  if (selectedConfig === "custom") {
-                                    if (customProfileId) {
-                                      navigate(
-                                        `/profiles/${customProfileId}?mode=custom`,
-                                      );
-                                    } else {
-                                      applyMutation.mutate({ preview: false });
-                                    }
-                                  } else {
-                                    navigate("/profiles");
+                              {mode !== "unify" && (
+                                <CapsuleStripeListItem
+                                  interactive
+                                  className={
+                                    selectedConfig === "custom" && customProfileId
+                                      ? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
+                                      : "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
                                   }
-                                }}
-                              >
-                                <CapsuleStripeRowBody
-                                  lead={
-                                    <CapsuleStripeLeadCircle
-                                      variant="ghost"
-                                      hasProfile={
-                                        selectedConfig === "custom" &&
-                                        !!customProfileId
+                                  onClick={() => {
+                                    if (selectedConfig === "custom") {
+                                      if (customProfileId) {
+                                        navigate(
+                                          `/profiles/${customProfileId}?mode=custom`,
+                                        );
+                                      } else {
+                                        applyMutation.mutate({ preview: false });
                                       }
-                                    />
-                                  }
+                                    } else {
+                                      navigate("/profiles");
+                                    }
+                                  }}
                                 >
-                                  <div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
-                                    {selectedConfig === "custom"
-                                      ? t(
+                                  <CapsuleStripeRowBody
+                                    lead={
+                                      <CapsuleStripeLeadCircle
+                                        variant="ghost"
+                                        hasProfile={
+                                          selectedConfig === "custom" &&
+                                          !!customProfileId
+                                        }
+                                      />
+                                    }
+                                  >
+                                    <div className="font-medium text-sm truncate text-slate-700 dark:text-slate-300">
+                                      {selectedConfig === "custom"
+                                        ? t(
                                           "detail.configuration.sections.profiles.ghost.titleCustom",
                                           {
                                             defaultValue: customProfileId
@@ -3100,17 +3119,17 @@ export function ClientDetailPage() {
                                               : "Create custom workspace",
                                           },
                                         )
-                                      : t(
+                                        : t(
                                           "detail.configuration.sections.profiles.ghost.titleDefault",
                                           {
                                             defaultValue:
                                               "Open profiles library",
                                           },
                                         )}
-                                  </div>
-                                  <div className="text-xs text-slate-400 dark:text-slate-600 truncate">
-                                    {selectedConfig === "custom"
-                                      ? t(
+                                    </div>
+                                    <div className="text-xs text-slate-400 dark:text-slate-600 truncate">
+                                      {selectedConfig === "custom"
+                                        ? t(
                                           mode === "transparent"
                                             ? "detail.configuration.sections.profiles.ghost.subtitleCustomTransparent"
                                             : "detail.configuration.sections.profiles.ghost.subtitleCustom",
@@ -3120,26 +3139,26 @@ export function ClientDetailPage() {
                                               : "Create client-specific overrides for this workspace",
                                           },
                                         )
-                                      : t(
+                                        : t(
                                           "detail.configuration.sections.profiles.ghost.subtitleDefault",
                                           {
                                             defaultValue:
                                               "Browse reusable shared scenes and edit them from the profiles page",
                                           },
                                         )}
-                                  </div>
-                                  {customProfileCapabilities
-                                    ? renderProfileCapabilitySummary(
+                                    </div>
+                                    {customProfileCapabilities
+                                      ? renderProfileCapabilitySummary(
                                         customProfileCapabilities,
                                       )
-                                    : null}
-                                </CapsuleStripeRowBody>
-                              </CapsuleStripeListItem>
-                            )}
-                          </CapsuleStripeList>
-                        )}
-                      </div>
-                    )}
+                                      : null}
+                                  </CapsuleStripeRowBody>
+                                </CapsuleStripeListItem>
+                              )}
+                            </CapsuleStripeList>
+                          )}
+                        </div>
+                      )}
                   </div>
                 </CardContent>
               </Card>
@@ -3248,29 +3267,26 @@ export function ClientDetailPage() {
                         <div className="flex items-center justify-between flex-1">
                           <div className="flex items-center gap-3">
                             <div
-                              className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${
-                                selected
-                                  ? "border-primary bg-primary text-white shadow-sm"
-                                  : "border-slate-300 text-transparent group-hover:border-primary/50 group-hover:text-primary/60 dark:border-slate-700 dark:group-hover:border-primary/50"
-                              }`}
+                              className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${selected
+                                ? "border-primary bg-primary text-white shadow-sm"
+                                : "border-slate-300 text-transparent group-hover:border-primary/50 group-hover:text-primary/60 dark:border-slate-700 dark:group-hover:border-primary/50"
+                                }`}
                             >
                               <Check className="h-3 w-3" />
                             </div>
                             <div
-                              className={`font-mono transition-colors duration-200 ${
-                                selected
-                                  ? "text-primary"
-                                  : "text-slate-700 dark:text-slate-200"
-                              }`}
+                              className={`font-mono transition-colors duration-200 ${selected
+                                ? "text-primary"
+                                : "text-slate-700 dark:text-slate-200"
+                                }`}
                             >
                               {b.backup}
                             </div>
                           </div>
                           <div className="flex items-center justify-end gap-4">
                             <div
-                              className={`flex items-center gap-4 text-slate-500 transition-all duration-200 ${
-                                selected ? "text-primary" : ""
-                              }`}
+                              className={`flex items-center gap-4 text-slate-500 transition-all duration-200 ${selected ? "text-primary" : ""
+                                }`}
                             >
                               <div>{formatBackupTime(b.created_at)}</div>
                               <div>{(b.size / 1024).toFixed(1)} KB</div>
@@ -3316,12 +3332,12 @@ export function ClientDetailPage() {
                 <div className="text-slate-500 text-sm">
                   {backupsDisabledByPolicy
                     ? t("detail.backups.emptyDisabledByPolicy", {
-                        defaultValue:
-                          "Backups are currently disabled by system policy.",
-                      })
+                      defaultValue:
+                        "Backups are currently disabled by system policy.",
+                    })
                     : t("detail.backups.empty", {
-                        defaultValue: "No backups.",
-                      })}
+                      defaultValue: "No backups.",
+                    })}
                 </div>
               )}
             </CardContent>
@@ -3336,19 +3352,19 @@ export function ClientDetailPage() {
           confirm?.kind === "delete"
             ? t("detail.confirm.deleteTitle", { defaultValue: "Delete Backup" })
             : t("detail.confirm.restoreTitle", {
-                defaultValue: "Restore Backup",
-              })
+              defaultValue: "Restore Backup",
+            })
         }
         description={
           confirm?.kind === "delete"
             ? t("detail.confirm.deleteDescription", {
-                defaultValue:
-                  "Are you sure you want to delete this backup? This action cannot be undone.",
-              })
+              defaultValue:
+                "Are you sure you want to delete this backup? This action cannot be undone.",
+            })
             : t("detail.confirm.restoreDescription", {
-                defaultValue:
-                  "Restore the local client configuration file from the selected backup? MCPMate management mode and capability settings stay unchanged.",
-              })
+              defaultValue:
+                "Restore the local client configuration file from the selected backup? MCPMate management mode and capability settings stay unchanged.",
+            })
         }
         confirmLabel={
           confirm?.kind === "delete"
@@ -3377,22 +3393,22 @@ export function ClientDetailPage() {
         title={
           attachmentActionConfirm === "attach"
             ? t("detail.confirm.attachTitle", {
-                defaultValue: "Attach MCPMate to this client configuration?",
-              })
+              defaultValue: "Attach MCPMate to this client configuration?",
+            })
             : t("detail.confirm.detachTitle", {
-                defaultValue: "Detach MCPMate from this client configuration?",
-              })
+              defaultValue: "Detach MCPMate from this client configuration?",
+            })
         }
         description={
           attachmentActionConfirm === "attach"
             ? t("detail.confirm.attachDescription", {
-                defaultValue:
-                  "This writes the MCPMate server entry back into the client configuration file. The client's MCP session may restart or reconnect; confirm before continuing.",
-              })
+              defaultValue:
+                "This writes the MCPMate server entry back into the client configuration file. The client's MCP session may restart or reconnect; confirm before continuing.",
+            })
             : t("detail.confirm.detachDescription", {
-                defaultValue:
-                  "This removes the MCPMate server entry from the client configuration file. Running MCP connections for that client may break until you attach again; confirm before continuing.",
-              })
+              defaultValue:
+                "This removes the MCPMate server entry from the client configuration file. Running MCP connections for that client may break until you attach again; confirm before continuing.",
+            })
         }
         confirmLabel={
           attachmentActionConfirm === "attach"
@@ -3526,150 +3542,82 @@ export function ClientDetailPage() {
             </DrawerDescription>
           </DrawerHeader>
           <div className="p-4 text-sm flex flex-col gap-4 max-h-[70vh]">
-            {importPreviewMutation.isPending ? (
+            {loadingConfig ? (
               <div className="h-16 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
-            ) : importPreviewData ? (
+            ) : (
               <div className="flex-1 min-h-0 flex flex-col gap-4">
+                {currentServerList.length > 0 && (
+                  <div className="rounded border">
+                    <div className="px-3 py-2 text-xs text-slate-500 border-b">
+                      {t("detail.importPreview.sections.detectedEntries", {
+                        defaultValue: "Detected entries",
+                      })}
+                    </div>
+                    <ul className="divide-y max-h-[30vh] overflow-auto">
+                      {currentServerList.map((entry) => (
+                        <li key={entry.name} className="px-3 py-2 flex items-center justify-between text-xs">
+                          <div className="font-mono">{entry.name}</div>
+                          {renderServerEntryMeta(entry)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div className="grid grid-cols-[120px_1fr] gap-y-2 gap-x-4 text-sm leading-6">
                   <div className="text-slate-500">
-                    {t("detail.importPreview.fields.attempted", {
-                      defaultValue: "Attempted",
+                    {t("detail.importPreview.fields.importable", {
+                      defaultValue: "Importable",
                     })}
                   </div>
-                  <div>
-                    {typeof importPreviewData.summary?.attempted === "boolean"
-                      ? importPreviewData.summary.attempted
-                        ? t("states.yes", { defaultValue: "Yes" })
-                        : t("states.no", { defaultValue: "No" })
-                      : "-"}
-                  </div>
-                  <div className="text-slate-500">
-                    {t("detail.importPreview.fields.imported", {
-                      defaultValue: "Imported",
-                    })}
-                  </div>
-                  <div>{importPreviewData.summary?.imported_count ?? 0}</div>
+                  <div>{importPreviewSummary.importableCount}</div>
                   <div className="text-slate-500">
                     {t("detail.importPreview.fields.skipped", {
                       defaultValue: "Skipped",
                     })}
                   </div>
-                  <div>{importPreviewData.summary?.skipped_count ?? 0}</div>
+                  <div>{importPreviewSummary.skippedCount}</div>
                   <div className="text-slate-500">
                     {t("detail.importPreview.fields.failed", {
                       defaultValue: "Failed",
                     })}
                   </div>
-                  <div>{importPreviewData.summary?.failed_count ?? 0}</div>
+                  <div>{importPreviewSummary.failedCount}</div>
                 </div>
-                {Array.isArray(importPreviewData.items) &&
-                importPreviewData.items.length > 0 ? (
-                  <div className="rounded border">
-                    <div className="px-3 py-2 text-xs text-slate-500 border-b">
-                      {t("detail.importPreview.sections.servers", {
-                        defaultValue: "Servers to import",
-                      })}
-                    </div>
-                    <ul className="divide-y max-h-[30vh] overflow-auto">
-                      {importPreviewData.items.map((it, idx: number) => (
-                        <li
-                          key={`import-item-${idx}-${it.name || it.server_name || "unnamed"}`}
-                          className="p-3 text-xs"
-                        >
-                          <div className="font-medium">
-                            {it.name || it.server_name || `#${idx + 1}`}
-                          </div>
-                          {it.error ? (
-                            <div className="text-red-500">
-                              {String(it.error)}
-                            </div>
-                          ) : null}
-                          <div className="mt-1 text-slate-500">
-                            {t("detail.importPreview.sections.stats", {
-                              defaultValue:
-                                "tools: {{tools}} • resources: {{resources}} • templates: {{templates}} • prompts: {{prompts}}",
-                              tools: it.tools?.items?.length ?? 0,
-                              resources: it.resources?.items?.length ?? 0,
-                              templates:
-                                it.resource_templates?.items?.length ?? 0,
-                              prompts: it.prompts?.items?.length ?? 0,
-                            })}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {importPreviewData.summary?.errors ? (
-                  <details>
-                    <summary className="text-xs text-slate-500 cursor-pointer">
-                      {t("detail.importPreview.sections.errors", {
-                        defaultValue: "Errors",
-                      })}
-                    </summary>
-                    <pre className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded overflow-auto max-h-[26vh]">
-                      {JSON.stringify(
-                        importPreviewData.summary.errors,
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  </details>
-                ) : null}
-                {(importPreviewData.summary?.skipped_count ?? 0) > 0 &&
-                importPreviewData.summary?.skipped_servers?.length ? (
+                {importPreviewSummary.skippedCount > 0 &&
+                  importPreviewSummary.skippedServers.length ? (
                   <details className="mt-2">
                     <summary className="text-xs text-slate-500 cursor-pointer">
-                      {importPreviewData.summary.skipped_count === 1
+                      {importPreviewSummary.skippedCount === 1
                         ? t(
-                            "detail.importPreview.sections.skippedDetailsSingle",
-                            {
-                              defaultValue: "Skip details ({{count}} server)",
-                              count: importPreviewData.summary.skipped_count,
-                            },
-                          )
+                          "detail.importPreview.sections.skippedDetailsSingle",
+                          {
+                            defaultValue: "Skip details ({{count}} server)",
+                            count: importPreviewSummary.skippedCount,
+                          },
+                        )
                         : t(
-                            "detail.importPreview.sections.skippedDetailsPlural",
-                            {
-                              defaultValue: "Skip details ({{count}} servers)",
-                              count: importPreviewData.summary.skipped_count,
-                            },
-                          )}
+                          "detail.importPreview.sections.skippedDetailsPlural",
+                          {
+                            defaultValue: "Skip details ({{count}} servers)",
+                            count: importPreviewSummary.skippedCount,
+                          },
+                        )}
                     </summary>
                     <ul className="mt-2 space-y-2">
-                      {importPreviewData.summary.skipped_servers.map(
-                        (s, idx) => {
-                          const reasonLabel = getSkippedReasonLabel(s.reason, t);
-                          const existingQueryLabel =
-                            getSkippedQueryFieldLabel("existing", t);
-                          const incomingQueryLabel =
-                            getSkippedQueryFieldLabel("incoming", t);
-                          return (
-                            <li
-                              key={`skipped-${idx}-${s.name}`}
-                              className="text-xs p-2 bg-slate-50 dark:bg-slate-900 rounded"
-                            >
-                              <span className="font-medium">{s.name}</span>
-                              <span className="text-slate-500 ml-2">
-                                &mdash;{" "}
-                                {reasonLabel}
-                              </span>
-                              {s.existing_query && (
-                                <div className="mt-1 text-slate-400 overflow-x-auto break-all">
-                                  {existingQueryLabel}
-                                  : {s.existing_query}
-                                </div>
-                              )}
-                              {s.incoming_query && (
-                                <div className="mt-1 text-slate-400 overflow-x-auto break-all">
-                                  {incomingQueryLabel}
-                                  : {s.incoming_query}
-                                </div>
-                              )}
-                            </li>
-                          );
-                        },
-                      )}
+                      {importPreviewSummary.skippedServers.map((s, idx) => {
+                        const reasonLabel = getSkippedReasonLabel(s.reason, t);
+                        return (
+                          <li
+                            key={`skipped-${idx}-${s.name}`}
+                            className="text-xs p-2 bg-slate-50 dark:bg-slate-900 rounded"
+                          >
+                            <span className="font-medium">{s.name}</span>
+                            <span className="text-slate-500 ml-2">
+                              &mdash; {reasonLabel}
+                            </span>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </details>
                 ) : null}
@@ -3680,15 +3628,9 @@ export function ClientDetailPage() {
                     })}
                   </summary>
                   <pre className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded overflow-auto flex-1 min-h-0 max-h-[40vh]">
-                    {JSON.stringify(importPreviewData, null, 2)}
+                    {JSON.stringify(importPreviewSnapshot, null, 2)}
                   </pre>
                 </details>
-              </div>
-            ) : (
-              <div className="text-slate-500">
-                {t("detail.importPreview.noPreview", {
-                  defaultValue: "No preview data.",
-                })}
               </div>
             )}
           </div>
@@ -3702,32 +3644,21 @@ export function ClientDetailPage() {
                   defaultValue: "Close",
                 })}
               </Button>
-              {importPreviewData ? (
-                (importPreviewData?.summary?.imported_count ?? 0) > 0 ? (
-                  <Button
-                    onClick={() => importMutation.mutate()}
-                    disabled={importMutation.isPending}
-                  >
-                    {t("detail.importPreview.buttons.apply", {
-                      defaultValue: "Apply Import",
-                    })}
-                  </Button>
-                ) : (
-                  <div className="text-xs text-slate-500">
-                    {t("detail.importPreview.states.noImportNeeded", {
-                      defaultValue: "No import needed",
-                    })}
-                  </div>
-                )
-              ) : (
+              {importPreviewSummary.importableCount > 0 ? (
                 <Button
-                  onClick={() => importPreviewMutation.mutate()}
-                  disabled={importPreviewMutation.isPending}
+                  onClick={() => importMutation.mutate()}
+                  disabled={importMutation.isPending}
                 >
-                  {t("detail.importPreview.buttons.preview", {
-                    defaultValue: "Preview",
+                  {t("detail.importPreview.buttons.apply", {
+                    defaultValue: "Apply Import",
                   })}
                 </Button>
+              ) : (
+                <div className="text-xs text-slate-500">
+                  {t("detail.importPreview.states.noImportNeeded", {
+                    defaultValue: "No import needed",
+                  })}
+                </div>
               )}
             </div>
           </DrawerFooter>

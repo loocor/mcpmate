@@ -20,6 +20,22 @@ const SKIPPED_REASON_LABELS: Record<
     key: "serverImport.skippedReasons.urlQueryMismatch",
     defaultValue: "URL query mismatch",
   },
+  config_unrecognized: {
+    key: "serverImport.skippedReasons.configUnrecognized",
+    defaultValue: "Unrecognized config entry",
+  },
+  config_invalid_entry: {
+    key: "serverImport.skippedReasons.configInvalidEntry",
+    defaultValue: "Invalid config entry",
+  },
+  config_missing_command: {
+    key: "serverImport.skippedReasons.configMissingCommand",
+    defaultValue: "Missing command",
+  },
+  config_missing_url: {
+    key: "serverImport.skippedReasons.configMissingUrl",
+    defaultValue: "Missing URL",
+  },
 };
 
 const SKIPPED_QUERY_FIELD_LABELS: Record<

@@ -30,6 +30,7 @@ import type {
 	ClientDeleteResp,
 	ClientAttachResp,
 	ClientDetachResp,
+	ServerEntryData,
  TransportRuleData,
 	ClientRecordLifecycleResp,
 	ClientRecordReviewReq,
@@ -2562,16 +2563,16 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
-	// Import servers from an existing client configuration (preview or apply)
+	// Import servers from analyzed client configuration entries
 	importFromClient: async (
 		identifier: string,
-		options?: { preview?: boolean; profile_id?: string | null },
+		options: { entries: ServerEntryData[]; profile_id?: string | null },
 	): Promise<ClientConfigImportData> => {
-		const body: ClientConfigImportReq = { identifier };
-		if (options && typeof options.preview === "boolean") {
-			body.preview = options.preview;
-		}
-		if (options && "profile_id" in options) {
+		const body: ClientConfigImportReq = {
+			identifier,
+			entries: options.entries,
+		};
+		if ("profile_id" in options) {
 			body.profile_id = options.profile_id ?? null;
 		}
 		const resp = await fetchApi<ApiWrapper<ClientConfigImportData>>(

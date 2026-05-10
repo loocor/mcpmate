@@ -705,6 +705,10 @@ export const clientsTranslations = {
           duplicateName: "Duplicate name",
           duplicateFingerprint: "Duplicate fingerprint",
           urlQueryMismatch: "URL query mismatch",
+          configUnrecognized: "Unrecognized config entry",
+          configInvalidEntry: "Invalid config entry",
+          configMissingCommand: "Missing command",
+          configMissingUrl: "Missing URL",
           unknown: "Unknown reason",
         },
         buttons: {
@@ -1510,6 +1514,10 @@ export const clientsTranslations = {
           duplicateName: "名称重复",
           duplicateFingerprint: "指纹重复",
           urlQueryMismatch: "URL 查询参数不匹配",
+          configUnrecognized: "未识别的配置项",
+          configInvalidEntry: "无效的配置项",
+          configMissingCommand: "缺少命令",
+          configMissingUrl: "缺少 URL",
           unknown: "未知原因",
         },
         buttons: {
@@ -2345,6 +2353,10 @@ export const clientsTranslations = {
           duplicateName: "名前の重複",
           duplicateFingerprint: "フィンガープリントの重複",
           urlQueryMismatch: "URL クエリ不一致",
+          configUnrecognized: "未識別の設定項目",
+          configInvalidEntry: "無効な設定項目",
+          configMissingCommand: "コマンドがありません",
+          configMissingUrl: "URL がありません",
           unknown: "不明な理由",
         },
         buttons: {
