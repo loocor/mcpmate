@@ -1,3 +1,4 @@
+use crate::clients::analyzer::InspectedServerEntry;
 use crate::clients::models::{
     CapabilitySource, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
     UnifyDirectExposureIntent,
@@ -324,18 +325,18 @@ pub struct ClientConfigData {
     pub has_mcp_config: bool,
     #[schemars(description = "Number of configured MCP servers")]
     pub mcp_servers_count: u32,
-    #[schemars(description = "Server names detected from the current config using the effective parse rules")]
+    #[schemars(
+        description = "Compatibility field: server names derived from configured_server_entries using the effective parse rules"
+    )]
     #[serde(default)]
     pub configured_servers: Vec<String>,
+    #[schemars(description = "Full details of each detected server entry from the config file")]
+    #[serde(default)]
+    pub configured_server_entries: Vec<ServerEntryData>,
     #[schemars(description = "ISO 8601 timestamp of last modification")]
     pub last_modified: Option<String>,
     #[schemars(description = "Configuration file format type")]
     pub config_type: Option<ClientConfigType>,
-    #[schemars(description = "List of imported server configurations")]
-    pub imported_servers: Option<Vec<ClientImportedServer>>,
-    #[schemars(description = "Import attempt summary (counts and errors)")]
-    #[serde(default)]
-    pub import_summary: Option<ClientImportSummary>,
     #[schemars(description = "Template metadata summary for this client")]
     pub template: ClientTemplateMetadata,
     #[schemars(description = "Persisted fine-grained transport rules for this client")]
@@ -510,6 +511,68 @@ pub struct ClientTemplateStorageMetadata {
 }
 
 // Note: former `ClientManagedEndpointMetadata` was removed; use `ClientTemplateMetadata.managed_source` instead.
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "A detected server entry from the client's config file")]
+pub struct ServerEntryData {
+    #[schemars(description = "Server name identifier")]
+    pub name: String,
+    #[schemars(description = "Transport classification (stdio, streamable_http, sse, unclassified)")]
+    pub transport: String,
+    #[schemars(description = "Whether this entry can be imported from the detected config")]
+    pub import_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Reason code when the detected entry cannot be imported")]
+    pub skip_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Inspection issue code for malformed config entries")]
+    pub issue: Option<String>,
+    #[schemars(description = "Command to execute the server (stdio only)")]
+    pub command: Option<String>,
+    #[schemars(description = "Command line arguments (stdio only)")]
+    pub args: Vec<String>,
+    #[schemars(description = "Environment variables")]
+    pub env: std::collections::HashMap<String, String>,
+    #[schemars(description = "HTTP headers")]
+    pub headers: std::collections::HashMap<String, String>,
+    #[schemars(description = "Endpoint URL (streamable_http/sse only)")]
+    pub url: Option<String>,
+}
+
+impl From<InspectedServerEntry> for ServerEntryData {
+    fn from(entry: InspectedServerEntry) -> Self {
+        let skip_reason = entry.import_skip_reason().map(|reason| reason.as_str().to_string());
+        let import_status = entry.import_status().to_string();
+
+        Self {
+            name: entry.name,
+            transport: entry.transport,
+            import_status,
+            skip_reason,
+            issue: entry.issue,
+            command: entry.command,
+            args: entry.args,
+            env: entry.env,
+            headers: entry.headers,
+            url: entry.url,
+        }
+    }
+}
+
+impl From<ServerEntryData> for InspectedServerEntry {
+    fn from(entry: ServerEntryData) -> Self {
+        Self {
+            name: entry.name,
+            transport: entry.transport,
+            command: entry.command,
+            args: entry.args,
+            env: entry.env,
+            headers: entry.headers,
+            url: entry.url,
+            issue: entry.issue,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Information about an imported server")]
@@ -951,9 +1014,9 @@ pub struct ClientBackupPolicySetReq {
 pub struct ClientConfigImportReq {
     #[schemars(description = "Client identifier")]
     pub identifier: String,
-    #[serde(default = "super::default_true")]
-    #[schemars(description = "Preview only without applying changes (default: true)")]
-    pub preview: bool,
+    #[serde(default)]
+    #[schemars(description = "Analyzed config entries from GET /api/client/config/details")]
+    pub entries: Vec<ServerEntryData>,
     #[serde(default)]
     #[schemars(description = "Target profile id; default profile if omitted")]
     pub profile_id: Option<String>,
@@ -1009,6 +1072,9 @@ pub struct ClientDetachData {
     pub attachment_state: String,
     #[schemars(description = "Whether the external client config file was changed")]
     pub changed: bool,
+    #[schemars(description = "Warnings about state conflicts")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 api_resp!(ClientDetachResp, ClientDetachData, "Client detach response");
@@ -1029,6 +1095,9 @@ pub struct ClientAttachData {
     pub attachment_state: String,
     #[schemars(description = "Whether the external client config file was updated")]
     pub changed: bool,
+    #[schemars(description = "Warnings about state conflicts")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 api_resp!(ClientAttachResp, ClientAttachData, "Client attach response");

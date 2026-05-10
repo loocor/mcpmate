@@ -7,15 +7,18 @@ use std::collections::{HashMap, HashSet};
 pub struct ConfigAnalysis {
     pub has_mcp_config: bool,
     pub server_count: u32,
-    pub server_names: Vec<String>,
+    pub mcpmate_present: bool,
 }
 
 impl ConfigAnalysis {
-    fn from_server_names(server_names: Vec<String>) -> Self {
+    fn from_server_count(
+        server_count: u32,
+        mcpmate_present: bool,
+    ) -> Self {
         Self {
             has_mcp_config: true,
-            server_count: server_names.len() as u32,
-            server_names,
+            server_count,
+            mcpmate_present,
         }
     }
 
@@ -23,7 +26,26 @@ impl ConfigAnalysis {
         Self {
             has_mcp_config: true,
             server_count: 0,
-            server_names: Vec::new(),
+            mcpmate_present: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigImportSkipReason {
+    InvalidEntry,
+    MissingCommand,
+    MissingUrl,
+    Unrecognized,
+}
+
+impl ConfigImportSkipReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidEntry => "config_invalid_entry",
+            Self::MissingCommand => "config_missing_command",
+            Self::MissingUrl => "config_missing_url",
+            Self::Unrecognized => "config_unrecognized",
         }
     }
 }
@@ -35,13 +57,93 @@ pub struct InspectedServerEntry {
     pub command: Option<String>,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    pub headers: HashMap<String, String>,
     pub url: Option<String>,
+    pub issue: Option<String>,
+}
+
+pub struct ResolvedImportTransport<'a> {
+    pub kind: &'static str,
+    pub command: Option<&'a str>,
+    pub url: Option<&'a str>,
+}
+
+impl InspectedServerEntry {
+    pub fn resolved_import_transport(&self) -> Result<ResolvedImportTransport<'_>, ConfigImportSkipReason> {
+        if self.issue.is_some() {
+            return Err(ConfigImportSkipReason::InvalidEntry);
+        }
+
+        match self.transport.as_str() {
+            "stdio" => self
+                .command
+                .as_deref()
+                .map(|command| ResolvedImportTransport {
+                    kind: "stdio",
+                    command: Some(command),
+                    url: None,
+                })
+                .ok_or(ConfigImportSkipReason::MissingCommand),
+            "streamable_http" | "sse" => self
+                .url
+                .as_deref()
+                .map(|url| ResolvedImportTransport {
+                    kind: if self.transport == "sse" {
+                        "sse"
+                    } else {
+                        "streamable_http"
+                    },
+                    command: None,
+                    url: Some(url),
+                })
+                .ok_or(ConfigImportSkipReason::MissingUrl),
+            "unclassified" => self
+                .inferred_import_transport()
+                .ok_or(ConfigImportSkipReason::Unrecognized),
+            _ => Err(ConfigImportSkipReason::Unrecognized),
+        }
+    }
+
+    pub fn import_skip_reason(&self) -> Option<ConfigImportSkipReason> {
+        self.resolved_import_transport().err()
+    }
+
+    pub fn import_status(&self) -> &'static str {
+        if self.import_skip_reason().is_some() {
+            "skipped"
+        } else {
+            "importable"
+        }
+    }
+
+    fn inferred_import_transport(&self) -> Option<ResolvedImportTransport<'_>> {
+        if let Some(url) = self.url.as_deref() {
+            return Some(ResolvedImportTransport {
+                kind: "streamable_http",
+                command: None,
+                url: Some(url),
+            });
+        }
+
+        self.command.as_deref().map(|command| ResolvedImportTransport {
+            kind: "stdio",
+            command: Some(command),
+            url: None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ConfigInspection {
     pub matched_container: bool,
     pub entries: Vec<InspectedServerEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigInspectionReport {
+    pub document: Value,
+    pub inspection: ConfigInspection,
+    pub analysis: ConfigAnalysis,
 }
 
 struct MatchedTransport<'a> {
@@ -73,16 +175,26 @@ pub fn analyze_config_content(
     parse_rule: &ClientConfigFileParse,
     transports: Option<&HashMap<String, FormatRule>>,
 ) -> ConfigAnalysis {
-    if content.is_empty() {
-        return ConfigAnalysis::default();
-    }
+    inspect_config_content(content, parse_rule, transports).analysis
+}
 
-    match parse_config_to_json_value(content, Some(parse_rule.format.as_str())) {
-        Some(json) => match inspect_config_value(&json, parse_rule, transports) {
-            Ok(inspection) => config_analysis_from_inspection(inspection),
-            Err(_) => ConfigAnalysis::present_without_entries(),
-        },
-        None => ConfigAnalysis::default(),
+pub fn inspect_config_content(
+    content: &str,
+    parse_rule: &ClientConfigFileParse,
+    transports: Option<&HashMap<String, FormatRule>>,
+) -> ConfigInspectionReport {
+    let document = if content.is_empty() {
+        Value::Null
+    } else {
+        parse_config_to_json_value(content, Some(parse_rule.format.as_str())).unwrap_or(Value::Null)
+    };
+    let inspection = inspect_config_value(&document, parse_rule, transports);
+    let analysis = config_analysis_from_inspection(&inspection);
+
+    ConfigInspectionReport {
+        document,
+        inspection,
+        analysis,
     }
 }
 
@@ -90,7 +202,7 @@ pub fn inspect_config_value(
     document: &Value,
     parse_rule: &ClientConfigFileParse,
     transports: Option<&HashMap<String, FormatRule>>,
-) -> Result<ConfigInspection, String> {
+) -> ConfigInspection {
     let mut matched_container = false;
     let mut entries = Vec::new();
     let mut seen_names = HashSet::new();
@@ -108,26 +220,34 @@ pub fn inspect_config_value(
             parse_rule.container_type,
             container_key,
             transports,
-        )?;
+        );
     }
 
-    Ok(ConfigInspection {
+    ConfigInspection {
         matched_container,
         entries,
-    })
+    }
 }
 
-fn config_analysis_from_inspection(inspection: ConfigInspection) -> ConfigAnalysis {
+fn config_analysis_from_inspection(inspection: &ConfigInspection) -> ConfigAnalysis {
     if !inspection.matched_container {
         return ConfigAnalysis::default();
     }
 
-    let server_names: Vec<String> = inspection.entries.into_iter().map(|entry| entry.name).collect();
-    if server_names.is_empty() {
+    let mcpmate_present = inspection
+        .entries
+        .iter()
+        .any(|entry| entry.name.eq_ignore_ascii_case("MCPMate") && entry_has_transport_fields(entry));
+    let server_count = inspection.entries.len() as u32;
+    if server_count == 0 {
         return ConfigAnalysis::present_without_entries();
     }
 
-    ConfigAnalysis::from_server_names(server_names)
+    ConfigAnalysis::from_server_count(server_count, mcpmate_present)
+}
+
+fn entry_has_transport_fields(entry: &InspectedServerEntry) -> bool {
+    entry.command.is_some() || entry.url.is_some()
 }
 
 fn collect_entries_from_container(
@@ -137,13 +257,12 @@ fn collect_entries_from_container(
     container_type: ContainerType,
     container_key: &str,
     transports: Option<&HashMap<String, FormatRule>>,
-) -> Result<(), String> {
+) {
     match container_type {
         ContainerType::ObjectMap => {
             let Some(map) = container.as_object() else {
-                return Err(format!(
-                    "configured config node '{container_key}' must resolve to an object map"
-                ));
+                tracing::warn!("config node '{container_key}' resolved to non-object, skipping");
+                return;
             };
 
             for (name, value) in map {
@@ -156,9 +275,8 @@ fn collect_entries_from_container(
         }
         ContainerType::Array => {
             let Some(items) = container.as_array() else {
-                return Err(format!(
-                    "configured config node '{container_key}' must resolve to an array"
-                ));
+                tracing::warn!("config node '{container_key}' resolved to non-array, skipping");
+                return;
             };
 
             for value in items {
@@ -174,8 +292,6 @@ fn collect_entries_from_container(
             }
         }
     }
-
-    Ok(())
 }
 
 fn inspect_named_entry(
@@ -183,17 +299,33 @@ fn inspect_named_entry(
     value: &Value,
     transports: Option<&HashMap<String, FormatRule>>,
 ) -> Option<InspectedServerEntry> {
-    let object = value.as_object()?;
-    let transports = transports?;
-    let matched = matched_transport(object, transports)?;
+    let Some(object) = value.as_object() else {
+        return Some(InspectedServerEntry {
+            name: name.to_string(),
+            transport: "unclassified".to_string(),
+            command: None,
+            args: Vec::new(),
+            env: HashMap::new(),
+            headers: HashMap::new(),
+            url: None,
+            issue: Some(ConfigImportSkipReason::InvalidEntry.as_str().to_string()),
+        });
+    };
+
+    let (transport, rule) = transports
+        .and_then(|t| matched_transport(object, t))
+        .map(|m| (m.transport.to_string(), m.rule))
+        .unwrap_or_else(|| ("unclassified".to_string(), FormatRule::default()));
 
     Some(InspectedServerEntry {
         name: name.to_string(),
-        transport: matched.transport.to_string(),
-        command: first_string_value(object, matched.rule.command_field.as_deref(), &["command"]),
-        args: first_string_array(object, matched.rule.args_field.as_deref(), &["args"]).unwrap_or_default(),
-        env: first_string_map(object, matched.rule.env_field.as_deref(), &["env"]).unwrap_or_default(),
-        url: first_string_value(object, matched.rule.url_field.as_deref(), &["url", "baseUrl"]),
+        transport,
+        command: first_string_value(object, rule.command_field.as_deref(), &["command"]),
+        args: first_string_array(object, rule.args_field.as_deref(), &["args"]).unwrap_or_default(),
+        env: first_string_map(object, rule.env_field.as_deref(), &["env"]).unwrap_or_default(),
+        headers: first_string_map(object, rule.headers_field.as_deref(), &["headers"]).unwrap_or_default(),
+        url: first_string_value(object, rule.url_field.as_deref(), &["url", "baseUrl"]),
+        issue: None,
     })
 }
 
@@ -360,8 +492,17 @@ pub fn get_config_last_modified(config_path: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn entry_names(report: &ConfigInspectionReport) -> Vec<String> {
+        report
+            .inspection
+            .entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect()
+    }
+
     #[test]
-    fn analyze_config_content_returns_object_map_server_names() {
+    fn inspect_config_content_returns_object_map_entries() {
         let transports = HashMap::from([(
             "stdio".to_string(),
             FormatRule {
@@ -369,7 +510,7 @@ mod tests {
                 ..FormatRule::default()
             },
         )]);
-        let result = analyze_config_content(
+        let report = inspect_config_content(
             r#"{"context_servers":{"MCPMate":{},"mcp-server-context7":{"enabled":true}}}"#,
             &ClientConfigFileParse {
                 format: crate::clients::models::TemplateFormat::Json,
@@ -379,9 +520,10 @@ mod tests {
             Some(&transports),
         );
 
-        assert!(result.has_mcp_config);
-        assert_eq!(result.server_count, 0);
-        assert!(result.server_names.is_empty());
+        assert!(report.analysis.has_mcp_config);
+        assert_eq!(report.analysis.server_count, 2);
+        assert!(entry_names(&report).contains(&"MCPMate".to_string()));
+        assert!(entry_names(&report).contains(&"mcp-server-context7".to_string()));
     }
 
     #[test]
@@ -393,7 +535,7 @@ mod tests {
                 ..FormatRule::default()
             },
         )]);
-        let result = analyze_config_content(
+        let report = inspect_config_content(
             r#"{"context_servers":{"MCPMate":{}},"agent_servers":{"claude-acp":{"type":"registry"}}}"#,
             &ClientConfigFileParse {
                 format: crate::clients::models::TemplateFormat::Json,
@@ -403,7 +545,8 @@ mod tests {
             Some(&transports),
         );
 
-        assert!(result.server_names.is_empty());
+        assert_eq!(entry_names(&report), vec!["MCPMate".to_string()]);
+        assert_eq!(report.analysis.server_count, 1);
     }
 
     #[test]
@@ -422,6 +565,48 @@ mod tests {
     }
 
     #[test]
+    fn inspect_config_content_returns_document_entries_and_analysis() {
+        let transports = HashMap::from([(
+            "stdio".to_string(),
+            FormatRule {
+                command_field: Some("command".to_string()),
+                ..FormatRule::default()
+            },
+        )]);
+        let report = inspect_config_content(
+            r#"{"context_servers":{"MCPMate":{"command":"uvx"}}}"#,
+            &ClientConfigFileParse {
+                format: crate::clients::models::TemplateFormat::Json,
+                container_type: ContainerType::ObjectMap,
+                container_keys: vec!["context_servers".to_string()],
+            },
+            Some(&transports),
+        );
+
+        assert!(report.document.is_object());
+        assert!(report.inspection.matched_container);
+        assert_eq!(report.inspection.entries.len(), 1);
+        assert_eq!(entry_names(&report), vec!["MCPMate".to_string()]);
+        assert!(report.analysis.mcpmate_present);
+    }
+
+    #[test]
+    fn analyze_config_content_returns_entries_when_transports_are_empty() {
+        let result = analyze_config_content(
+            r#"{"context_servers":{"MCPMate":{"url":"http://127.0.0.1:8000/mcp"}}}"#,
+            &ClientConfigFileParse {
+                format: crate::clients::models::TemplateFormat::Json,
+                container_type: ContainerType::ObjectMap,
+                container_keys: vec!["context_servers".to_string()],
+            },
+            None,
+        );
+
+        assert!(result.has_mcp_config);
+        assert_eq!(result.server_count, 1);
+    }
+
+    #[test]
     fn analyze_config_content_accepts_base_url_alias_for_http_entries() {
         let transports = HashMap::from([(
             "streamable_http".to_string(),
@@ -430,7 +615,7 @@ mod tests {
                 ..FormatRule::default()
             },
         )]);
-        let result = analyze_config_content(
+        let report = inspect_config_content(
             r#"{"context_servers":{"context7":{"baseUrl":"https://example.com/mcp"}}}"#,
             &ClientConfigFileParse {
                 format: crate::clients::models::TemplateFormat::Json,
@@ -440,8 +625,8 @@ mod tests {
             Some(&transports),
         );
 
-        assert_eq!(result.server_names, vec!["context7".to_string()]);
-        assert_eq!(result.server_count, 1);
+        assert_eq!(entry_names(&report), vec!["context7".to_string()]);
+        assert_eq!(report.analysis.server_count, 1);
     }
 
     #[test]
@@ -453,7 +638,7 @@ mod tests {
                 ..FormatRule::default()
             },
         )]);
-        let result = analyze_config_content(
+        let report = inspect_config_content(
             r#"{"servers":[{"name":123,"command":"uvx"},{"name":"valid","command":"bun"}]}"#,
             &ClientConfigFileParse {
                 format: crate::clients::models::TemplateFormat::Json,
@@ -463,7 +648,70 @@ mod tests {
             Some(&transports),
         );
 
-        assert_eq!(result.server_names, vec!["valid".to_string()]);
+        assert_eq!(entry_names(&report), vec!["valid".to_string()]);
+        assert_eq!(report.analysis.server_count, 1);
+    }
+
+    #[test]
+    fn analyze_config_content_sets_mcpmate_present_when_entry_matches() {
+        let result = analyze_config_content(
+            r#"{"context_servers":{"MCPMate":{"url":"http://127.0.0.1:8000/mcp"},"shadcn":{"enabled":true}}}"#,
+            &ClientConfigFileParse {
+                format: crate::clients::models::TemplateFormat::Json,
+                container_type: ContainerType::ObjectMap,
+                container_keys: vec!["context_servers".to_string()],
+            },
+            None,
+        );
+
+        assert!(result.mcpmate_present);
+        assert_eq!(result.server_count, 2);
+    }
+
+    #[test]
+    fn analyze_config_content_sets_mcpmate_present_case_insensitive() {
+        let result = analyze_config_content(
+            r#"{"context_servers":{"mcpmate":{"url":"http://127.0.0.1:8000/mcp"}}}"#,
+            &ClientConfigFileParse {
+                format: crate::clients::models::TemplateFormat::Json,
+                container_type: ContainerType::ObjectMap,
+                container_keys: vec!["context_servers".to_string()],
+            },
+            None,
+        );
+
+        assert!(result.mcpmate_present);
+    }
+
+    #[test]
+    fn analyze_config_content_mcpmate_present_false_when_no_match() {
+        let result = analyze_config_content(
+            r#"{"context_servers":{"shadcn":{"enabled":true},"context7":{"url":"https://example.com"}}}"#,
+            &ClientConfigFileParse {
+                format: crate::clients::models::TemplateFormat::Json,
+                container_type: ContainerType::ObjectMap,
+                container_keys: vec!["context_servers".to_string()],
+            },
+            None,
+        );
+
+        assert!(!result.mcpmate_present);
+        assert_eq!(result.server_count, 2);
+    }
+
+    #[test]
+    fn analyze_config_content_does_not_mark_empty_mcpmate_object_as_present() {
+        let result = analyze_config_content(
+            r#"{"context_servers":{"MCPMate":{"enabled":true}}}"#,
+            &ClientConfigFileParse {
+                format: crate::clients::models::TemplateFormat::Json,
+                container_type: ContainerType::ObjectMap,
+                container_keys: vec!["context_servers".to_string()],
+            },
+            None,
+        );
+
+        assert!(!result.mcpmate_present);
         assert_eq!(result.server_count, 1);
     }
 }
