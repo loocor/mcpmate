@@ -296,22 +296,22 @@ impl RuntimeInstaller {
     }
 
     /// Generate a sibling directory name for staging or backup.
-    fn staging_name(target_dir: &Path, suffix: &str) -> PathBuf {
-        target_dir
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(format!(
-                "{}.{}",
-                target_dir
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy(),
-                suffix
-            ))
+    fn staging_name(
+        target_dir: &Path,
+        suffix: &str,
+    ) -> PathBuf {
+        target_dir.parent().unwrap_or_else(|| Path::new(".")).join(format!(
+            "{}.{}",
+            target_dir.file_name().unwrap_or_default().to_string_lossy(),
+            suffix
+        ))
     }
 
     /// Create a clean sibling staging directory for installation work.
-    async fn prepare_staging_dir(target_dir: &Path, suffix: &str) -> Result<PathBuf> {
+    async fn prepare_staging_dir(
+        target_dir: &Path,
+        suffix: &str,
+    ) -> Result<PathBuf> {
         let staging_dir = Self::staging_name(target_dir, suffix);
         Self::clean_dir(&staging_dir).await?;
         tokio::fs::create_dir_all(&staging_dir).await?;
@@ -323,7 +323,10 @@ impl RuntimeInstaller {
     /// 1. Rename existing `target_dir` to `{target}.old`
     /// 2. Rename `staging_dir` to `target_dir` (atomic on same filesystem)
     /// 3. Clean up old backup
-    async fn commit_staging(staging_dir: &Path, target_dir: &Path) -> Result<()> {
+    async fn commit_staging(
+        staging_dir: &Path,
+        target_dir: &Path,
+    ) -> Result<()> {
         let backup_dir = Self::staging_name(target_dir, "old");
         Self::clean_dir(&backup_dir).await?;
 
@@ -473,7 +476,6 @@ impl RuntimeInstaller {
 
         Ok(())
     }
-
 
     fn find_node_install_root(
         &self,
@@ -626,7 +628,6 @@ exec "$DIR/node" "$DIR/lib/node_modules/npm/bin/npx-cli.js" "$@"
 
         Err(anyhow::anyhow!("UVX executable not found in extracted files"))
     }
-
 }
 impl Default for RuntimeInstaller {
     fn default() -> Self {
@@ -804,9 +805,7 @@ mod tests {
             node_header.set_mode(0o755);
             node_header.set_size(4);
             node_header.set_cksum();
-            builder
-                .append(&node_header, &b"node"[..])
-                .expect("append node binary");
+            builder.append(&node_header, &b"node"[..]).expect("append node binary");
 
             let encoder = builder.into_inner().expect("finish tar");
             encoder.finish().expect("finish gzip");
@@ -819,25 +818,16 @@ mod tests {
             let file = StdFile::create(&archive_path).expect("create zip");
             let mut zip = zip::ZipWriter::new(file);
 
-            zip.start_file(
-                "node-v24.15.0-win-x64/node.exe",
-                SimpleFileOptions::default(),
-            )
-            .expect("start node.exe");
+            zip.start_file("node-v24.15.0-win-x64/node.exe", SimpleFileOptions::default())
+                .expect("start node.exe");
             zip.write_all(b"node").expect("write node.exe");
 
-            zip.start_file(
-                "node-v24.15.0-win-x64/npm.cmd",
-                SimpleFileOptions::default(),
-            )
-            .expect("start npm.cmd");
+            zip.start_file("node-v24.15.0-win-x64/npm.cmd", SimpleFileOptions::default())
+                .expect("start npm.cmd");
             zip.write_all(b"npm").expect("write npm.cmd");
 
-            zip.start_file(
-                "node-v24.15.0-win-x64/npx.cmd",
-                SimpleFileOptions::default(),
-            )
-            .expect("start npx.cmd");
+            zip.start_file("node-v24.15.0-win-x64/npx.cmd", SimpleFileOptions::default())
+                .expect("start npx.cmd");
             zip.write_all(b"npx").expect("write npx.cmd");
 
             zip.finish().expect("finish zip");
@@ -893,9 +883,7 @@ mod tests {
                 .expect("set readme path");
             readme_header.set_size(6);
             readme_header.set_cksum();
-            builder
-                .append(&readme_header, &b"broken"[..])
-                .expect("append readme");
+            builder.append(&readme_header, &b"broken"[..]).expect("append readme");
 
             let encoder = builder.into_inner().expect("finish tar");
             encoder.finish().expect("finish gzip");
@@ -908,11 +896,8 @@ mod tests {
             let file = StdFile::create(&archive_path).expect("create zip");
             let mut zip = zip::ZipWriter::new(file);
 
-            zip.start_file(
-                "node-v24.15.0-win-x64/README.md",
-                SimpleFileOptions::default(),
-            )
-            .expect("start readme");
+            zip.start_file("node-v24.15.0-win-x64/README.md", SimpleFileOptions::default())
+                .expect("start readme");
             zip.write_all(b"broken").expect("write readme");
 
             zip.finish().expect("finish zip");
@@ -928,10 +913,7 @@ mod tests {
             error.to_string().contains("install root not found"),
             "unexpected error: {error:#}"
         );
-        assert_eq!(
-            fs::read(&existing_binary).expect("read existing runtime"),
-            b"old-node"
-        );
+        assert_eq!(fs::read(&existing_binary).expect("read existing runtime"), b"old-node");
         assert!(!RuntimeInstaller::staging_name(&target_dir, "staging").exists());
         assert!(!RuntimeInstaller::staging_name(&target_dir, "final").exists());
         assert!(!RuntimeInstaller::staging_name(&target_dir, "old").exists());

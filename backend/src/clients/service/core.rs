@@ -3,9 +3,9 @@ use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    AttachmentState, BackupPolicySetting, ClientCapabilityConfig, ClientConfigFileParse, ClientConnectionMode,
-    ClientGovernanceKind, ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule,
-    ManagedEndpointConfig, MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
+    AttachmentState, BackupPolicySetting, CONFIG_TRANSPORT_PRIORITY, ClientCapabilityConfig, ClientConfigFileParse,
+    ClientConnectionMode, ClientGovernanceKind, ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode,
+    FormatRule, ManagedEndpointConfig, MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
 };
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
@@ -415,6 +415,26 @@ impl ClientStateRow {
             .map_err(|e| ConfigError::DataAccessError(format!("Failed to parse config_file_parse: {}", e)))
     }
 
+    pub fn effective_config_file_parse(&self) -> ConfigResult<Option<ClientConfigFileParse>> {
+        if let Some(override_parse) = self.config_file_parse_override()? {
+            return Ok(Some(override_parse));
+        }
+
+        self.legacy_config_file_parse()
+    }
+
+    pub fn effective_config_file_parse_with(
+        &self,
+        next_override: Option<&ClientConfigFileParse>,
+        clear_override: bool,
+    ) -> ConfigResult<Option<ClientConfigFileParse>> {
+        match (next_override, clear_override) {
+            (Some(parse), _) => Ok(Some(parse.clone())),
+            (None, true) => self.legacy_config_file_parse(),
+            (None, false) => self.effective_config_file_parse(),
+        }
+    }
+
     pub fn legacy_config_file_parse(&self) -> ConfigResult<Option<ClientConfigFileParse>> {
         let format = match self.config_format() {
             Some("json") => TemplateFormat::Json,
@@ -451,7 +471,7 @@ fn effective_transports_for_state(state: &ClientStateRow) -> ConfigResult<HashMa
 }
 
 pub(crate) fn supported_transports_from_transports(transports: &HashMap<String, FormatRule>) -> Vec<String> {
-    ["streamable_http", "sse", "stdio"]
+    CONFIG_TRANSPORT_PRIORITY
         .into_iter()
         .filter(|transport| transports.contains_key(*transport))
         .map(str::to_string)
@@ -573,15 +593,12 @@ impl ClientConfigService {
     }
 
     pub fn build_render_definition_from_state(state: &ClientStateRow) -> ConfigResult<ClientRenderDefinition> {
-        let parse = state
-            .config_file_parse_override()?
-            .or_else(|| state.legacy_config_file_parse().ok().flatten())
-            .ok_or_else(|| {
-                ConfigError::DataAccessError(format!(
-                    "Client '{}' is missing persisted config_file_parse; cannot render configuration",
-                    state.identifier()
-                ))
-            })?;
+        let parse = state.effective_config_file_parse()?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!(
+                "Client '{}' is missing persisted config_file_parse; cannot render configuration",
+                state.identifier()
+            ))
+        })?;
 
         if parse.container_keys.is_empty() {
             return Err(ConfigError::DataAccessError(format!(
@@ -721,11 +738,19 @@ impl ClientConfigService {
             ConfigError::FileOperationError(format!("Config file not found for client {}", client_id))
         })?;
 
-        let format = state.config_format().unwrap_or("json");
+        let parse_rule = state.effective_config_file_parse()?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!(
+                "Client '{}' is missing persisted config_file_parse; cannot detach configuration",
+                client_id
+            ))
+        })?;
+        let format = parse_rule.format.as_str();
         let parsed = Self::parse_detach_config(&raw_content, format)?;
-        let container_keys = state.container_keys().unwrap_or_default();
-        let is_array = state.container_type() == Some("array");
-        let (filtered, changed) = filter_mcp_mate_entries(parsed, &container_keys, is_array);
+        let (filtered, changed) = filter_mcp_mate_entries(
+            parsed,
+            &parse_rule.container_keys,
+            matches!(parse_rule.container_type, crate::clients::models::ContainerType::Array),
+        );
 
         if changed {
             let output = Self::serialize_detach_config(&filtered, format)?;
@@ -747,20 +772,26 @@ impl ClientConfigService {
         self.resolved_config_path(client_id).await
     }
 
+    pub(super) fn resolved_config_path_from_state(state: &ClientStateRow) -> ConfigResult<Option<String>> {
+        let Some(config_path) = state.config_path() else {
+            return Ok(None);
+        };
+
+        let resolved = get_path_service()
+            .resolve_user_path(config_path)
+            .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+        Ok(Some(resolved.to_string_lossy().to_string()))
+    }
+
     pub(super) async fn resolved_config_path(
         &self,
         client_id: &str,
     ) -> crate::clients::error::ConfigResult<Option<String>> {
-        if let Some(state) = self.fetch_state(client_id).await? {
-            if let Some(config_path) = state.config_path.filter(|value| !value.trim().is_empty()) {
-                let resolved = get_path_service()
-                    .resolve_user_path(&config_path)
-                    .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
-                return Ok(Some(resolved.to_string_lossy().to_string()));
-            }
-        }
+        let Some(state) = self.fetch_state(client_id).await? else {
+            return Ok(None);
+        };
 
-        Ok(None)
+        Self::resolved_config_path_from_state(&state)
     }
 
     pub(super) async fn verified_local_config_target(

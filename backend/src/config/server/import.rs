@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::api::models::server::{RegistryRepositoryInfo, ServerIcon, ServerMetaPayload, ServersImportConfig};
+use crate::clients::analyzer::{ConfigImportSkipReason, InspectedServerEntry};
+use crate::common::constants::profile_keys;
 use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
 use crate::config::registry::RegistryCacheService;
@@ -76,10 +78,135 @@ pub struct SkippedServer {
 pub enum SkipReason {
     DuplicateName,
     DuplicateFingerprint,
+    ConfigInvalidEntry,
+    ConfigMissingCommand,
+    ConfigMissingUrl,
+    ConfigUnrecognized,
     UrlQueryMismatch {
         existing_query: Option<String>,
         incoming_query: Option<String>,
     },
+}
+
+impl From<ConfigImportSkipReason> for SkipReason {
+    fn from(reason: ConfigImportSkipReason) -> Self {
+        match reason {
+            ConfigImportSkipReason::InvalidEntry => Self::ConfigInvalidEntry,
+            ConfigImportSkipReason::MissingCommand => Self::ConfigMissingCommand,
+            ConfigImportSkipReason::MissingUrl => Self::ConfigMissingUrl,
+            ConfigImportSkipReason::Unrecognized => Self::ConfigUnrecognized,
+        }
+    }
+}
+
+pub struct ClientImportPlan {
+    pub items: HashMap<String, ServersImportConfig>,
+    pub skipped_servers: Vec<SkippedServer>,
+}
+
+fn record_conflict(
+    outcome: &mut ImportOutcome,
+    name: &str,
+    reason: SkipReason,
+    policy: ConflictPolicy,
+) -> bool {
+    match policy {
+        ConflictPolicy::Skip => {
+            outcome.skipped.push(SkippedServer {
+                name: name.to_string(),
+                reason,
+            });
+            true
+        }
+        ConflictPolicy::Error => {
+            outcome.failed.insert(name.to_string(), "duplicate".to_string());
+            true
+        }
+        ConflictPolicy::Update => false,
+    }
+}
+
+fn build_imported_server(
+    name: String,
+    cfg: &ServersImportConfig,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    server_type: &str,
+) -> ImportedServer {
+    ImportedServer {
+        name,
+        command: cfg.command.clone(),
+        args,
+        env,
+        server_type: server_type.to_string(),
+        url: cfg.url.clone(),
+    }
+}
+
+fn is_mcpmate_import_entry(entry: &InspectedServerEntry) -> bool {
+    entry.name.eq_ignore_ascii_case(profile_keys::MCPMATE)
+}
+
+pub(crate) fn build_import_plan_from_entries(
+    entries: impl IntoIterator<Item = InspectedServerEntry>
+) -> ClientImportPlan {
+    let mut items = HashMap::new();
+    let mut skipped_servers = Vec::new();
+    for entry in entries {
+        if is_mcpmate_import_entry(&entry) {
+            continue;
+        }
+
+        match import_config_from_inspected_entry(entry) {
+            Ok((name, config)) => {
+                items.insert(name, config);
+            }
+            Err(skipped) => skipped_servers.push(skipped),
+        }
+    }
+
+    ClientImportPlan { items, skipped_servers }
+}
+
+fn import_config_from_inspected_entry(
+    entry: InspectedServerEntry
+) -> std::result::Result<(String, ServersImportConfig), SkippedServer> {
+    let (kind, command, url) = match entry.resolved_import_transport() {
+        Ok(target) => (
+            target.kind.to_string(),
+            target.command.map(str::to_string),
+            target.url.map(str::to_string),
+        ),
+        Err(reason) => {
+            return Err(SkippedServer {
+                name: entry.name,
+                reason: reason.into(),
+            });
+        }
+    };
+
+    let InspectedServerEntry {
+        name,
+        args,
+        env,
+        headers,
+        ..
+    } = entry;
+    let headers = if headers.is_empty() { None } else { Some(headers) };
+
+    Ok((
+        name,
+        ServersImportConfig {
+            kind,
+            command,
+            args: Some(args),
+            url,
+            env: Some(env),
+            headers,
+            registry_server_id: None,
+            meta: None,
+        },
+    ))
 }
 
 /// Import a batch of servers with consistent deduplication and capability sync.
@@ -100,8 +227,6 @@ pub async fn import_batch(
         "Starting server import batch"
     );
     let existing = ExistingIndex::build(db_pool).await?;
-
-    // We'll need profile association (lazily resolve default if not provided)
 
     for (name, cfg) in items.into_iter() {
         // Validate and normalize
@@ -132,85 +257,53 @@ pub async fn import_batch(
         let by_name_dup = opts.by_name && existing.names.contains(&name);
         let by_fp_dup = opts.by_fingerprint && !fp.is_empty() && existing.fingerprints.contains(&fp);
 
-        if by_fp_dup {
-            match opts.conflict_policy {
-                ConflictPolicy::Skip => {
-                    outcome.skipped.push(SkippedServer {
-                        name,
-                        reason: SkipReason::DuplicateFingerprint,
-                    });
-                    continue;
-                }
-                ConflictPolicy::Error => {
-                    outcome.failed.insert(name, "duplicate".to_string());
-                    continue;
-                }
-                ConflictPolicy::Update => {}
-            }
+        if by_fp_dup
+            && record_conflict(
+                &mut outcome,
+                &name,
+                SkipReason::DuplicateFingerprint,
+                opts.conflict_policy,
+            )
+        {
+            continue;
         }
 
         if opts.by_fingerprint && !by_fp_dup {
             if let Some(sig) = url_signature.as_ref() {
                 if existing.url_bases.contains(&sig.base) {
                     let existing_sig = existing.url_signatures.get(&sig.base);
-                    match opts.conflict_policy {
-                        ConflictPolicy::Skip => {
-                            let existing_query = existing_sig.and_then(|s| s.display_query());
-                            let incoming_query = sig.display_query();
-                            outcome.skipped.push(SkippedServer {
-                                name,
-                                reason: SkipReason::UrlQueryMismatch {
-                                    existing_query,
-                                    incoming_query,
-                                },
-                            });
-                            continue;
-                        }
-                        ConflictPolicy::Error => {
-                            outcome.failed.insert(name, "duplicate".to_string());
-                            continue;
-                        }
-                        ConflictPolicy::Update => {}
+                    if record_conflict(
+                        &mut outcome,
+                        &name,
+                        SkipReason::UrlQueryMismatch {
+                            existing_query: existing_sig.and_then(|s| s.display_query()),
+                            incoming_query: sig.display_query(),
+                        },
+                        opts.conflict_policy,
+                    ) {
+                        continue;
                     }
                 }
             }
         }
 
-        if by_name_dup {
-            match opts.conflict_policy {
-                ConflictPolicy::Skip => {
-                    outcome.skipped.push(SkippedServer {
-                        name,
-                        reason: SkipReason::DuplicateName,
-                    });
-                    continue;
-                }
-                ConflictPolicy::Error => {
-                    outcome.failed.insert(name, "duplicate".to_string());
-                    continue;
-                }
-                ConflictPolicy::Update => {}
-            }
-        }
-
-        // Preview: report would-be imported without DB side-effects
-        if opts.preview {
-            outcome.imported.push(ImportedServer {
-                name,
-                command: cfg.command.clone(),
-                args: cfg.args.clone().unwrap_or_default(),
-                env: cfg.env.clone().unwrap_or_default(),
-                server_type: normalized_kind.to_string(),
-                url: cfg.url.clone(),
-            });
+        if by_name_dup && record_conflict(&mut outcome, &name, SkipReason::DuplicateName, opts.conflict_policy) {
             continue;
         }
 
-        // Normalize args/env: move KEY=VALUE patterns from args into env for safety
+        // Normalize args/env once for both preview and apply.
         let (args_norm, env_norm) = normalize_args_env(
             cfg.args.clone().unwrap_or_default(),
             cfg.env.clone().unwrap_or_default(),
         );
+
+        // Preview: report would-be imported without DB side-effects
+        if opts.preview {
+            outcome
+                .imported
+                .push(build_imported_server(name, &cfg, args_norm, env_norm, &normalized_kind));
+            continue;
+        }
 
         // Apply: upsert server, args, env, headers
         let mut server = match server_type {
@@ -346,14 +439,13 @@ pub async fn import_batch(
         }
         outcome.scheduled = true;
 
-        outcome.imported.push(ImportedServer {
+        outcome.imported.push(build_imported_server(
             name,
-            command: cfg.command.clone(),
-            args: args_norm,
-            env: env_norm,
-            server_type: server_type.client_format().to_string(),
-            url: cfg.url.clone(),
-        });
+            &cfg,
+            args_norm,
+            env_norm,
+            server_type.client_format(),
+        ));
     }
 
     Ok(outcome)
@@ -409,7 +501,7 @@ pub(crate) fn server_meta_from_payload(
     Ok(meta)
 }
 
-fn normalize_args_env(
+pub(crate) fn normalize_args_env(
     args: Vec<String>,
     env: std::collections::HashMap<String, String>,
 ) -> (Vec<String>, std::collections::HashMap<String, String>) {
@@ -537,39 +629,32 @@ fn validate_server_config(
 
 // ========================= Registry Import =========================
 
-/// Package type for registry servers
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PackageType {
-    Npm,
-    Pypi,
-}
-
 /// Package information extracted from registry cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegistryPackage {
-    pub name: Option<String>,
-    pub version: Option<String>,
+struct RegistryPackage {
+    name: Option<String>,
+    version: Option<String>,
 }
 
 /// Remote information extracted from registry cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegistryRemote {
-    pub url: Option<String>,
-    pub r#type: Option<String>,
+struct RegistryRemote {
+    url: Option<String>,
+    r#type: Option<String>,
 }
 
 /// Result of converting a registry package to import config
 #[derive(Debug, Clone)]
-pub struct PackageImportConfig {
-    pub kind: String,
-    pub command: Option<String>,
-    pub args: Option<Vec<String>>,
-    pub url: Option<String>,
+struct PackageImportConfig {
+    kind: String,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    url: Option<String>,
 }
 
 /// Convert npm package to import configuration
 /// npm packages use: npx -y <identifier>@<version>
-pub fn npm_package_to_import_config(
+fn npm_package_to_import_config(
     identifier: &str,
     version: Option<&str>,
 ) -> PackageImportConfig {
@@ -585,53 +670,15 @@ pub fn npm_package_to_import_config(
     }
 }
 
-/// Convert pypi package to import configuration
-/// pypi packages use: uvx <identifier>==<version>
-pub fn pypi_package_to_import_config(
-    identifier: &str,
-    version: Option<&str>,
-) -> PackageImportConfig {
-    let full_identifier = match version {
-        Some(v) => format!("{}=={}", identifier, v),
-        None => identifier.to_string(),
-    };
-    PackageImportConfig {
-        kind: "stdio".to_string(),
-        command: Some("uvx".to_string()),
-        args: Some(vec![full_identifier]),
-        url: None,
-    }
-}
-
 /// Convert remote URL to import configuration
 /// remotes use streamable_http transport
-pub fn remote_to_import_config(url: &str) -> PackageImportConfig {
+fn remote_to_import_config(url: &str) -> PackageImportConfig {
     PackageImportConfig {
         kind: "streamable_http".to_string(),
         command: None,
         args: None,
         url: Some(url.to_string()),
     }
-}
-
-/// Detect package type from registry package name
-/// npm packages typically start with @ or don't have a specific prefix
-/// pypi packages are typically just the package name
-pub fn detect_package_type(package_name: &str) -> Option<PackageType> {
-    // Check for npm scoped packages (e.g., @modelcontextprotocol/server-filesystem)
-    if package_name.starts_with('@') {
-        return Some(PackageType::Npm);
-    }
-
-    // Check for common npm package patterns
-    if package_name.contains('/') && !package_name.contains("://") {
-        // Could be a scoped package without @ prefix (unusual but possible)
-        return Some(PackageType::Npm);
-    }
-
-    // Default to npm for MCP packages (most common)
-    // This is a heuristic - in practice, the registry should provide type info
-    Some(PackageType::Npm)
 }
 
 /// Parse packages_json from registry cache entry
@@ -652,7 +699,7 @@ fn parse_remotes(remotes_json: Option<&str>) -> Result<Vec<RegistryRemote>> {
 
 /// Convert registry cache entry to import configuration
 /// Priority: remotes > packages (remotes are preferred for HTTP-based servers)
-pub fn registry_entry_to_import_config(
+fn registry_entry_to_import_config(
     entry: &RegistryCacheEntry,
     preferred_version: Option<&str>,
 ) -> Result<Option<PackageImportConfig>> {
@@ -675,15 +722,7 @@ pub fn registry_entry_to_import_config(
         // Use preferred version if provided, otherwise use package version
         let version = preferred_version.or(package.version.as_deref());
 
-        // Detect package type
-        let package_type = detect_package_type(name).unwrap_or(PackageType::Npm);
-
-        let config = match package_type {
-            PackageType::Npm => npm_package_to_import_config(name, version),
-            PackageType::Pypi => pypi_package_to_import_config(name, version),
-        };
-
-        return Ok(Some(config));
+        return Ok(Some(npm_package_to_import_config(name, version)));
     }
 
     // No packages or remotes found
@@ -852,6 +891,61 @@ pub async fn import_from_registry(
 mod tests {
     use super::*;
 
+    fn server_entry(
+        name: &str,
+        transport: &str,
+        command: Option<&str>,
+        url: Option<&str>,
+        issue: Option<&str>,
+    ) -> InspectedServerEntry {
+        InspectedServerEntry {
+            name: name.to_string(),
+            transport: transport.to_string(),
+            command: command.map(str::to_string),
+            args: Vec::new(),
+            env: HashMap::new(),
+            headers: HashMap::new(),
+            url: url.map(str::to_string),
+            issue: issue.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn client_config_import_plan_filters_out_mcpmate_self_entry() {
+        let plan = build_import_plan_from_entries([
+            server_entry("MCPMate", "stdio", Some("mcpmate-bridge"), None, None),
+            server_entry(
+                "context7",
+                "streamable_http",
+                None,
+                Some("http://127.0.0.1:8123/mcp"),
+                None,
+            ),
+            server_entry("shadcn-mcp-server", "unclassified", None, None, None),
+        ]);
+
+        assert!(!plan.items.contains_key("MCPMate"));
+        let context7 = plan.items.get("context7").expect("context7 server entry");
+        assert_eq!(context7.kind, "streamable_http");
+        assert_eq!(context7.url.as_deref(), Some("http://127.0.0.1:8123/mcp"));
+        assert_eq!(plan.skipped_servers.len(), 1);
+        assert_eq!(plan.skipped_servers[0].name, "shadcn-mcp-server");
+        assert!(matches!(plan.skipped_servers[0].reason, SkipReason::ConfigUnrecognized));
+    }
+
+    #[test]
+    fn client_config_import_plan_reports_invalid_entries() {
+        let plan = build_import_plan_from_entries([
+            server_entry("broken", "unclassified", None, None, Some("config_invalid_entry")),
+            server_entry("valid", "stdio", Some("uvx"), None, None),
+        ]);
+
+        assert!(plan.items.contains_key("valid"));
+        assert_eq!(plan.skipped_servers.len(), 1);
+        assert_eq!(plan.skipped_servers[0].name, "broken");
+        assert!(matches!(plan.skipped_servers[0].reason, SkipReason::ConfigInvalidEntry));
+    }
+
     #[test]
     fn test_npm_package_to_import_config_with_version() {
         let config = npm_package_to_import_config("@modelcontextprotocol/server-filesystem", Some("1.0.0"));
@@ -882,43 +976,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pypi_package_to_import_config_with_version() {
-        let config = pypi_package_to_import_config("mcp-server-filesystem", Some("1.0.0"));
-        assert_eq!(config.kind, "stdio");
-        assert_eq!(config.command, Some("uvx".to_string()));
-        assert_eq!(config.args, Some(vec!["mcp-server-filesystem==1.0.0".to_string()]));
-        assert!(config.url.is_none());
-    }
-
-    #[test]
-    fn test_pypi_package_to_import_config_without_version() {
-        let config = pypi_package_to_import_config("mcp-server-filesystem", None);
-        assert_eq!(config.kind, "stdio");
-        assert_eq!(config.command, Some("uvx".to_string()));
-        assert_eq!(config.args, Some(vec!["mcp-server-filesystem".to_string()]));
-    }
-
-    #[test]
     fn test_remote_to_import_config() {
         let config = remote_to_import_config("https://api.example.com/mcp");
         assert_eq!(config.kind, "streamable_http");
         assert!(config.command.is_none());
         assert!(config.args.is_none());
         assert_eq!(config.url, Some("https://api.example.com/mcp".to_string()));
-    }
-
-    #[test]
-    fn test_detect_package_type_scoped_npm() {
-        assert_eq!(
-            detect_package_type("@modelcontextprotocol/server-filesystem"),
-            Some(PackageType::Npm)
-        );
-    }
-
-    #[test]
-    fn test_detect_package_type_regular_npm() {
-        // Default to npm for most packages
-        assert_eq!(detect_package_type("mcp-server-filesystem"), Some(PackageType::Npm));
     }
 
     #[test]

@@ -1077,6 +1077,19 @@ export interface ClientImportedServer {
   url?: string | null;
 }
 
+export interface ServerEntryData {
+  name: string;
+  transport: string;
+  import_status?: "importable" | "skipped" | string;
+  skip_reason?: string | null;
+  issue?: string | null;
+  command?: string | null;
+  args: string[];
+  env: Record<string, string>;
+  headers: Record<string, string>;
+  url?: string | null;
+}
+
 export interface ClientImportSummary {
   attempted: boolean;
   imported_count: number;
@@ -1086,23 +1099,12 @@ export interface ClientImportSummary {
   skipped_servers?: SkippedServer[] | null;
 }
 
-export interface ClientConfigImportItem {
-  name?: string;
-  server_name?: string;
-  error?: string;
-  tools?: { items?: unknown[] };
-  resources?: { items?: unknown[] };
-  resource_templates?: { items?: unknown[] };
-  prompts?: { items?: unknown[] };
-}
-
 export interface ClientConfigImportData {
   summary: ClientImportSummary;
   imported_servers?: ClientImportedServer[] | null;
   profile_id?: string | null;
   scheduled?: boolean | null;
   scheduled_reason?: string | null;
-  items?: ClientConfigImportItem[];
 }
 
 export interface ClientConfigImportResp {
@@ -1113,7 +1115,7 @@ export interface ClientConfigImportResp {
 
 export interface ClientConfigImportReq {
   identifier: string;
-  preview?: boolean;
+  entries: ServerEntryData[];
   profile_id?: string | null;
 }
 
@@ -1129,8 +1131,7 @@ export interface ClientConfigData {
   warnings?: string[];
   degraded_reasons?: string[];
   has_mcp_config: boolean;
-  imported_servers?: ClientImportedServer[] | null;
-  import_summary?: ClientImportSummary | null;
+  configured_server_entries?: ServerEntryData[];
   last_modified?: string | null;
   connection_mode?: ClientConnectionMode | null;
   mcp_servers_count: number;
@@ -1438,15 +1439,24 @@ export interface TransportRuleData {
   selected?: boolean | null;
 }
 
-export interface ClientConfigFileParseInspectReq {
-  config_path: string;
+interface ClientConfigFileParseDraftPayload {
   config_file_parse?: ClientConfigFileParse;
 }
 
-export interface ClientConfigFileParseInspectExistingReq {
-  identifier: string;
-  config_file_parse?: ClientConfigFileParse;
+export interface ClientConfigFileParseInspectReq
+  extends ClientConfigFileParseDraftPayload {
+  config_path: string;
 }
+
+export interface ClientConfigFileParseInspectExistingReq
+  extends ClientConfigFileParseDraftPayload {
+  identifier: string;
+}
+
+/** Discriminated request for `clientsApi.inspectClientConfigFileParse` (not sent to the server). */
+export type ClientConfigFileParseInspectCall =
+  | (ClientConfigFileParseInspectReq & { inspectTarget: "path" })
+  | (ClientConfigFileParseInspectExistingReq & { inspectTarget: "existing" });
 
 export interface ClientConfigFileParseValidation {
   matches: boolean;
@@ -1461,6 +1471,4 @@ export interface ClientConfigFileParseInspectResp {
   inferred_parse?: ClientConfigFileParse | null;
   validation?: ClientConfigFileParseValidation | null;
   preview?: unknown;
-  preview_text?: string;
-  warnings?: string[];
 }

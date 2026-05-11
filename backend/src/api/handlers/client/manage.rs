@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
 
-use crate::api::handlers::client::handlers::get_client_service;
+use super::get_client_service;
 use crate::api::models::client::{ClientDeleteData, ClientDeleteReq, ClientDeleteResp};
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};

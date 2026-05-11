@@ -1039,9 +1039,11 @@ export function ClientFormDrawer({
 				| { kind: "create"; request: ClientConfigFileParseInspectReq }
 				| { kind: "existing"; request: ClientConfigFileParseInspectExistingReq },
 		) =>
-			payload.kind === "existing"
-				? clientsApi.inspectExistingClientConfigFileParse(payload.request)
-				: clientsApi.inspectConfigFileParse(payload.request),
+			clientsApi.inspectClientConfigFileParse(
+				payload.kind === "existing"
+					? { inspectTarget: "existing", ...payload.request }
+					: { inspectTarget: "path", ...payload.request },
+			),
 		onSuccess: (data) => {
 			if (!data) {
 				setParseInspection(null);

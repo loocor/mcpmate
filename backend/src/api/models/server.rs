@@ -898,6 +898,10 @@ impl From<SkippedServer> for SkippedServerData {
         let (reason, existing_query, incoming_query) = match source.reason {
             SkipReason::DuplicateName => ("duplicate_name".to_string(), None, None),
             SkipReason::DuplicateFingerprint => ("duplicate_fingerprint".to_string(), None, None),
+            SkipReason::ConfigInvalidEntry => ("config_invalid_entry".to_string(), None, None),
+            SkipReason::ConfigMissingCommand => ("config_missing_command".to_string(), None, None),
+            SkipReason::ConfigMissingUrl => ("config_missing_url".to_string(), None, None),
+            SkipReason::ConfigUnrecognized => ("config_unrecognized".to_string(), None, None),
             SkipReason::UrlQueryMismatch {
                 existing_query,
                 incoming_query,
