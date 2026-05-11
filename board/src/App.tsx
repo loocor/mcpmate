@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { lazy, Suspense } from "react";
 import {
 	BrowserRouter,
 	Navigate,
@@ -10,7 +11,6 @@ import { Layout } from "./components/layout/layout";
 import { LanguageSynchronizer } from "./components/language-synchronizer.ts";
 import { ApiDocsPage } from "./pages/api-docs/api-docs-page";
 import { AuditPage } from "./pages/audit/audit-page";
-import { ClientDetailPage } from "./pages/clients/client-detail-page";
 import { ClientDirectCapabilitiesPage } from "./pages/clients/client-direct-page.tsx";
 import { ClientsPage } from "./pages/clients/clients-page";
 import { DashboardPage } from "./pages/dashboard/dashboard-page";
@@ -26,6 +26,12 @@ import { ServerDetailPage } from "./pages/servers/server-detail-page";
 import { OAuthCallbackPage } from "./pages/servers/oauth-callback-page";
 import { ServerListPage } from "./pages/servers/server-list-page";
 import { SettingsPage } from "./pages/settings/settings-page";
+
+const ClientDetailPage = lazy(() =>
+	import("./pages/clients/client-detail-page").then((module) => ({
+		default: module.ClientDetailPage,
+	})),
+);
 
 // Initialize the query client
 const queryClient = new QueryClient({
@@ -90,7 +96,14 @@ function App() {
 							path="clients/:identifier/direct/:serverId"
 							element={<ClientDirectCapabilitiesPage />}
 						/>
-						<Route path="clients/:identifier" element={<ClientDetailPage />} />
+						<Route
+							path="clients/:identifier"
+							element={
+								<Suspense fallback={null}>
+									<ClientDetailPage />
+								</Suspense>
+							}
+						/>
 						<Route path="runtime" element={<RuntimePage />} />
 						<Route path="audit" element={<AuditPage />} />
 						<Route path="api-docs" element={<ApiDocsPage />} />
