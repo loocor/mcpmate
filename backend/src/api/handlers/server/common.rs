@@ -329,7 +329,7 @@ pub(crate) async fn reconcile_client_direct_exposure_after_server_constraint_cha
     state: &Arc<AppState>,
     server_id: &str,
 ) -> Result<usize, ApiError> {
-    let Ok(client_service) = crate::api::handlers::client::handlers::get_client_service(state) else {
+    let Ok(client_service) = crate::api::handlers::client::get_client_service(state) else {
         warn!(server_id = %server_id, "Client service unavailable; skipping direct exposure reconciliation");
         return Ok(0);
     };

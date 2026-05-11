@@ -6,6 +6,7 @@ use crate::clients::models::{
     UnifyDirectExposureIntent, UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic,
     UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface,
     UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic,
+    canonical_config_transport_key,
 };
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::common::profile::{ProfileRole, ProfileType};
@@ -21,15 +22,6 @@ use tokio::fs::OpenOptions;
 
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
 const VALID_CONNECTION_MODES: &[&str] = &["local_config_detected", "remote_http", "manual"];
-
-fn canonical_record_transport(transport: &str) -> Option<&'static str> {
-    match transport.trim() {
-        "streamable_http" => Some("streamable_http"),
-        "sse" => Some("sse"),
-        "stdio" => Some("stdio"),
-        _ => None,
-    }
-}
 
 fn sanitize_optional(value: Option<&str>) -> Option<String> {
     value
@@ -253,7 +245,7 @@ impl ClientConfigService {
         identifier: &str,
         observed_transport: &str,
     ) -> ConfigResult<()> {
-        let Some(normalized_transport) = canonical_record_transport(observed_transport) else {
+        let Some(normalized_transport) = canonical_config_transport_key(observed_transport) else {
             if observed_transport.trim().is_empty() {
                 return Ok(());
             }
@@ -476,21 +468,11 @@ impl ClientConfigService {
         self.validate_runtime_target_input(resolved_connection_mode.as_deref(), normalized_config_path.as_deref())
             .await?;
 
-        let effective_parse_for_validation = if let Some(parse) = update.config_file_parse.clone() {
-            Some(parse)
-        } else if update.clear_config_file_parse {
-            existing_state
-                .as_ref()
-                .and_then(|state| state.legacy_config_file_parse().ok().flatten())
-        } else {
-            existing_state
-                .as_ref()
-                .and_then(|state| state.config_file_parse_override().ok().flatten())
-                .or_else(|| {
-                    existing_state
-                        .as_ref()
-                        .and_then(|state| state.legacy_config_file_parse().ok().flatten())
-                })
+        let effective_parse_for_validation = match existing_state.as_ref() {
+            Some(state) => state
+                .effective_config_file_parse_with(update.config_file_parse.as_ref(), update.clear_config_file_parse)?
+                .or_else(|| update.config_file_parse.clone()),
+            None => update.config_file_parse.clone(),
         };
         let validation_path = normalized_config_path
             .as_deref()
@@ -811,14 +793,11 @@ impl ClientConfigService {
                 .transpose()?
         };
 
-        let effective_parse = if let Some(value) = config_file_parse {
-            Some(value.clone())
-        } else if clear_override {
-            existing_state
-                .as_ref()
-                .and_then(|state| state.legacy_config_file_parse().ok().flatten())
-        } else {
-            None
+        let effective_parse = match existing_state.as_ref() {
+            Some(state) => state
+                .effective_config_file_parse_with(config_file_parse, clear_override)?
+                .or_else(|| config_file_parse.cloned()),
+            None => config_file_parse.cloned(),
         };
 
         let config_format = effective_parse.as_ref().map(|value| value.format.as_str().to_string());
@@ -885,7 +864,7 @@ impl ClientConfigService {
         };
 
         for transport in rules.keys() {
-            if canonical_record_transport(transport).is_none() {
+            if canonical_config_transport_key(transport).is_none() {
                 return Err(ConfigError::DataAccessError(format!(
                     "Invalid transport key '{}'; expected canonical transport key",
                     transport

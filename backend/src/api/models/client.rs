@@ -541,8 +541,11 @@ pub struct ServerEntryData {
 
 impl From<InspectedServerEntry> for ServerEntryData {
     fn from(entry: InspectedServerEntry) -> Self {
-        let skip_reason = entry.import_skip_reason().map(|reason| reason.as_str().to_string());
-        let import_status = entry.import_status().to_string();
+        let skip_reason = entry
+            .resolved_import_transport()
+            .err()
+            .map(|reason| reason.as_str().to_string());
+        let import_status = if skip_reason.is_some() { "skipped" } else { "importable" }.to_string();
 
         Self {
             name: entry.name,
@@ -673,10 +676,6 @@ pub struct ClientConfigFileParseInspectData {
     pub validation: Option<ClientConfigFileParseValidationData>,
     #[serde(default)]
     pub preview: serde_json::Value,
-    #[serde(default)]
-    pub preview_text: Option<String>,
-    #[serde(default)]
-    pub warnings: Vec<String>,
 }
 
 api_resp!(

@@ -1440,15 +1440,24 @@ export interface TransportRuleData {
   selected?: boolean | null;
 }
 
-export interface ClientConfigFileParseInspectReq {
-  config_path: string;
+interface ClientConfigFileParseDraftPayload {
   config_file_parse?: ClientConfigFileParse;
 }
 
-export interface ClientConfigFileParseInspectExistingReq {
-  identifier: string;
-  config_file_parse?: ClientConfigFileParse;
+export interface ClientConfigFileParseInspectReq
+  extends ClientConfigFileParseDraftPayload {
+  config_path: string;
 }
+
+export interface ClientConfigFileParseInspectExistingReq
+  extends ClientConfigFileParseDraftPayload {
+  identifier: string;
+}
+
+/** Discriminated request for `clientsApi.inspectClientConfigFileParse` (not sent to the server). */
+export type ClientConfigFileParseInspectCall =
+  | (ClientConfigFileParseInspectReq & { inspectTarget: "path" })
+  | (ClientConfigFileParseInspectExistingReq & { inspectTarget: "existing" });
 
 export interface ClientConfigFileParseValidation {
   matches: boolean;
@@ -1463,6 +1472,4 @@ export interface ClientConfigFileParseInspectResp {
   inferred_parse?: ClientConfigFileParse | null;
   validation?: ClientConfigFileParseValidation | null;
   preview?: unknown;
-  preview_text?: string;
-  warnings?: string[];
 }

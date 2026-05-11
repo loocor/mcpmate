@@ -66,6 +66,9 @@ pub enum ConfigError {
 
     #[error("Client {identifier} is disabled and cannot be managed by MCPMate")]
     ClientDisabled { identifier: String },
+
+    #[error("Client record not found: {identifier}")]
+    ClientNotFound { identifier: String },
 }
 
 pub type ConfigResult<T> = Result<T, ConfigError>;

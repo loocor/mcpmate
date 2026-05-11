@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
 
-use crate::api::handlers::client::handlers::get_client_service;
-use crate::api::handlers::client::manage::invalidate_client_runtime_visibility;
+use super::get_client_service;
+use super::manage::invalidate_client_runtime_visibility;
 use crate::api::models::client::{ApprovalRequest, ApprovalResponse};
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
