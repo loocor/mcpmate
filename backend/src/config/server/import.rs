@@ -7,9 +7,9 @@ use sqlx::{Pool, Sqlite};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::api::models::client::ServerEntryData;
 use crate::api::models::server::{RegistryRepositoryInfo, ServerIcon, ServerMetaPayload, ServersImportConfig};
-use crate::clients::analyzer::{ConfigImportSkipReason, ConfigInspection, InspectedServerEntry};
+use crate::clients::analyzer::{ConfigImportSkipReason, InspectedServerEntry};
+use crate::common::constants::profile_keys;
 use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
 use crate::config::registry::RegistryCacheService;
@@ -143,28 +143,20 @@ fn build_imported_server(
     }
 }
 
-pub fn build_import_plan_from_inspection(
-    inspection: ConfigInspection,
-    container_keys: &[String],
-) -> Result<ClientImportPlan> {
-    if !inspection.matched_container {
-        anyhow::bail!(
-            "none of the configured config nodes matched: {}",
-            container_keys.join(", ")
-        );
-    }
-
-    Ok(build_import_plan(inspection.entries))
+fn is_mcpmate_import_entry(entry: &InspectedServerEntry) -> bool {
+    entry.name.eq_ignore_ascii_case(profile_keys::MCPMATE)
 }
 
-pub fn build_import_plan_from_entries(entries: Vec<ServerEntryData>) -> ClientImportPlan {
-    build_import_plan(entries.into_iter().map(Into::into))
-}
-
-fn build_import_plan(entries: impl IntoIterator<Item = InspectedServerEntry>) -> ClientImportPlan {
+pub(crate) fn build_import_plan_from_entries(
+    entries: impl IntoIterator<Item = InspectedServerEntry>
+) -> ClientImportPlan {
     let mut items = HashMap::new();
     let mut skipped_servers = Vec::new();
     for entry in entries {
+        if is_mcpmate_import_entry(&entry) {
+            continue;
+        }
+
         match import_config_from_inspected_entry(entry) {
             Ok((name, config)) => {
                 items.insert(name, config);
@@ -637,39 +629,32 @@ fn validate_server_config(
 
 // ========================= Registry Import =========================
 
-/// Package type for registry servers
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PackageType {
-    Npm,
-    Pypi,
-}
-
 /// Package information extracted from registry cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegistryPackage {
-    pub name: Option<String>,
-    pub version: Option<String>,
+struct RegistryPackage {
+    name: Option<String>,
+    version: Option<String>,
 }
 
 /// Remote information extracted from registry cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RegistryRemote {
-    pub url: Option<String>,
-    pub r#type: Option<String>,
+struct RegistryRemote {
+    url: Option<String>,
+    r#type: Option<String>,
 }
 
 /// Result of converting a registry package to import config
 #[derive(Debug, Clone)]
-pub struct PackageImportConfig {
-    pub kind: String,
-    pub command: Option<String>,
-    pub args: Option<Vec<String>>,
-    pub url: Option<String>,
+struct PackageImportConfig {
+    kind: String,
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    url: Option<String>,
 }
 
 /// Convert npm package to import configuration
 /// npm packages use: npx -y <identifier>@<version>
-pub fn npm_package_to_import_config(
+fn npm_package_to_import_config(
     identifier: &str,
     version: Option<&str>,
 ) -> PackageImportConfig {
@@ -685,53 +670,15 @@ pub fn npm_package_to_import_config(
     }
 }
 
-/// Convert pypi package to import configuration
-/// pypi packages use: uvx <identifier>==<version>
-pub fn pypi_package_to_import_config(
-    identifier: &str,
-    version: Option<&str>,
-) -> PackageImportConfig {
-    let full_identifier = match version {
-        Some(v) => format!("{}=={}", identifier, v),
-        None => identifier.to_string(),
-    };
-    PackageImportConfig {
-        kind: "stdio".to_string(),
-        command: Some("uvx".to_string()),
-        args: Some(vec![full_identifier]),
-        url: None,
-    }
-}
-
 /// Convert remote URL to import configuration
 /// remotes use streamable_http transport
-pub fn remote_to_import_config(url: &str) -> PackageImportConfig {
+fn remote_to_import_config(url: &str) -> PackageImportConfig {
     PackageImportConfig {
         kind: "streamable_http".to_string(),
         command: None,
         args: None,
         url: Some(url.to_string()),
     }
-}
-
-/// Detect package type from registry package name
-/// npm packages typically start with @ or don't have a specific prefix
-/// pypi packages are typically just the package name
-pub fn detect_package_type(package_name: &str) -> Option<PackageType> {
-    // Check for npm scoped packages (e.g., @modelcontextprotocol/server-filesystem)
-    if package_name.starts_with('@') {
-        return Some(PackageType::Npm);
-    }
-
-    // Check for common npm package patterns
-    if package_name.contains('/') && !package_name.contains("://") {
-        // Could be a scoped package without @ prefix (unusual but possible)
-        return Some(PackageType::Npm);
-    }
-
-    // Default to npm for MCP packages (most common)
-    // This is a heuristic - in practice, the registry should provide type info
-    Some(PackageType::Npm)
 }
 
 /// Parse packages_json from registry cache entry
@@ -752,7 +699,7 @@ fn parse_remotes(remotes_json: Option<&str>) -> Result<Vec<RegistryRemote>> {
 
 /// Convert registry cache entry to import configuration
 /// Priority: remotes > packages (remotes are preferred for HTTP-based servers)
-pub fn registry_entry_to_import_config(
+fn registry_entry_to_import_config(
     entry: &RegistryCacheEntry,
     preferred_version: Option<&str>,
 ) -> Result<Option<PackageImportConfig>> {
@@ -775,15 +722,7 @@ pub fn registry_entry_to_import_config(
         // Use preferred version if provided, otherwise use package version
         let version = preferred_version.or(package.version.as_deref());
 
-        // Detect package type
-        let package_type = detect_package_type(name).unwrap_or(PackageType::Npm);
-
-        let config = match package_type {
-            PackageType::Npm => npm_package_to_import_config(name, version),
-            PackageType::Pypi => pypi_package_to_import_config(name, version),
-        };
-
-        return Ok(Some(config));
+        return Ok(Some(npm_package_to_import_config(name, version)));
     }
 
     // No packages or remotes found
@@ -951,58 +890,44 @@ pub async fn import_from_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clients::analyzer::inspect_config_value;
-    use crate::clients::models::{ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat};
 
-    fn transport_rules() -> HashMap<String, FormatRule> {
-        HashMap::from([
-            (
-                "stdio".to_string(),
-                FormatRule {
-                    command_field: Some("command".to_string()),
-                    args_field: Some("args".to_string()),
-                    env_field: Some("env".to_string()),
-                    ..FormatRule::default()
-                },
-            ),
-            (
-                "streamable_http".to_string(),
-                FormatRule {
-                    url_field: Some("url".to_string()),
-                    ..FormatRule::default()
-                },
-            ),
-        ])
-    }
-
-    fn import_plan_from_value(
-        config: &serde_json::Value,
-        parse_rule: &ClientConfigFileParse,
-    ) -> Result<ClientImportPlan> {
-        let transports = transport_rules();
-        let inspection = inspect_config_value(config, parse_rule, Some(&transports));
-        build_import_plan_from_inspection(inspection, &parse_rule.container_keys)
+    fn server_entry(
+        name: &str,
+        transport: &str,
+        command: Option<&str>,
+        url: Option<&str>,
+        issue: Option<&str>,
+    ) -> InspectedServerEntry {
+        InspectedServerEntry {
+            name: name.to_string(),
+            transport: transport.to_string(),
+            command: command.map(str::to_string),
+            args: Vec::new(),
+            env: HashMap::new(),
+            headers: HashMap::new(),
+            url: url.map(str::to_string),
+            issue: issue.map(str::to_string),
+        }
     }
 
     #[test]
-    fn client_config_import_plan_infers_transport_and_reports_skips() {
-        let config = serde_json::json!({
-            "context_servers": {
-                "MCPMate": {"url": "http://127.0.0.1:8000/mcp"},
-                "shadcn-mcp-server": {"enabled": true}
-            }
-        });
-        let parse_rule = ClientConfigFileParse {
-            format: TemplateFormat::Json,
-            container_type: ContainerType::ObjectMap,
-            container_keys: vec!["context_servers".to_string()],
-        };
+    fn client_config_import_plan_filters_out_mcpmate_self_entry() {
+        let plan = build_import_plan_from_entries([
+            server_entry("MCPMate", "stdio", Some("mcpmate-bridge"), None, None),
+            server_entry(
+                "context7",
+                "streamable_http",
+                None,
+                Some("http://127.0.0.1:8123/mcp"),
+                None,
+            ),
+            server_entry("shadcn-mcp-server", "unclassified", None, None, None),
+        ]);
 
-        let plan = import_plan_from_value(&config, &parse_rule).expect("import plan");
-
-        let mcpmate = plan.items.get("MCPMate").expect("MCPMate server entry");
-        assert_eq!(mcpmate.kind, "streamable_http");
-        assert_eq!(mcpmate.url.as_deref(), Some("http://127.0.0.1:8000/mcp"));
+        assert!(!plan.items.contains_key("MCPMate"));
+        let context7 = plan.items.get("context7").expect("context7 server entry");
+        assert_eq!(context7.kind, "streamable_http");
+        assert_eq!(context7.url.as_deref(), Some("http://127.0.0.1:8123/mcp"));
         assert_eq!(plan.skipped_servers.len(), 1);
         assert_eq!(plan.skipped_servers[0].name, "shadcn-mcp-server");
         assert!(matches!(plan.skipped_servers[0].reason, SkipReason::ConfigUnrecognized));
@@ -1010,19 +935,10 @@ mod tests {
 
     #[test]
     fn client_config_import_plan_reports_invalid_entries() {
-        let config = serde_json::json!({
-            "context_servers": {
-                "broken": true,
-                "valid": {"command": "uvx"}
-            }
-        });
-        let parse_rule = ClientConfigFileParse {
-            format: TemplateFormat::Json,
-            container_type: ContainerType::ObjectMap,
-            container_keys: vec!["context_servers".to_string()],
-        };
-
-        let plan = import_plan_from_value(&config, &parse_rule).expect("import plan");
+        let plan = build_import_plan_from_entries([
+            server_entry("broken", "unclassified", None, None, Some("config_invalid_entry")),
+            server_entry("valid", "stdio", Some("uvx"), None, None),
+        ]);
 
         assert!(plan.items.contains_key("valid"));
         assert_eq!(plan.skipped_servers.len(), 1);
@@ -1060,43 +976,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pypi_package_to_import_config_with_version() {
-        let config = pypi_package_to_import_config("mcp-server-filesystem", Some("1.0.0"));
-        assert_eq!(config.kind, "stdio");
-        assert_eq!(config.command, Some("uvx".to_string()));
-        assert_eq!(config.args, Some(vec!["mcp-server-filesystem==1.0.0".to_string()]));
-        assert!(config.url.is_none());
-    }
-
-    #[test]
-    fn test_pypi_package_to_import_config_without_version() {
-        let config = pypi_package_to_import_config("mcp-server-filesystem", None);
-        assert_eq!(config.kind, "stdio");
-        assert_eq!(config.command, Some("uvx".to_string()));
-        assert_eq!(config.args, Some(vec!["mcp-server-filesystem".to_string()]));
-    }
-
-    #[test]
     fn test_remote_to_import_config() {
         let config = remote_to_import_config("https://api.example.com/mcp");
         assert_eq!(config.kind, "streamable_http");
         assert!(config.command.is_none());
         assert!(config.args.is_none());
         assert_eq!(config.url, Some("https://api.example.com/mcp".to_string()));
-    }
-
-    #[test]
-    fn test_detect_package_type_scoped_npm() {
-        assert_eq!(
-            detect_package_type("@modelcontextprotocol/server-filesystem"),
-            Some(PackageType::Npm)
-        );
-    }
-
-    #[test]
-    fn test_detect_package_type_regular_npm() {
-        // Default to npm for most packages
-        assert_eq!(detect_package_type("mcp-server-filesystem"), Some(PackageType::Npm));
     }
 
     #[test]

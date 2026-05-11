@@ -18,8 +18,7 @@ import type {
 	ClientCapabilityConfigResp,
 	ClientCheckResp,
  ClientConfigFileParse,
- ClientConfigFileParseInspectExistingReq,
- ClientConfigFileParseInspectReq,
+ ClientConfigFileParseInspectCall,
  ClientConfigFileParseInspectResp,
 	ClientConfigImportData,
 	ClientConfigImportReq,
@@ -2383,26 +2382,18 @@ export const notificationsService = new NotificationsService();
 
 // Clients Management API
 export const clientsApi = {
-	inspectConfigFileParse: async (req: ClientConfigFileParseInspectReq): Promise<ClientConfigFileParseInspectResp> => {
-		const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(
-			"/api/client/config-file-parse/inspect",
-			{
-				method: "POST",
-				body: JSON.stringify(req),
-			},
-		);
-		return extractApiData(resp);
-	},
-	inspectExistingClientConfigFileParse: async (
-		req: ClientConfigFileParseInspectExistingReq,
+	inspectClientConfigFileParse: async (
+		req: ClientConfigFileParseInspectCall,
 	): Promise<ClientConfigFileParseInspectResp> => {
-		const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(
-			"/api/client/config-file-parse/inspect-existing",
-			{
-				method: "POST",
-				body: JSON.stringify(req),
-			},
-		);
+		const { inspectTarget, ...body } = req;
+		const path =
+			inspectTarget === "path"
+				? "/api/client/config-file-parse/inspect"
+				: "/api/client/config-file-parse/inspect-existing";
+		const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(path, {
+			method: "POST",
+			body: JSON.stringify(body),
+		});
 		return extractApiData(resp);
 	},
 	getCapabilityConfig: async (identifier: string) => {

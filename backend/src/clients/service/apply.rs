@@ -1,30 +1,21 @@
-use super::core::supported_transports_from_transports;
 use super::core::{ApplyOutcome, ClientConfigService, ClientRenderOptions, ClientRenderResult, PreviewOutcome};
 use crate::clients::TemplateExecutionResult;
 use crate::clients::engine::RenderRequest;
 use crate::clients::error::{ConfigError, ConfigResult};
-use crate::clients::models::FormatRule;
-use crate::clients::models::{ConfigMode, TemplateFormat};
+use crate::clients::models::{
+    CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ConfigMode, ContainerType, FormatRule, TemplateFormat,
+};
 use std::collections::HashMap;
 use std::collections::HashSet;
-
-fn supported_transport_name(transport: &str) -> Option<&'static str> {
-    match transport {
-        "streamable_http" => Some("streamable_http"),
-        "sse" => Some("sse"),
-        "stdio" => Some("stdio"),
-        _ => None,
-    }
-}
 
 fn available_managed_transports(transports: Option<&HashMap<String, FormatRule>>) -> Vec<&'static str> {
     let Some(rules) = transports else {
         return Vec::new();
     };
 
-    supported_transports_from_transports(rules)
+    CONFIG_TRANSPORT_PRIORITY
         .into_iter()
-        .filter_map(|transport| supported_transport_name(&transport))
+        .filter(|transport| rules.contains_key(*transport))
         .collect()
 }
 
@@ -44,7 +35,7 @@ fn select_managed_transport(
 
 fn selected_managed_transport(transports: Option<&HashMap<String, FormatRule>>) -> Option<&'static str> {
     let rules = transports?;
-    ["streamable_http", "sse", "stdio"]
+    CONFIG_TRANSPORT_PRIORITY
         .into_iter()
         .find(|transport| rules.get(*transport).is_some_and(|rule| rule.selected == Some(true)))
 }
@@ -171,13 +162,8 @@ impl ClientConfigService {
             warnings: result.warnings.clone(),
             ..Default::default()
         };
-        if let TemplateExecutionResult::Applied { backup_path, .. } = result.execution {
-            let backup_policy = self.get_backup_policy(&options.client_id).await?;
-            self.enforce_backup_retention(&options.client_id, &backup_policy)
-                .await?;
-            outcome.applied = true;
-            outcome.backup_path = backup_path;
-        }
+        self.finalize_apply_outcome(&options.client_id, &result.execution, &mut outcome)
+            .await?;
         Ok(outcome)
     }
 
@@ -193,35 +179,7 @@ impl ClientConfigService {
         // Temporary: write-probe logging before actual apply
         // Helps diagnose which transports are being generated and whether 'args' exist
         if let Some(ref after) = preview_outcome.preview.after {
-            let state = self.fetch_state(&options.client_id).await.ok().flatten();
-            if let Some(state) = state {
-                let format = preview_outcome.preview.format;
-                let container_keys = state.container_keys().unwrap_or_default();
-                let container_type = state.container_type();
-                // best-effort parse + summarize; don't fail the apply path on parse errors
-                if let Some(summary) = Self::summarize_servers_for_probe(after, format, &container_keys, container_type)
-                {
-                    for entry in summary.into_iter().take(5) {
-                        tracing::debug!(
-                            target: "mcpmate::client::apply_probe",
-                            client = %options.client_id,
-                            name = %entry.name,
-                            transport = %entry.transport,
-                            has_args = entry.has_args,
-                            args_len = entry.args_len,
-                            has_url = entry.has_url,
-                            has_command = entry.has_command,
-                            "write-probe: server entry"
-                        );
-                    }
-                } else {
-                    tracing::debug!(
-                        target: "mcpmate::client::apply_probe",
-                        client = %options.client_id,
-                        "write-probe: unable to summarize servers (parse skipped)"
-                    );
-                }
-            }
+            self.log_preview_probe(&options.client_id, after).await;
         }
 
         // If the original request is a preview, return directly
@@ -230,19 +188,65 @@ impl ClientConfigService {
         }
 
         // If not a preview: try to write
-        match self.execute_render(options.clone()).await {
-            Ok(exec) => {
-                let mut out = preview_outcome;
-                if let TemplateExecutionResult::Applied { backup_path, .. } = exec.execution {
-                    let backup_policy = self.get_backup_policy(&options.client_id).await?;
-                    self.enforce_backup_retention(&options.client_id, &backup_policy)
-                        .await?;
-                    out.applied = true;
-                    out.backup_path = backup_path;
-                }
-                Ok(out)
-            }
-            Err(e) => Err(e),
+        let exec = self.execute_render(options.clone()).await?;
+        let mut out = preview_outcome;
+        self.finalize_apply_outcome(&options.client_id, &exec.execution, &mut out)
+            .await?;
+        Ok(out)
+    }
+
+    async fn finalize_apply_outcome(
+        &self,
+        client_id: &str,
+        execution: &TemplateExecutionResult,
+        outcome: &mut ApplyOutcome,
+    ) -> ConfigResult<()> {
+        if let TemplateExecutionResult::Applied { backup_path, .. } = execution {
+            let backup_policy = self.get_backup_policy(client_id).await?;
+            self.enforce_backup_retention(client_id, &backup_policy).await?;
+            outcome.applied = true;
+            outcome.backup_path = backup_path.clone();
+        }
+
+        Ok(())
+    }
+
+    async fn log_preview_probe(
+        &self,
+        client_id: &str,
+        rendered_config: &str,
+    ) {
+        let parse_rule = self
+            .fetch_state(client_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|state| state.effective_config_file_parse().ok().flatten());
+
+        let Some(summary) = parse_rule
+            .as_ref()
+            .and_then(|rule| Self::summarize_servers_for_probe(rendered_config, rule))
+        else {
+            tracing::debug!(
+                target: "mcpmate::client::apply_probe",
+                client = %client_id,
+                "write-probe: unable to summarize servers (parse skipped)"
+            );
+            return;
+        };
+
+        for entry in summary.into_iter().take(5) {
+            tracing::debug!(
+                target: "mcpmate::client::apply_probe",
+                client = %client_id,
+                name = %entry.name,
+                transport = %entry.transport,
+                has_args = entry.has_args,
+                args_len = entry.args_len,
+                has_url = entry.has_url,
+                has_command = entry.has_command,
+                "write-probe: server entry"
+            );
         }
     }
 
@@ -262,72 +266,65 @@ impl ClientConfigService {
 
     fn summarize_servers_for_probe(
         raw: &str,
-        format: TemplateFormat,
-        container_keys: &[String],
-        container_type: Option<&str>,
+        parse_rule: &ClientConfigFileParse,
     ) -> Option<Vec<ProbeEntry>> {
         use serde_json::Value;
-        let doc = Self::parse_by_format(format, raw)?;
-        // Find container
-        let mut container: Option<Value> = None;
-        for key in container_keys {
-            if let Some(v) = crate::clients::utils::get_nested_value(&doc, key) {
-                container = Some(v.clone());
-                break;
-            }
-        }
-        let container = container?;
+        let doc = Self::parse_by_format(parse_rule.format, raw)?;
+        let container = parse_rule
+            .container_keys
+            .iter()
+            .find_map(|key| crate::clients::utils::get_nested_value(&doc, key))?
+            .clone();
 
         let mut out: Vec<ProbeEntry> = Vec::new();
-        let is_array = container_type == Some("array");
-        match (is_array, container) {
-            (false, Value::Object(map)) => {
-                for (name, v) in map {
-                    let transport = v.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let has_args = v.get("args").is_some();
-                    let args_len = v
-                        .get("args")
-                        .and_then(|a| a.as_array())
-                        .map(|a| a.len() as u32)
-                        .unwrap_or(0);
-                    let has_url = v.get("url").is_some() || v.get("baseUrl").is_some();
-                    let has_command = v.get("command").is_some();
-                    out.push(ProbeEntry {
-                        name,
-                        transport,
-                        has_args,
-                        args_len,
-                        has_url,
-                        has_command,
-                    });
+        match (parse_rule.container_type, container) {
+            (ContainerType::Array, Value::Array(items)) => {
+                for value in items {
+                    let name = value
+                        .get("name")
+                        .and_then(|field| field.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    out.push(Self::probe_entry(name, &value));
                 }
             }
-            (true, Value::Array(items)) => {
-                for v in items {
-                    let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let transport = v.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                    let has_args = v.get("args").is_some();
-                    let args_len = v
-                        .get("args")
-                        .and_then(|a| a.as_array())
-                        .map(|a| a.len() as u32)
-                        .unwrap_or(0);
-                    let has_url = v.get("url").is_some() || v.get("baseUrl").is_some();
-                    let has_command = v.get("command").is_some();
-                    out.push(ProbeEntry {
-                        name,
-                        transport,
-                        has_args,
-                        args_len,
-                        has_url,
-                        has_command,
-                    });
+            (ContainerType::ObjectMap, Value::Object(map)) => {
+                for (name, value) in map {
+                    out.push(Self::probe_entry(name, &value));
                 }
             }
             _ => {}
         }
 
         if out.is_empty() { None } else { Some(out) }
+    }
+
+    fn probe_entry(
+        name: String,
+        value: &serde_json::Value,
+    ) -> ProbeEntry {
+        let transport = value
+            .get("type")
+            .and_then(|field| field.as_str())
+            .unwrap_or("")
+            .to_string();
+        let has_args = value.get("args").is_some();
+        let args_len = value
+            .get("args")
+            .and_then(|field| field.as_array())
+            .map(|args| args.len() as u32)
+            .unwrap_or(0);
+        let has_url = value.get("url").is_some() || value.get("baseUrl").is_some();
+        let has_command = value.get("command").is_some();
+
+        ProbeEntry {
+            name,
+            transport,
+            has_args,
+            args_len,
+            has_url,
+            has_command,
+        }
     }
 }
 

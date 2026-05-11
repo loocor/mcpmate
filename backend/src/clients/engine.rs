@@ -1,7 +1,7 @@
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    BackupPolicySetting, ClientRenderDefinition, ConfigMode, ContainerType, ServerTemplateInput, StorageKind,
-    TemplateFormat,
+    BackupPolicySetting, CONFIG_TRANSPORT_PRIORITY, ClientRenderDefinition, ConfigMode, ContainerType,
+    ServerTemplateInput, StorageKind, TemplateFormat,
 };
 use crate::clients::renderer::{ConfigDiff, DynConfigRenderer};
 use crate::clients::source::ClientConfigSource;
@@ -560,15 +560,13 @@ impl TemplateEngine {
     }
 }
 
-const TRANSPORT_PRIORITY: &[&str] = &["streamable_http", "sse", "stdio"];
-
 fn derive_transports_by_priority(
     transports: &std::collections::HashMap<String, crate::clients::models::FormatRule>
 ) -> Vec<&'static str> {
     let mut list = Vec::new();
-    for t in TRANSPORT_PRIORITY {
-        if transports.contains_key(*t) {
-            list.push(*t);
+    for t in CONFIG_TRANSPORT_PRIORITY {
+        if transports.contains_key(t) {
+            list.push(t);
         }
     }
     list

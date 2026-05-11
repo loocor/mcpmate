@@ -1,5 +1,6 @@
 use super::ClientConfigService;
-use crate::clients::analyzer::parse_config_to_json_value;
+use crate::clients::analyzer::inspect_config_value;
+use crate::clients::document::{infer_format_from_path, parse_config_to_json_value};
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat};
 use crate::clients::utils::get_nested_value;
@@ -24,7 +25,6 @@ pub struct ConfigRuleInspection {
     pub inferred_parse: Option<ClientConfigFileParse>,
     pub validation: Option<ConfigRuleValidation>,
     pub preview: Value,
-    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,6 @@ struct ParsedConfigDocument {
 struct CandidateRule {
     path: String,
     container_type: ContainerType,
-    server_count: u32,
     depth: usize,
 }
 
@@ -47,8 +46,8 @@ impl ClientConfigService {
         raw_path: &str,
         draft: Option<&ClientConfigFileParse>,
     ) -> ConfigResult<ConfigRuleInspection> {
-        let normalized_path = resolve_create_inspect_path(raw_path).await?;
-        self.inspect_resolved_config_file_parse(&normalized_path, draft).await
+        let (normalized_path, parsed) = load_document_from_raw_path(raw_path, ConfigPathPolicy::CreateInspect).await?;
+        Ok(build_rule_inspection(&normalized_path, &parsed, draft))
     }
 
     pub async fn inspect_existing_client_config_file_parse(
@@ -56,11 +55,17 @@ impl ClientConfigService {
         identifier: &str,
         draft: Option<&ClientConfigFileParse>,
     ) -> ConfigResult<ConfigRuleInspection> {
-        let normalized_path = self
-            .resolved_config_path(identifier)
+        let state = self
+            .fetch_state(identifier)
             .await?
+            .ok_or_else(|| ConfigError::ClientNotFound {
+                identifier: identifier.to_string(),
+            })?;
+        let normalized_path = Self::resolved_config_path_from_state(&state)?
             .ok_or_else(|| ConfigError::PathResolutionError(format!("No config_path for client {}", identifier)))?;
-        self.inspect_resolved_config_file_parse(&normalized_path, draft).await
+        let draft = state.effective_config_file_parse_with(draft, false)?;
+        let parsed = load_document_from_resolved_path(&normalized_path).await?;
+        Ok(build_rule_inspection(&normalized_path, &parsed, draft.as_ref()))
     }
 
     pub async fn validate_config_file_parse_rule(
@@ -68,40 +73,30 @@ impl ClientConfigService {
         raw_path: &str,
         rule: &ClientConfigFileParse,
     ) -> ConfigResult<ConfigRuleValidation> {
-        let normalized_path = resolve_config_path(raw_path)?;
-        let content = tokio::fs::read_to_string(&normalized_path)
-            .await
-            .map_err(ConfigError::IoError)?;
-        let parsed = parse_document(&content, Some(&normalized_path))?;
+        let (_, parsed) = load_document_from_raw_path(raw_path, ConfigPathPolicy::General).await?;
         let validation = validate_rule_against_document(&parsed.value, parsed.format, rule);
-
-        if validation.format_matches {
-            return Ok(validation);
-        }
-
-        let reason = format!(
-            "Configured parse rule format '{}' does not match file format '{}'.",
-            rule.format.as_str(),
-            parsed.format.as_str()
-        );
-
-        Err(ConfigError::DataAccessError(reason))
+        ensure_format_matches(rule, parsed.format, validation)
     }
 
     pub async fn infer_config_file_parse_rule(
         &self,
         raw_path: &str,
     ) -> ConfigResult<Option<ClientConfigFileParse>> {
-        let normalized_path = resolve_config_path(raw_path)?;
-        let content = tokio::fs::read_to_string(&normalized_path)
-            .await
-            .map_err(ConfigError::IoError)?;
-        let parsed = parse_document(&content, Some(&normalized_path))?;
+        let (_, parsed) = load_document_from_raw_path(raw_path, ConfigPathPolicy::General).await?;
         Ok(infer_rule_from_document(&parsed.value, parsed.format))
     }
 }
 
-async fn resolve_create_inspect_path(raw_path: &str) -> ConfigResult<String> {
+#[derive(Debug, Clone, Copy)]
+enum ConfigPathPolicy {
+    CreateInspect,
+    General,
+}
+
+async fn resolve_config_path(
+    raw_path: &str,
+    policy: ConfigPathPolicy,
+) -> ConfigResult<String> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
         return Err(ConfigError::DataAccessError(
@@ -112,6 +107,10 @@ async fn resolve_create_inspect_path(raw_path: &str) -> ConfigResult<String> {
     let resolved = get_path_service()
         .resolve_user_path(trimmed)
         .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+
+    if matches!(policy, ConfigPathPolicy::General) {
+        return Ok(resolved.to_string_lossy().to_string());
+    }
 
     infer_format_from_path(resolved.to_str()).ok_or_else(|| {
         ConfigError::DataAccessError(
@@ -143,47 +142,64 @@ async fn resolve_create_inspect_path(raw_path: &str) -> ConfigResult<String> {
     Ok(resolved.to_string_lossy().to_string())
 }
 
-fn resolve_config_path(raw_path: &str) -> ConfigResult<String> {
-    let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return Err(ConfigError::DataAccessError(
-            "A configuration file path is required for parse rule inspection.".to_string(),
-        ));
-    }
-
-    let resolved = get_path_service()
-        .resolve_user_path(trimmed)
-        .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
-
-    Ok(resolved.to_string_lossy().to_string())
+async fn load_document_from_raw_path(
+    raw_path: &str,
+    policy: ConfigPathPolicy,
+) -> ConfigResult<(String, ParsedConfigDocument)> {
+    let normalized_path = resolve_config_path(raw_path, policy).await?;
+    let parsed = load_document_from_resolved_path(&normalized_path).await?;
+    Ok((normalized_path, parsed))
 }
 
-impl ClientConfigService {
-    async fn inspect_resolved_config_file_parse(
-        &self,
-        normalized_path: &str,
-        draft: Option<&ClientConfigFileParse>,
-    ) -> ConfigResult<ConfigRuleInspection> {
-        let content = tokio::fs::read_to_string(normalized_path)
-            .await
-            .map_err(ConfigError::IoError)?;
-        let parsed = parse_document(&content, Some(normalized_path))?;
-        let inferred_parse = infer_rule_from_document(&parsed.value, parsed.format);
-        let validation = draft.map(|rule| validate_rule_against_document(&parsed.value, parsed.format, rule));
-        let preview_rule = draft.or(inferred_parse.as_ref());
-        let preview = preview_rule
-            .and_then(|rule| build_preview_for_rule(&parsed.value, rule))
-            .unwrap_or_else(|| limit_preview_value(&parsed.value));
+async fn load_document_from_resolved_path(normalized_path: &str) -> ConfigResult<ParsedConfigDocument> {
+    let content = tokio::fs::read_to_string(normalized_path)
+        .await
+        .map_err(ConfigError::IoError)?;
+    parse_document(&content, Some(normalized_path))
+}
 
-        Ok(ConfigRuleInspection {
-            normalized_path: normalized_path.to_string(),
-            detected_format: Some(parsed.format),
-            inferred_parse,
-            validation,
-            preview,
-            warnings: Vec::new(),
-        })
+fn build_rule_inspection(
+    normalized_path: &str,
+    parsed: &ParsedConfigDocument,
+    draft: Option<&ClientConfigFileParse>,
+) -> ConfigRuleInspection {
+    let inferred_parse = infer_rule_from_document(&parsed.value, parsed.format);
+    let validation = draft.map(|rule| validate_rule_against_document(&parsed.value, parsed.format, rule));
+    let preview = build_preview_value(&parsed.value, draft.or(inferred_parse.as_ref()));
+
+    ConfigRuleInspection {
+        normalized_path: normalized_path.to_string(),
+        detected_format: Some(parsed.format),
+        inferred_parse,
+        validation,
+        preview,
     }
+}
+
+fn build_preview_value(
+    document: &Value,
+    preview_rule: Option<&ClientConfigFileParse>,
+) -> Value {
+    preview_rule
+        .and_then(|rule| build_preview_for_rule(document, rule))
+        .unwrap_or_else(|| limit_preview_value(document))
+}
+
+fn ensure_format_matches(
+    rule: &ClientConfigFileParse,
+    detected_format: TemplateFormat,
+    validation: ConfigRuleValidation,
+) -> ConfigResult<ConfigRuleValidation> {
+    if !validation.format_matches {
+        let reason = format!(
+            "Configured parse rule format '{}' does not match file format '{}'.",
+            rule.format.as_str(),
+            detected_format.as_str()
+        );
+        return Err(ConfigError::DataAccessError(reason));
+    }
+
+    Ok(validation)
 }
 
 fn parse_document(
@@ -224,47 +240,19 @@ fn build_parse_order(hinted: Option<TemplateFormat>) -> Vec<TemplateFormat> {
     order
 }
 
-fn infer_format_from_path(path_hint: Option<&str>) -> Option<TemplateFormat> {
-    let path = path_hint?.to_ascii_lowercase();
-    if path.ends_with(".json5") {
-        Some(TemplateFormat::Json5)
-    } else if path.ends_with(".json") {
-        Some(TemplateFormat::Json)
-    } else if path.ends_with(".toml") {
-        Some(TemplateFormat::Toml)
-    } else if path.ends_with(".yaml") || path.ends_with(".yml") {
-        Some(TemplateFormat::Yaml)
-    } else {
-        None
-    }
-}
-
 fn validate_rule_against_document(
     document: &Value,
     detected_format: TemplateFormat,
     rule: &ClientConfigFileParse,
 ) -> ConfigRuleValidation {
     let format_matches = detected_format == rule.format;
-    let mut container_found = false;
-    let mut server_count = 0;
-    let mut matches = false;
-
-    for key in &rule.container_keys {
-        if let Some(container) = get_nested_value(document, key) {
-            container_found = true;
-            let count = server_count_for_container(container, rule.container_type);
-            if count > 0 {
-                server_count = count;
-                matches = true;
-                break;
-            }
-        }
-    }
+    let inspection = inspect_config_value(document, rule, None);
+    let server_count = inspection.server_count();
 
     ConfigRuleValidation {
-        matches: format_matches && matches,
+        matches: format_matches && inspection.matched_container && server_count > 0,
         format_matches,
-        container_found,
+        container_found: inspection.matched_container,
         server_count,
     }
 }
@@ -277,7 +265,25 @@ fn infer_rule_from_document(
     collect_candidates(document, "", &mut candidates);
     let best = candidates
         .into_iter()
-        .max_by(|left, right| score_candidate(left).cmp(&score_candidate(right)))?;
+        .filter_map(|candidate| {
+            let rule = ClientConfigFileParse {
+                format,
+                container_type: candidate.container_type,
+                container_keys: vec![candidate.path.clone()],
+            };
+            let inspection = inspect_config_value(document, &rule, None);
+            let server_count = inspection.server_count();
+
+            if !inspection.matched_container || server_count == 0 {
+                return None;
+            }
+
+            Some((candidate, server_count))
+        })
+        .max_by(|(left, left_count), (right, right_count)| {
+            score_candidate(left, *left_count).cmp(&score_candidate(right, *right_count))
+        })?
+        .0;
 
     Some(ClientConfigFileParse {
         format,
@@ -293,15 +299,7 @@ fn collect_candidates(
 ) {
     match value {
         Value::Object(map) => {
-            let object_count = object_map_server_count(map);
-            if object_count > 0 && !path.is_empty() {
-                out.push(CandidateRule {
-                    path: path.to_string(),
-                    container_type: ContainerType::ObjectMap,
-                    server_count: object_count,
-                    depth: path.matches('.').count(),
-                });
-            }
+            push_candidate(out, path, ContainerType::ObjectMap);
 
             for (key, child) in map {
                 let next_path = if path.is_empty() {
@@ -313,15 +311,7 @@ fn collect_candidates(
             }
         }
         Value::Array(items) => {
-            let array_count = array_server_count(items);
-            if array_count > 0 && !path.is_empty() {
-                out.push(CandidateRule {
-                    path: path.to_string(),
-                    container_type: ContainerType::Array,
-                    server_count: array_count,
-                    depth: path.matches('.').count(),
-                });
-            }
+            push_candidate(out, path, ContainerType::Array);
 
             for child in items {
                 if child.is_object() {
@@ -333,9 +323,28 @@ fn collect_candidates(
     }
 }
 
-fn score_candidate(candidate: &CandidateRule) -> (u32, i32, i32) {
+fn push_candidate(
+    out: &mut Vec<CandidateRule>,
+    path: &str,
+    container_type: ContainerType,
+) {
+    if path.is_empty() {
+        return;
+    }
+
+    out.push(CandidateRule {
+        path: path.to_string(),
+        container_type,
+        depth: path.matches('.').count(),
+    });
+}
+
+fn score_candidate(
+    candidate: &CandidateRule,
+    server_count: u32,
+) -> (u32, i32, i32) {
     (
-        candidate.server_count,
+        server_count,
         if candidate.path == "mcpServers" { 3 } else { 0 },
         -(candidate.depth as i32),
     )
@@ -373,38 +382,6 @@ fn limit_preview_value(value: &Value) -> Value {
         ),
         _ => value.clone(),
     }
-}
-
-fn server_count_for_container(
-    container: &Value,
-    container_type: ContainerType,
-) -> u32 {
-    match container_type {
-        ContainerType::ObjectMap => container.as_object().map(object_map_server_count).unwrap_or(0),
-        ContainerType::Array => container
-            .as_array()
-            .map(|items| array_server_count(items.as_slice()))
-            .unwrap_or(0),
-    }
-}
-
-fn object_map_server_count(map: &Map<String, Value>) -> u32 {
-    map.values().filter(|value| is_server_entry(value)).count() as u32
-}
-
-fn array_server_count(items: &[Value]) -> u32 {
-    items.iter().filter(|value| is_server_entry(value)).count() as u32
-}
-
-fn is_server_entry(value: &Value) -> bool {
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-
-    object.contains_key("command")
-        || object.contains_key("url")
-        || object.contains_key("baseUrl")
-        || object.contains_key("transport")
 }
 
 #[cfg(test)]
@@ -447,5 +424,24 @@ mod tests {
         assert!(validation.matches);
         assert!(validation.container_found);
         assert_eq!(validation.server_count, 1);
+    }
+
+    #[test]
+    fn validate_rule_ignores_entries_without_transport_fields() {
+        let document = json!({
+            "mcpServers": {
+                "alpha": { "label": "not-a-server" }
+            }
+        });
+        let rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["mcpServers".to_string()],
+        };
+
+        let validation = validate_rule_against_document(&document, TemplateFormat::Json, &rule);
+        assert!(!validation.matches);
+        assert!(validation.container_found);
+        assert_eq!(validation.server_count, 0);
     }
 }

@@ -3,18 +3,18 @@
 
 pub mod apply;
 pub mod backup;
-pub mod config_rules;
 pub mod core;
 pub mod list;
 pub mod query;
-pub mod reapply_hosted;
+pub mod reapply;
+pub mod rules;
 pub mod settings;
 pub mod state;
-pub mod sync_transparent_profile;
+pub mod sync;
 
 // Re-exports for external callers
 pub use core::{
     ApplyOutcome, ClientBackupRecord, ClientConfigService, ClientDescriptor, ClientRenderOptions, ClientRenderResult,
     PreviewOutcome,
 };
-pub use reapply_hosted::HostedClientReapplySummary;
+pub use reapply::HostedClientReapplySummary;
