@@ -191,7 +191,7 @@ pub async fn server_scan(
             }
 
             Ok(crate::config::server::build_import_plan_from_entries(
-                inspected.inspection.entries.into_iter(),
+                inspected.inspection.entries,
             ))
         }
         .await;
