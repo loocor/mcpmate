@@ -12,6 +12,93 @@ import {
 import type { ServerEntryData } from "../../../lib/types";
 import { ServerEntryTransportBadge } from "./server-entry-transport-badge";
 
+const REDACTED_VALUE = "[REDACTED]";
+
+interface ImportPreviewEntry {
+  args: string[];
+  command?: string | null;
+  env: Record<string, string>;
+  headers: Record<string, string>;
+  import_status?: string;
+  issue?: string | null;
+  name: string;
+  skip_reason?: string | null;
+  transport?: string;
+  url?: string | null;
+}
+
+interface SkippedServerPreview {
+  name: string;
+  reason: string;
+}
+
+interface ImportPreviewSnapshot {
+  entries: ImportPreviewEntry[];
+  summary: {
+    failedCount: number;
+    importableCount: number;
+    skippedCount: number;
+    skippedServers: SkippedServerPreview[];
+  };
+}
+
+function isImportableEntry(entry: ServerEntryData): boolean {
+  return entry.import_status === "importable";
+}
+
+function isSkippedEntry(entry: ServerEntryData): boolean {
+  return entry.import_status === "skipped";
+}
+
+function redactSecrets(values: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.keys(values).map((key) => [key, REDACTED_VALUE]),
+  );
+}
+
+function buildPreviewEntry(entry: ServerEntryData): ImportPreviewEntry {
+  return {
+    name: entry.name,
+    transport: entry.transport,
+    import_status: entry.import_status,
+    skip_reason: entry.skip_reason,
+    issue: entry.issue,
+    command: entry.command,
+    args: entry.args,
+    env: redactSecrets(entry.env),
+    headers: redactSecrets(entry.headers),
+    url: entry.url,
+  };
+}
+
+function buildSkippedServerPreview(
+  entry: ServerEntryData,
+): SkippedServerPreview {
+  return {
+    name: entry.name,
+    reason: entry.skip_reason ?? entry.issue ?? "config_unrecognized",
+  };
+}
+
+function buildImportPreviewSnapshot(
+  entries: ServerEntryData[],
+): ImportPreviewSnapshot {
+  const skippedServers = entries
+    .filter(isSkippedEntry)
+    .map(buildSkippedServerPreview);
+  const importableCount = entries.filter(isImportableEntry).length;
+
+  return {
+    entries: entries.map(buildPreviewEntry),
+    summary: {
+      failedCount: 0,
+      importableCount,
+      skippedCount: skippedServers.length,
+      skippedServers,
+    },
+  };
+}
+
 interface ClientImportReviewDrawerProps {
   entries: ServerEntryData[];
   isImporting: boolean;
@@ -28,24 +115,10 @@ export function ClientImportReviewDrawer({
   onImport,
   onOpenChange,
   open,
-}: ClientImportReviewDrawerProps) {
+}: ClientImportReviewDrawerProps): JSX.Element {
   const { t } = useTranslation("clients");
-  const skippedServers = entries
-    .filter((entry) => entry.import_status === "skipped")
-    .map((entry) => ({
-      name: entry.name,
-      reason: entry.skip_reason ?? entry.issue ?? "config_unrecognized",
-    }));
-  const importableCount = entries.length - skippedServers.length;
-  const importPreviewSnapshot = {
-    entries,
-    summary: {
-      importableCount,
-      skippedCount: skippedServers.length,
-      failedCount: 0,
-      skippedServers,
-    },
-  };
+  const importPreviewSnapshot = buildImportPreviewSnapshot(entries);
+  const { importableCount, skippedCount } = importPreviewSnapshot.summary;
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -100,12 +173,12 @@ export function ClientImportReviewDrawer({
                     defaultValue: "Skipped",
                   })}
                 </div>
-                <div>{skippedServers.length}</div>
+                <div>{skippedCount}</div>
               </div>
               <details className="mt-2 flex-1 min-h-0">
                 <summary className="text-xs text-slate-500 cursor-pointer">
                   {t("detail.importReview.sections.raw", {
-                    defaultValue: "Raw preview JSON",
+                    defaultValue: "Sanitized preview JSON",
                   })}
                 </summary>
                 <pre className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded overflow-auto flex-1 min-h-0 max-h-[40vh]">

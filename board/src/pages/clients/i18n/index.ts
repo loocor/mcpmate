@@ -687,7 +687,7 @@ export const clientsTranslations = {
         },
         sections: {
           detectedEntries: "Detected entries",
-          raw: "Raw preview JSON",
+          raw: "Sanitized preview JSON",
         },
         queryLabels: {
           existing: "Existing query",
