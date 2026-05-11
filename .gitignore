@@ -31,7 +31,6 @@ node-compile-cache/
 **/src-tauri/gen/schemas/
 
 # external projects
-auth/
 rmcp/
 /docs/
-workers/
+account/

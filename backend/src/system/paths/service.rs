@@ -11,9 +11,9 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
 use std::path::PrefixComponent;
 use std::path::{Component, Path, PathBuf};
+use tokio::fs;
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW};
-use tokio::fs;
 
 /// Unified path service for consistent path handling across the application
 pub struct PathService {
@@ -385,9 +385,7 @@ impl PathService {
         retention: usize,
     ) -> Result<()> {
         let mut backups = Vec::new();
-        for entry in std::fs::read_dir(dir)
-            .context(format!("Failed to read backup directory: {}", dir.display()))?
-        {
+        for entry in std::fs::read_dir(dir).context(format!("Failed to read backup directory: {}", dir.display()))? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {

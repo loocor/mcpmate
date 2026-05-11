@@ -4,6 +4,17 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
+pub const CONFIG_TRANSPORT_PRIORITY: [&str; 3] = ["streamable_http", "sse", "stdio"];
+
+pub fn canonical_config_transport_key(transport: &str) -> Option<&'static str> {
+    match transport.trim() {
+        "streamable_http" => Some("streamable_http"),
+        "sse" => Some("sse"),
+        "stdio" => Some("stdio"),
+        _ => None,
+    }
+}
+
 /// Supported template output formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

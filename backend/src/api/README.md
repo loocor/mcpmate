@@ -54,7 +54,9 @@ This project adopts a consistent “list/details/create/update/delete/manage” 
 
 - `GET /client/list`
 - `GET /client/config/details`
+  - Returns parsed config facts, including `configured_server_entries` for direct UI consumption.
 - `POST /client/config/apply|restore|import`
+  - `POST /client/config/import` consumes analyzed entries supplied by the client and performs import/write only.
 - `POST /client/manage`
 - `GET /client/backups/list`, `POST /client/backups/delete`
 - `GET /client/backups/policy`, `POST /client/backups/policy`
