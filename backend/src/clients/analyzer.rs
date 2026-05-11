@@ -133,10 +133,6 @@ pub(crate) struct ConfigInspection {
 }
 
 impl ConfigInspection {
-    pub(crate) fn server_names(&self) -> Vec<String> {
-        self.entries.iter().map(|entry| entry.name.clone()).collect()
-    }
-
     pub(crate) fn server_count(&self) -> u32 {
         self.entries.iter().filter(|entry| entry.has_transport_target()).count() as u32
     }
@@ -479,7 +475,12 @@ mod tests {
     }
 
     fn entry_names(report: &ConfigInspectionReport) -> Vec<String> {
-        report.inspection.server_names()
+        report
+            .inspection
+            .entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect()
     }
 
     #[test]

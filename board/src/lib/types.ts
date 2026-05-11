@@ -1131,7 +1131,6 @@ export interface ClientConfigData {
   warnings?: string[];
   degraded_reasons?: string[];
   has_mcp_config: boolean;
-  configured_servers?: string[];
   configured_server_entries?: ServerEntryData[];
   last_modified?: string | null;
   connection_mode?: ClientConnectionMode | null;

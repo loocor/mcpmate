@@ -325,11 +325,6 @@ pub struct ClientConfigData {
     pub has_mcp_config: bool,
     #[schemars(description = "Number of configured MCP servers")]
     pub mcp_servers_count: u32,
-    #[schemars(
-        description = "Compatibility field: server names derived from configured_server_entries using the effective parse rules"
-    )]
-    #[serde(default)]
-    pub configured_servers: Vec<String>,
     #[schemars(description = "Full details of each detected server entry from the config file")]
     #[serde(default)]
     pub configured_server_entries: Vec<ServerEntryData>,

@@ -91,9 +91,9 @@ pub(super) fn derive_attachment_state(
     state.attachment_state().as_str().to_string()
 }
 
-pub(super) fn configured_servers_data(
+pub(super) fn configured_server_entries_data(
     report: &ConfigInspectionReport
-) -> (ConfigAnalysis, Vec<ServerEntryData>, Vec<String>) {
+) -> (ConfigAnalysis, Vec<ServerEntryData>) {
     let entries = report
         .inspection
         .entries
@@ -101,7 +101,7 @@ pub(super) fn configured_servers_data(
         .into_iter()
         .map(ServerEntryData::from)
         .collect::<Vec<_>>();
-    (report.analysis.clone(), entries, report.inspection.server_names())
+    (report.analysis.clone(), entries)
 }
 
 pub(super) fn parse_rule_from_api_data(parse: &ClientConfigFileParseData) -> ClientConfigFileParse {

@@ -2,7 +2,8 @@
 
 use super::backups::parse_policy_payload;
 use super::inspection::{
-    build_config_file_parse_inspect_data, build_parse_metadata, configured_servers_data, derive_attachment_state,
+    build_config_file_parse_inspect_data, build_parse_metadata, configured_server_entries_data,
+    derive_attachment_state,
     detect_mcpmate_in_client_config, inspect_client_config_lenient, parse_api_transports, parse_rule_from_api_data,
     transports_data_from_state,
 };
@@ -257,9 +258,9 @@ pub async fn config_details(
             fallback_parsed_config_content(content.as_deref(), state.config_format(), config_path.as_deref())
         });
 
-    let (configured_servers_analysis, configured_server_entries, configured_servers) = inspected_config
+    let (configured_servers_analysis, configured_server_entries) = inspected_config
         .as_ref()
-        .map(configured_servers_data)
+        .map(configured_server_entries_data)
         .unwrap_or_default();
 
     let last_modified = config_path.as_deref().and_then(get_config_last_modified);
@@ -317,7 +318,6 @@ pub async fn config_details(
         content: parsed_content,
         has_mcp_config: configured_servers_analysis.has_mcp_config,
         mcp_servers_count: configured_servers_analysis.server_count,
-        configured_servers,
         configured_server_entries,
         last_modified,
         config_type,
@@ -2923,7 +2923,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_details_uses_effective_parse_for_configured_servers() {
+    async fn config_details_uses_effective_parse_for_configured_server_entries() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("zed-settings.json");
         tokio::fs::write(
@@ -2974,10 +2974,6 @@ mod tests {
 
         assert!(details_response.success);
         let details = details_response.data.expect("details data");
-        assert_eq!(
-            details.configured_servers,
-            vec!["MCPMate".to_string(), "mcp-server-context7".to_string()]
-        );
         assert_eq!(details.configured_server_entries.len(), 2);
         assert_eq!(details.configured_server_entries[0].name, "MCPMate");
         assert_eq!(details.configured_server_entries[0].transport, "streamable_http");
@@ -3520,7 +3516,8 @@ mod tests {
         assert_eq!(details.attachment_state.as_deref(), Some("attached"));
         assert_eq!(details.template.managed_source.as_deref(), None);
         assert_eq!(details.content["mcpServers"]["MCPMate"]["type"], "streamable_http");
-        assert_eq!(details.configured_servers, vec!["MCPMate".to_string()]);
+        assert_eq!(details.configured_server_entries.len(), 1);
+        assert_eq!(details.configured_server_entries[0].name, "MCPMate");
     }
 
     #[tokio::test]
