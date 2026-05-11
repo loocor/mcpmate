@@ -50,7 +50,6 @@ import {
 import {
   Drawer,
   DrawerContent,
-  DrawerDescription,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
@@ -84,9 +83,6 @@ import {
   resolveClientConfigSyncErrorMessage,
 } from "../../lib/client-config-sync";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
-import {
-  getSkippedReasonLabel,
-} from "../../lib/server-import-utils";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
@@ -100,14 +96,14 @@ import type {
   ClientConfigUpdateData,
   ClientInfo,
   ConfigSuit,
-  SkippedServer,
-  ServerEntryData,
   ServerSummary,
   TransportRuleData,
   UnifyDirectCapabilityIds,
 } from "../../lib/types";
 import { formatBackupTime } from "../../lib/utils";
+import { ClientImportReviewDrawer } from "./components/client-import-review-drawer";
 import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
+import { ServerEntryTransportBadge } from "./components/server-entry-transport-badge";
 
 type UnifyRouteMode = "broker_only" | "server_level" | "capability_level";
 type DirectExposureRouteMode = Extract<
@@ -118,6 +114,10 @@ type DirectExposureRouteMode = Extract<
 const governanceClientsApi = clientsApi as typeof clientsApi & {
   suspendRecord: (payload: { identifier: string }) => Promise<unknown>;
 };
+
+function isMcpMateEntryName(name: string): boolean {
+  return name.trim().toLowerCase() === "mcpmate";
+}
 
 const arrangeProfilesWithDefaultFirst = (items: ConfigSuit[] = []) => {
   if (!items.length) {
@@ -361,7 +361,7 @@ export function ClientDetailPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   usePageTranslations("clients");
-  const { t, i18n } = useTranslation("clients");
+  const { t } = useTranslation("clients");
   const showClientLiveLogs = useAppStore(
     (state) => state.dashboardSettings.showClientLiveLogs,
   );
@@ -452,7 +452,7 @@ export function ClientDetailPage() {
   const [selectedConfig, setSelectedConfig] =
     useState<ClientCapabilitySourceSelection>("default");
   const [policyOpen, setPolicyOpen] = useState(false);
-  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [importReviewOpen, setImportReviewOpen] = useState(false);
 
   const {
     data: configDetails,
@@ -776,7 +776,7 @@ export function ClientDetailPage() {
         ),
       },
     ];
-  }, [t, i18n.language]);
+  }, [t]);
 
   const configurationSourceSegmentOptions = useMemo(() => {
     const statusOrUndefined = (raw: string) => {
@@ -818,7 +818,7 @@ export function ClientDetailPage() {
         ),
       },
     ];
-  }, [t, i18n.language]);
+  }, [t]);
 
   const detailDescription = configDetails?.description ?? "";
   const detailHomepageUrl = configDetails?.homepage_url ?? "";
@@ -888,7 +888,7 @@ export function ClientDetailPage() {
             : undefined,
       },
     ];
-  }, [configDetails?.writable_config, t, i18n.language]);
+  }, [configDetails?.writable_config, t]);
   const [logFilter, setLogFilter] = useState("");
   const [logPageSize, setLogPageSize] = useState<number>(10);
   const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
@@ -1573,7 +1573,7 @@ export function ClientDetailPage() {
     mutationFn: async () => {
       if (!identifier) throw new Error("No identifier provided");
       return clientsApi.importFromClient(identifier, {
-        entries: currentServerEntries,
+        entries: importCandidateEntries,
       });
     },
     onSuccess: (res) => {
@@ -1594,7 +1594,7 @@ export function ClientDetailPage() {
               count: imported,
             }),
         );
-        setImportPreviewOpen(false);
+        setImportReviewOpen(false);
         refetchDetails();
       } else {
         notifyInfo(
@@ -1606,7 +1606,7 @@ export function ClientDetailPage() {
               "All entries were skipped or no importable servers found.",
           }),
         );
-        setImportPreviewOpen(false);
+        setImportReviewOpen(false);
       }
     },
     onError: (e) =>
@@ -1828,53 +1828,11 @@ export function ClientDetailPage() {
     () => configDetails?.configured_server_entries ?? [],
     [configDetails?.configured_server_entries],
   );
-  const currentServerList = useMemo<ServerEntryData[]>(
-    () => currentServerEntries,
-    [currentServerEntries],
-  );
-  const importPreviewSkippedServers = useMemo<SkippedServer[]>(
+  const importCandidateEntries = useMemo(
     () =>
-      currentServerEntries
-        .filter((entry) => entry.import_status === "skipped")
-        .map((entry) => ({
-          name: entry.name,
-          reason:
-            entry.skip_reason ?? entry.issue ?? "config_unrecognized",
-        })),
+      currentServerEntries.filter((entry) => !isMcpMateEntryName(entry.name)),
     [currentServerEntries],
   );
-  const importPreviewSummary = useMemo(
-    () => ({
-      importableCount: currentServerEntries.filter(
-        (entry) => entry.import_status !== "skipped",
-      ).length,
-      skippedCount: importPreviewSkippedServers.length,
-      failedCount: 0,
-      skippedServers: importPreviewSkippedServers,
-    }),
-    [currentServerEntries, importPreviewSkippedServers],
-  );
-  const importPreviewSnapshot = useMemo(
-    () => ({
-      entries: currentServerEntries,
-      summary: importPreviewSummary,
-    }),
-    [currentServerEntries, importPreviewSummary],
-  );
-  const renderServerEntryMeta = useCallback((entry: ServerEntryData) => {
-    const isSkipped = entry.import_status === "skipped";
-    const variant = isSkipped
-      ? "destructive"
-      : entry.transport === "unclassified"
-        ? "warning"
-        : "secondary";
-
-    return (
-      <Badge variant={variant} className="text-[10px] px-1.5 py-0">
-        {entry.transport}
-      </Badge>
-    );
-  }, []);
 
   if (!identifier)
     return (
@@ -2312,7 +2270,7 @@ export function ClientDetailPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setImportPreviewOpen(true)}
+                      onClick={() => setImportReviewOpen(true)}
                       disabled={configDetails?.writable_config === false}
                     >
                       <Download className="mr-2 h-4 w-4" />{" "}
@@ -2333,12 +2291,12 @@ export function ClientDetailPage() {
                       />
                     ))}
                   </div>
-                ) : currentServerList.length ? (
+                ) : currentServerEntries.length ? (
                   <CapsuleStripeList>
-                    {currentServerList.map((entry) => (
+                    {currentServerEntries.map((entry) => (
                       <CapsuleStripeListItem key={entry.name}>
                         <div className="font-mono">{entry.name}</div>
-                        {renderServerEntryMeta(entry)}
+                        <ServerEntryTransportBadge entry={entry} />
                       </CapsuleStripeListItem>
                     ))}
                   </CapsuleStripeList>
@@ -3454,7 +3412,6 @@ export function ClientDetailPage() {
         onConfirm={() => bulkDeleteMutation.mutate()}
       />
 
-      {/* Backup Policy Drawer */}
       <Drawer open={policyOpen} onOpenChange={setPolicyOpen}>
         <DrawerContent>
           <DrawerHeader>
@@ -3501,7 +3458,7 @@ export function ClientDetailPage() {
                 type="number"
                 min={0}
                 value={policyLimit ?? 0}
-                onChange={(e) => setPolicyLimit(Number(e.target.value))}
+                onChange={(event) => setPolicyLimit(Number(event.target.value))}
               />
             </div>
             <div>
@@ -3525,145 +3482,14 @@ export function ClientDetailPage() {
         </DrawerContent>
       </Drawer>
 
-      {/* Import Preview Drawer */}
-      <Drawer open={importPreviewOpen} onOpenChange={setImportPreviewOpen}>
-        <DrawerContent>
-          <DrawerHeader>
-            <DrawerTitle>
-              {t("detail.importPreview.title", {
-                defaultValue: "Import Preview",
-              })}
-            </DrawerTitle>
-            <DrawerDescription>
-              {t("detail.importPreview.description", {
-                defaultValue:
-                  "Summary of servers detected from current client config.",
-              })}
-            </DrawerDescription>
-          </DrawerHeader>
-          <div className="p-4 text-sm flex flex-col gap-4 max-h-[70vh]">
-            {loadingConfig ? (
-              <div className="h-16 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
-            ) : (
-              <div className="flex-1 min-h-0 flex flex-col gap-4">
-                {currentServerList.length > 0 && (
-                  <div className="rounded border">
-                    <div className="px-3 py-2 text-xs text-slate-500 border-b">
-                      {t("detail.importPreview.sections.detectedEntries", {
-                        defaultValue: "Detected entries",
-                      })}
-                    </div>
-                    <ul className="divide-y max-h-[30vh] overflow-auto">
-                      {currentServerList.map((entry) => (
-                        <li key={entry.name} className="px-3 py-2 flex items-center justify-between text-xs">
-                          <div className="font-mono">{entry.name}</div>
-                          {renderServerEntryMeta(entry)}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                <div className="grid grid-cols-[120px_1fr] gap-y-2 gap-x-4 text-sm leading-6">
-                  <div className="text-slate-500">
-                    {t("detail.importPreview.fields.importable", {
-                      defaultValue: "Importable",
-                    })}
-                  </div>
-                  <div>{importPreviewSummary.importableCount}</div>
-                  <div className="text-slate-500">
-                    {t("detail.importPreview.fields.skipped", {
-                      defaultValue: "Skipped",
-                    })}
-                  </div>
-                  <div>{importPreviewSummary.skippedCount}</div>
-                  <div className="text-slate-500">
-                    {t("detail.importPreview.fields.failed", {
-                      defaultValue: "Failed",
-                    })}
-                  </div>
-                  <div>{importPreviewSummary.failedCount}</div>
-                </div>
-                {importPreviewSummary.skippedCount > 0 &&
-                  importPreviewSummary.skippedServers.length ? (
-                  <details className="mt-2">
-                    <summary className="text-xs text-slate-500 cursor-pointer">
-                      {importPreviewSummary.skippedCount === 1
-                        ? t(
-                          "detail.importPreview.sections.skippedDetailsSingle",
-                          {
-                            defaultValue: "Skip details ({{count}} server)",
-                            count: importPreviewSummary.skippedCount,
-                          },
-                        )
-                        : t(
-                          "detail.importPreview.sections.skippedDetailsPlural",
-                          {
-                            defaultValue: "Skip details ({{count}} servers)",
-                            count: importPreviewSummary.skippedCount,
-                          },
-                        )}
-                    </summary>
-                    <ul className="mt-2 space-y-2">
-                      {importPreviewSummary.skippedServers.map((s, idx) => {
-                        const reasonLabel = getSkippedReasonLabel(s.reason, t);
-                        return (
-                          <li
-                            key={`skipped-${idx}-${s.name}`}
-                            className="text-xs p-2 bg-slate-50 dark:bg-slate-900 rounded"
-                          >
-                            <span className="font-medium">{s.name}</span>
-                            <span className="text-slate-500 ml-2">
-                              &mdash; {reasonLabel}
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </details>
-                ) : null}
-                <details className="mt-2 flex-1 min-h-0">
-                  <summary className="text-xs text-slate-500 cursor-pointer">
-                    {t("detail.importPreview.sections.raw", {
-                      defaultValue: "Raw preview JSON",
-                    })}
-                  </summary>
-                  <pre className="text-xs bg-slate-50 dark:bg-slate-900 p-2 rounded overflow-auto flex-1 min-h-0 max-h-[40vh]">
-                    {JSON.stringify(importPreviewSnapshot, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            )}
-          </div>
-          <DrawerFooter>
-            <div className="flex w-full items-center justify-between">
-              <Button
-                variant="outline"
-                onClick={() => setImportPreviewOpen(false)}
-              >
-                {t("detail.importPreview.buttons.close", {
-                  defaultValue: "Close",
-                })}
-              </Button>
-              {importPreviewSummary.importableCount > 0 ? (
-                <Button
-                  onClick={() => importMutation.mutate()}
-                  disabled={importMutation.isPending}
-                >
-                  {t("detail.importPreview.buttons.apply", {
-                    defaultValue: "Apply Import",
-                  })}
-                </Button>
-              ) : (
-                <div className="text-xs text-slate-500">
-                  {t("detail.importPreview.states.noImportNeeded", {
-                    defaultValue: "No import needed",
-                  })}
-                </div>
-              )}
-            </div>
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+      <ClientImportReviewDrawer
+        entries={importCandidateEntries}
+        isImporting={importMutation.isPending}
+        isLoading={loadingConfig}
+        onImport={() => importMutation.mutate()}
+        onOpenChange={setImportReviewOpen}
+        open={importReviewOpen}
+      />
       <ClientFormDrawer
         open={isClientFormOpen}
         onOpenChange={setIsClientFormOpen}
