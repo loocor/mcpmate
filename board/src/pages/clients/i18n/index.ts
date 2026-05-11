@@ -678,24 +678,16 @@ export const clientsTranslations = {
           save: "Save Policy",
         },
       },
-      importPreview: {
-        title: "Import Preview",
+      importReview: {
+        title: "Import Review",
         description: "Summary of servers detected from current client config.",
         fields: {
-          attempted: "Attempted",
-          imported: "Imported",
+          importable: "Importable",
           skipped: "Skipped",
-          failed: "Failed",
         },
-        noPreview: "No preview data.",
         sections: {
-          servers: "Servers to import",
-          errors: "Errors",
-          skippedDetailsSingle: "Skip details ({{count}} server)",
-          skippedDetailsPlural: "Skip details ({{count}} servers)",
+          detectedEntries: "Detected entries",
           raw: "Raw preview JSON",
-          stats:
-            "tools: {{tools}} • resources: {{resources}} • templates: {{templates}} • prompts: {{prompts}}",
         },
         queryLabels: {
           existing: "Existing query",
@@ -714,7 +706,6 @@ export const clientsTranslations = {
         buttons: {
           close: "Close",
           apply: "Apply Import",
-          preview: "Preview",
         },
         states: {
           noImportNeeded: "No import needed",
@@ -1487,24 +1478,16 @@ export const clientsTranslations = {
           save: "保存策略",
         },
       },
-      importPreview: {
-        title: "导入预览",
+      importReview: {
+        title: "导入复核",
         description: "概览当前客户端配置中检测到的服务器。",
         fields: {
-          attempted: "已尝试",
-          imported: "已导入",
+          importable: "可导入",
           skipped: "已跳过",
-          failed: "失败",
         },
-        noPreview: "暂无预览数据。",
         sections: {
-          servers: "待导入服务器",
-          errors: "错误信息",
-          skippedDetailsSingle: "跳过详情（{{count}} 个服务器）",
-          skippedDetailsPlural: "跳过详情（{{count}} 个服务器）",
+          detectedEntries: "检测到的条目",
           raw: "原始预览 JSON",
-          stats:
-            "工具：{{tools}} • 资源：{{resources}} • 模板：{{templates}} • 提示：{{prompts}}",
         },
         queryLabels: {
           existing: "现有查询参数",
@@ -1523,7 +1506,6 @@ export const clientsTranslations = {
         buttons: {
           close: "关闭",
           apply: "应用导入",
-          preview: "生成预览",
         },
         states: {
           noImportNeeded: "无需导入",
@@ -2326,24 +2308,16 @@ export const clientsTranslations = {
           save: "ポリシーを保存",
         },
       },
-      importPreview: {
-        title: "インポートプレビュー",
+      importReview: {
+        title: "インポート確認",
         description: "現在の設定から検出したサーバーの概要です。",
         fields: {
-          attempted: "試行",
-          imported: "インポート済み",
+          importable: "インポート可能",
           skipped: "スキップ",
-          failed: "失敗",
         },
-        noPreview: "プレビューはありません。",
         sections: {
-          servers: "インポート対象サーバー",
-          errors: "エラー",
-          skippedDetailsSingle: "スキップ詳細（{{count}} 件のサーバー）",
-          skippedDetailsPlural: "スキップ詳細（{{count}} 件のサーバー）",
-          raw: "プレビュー JSON",
-          stats:
-            "ツール: {{tools}} • リソース: {{resources}} • テンプレート: {{templates}} • プロンプト: {{prompts}}",
+          detectedEntries: "検出された項目",
+          raw: "生のプレビュー JSON",
         },
         queryLabels: {
           existing: "既存のクエリ",
@@ -2362,7 +2336,6 @@ export const clientsTranslations = {
         buttons: {
           close: "閉じる",
           apply: "インポートを適用",
-          preview: "プレビュー",
         },
         states: {
           noImportNeeded: "インポート不要",
