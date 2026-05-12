@@ -9,6 +9,8 @@ use std::sync::Arc;
 
 use crate::api::models::server::{RegistryRepositoryInfo, ServerIcon, ServerMetaPayload, ServersImportConfig};
 use crate::clients::analyzer::{ConfigImportSkipReason, InspectedServerEntry};
+use crate::clients::models::ClientConfigFileParse;
+use crate::clients::service::ClientConfigService;
 use crate::common::constants::profile_keys;
 use crate::common::server::ServerType;
 use crate::config::models::{Server, ServerMeta};
@@ -46,6 +48,22 @@ impl Default for ImportOptions {
             conflict_policy: ConflictPolicy::Skip,
             preview: false,
             target_profile: None,
+        }
+    }
+}
+
+impl ImportOptions {
+    /// Default options for dashboard and first-run imports (skip on conflict; optional preview).
+    pub fn dashboard_import(
+        preview: bool,
+        target_profile: Option<String>,
+    ) -> Self {
+        Self {
+            by_name: true,
+            by_fingerprint: true,
+            conflict_policy: ConflictPolicy::Skip,
+            preview,
+            target_profile,
         }
     }
 }
@@ -209,6 +227,48 @@ fn import_config_from_inspected_entry(
     ))
 }
 
+pub async fn plan_import_from_client_inspection(
+    service: &ClientConfigService,
+    identifier: &str,
+    config_path_override: Option<&str>,
+    parse_rule: Option<&ClientConfigFileParse>,
+    selected_server_names: &[String],
+) -> Result<ClientImportPlan> {
+    let trimmed_override = config_path_override.map(str::trim).filter(|path| !path.is_empty());
+    let inspected = if let Some(path) = trimmed_override {
+        let state = service
+            .fetch_state(identifier)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Client '{}' not found", identifier))?;
+        service
+            .inspect_config_path_for_import(&state, path, parse_rule)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+    } else {
+        service
+            .inspect_current_config_for_import(identifier)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+    };
+
+    let selected: HashSet<String> = selected_server_names
+        .iter()
+        .map(|name| name.trim().to_ascii_lowercase())
+        .filter(|name| !name.is_empty())
+        .collect();
+
+    let entries: Vec<InspectedServerEntry> = inspected
+        .inspection
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            selected.is_empty() || selected.contains(&entry.name.trim().to_ascii_lowercase())
+        })
+        .collect();
+
+    Ok(build_import_plan_from_entries(entries))
+}
+
 /// Import a batch of servers with consistent deduplication and capability sync.
 /// - `items`: map of server name -> ServersImportConfig (kind/command/url/args/env)
 pub async fn import_batch(
@@ -229,14 +289,11 @@ pub async fn import_batch(
     let existing = ExistingIndex::build(db_pool).await?;
 
     for (name, cfg) in items.into_iter() {
-        // Validate and normalize
-        let normalized_kind = match cfg.kind.to_ascii_lowercase() {
-            kind if kind == "sse" => "streamable_http".to_string(),
-            kind => kind,
-        };
-        let server_type = ServerType::from_client_format(&normalized_kind)
+        let lc = cfg.kind.trim().to_ascii_lowercase();
+        let server_type = ServerType::from_client_format(&lc)
             .map_err(|_| anyhow::anyhow!(format!("Invalid server type '{}'", cfg.kind)))?;
-        validate_server_config(&normalized_kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let persisted_kind = server_type.client_format();
+        validate_server_config(persisted_kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
         // Compute fingerprint
         let mut url_signature: Option<fingerprint::UrlSignature> = None;
@@ -245,9 +302,9 @@ pub async fn import_batch(
                 cfg.command.as_deref().unwrap_or_default(),
                 cfg.args.as_deref().unwrap_or(&[]),
             ),
-            ServerType::StreamableHttp => {
+            ServerType::Sse | ServerType::StreamableHttp => {
                 let sig = fingerprint::url_signature(cfg.url.as_deref().unwrap_or_default());
-                let key = sig.fingerprint.clone();
+                let key = format!("{}|{}", sig.fingerprint, persisted_kind);
                 url_signature = Some(sig);
                 key
             }
@@ -301,13 +358,14 @@ pub async fn import_batch(
         if opts.preview {
             outcome
                 .imported
-                .push(build_imported_server(name, &cfg, args_norm, env_norm, &normalized_kind));
+                .push(build_imported_server(name, &cfg, args_norm, env_norm, persisted_kind));
             continue;
         }
 
         // Apply: upsert server, args, env, headers
         let mut server = match server_type {
             ServerType::Stdio => Server::new_stdio(name.clone(), cfg.command.clone()),
+            ServerType::Sse => Server::new_sse(name.clone(), cfg.url.clone()),
             ServerType::StreamableHttp => Server::new_streamable_http(name.clone(), cfg.url.clone()),
         };
         server.registry_server_id = cfg.registry_server_id.clone();
@@ -598,7 +656,8 @@ impl ExistingIndex {
             }
             if let Some(url) = s.url.as_ref() {
                 let sig = fingerprint::url_signature(url);
-                fps.insert(sig.fingerprint.clone());
+                let key = format!("{}|{}", sig.fingerprint, s.server_type.client_format());
+                fps.insert(key);
                 url_bases.insert(sig.base.clone());
                 url_sigs.entry(sig.base.clone()).or_insert(sig);
             }
@@ -619,8 +678,8 @@ fn validate_server_config(
 ) -> Result<(), &'static str> {
     match kind {
         "stdio" if command.is_none() => Err("Command is required for stdio servers"),
-        "streamable_http" if url.is_none() => Err("URL is required for streamable_http servers"),
-        "stdio" | "streamable_http" => Ok(()),
+        "sse" | "streamable_http" if url.is_none() => Err("URL is required for HTTP-based servers"),
+        "stdio" | "sse" | "streamable_http" => Ok(()),
         _ => Err("Invalid server type"),
     }
 }

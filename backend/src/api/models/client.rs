@@ -393,43 +393,6 @@ pub struct ClientConfigData {
     pub uses_template_parse_default: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-#[schemars(description = "Summary for servers imported from a client config")]
-pub struct ClientImportSummary {
-    #[schemars(description = "Whether import was attempted for this request")]
-    pub attempted: bool,
-    #[schemars(description = "Number of servers successfully imported")]
-    pub imported_count: u32,
-    #[schemars(description = "Number of servers skipped (e.g., duplicates)")]
-    pub skipped_count: u32,
-    #[schemars(description = "Number of servers failed to import")]
-    pub failed_count: u32,
-    #[schemars(description = "Optional per-server error messages for failures")]
-    #[serde(default)]
-    pub errors: Option<std::collections::HashMap<String, String>>,
-    #[schemars(description = "Detailed reason for each skipped server")]
-    #[serde(default)]
-    pub skipped_servers: Vec<crate::api::models::server::SkippedServerData>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Import result for client configuration import")]
-pub struct ClientConfigImportData {
-    #[schemars(description = "Summary for the import attempt")]
-    pub summary: ClientImportSummary,
-    #[schemars(description = "Imported servers (when applied)")]
-    #[serde(default)]
-    pub imported_servers: Vec<ClientImportedServer>,
-    #[schemars(description = "Profile id used for association (when applied)")]
-    #[serde(default)]
-    pub profile_id: Option<String>,
-    #[schemars(description = "Whether capability sync was scheduled in background")]
-    #[serde(default)]
-    pub scheduled: Option<bool>,
-    #[schemars(description = "Reason for scheduling (if available)")]
-    #[serde(default)]
-    pub scheduled_reason: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Summary of the client template metadata")]
@@ -572,25 +535,6 @@ impl From<ServerEntryData> for InspectedServerEntry {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(description = "Information about an imported server")]
-pub struct ClientImportedServer {
-    #[schemars(description = "Server name identifier")]
-    pub name: String,
-    #[schemars(description = "Command to execute the server")]
-    pub command: String,
-    #[schemars(description = "Command line arguments")]
-    pub args: Vec<String>,
-    #[schemars(description = "Environment variables")]
-    pub env: std::collections::HashMap<String, String>,
-    #[schemars(
-        description = "Server type reported by the client import (stdio|streamable_http, legacy sse may be normalized during import)"
-    )]
-    pub server_type: String,
-    #[schemars(description = "Endpoint URL for HTTP-based servers, including legacy SSE-compatible endpoints")]
-    #[serde(default)]
-    pub url: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "API error structure")]
@@ -622,11 +566,6 @@ api_resp!(
     ClientConfigUpdateResp,
     ClientConfigUpdateData,
     "Client configuration update response"
-);
-api_resp!(
-    ClientConfigImportResp,
-    ClientConfigImportData,
-    "Client configuration import response"
 );
 api_resp!(ClientDeleteResp, ClientDeleteData, "Client deletion response");
 
@@ -1008,19 +947,6 @@ pub struct ClientBackupPolicySetReq {
     pub policy: ClientBackupPolicyPayload,
 }
 
-/// Request for client config import
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(description = "Request for client config import")]
-pub struct ClientConfigImportReq {
-    #[schemars(description = "Client identifier")]
-    pub identifier: String,
-    #[serde(default)]
-    #[schemars(description = "Analyzed config entries from GET /api/client/config/details")]
-    pub entries: Vec<ServerEntryData>,
-    #[serde(default)]
-    #[schemars(description = "Target profile id; default profile if omitted")]
-    pub profile_id: Option<String>,
-}
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[schemars(description = "Backup policy descriptor for API payload")]

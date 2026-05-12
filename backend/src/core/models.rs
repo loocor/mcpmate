@@ -47,10 +47,6 @@ pub struct MCPServerConfig {
 impl MCPServerConfig {
     /// Get the transport type for this server
     pub fn get_transport_type(&self) -> TransportType {
-        // Infer strictly from the 'kind' field
-        match self.kind {
-            ServerType::Stdio => TransportType::Stdio,
-            ServerType::StreamableHttp => TransportType::StreamableHttp,
-        }
+        self.kind.wire_transport()
     }
 }

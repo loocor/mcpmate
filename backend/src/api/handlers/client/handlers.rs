@@ -3,9 +3,8 @@
 use super::backups::parse_policy_payload;
 use super::inspection::{
     build_config_file_parse_inspect_data, build_parse_metadata, configured_server_entries_data,
-    derive_attachment_state,
-    detect_mcpmate_in_client_config, inspect_client_config_lenient, parse_api_transports, parse_rule_from_api_data,
-    transports_data_from_state,
+    derive_attachment_state, detect_mcpmate_in_client_config, inspect_client_config_lenient, parse_api_transports,
+    parse_rule_from_api_data, transports_data_from_state,
 };
 use super::runtime::sync_bound_client_runtime_state;
 use crate::api::models::client::{
@@ -13,16 +12,14 @@ use crate::api::models::client::{
     ClientCapabilityConfigData, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq,
     ClientCheckResp, ClientConfigData, ClientConfigFileParseInspectExistingReq,
     ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq, ClientConfigFileParseInspectResp,
-    ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
+    ClientConfigMode, ClientConfigReq,
     ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientDetachData, ClientDetachReq, ClientDetachResp, ClientImportSummary,
-    ClientImportedServer, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
+    ClientConfigUpdateResp, ClientDetachData, ClientDetachReq, ClientDetachResp, ClientInfo, ClientTemplateMetadata,
+    ClientTemplateStorageMetadata,
     ClientUnifyDirectExposureData,
 };
-use crate::api::models::server::SkippedServerData;
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::analyzer::InspectedServerEntry;
 use crate::clients::document::{get_config_last_modified, infer_format_from_path, parse_config_to_json_value};
 use crate::clients::models::{AttachmentState, CapabilitySource, ClientCapabilityConfigState};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
@@ -31,7 +28,6 @@ use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
 use crate::common::ClientCategory;
-use crate::config::server::build_import_plan_from_entries;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -675,133 +671,6 @@ pub async fn config_restore(
     .await;
 
     Ok(Json(ClientBackupActionResp::success(data)))
-}
-
-/// Handler for POST /api/client/config/import
-/// Import servers from analyzed client configuration entries
-#[tracing::instrument(skip(app_state, request), level = "debug", fields(client = %request.identifier, profile = ?request.profile_id))]
-pub async fn config_import(
-    State(app_state): State<Arc<AppState>>,
-    Json(request): Json<ClientConfigImportReq>,
-) -> Result<Json<ClientConfigImportResp>, StatusCode> {
-    let service = get_client_service(&app_state)?;
-    service
-        .fetch_state(&request.identifier)
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to load client state {}: {}", request.identifier, err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or_else(|| {
-            tracing::error!("Client state not found: {}", request.identifier);
-            StatusCode::NOT_FOUND
-        })?;
-
-    let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let import_plan = build_import_plan_from_entries(request.entries.into_iter().map(InspectedServerEntry::from));
-    let entry_count = import_plan.items.len() + import_plan.skipped_servers.len();
-    let opts = crate::config::server::ImportOptions {
-        by_name: true,
-        by_fingerprint: true,
-        conflict_policy: crate::config::server::ConflictPolicy::Skip,
-        preview: false,
-        target_profile: request.profile_id.clone(),
-    };
-    let outcome = crate::config::server::import_batch(
-        &db.pool,
-        &app_state.connection_pool,
-        &app_state.redb_cache,
-        import_plan.items,
-        opts,
-    )
-    .await
-    .map_err(|err| {
-        tracing::error!("Failed to import via unified core: {}", err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Report the profile used for association (actual association is handled in import core)
-    let mut profile_used: Option<String> = None;
-    if !outcome.imported.is_empty() {
-        let profile_id = if let Some(pid) = &request.profile_id {
-            pid.clone()
-        } else {
-            // Ensure the system default anchor profile exists so we can report its identifier
-            match crate::config::profile::ensure_default_anchor_profile_id(&db.pool).await {
-                Ok(id) => id,
-                Err(err) => {
-                    tracing::error!("Failed to ensure default anchor profile during client import: {}", err);
-                    String::new()
-                }
-            }
-        };
-        if !profile_id.is_empty() {
-            profile_used = Some(profile_id);
-        }
-    }
-
-    let crate::config::server::ImportOutcome {
-        imported,
-        skipped,
-        failed,
-        scheduled,
-    } = outcome;
-
-    let imported_servers: Vec<ClientImportedServer> = imported
-        .into_iter()
-        .map(|s| ClientImportedServer {
-            name: s.name,
-            command: s.command.unwrap_or_default(),
-            args: s.args,
-            env: s.env,
-            server_type: s.server_type,
-            url: s.url,
-        })
-        .collect();
-
-    let mut skipped_domain = import_plan.skipped_servers;
-    skipped_domain.extend(skipped);
-    let skipped_servers: Vec<SkippedServerData> = skipped_domain.into_iter().map(SkippedServerData::from).collect();
-
-    let skipped_count = skipped_servers.len() as u32;
-
-    let summary = ClientImportSummary {
-        attempted: true,
-        imported_count: imported_servers.len() as u32,
-        skipped_count,
-        failed_count: failed.len() as u32,
-        errors: if failed.is_empty() { None } else { Some(failed) },
-        skipped_servers,
-    };
-
-    let data = ClientConfigImportData {
-        summary,
-        imported_servers,
-        profile_id: profile_used,
-        scheduled: Some(scheduled),
-        scheduled_reason: None,
-    };
-
-    emit_client_audit_event(
-        &app_state,
-        AuditAction::ClientConfigImport,
-        AuditStatus::Success,
-        "/api/client/config/import",
-        &request.identifier,
-        Some(request.identifier.clone()),
-        Some(json!({
-            "entry_count": entry_count,
-            "profile_id": request.profile_id,
-            "imported_count": data.summary.imported_count,
-            "skipped_count": data.summary.skipped_count,
-            "failed_count": data.summary.failed_count,
-            "scheduled": data.scheduled,
-        })),
-        None,
-    )
-    .await;
-
-    Ok(Json(ClientConfigImportResp::success(data)))
 }
 
 pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigService>, StatusCode> {
@@ -1459,10 +1328,9 @@ fn map_mode(mode: ClientConfigMode) -> ConfigMode {
 mod tests {
     use super::*;
     use crate::api::models::client::{
-        ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq, ServerEntryData,
+        ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq,
     };
     use crate::api::routes::AppState;
-    use crate::clients::analyzer::InspectedServerEntry;
     use crate::clients::{
         CapabilitySource,
         source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot},
@@ -1666,24 +1534,6 @@ mod tests {
         }
     }
 
-    /// Build API import entries using the same `InspectedServerEntry` → `ServerEntryData` path as production inspection.
-    fn server_entry_data(
-        name: &str,
-        transport: &str,
-        command: Option<&str>,
-        url: Option<&str>,
-    ) -> ServerEntryData {
-        ServerEntryData::from(InspectedServerEntry {
-            name: name.to_string(),
-            transport: transport.to_string(),
-            command: command.map(str::to_string),
-            args: Vec::new(),
-            env: HashMap::new(),
-            headers: HashMap::new(),
-            url: url.map(str::to_string),
-            issue: None,
-        })
-    }
 
     async fn insert_shared_profile(
         pool: &sqlx::SqlitePool,
@@ -3213,98 +3063,6 @@ mod tests {
             Some(1)
         );
         assert_eq!(data.preview["alpha"]["command"], "node");
-    }
-
-    #[tokio::test]
-    async fn config_import_uses_supplied_entries_without_reanalyzing_config() {
-        let context = create_test_context().await;
-        context
-            .client_service
-            .set_client_settings(
-                "client-a",
-                Some("hosted".to_string()),
-                Some("streamable_http".to_string()),
-                None,
-            )
-            .await
-            .expect("seed client state");
-
-        let Json(import_response) = config_import(
-            State(context.app_state.clone()),
-            Json(crate::api::models::client::ClientConfigImportReq {
-                identifier: "client-a".to_string(),
-                entries: vec![
-                    server_entry_data(
-                        "config-import-entry",
-                        "streamable_http",
-                        None,
-                        Some("http://127.0.0.1:8123/mcp"),
-                    ),
-                    server_entry_data("broken-entry", "unclassified", None, None),
-                ],
-                profile_id: None,
-            }),
-        )
-        .await
-        .expect("import from supplied entries");
-
-        assert!(import_response.success);
-        let data = import_response.data.expect("import data");
-        assert_eq!(data.summary.imported_count, 1);
-        assert_eq!(data.summary.skipped_count, 1);
-        assert_eq!(data.summary.failed_count, 0);
-        assert_eq!(data.imported_servers.len(), 1);
-        assert_eq!(data.imported_servers[0].name, "config-import-entry");
-        assert_eq!(data.summary.skipped_servers.len(), 1);
-        assert_eq!(data.summary.skipped_servers[0].name, "broken-entry");
-        assert_eq!(data.summary.skipped_servers[0].reason, "config_unrecognized");
-    }
-
-    #[tokio::test]
-    async fn config_import_ignores_supplied_mcpmate_entry_by_name() {
-        let context = create_test_context().await;
-        context
-            .client_service
-            .set_client_settings(
-                "client-a",
-                Some("hosted".to_string()),
-                Some("streamable_http".to_string()),
-                None,
-            )
-            .await
-            .expect("seed client state");
-
-        let Json(import_response) = config_import(
-            State(context.app_state.clone()),
-            Json(crate::api::models::client::ClientConfigImportReq {
-                identifier: "client-a".to_string(),
-                entries: vec![
-                    server_entry_data("MCPMate", "sse", None, Some("http://127.0.0.1:8999/sse")),
-                    server_entry_data(
-                        "config-import-entry",
-                        "streamable_http",
-                        None,
-                        Some("http://127.0.0.1:8123/mcp"),
-                    ),
-                    server_entry_data("broken-entry", "unclassified", None, None),
-                ],
-                profile_id: None,
-            }),
-        )
-        .await
-        .expect("import from supplied entries");
-
-        assert!(import_response.success);
-        let data = import_response.data.expect("import data");
-        assert_eq!(data.summary.imported_count, 1);
-        assert_eq!(data.summary.skipped_count, 1);
-        assert_eq!(data.summary.failed_count, 0);
-        assert_eq!(data.imported_servers.len(), 1);
-        assert_eq!(data.imported_servers[0].name, "config-import-entry");
-        assert!(data.imported_servers.iter().all(|server| server.name != "MCPMate"));
-        assert_eq!(data.summary.skipped_servers.len(), 1);
-        assert_eq!(data.summary.skipped_servers[0].name, "broken-entry");
-        assert!(data.summary.skipped_servers.iter().all(|server| server.name != "MCPMate"));
     }
 
     #[test]

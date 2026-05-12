@@ -359,7 +359,7 @@ impl UpstreamConnectionPool {
         // Connect based on server type using enum matching (strict type safety)
         let result = match server_config.kind {
             ServerType::Stdio => self.connect_stdio(server_id, instance_id).await,
-            ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
+            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
         };
 
         // Handle connection result

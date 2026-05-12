@@ -4,7 +4,7 @@ use crate::api::models::client::{
     ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq, ClientBackupPolicyResp,
     ClientBackupPolicySetReq, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp,
     ClientConfigFileParseInspectExistingReq, ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq,
-    ClientConfigFileParseInspectResp, ClientConfigImportReq, ClientConfigImportResp, ClientConfigReq, ClientConfigResp,
+    ClientConfigFileParseInspectResp, ClientConfigReq, ClientConfigResp,
     ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientDeleteReq, ClientDeleteResp,
     ClientDetachReq, ClientDetachResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
 };
@@ -58,14 +58,6 @@ aide_wrapper_payload!(
     ClientConfigRestoreReq,
     ClientBackupActionResp,
     "Restore a client configuration from backup"
-);
-
-// Import existing client configuration
-aide_wrapper_payload!(
-    client::config_import,
-    ClientConfigImportReq,
-    ClientConfigImportResp,
-    "Preview or import servers from client's existing configuration"
 );
 
 aide_wrapper_payload!(
@@ -177,10 +169,6 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/client/config/restore",
             post_with(config_restore_aide, config_restore_docs),
-        )
-        .api_route(
-            "/client/config/import",
-            post_with(config_import_aide, config_import_docs),
         )
         .api_route("/client/delete", post_with(delete_client_aide, delete_client_docs))
         .api_route("/client/update", post_with(update_settings_aide, update_settings_docs))

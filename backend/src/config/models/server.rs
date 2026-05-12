@@ -163,6 +163,28 @@ impl Server {
         }
     }
 
+    /// Create a new SSE server configuration (URL-based; persisted as `sse` for user accuracy)
+    pub fn new_sse(
+        name: String,
+        url: Option<String>,
+    ) -> Self {
+        Self {
+            id: None,
+            name,
+            server_type: ServerType::Sse,
+            command: None,
+            url,
+
+            registry_server_id: None,
+            capabilities: None,
+            enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
+            pending_import: false,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
     /// Create a new Streamable HTTP server configuration
     pub fn new_streamable_http(
         name: String,

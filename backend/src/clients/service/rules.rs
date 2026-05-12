@@ -1,8 +1,9 @@
 use super::ClientConfigService;
-use crate::clients::analyzer::inspect_config_value;
+use crate::clients::analyzer::{ConfigInspectionReport, inspect_config_content, inspect_config_value};
 use crate::clients::document::{infer_format_from_path, parse_config_to_json_value};
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat};
+use crate::clients::service::core::ClientStateRow;
 use crate::clients::utils::get_nested_value;
 use crate::system::paths::get_path_service;
 use serde_json::{Map, Value};
@@ -41,6 +42,60 @@ struct CandidateRule {
 }
 
 impl ClientConfigService {
+    pub(crate) async fn inspect_config_path_for_import(
+        &self,
+        state: &ClientStateRow,
+        raw_path: &str,
+        draft: Option<&ClientConfigFileParse>,
+    ) -> ConfigResult<ConfigInspectionReport> {
+        let normalized_path = get_path_service()
+            .resolve_user_path(raw_path)
+            .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
+        let raw = tokio::fs::read_to_string(&normalized_path)
+            .await
+            .map_err(ConfigError::IoError)?;
+        self.inspect_config_content_for_import(state, &raw, draft)
+    }
+
+    pub(crate) async fn inspect_current_config_for_import(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<ConfigInspectionReport> {
+        let state = self
+            .fetch_state(identifier)
+            .await?
+            .ok_or_else(|| ConfigError::ClientNotFound {
+                identifier: identifier.to_string(),
+            })?;
+        let raw = self
+            .read_current_config(identifier)
+            .await?
+            .ok_or_else(|| ConfigError::DataAccessError(format!("Client {} has no readable config", identifier)))?;
+        self.inspect_config_content_for_import(&state, &raw, None)
+    }
+
+    fn inspect_config_content_for_import(
+        &self,
+        state: &ClientStateRow,
+        raw: &str,
+        draft: Option<&ClientConfigFileParse>,
+    ) -> ConfigResult<ConfigInspectionReport> {
+        let parse_rule = state.effective_config_file_parse_with(draft, false)?.ok_or_else(|| {
+            ConfigError::DataAccessError(
+                "Client is missing an effective config_file_parse; cannot scan existing MCP servers".to_string(),
+            )
+        })?;
+        let transports = state.parsed_transports()?;
+        let inspected = inspect_config_content(raw, &parse_rule, Some(&transports));
+        if !inspected.inspection.matched_container {
+            return Err(ConfigError::DataAccessError(
+                "Configured parse rule did not match any config container".to_string(),
+            ));
+        }
+
+        Ok(inspected)
+    }
+
     pub async fn inspect_config_file_parse(
         &self,
         raw_path: &str,

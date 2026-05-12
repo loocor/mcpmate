@@ -237,7 +237,7 @@ pub async fn discover_from_config(
         crate::common::server::ServerType::Stdio => {
             connect_server_simple(server_name, server_config, server_type, TransportType::Stdio).await?
         }
-        crate::common::server::ServerType::StreamableHttp => {
+        crate::common::server::ServerType::Sse | crate::common::server::ServerType::StreamableHttp => {
             connect_http_server(server_name, server_config, TransportType::StreamableHttp)
                 .await
                 .map(|(s, t, c)| (s, t, c, None))?
@@ -311,7 +311,7 @@ pub async fn discover_from_config_preview(
             };
             (svc, tools, caps, pid)
         }
-        crate::common::server::ServerType::StreamableHttp => {
+        crate::common::server::ServerType::Sse | crate::common::server::ServerType::StreamableHttp => {
             if let Some(client) = http_client {
                 if let Some((c_to, s_to, t_to)) = http_timeouts {
                     let (s, t, c) = connect_http_server_with_client_timeouts(

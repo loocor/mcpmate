@@ -61,7 +61,6 @@ pub enum AuditAction {
     ClientConfigAttach,
     ClientConfigDetach,
     ClientConfigRestore,
-    ClientConfigImport,
     ClientCapabilityUpdate,
     ClientDelete,
     ClientBackupDelete,
@@ -132,7 +131,6 @@ impl AuditAction {
             | Self::ClientConfigAttach
             | Self::ClientConfigDetach
             | Self::ClientConfigRestore
-            | Self::ClientConfigImport
             | Self::ClientCapabilityUpdate
             | Self::ClientDelete
             | Self::ClientBackupDelete

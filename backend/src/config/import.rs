@@ -57,13 +57,7 @@ async fn import_config_with_cache(
         &dummy_pool,
         redb_cache,
         items,
-        crate::config::server::ImportOptions {
-            by_name: true,
-            by_fingerprint: true,
-            conflict_policy: crate::config::server::ConflictPolicy::Skip,
-            preview: false,
-            target_profile: None,
-        },
+        crate::config::server::ImportOptions::dashboard_import(false, None),
     )
     .await?;
 

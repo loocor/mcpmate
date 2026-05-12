@@ -46,15 +46,31 @@ impl ServerIdentity {
 pub enum ServerType {
     /// Standard input/output server
     Stdio,
+    /// Legacy SSE transport (persisted for user accuracy; use [`wire_transport`](Self::wire_transport) for rmcp)
+    Sse,
     /// Streamable HTTP server
     StreamableHttp,
 }
 
 impl ServerType {
+    /// Transport used when opening an MCP session via rmcp (SSE maps to Streamable HTTP).
+    pub fn wire_transport(self) -> TransportType {
+        match self {
+            ServerType::Stdio => TransportType::Stdio,
+            ServerType::Sse | ServerType::StreamableHttp => TransportType::StreamableHttp,
+        }
+    }
+
+    /// True for persisted URL-based transports (SSE or Streamable HTTP).
+    pub fn is_http_transport(self) -> bool {
+        matches!(self, Self::Sse | Self::StreamableHttp)
+    }
+
     /// Convert to string (database format)
     pub fn as_str(&self) -> &'static str {
         match self {
             ServerType::Stdio => "stdio",
+            ServerType::Sse => transport::SSE,
             ServerType::StreamableHttp => "streamable_http",
         }
     }
@@ -63,6 +79,7 @@ impl ServerType {
     pub fn client_format(&self) -> &'static str {
         match self {
             ServerType::Stdio => transport::STDIO,
+            ServerType::Sse => transport::SSE,
             ServerType::StreamableHttp => transport::STREAMABLE_HTTP,
         }
     }
@@ -72,7 +89,7 @@ impl ServerType {
         let lc = s.to_ascii_lowercase();
         match lc.as_str() {
             x if x == transport::STDIO => Ok(ServerType::Stdio),
-            x if x == transport::SSE => Ok(ServerType::StreamableHttp),
+            x if x == transport::SSE => Ok(ServerType::Sse),
             x if x == transport::STREAMABLE_HTTP => Ok(ServerType::StreamableHttp),
             _ => Err(ParseServerTypeError),
         }
@@ -110,11 +127,11 @@ impl FromStr for ServerType {
         let lc = s.to_ascii_lowercase();
         match lc.as_str() {
             "stdio" => Ok(ServerType::Stdio),
-            "sse" => Ok(ServerType::StreamableHttp),
+            "sse" => Ok(ServerType::Sse),
             "streamable_http" => Ok(ServerType::StreamableHttp),
             _ => {
                 tracing::error!(
-                    "Invalid server type '{}'. Allowed: 'stdio'|'streamable_http' (case-insensitive; legacy 'sse' normalizes to 'streamable_http')",
+                    "Invalid server type '{}'. Allowed: 'stdio'|'sse'|'streamable_http' (case-insensitive)",
                     s
                 );
                 Err(ParseServerTypeError)

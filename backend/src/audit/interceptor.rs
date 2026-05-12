@@ -137,7 +137,6 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::ClientConfigAttach
         | AuditAction::ClientConfigDetach
         | AuditAction::ClientConfigRestore
-        | AuditAction::ClientConfigImport
         | AuditAction::ClientCapabilityUpdate
         | AuditAction::ClientDelete
         | AuditAction::ClientBackupDelete

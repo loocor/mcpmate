@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::ApiError;
+use super::client::parse_rule_from_api_data;
 use crate::api::models::onboarding::{
     OnboardingCompleteReq, OnboardingServerCandidate, OnboardingServerScanData, OnboardingServerScanError,
     OnboardingServerScanReq, OnboardingServerScanResp, OnboardingStatusData, OnboardingStatusResp, RuntimeCheckData,
@@ -12,6 +13,8 @@ use crate::api::models::onboarding::{
 };
 use crate::api::routes::AppState;
 use crate::common::constants::database::tables;
+use crate::common::server::ServerType;
+use crate::config::server::import::build_import_plan_from_entries;
 use crate::macros::resp::api_resp;
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -47,14 +50,19 @@ async fn set_onboarding_completed(
 }
 
 fn candidate_fingerprint(config: &crate::api::models::server::ServersImportConfig) -> String {
-    match config.kind.to_ascii_lowercase().as_str() {
-        "streamable_http" | "sse" | "http" | "streamablehttp" => {
-            crate::config::server::fingerprint::url_signature(config.url.as_deref().unwrap_or_default()).fingerprint
-        }
-        _ => crate::config::server::fingerprint::fingerprint_for_stdio(
+    let Ok(st) = ServerType::from_client_format(config.kind.trim()) else {
+        return String::new();
+    };
+    match st {
+        ServerType::Stdio => crate::config::server::fingerprint::fingerprint_for_stdio(
             config.command.as_deref().unwrap_or_default(),
             config.args.as_deref().unwrap_or(&[]),
         ),
+        ServerType::Sse | ServerType::StreamableHttp => {
+            let base = crate::config::server::fingerprint::url_signature(config.url.as_deref().unwrap_or_default())
+                .fingerprint;
+            format!("{}|{}", base, st.client_format())
+        }
     }
 }
 
@@ -66,24 +74,6 @@ fn push_source(
     if !candidate.source_client_ids.iter().any(|value| value == client_id) {
         candidate.source_client_ids.push(client_id.to_string());
         candidate.source_clients.push(client_name.to_string());
-    }
-}
-
-fn parse_rule_from_api_data(
-    parse: &crate::api::models::client::ClientConfigFileParseData,
-) -> crate::clients::models::ClientConfigFileParse {
-    crate::clients::models::ClientConfigFileParse {
-        format: match parse.format.as_str() {
-            "json5" => crate::clients::models::TemplateFormat::Json5,
-            "toml" => crate::clients::models::TemplateFormat::Toml,
-            "yaml" => crate::clients::models::TemplateFormat::Yaml,
-            _ => crate::clients::models::TemplateFormat::Json,
-        },
-        container_type: match parse.container_type {
-            crate::api::models::client::ClientConfigType::Array => crate::clients::models::ContainerType::Array,
-            _ => crate::clients::models::ContainerType::ObjectMap,
-        },
-        container_keys: parse.container_keys.clone(),
     }
 }
 
@@ -168,31 +158,12 @@ pub async fn server_scan(
             }
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| "Client has no detected local config path".to_string())?;
-            let raw = tokio::fs::read_to_string(config_path)
+            let parse_rule_owned = client.config_file_parse.as_ref().map(parse_rule_from_api_data);
+            let inspected = service
+                .inspect_config_path_for_import(&descriptor.state, config_path, parse_rule_owned.as_ref())
                 .await
-                .map_err(|err| err.to_string())?;
-
-            let parse_rule = if let Some(parse) = client.config_file_parse.as_ref() {
-                parse_rule_from_api_data(parse)
-            } else {
-                descriptor
-                    .state
-                    .effective_config_file_parse()
-                    .map_err(|err| err.to_string())?
-                    .ok_or_else(|| {
-                        "Client is missing an effective config_file_parse; cannot scan existing MCP servers"
-                            .to_string()
-                    })?
-            };
-            let transports = descriptor.state.parsed_transports().map_err(|err| err.to_string())?;
-            let inspected = crate::clients::analyzer::inspect_config_content(&raw, &parse_rule, Some(&transports));
-            if !inspected.inspection.matched_container {
-                return Err("Configured parse rule did not match any config container".to_string());
-            }
-
-            Ok(crate::config::server::build_import_plan_from_entries(
-                inspected.inspection.entries,
-            ))
+                .map_err(|e| e.to_string())?;
+            Ok(build_import_plan_from_entries(inspected.inspection.entries))
         }
         .await;
 
@@ -230,9 +201,9 @@ pub async fn server_scan(
             }
 
             let key = fingerprint_key.clone().unwrap_or_else(|| name_key.clone());
-            let kind = match config.kind.to_ascii_lowercase().as_str() {
-                "sse" | "http" | "streamablehttp" => "streamable_http".to_string(),
-                value => value.to_string(),
+            let kind = match ServerType::from_client_format(config.kind.trim()) {
+                Ok(st) => st.client_format().to_string(),
+                Err(_) => continue,
             };
             let candidate = OnboardingServerCandidate {
                 key: key.clone(),
