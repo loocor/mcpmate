@@ -72,8 +72,8 @@ export function ServerForm({
 		args: initialData?.args ? initialData.args.join(" ") : "",
 		env: initialData?.env
 			? Object.entries(initialData.env)
-					.map(([key, value]) => `${key}=${value}`)
-					.join("\n")
+				.map(([key, value]) => `${key}=${value}`)
+				.join("\n")
 			: "",
 		max_instances: initialData?.max_instances || 1,
 	};
@@ -99,25 +99,27 @@ export function ServerForm({
 		setError(null);
 
 		try {
-			// Convert form data to server configuration
-			// Normalize legacy "sse" to "streamable_http" for backend
+			// Convert form data to server configuration (HTTP URL is collected in `command` field in this dialog)
+			const endpoint = data.command?.trim();
 			const serverConfig: Partial<MCPServerConfig> = {
 				name: data.name,
-				kind: data.kind === "sse" ? "streamable_http" : data.kind,
-				command: data.command || undefined,
+				kind: data.kind,
+				command: data.kind === "stdio" ? endpoint || undefined : undefined,
+				url:
+					data.kind === "stdio" ? undefined : endpoint ? endpoint : undefined,
 				command_path: data.command_path || undefined,
 				args: data.args ? data.args.split(" ").filter(Boolean) : undefined,
 				env: data.env
 					? data.env.split("\n").reduce(
-							(acc, line) => {
-								const [key, ...valueParts] = line.split("=");
-								if (key && valueParts.length > 0) {
-									acc[key.trim()] = valueParts.join("=").trim();
-								}
-								return acc;
-							},
-							{} as Record<string, string>,
-						)
+						(acc, line) => {
+							const [key, ...valueParts] = line.split("=");
+							if (key && valueParts.length > 0) {
+								acc[key.trim()] = valueParts.join("=").trim();
+							}
+							return acc;
+						},
+						{} as Record<string, string>,
+					)
 					: undefined,
 				max_instances: data.max_instances || undefined,
 			};

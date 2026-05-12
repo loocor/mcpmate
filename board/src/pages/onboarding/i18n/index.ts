@@ -9,7 +9,6 @@ export const onboardingTranslations = {
 		},
 		nav: {
 			back: "Back",
-			skip: "Skip",
 			next: "Next",
 			finish: "Finish Setup",
 			finishing: "Finishing…",
@@ -65,10 +64,10 @@ export const onboardingTranslations = {
 		servers: {
 			title: "Import Existing Servers",
 			description:
-				"We scanned the MCP clients you selected. Choose the servers you'd like MCPMate to import.",
-			selectClientsFirst:
-				"Select at least one detected client first, or skip this step.",
-			empty: "No importable MCP servers were found in the selected clients.",
+				"We scanned every detected MCP client that has a local config file. Choose the servers you'd like MCPMate to import.",
+			noScannableClients:
+				"No detected MCP clients have a local configuration path to scan yet. You can skip this step or finish client setup first.",
+			empty: "No importable MCP servers were found across your detected clients.",
 			sources: "Found in",
 			importErrorTitle: "Server import failed",
 			official: "Official",
@@ -77,21 +76,20 @@ export const onboardingTranslations = {
 			title: "Join the Community",
 			description:
 				"Connect with other MCPMate users, get help, and stay up to date.",
+			openExternalAria: "Open {{title}} in a new tab",
+			discord: {
+				title: "Discord",
+				description:
+					"Chat with the community, get support, and follow product updates.",
+			},
 			github: {
 				title: "GitHub Issues",
 				description: "Report bugs, request features, and browse open issues.",
 			},
-			docs: {
-				title: "Documentation",
-				description: "Guides, tutorials, and API references.",
-			},
-			chrome: {
-				title: "Chrome Extension",
-				description: "Detect and import MCP server snippets from web pages.",
-			},
-			edge: {
-				title: "Edge Extension",
-				description: "Import MCP server configurations directly from Edge.",
+			discussions: {
+				title: "GitHub Discussions",
+				description:
+					"Ask questions, share ideas, and discuss MCPMate with maintainers and users.",
 			},
 		},
 		language: {
@@ -108,7 +106,6 @@ export const onboardingTranslations = {
 		},
 		nav: {
 			back: "返回",
-			skip: "跳过",
 			next: "下一步",
 			finish: "完成设置",
 			finishing: "正在完成…",
@@ -161,9 +158,11 @@ export const onboardingTranslations = {
 		},
 		servers: {
 			title: "导入已有服务器",
-			description: "已扫描你选择的 MCP 客户端，选择希望 MCPMate 导入的服务器。",
-			selectClientsFirst: "请先选择至少一个已检测到的客户端，或跳过此步骤。",
-			empty: "所选客户端中未发现可导入的 MCP 服务器。",
+			description:
+				"已扫描本机所有已检测到且具备本地配置路径的 MCP 客户端，请选择希望 MCPMate 导入的服务器。",
+			noScannableClients:
+				"当前没有已检测且具备本地配置路径的客户端可供扫描。可跳过此步骤，或先完成某个客户端的配置。",
+			empty: "在已检测的客户端中未发现可导入的 MCP 服务器。",
 			sources: "来自",
 			importErrorTitle: "服务器导入失败",
 			official: "官方",
@@ -171,21 +170,18 @@ export const onboardingTranslations = {
 		community: {
 			title: "加入社区",
 			description: "和 MCPMate 用户交流、获取帮助、了解最新动态。",
+			openExternalAria: "在新标签页打开：{{title}}",
+			discord: {
+				title: "Discord",
+				description: "与社区交流、获取支持并关注产品动态。",
+			},
 			github: {
 				title: "GitHub Issues",
 				description: "提交 Bug、功能请求，浏览公开问题。",
 			},
-			docs: {
-				title: "文档中心",
-				description: "入门指南、教程和 API 参考。",
-			},
-			chrome: {
-				title: "Chrome 扩展",
-				description: "从网页中检测并导入 MCP 服务器配置片段。",
-			},
-			edge: {
-				title: "Edge 扩展",
-				description: "从 Edge 浏览器直接导入 MCP 服务器配置。",
+			discussions: {
+				title: "GitHub Discussions",
+				description: "提问、分享想法，与维护者和其他用户讨论 MCPMate。",
 			},
 		},
 		language: {
@@ -202,7 +198,6 @@ export const onboardingTranslations = {
 		},
 		nav: {
 			back: "戻る",
-			skip: "スキップ",
 			next: "次へ",
 			finish: "セットアップ完了",
 			finishing: "完了中…",
@@ -255,9 +250,11 @@ export const onboardingTranslations = {
 		},
 		servers: {
 			title: "既存サーバーをインポート",
-			description: "選択した MCP クライアントをスキャンしました。MCPMate にインポートするサーバーを選択してください。",
-			selectClientsFirst: "先に検出済みクライアントを 1 つ以上選択するか、この手順をスキップしてください。",
-			empty: "選択したクライアントにインポート可能な MCP サーバーは見つかりませんでした。",
+			description:
+				"ローカル設定ファイルがある検出済み MCP クライアントをすべてスキャンしました。MCPMate にインポートするサーバーを選択してください。",
+			noScannableClients:
+				"スキャンできるローカル設定パスを持つ検出済みクライアントがありません。この手順をスキップするか、クライアントのセットアップを完了してください。",
+			empty: "検出済みクライアントにインポート可能な MCP サーバーは見つかりませんでした。",
 			sources: "検出元",
 			importErrorTitle: "サーバーのインポートに失敗しました",
 			official: "公式",
@@ -265,21 +262,19 @@ export const onboardingTranslations = {
 		community: {
 			title: "コミュニティに参加",
 			description: "他の MCPMate ユーザーと交流し、ヘルプや最新情報を入手しましょう。",
+			openExternalAria: "新しいタブで {{title}} を開く",
+			discord: {
+				title: "Discord",
+				description: "コミュニティとチャットし、サポートや製品アップデートを入手。",
+			},
 			github: {
 				title: "GitHub Issues",
 				description: "バグ報告、機能リクエスト、公開 issue の閲覧。",
 			},
-			docs: {
-				title: "ドキュメント",
-				description: "ガイド、チュートリアル、API リファレンス。",
-			},
-			chrome: {
-				title: "Chrome 拡張",
-				description: "Web ページから MCP サーバー設定を検出してインポート。",
-			},
-			edge: {
-				title: "Edge 拡張",
-				description: "Edge ブラウザから MCP サーバー設定を直接インポート。",
+			discussions: {
+				title: "GitHub Discussions",
+				description:
+					"質問やアイデアを共有し、メンテナーやユーザーと MCPMate について話し合う。",
 			},
 		},
 		language: {

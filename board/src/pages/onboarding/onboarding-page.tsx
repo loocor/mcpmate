@@ -4,9 +4,8 @@ import {
   ArrowRight,
   Check,
   ExternalLink,
-  Github,
   Globe,
-  MessageCircle,
+  MessagesSquare,
   Loader2,
   Rocket,
   Server,
@@ -16,10 +15,11 @@ import {
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { SiBun, SiNodedotjs, SiUv } from "@icons-pack/react-simple-icons";
+import { SiBun, SiDiscord, SiGithub, SiNodedotjs, SiUv } from "@icons-pack/react-simple-icons";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
-import { clientsApi, runtimeApi, serversApi } from "../../lib/api";
+import { clientsApi, extractImportStats, runtimeApi, serversApi } from "../../lib/api";
+import { buildClientServersImportRequest } from "../../lib/server-import-payload";
 import {
   onboardingApi,
   type OnboardingServerCandidate,
@@ -37,35 +37,37 @@ import type { ClientInfo } from "../../lib/types";
 type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
 type RuntimeKind = "node" | "bun" | "uv";
 
-function buildServerImportPayload(
+function groupSelectedServerNamesByClient(
   candidates: OnboardingServerCandidate[],
   selectedKeys: Set<string>,
-) {
-  const mcpServers: Record<
-    string,
-    {
-      type: string;
-      command?: string | null;
-      args?: string[];
-      env?: Record<string, string>;
-      url?: string | null;
-    }
-  > = {};
+): Map<string, string[]> {
+  const selectedByClient = new Map<string, string[]>();
 
   for (const candidate of candidates) {
     if (!selectedKeys.has(candidate.key)) continue;
-    const kind = candidate.kind.toLowerCase() === "sse" ? "streamable_http" : candidate.kind;
-    mcpServers[candidate.name] = {
-      type: kind,
-      ...(kind === "streamable_http"
-        ? { url: candidate.url }
-        : { command: candidate.command }),
-      args: candidate.args,
-      env: candidate.env,
-    };
+    const clientIds = candidate.source_client_ids.filter(
+      (id): id is string => typeof id === "string" && id.trim().length > 0,
+    );
+    if (clientIds.length === 0) continue;
+
+    for (const sourceClientId of clientIds) {
+      const names = selectedByClient.get(sourceClientId) ?? [];
+      if (!names.includes(candidate.name)) {
+        names.push(candidate.name);
+      }
+      selectedByClient.set(sourceClientId, names);
+    }
   }
 
-  return mcpServers;
+  return selectedByClient;
+}
+
+/** Detected clients that expose a local config path (eligible for onboarding server scan). */
+function clientsWithScannableConfig(clients: ClientInfo[]): ClientInfo[] {
+  return clients.filter(
+    (client) =>
+      client.detected && Boolean(client.config_path?.trim()),
+  );
 }
 
 function RuntimeBrandIcon({ kind }: { kind: RuntimeKind }) {
@@ -99,6 +101,7 @@ const STEP_ORDER: WizardStep[] = [
   "servers",
   "community",
 ];
+const ONBOARDING_SELECTIONS_STORAGE_KEY = "mcpmate_onboarding_selections";
 
 const clientNameCollator = new Intl.Collator(undefined, {
   sensitivity: "base",
@@ -129,6 +132,11 @@ interface WizardState {
   step: WizardStep;
   selectedClients: Set<string>;
   selectedServers: Set<string>;
+}
+
+interface PersistedOnboardingSelections {
+  selectedClients: string[];
+  selectedServers: string[];
 }
 
 type WizardAction =
@@ -173,6 +181,44 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   }
 }
 
+function readPersistedSelections(): PersistedOnboardingSelections {
+  if (typeof window === "undefined") {
+    return { selectedClients: [], selectedServers: [] };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(ONBOARDING_SELECTIONS_STORAGE_KEY);
+    if (!raw) {
+      return { selectedClients: [], selectedServers: [] };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<PersistedOnboardingSelections>;
+    const selectedClients = Array.isArray(parsed.selectedClients)
+      ? parsed.selectedClients.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )
+      : [];
+    const selectedServers = Array.isArray(parsed.selectedServers)
+      ? parsed.selectedServers.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )
+      : [];
+
+    return { selectedClients, selectedServers };
+  } catch {
+    return { selectedClients: [], selectedServers: [] };
+  }
+}
+
+function buildInitialWizardState(step: WizardStep): WizardState {
+  const persisted = readPersistedSelections();
+  return {
+    step,
+    selectedClients: new Set(persisted.selectedClients),
+    selectedServers: new Set(persisted.selectedServers),
+  };
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function OnboardingPage() {
@@ -188,11 +234,11 @@ export function OnboardingPage() {
     validTabs: STEP_ORDER,
   });
 
-  const [state, dispatch] = useReducer(wizardReducer, {
-    step: activeStep as WizardStep,
-    selectedClients: new Set<string>(),
-    selectedServers: new Set<string>(),
-  });
+  const [state, dispatch] = useReducer(
+    wizardReducer,
+    activeStep as WizardStep,
+    buildInitialWizardState,
+  );
 
   const [completing, setCompleting] = useState(false);
   const [serverCandidates, setServerCandidates] = useState<
@@ -231,9 +277,25 @@ export function OnboardingPage() {
 
   useEffect(() => {
     if (statusResp?.data?.completed) {
+      window.localStorage.removeItem(ONBOARDING_SELECTIONS_STORAGE_KEY);
       navigate("/", { replace: true });
     }
   }, [statusResp, navigate]);
+
+  useEffect(() => {
+    if (statusResp?.data?.completed) {
+      return;
+    }
+
+    const payload: PersistedOnboardingSelections = {
+      selectedClients: Array.from(state.selectedClients),
+      selectedServers: Array.from(state.selectedServers),
+    };
+    window.localStorage.setItem(
+      ONBOARDING_SELECTIONS_STORAGE_KEY,
+      JSON.stringify(payload),
+    );
+  }, [state.selectedClients, state.selectedServers, statusResp?.data?.completed]);
 
   const handleComplete = useCallback(async () => {
     setCompleting(true);
@@ -242,8 +304,17 @@ export function OnboardingPage() {
         persistDetected: false,
         includeDetected: true,
       });
-      const selectedClientList = (clientsResp?.client ?? []).filter((client) =>
-        state.selectedClients.has(client.identifier),
+      const allListed = clientsResp?.client ?? [];
+      const selectedServerNamesByClient = groupSelectedServerNamesByClient(
+        serverCandidates,
+        state.selectedServers,
+      );
+      const clientsToRegister = new Set([
+        ...state.selectedClients,
+        ...selectedServerNamesByClient.keys(),
+      ]);
+      const selectedClientList = allListed.filter((client) =>
+        clientsToRegister.has(client.identifier),
       );
       await Promise.all(
         selectedClientList.map(async (client) => {
@@ -263,14 +334,31 @@ export function OnboardingPage() {
         }),
       );
 
-      const mcpServers = buildServerImportPayload(
-        serverCandidates,
-        state.selectedServers,
-      );
-      if (Object.keys(mcpServers).length > 0) {
-        const response = await serversApi.importServers({ mcpServers });
-        if (response.success === false) {
-          throw new Error(String(response.error ?? "Server import failed"));
+      if (selectedServerNamesByClient.size > 0) {
+        for (const [clientIdentifier, selectedServerNames] of selectedServerNamesByClient) {
+          const response = await serversApi.importServers(
+            buildClientServersImportRequest({
+              clientIdentifier,
+              selectedServerNames,
+            }),
+          );
+          if (
+            response &&
+            typeof response === "object" &&
+            "success" in response &&
+            (response as { success?: boolean }).success === false
+          ) {
+            const err = (response as { error?: unknown }).error;
+            throw new Error(err ? String(err) : "Server import failed");
+          }
+          const stats = extractImportStats(response);
+          if (stats.failedCount > 0) {
+            throw new Error(
+              stats.errorDetails
+                ? JSON.stringify(stats.errorDetails)
+                : "Server import failed",
+            );
+          }
         }
         await qc.invalidateQueries({ queryKey: ["servers"] });
       }
@@ -278,6 +366,7 @@ export function OnboardingPage() {
 
       await onboardingApi.complete(true);
       await qc.invalidateQueries({ queryKey: ["onboardingStatus"] });
+      window.localStorage.removeItem(ONBOARDING_SELECTIONS_STORAGE_KEY);
       navigate("/", { replace: true });
     } catch (error) {
       notifyError(
@@ -286,7 +375,14 @@ export function OnboardingPage() {
       );
       setCompleting(false);
     }
-  }, [navigate, qc, serverCandidates, state.selectedClients, state.selectedServers, t]);
+  }, [
+    navigate,
+    qc,
+    serverCandidates,
+    state.selectedClients,
+    state.selectedServers,
+    t,
+  ]);
 
   const handleStartWithLanguage = useCallback(
     (storeLanguage: "en" | "zh-cn" | "ja") => {
@@ -397,7 +493,6 @@ export function OnboardingPage() {
           )}
           {state.step === "servers" && (
             <ServersStep
-              selectedClients={state.selectedClients}
               selectedServers={state.selectedServers}
               onCandidatesChange={setServerCandidates}
               onToggle={(name) => dispatch({ type: "TOGGLE_SERVER", name })}
@@ -420,14 +515,6 @@ export function OnboardingPage() {
               </Button>
             )}
             <div className="flex items-center gap-2">
-              {!isLast && (
-                <Button
-                  variant="ghost"
-                  onClick={goToNextStep}
-                >
-                  {t("nav.skip", { defaultValue: "Skip" })}
-                </Button>
-              )}
               {isLast ? (
                 <Button onClick={handleComplete} disabled={completing}>
                   {completing
@@ -837,48 +924,47 @@ function ClientsStep({
 }
 
 function ServersStep({
-  selectedClients,
   selectedServers,
   onCandidatesChange,
   onToggle,
 }: {
-  selectedClients: Set<string>;
   selectedServers: Set<string>;
   onCandidatesChange: (candidates: OnboardingServerCandidate[]) => void;
   onToggle: (name: string) => void;
 }) {
   const { t } = useTranslation("onboarding");
-  const selectedClientIds = useMemo(
-    () => Array.from(selectedClients).sort(),
-    [selectedClients],
-  );
-  const selectedClientKey = selectedClientIds.join("|");
   const clientsQuery = useQuery({
     queryKey: ["clients", "onboarding"],
     queryFn: () => clientsApi.list(true, { persistDetected: false, includeDetected: true }),
     staleTime: 30_000,
   });
   const allClients: ClientInfo[] = clientsQuery.data?.client ?? [];
-  const selectedClientList = useMemo(
-    () => allClients.filter((client) => selectedClients.has(client.identifier)),
-    [allClients, selectedClients],
+  const scannableClients = useMemo(
+    () => clientsWithScannableConfig(allClients),
+    [allClients],
+  );
+  const scannableClientKey = useMemo(
+    () =>
+      scannableClients
+        .map((c) => c.identifier)
+        .sort()
+        .join("|"),
+    [scannableClients],
   );
   const scanQuery = useQuery({
-    queryKey: ["onboardingServerScan", selectedClientKey],
-    enabled: selectedClientList.length > 0,
+    queryKey: ["onboardingServerScan", scannableClientKey],
+    enabled: scannableClients.length > 0,
     queryFn: async () => {
       const response = await onboardingApi.scanServers(
-        selectedClientList
-          .filter((client) => client.config_path)
-          .map((client) => ({
-            identifier: client.identifier,
-            display_name: client.display_name || client.identifier,
-            config_path: client.config_path,
-            config_file_parse:
-              client.config_file_parse_override ??
-              client.config_file_parse_effective ??
-              null,
-          })),
+        scannableClients.map((client) => ({
+          identifier: client.identifier,
+          display_name: client.display_name || client.identifier,
+          config_path: client.config_path!,
+          config_file_parse:
+            client.config_file_parse_override ??
+            client.config_file_parse_effective ??
+            null,
+        })),
       );
       if (!response.success || !response.data) {
         throw new Error(String(response.error?.message ?? "Server scan failed"));
@@ -890,10 +976,9 @@ function ServersStep({
 
   useEffect(() => {
     onCandidatesChange(scanQuery.data?.candidates ?? []);
-  }, [onCandidatesChange, scanQuery.data?.candidates, selectedClientKey]);
+  }, [onCandidatesChange, scanQuery.data?.candidates, scannableClientKey]);
 
   const candidates = scanQuery.data?.candidates ?? [];
-  const scanErrors = scanQuery.data?.errors ?? [];
 
   return (
     <div>
@@ -907,17 +992,17 @@ function ServersStep({
         <p className="mt-2 text-slate-600 dark:text-slate-400">
           {t("servers.description", {
             defaultValue:
-              "We scanned the MCP clients you selected. Choose the servers you'd like MCPMate to import.",
+              "We scanned every detected MCP client that has a local config file. Choose the servers you'd like MCPMate to import.",
           })}
         </p>
       </div>
 
-      {selectedClientIds.length === 0 ? (
+      {scannableClients.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-slate-500">
-            {t("servers.selectClientsFirst", {
+            {t("servers.noScannableClients", {
               defaultValue:
-                "Select at least one detected client first, or skip this step.",
+                "No detected MCP clients have a local configuration path to scan yet. You can skip this step or finish client setup first.",
             })}
           </CardContent>
         </Card>
@@ -931,36 +1016,18 @@ function ServersStep({
             <p>
               {t("servers.empty", {
                 defaultValue:
-                  "No importable MCP servers were found in the selected clients.",
+                  "No importable MCP servers were found across your detected clients.",
               })}
             </p>
-            {scanErrors.length > 0 && (
-              <div className="mx-auto max-w-lg rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-                {scanErrors.map((error) => (
-                  <div key={error.client_name}>
-                    {error.client_name}: {error.message}
-                  </div>
-                ))}
-              </div>
-            )}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {scanErrors.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-              {scanErrors.map((error) => (
-                <div key={error.client_name}>
-                  {error.client_name}: {error.message}
-                </div>
-              ))}
-            </div>
-          )}
           <div className="grid gap-3">
             {candidates.map((server) => {
               const isSelected = selectedServers.has(server.key);
               const detail =
-                server.kind === "streamable_http" ? server.url : server.command;
+                server.kind === "stdio" ? server.command : server.url;
               return (
                 <button
                   key={server.key}
@@ -1007,8 +1074,16 @@ function ServersStep({
 
 const COMMUNITY_LINKS = [
   {
+    key: "discord",
+    titleKey: "community.discord.title",
+    defaultTitle: "Discord",
+    descriptionKey: "community.discord.description",
+    defaultDescription:
+      "Chat with the community, get support, and follow product updates.",
+    href: "https://discord.com/channels/1369086293933559838",
+  },
+  {
     key: "github",
-    icon: Github,
     titleKey: "community.github.title",
     defaultTitle: "GitHub Issues",
     descriptionKey: "community.github.description",
@@ -1016,33 +1091,37 @@ const COMMUNITY_LINKS = [
     href: "https://github.com/loocor/MCPMate/issues",
   },
   {
-    key: "docs",
-    icon: MessageCircle,
-    titleKey: "community.docs.title",
-    defaultTitle: "Documentation",
-    descriptionKey: "community.docs.description",
-    defaultDescription: "Guides, tutorials, and API references.",
-    href: "https://mcp.umate.ai/docs",
-  },
-  {
-    key: "chrome",
-    icon: ExternalLink,
-    titleKey: "community.chrome.title",
-    defaultTitle: "Chrome Extension",
-    descriptionKey: "community.chrome.description",
-    defaultDescription: "Detect and import MCP server snippets from web pages.",
-    href: "https://chromewebstore.google.com/detail/mcpmate-server-import/jngogcgclencgillbmeeimkcjjnobidf",
-  },
-  {
-    key: "edge",
-    icon: ExternalLink,
-    titleKey: "community.edge.title",
-    defaultTitle: "Edge Extension",
-    descriptionKey: "community.edge.description",
-    defaultDescription: "Import MCP server configurations directly from Edge.",
-    href: "https://microsoftedge.microsoft.com/addons/detail/mcpmate-server-import/nbpdfanhajcjghegoocfmjkpaklidckn",
+    key: "discussions",
+    titleKey: "community.discussions.title",
+    defaultTitle: "GitHub Discussions",
+    descriptionKey: "community.discussions.description",
+    defaultDescription:
+      "Ask questions, share ideas, and discuss MCPMate with maintainers and users.",
+    href: "https://github.com/loocor/MCPMate/discussions",
   },
 ] as const;
+
+function CommunityLinkBrandIcon({ linkKey }: { linkKey: (typeof COMMUNITY_LINKS)[number]["key"] }) {
+  if (linkKey === "discord") {
+    return (
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 dark:bg-indigo-950/40">
+        <SiDiscord className="h-7 w-7 text-[#5865F2]" />
+      </div>
+    );
+  }
+  if (linkKey === "github") {
+    return (
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
+        <SiGithub className="h-7 w-7 text-slate-800 dark:text-slate-200" />
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-50 dark:bg-violet-950/40">
+      <MessagesSquare className="h-7 w-7 text-violet-600 dark:text-violet-400" />
+    </div>
+  );
+}
 
 function CommunityStep() {
   const { t } = useTranslation("onboarding");
@@ -1063,28 +1142,38 @@ function CommunityStep() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="mb-6 grid gap-4 md:grid-cols-3">
         {COMMUNITY_LINKS.map((link) => {
-          const Icon = link.icon;
+          const cardTitle = t(link.titleKey, { defaultValue: link.defaultTitle });
           return (
             <a
               key={link.key}
               href={link.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex min-h-[120px] items-start gap-3 rounded-lg border-2 border-slate-200 bg-white p-4 text-left transition-all hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+              aria-label={t("community.openExternalAria", {
+                defaultValue: "Open {{title}} in a new tab",
+                title: cardTitle,
+              })}
+              className="group flex min-h-[190px] flex-col rounded-lg border-2 border-slate-200 bg-white p-4 text-left transition-all hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
             >
-              <Icon className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
-              <div>
-                <div className="font-medium">
-                  {t(link.titleKey, { defaultValue: link.defaultTitle })}
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <CommunityLinkBrandIcon linkKey={link.key} />
+                  <span className="text-base font-semibold">{cardTitle}</span>
                 </div>
-                <div className="mt-0.5 text-sm text-slate-500">
-                  {t(link.descriptionKey, {
-                    defaultValue: link.defaultDescription,
-                  })}
-                </div>
+                <span
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors group-hover:bg-slate-100 group-hover:text-slate-600 dark:group-hover:bg-slate-800 dark:text-slate-500 dark:group-hover:text-slate-300"
+                  aria-hidden={true}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </span>
               </div>
+              <p className="flex-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                {t(link.descriptionKey, {
+                  defaultValue: link.defaultDescription,
+                })}
+              </p>
             </a>
           );
         })}
