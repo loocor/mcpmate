@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "../../../components/ui/button";
@@ -80,21 +81,29 @@ function buildSkippedServerPreview(
   };
 }
 
-function buildImportPreviewSnapshot(
-  entries: ServerEntryData[],
-): ImportPreviewSnapshot {
+interface ImportPreviewModel {
+  importableNames: string[];
+  snapshot: ImportPreviewSnapshot;
+}
+
+function buildImportPreviewModel(entries: ServerEntryData[]): ImportPreviewModel {
   const skippedServers = entries
     .filter(isSkippedEntry)
     .map(buildSkippedServerPreview);
-  const importableCount = entries.filter(isImportableEntry).length;
+  const importableNames = entries
+    .filter(isImportableEntry)
+    .map((entry) => entry.name);
 
   return {
-    entries: entries.map(buildPreviewEntry),
-    summary: {
-      failedCount: 0,
-      importableCount,
-      skippedCount: skippedServers.length,
-      skippedServers,
+    importableNames,
+    snapshot: {
+      entries: entries.map(buildPreviewEntry),
+      summary: {
+        failedCount: 0,
+        importableCount: importableNames.length,
+        skippedCount: skippedServers.length,
+        skippedServers,
+      },
     },
   };
 }
@@ -103,7 +112,7 @@ interface ClientImportReviewDrawerProps {
   entries: ServerEntryData[];
   isImporting: boolean;
   isLoading: boolean;
-  onImport: () => void;
+  onImport: (selectedServerNames: string[]) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
 }
@@ -117,8 +126,31 @@ export function ClientImportReviewDrawer({
   open,
 }: ClientImportReviewDrawerProps): JSX.Element {
   const { t } = useTranslation("clients");
-  const importPreviewSnapshot = buildImportPreviewSnapshot(entries);
+  const { importableNames, snapshot: importPreviewSnapshot } = useMemo(
+    () => buildImportPreviewModel(entries),
+    [entries],
+  );
   const { importableCount, skippedCount } = importPreviewSnapshot.summary;
+  const importableKey = importableNames.join("\u0000");
+  const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
+  const selectedImportableCount = selectedNames.size;
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedNames(new Set(importableNames));
+  }, [importableKey, importableNames, open]);
+
+  const toggleSelectedName = (name: string) => {
+    setSelectedNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  };
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -149,19 +181,40 @@ export function ClientImportReviewDrawer({
                     })}
                   </div>
                   <ul className="divide-y max-h-[30vh] overflow-auto">
-                    {entries.map((entry) => (
-                      <li
-                        key={entry.name}
-                        className="px-3 py-2 flex items-center justify-between text-xs"
-                      >
-                        <div className="font-mono">{entry.name}</div>
-                        <ServerEntryTransportBadge entry={entry} />
-                      </li>
-                    ))}
+                    {entries.map((entry) => {
+                      const importable = isImportableEntry(entry);
+                      const selected = selectedNames.has(entry.name);
+                      return (
+                        <li
+                          key={entry.name}
+                          className="px-3 py-2 flex items-center justify-between gap-3 text-xs"
+                        >
+                          <label className="flex min-w-0 flex-1 items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              disabled={!importable}
+                              onChange={() => toggleSelectedName(entry.name)}
+                              className="h-4 w-4 shrink-0"
+                            />
+                            <span className="truncate font-mono">
+                              {entry.name}
+                            </span>
+                          </label>
+                          <ServerEntryTransportBadge entry={entry} />
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
               <div className="grid grid-cols-[120px_1fr] gap-y-2 gap-x-4 text-sm leading-6">
+                <div className="text-slate-500">
+                  {t("detail.importReview.fields.selected", {
+                    defaultValue: "Selected",
+                  })}
+                </div>
+                <div>{selectedImportableCount}</div>
                 <div className="text-slate-500">
                   {t("detail.importReview.fields.importable", {
                     defaultValue: "Importable",
@@ -196,7 +249,10 @@ export function ClientImportReviewDrawer({
               })}
             </Button>
             {importableCount > 0 ? (
-              <Button onClick={onImport} disabled={isImporting}>
+              <Button
+                onClick={() => onImport(Array.from(selectedNames))}
+                disabled={isImporting || selectedImportableCount === 0}
+              >
                 {t("detail.importReview.buttons.apply", {
                   defaultValue: "Apply Import",
                 })}

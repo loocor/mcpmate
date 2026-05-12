@@ -146,8 +146,8 @@ const buildMetaFromServer = (
 const inferKind = (serverType?: string | null): ServerInstallDraft["kind"] => {
 	const kind = serverType?.toLowerCase() ?? "";
 	if (kind.includes("streamable")) return "streamable_http";
+	if (kind === "sse") return "sse";
 	if (kind.includes("http")) return "streamable_http";
-	if (kind.includes("sse")) return "streamable_http";
 	return "stdio";
 };
 
@@ -401,7 +401,7 @@ export function ServerEditDrawer({
 				<p className="text-sm text-muted-foreground">
 					{t("manual.fields.unifyEligibility.howToEnableDesc", {
 						defaultValue:
-						"First mark the server as eligible here. Then open a Client in Unify mode and choose Server Level (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
+							"First mark the server as eligible here. Then open a Client in Unify mode and choose Server Level (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
 					})}
 				</p>
 			</div>

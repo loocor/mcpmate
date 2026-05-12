@@ -699,49 +699,6 @@ export function DashboardPage() {
 						</Card>
 					</Link>
 
-					<Link to="/servers" className="block h-full">
-						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
-							<CardHeader className="flex flex-row items-center justify-between space-y-0">
-								<CardTitle className="text-sm font-medium">
-									{t("dashboard:cards.servers", { defaultValue: "Servers" })}
-								</CardTitle>
-								<Server className="h-4 w-4 text-slate-500" />
-							</CardHeader>
-							<CardContent>
-								<div className="space-y-1.5">
-									<div className="flex items-center justify-between">
-										<CardDescription>
-											{t("dashboard:labels.totalServers", {
-												defaultValue: "Total Servers",
-											})}
-										</CardDescription>
-										{isLoadingServers ? (
-											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-										) : (
-											<span className="text-sm font-medium">
-												{servers?.servers?.length || 0}
-											</span>
-										)}
-									</div>
-									<div className="flex items-center justify-between">
-										<CardDescription>
-											{t("dashboard:labels.connected", {
-												defaultValue: "Connected",
-											})}
-										</CardDescription>
-										{isLoadingServers ? (
-											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-										) : (
-											<span className="text-sm font-medium">
-												{connectedServers}
-											</span>
-										)}
-									</div>
-								</div>
-							</CardContent>
-						</Card>
-					</Link>
-
 					<Link to="/clients" className="block h-full">
 						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
 							<CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -777,6 +734,49 @@ export function DashboardPage() {
 										) : (
 											<span className="text-sm font-medium">
 												{approvedClients}
+											</span>
+										)}
+									</div>
+								</div>
+							</CardContent>
+						</Card>
+					</Link>
+
+					<Link to="/servers" className="block h-full">
+						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
+							<CardHeader className="flex flex-row items-center justify-between space-y-0">
+								<CardTitle className="text-sm font-medium">
+									{t("dashboard:cards.servers", { defaultValue: "Servers" })}
+								</CardTitle>
+								<Server className="h-4 w-4 text-slate-500" />
+							</CardHeader>
+							<CardContent>
+								<div className="space-y-1.5">
+									<div className="flex items-center justify-between">
+										<CardDescription>
+											{t("dashboard:labels.totalServers", {
+												defaultValue: "Total Servers",
+											})}
+										</CardDescription>
+										{isLoadingServers ? (
+											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+										) : (
+											<span className="text-sm font-medium">
+												{servers?.servers?.length || 0}
+											</span>
+										)}
+									</div>
+									<div className="flex items-center justify-between">
+										<CardDescription>
+											{t("dashboard:labels.connected", {
+												defaultValue: "Connected",
+											})}
+										</CardDescription>
+										{isLoadingServers ? (
+											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+										) : (
+											<span className="text-sm font-medium">
+												{connectedServers}
 											</span>
 										)}
 									</div>
