@@ -55,30 +55,30 @@ export function Sidebar() {
   return (
     <div
       className={cn(
-        "fixed inset-y-0 left-0 z-40 flex flex-col transition-all duration-300 ease-in-out",
+        "fixed inset-y-0 left-0 z-40 flex flex-col overflow-x-hidden transition-[width] duration-300 ease-in-out",
         "border-r border-border bg-card",
         sidebarOpen ? "w-64" : "w-16",
       )}
     >
-      <div className="flex h-16 items-center justify-between px-4">
+      <div className="flex h-16 shrink-0 items-center px-4">
         <div
           className={cn(
-            "flex items-center gap-2 w-full",
-            sidebarOpen ? "justify-between" : "justify-center",
+            "flex min-w-0 items-center gap-2",
+            sidebarOpen ? "w-full" : "w-full justify-center",
           )}
         >
           {sidebarOpen ? (
             <>
-              {/* Brand: show logo + title when expanded */}
-				<img
-					src="/logo.svg"
+              {/* Brand: show logo + title when expanded; overflow-x-hidden on sidebar clips during width transition */}
+              <img
+                src="/logo.svg"
                 alt="MCPMate"
                 className={cn(
-                  "h-6 w-6 object-contain transition",
+                  "h-6 w-6 shrink-0 object-contain transition-colors",
                   "dark:invert dark:brightness-0",
                 )}
               />
-              <span className="font-bold text-xl text-foreground">
+              <span className="shrink-0 whitespace-nowrap font-bold text-xl text-foreground">
                 {t("layout.brand", { defaultValue: "MCPMate" })}{" "}
                 <sup className="text-[9px] text-muted-foreground">
                   {t("layout.alpha", { defaultValue: "Beta" })}
@@ -105,8 +105,8 @@ export function Sidebar() {
                 defaultValue: "Expand sidebar",
               })}
             >
-				<img
-					src="/logo.svg"
+              <img
+                src="/logo.svg"
                 alt="MCPMate"
                 className="h-6 w-6 object-contain dark:invert dark:brightness-0"
               />
