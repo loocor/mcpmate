@@ -21,6 +21,36 @@ pub struct SystemStatusResp {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Backend readiness response")]
+pub struct SystemReadinessResp {
+    #[schemars(description = "Readiness event type")]
+    pub r#type: String,
+    #[schemars(description = "Readiness status: ok or waiting")]
+    pub status: String,
+    #[schemars(description = "Optional reason when readiness is waiting")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl SystemReadinessResp {
+    pub fn ready() -> Self {
+        Self {
+            r#type: "ready".to_string(),
+            status: "ok".to_string(),
+            reason: None,
+        }
+    }
+
+    pub fn waiting(reason: impl Into<String>) -> Self {
+        Self {
+            r#type: "ready".to_string(),
+            status: "waiting".to_string(),
+            reason: Some(reason.into()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System metrics response")]
 pub struct SystemMetricsResp {
     #[schemars(description = "System uptime in seconds")]

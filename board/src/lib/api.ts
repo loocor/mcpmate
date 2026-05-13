@@ -1578,6 +1578,12 @@ export const toolsApi = {
 
 // System Management API
 export const systemApi = {
+	getReadiness: () =>
+		fetchApi<{
+			type?: string;
+			status?: string;
+			reason?: string;
+		}>("/api/system/readiness"),
 	getStatus: () => fetchApi<SystemStatus>("/api/system/status"),
 	getMetrics: () => fetchApi<SystemMetrics>("/api/system/metrics"),
 	getSettings: async (): Promise<{

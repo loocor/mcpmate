@@ -30,8 +30,8 @@ import { SettingsPage } from "./pages/settings/settings-page";
 import { OnboardingPage } from "./pages/onboarding/onboarding-page";
 import {
 	notificationsService,
-	resolveWebSocketUrl,
 	setApiBaseUrl,
+	systemApi,
 } from "./lib/api";
 import { isTauriEnvironmentSync } from "./lib/platform";
 
@@ -180,65 +180,40 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 		}
 
 		let cancelled = false;
-		let ready = false;
-		let socket: WebSocket | null = null;
 		let retryTimer: number | undefined;
 
-		const scheduleRetry = () => {
-			if (cancelled || ready) {
+		function scheduleRetry(): void {
+			if (cancelled) {
 				return;
 			}
 			retryTimer = window.setTimeout(() => setAttempt((value) => value + 1), 1_000);
-		};
-
-		try {
-			setMessage("Waiting for MCPMate backend");
-			socket = new WebSocket(`${resolveWebSocketUrl()}/readiness`);
-		} catch {
-			scheduleRetry();
-			return () => {
-				cancelled = true;
-				if (retryTimer !== undefined) {
-					window.clearTimeout(retryTimer);
-				}
-			};
 		}
 
-		socket.onopen = () => {
-			setMessage("Confirming backend readiness...");
-		};
-		socket.onmessage = (event) => {
-			const raw = typeof event.data === "string" ? event.data : "";
+		async function checkReadiness(): Promise<void> {
+			setMessage("Waiting for MCPMate backend");
 			try {
-				const payload = JSON.parse(raw) as { type?: string; status?: string };
+				setMessage("Confirming backend readiness...");
+				const payload = await systemApi.getReadiness();
+				if (cancelled) {
+					return;
+				}
 				if (payload.type === "ready" && payload.status === "ok") {
-					ready = true;
 					setBackendReady(true);
-					socket?.close();
+					return;
 				}
 			} catch {
-				if (raw === "ready") {
-					ready = true;
-					setBackendReady(true);
-					socket?.close();
-				}
+				// Keep retrying until the backend API is reachable.
 			}
-		};
-		socket.onclose = () => {
-			if (!ready) {
-				scheduleRetry();
-			}
-		};
-		socket.onerror = () => {
-			setMessage("Waiting for MCPMate backend");
-		};
+			scheduleRetry();
+		}
+
+		void checkReadiness();
 
 		return () => {
 			cancelled = true;
 			if (retryTimer !== undefined) {
 				window.clearTimeout(retryTimer);
 			}
-			socket?.close();
 		};
 	}, [desktopSourceReady, backendReady, attempt]);
 

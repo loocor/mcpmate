@@ -1,7 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { fileURLToPath } from "node:url";
 
 const baseURL = "http://127.0.0.1:4173";
-const rootDir = new URL(".", import.meta.url).pathname;
+const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",

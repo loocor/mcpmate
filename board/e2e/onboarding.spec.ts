@@ -1,5 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
+declare global {
+  interface Window {
+    __mcpmateTestWebSocketUrls: string[];
+  }
+}
+
 type OnboardingMockOptions = {
   completed?: boolean;
   clients?: Array<{
@@ -171,6 +177,9 @@ async function installOnboardingApiMocks(
       case "/api/system/status":
         return ok({ status: "running", uptime: 120, version: "test" });
 
+      case "/api/system/readiness":
+        return ok({ type: "ready", status: "ok" });
+
       case "/api/system/metrics":
         return ok({
           timestamp: new Date().toISOString(),
@@ -211,6 +220,41 @@ test("completed user does not get redirected to onboarding", async ({ page }) =>
   await page.goto("/");
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("System Status")).toBeVisible();
+});
+
+test("backend readiness gate uses HTTP without opening websocket", async ({ page }) => {
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket;
+    window.__mcpmateTestWebSocketUrls = [];
+
+    class RecordingWebSocket extends NativeWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        const urlText = String(url);
+        window.__mcpmateTestWebSocketUrls.push(urlText);
+        if (urlText.includes("/ws/readiness")) {
+          throw new Error(`Unexpected readiness websocket connection to ${urlText}`);
+        }
+        super(url, protocols);
+      }
+    }
+
+    // @ts-expect-error test override
+    window.WebSocket = RecordingWebSocket;
+  });
+  await installOnboardingApiMocks(page, { completed: true });
+
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText("System Status")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.__mcpmateTestWebSocketUrls.some((url) =>
+          url.includes("/ws/readiness"),
+        ),
+      ),
+    )
+    .toBe(false);
 });
 
 test("onboarding wizard completes and stays out after completion", async ({ page }) => {
