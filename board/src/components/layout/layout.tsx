@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { MessagesSquare } from "lucide-react";
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { SiDiscord } from "@icons-pack/react-simple-icons";
 import { MCPMATE_DISCORD_COMMUNITY_HREF } from "../../lib/mcpmate-community-urls";
 import { onboardingApi } from "../../lib/onboarding-api";
 import {
@@ -289,10 +289,10 @@ export function Layout() {
 									defaultValue: "Open MCPMate Discord community in a new tab",
 								})}
 							>
-								<SiDiscord className="h-3.5 w-3.5 shrink-0 text-[#5865F2]" aria-hidden />
-								<span>{t("layout.discord", { defaultValue: "Discord" })}</span>
-							</a>
-						</div>
+									<MessagesSquare className="h-3.5 w-3.5 shrink-0 text-[#5865F2]" aria-hidden />
+									<span>{t("layout.discord", { defaultValue: "Discord" })}</span>
+								</a>
+							</div>
 					</footer>
 				</div>
 			</main>
