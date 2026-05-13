@@ -261,9 +261,7 @@ pub async fn plan_import_from_client_inspection(
         .inspection
         .entries
         .into_iter()
-        .filter(|entry| {
-            selected.is_empty() || selected.contains(&entry.name.trim().to_ascii_lowercase())
-        })
+        .filter(|entry| selected.is_empty() || selected.contains(&entry.name.trim().to_ascii_lowercase()))
         .collect();
 
     Ok(build_import_plan_from_entries(entries))

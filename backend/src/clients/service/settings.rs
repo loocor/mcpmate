@@ -3,9 +3,10 @@ use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
     FormatRule, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
-    UnifyDirectExposureIntent, UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic, UnifyDirectResourceSurface,
-    UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface, UnifyDirectTemplateSurfaceDiagnostic,
-    UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic, canonical_config_transport_key,
+    UnifyDirectExposureIntent, UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic,
+    UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface,
+    UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic,
+    canonical_config_transport_key,
 };
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::common::profile::{ProfileRole, ProfileType};

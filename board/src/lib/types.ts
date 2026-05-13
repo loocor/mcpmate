@@ -625,9 +625,7 @@ export function getServerTypeErrorMessage(invalidKind: string): string {
 
 Correct format requirements:
 - Use "stdio" (not "Stdio" or other variants)
-- Use "sse" or "streamable_http" (lowercase; not "http", "streamable-http", or "streamableHttp")
-
-Legacy "sse" inputs are normalized only during import.`;
+- Use "sse" or "streamable_http" (lowercase; not "http", "streamable-http", or "streamableHttp")`;
 }
 
 // Config Suits Types

@@ -24,6 +24,10 @@ import { useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { serversApi } from "../../lib/api";
+import {
+	resolveAutoAddTargetProfileId,
+	useAutoAddTargetProfile,
+} from "../../lib/default-profile";
 import { startOAuthAccessFlow } from "../../lib/oauth-callback-access";
 import {
 	type InstallSource,
@@ -104,6 +108,11 @@ export const ServerInstallWizard = forwardRef(
 	) => {
 		usePageTranslations("servers");
 		const { t } = useTranslation("servers");
+		// Live snapshot of the "Auto Add To Default Profile" setting and the
+		// real default-anchor profile name (when enabled). Used to render
+		// accurate result-step labels — the imperative resolve in
+		// `handleImport` remains the source of truth for the API call.
+		const autoAddTargetProfile = useAutoAddTargetProfile();
 		// Normalize modes: "create"->"new", "market"->"import"
 		const normalizedMode =
 			mode === "create" ? "new" : mode === "market" ? "import" : mode;
@@ -435,7 +444,7 @@ export const ServerInstallWizard = forwardRef(
 			}
 			pendingImportServerRef.current = null;
 			setPendingImportServerId(null);
-			void serversApi.deleteServer(pendingId).catch(() => {});
+			void serversApi.deleteServer(pendingId).catch(() => { });
 		}, []);
 
 		const buildJsonPayloadFromValues = useCallback(
@@ -734,9 +743,9 @@ export const ServerInstallWizard = forwardRef(
 						.filter((x): x is { key: string; value: string } => Boolean(x));
 					return pairs.length
 						? pairs.reduce<Record<string, string>>((acc, e) => {
-								acc[e.key] = e.value;
-								return acc;
-							}, {})
+							acc[e.key] = e.value;
+							return acc;
+						}, {})
 						: undefined;
 				};
 				const urlParams = kvToRecord((values as any).urlParams);
@@ -918,6 +927,20 @@ export const ServerInstallWizard = forwardRef(
 
 		// Handle import action
 		const handleImport = useCallback(async () => {
+			// Resolve the auto-add target profile once up front so both the
+			// `pendingImport` finalization (PUT /servers/:id) and the install
+			// pipeline branch (POST /servers/import) link to the same profile
+			// atomically. Returns null when the setting is off, keeping the
+			// no-op behavior intact.
+			const autoAddTargetProfileId = await resolveAutoAddTargetProfileId({
+				autoAddEnabled:
+					useAppStore.getState().dashboardSettings
+						.autoAddServerToDefaultProfile,
+			});
+			const explicitTargetProfileId = installPipeline.state.targetProfileId;
+			const effectiveTargetProfileId =
+				explicitTargetProfileId ?? autoAddTargetProfileId;
+
 			if (pendingImportServerRef.current && !isEditMode) {
 				const formValues = getValues();
 				const draft = toDraftFromValues(formValues);
@@ -927,14 +950,19 @@ export const ServerInstallWizard = forwardRef(
 					draftToServerConfig(draft, {
 						enabled: true,
 						pending_import: false,
-						profile_ids: installPipeline.state.targetProfileId
-							? [installPipeline.state.targetProfileId]
+						profile_ids: effectiveTargetProfileId
+							? [effectiveTargetProfileId]
 							: undefined,
 					}),
 				);
 				pendingImportServerRef.current = null;
 				setPendingImportServerId(null);
 				await queryClient.invalidateQueries({ queryKey: ["servers"] });
+				if (effectiveTargetProfileId) {
+					await queryClient.invalidateQueries({
+						queryKey: ["configSuits"],
+					});
+				}
 				installPipeline.setImportResult({
 					success: true,
 					summary: {
@@ -962,10 +990,17 @@ export const ServerInstallWizard = forwardRef(
 			}
 
 			// Use install pipeline for import; close drawer on success
-			const didSucceed = await installPipeline.confirmImport();
+			const didSucceed = await installPipeline.confirmImport(
+				effectiveTargetProfileId,
+			);
 			if (didSucceed) {
 				pendingImportServerRef.current = null;
 				setPendingImportServerId(null);
+				if (effectiveTargetProfileId) {
+					await queryClient.invalidateQueries({
+						queryKey: ["configSuits"],
+					});
+				}
 				handleOverlayClose();
 			}
 		}, [
@@ -1243,28 +1278,25 @@ export const ServerInstallWizard = forwardRef(
 										e.preventDefault();
 										await ingestClipboardPayload(
 											e.clipboardData?.getData("text/plain") ??
-												e.clipboardData?.getData("text") ??
-												null,
+											e.clipboardData?.getData("text") ??
+											null,
 										);
 									}}
 									className="w-full"
 								>
 									<div
-										className={`w-full ${
-											isDropZoneCollapsed ? "h-10" : "h-[18vh]"
-										} flex items-center justify-center gap-1 rounded-lg border border-dashed transition-all duration-300 ${
-											isDropZoneCollapsed
+										className={`w-full ${isDropZoneCollapsed ? "h-10" : "h-[18vh]"
+											} flex items-center justify-center gap-1 rounded-lg border border-dashed transition-all duration-300 ${isDropZoneCollapsed
 												? "flex-row px-4 py-0 border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
 												: "flex-col py-2 border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
-										} ${
-											ingestError
+											} ${ingestError
 												? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
 												: isIngestSuccess
 													? "border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-900/20"
 													: isDragOver
 														? "border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/20"
 														: ""
-										}`}
+											}`}
 									>
 										{isIngesting ? (
 											<Loader2
@@ -1272,13 +1304,11 @@ export const ServerInstallWizard = forwardRef(
 											/>
 										) : (
 											<Target
-												className={`transition-all duration-300 ${
-													isDropZoneCollapsed ? "h-4 w-4" : "h-12 w-12"
-												} ${
-													isDragOver || isIngesting
+												className={`transition-all duration-300 ${isDropZoneCollapsed ? "h-4 w-4" : "h-12 w-12"
+													} ${isDragOver || isIngesting
 														? "animate-pulse"
 														: "scale-100"
-												} ${isDragOver ? "text-blue-500" : "text-slate-500"}`}
+													} ${isDragOver ? "text-blue-500" : "text-slate-500"}`}
 												style={{
 													animation:
 														ingestError || isDragOver || isIngesting
@@ -1288,15 +1318,14 @@ export const ServerInstallWizard = forwardRef(
 											/>
 										)}
 										<p
-											className={`text-sm ${
-												ingestError
-													? "text-red-600 dark:text-red-400"
-													: isIngestSuccess
-														? "text-green-600 dark:text-green-400"
-														: isDragOver
-															? "text-blue-600 dark:text-blue-400"
-															: "text-slate-600 dark:text-slate-300"
-											}`}
+											className={`text-sm ${ingestError
+												? "text-red-600 dark:text-red-400"
+												: isIngestSuccess
+													? "text-green-600 dark:text-green-400"
+													: isDragOver
+														? "text-blue-600 dark:text-blue-400"
+														: "text-slate-600 dark:text-slate-300"
+												}`}
 										>
 											{ingestError || ingestMessage}
 										</p>
@@ -1373,31 +1402,31 @@ export const ServerInstallWizard = forwardRef(
 															<Input
 																id={nameId}
 																{...register("name")}
-										placeholder={t(
-											"manual.fields.name.placeholder",
-											{
-												defaultValue: "e.g., local-mcp",
-											},
-										)}
-										readOnly={isEditMode || Boolean(pendingImportServerId)}
-										aria-readonly={isEditMode || Boolean(pendingImportServerId)}
-										title={
-											isEditMode || Boolean(pendingImportServerId)
-												? pendingImportServerId
-													? t("manual.fields.name.readOnlyTitleAfterOAuth", {
-														defaultValue:
-															"Editing server names is disabled after OAuth setup starts",
-													})
-													: t("manual.fields.name.readOnlyTitle", {
-														defaultValue: "Editing server names is disabled",
-													})
-												: undefined
-										}
-										className={
-											isEditMode || Boolean(pendingImportServerId)
-												? "cursor-not-allowed bg-muted text-muted-foreground"
-												: undefined
-										}
+																placeholder={t(
+																	"manual.fields.name.placeholder",
+																	{
+																		defaultValue: "e.g., local-mcp",
+																	},
+																)}
+																readOnly={isEditMode || Boolean(pendingImportServerId)}
+																aria-readonly={isEditMode || Boolean(pendingImportServerId)}
+																title={
+																	isEditMode || Boolean(pendingImportServerId)
+																		? pendingImportServerId
+																			? t("manual.fields.name.readOnlyTitleAfterOAuth", {
+																				defaultValue:
+																					"Editing server names is disabled after OAuth setup starts",
+																			})
+																			: t("manual.fields.name.readOnlyTitle", {
+																				defaultValue: "Editing server names is disabled",
+																			})
+																		: undefined
+																}
+																className={
+																	isEditMode || Boolean(pendingImportServerId)
+																		? "cursor-not-allowed bg-muted text-muted-foreground"
+																		: undefined
+																}
 															/>
 															{errors.name && (
 																<p className="text-xs text-red-500">
@@ -1413,15 +1442,15 @@ export const ServerInstallWizard = forwardRef(
 															})}
 														</Label>
 														<div className="flex-1">
-										<Segment
-											options={SERVER_TYPE_OPTIONS}
-											value={kind}
-											onValueChange={(value) => {
-												if (pendingImportServerId) {
-													return;
-												}
-												const newKind =
-													value as ManualServerFormValues["kind"];
+															<Segment
+																options={SERVER_TYPE_OPTIONS}
+																value={kind}
+																onValueChange={(value) => {
+																	if (pendingImportServerId) {
+																		return;
+																	}
+																	const newKind =
+																		value as ManualServerFormValues["kind"];
 																	if (newKind === kind) {
 																		return;
 																	}
@@ -1454,72 +1483,72 @@ export const ServerInstallWizard = forwardRef(
 													viewMode={viewMode}
 												/>
 
-										<ServerAuthSection
-											serverId={pendingImportServerId ?? undefined}
-											isStdio={isStdio}
-											viewMode={viewMode}
-											isNewServer={!isEditMode}
-											suggestedAuthMode={suggestedAuthMode}
-											onAuthModeChange={setSelectedAuthMode}
-											onOAuthConnected={(serverId) => {
-												if (isEditMode || pendingImportServerRef.current !== serverId) {
-													return;
-												}
-												void handlePreview({
-													skipValidation: true,
-													shouldFocus: false,
-												});
-											}}
-											onInitiateOAuth={async (config) => {
-												const formValues = getValues();
-												const draft = toDraftFromValues(formValues);
-												if (!draft.name) {
-													throw new Error(
-														t("manual.errors.nameRequired", {
-															defaultValue: "Name is required",
-														}),
-													);
-												}
-
-												let targetServerId = pendingImportServerRef.current;
-												if (!isEditMode) {
-													if (targetServerId) {
-														await serversApi.updateServer(
-															targetServerId,
-															draftToServerConfig(draft, {
-																pending_import: true,
-																enabled: false,
-															}),
-														);
-													} else {
-														const created = await serversApi.createServer(
-															draftToServerConfig(draft, {
-																pending_import: true,
-																enabled: false,
-															}),
-														);
-														targetServerId = created.data?.id ?? null;
-														if (!targetServerId) {
+												<ServerAuthSection
+													serverId={pendingImportServerId ?? undefined}
+													isStdio={isStdio}
+													viewMode={viewMode}
+													isNewServer={!isEditMode}
+													suggestedAuthMode={suggestedAuthMode}
+													onAuthModeChange={setSelectedAuthMode}
+													onOAuthConnected={(serverId) => {
+														if (isEditMode || pendingImportServerRef.current !== serverId) {
+															return;
+														}
+														void handlePreview({
+															skipValidation: true,
+															shouldFocus: false,
+														});
+													}}
+													onInitiateOAuth={async (config) => {
+														const formValues = getValues();
+														const draft = toDraftFromValues(formValues);
+														if (!draft.name) {
 															throw new Error(
-																t("manual.errors.oauthDraftServerFailed", {
-																	defaultValue: "Failed to create OAuth draft server",
+																t("manual.errors.nameRequired", {
+																	defaultValue: "Name is required",
 																}),
 															);
 														}
-														pendingImportServerRef.current = targetServerId;
-														setPendingImportServerId(targetServerId);
-													}
-												} else if (!targetServerId) {
-													throw new Error(
-														t("manual.errors.oauthServerIdRequired", {
-															defaultValue: "Server ID is required to initiate OAuth",
-														}),
-													);
-												}
 
-												await startOAuthAccessFlow(targetServerId, config);
-											}}
-										/>
+														let targetServerId = pendingImportServerRef.current;
+														if (!isEditMode) {
+															if (targetServerId) {
+																await serversApi.updateServer(
+																	targetServerId,
+																	draftToServerConfig(draft, {
+																		pending_import: true,
+																		enabled: false,
+																	}),
+																);
+															} else {
+																const created = await serversApi.createServer(
+																	draftToServerConfig(draft, {
+																		pending_import: true,
+																		enabled: false,
+																	}),
+																);
+																targetServerId = created.data?.id ?? null;
+																if (!targetServerId) {
+																	throw new Error(
+																		t("manual.errors.oauthDraftServerFailed", {
+																			defaultValue: "Failed to create OAuth draft server",
+																		}),
+																	);
+																}
+																pendingImportServerRef.current = targetServerId;
+																setPendingImportServerId(targetServerId);
+															}
+														} else if (!targetServerId) {
+															throw new Error(
+																t("manual.errors.oauthServerIdRequired", {
+																	defaultValue: "Server ID is required to initiate OAuth",
+																}),
+															);
+														}
+
+														await startOAuthAccessFlow(targetServerId, config);
+													}}
+												/>
 
 												<StdioAdvanced
 													viewMode={viewMode}
@@ -1536,9 +1565,9 @@ export const ServerInstallWizard = forwardRef(
 													onGhostClick={handleGhostClick}
 												/>
 
-											<UrlParams
-												viewMode={viewMode}
-												isStdio={isStdio}
+												<UrlParams
+													viewMode={viewMode}
+													isStdio={isStdio}
 													urlParamFields={paramFields.fields}
 													removeUrlParam={removeUrlParam}
 													appendUrlParam={appendUrlParam}
@@ -1546,18 +1575,18 @@ export const ServerInstallWizard = forwardRef(
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
-											/>
+												/>
 
-											{!isStdio && selectedAuthMode === "oauth" ? (
-												<p className="text-xs text-slate-500 dark:text-slate-400">
-													{t("manual.auth.transportHint", {
-														defaultValue:
-															"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
-													})}
-												</p>
-											) : null}
+												{!isStdio && selectedAuthMode === "oauth" ? (
+													<p className="text-xs text-slate-500 dark:text-slate-400">
+														{t("manual.auth.transportHint", {
+															defaultValue:
+																"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
+														})}
+													</p>
+												) : null}
 
-											<HttpHeaders
+												<HttpHeaders
 													viewMode={viewMode}
 													isStdio={isStdio}
 													headerFields={headerFields.fields}
@@ -1693,8 +1722,8 @@ export const ServerInstallWizard = forwardRef(
 			setExpanded((e) => ({ ...e, [name]: !e[name] }));
 
 		const renderPreviewStep = () => {
-		const { state } = installPipeline;
-		const { drafts, previewState, previewError, isPreviewLoading } = state;
+			const { state } = installPipeline;
+			const { drafts, previewState, previewError, isPreviewLoading } = state;
 
 			// Capability rendering helper
 			const renderCapabilitySection = (
@@ -1711,8 +1740,8 @@ export const ServerInstallWizard = forwardRef(
 							{items.map((item, idx) => {
 								const name = String(
 									(item as any).name ??
-										(item as any).title ??
-										`Item ${idx + 1}`,
+									(item as any).title ??
+									`Item ${idx + 1}`,
 								);
 								const description = String(
 									(item as any).description ?? (item as any).summary ?? "",
@@ -1888,10 +1917,12 @@ export const ServerInstallWizard = forwardRef(
 			const skippedCount = summary?.skipped_count ?? 0;
 			const onlySkipped = importedCount === 0 && skippedCount > 0;
 
-			// Get auto-add setting from store
-			const autoAddToDefault =
-				useAppStore.getState().dashboardSettings.autoAddServerToDefaultProfile;
-			const selectedProfileName = autoAddToDefault ? "Default" : null;
+			// Reflect the live setting + actual default-anchor profile name so
+			// the UI matches whatever the user has renamed the anchor to.
+			const autoAddToDefault = autoAddTargetProfile.enabled;
+			const selectedProfileName = autoAddToDefault
+				? (autoAddTargetProfile.profileName ?? "Default")
+				: null;
 
 			// Show ready state UI before import is completed
 			const showReadyState = !importResult && !isImporting;
@@ -1942,52 +1973,52 @@ export const ServerInstallWizard = forwardRef(
 			const successSteps: Array<{ label: string; action: NextStepAction }> =
 				selectedProfileName
 					? [
-							{
-								label: t("wizard.result.success.close", {
-									defaultValue:
-										"Close this drawer to continue browsing or queue another server for import.",
-								}),
-								action: "close",
-							},
-							{
-								label: t("wizard.result.success.servers", {
-									defaultValue:
-										"Open the Servers dashboard to review and manage the new server.",
-								}),
-								action: "servers",
-							},
-							{
-								label: t("wizard.result.success.profilesWithName", {
-									profile: selectedProfileName,
-									defaultValue:
-										'Open Profiles to verify "{{profile}}" reflects the new server.',
-								}),
-								action: "profiles",
-							},
-						]
+						{
+							label: t("wizard.result.success.close", {
+								defaultValue:
+									"Close this drawer to continue browsing or queue another server for import.",
+							}),
+							action: "close",
+						},
+						{
+							label: t("wizard.result.success.servers", {
+								defaultValue:
+									"Open the Servers dashboard to review and manage the new server.",
+							}),
+							action: "servers",
+						},
+						{
+							label: t("wizard.result.success.profilesWithName", {
+								profile: selectedProfileName,
+								defaultValue:
+									'Open Profiles to verify "{{profile}}" reflects the new server.',
+							}),
+							action: "profiles",
+						},
+					]
 					: [
-							{
-								label: t("wizard.result.success.close", {
-									defaultValue:
-										"Close this drawer to continue browsing or queue another server for import.",
-								}),
-								action: "close",
-							},
-							{
-								label: t("wizard.result.success.servers", {
-									defaultValue:
-										"Open the Servers dashboard to review and manage the new server.",
-								}),
-								action: "servers",
-							},
-							{
-								label: t("wizard.result.success.profiles", {
-									defaultValue:
-										"Visit Profiles to add this server to the appropriate activation sets.",
-								}),
-								action: "profiles",
-							},
-						];
+						{
+							label: t("wizard.result.success.close", {
+								defaultValue:
+									"Close this drawer to continue browsing or queue another server for import.",
+							}),
+							action: "close",
+						},
+						{
+							label: t("wizard.result.success.servers", {
+								defaultValue:
+									"Open the Servers dashboard to review and manage the new server.",
+							}),
+							action: "servers",
+						},
+						{
+							label: t("wizard.result.success.profiles", {
+								defaultValue:
+									"Visit Profiles to add this server to the appropriate activation sets.",
+							}),
+							action: "profiles",
+						},
+					];
 			const failureSteps: Array<{ label: string; action: NextStepAction }> = [
 				{
 					label: t("wizard.result.failure.adjustServers", {
@@ -2059,13 +2090,13 @@ export const ServerInstallWizard = forwardRef(
 				{
 					label: autoAddToDefault
 						? t("wizard.result.readySteps.autoAdd", {
-								defaultValue:
-									"The server will be automatically added to the Default profile based on your settings.",
-							})
+							defaultValue:
+								"The server will be automatically added to the Default profile based on your settings.",
+						})
 						: t("wizard.result.readySteps.manualAssign", {
-								defaultValue:
-									"The server will remain unassigned. You can add it to profiles later from the Profiles page.",
-							}),
+							defaultValue:
+								"The server will remain unassigned. You can add it to profiles later from the Profiles page.",
+						}),
 					action: "none",
 				},
 				{
@@ -2089,22 +2120,22 @@ export const ServerInstallWizard = forwardRef(
 									})}
 								</div>
 							) : (
-							<div className="rounded-lg border p-4 space-y-4">
-								{(() => {
-									let statusTitle = t("wizard.result.validatedTitle", {
-										defaultValue: "Import Validated",
-									});
-									let detailMessage: string | null = null;
-									let detailTone: "error" | "warning" | "muted" = "muted";
-									if (hiddenPreviewReady) {
-										statusTitle = t("wizard.result.pendingImportReadyTitle", {
-											defaultValue: "Ready to publish",
+								<div className="rounded-lg border p-4 space-y-4">
+									{(() => {
+										let statusTitle = t("wizard.result.validatedTitle", {
+											defaultValue: "Import Validated",
 										});
-										detailMessage = t("wizard.result.pendingImportReadyDescription", {
-											defaultValue:
-												"OAuth authorization is complete. Import will publish this server and make it visible in your Servers list.",
-										});
-									} else if (dryRunError) {
+										let detailMessage: string | null = null;
+										let detailTone: "error" | "warning" | "muted" = "muted";
+										if (hiddenPreviewReady) {
+											statusTitle = t("wizard.result.pendingImportReadyTitle", {
+												defaultValue: "Ready to publish",
+											});
+											detailMessage = t("wizard.result.pendingImportReadyDescription", {
+												defaultValue:
+													"OAuth authorization is complete. Import will publish this server and make it visible in your Servers list.",
+											});
+										} else if (dryRunError) {
 											statusTitle = t("wizard.result.validationFailedTitle", {
 												defaultValue: "Import Validation Failed",
 											});
@@ -2121,8 +2152,8 @@ export const ServerInstallWizard = forwardRef(
 												detailMessage = dryRunWarning;
 												detailTone = "warning";
 											}
-									} else {
-										statusTitle = t("wizard.result.alreadyInstalledTitle", {
+										} else {
+											statusTitle = t("wizard.result.alreadyInstalledTitle", {
 												defaultValue: "Already Installed",
 											});
 											detailMessage = dryRunWarning;
@@ -2148,27 +2179,27 @@ export const ServerInstallWizard = forwardRef(
 												? readySteps
 												: skippedOnly
 													? [
-															{
-																label: t(
-																	"wizard.result.skipSteps.useExisting",
-																	{
-																		defaultValue:
-																			"Close this drawer and start using the existing server.",
-																	},
-																),
-																action: "close" as NextStepAction,
-															},
-															{
-																label: t(
-																	"wizard.result.skipSteps.chooseAnother",
-																	{
-																		defaultValue:
-																			"Go back to the previous step to choose a different server if needed.",
-																	},
-																),
-																action: "preview" as NextStepAction,
-															},
-														]
+														{
+															label: t(
+																"wizard.result.skipSteps.useExisting",
+																{
+																	defaultValue:
+																		"Close this drawer and start using the existing server.",
+																},
+															),
+															action: "close" as NextStepAction,
+														},
+														{
+															label: t(
+																"wizard.result.skipSteps.chooseAnother",
+																{
+																	defaultValue:
+																		"Go back to the previous step to choose a different server if needed.",
+																},
+															),
+															action: "preview" as NextStepAction,
+														},
+													]
 													: readySteps;
 
 										return (
@@ -2230,11 +2261,11 @@ export const ServerInstallWizard = forwardRef(
 										<span className="font-medium">
 											{importResult.success !== false
 												? t("wizard.result.successTitle", {
-														defaultValue: "Import Successful",
-													})
+													defaultValue: "Import Successful",
+												})
 												: t("wizard.result.failureTitle", {
-														defaultValue: "Import Failed",
-													})}
+													defaultValue: "Import Failed",
+												})}
 										</span>
 									</div>
 									{importResult.success !== false ? (
@@ -2242,13 +2273,13 @@ export const ServerInstallWizard = forwardRef(
 											<p className="text-sm text-muted-foreground">
 												{onlySkipped
 													? t("wizard.result.successAllSkipped", {
-															defaultValue:
-																"All selected servers were already installed. No changes were applied.",
-														})
+														defaultValue:
+															"All selected servers were already installed. No changes were applied.",
+													})
 													: t("wizard.result.successInstalled", {
-															defaultValue:
-																"The server has been successfully installed and is ready to use.",
-														})}
+														defaultValue:
+															"The server has been successfully installed and is ready to use.",
+													})}
 											</p>
 											{selectedProfileName ? (
 												<p className="mt-2 text-xs text-muted-foreground">
@@ -2372,17 +2403,17 @@ export const ServerInstallWizard = forwardRef(
 							{isEditMode
 								? t("wizard.header.editTitle", { defaultValue: "Edit Server" })
 								: t("wizard.header.addTitle", {
-										defaultValue: "Add MCP Server",
-									})}
+									defaultValue: "Add MCP Server",
+								})}
 						</DrawerTitle>
 						<DrawerDescription>
 							{isEditMode
 								? t("wizard.header.editDescription", {
-										defaultValue: "Update server configuration",
-									})
+									defaultValue: "Update server configuration",
+								})
 								: t("wizard.header.addDescription", {
-										defaultValue: "Configure and install a new MCP server",
-									})}
+									defaultValue: "Configure and install a new MCP server",
+								})}
 						</DrawerDescription>
 					</DrawerHeader>
 
@@ -2400,13 +2431,12 @@ export const ServerInstallWizard = forwardRef(
 												type="button"
 												onClick={() => handleStepChange(step.id)}
 												disabled={!canNavigate || isSubmitting}
-												className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
-													isActive
-														? "bg-primary text-primary-foreground"
-														: canNavigate
-															? "bg-slate-200 text-slate-600 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 cursor-pointer"
-															: "bg-slate-100 text-slate-400 dark:bg-slate-900 dark:text-slate-500 cursor-not-allowed"
-												}`}
+												className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${isActive
+													? "bg-primary text-primary-foreground"
+													: canNavigate
+														? "bg-slate-200 text-slate-600 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 cursor-pointer"
+														: "bg-slate-100 text-slate-400 dark:bg-slate-900 dark:text-slate-500 cursor-not-allowed"
+													}`}
 											>
 												{index + 1}
 											</button>
@@ -2417,13 +2447,12 @@ export const ServerInstallWizard = forwardRef(
 												className="flex flex-col text-left transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
 											>
 												<span
-													className={`text-sm font-medium ${
-														isActive
-															? "text-primary"
-															: canNavigate
-																? "text-slate-600 dark:text-slate-300"
-																: "text-slate-400 dark:text-slate-500"
-													}`}
+													className={`text-sm font-medium ${isActive
+														? "text-primary"
+														: canNavigate
+															? "text-slate-600 dark:text-slate-300"
+															: "text-slate-400 dark:text-slate-500"
+														}`}
 												>
 													{step.label}
 												</span>
@@ -2455,13 +2484,13 @@ export const ServerInstallWizard = forwardRef(
 												: t("wizard.preview.retry", { defaultValue: "Retry preview" })
 										}
 										disabled={installPipeline.state.isImporting || installPipeline.state.isPreviewLoading}
-									onClick={() => {
-										installPipeline.setPreviewState(null);
-										void handlePreview({
-											skipValidation: true,
-											shouldFocus: false,
-										});
-									}}
+										onClick={() => {
+											installPipeline.setPreviewState(null);
+											void handlePreview({
+												skipValidation: true,
+												shouldFocus: false,
+											});
+										}}
 									>
 										<RefreshCw className={`h-4 w-4 ${installPipeline.state.isPreviewLoading ? "animate-spin" : ""}`} />
 									</Button>
@@ -2478,7 +2507,7 @@ export const ServerInstallWizard = forwardRef(
 					<DrawerFooter className="absolute bottom-0 left-0 right-0 z-10 border-t p-4 bg-background">
 						<div className="flex w-full items-center justify-between gap-3">
 							{currentStep === "result" &&
-							installPipeline.state.importResult ? (
+								installPipeline.state.importResult ? (
 								<div />
 							) : (
 								<Button
@@ -2535,15 +2564,15 @@ export const ServerInstallWizard = forwardRef(
 										<Button
 											type="button"
 											onClick={handleImport}
-										disabled={
-											installPipeline.state.isImporting ||
-											installPipeline.state.isDryRunLoading ||
-											!!installPipeline.state.dryRunError ||
-											!(hiddenPreviewReady || (
-												installPipeline.state.dryRunStats &&
-												installPipeline.state.dryRunStats.importedCount > 0
-											))
-										}
+											disabled={
+												installPipeline.state.isImporting ||
+												installPipeline.state.isDryRunLoading ||
+												!!installPipeline.state.dryRunError ||
+												!(hiddenPreviewReady || (
+													installPipeline.state.dryRunStats &&
+													installPipeline.state.dryRunStats.importedCount > 0
+												))
+											}
 										>
 											{installPipeline.state.isImporting ? (
 												<>

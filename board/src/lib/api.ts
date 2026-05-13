@@ -2376,6 +2376,12 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
+	detect: async (refresh = false) => {
+		const q = new URLSearchParams({ refresh: String(refresh) });
+		const resp = await fetchApi<ClientCheckResp>(`/api/client/detect?${q}`);
+		return extractApiData(resp);
+	},
+
 	deleteRecord: async (identifier: string) => {
 		const resp = await fetchApi<ClientDeleteResp>("/api/client/delete", {
 			method: "POST",

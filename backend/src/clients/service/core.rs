@@ -209,12 +209,13 @@ impl RuntimeClientMetadata {
             return stored.clone();
         };
         Self {
-            description: template.description.or_else(|| stored.description.clone()),
-            homepage_url: template.homepage_url.or_else(|| stored.homepage_url.clone()),
-            docs_url: template.docs_url.or_else(|| stored.docs_url.clone()),
-            support_url: template.support_url.or_else(|| stored.support_url.clone()),
-            logo_url: template.logo_url.or_else(|| stored.logo_url.clone()),
-            category: template.category.or_else(|| stored.category.clone()),
+            // Keep user-saved metadata authoritative; template metadata is fallback only.
+            description: stored.description.clone().or(template.description),
+            homepage_url: stored.homepage_url.clone().or(template.homepage_url),
+            docs_url: stored.docs_url.clone().or(template.docs_url),
+            support_url: stored.support_url.clone().or(template.support_url),
+            logo_url: stored.logo_url.clone().or(template.logo_url),
+            category: stored.category.clone().or(template.category),
         }
     }
 }

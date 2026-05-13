@@ -219,68 +219,90 @@ export function useServerInstallPipeline(
 		}
 	}, [drafts, targetProfileId, t, i18n.language]);
 
-	const confirmImport = useCallback(async () => {
+	const confirmImport = useCallback(
+		async (overrideTargetProfileId?: string | null) => {
 			if (!drafts.length) return false;
-		try {
-			setImporting(true);
-			setCurrentStep("result");
-			const requestBody = buildDraftServersImportRequest({
-				drafts,
-				targetProfileId,
-			});
+			// Allow callers (e.g., the install wizard's `handleImport`) to
+			// provide a freshly resolved target profile id — useful when
+			// auto-add is enabled but the pipeline state has not been updated
+			// via `setTargetProfileId` yet (state updates would be stale
+			// within the same handler tick).
+			const effectiveTargetProfileId =
+				overrideTargetProfileId !== undefined
+					? overrideTargetProfileId
+					: targetProfileId;
+			try {
+				setImporting(true);
+				setCurrentStep("result");
+				const requestBody = buildDraftServersImportRequest({
+					drafts,
+					targetProfileId: effectiveTargetProfileId,
+				});
 				const result = await serversApi.importServers(requestBody);
-			setImportResult(result);
+				setImportResult(result);
 
-			const didSucceed =
-				typeof result?.success === "boolean"
-					? result.success
-					: (result as { status?: string })?.status === "success" ||
-						!("error" in (result ?? {}));
-			if (didSucceed) {
-				const stats = extractImportStats(result);
-				const { importedCount, skippedCount, skippedServers, skippedDetails } =
-					stats;
-				const skippedSummary = summarizeSkipped(skippedDetails, t);
-				const fallbackList = formatNameList(skippedServers, t);
-				const skippedDescription = skippedSummary
-					? skippedSummary
-					: skippedCount > 0
-						? `${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped${fallbackList ? ` (${fallbackList})` : ""}`
-						: "";
-				const shouldAutoClose = importedCount > 0;
-				if (importedCount > 0) {
-					const parts: string[] = [
-						`${importedCount} server${importedCount > 1 ? "s" : ""} imported`,
-					];
-					if (skippedCount > 0) {
-						parts.push(skippedDescription);
+				const didSucceed =
+					typeof result?.success === "boolean"
+						? result.success
+						: (result as { status?: string })?.status === "success" ||
+							!("error" in (result ?? {}));
+				if (didSucceed) {
+					const stats = extractImportStats(result);
+					const {
+						importedCount,
+						skippedCount,
+						skippedServers,
+						skippedDetails,
+					} = stats;
+					const skippedSummary = summarizeSkipped(skippedDetails, t);
+					const fallbackList = formatNameList(skippedServers, t);
+					const skippedDescription = skippedSummary
+						? skippedSummary
+						: skippedCount > 0
+							? `${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped${fallbackList ? ` (${fallbackList})` : ""}`
+							: "";
+					const shouldAutoClose = importedCount > 0;
+					if (importedCount > 0) {
+						const parts: string[] = [
+							`${importedCount} server${importedCount > 1 ? "s" : ""} imported`,
+						];
+						if (skippedCount > 0) {
+							parts.push(skippedDescription);
+						}
+						notifySuccess("Servers installed", parts.join("; "));
+					} else if (skippedCount > 0) {
+						notifyInfo(
+							"No new servers installed",
+							skippedDescription ||
+								`${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped (already installed).`,
+						);
+					} else {
+						notifySuccess(
+							"Servers installed",
+							"Import completed (no changes)",
+						);
 					}
-					notifySuccess("Servers installed", parts.join("; "));
-				} else if (skippedCount > 0) {
-					notifyInfo(
-						"No new servers installed",
-						skippedDescription ||
-							`${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped (already installed).`,
-					);
-				} else {
-					notifySuccess("Servers installed", "Import completed (no changes)");
+					if (shouldAutoClose) {
+						opts.onImported?.();
+					}
+					return true;
 				}
-				if (shouldAutoClose) {
-					opts.onImported?.();
-				}
-				return true;
+				notifyError(
+					"Import failed",
+					String(result.error ?? "Unknown error"),
+				);
+				return false;
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message : String(error ?? "");
+				notifyError("Import failed", message || "Unexpected error");
+				return false;
+			} finally {
+				setImporting(false);
 			}
-			notifyError("Import failed", String(result.error ?? "Unknown error"));
-			return false;
-		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : String(error ?? "");
-			notifyError("Import failed", message || "Unexpected error");
-			return false;
-		} finally {
-			setImporting(false);
-		}
-	}, [drafts, targetProfileId, t, i18n.language, opts]);
+		},
+		[drafts, targetProfileId, t, i18n.language, opts],
+	);
 
 	const state = useMemo(
 		() => ({

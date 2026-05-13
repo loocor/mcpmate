@@ -77,6 +77,7 @@ import {
   extractImportStats,
   serversApi,
 } from "../../lib/api";
+import { resolveAutoAddTargetProfileId } from "../../lib/default-profile";
 import { buildClientServersImportRequest } from "../../lib/server-import-payload";
 import { mapDashboardSettingsToClientBackupPolicy } from "../../lib/client-backup-policy";
 import {
@@ -1574,10 +1575,14 @@ export function ClientDetailPage() {
   const importMutation = useMutation<ServersImportData, Error, string[]>({
     mutationFn: async (selectedServerNames) => {
       if (!identifier) throw new Error("No identifier provided");
+      const targetProfileId = await resolveAutoAddTargetProfileId({
+        autoAddEnabled: dashboardSettings.autoAddServerToDefaultProfile,
+      });
       const resp = await serversApi.importServers(
         buildClientServersImportRequest({
           clientIdentifier: identifier,
           selectedServerNames,
+          targetProfileId,
         }),
       );
       if (
@@ -1629,6 +1634,9 @@ export function ClientDetailPage() {
         );
         setImportReviewOpen(false);
         refetchDetails();
+        if (dashboardSettings.autoAddServerToDefaultProfile) {
+          void qc.invalidateQueries({ queryKey: ["configSuits"] });
+        }
       } else {
         notifyInfo(
           t("detail.notifications.nothingToImport.title", {

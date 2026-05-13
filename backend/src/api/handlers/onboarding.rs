@@ -1,8 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, process::Output, sync::Arc, time::Duration};
 
 use axum::{Json, extract::State};
 use schemars::JsonSchema;
 use serde::Serialize;
+use tokio::time::Instant;
 
 use super::ApiError;
 use super::client::parse_rule_from_api_data;
@@ -237,6 +238,92 @@ fn runtime_locator_command() -> &'static str {
     if cfg!(windows) { "where" } else { "which" }
 }
 
+#[derive(Clone, Copy)]
+struct RuntimeCheckProbe<'a> {
+    program: &'a str,
+    args: &'a [&'a str],
+}
+
+const NODE_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
+    program: "node",
+    args: &["--version"],
+}];
+const NPX_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
+    program: "npx",
+    args: &["--version"],
+}];
+const BUN_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
+    program: "bun",
+    args: &["--version"],
+}];
+const BUNX_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
+    program: "bunx",
+    args: &["--version"],
+}];
+#[cfg(windows)]
+const PYTHON_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[
+    RuntimeCheckProbe {
+        program: "python",
+        args: &["--version"],
+    },
+    RuntimeCheckProbe {
+        program: "py",
+        args: &["-3", "--version"],
+    },
+];
+#[cfg(not(windows))]
+const PYTHON_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
+    program: "python3",
+    args: &["--version"],
+}];
+const UV_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
+    program: "uv",
+    args: &["--version"],
+}];
+const UVX_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
+    program: "uvx",
+    args: &["--version"],
+}];
+
+const RUNTIME_CHECK_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const RUNTIME_CHECK_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn remaining_runtime_check_budget(started_at: Instant) -> Option<Duration> {
+    RUNTIME_CHECK_TOTAL_TIMEOUT.checked_sub(started_at.elapsed())
+}
+
+async fn run_command_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<Output> {
+    if timeout.is_zero() {
+        return None;
+    }
+
+    let mut command = tokio::process::Command::new(program);
+    command.kill_on_drop(true).args(args);
+
+    tokio::time::timeout(timeout, command.output()).await.ok()?.ok()
+}
+
+fn resolve_runtime_path(stdout: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
+async fn run_runtime_check_command(
+    program: &str,
+    args: &[&str],
+    started_at: Instant,
+) -> Option<Output> {
+    let remaining = remaining_runtime_check_budget(started_at)?;
+    run_command_with_timeout(program, args, remaining.min(RUNTIME_CHECK_COMMAND_TIMEOUT)).await
+}
+
 fn normalize_runtime_version(
     stdout: &[u8],
     stderr: &[u8],
@@ -254,37 +341,42 @@ fn normalize_runtime_version(
 /// GET /api/onboarding/runtime-check
 /// Detects available runtimes (node, bun, python3, uv, etc.) on the host system.
 pub async fn runtime_check(State(_state): State<Arc<AppState>>) -> Result<Json<RuntimeCheckResp>, ApiError> {
-    let checks: &[(&str, &[&str])] = &[
-        ("node", &["node", "--version"]),
-        ("npx", &["npx", "--version"]),
-        ("bun", &["bun", "--version"]),
-        ("bunx", &["bunx", "--version"]),
-        ("python3", &["python3", "--version"]),
-        ("uv", &["uv", "--version"]),
-        ("uvx", &["uvx", "--version"]),
+    let checks: &[(&str, &[RuntimeCheckProbe<'_>])] = &[
+        ("node", NODE_RUNTIME_PROBES),
+        ("npx", NPX_RUNTIME_PROBES),
+        ("bun", BUN_RUNTIME_PROBES),
+        ("bunx", BUNX_RUNTIME_PROBES),
+        ("python3", PYTHON_RUNTIME_PROBES),
+        ("uv", UV_RUNTIME_PROBES),
+        ("uvx", UVX_RUNTIME_PROBES),
     ];
 
     let mut runtimes = Vec::with_capacity(checks.len());
     let mut has_js = false;
     let mut has_python = false;
+    let started_at = Instant::now();
+    let locator = runtime_locator_command();
 
-    for &(name, args) in checks {
-        let result = tokio::process::Command::new(args[0]).args(&args[1..]).output().await;
+    for &(name, probes) in checks {
+        let mut available = false;
+        let mut version = None;
+        let mut resolved_program = None;
 
-        let (available, version) = match result {
-            Ok(output) if output.status.success() => (true, normalize_runtime_version(&output.stdout, &output.stderr)),
-            _ => (false, None),
-        };
+        for probe in probes {
+            let result = run_runtime_check_command(probe.program, probe.args, started_at).await;
+            if let Some(output) = result.filter(|output| output.status.success()) {
+                available = true;
+                version = normalize_runtime_version(&output.stdout, &output.stderr);
+                resolved_program = Some(probe.program);
+                break;
+            }
+        }
 
-        let locator = runtime_locator_command();
-        let path = if available {
-            tokio::process::Command::new(locator)
-                .arg(args[0])
-                .output()
+        let path = if let Some(program) = resolved_program {
+            run_runtime_check_command(locator, &[program], started_at)
                 .await
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|output| output.status.success())
+                .and_then(|output| resolve_runtime_path(&output.stdout))
         } else {
             None
         };
@@ -561,6 +653,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_scan_uses_wildcard_parse_rule_for_project_scoped_servers() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("claude-code.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{"projects":{"/Volumes/External/GitHub/MCPMate":{"mcpServers":{"Project Server":{"command":"node","args":["server.js"],"env":{"A":"B"}}}}}}"#,
+        )
+        .await
+        .expect("write client config");
+
+        let service = context.state.client_service.as_ref().expect("client service");
+        service
+            .set_active_client_settings(
+                "custom.client",
+                ActiveClientSettingsUpdate {
+                    display_name: Some("Custom Client".to_string()),
+                    connection_mode: Some("local_config_detected".to_string()),
+                    config_path: Some(config_path.to_string_lossy().to_string()),
+                    clear_config_file_parse: true,
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("create custom client");
+
+        let Json(response) = server_scan(
+            State(context.state),
+            Json(OnboardingServerScanReq {
+                clients: vec![OnboardingServerScanClient {
+                    identifier: "custom.client".to_string(),
+                    display_name: Some("Custom Client".to_string()),
+                    config_path: config_path.to_string_lossy().to_string(),
+                    config_file_parse: Some(ClientConfigFileParseData {
+                        format: "json".to_string(),
+                        container_type: ClientConfigType::Standard,
+                        container_keys: vec!["projects.*.mcpServers".to_string()],
+                    }),
+                }],
+            }),
+        )
+        .await
+        .expect("server scan response");
+
+        let data = response.data.expect("server scan data");
+        assert!(data.errors.is_empty());
+        assert_eq!(data.candidates.len(), 1);
+        assert_eq!(data.candidates[0].name, "Project Server");
+        assert_eq!(data.candidates[0].command.as_deref(), Some("node"));
+    }
+
+    #[tokio::test]
     async fn runtime_check_returns_expected_runtime_matrix_shape() {
         let context = create_test_context().await;
 
@@ -590,6 +733,51 @@ mod tests {
 
         assert_eq!(data.has_js_runtime, has_js_from_rows);
         assert_eq!(data.has_python_runtime, has_python_from_rows);
+    }
+
+    #[test]
+    fn resolve_runtime_path_uses_first_non_empty_line() {
+        assert_eq!(
+            resolve_runtime_path(b"\nC:/Python312/python.exe\r\nC:/Windows/py.exe\r\n").as_deref(),
+            Some("C:/Python312/python.exe")
+        );
+    }
+
+    #[test]
+    fn resolve_runtime_path_returns_none_for_blank_output() {
+        assert!(resolve_runtime_path(b"\n  \r\n").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn python_runtime_probes_cover_windows_launchers() {
+        let programs = PYTHON_RUNTIME_PROBES
+            .iter()
+            .map(|probe| probe.program)
+            .collect::<HashSet<_>>();
+
+        assert!(programs.contains("python"));
+        assert!(programs.contains("py"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn python_runtime_probes_use_python3_off_windows() {
+        assert_eq!(PYTHON_RUNTIME_PROBES.len(), 1);
+        assert_eq!(PYTHON_RUNTIME_PROBES[0].program, "python3");
+        assert_eq!(PYTHON_RUNTIME_PROBES[0].args, ["--version"]);
+    }
+
+    #[tokio::test]
+    async fn runtime_check_command_times_out_for_long_running_process() {
+        #[cfg(unix)]
+        let result = run_command_with_timeout("sh", &["-c", "sleep 1"], Duration::from_millis(50)).await;
+
+        #[cfg(windows)]
+        let result =
+            run_command_with_timeout("cmd", &["/C", "ping -n 2 127.0.0.1 >NUL"], Duration::from_millis(50)).await;
+
+        assert!(result.is_none());
     }
 
     #[test]

@@ -4,9 +4,9 @@ use crate::api::models::client::{
     ClientBackupListResp, ClientBackupOperateReq, ClientBackupPolicyReq, ClientBackupPolicyResp,
     ClientBackupPolicySetReq, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckReq, ClientCheckResp,
     ClientConfigFileParseInspectExistingReq, ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq,
-    ClientConfigFileParseInspectResp, ClientConfigReq, ClientConfigResp,
-    ClientConfigRestoreReq, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientDeleteReq, ClientDeleteResp,
-    ClientDetachReq, ClientDetachResp, ClientSettingsUpdateReq, ClientSettingsUpdateResp,
+    ClientConfigFileParseInspectResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
+    ClientConfigUpdateResp, ClientDeleteReq, ClientDeleteResp, ClientDetachReq, ClientDetachResp, ClientDetectReq,
+    ClientSettingsUpdateReq, ClientSettingsUpdateResp,
 };
 use crate::api::routes::AppState;
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -22,6 +22,13 @@ aide_wrapper_query!(
     ClientCheckReq,
     ClientCheckResp,
     "Get all client with optional force refresh."
+);
+
+aide_wrapper_query!(
+    client::detect,
+    ClientDetectReq,
+    ClientCheckResp,
+    "Detect installed clients without persisting discovered candidates."
 );
 
 // Configuration endpoints
@@ -150,6 +157,7 @@ aide_wrapper_payload!(
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/client/list", get_with(list_aide, list_docs))
+        .api_route("/client/detect", get_with(detect_aide, detect_docs))
         .api_route(
             "/client/config/details",
             get_with(config_details_aide, config_details_docs),

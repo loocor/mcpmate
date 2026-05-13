@@ -12,13 +12,23 @@ import {
   Terminal,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { SiBun, SiDiscord, SiGithub, SiNodedotjs, SiUv } from "@icons-pack/react-simple-icons";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
-import { clientsApi, extractImportStats, runtimeApi, serversApi } from "../../lib/api";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Segment, type SegmentOption } from "../../components/ui/segment";
+import {
+  clientsApi,
+  extractImportStats,
+  runtimeApi,
+  serversApi,
+} from "../../lib/api";
+import { websiteLangParam } from "../../lib/website-lang";
+import { applyManagedClientsForIdentifiers } from "../../lib/client-config-sync";
+import { resolveActiveDefaultProfileId } from "../../lib/default-profile";
 import { buildClientServersImportRequest } from "../../lib/server-import-payload";
 import {
   onboardingApi,
@@ -27,15 +37,25 @@ import {
   type OnboardingStatusResp,
   type RuntimeCheckResp,
 } from "../../lib/onboarding-api";
+import { MCPMATE_DISCORD_COMMUNITY_HREF } from "../../lib/mcpmate-community-urls";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { cn } from "../../lib/utils";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { ClientInfo } from "../../lib/types";
 
 type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
 type RuntimeKind = "node" | "bun" | "uv";
+type WelcomeLanguage = "en" | "zh-cn" | "ja";
+
+function normalizeWelcomeLanguage(language?: string): WelcomeLanguage {
+  const lower = language?.toLowerCase() ?? "";
+  if (lower.startsWith("zh")) return "zh-cn";
+  if (lower.startsWith("ja")) return "ja";
+  return "en";
+}
 
 function groupSelectedServerNamesByClient(
   candidates: OnboardingServerCandidate[],
@@ -132,6 +152,7 @@ interface WizardState {
   step: WizardStep;
   selectedClients: Set<string>;
   selectedServers: Set<string>;
+  welcomeConsent: boolean;
 }
 
 interface PersistedOnboardingSelections {
@@ -144,7 +165,8 @@ type WizardAction =
   | { type: "PREV" }
   | { type: "TOGGLE_CLIENT"; identifier: string }
   | { type: "TOGGLE_SERVER"; name: string }
-  | { type: "SET_STEP"; step: WizardStep };
+  | { type: "SET_STEP"; step: WizardStep }
+  | { type: "SET_WELCOME_CONSENT"; consent: boolean };
 
 function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
@@ -178,6 +200,8 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
     }
     case "SET_STEP":
       return { ...state, step: action.step };
+    case "SET_WELCOME_CONSENT":
+      return { ...state, welcomeConsent: action.consent };
   }
 }
 
@@ -216,6 +240,7 @@ function buildInitialWizardState(step: WizardStep): WizardState {
     step,
     selectedClients: new Set(persisted.selectedClients),
     selectedServers: new Set(persisted.selectedServers),
+    welcomeConsent: false,
   };
 }
 
@@ -224,7 +249,7 @@ function buildInitialWizardState(step: WizardStep): WizardState {
 export function OnboardingPage() {
   const navigate = useNavigate();
   usePageTranslations("onboarding");
-  const { t, i18n } = useTranslation("onboarding");
+  const { t, i18n } = useTranslation(["onboarding", "translation"]);
   const qc = useQueryClient();
   const dashboardSettings = useAppStore((s) => s.dashboardSettings);
   const setDashboardSetting = useAppStore((s) => s.setDashboardSetting);
@@ -244,6 +269,10 @@ export function OnboardingPage() {
   const [serverCandidates, setServerCandidates] = useState<
     OnboardingServerCandidate[]
   >([]);
+  const [language, setLanguage] = useState<WelcomeLanguage>(() =>
+    normalizeWelcomeLanguage(dashboardSettings.language),
+  );
+  const [welcomeConsentError, setWelcomeConsentError] = useState(false);
 
   useEffect(() => {
     if (activeStep !== state.step) {
@@ -253,9 +282,14 @@ export function OnboardingPage() {
 
   const goToStep = useCallback(
     (step: WizardStep) => {
+      // Prevent navigating away from welcome step without consent
+      if (state.step === "welcome" && !state.welcomeConsent && step !== "welcome") {
+        setWelcomeConsentError(true);
+        return;
+      }
       setActiveStep(step);
     },
-    [setActiveStep],
+    [setActiveStep, state.step, state.welcomeConsent],
   );
 
   const goToNextStep = useCallback(() => {
@@ -300,10 +334,7 @@ export function OnboardingPage() {
   const handleComplete = useCallback(async () => {
     setCompleting(true);
     try {
-      const clientsResp = await clientsApi.list(false, {
-        persistDetected: false,
-        includeDetected: true,
-      });
+      const clientsResp = await clientsApi.detect(false);
       const allListed = clientsResp?.client ?? [];
       const selectedServerNamesByClient = groupSelectedServerNamesByClient(
         serverCandidates,
@@ -335,11 +366,17 @@ export function OnboardingPage() {
       );
 
       if (selectedServerNamesByClient.size > 0) {
+        // In onboarding context, always link imported servers to the default-anchor profile
+        // regardless of the autoAddServerToDefaultProfile setting (which defaults to false for new users).
+        // The default anchor is seeded at app init, so it must already exist before onboarding runs.
+        const targetProfileId = await resolveActiveDefaultProfileId();
+
         for (const [clientIdentifier, selectedServerNames] of selectedServerNamesByClient) {
           const response = await serversApi.importServers(
             buildClientServersImportRequest({
               clientIdentifier,
               selectedServerNames,
+              targetProfileId,
             }),
           );
           if (
@@ -361,7 +398,32 @@ export function OnboardingPage() {
           }
         }
         await qc.invalidateQueries({ queryKey: ["servers"] });
+        if (targetProfileId) {
+          await qc.invalidateQueries({ queryKey: ["configSuits"] });
+        }
       }
+
+      try {
+        const postRegister = await clientsApi.list(false, {
+          persistDetected: false,
+          includeDetected: true,
+        });
+        await applyManagedClientsForIdentifiers({
+          clients: postRegister?.client ?? [],
+          identifiers: clientsToRegister,
+          dashboardSettings,
+        });
+      } catch (applyError) {
+        notifyError(
+          t("complete.applyClientsErrorTitle", {
+            defaultValue: "Failed to apply MCP client configurations",
+          }),
+          applyError instanceof Error ? applyError.message : String(applyError),
+        );
+        setCompleting(false);
+        return;
+      }
+
       await qc.invalidateQueries({ queryKey: ["clients"] });
 
       await onboardingApi.complete(true);
@@ -376,6 +438,7 @@ export function OnboardingPage() {
       setCompleting(false);
     }
   }, [
+    dashboardSettings,
     navigate,
     qc,
     serverCandidates,
@@ -384,8 +447,10 @@ export function OnboardingPage() {
     t,
   ]);
 
-  const handleStartWithLanguage = useCallback(
-    (storeLanguage: "en" | "zh-cn" | "ja") => {
+  const handleLanguageChange = useCallback(
+    (newLanguage: string) => {
+      const storeLanguage = normalizeWelcomeLanguage(newLanguage);
+      setLanguage(storeLanguage);
       const i18nCode =
         SUPPORTED_LANGUAGES.find((entry) => entry.store === storeLanguage)?.i18n ??
         storeLanguage;
@@ -393,14 +458,24 @@ export function OnboardingPage() {
         setDashboardSetting("language", storeLanguage);
       }
       void i18n.changeLanguage(i18nCode);
-      goToNextStep();
     },
-    [dashboardSettings.language, goToNextStep, i18n, setDashboardSetting],
+    [dashboardSettings.language, i18n, setDashboardSetting],
   );
+
+  const handleGetStarted = useCallback(() => {
+    setWelcomeConsentError(false);
+    goToNextStep();
+  }, [goToNextStep]);
 
   const stepIdx = STEP_ORDER.indexOf(state.step);
   const isFirst = stepIdx === 0;
   const isLast = stepIdx === STEP_ORDER.length - 1;
+
+  const termsLabel = t("layout.terms", { defaultValue: "Terms" });
+  const privacyLabel = t("layout.privacy", { defaultValue: "Privacy" });
+  const langParam = websiteLangParam(i18n.language);
+  const termsHref = `https://mcp.umate.ai/terms?lang=${langParam}`;
+  const privacyHref = `https://mcp.umate.ai/privacy?lang=${langParam}`;
 
   const stepLabels = useMemo(
     () => [
@@ -480,7 +555,18 @@ export function OnboardingPage() {
       <main className="flex-1 overflow-y-auto px-6 py-10">
         <div className="mx-auto max-w-3xl">
           {state.step === "welcome" && (
-            <WelcomeStep onStartWithLanguage={handleStartWithLanguage} />
+            <WelcomeStep
+              language={language}
+              onLanguageChange={handleLanguageChange}
+              consent={state.welcomeConsent}
+              onConsentChange={(consent) => {
+                dispatch({ type: "SET_WELCOME_CONSENT", consent });
+                if (consent) setWelcomeConsentError(false);
+              }}
+              consentError={welcomeConsentError}
+              onConsentErrorChange={setWelcomeConsentError}
+              onGetStarted={handleGetStarted}
+            />
           )}
           {state.step === "runtime" && <RuntimeStep />}
           {state.step === "clients" && (
@@ -502,52 +588,133 @@ export function OnboardingPage() {
         </div>
       </main>
 
-      {/* Bottom navigation — fixed */}
-      {state.step !== "welcome" && (
-        <footer className="shrink-0 border-t border-slate-200 px-6 py-4 dark:border-slate-800">
-          <div className="mx-auto flex max-w-3xl items-center justify-between">
-            {isFirst ? (
-              <div className="h-9 w-[88px]" aria-hidden="true" />
-            ) : (
-              <Button variant="ghost" onClick={goToPrevStep}>
-                <ArrowLeft className="mr-1.5 h-4 w-4" />
-                {t("nav.back", { defaultValue: "Back" })}
-              </Button>
-            )}
-            <div className="flex items-center gap-2">
-              {isLast ? (
-                <Button onClick={handleComplete} disabled={completing}>
-                  {completing
-                    ? t("nav.finishing", {
-                      defaultValue: "Finishing...",
-                    })
-                    : t("nav.finish", {
-                      defaultValue: "Finish Setup",
-                    })}
-                  <Check className="ml-1.5 h-4 w-4" />
-                </Button>
+      {/* Bottom navigation or welcome footer — fixed */}
+      <footer className="shrink-0 border-t border-slate-200 px-6 py-4 dark:border-slate-800">
+        <div className="mx-auto flex max-w-3xl items-center justify-between">
+          {state.step === "welcome" ? (
+            <>
+              <div className="flex items-center gap-4 flex-wrap text-[11px] text-slate-500">
+                <a
+                  className="hover:underline"
+                  href="https://mcp.umate.ai"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {t("layout.copyright", {
+                    defaultValue: "© 2026 MCPMate",
+                  })}
+                </a>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                <a
+                  className="hover:underline"
+                  href={termsHref}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {termsLabel}
+                </a>
+                <span className="text-slate-300">•</span>
+                <a
+                  className="hover:underline"
+                  href={privacyHref}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {privacyLabel}
+                </a>
+              </div>
+            </>
+          ) : (
+            <>
+              {isFirst ? (
+                <div className="h-9 w-[88px]" aria-hidden="true" />
               ) : (
-                <Button onClick={goToNextStep}>
-                  {t("nav.next", { defaultValue: "Next" })}
-                  <ArrowRight className="ml-1.5 h-4 w-4" />
+                <Button variant="ghost" onClick={goToPrevStep}>
+                  <ArrowLeft className="mr-1.5 h-4 w-4" />
+                  {t("nav.back", { defaultValue: "Back" })}
                 </Button>
               )}
-            </div>
-          </div>
-        </footer>
-      )}
+              <div className="flex items-center gap-2">
+                {isLast ? (
+                  <Button onClick={handleComplete} disabled={completing}>
+                    {completing
+                      ? t("nav.finishing", {
+                        defaultValue: "Finishing...",
+                      })
+                      : t("nav.finish", {
+                        defaultValue: "Finish Setup",
+                      })}
+                    <Check className="ml-1.5 h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button onClick={goToNextStep}>
+                    {t("nav.next", { defaultValue: "Next" })}
+                    <ArrowRight className="ml-1.5 h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </footer>
     </div>
   );
 }
 
 // ── Welcome step ──────────────────────────────────────────────────────────────
 
+/** Endonyms for a11y + tooltips (always shown in that language, not UI locale). */
+const WELCOME_LANGUAGE_SEGMENT_OPTIONS: SegmentOption[] = [
+  { value: "en", label: "🇺🇸 English", ariaLabel: "English", tooltip: "English" },
+  { value: "zh-cn", label: "🇨🇳 简体中文", ariaLabel: "简体中文", tooltip: "简体中文" },
+  { value: "ja", label: "🇯🇵 日本語", ariaLabel: "日本語", tooltip: "日本語" },
+];
+
 function WelcomeStep({
-  onStartWithLanguage,
+  language,
+  onLanguageChange,
+  consent,
+  onConsentChange,
+  consentError,
+  onConsentErrorChange,
+  onGetStarted,
 }: {
-  onStartWithLanguage: (language: "en" | "zh-cn" | "ja") => void;
+  language: WelcomeLanguage;
+  onLanguageChange: (language: string) => void;
+  consent: boolean;
+  onConsentChange: (consent: boolean) => void;
+  consentError: boolean;
+  onConsentErrorChange: (visible: boolean) => void;
+  onGetStarted: () => void;
 }) {
-  const { t } = useTranslation("onboarding");
+  const { t, i18n } = useTranslation("onboarding");
+  const consentId = useId();
+
+  // Sync language with i18n
+  useEffect(() => {
+    const i18nLang = language === "zh-cn" ? "zh-CN" : language === "ja" ? "ja-JP" : "en";
+    if (i18n.language !== i18nLang) {
+      i18n.changeLanguage(i18nLang);
+    }
+  }, [language, i18n]);
+
+  const handleGetStarted = () => {
+    if (!consent) {
+      onConsentErrorChange(true);
+      return;
+    }
+    onConsentErrorChange(false);
+    onGetStarted();
+  };
+
+  const handleConsentChange = (checked: boolean) => {
+    onConsentChange(checked);
+    if (checked) {
+      onConsentErrorChange(false);
+    }
+  };
+
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <Rocket className="mx-auto mb-6 h-16 w-16 text-emerald-500" />
@@ -556,28 +723,61 @@ function WelcomeStep({
           defaultValue: "Welcome to MCPMate",
         })}
       </h1>
+
+      {/* Language selector */}
+      <div className="mb-8 w-full max-w-xs">
+        <Segment
+          showDots={false}
+          className={cn(
+            "[&_[role=tablist]]:min-h-11",
+            "[&_[role=tab][data-state=active]]:bg-emerald-100 [&_[role=tab][data-state=active]]:text-emerald-900 [&_[role=tab][data-state=active]]:shadow-sm",
+            "dark:[&_[role=tab][data-state=active]]:bg-emerald-900/50 dark:[&_[role=tab][data-state=active]]:text-emerald-50",
+          )}
+          options={WELCOME_LANGUAGE_SEGMENT_OPTIONS}
+          value={language}
+          onValueChange={onLanguageChange}
+        />
+      </div>
+
       <p className="mx-auto mb-8 max-w-lg text-lg text-slate-600 dark:text-slate-400">
         {t("welcome.description", {
           defaultValue:
             "Let's get you set up in a few quick steps. We'll check your environment, detect clients, and add some useful servers.",
         })}
       </p>
-      <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-        {t("welcome.chooseLanguage", {
-          defaultValue: "Choose your language to continue",
-        })}
-      </p>
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <Button size="lg" onClick={() => onStartWithLanguage("en")}>
-          🇺🇸 English
-        </Button>
-        <Button size="lg" onClick={() => onStartWithLanguage("zh-cn")}>
-          🇨🇳 简体中文
-        </Button>
-        <Button size="lg" onClick={() => onStartWithLanguage("ja")}>
-          🇯🇵 日本語
-        </Button>
+
+      {/* Consent checkbox */}
+      <div className="mb-4 flex items-start gap-2">
+        <input
+          type="checkbox"
+          id={consentId}
+          checked={consent}
+          onChange={(e) => handleConsentChange(e.target.checked)}
+          className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+        />
+        <label htmlFor={consentId} className="text-sm text-slate-600 dark:text-slate-400">
+          {t("welcome.consent", {
+            defaultValue: "Allow scanning local runtimes and MCP server configurations",
+          })}
+        </label>
       </div>
+
+      {/* Error alert */}
+      {consentError && (
+        <Alert variant="destructive" className="mb-4 max-w-md">
+          <AlertDescription>
+            {t("welcome.consentRequired", {
+              defaultValue: "Please accept the scanning authorization to continue",
+            })}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Get Started button */}
+      <Button size="lg" onClick={handleGetStarted}>
+        {t("welcome.getStarted", { defaultValue: "Get Started" })}
+        <ArrowRight className="ml-2 h-4 w-4" />
+      </Button>
     </div>
   );
 }
@@ -810,9 +1010,12 @@ function ClientsStep({
   onToggle: (identifier: string) => void;
 }) {
   const { t } = useTranslation("onboarding");
+  const [logoLoadFailedClients, setLogoLoadFailedClients] = useState<Set<string>>(
+    () => new Set(),
+  );
   const { data, isLoading, isError, refetch, error } = useQuery({
     queryKey: ["clients", "onboarding"],
-    queryFn: () => clientsApi.list(true, { persistDetected: false, includeDetected: true }),
+    queryFn: () => clientsApi.detect(true),
     staleTime: 30_000,
     refetchOnMount: "always",
   });
@@ -881,6 +1084,9 @@ function ClientsStep({
         <div className="grid gap-3 sm:grid-cols-2">
           {detectedClients.map((client) => {
             const isSelected = selectedClients.has(client.identifier);
+            const showLogo =
+              Boolean(client.logo_url) &&
+              !logoLoadFailedClients.has(client.identifier);
             return (
               <button
                 key={client.identifier}
@@ -891,10 +1097,27 @@ function ClientsStep({
                   : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
                   }`}
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
-                  {(client.display_name || client.identifier)
-                    .charAt(0)
-                    .toUpperCase()}
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
+                  {showLogo ? (
+                    <img
+                      src={client.logo_url ?? undefined}
+                      alt={client.display_name || client.identifier}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                      onError={() => {
+                        setLogoLoadFailedClients((prev) => {
+                          if (prev.has(client.identifier)) return prev;
+                          const next = new Set(prev);
+                          next.add(client.identifier);
+                          return next;
+                        });
+                      }}
+                    />
+                  ) : (
+                    (client.display_name || client.identifier)
+                      .charAt(0)
+                      .toUpperCase()
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">
@@ -935,7 +1158,7 @@ function ServersStep({
   const { t } = useTranslation("onboarding");
   const clientsQuery = useQuery({
     queryKey: ["clients", "onboarding"],
-    queryFn: () => clientsApi.list(true, { persistDetected: false, includeDetected: true }),
+    queryFn: () => clientsApi.detect(true),
     staleTime: 30_000,
   });
   const allClients: ClientInfo[] = clientsQuery.data?.client ?? [];
@@ -1080,7 +1303,7 @@ const COMMUNITY_LINKS = [
     descriptionKey: "community.discord.description",
     defaultDescription:
       "Chat with the community, get support, and follow product updates.",
-    href: "https://discord.com/channels/1369086293933559838",
+    href: MCPMATE_DISCORD_COMMUNITY_HREF,
   },
   {
     key: "github",

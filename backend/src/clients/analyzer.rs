@@ -1,5 +1,7 @@
 use crate::clients::document::parse_config_to_json_value;
-use crate::clients::models::{CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat};
+use crate::clients::models::{
+    CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat,
+};
 use crate::clients::utils::get_nested_value;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -188,24 +190,64 @@ pub(crate) fn inspect_config_value(
     let mut seen_names = HashSet::new();
 
     for container_key in &parse_rule.container_keys {
-        let Some(container) = get_nested_value(document, container_key) else {
-            continue;
-        };
-
-        matched_container = true;
-        collect_entries_from_container(
-            &mut entries,
-            &mut seen_names,
-            container,
-            parse_rule.container_type,
-            container_key,
-            transports,
-        );
+        for container in matching_nested_values(document, container_key) {
+            matched_container = true;
+            collect_entries_from_container(
+                &mut entries,
+                &mut seen_names,
+                container,
+                parse_rule.container_type,
+                container_key,
+                transports,
+            );
+        }
     }
 
     ConfigInspection {
         matched_container,
         entries,
+    }
+}
+
+fn matching_nested_values<'a>(
+    document: &'a Value,
+    container_key: &str,
+) -> Vec<&'a Value> {
+    if !container_key.contains('*') {
+        return get_nested_value(document, container_key).into_iter().collect();
+    }
+
+    let parts = container_key.split('.').collect::<Vec<_>>();
+    let mut matches = Vec::new();
+    collect_matching_nested_values(document, &parts, &mut matches);
+    matches
+}
+
+fn collect_matching_nested_values<'a>(
+    current: &'a Value,
+    parts: &[&str],
+    matches: &mut Vec<&'a Value>,
+) {
+    let Some((part, remaining)) = parts.split_first() else {
+        matches.push(current);
+        return;
+    };
+
+    if *part == "*" {
+        if let Some(map) = current.as_object() {
+            for value in map.values() {
+                collect_matching_nested_values(value, remaining, matches);
+            }
+        } else if let Some(items) = current.as_array() {
+            for value in items {
+                collect_matching_nested_values(value, remaining, matches);
+            }
+        }
+        return;
+    }
+
+    if let Some(next) = current.get(*part) {
+        collect_matching_nested_values(next, remaining, matches);
     }
 }
 
@@ -516,6 +558,28 @@ mod tests {
         );
 
         assert_eq!(entry_names(&report), vec!["MCPMate".to_string()]);
+        assert_eq!(report.analysis.server_count, 1);
+    }
+
+    #[test]
+    fn inspect_config_content_matches_wildcard_container_segments() {
+        let transports = stdio_transports();
+        let report = inspect_config_content(
+            r#"{
+                "projects": {
+                    "/Volumes/External/GitHub/MCPMate": {
+                        "mcpServers": {
+                            "project-server": {"command":"node","args":["server.js"]}
+                        }
+                    }
+                }
+            }"#,
+            &object_map_rule("projects.*.mcpServers"),
+            Some(&transports),
+        );
+
+        assert!(report.inspection.matched_container);
+        assert_eq!(entry_names(&report), vec!["project-server".to_string()]);
         assert_eq!(report.analysis.server_count, 1);
     }
 

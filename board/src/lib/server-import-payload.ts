@@ -96,11 +96,16 @@ export function urlWithMergedSearchParams(
 		for (const [key, value] of Object.entries(params)) {
 			parsed.searchParams.set(key, value);
 		}
-		return isAbsolute
-			? parsed.toString()
-			: `${baseUrl}?${parsed.searchParams.toString()}`;
+		if (isAbsolute) {
+			return parsed.toString();
+		}
+		// For relative URLs, use pathname + search to preserve existing query params
+		const search = parsed.searchParams.toString();
+		return search ? `${parsed.pathname}?${search}` : parsed.pathname;
 	} catch {
+		// Fallback: manually merge params, preserving existing query string
+		const separator = baseUrl.includes("?") ? "&" : "?";
 		const qs = new URLSearchParams(params).toString();
-		return `${baseUrl}?${qs}`;
+		return `${baseUrl}${separator}${qs}`;
 	}
 }

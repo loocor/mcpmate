@@ -393,7 +393,6 @@ pub struct ClientConfigData {
     pub uses_template_parse_default: bool,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Summary of the client template metadata")]
 pub struct ClientTemplateMetadata {
@@ -534,7 +533,6 @@ impl From<ServerEntryData> for InspectedServerEntry {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "API error structure")]
@@ -880,6 +878,14 @@ pub struct ClientCheckReq {
     pub include_detected: bool,
 }
 
+/// Request for client detection operation
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ClientDetectReq {
+    #[serde(default)]
+    #[schemars(description = "Whether to refresh templates before detecting clients")]
+    pub refresh: bool,
+}
+
 /// Request for client config details
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ClientConfigReq {
@@ -946,7 +952,6 @@ pub struct ClientBackupPolicySetReq {
     #[schemars(description = "Backup policy descriptor")]
     pub policy: ClientBackupPolicyPayload,
 }
-
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Default)]
 #[schemars(description = "Backup policy descriptor for API payload")]

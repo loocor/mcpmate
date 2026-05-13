@@ -4,7 +4,7 @@
 use super::{common, shared::*};
 use crate::api::models::server::{
     ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload, ServerUpdateReq,
-    ServersImportData, ServersImportReq, SkippedServerData,
+    ServersImportData, ServersImportReq, ServersImportResp, SkippedServerData,
 };
 use crate::{
     api::handlers::{
@@ -13,9 +13,7 @@ use crate::{
     },
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
-    config::server::{
-        ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch,
-    },
+    config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
@@ -37,7 +35,9 @@ fn validate_server_config(
 ) -> Result<(), ApiError> {
     match kind {
         "stdio" if command.is_none() => Err(ApiError::BadRequest("Command is required for stdio servers".to_owned())),
-        "sse" | "streamable_http" if url.is_none() => Err(ApiError::BadRequest(format!("URL is required for {kind} servers"))),
+        "sse" | "streamable_http" if url.is_none() => {
+            Err(ApiError::BadRequest(format!("URL is required for {kind} servers")))
+        }
         "stdio" | "sse" | "streamable_http" => Ok(()),
         _ => Err(ApiError::BadRequest(format!(
             "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
@@ -622,7 +622,7 @@ pub async fn update_server(
 pub async fn import_servers(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServersImportReq>,
-) -> Result<Json<ServersImportData>, ApiError> {
+) -> Result<Json<ServersImportResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
 
@@ -636,6 +636,13 @@ pub async fn import_servers(
         if !profile.is_active {
             return Err(ApiError::BadRequest(format!("Profile '{}' is not active", profile_id)));
         }
+    }
+
+    // Validate: require either client_identifier or mcp_servers
+    if payload.client_identifier.is_none() && payload.mcp_servers.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Either 'client_identifier' or 'mcp_servers' must be provided".to_string(),
+        ));
     }
 
     let mcp_servers = if let Some(ref client_id) = payload.client_identifier {
@@ -687,7 +694,7 @@ pub async fn import_servers(
     let failed_servers: Vec<String> = failed.keys().cloned().collect();
     let error_details = if failed.is_empty() { None } else { Some(failed) };
 
-    let response = Json(ServersImportData {
+    let import_data = ServersImportData {
         imported_count: imported_servers.len(),
         imported_servers,
         skipped_count: skipped_servers.len(),
@@ -695,23 +702,23 @@ pub async fn import_servers(
         failed_count: failed_servers.len(),
         failed_servers,
         error_details,
-    });
+    };
 
     let mut data = Map::new();
     data.insert(
         "imported_count".to_string(),
-        Value::from(response.0.imported_count as u64),
+        Value::from(import_data.imported_count as u64),
     );
     data.insert(
         "skipped_count".to_string(),
-        Value::from(response.0.skipped_count as u64),
+        Value::from(import_data.skipped_count as u64),
     );
-    data.insert("failed_count".to_string(), Value::from(response.0.failed_count as u64));
+    data.insert("failed_count".to_string(), Value::from(import_data.failed_count as u64));
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             crate::audit::AuditAction::ServerImport,
-            if response.0.failed_count > 0 {
+            if import_data.failed_count > 0 {
                 crate::audit::AuditStatus::Failed
             } else {
                 crate::audit::AuditStatus::Success
@@ -727,7 +734,7 @@ pub async fn import_servers(
     )
     .await;
 
-    Ok(response)
+    Ok(Json(ServersImportResp::success(import_data)))
 }
 
 fn skipped_server_to_api(source: SkippedServer) -> SkippedServerData {

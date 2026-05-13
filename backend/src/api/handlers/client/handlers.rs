@@ -12,10 +12,9 @@ use crate::api::models::client::{
     ClientCapabilityConfigData, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq,
     ClientCheckResp, ClientConfigData, ClientConfigFileParseInspectExistingReq,
     ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq, ClientConfigFileParseInspectResp,
-    ClientConfigMode, ClientConfigReq,
-    ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientDetachData, ClientDetachReq, ClientDetachResp, ClientInfo, ClientTemplateMetadata,
-    ClientTemplateStorageMetadata,
+    ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected,
+    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientDetachData, ClientDetachReq,
+    ClientDetachResp, ClientDetectReq, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
     ClientUnifyDirectExposureData,
 };
 use crate::api::routes::AppState;
@@ -185,6 +184,39 @@ pub async fn list(
     for descriptor in descriptors.into_iter().filter(|descriptor| {
         request.include_detected || (descriptor.persisted && descriptor.state.governance_kind().as_str() == "active")
     }) {
+        match descriptor_to_client_info(service.as_ref(), app_state.as_ref(), descriptor).await {
+            Ok(info) => client_infos.push(info),
+            Err(status) => return Err(status),
+        }
+    }
+
+    let response = ClientCheckData {
+        total: client_infos.len(),
+        client: client_infos,
+        last_updated: Utc::now().to_rfc3339(),
+    };
+
+    Ok(Json(ClientCheckResp::success(response)))
+}
+
+/// Handler for GET /api/client/detect
+/// Detects installed clients without persisting candidates as client records.
+pub async fn detect(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ClientDetectReq>,
+) -> Result<Json<ClientCheckResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+
+    let descriptors = service.list_clients(request.refresh, false).await.map_err(|err| {
+        tracing::error!("Failed to detect clients: {}", err);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let mut client_infos = Vec::new();
+    for descriptor in descriptors
+        .into_iter()
+        .filter(|descriptor| descriptor.detection.is_some())
+    {
         match descriptor_to_client_info(service.as_ref(), app_state.as_ref(), descriptor).await {
             Ok(info) => client_infos.push(info),
             Err(status) => return Err(status),
@@ -1165,21 +1197,7 @@ async fn descriptor_to_client_info(
         .map(|state| state.custom_profile_missing)
         .unwrap_or(false);
 
-    let content = if descriptor.config_exists {
-        match service.read_current_config(&identifier).await {
-            Ok(content) => content,
-            Err(err) => {
-                tracing::warn!(
-                    client = %identifier,
-                    error = %err,
-                    "Continuing list operation despite configuration read failure"
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let content = read_descriptor_config_content(service, &descriptor, &identifier).await;
 
     let config_analysis = inspect_client_config_lenient(content.as_deref(), &state)
         .map(|inspected| inspected.analysis)
@@ -1205,6 +1223,7 @@ async fn descriptor_to_client_info(
         .await
         .unwrap_or(false);
     let pending_approval = approval_status.as_deref() == Some("pending");
+    let attachment_state = derive_attachment_state(&state, &config_analysis);
 
     Ok(ClientInfo {
         identifier,
@@ -1235,7 +1254,7 @@ async fn descriptor_to_client_info(
         mcp_servers_count: Some(config_analysis.server_count),
         template: build_template_metadata_from_state(&state, &runtime_metadata),
         approval_status,
-        attachment_state: Some(state.attachment_state().as_str().to_string()),
+        attachment_state: Some(attachment_state),
         governance_kind,
         connection_mode,
         governed_by_default_policy,
@@ -1245,6 +1264,44 @@ async fn descriptor_to_client_info(
         config_file_parse_override,
         uses_template_parse_default,
     })
+}
+
+async fn read_descriptor_config_content(
+    service: &ClientConfigService,
+    descriptor: &ClientDescriptor,
+    identifier: &str,
+) -> Option<String> {
+    if !descriptor.config_exists {
+        return None;
+    }
+
+    if descriptor.persisted {
+        match service.read_current_config(identifier).await {
+            Ok(content) => content,
+            Err(err) => {
+                tracing::warn!(
+                    client = %identifier,
+                    error = %err,
+                    "Continuing list operation despite configuration read failure"
+                );
+                None
+            }
+        }
+    } else {
+        let config_path = descriptor.config_path.as_deref()?;
+        match tokio::fs::read_to_string(config_path).await {
+            Ok(content) => Some(content),
+            Err(err) => {
+                tracing::warn!(
+                    client = %identifier,
+                    path = %config_path,
+                    error = %err,
+                    "Continuing detect operation despite configuration read failure"
+                );
+                None
+            }
+        }
+    }
 }
 
 // moved to POST /api/client/config/import
@@ -1327,9 +1384,7 @@ fn map_mode(mode: ClientConfigMode) -> ConfigMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::models::client::{
-        ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq,
-    };
+    use crate::api::models::client::{ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq};
     use crate::api::routes::AppState;
     use crate::clients::{
         CapabilitySource,
@@ -1411,6 +1466,16 @@ mod tests {
     }
 
     async fn create_test_context() -> TestContext {
+        create_test_context_with_template_setup(true, |_, _| {}).await
+    }
+
+    async fn create_test_context_with_template_setup<F>(
+        seed_client_rows: bool,
+        setup_templates: F,
+    ) -> TestContext
+    where
+        F: FnOnce(&std::path::Path, &TemplateRoot),
+    {
         let temp_dir = TempDir::new().expect("temp dir");
         let db_pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -1436,6 +1501,8 @@ mod tests {
         });
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
+        template_root.ensure_base_dirs().expect("template dirs");
+        setup_templates(temp_dir.path(), &template_root);
         let template_source = Arc::new(
             FileTemplateSource::bootstrap(template_root)
                 .await
@@ -1444,9 +1511,11 @@ mod tests {
         ClientConfigService::seed_runtime_template_snapshots(&db_pool, template_source.as_ref())
             .await
             .expect("seed runtime templates");
-        ClientConfigService::seed_client_runtime_rows(&db_pool, template_source.as_ref())
-            .await
-            .expect("seed runtime rows");
+        if seed_client_rows {
+            ClientConfigService::seed_client_runtime_rows(&db_pool, template_source.as_ref())
+                .await
+                .expect("seed runtime rows");
+        }
         let runtime_source: Arc<dyn ClientConfigSource> =
             Arc::new(DbTemplateSource::new(Arc::new(db_pool.clone())).expect("runtime source"));
         let client_service = Arc::new(
@@ -1534,6 +1603,77 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn detect_returns_detected_clients_without_persisting_records() {
+        let context = create_test_context_with_template_setup(false, |temp_path, template_root| {
+            let config_path = temp_path.join("detected-client.json");
+            std::fs::write(
+                &config_path,
+                r#"{"mcpServers":{"Detected Server":{"command":"node","args":["server.js"]}}}"#,
+            )
+            .expect("write detected client config");
+
+            let template = format!(
+                r#"{{
+                  identifier: "test.detected",
+                  display_name: "Detected Test",
+                  format: "json",
+                  storage: {{ kind: "file", path_strategy: "config_path" }},
+                  detection: {{
+                    macos: [{{ method: "config_path", value: "{}" }}],
+                    linux: [{{ method: "config_path", value: "{}" }}],
+                    windows: [{{ method: "config_path", value: "{}" }}],
+                  }},
+                  config_mapping: {{
+                    container_keys: ["mcpServers"],
+                    container_type: "object_map",
+                    merge_strategy: "replace",
+                    format_rules: {{
+                      stdio: {{
+                        template: {{
+                          command: "{{{{command}}}}",
+                          args: "{{{{{{json args}}}}}}",
+                          env: "{{{{{{json env}}}}}}",
+                        }},
+                        requires_type_field: false,
+                      }},
+                    }},
+                  }},
+                }}"#,
+                config_path.display(),
+                config_path.display(),
+                config_path.display(),
+            );
+            std::fs::write(template_root.official_dir().join("test_detected.json5"), template)
+                .expect("write detected client template");
+        })
+        .await;
+
+        let Json(response) = detect(
+            State(context.app_state.clone()),
+            Query(ClientDetectReq { refresh: true }),
+        )
+        .await
+        .expect("detect clients");
+
+        assert!(response.success);
+        let clients = response.data.expect("detect data").client;
+        let detected = clients
+            .iter()
+            .find(|client| client.identifier == "test.detected")
+            .expect("detected client should be returned");
+
+        assert!(detected.detected);
+        assert_eq!(detected.mcp_servers_count, Some(1));
+        assert!(
+            context
+                .client_service
+                .fetch_state("test.detected")
+                .await
+                .expect("fetch state")
+                .is_none()
+        );
+    }
 
     async fn insert_shared_profile(
         pool: &sqlx::SqlitePool,
