@@ -11,6 +11,8 @@ import {
 export interface SegmentOption {
 	value: string;
 	label: string;
+	/** Overrides visible label for assistive tech when `label` is non-text (e.g. emoji-only). */
+	ariaLabel?: string;
 	icon?: React.ReactNode;
 	tooltip?: string;
 	disabled?: boolean;
@@ -57,7 +59,7 @@ const Segment = React.forwardRef<
 			>
 				<TabsPrimitive.List
 					className={cn(
-						"inline-flex h-10 w-full items-center justify-center rounded-md bg-slate-100 p-1 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+						"inline-flex min-h-10 h-auto w-full items-center justify-center rounded-md bg-slate-100 p-1 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
 						disabled && "opacity-50 pointer-events-none",
 					)}
 				>
@@ -72,6 +74,7 @@ const Segment = React.forwardRef<
 								key={option.value}
 								value={option.value}
 								disabled={isOptionDisabled}
+								aria-label={option.ariaLabel ?? displayLabel}
 								className={cn(
 									"inline-flex flex-1 items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-slate-950 data-[state=active]:shadow-sm dark:ring-offset-slate-950 dark:focus-visible:ring-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-slate-50",
 									"flex items-center gap-2",
@@ -85,7 +88,7 @@ const Segment = React.forwardRef<
 											"border-slate-400 bg-transparent",
 											"dark:border-slate-500",
 											value === option.value &&
-												"border-primary bg-primary dark:border-primary dark:bg-primary",
+											"border-primary bg-primary dark:border-primary dark:bg-primary",
 											option.disabled && "opacity-50",
 										)}
 									/>

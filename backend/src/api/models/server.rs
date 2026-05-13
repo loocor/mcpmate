@@ -817,8 +817,8 @@ pub struct ServerUpdateReq {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Import servers request")]
 pub struct ServersImportReq {
-    /// Map of MCP server name to configuration
-    #[serde(rename = "mcpServers")]
+    /// Map of MCP server name to configuration (required when `client_identifier` is absent)
+    #[serde(rename = "mcpServers", default)]
     pub mcp_servers: HashMap<String, ServersImportConfig>,
     /// Optional profile ID to auto-enable imported servers
     #[serde(default)]
@@ -826,6 +826,14 @@ pub struct ServersImportReq {
     /// Dry-run mode: validate and preview import without persisting changes (default: false)
     #[serde(default)]
     pub dry_run: bool,
+    /// When set, import from the named client's config file instead of `mcpServers`.
+    /// The client must already be registered in the database.
+    #[serde(default)]
+    pub client_identifier: Option<String>,
+    /// Filter to only import these server names (requires `client_identifier`).
+    /// An empty list means "import all detected servers".
+    #[serde(default)]
+    pub selected_server_names: Vec<String>,
 }
 
 /// Import server configuration

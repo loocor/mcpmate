@@ -155,6 +155,71 @@ pub struct RuntimeClientMetadata {
     pub category: Option<String>,
 }
 
+impl RuntimeClientMetadata {
+    pub fn from_template(template: &ClientTemplate) -> Self {
+        Self {
+            description: template
+                .metadata
+                .get("description")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            homepage_url: template
+                .metadata
+                .get("homepage_url")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            docs_url: template
+                .metadata
+                .get("docs_url")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            support_url: template
+                .metadata
+                .get("support_url")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            logo_url: template
+                .metadata
+                .get("logo_url")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+            category: template
+                .metadata
+                .get("category")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string),
+        }
+    }
+
+    pub fn resolve_for_template(
+        stored: &Self,
+        template: Option<&ClientTemplate>,
+    ) -> Self {
+        let Some(template) = template else {
+            return stored.clone();
+        };
+        Self::resolve_with_template_metadata(stored, Some(Self::from_template(template)))
+    }
+
+    pub fn resolve_with_template_metadata(
+        stored: &Self,
+        template: Option<Self>,
+    ) -> Self {
+        let Some(template) = template else {
+            return stored.clone();
+        };
+        Self {
+            // Keep user-saved metadata authoritative; template metadata is fallback only.
+            description: stored.description.clone().or(template.description),
+            homepage_url: stored.homepage_url.clone().or(template.homepage_url),
+            docs_url: stored.docs_url.clone().or(template.docs_url),
+            support_url: stored.support_url.clone().or(template.support_url),
+            logo_url: stored.logo_url.clone().or(template.logo_url),
+            category: stored.category.clone().or(template.category),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(super) struct PersistedTemplateConfig {
     pub(super) config_format: Option<String>,
@@ -487,6 +552,7 @@ pub struct ClientDescriptor {
     pub config_path: Option<String>,
     pub config_exists: bool,
     pub detected_at: Option<DateTime<Utc>>,
+    pub persisted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -550,7 +616,6 @@ impl ClientConfigService {
     pub async fn bootstrap(db_pool: Arc<SqlitePool>) -> crate::clients::error::ConfigResult<Self> {
         let templates = embedded_official_templates()?;
         Self::seed_runtime_template_snapshots_from_templates(db_pool.as_ref(), &templates).await?;
-        Self::seed_client_runtime_rows_from_templates(db_pool.as_ref(), &templates).await?;
         let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(DbTemplateSource::new(db_pool.clone())?);
         Self::with_source(db_pool, runtime_source).await
     }
@@ -906,6 +971,29 @@ impl ClientConfigService {
         Ok(())
     }
 
+    pub async fn runtime_template_metadata(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<Option<RuntimeClientMetadata>> {
+        let payload: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT payload_json FROM {} WHERE identifier = ?",
+            crate::common::constants::database::tables::CLIENT_TEMPLATE_RUNTIME
+        ))
+        .bind(identifier)
+        .fetch_optional(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        let Some(payload) = payload else {
+            return Ok(None);
+        };
+        let template: ClientTemplate = serde_json::from_str(&payload).map_err(|err| {
+            ConfigError::DataAccessError(format!("Failed to parse runtime client template metadata: {err}"))
+        })?;
+
+        Ok(Some(RuntimeClientMetadata::from_template(&template)))
+    }
+
     #[cfg(test)]
     pub(crate) async fn seed_client_runtime_rows(
         db_pool: &SqlitePool,
@@ -915,6 +1003,49 @@ impl ClientConfigService {
         Self::seed_client_runtime_rows_from_templates(db_pool, &templates).await
     }
 
+    pub(crate) fn preview_state_from_detected_template(
+        identifier: &str,
+        display_name: &str,
+        config_path: Option<&str>,
+        template: &ClientTemplate,
+    ) -> ClientStateRow {
+        let persisted_config = PersistedTemplateConfig::from_template(template);
+        let runtime_metadata = serde_json::json!({
+            "runtime_client": RuntimeClientMetadata::from_template(template)
+        });
+
+        ClientStateRow {
+            id: crate::generate_id!("clnt"),
+            identifier: identifier.to_string(),
+            name: display_name.to_string(),
+            display_name: Some(display_name.to_string()),
+            config_path: config_path.map(ToString::to_string),
+            backup_policy: Some("keep_n".to_string()),
+            backup_limit: Some(5),
+            capability_source: Some("activated".to_string()),
+            governance_kind: Some("passive".to_string()),
+            connection_mode: Some("local_config_detected".to_string()),
+            approval_status: Some("pending".to_string()),
+            attachment_state: Some("detached".to_string()),
+            template_identifier: Some(template.identifier.clone()),
+            config_format: persisted_config.config_format,
+            protocol_revision: persisted_config.protocol_revision,
+            container_type: persisted_config.container_type,
+            container_keys: persisted_config.container_keys,
+            storage_kind: persisted_config.storage_kind,
+            storage_adapter: persisted_config.storage_adapter,
+            storage_path_strategy: persisted_config.storage_path_strategy,
+            merge_strategy: persisted_config.merge_strategy,
+            keep_original_config: persisted_config.keep_original_config,
+            managed_source: persisted_config.managed_source,
+            transports: persisted_config.transports,
+            config_file_parse: persisted_config.config_file_parse,
+            approval_metadata: serde_json::to_string(&runtime_metadata).ok(),
+            ..ClientStateRow::default()
+        }
+    }
+
+    #[cfg(test)]
     async fn seed_client_runtime_rows_from_templates(
         db_pool: &SqlitePool,
         templates: &[ClientTemplate],
@@ -926,14 +1057,7 @@ impl ClientConfigService {
             let persisted_config = PersistedTemplateConfig::from_template(template);
 
             let runtime_metadata = serde_json::json!({
-                "runtime_client": {
-                    "description": template.metadata.get("description").and_then(|v| v.as_str()),
-                    "homepage_url": template.metadata.get("homepage_url").and_then(|v| v.as_str()),
-                    "docs_url": template.metadata.get("docs_url").and_then(|v| v.as_str()),
-                    "support_url": template.metadata.get("support_url").and_then(|v| v.as_str()),
-                    "logo_url": template.metadata.get("logo_url").and_then(|v| v.as_str()),
-                    "category": template.metadata.get("category").and_then(|v| v.as_str())
-                }
+                "runtime_client": RuntimeClientMetadata::from_template(template)
             });
             let approval_metadata = serde_json::to_string(&runtime_metadata).ok();
 

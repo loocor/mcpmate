@@ -407,6 +407,7 @@ impl ClientConfigService {
             client_version = ?update.client_version,
             connection_mode = ?update.connection_mode,
             config_path = ?update.config_path,
+            clear_config_file_parse = %update.clear_config_file_parse,
             "set_active_client_settings: entry"
         );
 
@@ -478,7 +479,9 @@ impl ClientConfigService {
             .as_deref()
             .or_else(|| existing_state.as_ref().and_then(|state| state.config_path()));
 
-        if matches!(resolved_connection_mode.as_deref(), Some("local_config_detected")) {
+        if !update.clear_config_file_parse
+            && matches!(resolved_connection_mode.as_deref(), Some("local_config_detected"))
+        {
             if let (Some(path), Some(parse)) = (validation_path, effective_parse_for_validation.as_ref()) {
                 self.validate_config_file_parse_rule(path, parse).await?;
             }
@@ -817,9 +820,9 @@ impl ClientConfigService {
             r#"
             UPDATE client
             SET config_file_parse = ?,
-                config_format = COALESCE(?, config_format),
-                container_type = COALESCE(?, container_type),
-                container_keys = COALESCE(?, container_keys),
+                config_format = ?,
+                container_type = ?,
+                container_keys = ?,
                 governance_kind = 'active',
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?

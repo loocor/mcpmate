@@ -726,8 +726,14 @@ impl FormatRule {
             if key == "type" {
                 if let Some(type_value) = value.as_str() {
                     if !type_value.contains("{{") {
-                        normalized.include_type = true;
                         normalized.type_value.get_or_insert_with(|| type_value.to_string());
+                        // Only treat static template `type` as an inbound discriminator when the rule
+                        // explicitly opted in (`include_type` / legacy `requires_type_field: true`).
+                        // Otherwise Cursor-like templates (literal output type + `requires_type_field: false`)
+                        // would incorrectly require user configs to repeat the same `type` field.
+                        if self.include_type {
+                            normalized.include_type = true;
+                        }
                         continue;
                     }
                 }

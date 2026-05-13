@@ -32,6 +32,7 @@ import {
 import { PageToolbar } from "../../components/ui/page-toolbar";
 import { ProfileSuitGridCard } from "./components/profile-suit-grid-card";
 import { configSuitsApi, serversApi } from "../../lib/api";
+import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifySuccess } from "../../lib/notify";
@@ -41,8 +42,6 @@ import type {
 	InstanceSummary,
 	ServerSummary,
 } from "../../lib/types";
-
-const DEFAULT_ANCHOR_ROLE = "default_anchor";
 
 const arrangeSuitsWithDefaultAnchor = (items: ConfigSuit[] = []) => {
 	if (!items.length) {
@@ -524,7 +523,7 @@ export function ProfilePage() {
 		const displayName = formatSuitDisplayName(suit.name, suit.id, t);
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
 		const suitRole = suit.role ?? "user";
-		const isDefaultAnchor = suitRole === "default_anchor";
+		const isDefaultAnchor = suitRole === DEFAULT_ANCHOR_ROLE;
 		const isDefaultMember = suit.is_default;
 
 		return (
@@ -604,7 +603,7 @@ export function ProfilePage() {
 		const displayName = formatSuitDisplayName(suit.name, suit.id, t);
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
 		const suitRole = suit.role ?? "user";
-		const isDefaultAnchor = suitRole === "default_anchor";
+		const isDefaultAnchor = suitRole === DEFAULT_ANCHOR_ROLE;
 		const statItems = [
 			{
 				label: t("profiles:badges.servers", { defaultValue: "Servers" }),

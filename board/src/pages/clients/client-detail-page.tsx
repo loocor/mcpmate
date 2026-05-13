@@ -74,8 +74,11 @@ import {
   auditApi,
   clientsApi,
   configSuitsApi,
+  extractImportStats,
   serversApi,
 } from "../../lib/api";
+import { resolveAutoAddTargetProfileId } from "../../lib/default-profile";
+import { buildClientServersImportRequest } from "../../lib/server-import-payload";
 import { mapDashboardSettingsToClientBackupPolicy } from "../../lib/client-backup-policy";
 import {
   applyClientConfigWithResolvedSelection,
@@ -91,12 +94,12 @@ import type {
   ClientCapabilityConfigData,
   ClientCapabilityConfigReq,
   ClientCapabilitySourceSelection,
-  ClientConfigImportData,
   ClientConfigMode,
   ClientConfigUpdateData,
   ClientInfo,
   ConfigSuit,
   ServerSummary,
+  ServersImportData,
   TransportRuleData,
   UnifyDirectCapabilityIds,
 } from "../../lib/types";
@@ -1569,16 +1572,51 @@ export function ClientDetailPage() {
       ),
   });
 
-  const importMutation = useMutation<ClientConfigImportData>({
-    mutationFn: async () => {
+  const importMutation = useMutation<ServersImportData, Error, string[]>({
+    mutationFn: async (selectedServerNames) => {
       if (!identifier) throw new Error("No identifier provided");
-      return clientsApi.importFromClient(identifier, {
-        entries: importCandidateEntries,
+      const targetProfileId = await resolveAutoAddTargetProfileId({
+        autoAddEnabled: dashboardSettings.autoAddServerToDefaultProfile,
       });
+      const resp = await serversApi.importServers(
+        buildClientServersImportRequest({
+          clientIdentifier: identifier,
+          selectedServerNames,
+          targetProfileId,
+        }),
+      );
+      if (
+        resp &&
+        typeof resp === "object" &&
+        "success" in resp &&
+        (resp as { success?: boolean }).success === false
+      ) {
+        throw new Error(
+          (resp as { error?: unknown }).error
+            ? String((resp as { error: unknown }).error)
+            : "Import failed",
+        );
+      }
+      const stats = extractImportStats(resp);
+      if (stats.failedCount > 0) {
+        throw new Error(
+          stats.errorDetails
+            ? JSON.stringify(stats.errorDetails)
+            : "Import failed",
+        );
+      }
+      return {
+        imported_count: stats.importedCount,
+        imported_servers: stats.importedServers,
+        skipped_count: stats.skippedCount,
+        skipped_servers: stats.skippedDetails,
+        failed_count: stats.failedCount,
+        failed_servers: stats.failedServers,
+        error_details: stats.errorDetails ?? null,
+      };
     },
     onSuccess: (res) => {
-      const imported =
-        res.imported_servers?.length ?? res.summary?.imported_count ?? 0;
+      const imported = res.imported_count ?? 0;
       if (imported > 0) {
         notifySuccess(
           t("detail.notifications.imported.title", {
@@ -1596,6 +1634,9 @@ export function ClientDetailPage() {
         );
         setImportReviewOpen(false);
         refetchDetails();
+        if (dashboardSettings.autoAddServerToDefaultProfile) {
+          void qc.invalidateQueries({ queryKey: ["configSuits"] });
+        }
       } else {
         notifyInfo(
           t("detail.notifications.nothingToImport.title", {
@@ -3486,7 +3527,7 @@ export function ClientDetailPage() {
         entries={importCandidateEntries}
         isImporting={importMutation.isPending}
         isLoading={loadingConfig}
-        onImport={() => importMutation.mutate()}
+        onImport={(selectedServerNames) => importMutation.mutate(selectedServerNames)}
         onOpenChange={setImportReviewOpen}
         open={importReviewOpen}
       />

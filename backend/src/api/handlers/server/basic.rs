@@ -164,7 +164,7 @@ async fn server_details_core(
 
     let mut oauth_status = None;
     let mut oauth_configured = false;
-    if server.server_type == crate::common::server::ServerType::StreamableHttp {
+    if server.server_type.is_http_transport() {
         let manager = crate::core::oauth::manager::OAuthManager::new(db_pool.clone());
         if let Ok(status) = manager.get_status(server_id).await {
             oauth_configured = status.configured;
@@ -242,7 +242,7 @@ async fn server_list_core(
     let enabled_in_profile = load_enabled_server_ids(db_pool).await;
     let streamable_http_server_ids: Vec<String> = all_servers
         .iter()
-        .filter(|server| server.server_type == crate::common::server::ServerType::StreamableHttp)
+        .filter(|server| server.server_type.is_http_transport())
         .filter_map(|server| server.id.clone())
         .collect();
     let oauth_status_map = match crate::core::oauth::load_oauth_states(db_pool, &streamable_http_server_ids).await {
@@ -304,7 +304,7 @@ async fn server_list_core(
         let raw_headers = raw_headers_map.remove(&server_id);
         let headers = headers_map.remove(&server_id);
 
-        let oauth_status = if server.server_type == crate::common::server::ServerType::StreamableHttp {
+        let oauth_status = if server.server_type.is_http_transport() {
             oauth_status_map.get(&server_id).cloned()
         } else {
             None

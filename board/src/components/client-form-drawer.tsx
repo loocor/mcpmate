@@ -843,6 +843,7 @@ export function ClientFormDrawer({
 	const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
 	const configPathFileInputRef = useRef<HTMLInputElement>(null);
 	const autoAppliedInferenceRef = useRef<string | null>(null);
+	const lastParseInspectionSignatureRef = useRef<string | null>(null);
 
 	const form = useForm<ClientRecordFormValues>({
 		resolver: zodResolver(formSchema),
@@ -892,6 +893,7 @@ export function ClientFormDrawer({
 		setShowParseCodePreview(false);
 		setIsDeleteConfirmOpen(false);
 		autoAppliedInferenceRef.current = null;
+		lastParseInspectionSignatureRef.current = null;
 		setTransportRuleEditors(transportRuleEditorsFromClient(client));
 		setSelectedTransportTab("");
 		initialSupportedTransportsRef.current = defaultValues(client).supportedTransports;
@@ -1083,6 +1085,7 @@ export function ClientFormDrawer({
 		if (!open || connectionShape !== "local_with_config") return;
 		const trimmedPath = configPath?.trim();
 		if (!trimmedPath) {
+			lastParseInspectionSignatureRef.current = null;
 			setParseInspection(null);
 			setParseInspectionError(null);
 			setShowParseCodePreview(false);
@@ -1094,6 +1097,7 @@ export function ClientFormDrawer({
 			mode === "edit" && Boolean(identifier?.trim()) && trimmedPath === persistedPath;
 		const canInspectCreatePath = mode === "create";
 		if (!canInspectExistingClientPath && !canInspectCreatePath) {
+			lastParseInspectionSignatureRef.current = null;
 			setParseInspection(null);
 			setParseInspectionError(
 				mode === "edit" && trimmedPath !== persistedPath
@@ -1107,7 +1111,19 @@ export function ClientFormDrawer({
 			return;
 		}
 
+		const inspectSignature = JSON.stringify({
+			mode,
+			identifier,
+			trimmedPath,
+			canInspectExistingClientPath,
+			parseDraft,
+		});
+		if (lastParseInspectionSignatureRef.current === inspectSignature) {
+			return;
+		}
+
 		const timer = window.setTimeout(() => {
+			lastParseInspectionSignatureRef.current = inspectSignature;
 			if (canInspectExistingClientPath && identifier?.trim()) {
 				void inspectMutation.mutateAsync({
 					kind: "existing",
@@ -1131,7 +1147,7 @@ export function ClientFormDrawer({
 		}, 350);
 
 		return () => window.clearTimeout(timer);
-	}, [open, connectionShape, configPath, parseDraft, inspectMutation, mode, identifier, client?.config_path, t]);
+	}, [open, connectionShape, configPath, parseDraft, inspectMutation.mutateAsync, mode, identifier, client?.config_path, t]);
 
 	const handleApplyDetectedRules = useCallback(() => {
 		const inferred = parseInspection?.inferred_parse;

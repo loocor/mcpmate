@@ -18,7 +18,7 @@ const normalizeKind = (value: unknown): ServerInstallDraft["kind"] => {
 			return "stdio";
 		case "sse":
 		case "server-sent-events":
-			return "streamable_http";
+			return "sse";
 		case "streamable_http":
 		case "streamable-http":
 		case "http":
@@ -85,12 +85,12 @@ const normalizeServerIcon = (icon: unknown): ServerIcon | null => {
 	if (!icon || typeof icon !== "object") return null;
 	const obj = icon as Record<string, unknown>;
 	const src =
-		typedefString(obj.src) || typedefString(obj.url) || typedefString(obj.href);
+		trimmedString(obj.src) || trimmedString(obj.url) || trimmedString(obj.href);
 	if (!src) return null;
 	const mimeType =
-		typedefString(obj.mime_type) || typedefString(obj.mimeType) || undefined;
+		trimmedString(obj.mime_type) || trimmedString(obj.mimeType) || undefined;
 	const sizes =
-		typedefString(obj.sizes) || typedefString(obj.size) || undefined;
+		trimmedString(obj.sizes) || trimmedString(obj.size) || undefined;
 	const normalized: ServerIcon = { src };
 	if (mimeType) normalized.mimeType = mimeType;
 	if (sizes) normalized.sizes = sizes;
@@ -116,9 +116,9 @@ const normalizeMeta = (metaLike: unknown): ServerMetaInfo | undefined => {
 	const version =
 		typeof raw.version === "string" ? raw.version.trim() : undefined;
 	const website =
-		typedefString(raw.websiteUrl) ||
-		typedefString(raw.website_url) ||
-		typedefString(raw.website);
+		trimmedString(raw.websiteUrl) ||
+		trimmedString(raw.website_url) ||
+		trimmedString(raw.website);
 	const repository = normalizeRepository(raw.repository);
 	const icons = normalizeIconList(raw.icons);
 
@@ -139,11 +139,11 @@ const normalizeMeta = (metaLike: unknown): ServerMetaInfo | undefined => {
 	return Object.keys(meta).length ? meta : undefined;
 };
 
-const typedefString = (value: unknown): string | undefined => {
+function trimmedString(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const trimmed = value.trim();
 	return trimmed.length ? trimmed : undefined;
-};
+}
 
 const hydrateMeta = (
 	base: ServerMetaInfo | undefined,
@@ -350,8 +350,8 @@ const buildDraft = (
 		typeof name === "string" && name.trim() ? name.trim() : undefined;
 	const rawKind = raw.kind ?? raw.type ?? raw.server_type;
 	let kind = normalizeKind(rawKind);
-	const command = typedefString(raw.command ?? raw.command_path ?? raw.launch);
-	let url = typedefString(
+	const command = trimmedString(raw.command ?? raw.command_path ?? raw.launch);
+	let url = trimmedString(
 		raw.url ??
 			(raw as any)?.httpUrl ??
 			(raw as any)?.http_url ??
@@ -396,7 +396,7 @@ const buildDraft = (
 		toEnvRecord(raw.headers) ||
 		toEnvRecord((raw as any)?.httpHeaders) ||
 		toEnvRecord((raw as any)?.requestHeaders);
-	const registryServerId = typedefString(
+	const registryServerId = trimmedString(
 		raw.registry_server_id ?? raw.registryServerId,
 	);
 
@@ -454,7 +454,7 @@ export async function parseMcpbBundle(
 	const serverConfig = manifest.server?.mcp_config ?? {};
 	const env = toEnvRecord(serverConfig.env);
 	const args = toStringArray(serverConfig.args);
-	const command = typedefString(serverConfig.command);
+	const command = trimmedString(serverConfig.command);
 
 	const metaExtras = {
 		"anthropic.mcpb/manifest": manifest,
@@ -476,8 +476,8 @@ export async function parseMcpbBundle(
 	const envForDraft = env && Object.keys(env).length ? env : undefined;
 	const draft: ServerInstallDraft = {
 		name:
-			typedefString(manifest.name) ||
-			typedefString(manifest.display_name) ||
+			trimmedString(manifest.name) ||
+			trimmedString(manifest.display_name) ||
 			generateServerName("stdio"),
 		kind: "stdio",
 		command: command,
@@ -487,6 +487,16 @@ export async function parseMcpbBundle(
 	};
 
 	return [draft];
+}
+
+function wrapLooseServerMap(record: Record<string, unknown>): unknown {
+	const values = Object.values(record);
+	const isDictOfObjects =
+		values.length > 0 &&
+		values.every(
+			(v) => typeof v === "object" && v !== null && !Array.isArray(v),
+		);
+	return isDictOfObjects ? { mcpServers: record } : record;
 }
 
 export const extractJsonFromText = (
@@ -533,14 +543,7 @@ export const extractJsonFromText = (
 			try {
 				const parsed = JSON.parse(cand);
 				if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-					// If values are objects (likely name→server), hand back as mcpServers to preserve names
-					const values = Object.values(parsed as Record<string, unknown>);
-					const isDictOfObjects =
-						values.length > 0 &&
-						values.every(
-							(v) => typeof v === "object" && v !== null && !Array.isArray(v),
-						);
-					return isDictOfObjects ? { mcpServers: parsed } : parsed;
+					return wrapLooseServerMap(parsed as Record<string, unknown>);
 				}
 			} catch {
 				// JSON parse failed for candidate, try JSON5
@@ -548,13 +551,7 @@ export const extractJsonFromText = (
 			try {
 				const parsed5 = JSON5.parse(cand);
 				if (parsed5 && typeof parsed5 === "object" && !Array.isArray(parsed5)) {
-					const values = Object.values(parsed5 as Record<string, unknown>);
-					const isDictOfObjects =
-						values.length > 0 &&
-						values.every(
-							(v) => typeof v === "object" && v !== null && !Array.isArray(v),
-						);
-					return isDictOfObjects ? { mcpServers: parsed5 } : parsed5;
+					return wrapLooseServerMap(parsed5 as Record<string, unknown>);
 				}
 			} catch {
 				// JSON5 parse failed for candidate, try next

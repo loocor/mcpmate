@@ -3,7 +3,16 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use axum::{Json, extract::State};
+use futures::SinkExt;
+
+use axum::{
+    Json,
+    extract::{
+        State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
+    response::IntoResponse,
+};
 use serde_json::{Map, Value};
 
 use crate::clients::error::ConfigError;
@@ -12,7 +21,8 @@ use super::ApiError;
 use crate::api::models::system::ManagementActionResp;
 use crate::api::{
     models::system::{
-        SystemMetricsResp, SystemSettingsData, SystemSettingsResp, SystemSettingsUpdateReq, SystemStatusResp,
+        SystemMetricsResp, SystemReadinessResp, SystemSettingsData, SystemSettingsResp, SystemSettingsUpdateReq,
+        SystemStatusResp,
     },
     routes::AppState,
 };
@@ -20,6 +30,38 @@ use crate::audit::{AuditAction, AuditStatus};
 use crate::system::config::{api_url_from_port, bind_socket_addr, get_runtime_port_config, mcp_http_url_from_port};
 
 const PROXY_NOT_AVAILABLE_ERROR: &str = "Proxy server not available";
+
+pub async fn readiness_ws(
+    State(state): State<Arc<AppState>>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_readiness_ws(socket, state))
+}
+
+async fn handle_readiness_ws(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+) {
+    let status = get_readiness_status(&state).await;
+    let status_json = serde_json::to_string(&status).expect("readiness response should serialize");
+    let _ = socket.send(Message::Text(status_json.into())).await;
+    let _ = socket.close().await;
+}
+
+pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<SystemReadinessResp>, ApiError> {
+    Ok(Json(get_readiness_status(&state).await))
+}
+
+async fn get_readiness_status(state: &AppState) -> SystemReadinessResp {
+    match (state.database.as_ref(), state.client_service.as_ref()) {
+        (Some(database), Some(_)) => match crate::system::settings::get_settings(&database.pool).await {
+            Ok(_) => SystemReadinessResp::ready(),
+            Err(err) => SystemReadinessResp::waiting(err.to_string()),
+        },
+        (None, _) => SystemReadinessResp::waiting("database_unavailable"),
+        (_, None) => SystemReadinessResp::waiting("client_service_unavailable"),
+    }
+}
 
 fn system_settings_data(settings: crate::system::settings::SystemSettings) -> SystemSettingsData {
     SystemSettingsData {

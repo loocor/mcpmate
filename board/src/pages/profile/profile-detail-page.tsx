@@ -62,6 +62,7 @@ import {
 	TabsTrigger,
 } from "../../components/ui/tabs";
 import { auditApi, configSuitsApi, serversApi, useProfileTokenChartSource } from "../../lib/api";
+import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
@@ -704,7 +705,7 @@ export function ProfileDetailPage() {
 	});
 
 	const suitRole = suit?.role ?? "user";
-	const isDefaultAnchor = suitRole === "default_anchor";
+	const isDefaultAnchor = suitRole === DEFAULT_ANCHOR_ROLE;
 	const isHostApp = suit?.suit_type === "host_app";
 	const isCustomMode = mode === "custom";
 
@@ -899,7 +900,7 @@ export function ProfileDetailPage() {
 											{t("profiles:detail.status.active", { defaultValue: "Active" })}
 										</span>
 									)}
-									{suitRole === "default_anchor" ? (
+									{suitRole === DEFAULT_ANCHOR_ROLE ? (
 										<Badge variant="outline">{t("profiles:badges.defaultAnchor", { defaultValue: "Default Anchor" })}</Badge>
 									) : suit.is_default ? (
 										<Badge variant="outline">{t("profiles:badges.inDefault", { defaultValue: "In Default" })}</Badge>
@@ -1177,7 +1178,7 @@ export function ProfileDetailPage() {
 								<AuditLogsPanel
 									title={t("profiles:detail.logs.title", { defaultValue: "Logs" })}
 									description={t("profiles:detail.logs.description", {
-										defaultValue: "Runtime and audit logs related to this profile.",
+										defaultValue: "Runtime and activity logs related to this profile.",
 									})}
 									searchPlaceholder={t("profiles:detail.logs.searchPlaceholder", {
 										defaultValue: "Search logs...",

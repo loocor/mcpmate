@@ -3,9 +3,8 @@
 use super::backups::parse_policy_payload;
 use super::inspection::{
     build_config_file_parse_inspect_data, build_parse_metadata, configured_server_entries_data,
-    derive_attachment_state,
-    detect_mcpmate_in_client_config, inspect_client_config_lenient, parse_api_transports, parse_rule_from_api_data,
-    transports_data_from_state,
+    derive_attachment_state, detect_mcpmate_in_client_config, inspect_client_config_lenient, parse_api_transports,
+    parse_rule_from_api_data, transports_data_from_state,
 };
 use super::runtime::sync_bound_client_runtime_state;
 use crate::api::models::client::{
@@ -13,16 +12,13 @@ use crate::api::models::client::{
     ClientCapabilityConfigData, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq,
     ClientCheckResp, ClientConfigData, ClientConfigFileParseInspectExistingReq,
     ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq, ClientConfigFileParseInspectResp,
-    ClientConfigImportData, ClientConfigImportReq, ClientConfigImportResp, ClientConfigMode, ClientConfigReq,
-    ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected, ClientConfigUpdateData, ClientConfigUpdateReq,
-    ClientConfigUpdateResp, ClientDetachData, ClientDetachReq, ClientDetachResp, ClientImportSummary,
-    ClientImportedServer, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
+    ClientConfigMode, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigSelected,
+    ClientConfigUpdateData, ClientConfigUpdateReq, ClientConfigUpdateResp, ClientDetachData, ClientDetachReq,
+    ClientDetachResp, ClientDetectReq, ClientInfo, ClientTemplateMetadata, ClientTemplateStorageMetadata,
     ClientUnifyDirectExposureData,
 };
-use crate::api::models::server::SkippedServerData;
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::analyzer::InspectedServerEntry;
 use crate::clients::document::{get_config_last_modified, infer_format_from_path, parse_config_to_json_value};
 use crate::clients::models::{AttachmentState, CapabilitySource, ClientCapabilityConfigState};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
@@ -31,7 +27,6 @@ use crate::clients::{
     ClientConfigService, ClientDescriptor, ClientRenderOptions, ConfigError, ConfigMode, TemplateExecutionResult,
 };
 use crate::common::ClientCategory;
-use crate::config::server::build_import_plan_from_entries;
 use axum::{
     extract::{Json, Query, State},
     http::StatusCode,
@@ -177,13 +172,51 @@ pub async fn list(
 ) -> Result<Json<ClientCheckResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let descriptors = service.list_clients(request.refresh).await.map_err(|err| {
-        tracing::error!("Failed to list clients: {}", err);
+    let descriptors = service
+        .list_clients(request.refresh, request.persist_detected)
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to list clients: {}", err);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let mut client_infos = Vec::with_capacity(descriptors.len());
+    for descriptor in descriptors.into_iter().filter(|descriptor| {
+        request.include_detected || (descriptor.persisted && descriptor.state.governance_kind().as_str() == "active")
+    }) {
+        match descriptor_to_client_info(service.as_ref(), app_state.as_ref(), descriptor).await {
+            Ok(info) => client_infos.push(info),
+            Err(status) => return Err(status),
+        }
+    }
+
+    let response = ClientCheckData {
+        total: client_infos.len(),
+        client: client_infos,
+        last_updated: Utc::now().to_rfc3339(),
+    };
+
+    Ok(Json(ClientCheckResp::success(response)))
+}
+
+/// Handler for GET /api/client/detect
+/// Detects installed clients without persisting candidates as client records.
+pub async fn detect(
+    State(app_state): State<Arc<AppState>>,
+    Query(request): Query<ClientDetectReq>,
+) -> Result<Json<ClientCheckResp>, StatusCode> {
+    let service = get_client_service(&app_state)?;
+
+    let descriptors = service.list_clients(request.refresh, false).await.map_err(|err| {
+        tracing::error!("Failed to detect clients: {}", err);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let mut client_infos = Vec::with_capacity(descriptors.len());
-    for descriptor in descriptors {
+    let mut client_infos = Vec::new();
+    for descriptor in descriptors
+        .into_iter()
+        .filter(|descriptor| descriptor.detection.is_some())
+    {
         match descriptor_to_client_info(service.as_ref(), app_state.as_ref(), descriptor).await {
             Ok(info) => client_infos.push(info),
             Err(status) => return Err(status),
@@ -272,8 +305,20 @@ pub async fn config_details(
     }
     .or_else(|| infer_config_type_from_path(config_path.as_deref()));
 
-    let runtime_metadata = state.runtime_client_metadata();
-    // Meta information comes only from runtime_metadata (approval_metadata.runtime_client)
+    let stored_runtime_metadata = state.runtime_client_metadata();
+    let template_metadata = service
+        .runtime_template_metadata(state.template_identifier().unwrap_or(state.identifier()))
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to resolve runtime template metadata for config details"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let runtime_metadata =
+        RuntimeClientMetadata::resolve_with_template_metadata(&stored_runtime_metadata, template_metadata);
     let description = runtime_metadata.description.clone();
     let homepage_url = runtime_metadata.homepage_url.clone();
     let docs_url = runtime_metadata.docs_url.clone();
@@ -660,133 +705,6 @@ pub async fn config_restore(
     Ok(Json(ClientBackupActionResp::success(data)))
 }
 
-/// Handler for POST /api/client/config/import
-/// Import servers from analyzed client configuration entries
-#[tracing::instrument(skip(app_state, request), level = "debug", fields(client = %request.identifier, profile = ?request.profile_id))]
-pub async fn config_import(
-    State(app_state): State<Arc<AppState>>,
-    Json(request): Json<ClientConfigImportReq>,
-) -> Result<Json<ClientConfigImportResp>, StatusCode> {
-    let service = get_client_service(&app_state)?;
-    service
-        .fetch_state(&request.identifier)
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to load client state {}: {}", request.identifier, err);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or_else(|| {
-            tracing::error!("Client state not found: {}", request.identifier);
-            StatusCode::NOT_FOUND
-        })?;
-
-    let db = app_state.database.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let import_plan = build_import_plan_from_entries(request.entries.into_iter().map(InspectedServerEntry::from));
-    let entry_count = import_plan.items.len() + import_plan.skipped_servers.len();
-    let opts = crate::config::server::ImportOptions {
-        by_name: true,
-        by_fingerprint: true,
-        conflict_policy: crate::config::server::ConflictPolicy::Skip,
-        preview: false,
-        target_profile: request.profile_id.clone(),
-    };
-    let outcome = crate::config::server::import_batch(
-        &db.pool,
-        &app_state.connection_pool,
-        &app_state.redb_cache,
-        import_plan.items,
-        opts,
-    )
-    .await
-    .map_err(|err| {
-        tracing::error!("Failed to import via unified core: {}", err);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Report the profile used for association (actual association is handled in import core)
-    let mut profile_used: Option<String> = None;
-    if !outcome.imported.is_empty() {
-        let profile_id = if let Some(pid) = &request.profile_id {
-            pid.clone()
-        } else {
-            // Ensure the system default anchor profile exists so we can report its identifier
-            match crate::config::profile::ensure_default_anchor_profile_id(&db.pool).await {
-                Ok(id) => id,
-                Err(err) => {
-                    tracing::error!("Failed to ensure default anchor profile during client import: {}", err);
-                    String::new()
-                }
-            }
-        };
-        if !profile_id.is_empty() {
-            profile_used = Some(profile_id);
-        }
-    }
-
-    let crate::config::server::ImportOutcome {
-        imported,
-        skipped,
-        failed,
-        scheduled,
-    } = outcome;
-
-    let imported_servers: Vec<ClientImportedServer> = imported
-        .into_iter()
-        .map(|s| ClientImportedServer {
-            name: s.name,
-            command: s.command.unwrap_or_default(),
-            args: s.args,
-            env: s.env,
-            server_type: s.server_type,
-            url: s.url,
-        })
-        .collect();
-
-    let mut skipped_domain = import_plan.skipped_servers;
-    skipped_domain.extend(skipped);
-    let skipped_servers: Vec<SkippedServerData> = skipped_domain.into_iter().map(SkippedServerData::from).collect();
-
-    let skipped_count = skipped_servers.len() as u32;
-
-    let summary = ClientImportSummary {
-        attempted: true,
-        imported_count: imported_servers.len() as u32,
-        skipped_count,
-        failed_count: failed.len() as u32,
-        errors: if failed.is_empty() { None } else { Some(failed) },
-        skipped_servers,
-    };
-
-    let data = ClientConfigImportData {
-        summary,
-        imported_servers,
-        profile_id: profile_used,
-        scheduled: Some(scheduled),
-        scheduled_reason: None,
-    };
-
-    emit_client_audit_event(
-        &app_state,
-        AuditAction::ClientConfigImport,
-        AuditStatus::Success,
-        "/api/client/config/import",
-        &request.identifier,
-        Some(request.identifier.clone()),
-        Some(json!({
-            "entry_count": entry_count,
-            "profile_id": request.profile_id,
-            "imported_count": data.summary.imported_count,
-            "skipped_count": data.summary.skipped_count,
-            "failed_count": data.summary.failed_count,
-            "scheduled": data.scheduled,
-        })),
-        None,
-    )
-    .await;
-
-    Ok(Json(ClientConfigImportResp::success(data)))
-}
-
 pub(crate) fn get_client_service(state: &AppState) -> Result<Arc<ClientConfigService>, StatusCode> {
     state
         .client_service
@@ -838,6 +756,7 @@ pub async fn update_settings(
         display_name = ?request.display_name,
         connection_mode = ?request.connection_mode,
         config_path = ?request.config_path,
+        clear_config_file_parse = %request.clear_config_file_parse,
         "update_settings: received request"
     );
 
@@ -901,7 +820,20 @@ pub async fn update_settings(
             client_settings_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
         })?
         .ok_or_else(|| client_settings_error(StatusCode::NOT_FOUND, "Client state not found"))?;
-    let runtime_metadata = state.runtime_client_metadata();
+    let stored_runtime_metadata = state.runtime_client_metadata();
+    let template_metadata = service
+        .runtime_template_metadata(state.template_identifier().unwrap_or(state.identifier()))
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                client = %state.identifier(),
+                error = %err,
+                "Failed to resolve runtime template metadata after settings update"
+            );
+            client_settings_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        })?;
+    let runtime_metadata =
+        RuntimeClientMetadata::resolve_with_template_metadata(&stored_runtime_metadata, template_metadata);
     let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
         build_parse_metadata(&state);
     let transports = transports_data_from_state(&state);
@@ -1220,7 +1152,9 @@ async fn descriptor_to_client_info(
     descriptor: ClientDescriptor,
 ) -> Result<ClientInfo, StatusCode> {
     let state = descriptor.state.clone();
-    let runtime_metadata = state.runtime_client_metadata();
+    let stored_runtime_metadata = state.runtime_client_metadata();
+    let runtime_metadata =
+        RuntimeClientMetadata::resolve_for_template(&stored_runtime_metadata, descriptor.template.as_ref());
     let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
         build_parse_metadata(&state);
     let transports = transports_data_from_state(&state);
@@ -1263,21 +1197,7 @@ async fn descriptor_to_client_info(
         .map(|state| state.custom_profile_missing)
         .unwrap_or(false);
 
-    let content = if descriptor.config_exists {
-        match service.read_current_config(&identifier).await {
-            Ok(content) => content,
-            Err(err) => {
-                tracing::warn!(
-                    client = %identifier,
-                    error = %err,
-                    "Continuing list operation despite configuration read failure"
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let content = read_descriptor_config_content(service, &descriptor, &identifier).await;
 
     let config_analysis = inspect_client_config_lenient(content.as_deref(), &state)
         .map(|inspected| inspected.analysis)
@@ -1303,6 +1223,7 @@ async fn descriptor_to_client_info(
         .await
         .unwrap_or(false);
     let pending_approval = approval_status.as_deref() == Some("pending");
+    let attachment_state = derive_attachment_state(&state, &config_analysis);
 
     Ok(ClientInfo {
         identifier,
@@ -1333,7 +1254,7 @@ async fn descriptor_to_client_info(
         mcp_servers_count: Some(config_analysis.server_count),
         template: build_template_metadata_from_state(&state, &runtime_metadata),
         approval_status,
-        attachment_state: Some(state.attachment_state().as_str().to_string()),
+        attachment_state: Some(attachment_state),
         governance_kind,
         connection_mode,
         governed_by_default_policy,
@@ -1343,6 +1264,44 @@ async fn descriptor_to_client_info(
         config_file_parse_override,
         uses_template_parse_default,
     })
+}
+
+async fn read_descriptor_config_content(
+    service: &ClientConfigService,
+    descriptor: &ClientDescriptor,
+    identifier: &str,
+) -> Option<String> {
+    if !descriptor.config_exists {
+        return None;
+    }
+
+    if descriptor.persisted {
+        match service.read_current_config(identifier).await {
+            Ok(content) => content,
+            Err(err) => {
+                tracing::warn!(
+                    client = %identifier,
+                    error = %err,
+                    "Continuing list operation despite configuration read failure"
+                );
+                None
+            }
+        }
+    } else {
+        let config_path = descriptor.config_path.as_deref()?;
+        match tokio::fs::read_to_string(config_path).await {
+            Ok(content) => Some(content),
+            Err(err) => {
+                tracing::warn!(
+                    client = %identifier,
+                    path = %config_path,
+                    error = %err,
+                    "Continuing detect operation despite configuration read failure"
+                );
+                None
+            }
+        }
+    }
 }
 
 // moved to POST /api/client/config/import
@@ -1425,11 +1384,8 @@ fn map_mode(mode: ClientConfigMode) -> ConfigMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::models::client::{
-        ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq, ServerEntryData,
-    };
+    use crate::api::models::client::{ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq};
     use crate::api::routes::AppState;
-    use crate::clients::analyzer::InspectedServerEntry;
     use crate::clients::{
         CapabilitySource,
         source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot},
@@ -1510,6 +1466,16 @@ mod tests {
     }
 
     async fn create_test_context() -> TestContext {
+        create_test_context_with_template_setup(true, |_, _| {}).await
+    }
+
+    async fn create_test_context_with_template_setup<F>(
+        seed_client_rows: bool,
+        setup_templates: F,
+    ) -> TestContext
+    where
+        F: FnOnce(&std::path::Path, &TemplateRoot),
+    {
         let temp_dir = TempDir::new().expect("temp dir");
         let db_pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -1535,6 +1501,8 @@ mod tests {
         });
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
+        template_root.ensure_base_dirs().expect("template dirs");
+        setup_templates(temp_dir.path(), &template_root);
         let template_source = Arc::new(
             FileTemplateSource::bootstrap(template_root)
                 .await
@@ -1543,9 +1511,11 @@ mod tests {
         ClientConfigService::seed_runtime_template_snapshots(&db_pool, template_source.as_ref())
             .await
             .expect("seed runtime templates");
-        ClientConfigService::seed_client_runtime_rows(&db_pool, template_source.as_ref())
-            .await
-            .expect("seed runtime rows");
+        if seed_client_rows {
+            ClientConfigService::seed_client_runtime_rows(&db_pool, template_source.as_ref())
+                .await
+                .expect("seed runtime rows");
+        }
         let runtime_source: Arc<dyn ClientConfigSource> =
             Arc::new(DbTemplateSource::new(Arc::new(db_pool.clone())).expect("runtime source"));
         let client_service = Arc::new(
@@ -1633,23 +1603,76 @@ mod tests {
         }
     }
 
-    /// Build API import entries using the same `InspectedServerEntry` → `ServerEntryData` path as production inspection.
-    fn server_entry_data(
-        name: &str,
-        transport: &str,
-        command: Option<&str>,
-        url: Option<&str>,
-    ) -> ServerEntryData {
-        ServerEntryData::from(InspectedServerEntry {
-            name: name.to_string(),
-            transport: transport.to_string(),
-            command: command.map(str::to_string),
-            args: Vec::new(),
-            env: HashMap::new(),
-            headers: HashMap::new(),
-            url: url.map(str::to_string),
-            issue: None,
+    #[tokio::test]
+    async fn detect_returns_detected_clients_without_persisting_records() {
+        let context = create_test_context_with_template_setup(false, |temp_path, template_root| {
+            let config_path = temp_path.join("detected-client.json");
+            std::fs::write(
+                &config_path,
+                r#"{"mcpServers":{"Detected Server":{"command":"node","args":["server.js"]}}}"#,
+            )
+            .expect("write detected client config");
+
+            let template = format!(
+                r#"{{
+                  identifier: "test.detected",
+                  display_name: "Detected Test",
+                  format: "json",
+                  storage: {{ kind: "file", path_strategy: "config_path" }},
+                  detection: {{
+                    macos: [{{ method: "config_path", value: "{}" }}],
+                    linux: [{{ method: "config_path", value: "{}" }}],
+                    windows: [{{ method: "config_path", value: "{}" }}],
+                  }},
+                  config_mapping: {{
+                    container_keys: ["mcpServers"],
+                    container_type: "object_map",
+                    merge_strategy: "replace",
+                    format_rules: {{
+                      stdio: {{
+                        template: {{
+                          command: "{{{{command}}}}",
+                          args: "{{{{{{json args}}}}}}",
+                          env: "{{{{{{json env}}}}}}",
+                        }},
+                        requires_type_field: false,
+                      }},
+                    }},
+                  }},
+                }}"#,
+                config_path.display(),
+                config_path.display(),
+                config_path.display(),
+            );
+            std::fs::write(template_root.official_dir().join("test_detected.json5"), template)
+                .expect("write detected client template");
         })
+        .await;
+
+        let Json(response) = detect(
+            State(context.app_state.clone()),
+            Query(ClientDetectReq { refresh: true }),
+        )
+        .await
+        .expect("detect clients");
+
+        assert!(response.success);
+        let clients = response.data.expect("detect data").client;
+        let detected = clients
+            .iter()
+            .find(|client| client.identifier == "test.detected")
+            .expect("detected client should be returned");
+
+        assert!(detected.detected);
+        assert_eq!(detected.mcp_servers_count, Some(1));
+        assert!(
+            context
+                .client_service
+                .fetch_state("test.detected")
+                .await
+                .expect("fetch state")
+                .is_none()
+        );
     }
 
     async fn insert_shared_profile(
@@ -2799,6 +2822,136 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_excludes_passive_detected_candidates_by_default() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .ensure_passive_observed_row("test.passive", "Test Passive", None)
+            .await
+            .expect("seed passive client");
+
+        let Json(default_response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: false,
+                include_detected: false,
+            }),
+        )
+        .await
+        .expect("list managed clients");
+
+        assert!(default_response.success);
+        assert!(
+            default_response
+                .data
+                .expect("default data")
+                .client
+                .into_iter()
+                .all(|client| client.governance_kind.as_deref() == Some("active"))
+        );
+
+        let Json(include_response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: false,
+                include_detected: true,
+            }),
+        )
+        .await
+        .expect("list detected candidates");
+
+        assert!(include_response.success);
+        assert!(
+            include_response
+                .data
+                .expect("include data")
+                .client
+                .iter()
+                .any(|client| client.identifier == "test.passive"
+                    && client.governance_kind.as_deref() == Some("passive"))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_uses_template_metadata_for_known_active_client() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("codex.toml");
+        tokio::fs::write(&config_path, "")
+            .await
+            .expect("seed codex config file");
+        let mut template = crate::clients::models::ClientTemplate {
+            identifier: "codex".to_string(),
+            display_name: Some("Codex".to_string()),
+            ..Default::default()
+        };
+        template.metadata.insert(
+            "description".to_string(),
+            serde_json::Value::String(
+                "One agent for everywhere you code—included in ChatGPT Plus, Pro, Business, Edu, and Enterprise plans."
+                    .to_string(),
+            ),
+        );
+        template.metadata.insert(
+            "logo_url".to_string(),
+            serde_json::Value::String("https://openai.com/favicon.ico".to_string()),
+        );
+        sqlx::query("INSERT OR REPLACE INTO client_template_runtime (identifier, payload_json) VALUES (?, ?)")
+            .bind("codex")
+            .bind(serde_json::to_string(&template).expect("serialize codex template"))
+            .execute(&context.db_pool)
+            .await
+            .expect("seed codex runtime template");
+
+        context
+            .client_service
+            .set_active_client_settings(
+                "codex",
+                ActiveClientSettingsUpdate {
+                    connection_mode: Some("local_config_detected".to_string()),
+                    config_path: Some(config_path.to_string_lossy().to_string()),
+                    clear_config_file_parse: true,
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("promote codex");
+
+        sqlx::query("UPDATE client SET approval_metadata = NULL WHERE identifier = ?")
+            .bind("codex")
+            .execute(&context.db_pool)
+            .await
+            .expect("clear stored metadata");
+
+        let Json(response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: false,
+                include_detected: false,
+            }),
+        )
+        .await
+        .expect("list clients");
+
+        let codex = response
+            .data
+            .expect("list data")
+            .client
+            .into_iter()
+            .find(|client| client.identifier == "codex")
+            .expect("codex in managed list");
+        assert_eq!(
+            codex.description.as_deref(),
+            Some(
+                "One agent for everywhere you code—included in ChatGPT Plus, Pro, Business, Edu, and Enterprise plans."
+            )
+        );
+        assert_eq!(codex.logo_url.as_deref(), Some("https://openai.com/favicon.ico"));
+    }
+
+    #[tokio::test]
     async fn update_settings_persists_runtime_only_active_payload_fields() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("custom-runtime-payload.json");
@@ -2902,7 +3055,11 @@ mod tests {
 
         let Json(list_response) = list(
             State(context.app_state.clone()),
-            Query(ClientCheckReq { refresh: false }),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: true,
+                include_detected: false,
+            }),
         )
         .await
         .expect("list clients");
@@ -3046,98 +3203,6 @@ mod tests {
             Some(1)
         );
         assert_eq!(data.preview["alpha"]["command"], "node");
-    }
-
-    #[tokio::test]
-    async fn config_import_uses_supplied_entries_without_reanalyzing_config() {
-        let context = create_test_context().await;
-        context
-            .client_service
-            .set_client_settings(
-                "client-a",
-                Some("hosted".to_string()),
-                Some("streamable_http".to_string()),
-                None,
-            )
-            .await
-            .expect("seed client state");
-
-        let Json(import_response) = config_import(
-            State(context.app_state.clone()),
-            Json(crate::api::models::client::ClientConfigImportReq {
-                identifier: "client-a".to_string(),
-                entries: vec![
-                    server_entry_data(
-                        "config-import-entry",
-                        "streamable_http",
-                        None,
-                        Some("http://127.0.0.1:8123/mcp"),
-                    ),
-                    server_entry_data("broken-entry", "unclassified", None, None),
-                ],
-                profile_id: None,
-            }),
-        )
-        .await
-        .expect("import from supplied entries");
-
-        assert!(import_response.success);
-        let data = import_response.data.expect("import data");
-        assert_eq!(data.summary.imported_count, 1);
-        assert_eq!(data.summary.skipped_count, 1);
-        assert_eq!(data.summary.failed_count, 0);
-        assert_eq!(data.imported_servers.len(), 1);
-        assert_eq!(data.imported_servers[0].name, "config-import-entry");
-        assert_eq!(data.summary.skipped_servers.len(), 1);
-        assert_eq!(data.summary.skipped_servers[0].name, "broken-entry");
-        assert_eq!(data.summary.skipped_servers[0].reason, "config_unrecognized");
-    }
-
-    #[tokio::test]
-    async fn config_import_ignores_supplied_mcpmate_entry_by_name() {
-        let context = create_test_context().await;
-        context
-            .client_service
-            .set_client_settings(
-                "client-a",
-                Some("hosted".to_string()),
-                Some("streamable_http".to_string()),
-                None,
-            )
-            .await
-            .expect("seed client state");
-
-        let Json(import_response) = config_import(
-            State(context.app_state.clone()),
-            Json(crate::api::models::client::ClientConfigImportReq {
-                identifier: "client-a".to_string(),
-                entries: vec![
-                    server_entry_data("MCPMate", "sse", None, Some("http://127.0.0.1:8999/sse")),
-                    server_entry_data(
-                        "config-import-entry",
-                        "streamable_http",
-                        None,
-                        Some("http://127.0.0.1:8123/mcp"),
-                    ),
-                    server_entry_data("broken-entry", "unclassified", None, None),
-                ],
-                profile_id: None,
-            }),
-        )
-        .await
-        .expect("import from supplied entries");
-
-        assert!(import_response.success);
-        let data = import_response.data.expect("import data");
-        assert_eq!(data.summary.imported_count, 1);
-        assert_eq!(data.summary.skipped_count, 1);
-        assert_eq!(data.summary.failed_count, 0);
-        assert_eq!(data.imported_servers.len(), 1);
-        assert_eq!(data.imported_servers[0].name, "config-import-entry");
-        assert!(data.imported_servers.iter().all(|server| server.name != "MCPMate"));
-        assert_eq!(data.summary.skipped_servers.len(), 1);
-        assert_eq!(data.summary.skipped_servers[0].name, "broken-entry");
-        assert!(data.summary.skipped_servers.iter().all(|server| server.name != "MCPMate"));
     }
 
     #[test]

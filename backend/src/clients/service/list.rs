@@ -10,6 +10,7 @@ impl ClientConfigService {
     pub async fn list_clients(
         &self,
         force_detect: bool,
+        persist_detected: bool,
     ) -> ConfigResult<Vec<ClientDescriptor>> {
         if force_detect {
             self.template_source.reload().await?;
@@ -52,11 +53,34 @@ impl ClientConfigService {
                 config_path: resolved_path,
                 config_exists,
                 detected_at,
+                persisted: true,
             });
         }
 
         for (identifier, detected) in detected_map {
             let display_name = detected.display_name.as_deref().unwrap_or(&identifier);
+            let template = template_map.remove(&identifier);
+
+            if !persist_detected {
+                if let Some(template) = template {
+                    let state = ClientConfigService::preview_state_from_detected_template(
+                        &identifier,
+                        display_name,
+                        detected.config_path.as_deref(),
+                        &template,
+                    );
+                    results.push(ClientDescriptor {
+                        state,
+                        detection: Some(detected.clone()),
+                        template: Some(template),
+                        config_path: detected.config_path.clone(),
+                        config_exists: detected.config_path.is_some(),
+                        detected_at: Some(detected.detected_at),
+                        persisted: false,
+                    });
+                }
+                continue;
+            }
 
             match self
                 .ensure_passive_observed_row(&identifier, display_name, detected.config_path.as_deref())
@@ -73,10 +97,11 @@ impl ClientConfigService {
                     results.push(ClientDescriptor {
                         state: state_row.clone(),
                         detection: Some(detected.clone()),
-                        template: None,
+                        template,
                         config_path: detected.config_path.clone(),
                         config_exists: false,
                         detected_at: Some(detected.detected_at),
+                        persisted: true,
                     });
                 }
                 Err(err) => {
@@ -218,7 +243,7 @@ mod tests {
             .await
             .expect("create active runtime-only client");
 
-        let descriptors = service.list_clients(false).await.expect("list clients");
+        let descriptors = service.list_clients(false, true).await.expect("list clients");
         let descriptor = descriptors
             .into_iter()
             .find(|entry| entry.state.identifier() == "custom.runtime")

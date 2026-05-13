@@ -1,6 +1,6 @@
 export const auditTranslations = {
   en: {
-    description: "Inspect audit events across REST and MCP flows",
+    description: "Browse REST and MCP activity logs recorded by MCPMate",
     headers: {
       expandColumn: "Expand row",
       timestamp: "Timestamp",
@@ -34,7 +34,7 @@ export const auditTranslations = {
       runtime_control: "Runtime Control",
     },
     managementSubLabels: {
-      audit_policy: "Audit Policy",
+      audit_policy: "Log retention",
       system: "System",
       developer: "Developer",
     },
@@ -68,7 +68,6 @@ export const auditTranslations = {
       client_config_attach: "Attach Client Config",
       client_config_detach: "Detach Client Config",
       client_config_restore: "Restore Client Config",
-      client_config_import: "Import Client Config",
       client_capability_update: "Update Client Capability",
       client_backup_delete: "Delete Client Backup",
       client_backup_policy_update: "Update Backup Policy",
@@ -112,34 +111,34 @@ export const auditTranslations = {
       data: "Data",
     },
     drawer: {
-      title: "Audit Event Details",
+      title: "Log event details",
       subtitle: "Load the complete event payload for inspection",
       loading: "Loading event details…",
       error: "Failed to load event details",
     },
     states: {
-      empty: "No audit events recorded yet.",
-      loading: "Loading audit events…",
+      empty: "No log events recorded yet.",
+      loading: "Loading log events…",
       live: "Live",
       disconnected: "Disconnected",
       noMatches: "No events match your filters",
       noMatchesHint: "Try adjusting your search or filter criteria",
       emptyHint:
         "Events will appear here as you interact with MCP servers and profiles",
-      error: "Failed to load audit events",
+      error: "Failed to load log events",
     },
     buttons: {
       refresh: "Refresh",
       retry: "Retry",
     },
     errors: {
-      loadFailed: "Failed to load audit events",
+      loadFailed: "Failed to load log events",
       pageJumpFailed: "Cannot go to that page",
       pageJumpFailedHint: "That page is not available from the current position.",
     },
   },
   "zh-CN": {
-    description: "查看 REST 与 MCP 流程中的审计事件",
+    description: "查看 MCPMate 记录的 REST 与 MCP 活动日志",
     headers: {
       expandColumn: "展开行",
       timestamp: "时间",
@@ -173,7 +172,7 @@ export const auditTranslations = {
       runtime_control: "运行时控制",
     },
     managementSubLabels: {
-      audit_policy: "审计",
+      audit_policy: "日志保留",
       system: "系统",
       developer: "开发者",
     },
@@ -207,7 +206,6 @@ export const auditTranslations = {
       client_config_attach: "接入客户端配置",
       client_config_detach: "断开客户端配置",
       client_config_restore: "恢复客户端配置",
-      client_config_import: "导入客户端配置",
       client_capability_update: "更新客户端能力",
       client_backup_delete: "删除客户端备份",
       client_backup_policy_update: "更新备份策略",
@@ -251,33 +249,33 @@ export const auditTranslations = {
       data: "数据",
     },
     drawer: {
-      title: "审计事件详情",
+      title: "日志事件详情",
       subtitle: "按需加载完整事件载荷以供排查",
       loading: "正在加载事件详情…",
       error: "加载事件详情失败",
     },
     states: {
-      empty: "暂时没有审计事件。",
-      loading: "正在加载审计事件…",
+      empty: "暂时没有日志事件。",
+      loading: "正在加载日志事件…",
       live: "实时连接中",
       disconnected: "连接已断开",
       noMatches: "没有匹配当前筛选条件的事件",
       noMatchesHint: "请尝试调整搜索词或筛选条件",
       emptyHint: "当你操作 MCP 服务器、客户端或配置时，事件会显示在这里",
-      error: "加载审计事件失败",
+      error: "加载日志事件失败",
     },
     buttons: {
       refresh: "刷新",
       retry: "重试",
     },
     errors: {
-      loadFailed: "加载审计事件失败",
+      loadFailed: "加载日志事件失败",
       pageJumpFailed: "无法跳转到该页",
       pageJumpFailedHint: "从当前位置无法打开该页。",
     },
   },
   "ja-JP": {
-    description: "REST と MCP フローの監査イベントを確認",
+    description: "MCPMate が記録した REST と MCP のアクティビティログを閲覧",
     headers: {
       expandColumn: "行を展開",
       timestamp: "時刻",
@@ -311,7 +309,7 @@ export const auditTranslations = {
       runtime_control: "ランタイム制御",
     },
     managementSubLabels: {
-      audit_policy: "監査ポリシー",
+      audit_policy: "ログの保持",
       system: "システム",
       developer: "開発者",
     },
@@ -345,7 +343,6 @@ export const auditTranslations = {
       client_config_attach: "クライアント設定再接続",
       client_config_detach: "クライアント設定切り離し",
       client_config_restore: "クライアント設定復元",
-      client_config_import: "クライアント設定インポート",
       client_capability_update: "クライアント権限更新",
       client_backup_delete: "クライアントバックアップ削除",
       client_backup_policy_update: "バックアップポリシー更新",
@@ -389,28 +386,28 @@ export const auditTranslations = {
       data: "データ",
     },
     drawer: {
-      title: "監査イベント詳細",
+      title: "ログイベントの詳細",
       subtitle: "必要時のみ完全なイベント内容を読み込みます",
       loading: "イベント詳細を読み込み中…",
       error: "イベント詳細の読み込みに失敗しました",
     },
     states: {
-      empty: "監査イベントはまだありません。",
-      loading: "監査イベントを読み込み中…",
+      empty: "ログイベントはまだありません。",
+      loading: "ログイベントを読み込み中…",
       live: "ライブ接続中",
       disconnected: "切断されました",
       noMatches: "現在の条件に一致するイベントはありません",
       noMatchesHint: "検索語やフィルターを調整してください",
       emptyHint:
         "MCP サーバーやクライアントを操作すると、ここにイベントが表示されます",
-      error: "監査イベントの読み込みに失敗しました",
+      error: "ログイベントの読み込みに失敗しました",
     },
     buttons: {
       refresh: "再読み込み",
       retry: "再試行",
     },
     errors: {
-      loadFailed: "監査イベントの読み込みに失敗しました",
+      loadFailed: "ログイベントの読み込みに失敗しました",
       pageJumpFailed: "そのページへ移動できません",
       pageJumpFailedHint: "現在の位置からそのページは開けません。",
     },

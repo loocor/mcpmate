@@ -12,6 +12,7 @@ export const navigationTranslations = {
 			settings: "Settings",
 			account: "Account",
 			apiDocs: "API Docs",
+			developer: "Advanced",
 		},
 		layout: {
 			brand: "MCPMate",
@@ -20,13 +21,14 @@ export const navigationTranslations = {
 			expandSidebar: "Expand sidebar",
 			versionFooter: "MCPMate Board",
 			copyright: "© 2026 MCPMate",
-			feedback: "Feedback",
+			discord: "Discord",
+			discordAria: "Open MCPMate Discord community in a new tab",
 			terms: "Terms",
 			privacy: "Privacy",
 		},
 		header: {
 			back: "Back",
-			sendFeedback: "Send feedback via email",
+			sendFeedback: "Open GitHub Discussions",
 			toggleTheme: "Toggle theme",
 			feedbackSubject: "Share feedback",
 			routes: {
@@ -63,6 +65,7 @@ export const navigationTranslations = {
 			settings: "偏好设置",
 			account: "账户",
 			apiDocs: "API 文档",
+			developer: "高级",
 		},
 		layout: {
 			brand: "MCPMate",
@@ -71,13 +74,14 @@ export const navigationTranslations = {
 			expandSidebar: "展开侧边栏",
 			versionFooter: "MCPMate Board",
 			copyright: "© 2026 MCPMate",
-			feedback: "反馈",
+			discord: "Discord",
+			discordAria: "在新标签页打开 MCPMate Discord 社区",
 			terms: "服务条款",
 			privacy: "隐私政策",
 		},
 		header: {
 			back: "返回",
-			sendFeedback: "发送反馈邮件",
+			sendFeedback: "打开 GitHub 讨论区",
 			toggleTheme: "切换主题",
 			feedbackSubject: "分享反馈",
 			routes: {
@@ -114,6 +118,7 @@ export const navigationTranslations = {
 			settings: "設定",
 			account: "アカウント",
 			apiDocs: "API ドキュメント",
+			developer: "アドバンス",
 		},
 		layout: {
 			brand: "MCPMate",
@@ -122,13 +127,14 @@ export const navigationTranslations = {
 			expandSidebar: "サイドバーを展開",
 			versionFooter: "MCPMate ダッシュボード",
 			copyright: "© 2026 MCPMate",
-			feedback: "フィードバック",
+			discord: "Discord",
+			discordAria: "MCPMate の Discord コミュニティを新しいタブで開く",
 			terms: "利用規約",
 			privacy: "プライバシーポリシー",
 		},
 		header: {
 			back: "戻る",
-			sendFeedback: "フィードバックメールを送信",
+			sendFeedback: "GitHub Discussions を開く",
 			toggleTheme: "テーマを切り替え",
 			feedbackSubject: "フィードバックを共有",
 			routes: {

@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import {
 	Activity,
+	AppWindow,
 	Play,
 	RefreshCw,
 	Server,
 	Sliders,
 	Square,
-	Users,
 } from "lucide-react";
 import React from "react";
 import { useTranslation } from "react-i18next";
@@ -116,7 +116,7 @@ function formatMetricsYAxisTick(value: number, axisMax: number): string {
 	return `${Number(value.toFixed(decimals))}%`;
 }
 
-const parseStoredHistory = (raw: string | null): MetricsHistory => {
+function parseStoredHistory(raw: string | null): MetricsHistory {
 	if (!raw) {
 		return [];
 	}
@@ -143,10 +143,38 @@ const parseStoredHistory = (raw: string | null): MetricsHistory => {
 	} catch {
 		return [];
 	}
-};
+}
 
-// Maintain a lightweight metrics history in component state
-function useMetricsHistory() {
+function finiteNumberOrNull(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function clampPercent(value: number): number {
+	return Math.min(100, Math.max(0, value));
+}
+
+function percentOf(value: number | null, total: number | null): number {
+	if (value === null || total === null || total <= 0) {
+		return 0;
+	}
+	return clampPercent((value / total) * 100);
+}
+
+function firstFiniteNumber(values: unknown[]): number | null {
+	for (const value of values) {
+		const numberValue = finiteNumberOrNull(value);
+		if (numberValue !== null) {
+			return numberValue;
+		}
+	}
+	return null;
+}
+
+function useMetricsHistory(): {
+	history: MetricsHistory;
+	latestPoint: MetricsHistoryPoint | null;
+	isLoading: boolean;
+} {
 	const [history, setHistory] = React.useState<MetricsHistory>(() => {
 		if (typeof window === "undefined") {
 			return [];
@@ -169,59 +197,32 @@ function useMetricsHistory() {
 		if (!metrics || typeof window === "undefined") {
 			return;
 		}
-		const ensureNumber = (value: unknown): number | null =>
-			typeof value === "number" && Number.isFinite(value) ? value : null;
-
-		const clampPercent = (value: number): number =>
-			Math.min(100, Math.max(0, value));
-
-		const percentOf = (value: number | null, total: number | null): number => {
-			if (value === null || total === null || total <= 0) {
-				return 0;
-			}
-			return clampPercent((value / total) * 100);
-		};
 
 		const timestamp = metrics.timestamp
 			? new Date(metrics.timestamp)
 			: new Date();
 
-		const mcpmateCpuPercent = (() => {
-			const candidates = [
-				ensureNumber(metrics.cpu_usage_percent),
-				ensureNumber(metrics.cpu_usage),
-				ensureNumber(metrics.system_cpu_usage),
-			];
-			for (const candidate of candidates) {
-				if (candidate !== null) {
-					return clampPercent(candidate);
-				}
-			}
-			return 0;
-		})();
+		const mcpmateCpuPercent = clampPercent(
+			firstFiniteNumber([
+				metrics.cpu_usage_percent,
+				metrics.cpu_usage,
+				metrics.system_cpu_usage,
+			]) ?? 0,
+		);
 
-		const systemCpuPercent = (() => {
-			const value = ensureNumber(metrics.system_cpu_usage);
-			return value !== null ? clampPercent(value) : mcpmateCpuPercent;
-		})();
+		const systemCpuValue = finiteNumberOrNull(metrics.system_cpu_usage);
+		const systemCpuPercent =
+			systemCpuValue !== null ? clampPercent(systemCpuValue) : mcpmateCpuPercent;
 
-		const systemMemoryTotalBytes = ensureNumber(metrics.system_memory_total);
-		const mcpmateMemoryBytes = (() => {
-			const candidates = [
-				ensureNumber(metrics.memory_usage),
-				ensureNumber(metrics.memory_usage_bytes),
-				ensureNumber(metrics.system_memory_usage),
-			];
-			for (const candidate of candidates) {
-				if (candidate !== null) {
-					return candidate;
-				}
-			}
-			return null;
-		})();
+		const systemMemoryTotalBytes = finiteNumberOrNull(metrics.system_memory_total);
+		const mcpmateMemoryBytes = firstFiniteNumber([
+			metrics.memory_usage,
+			metrics.memory_usage_bytes,
+			metrics.system_memory_usage,
+		]);
 
 		const systemMemoryUsageBytes =
-			ensureNumber(metrics.system_memory_usage) ?? mcpmateMemoryBytes;
+			finiteNumberOrNull(metrics.system_memory_usage) ?? mcpmateMemoryBytes;
 
 		const mcpmateMemoryPercent = percentOf(
 			mcpmateMemoryBytes,
@@ -278,7 +279,7 @@ function useMetricsHistory() {
 	return { history, latestPoint, isLoading };
 }
 
-function useIsDarkMode() {
+function useIsDarkMode(): boolean {
 	const [isDarkMode, setIsDarkMode] = React.useState(() => {
 		if (typeof document === "undefined") {
 			return false;
@@ -698,6 +699,49 @@ export function DashboardPage() {
 						</Card>
 					</Link>
 
+					<Link to="/clients" className="block h-full">
+						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
+							<CardHeader className="flex flex-row items-center justify-between space-y-0">
+								<CardTitle className="text-sm font-medium">
+									{t("dashboard:cards.clients", { defaultValue: "Clients" })}
+								</CardTitle>
+								<AppWindow className="h-4 w-4 text-slate-500" />
+							</CardHeader>
+							<CardContent>
+								<div className="space-y-1.5">
+									<div className="flex items-center justify-between">
+										<CardDescription>
+											{t("dashboard:labels.totalClients", {
+												defaultValue: "Total Clients",
+											})}
+										</CardDescription>
+										{isLoadingClients ? (
+											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+										) : (
+											<span className="text-sm font-medium">
+												{totalClients}
+											</span>
+										)}
+									</div>
+									<div className="flex items-center justify-between">
+										<CardDescription>
+											{t("dashboard:labels.approved", {
+												defaultValue: "Approved",
+											})}
+										</CardDescription>
+										{isLoadingClients ? (
+											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
+										) : (
+											<span className="text-sm font-medium">
+												{approvedClients}
+											</span>
+										)}
+									</div>
+								</div>
+							</CardContent>
+						</Card>
+					</Link>
+
 					<Link to="/servers" className="block h-full">
 						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
 							<CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -733,49 +777,6 @@ export function DashboardPage() {
 										) : (
 											<span className="text-sm font-medium">
 												{connectedServers}
-											</span>
-										)}
-									</div>
-								</div>
-							</CardContent>
-						</Card>
-					</Link>
-
-					<Link to="/clients" className="block h-full">
-						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
-							<CardHeader className="flex flex-row items-center justify-between space-y-0">
-								<CardTitle className="text-sm font-medium">
-									{t("dashboard:cards.clients", { defaultValue: "Clients" })}
-								</CardTitle>
-								<Users className="h-4 w-4 text-slate-500" />
-							</CardHeader>
-							<CardContent>
-								<div className="space-y-1.5">
-									<div className="flex items-center justify-between">
-										<CardDescription>
-											{t("dashboard:labels.totalClients", {
-												defaultValue: "Total Clients",
-											})}
-										</CardDescription>
-										{isLoadingClients ? (
-											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-										) : (
-											<span className="text-sm font-medium">
-												{totalClients}
-											</span>
-										)}
-									</div>
-									<div className="flex items-center justify-between">
-										<CardDescription>
-											{t("dashboard:labels.approved", {
-												defaultValue: "Approved",
-											})}
-										</CardDescription>
-										{isLoadingClients ? (
-											<div className="h-5 w-16 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-										) : (
-											<span className="text-sm font-medium">
-												{approvedClients}
 											</span>
 										)}
 									</div>

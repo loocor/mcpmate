@@ -2,8 +2,10 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { extractImportStats, serversApi } from "../lib/api";
+import { resolveAutoAddTargetProfileId } from "../lib/default-profile";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
+import { useAppStore } from "../lib/store";
 import { Button } from "./ui/button";
 import {
 	Drawer,
@@ -168,13 +170,21 @@ export function ServerImportDrawer({
 		if (!p.ok || !p.payload) return notifyError("Invalid JSON", p.error);
 		try {
 			setImporting(true);
-			const res = await serversApi.importServers(p.payload);
+			const targetProfileId = await resolveAutoAddTargetProfileId({
+				autoAddEnabled:
+					useAppStore.getState().dashboardSettings
+						.autoAddServerToDefaultProfile,
+			});
+			const importPayload = targetProfileId
+				? { ...p.payload, target_profile_id: targetProfileId }
+				: p.payload;
+			const res = await serversApi.importServers(importPayload);
 			const stats = extractImportStats(res);
 			const didSucceed =
 				typeof res?.success === "boolean"
 					? res.success
 					: (res as { status?: string })?.status === "success" ||
-						!("error" in (res ?? {}));
+					!("error" in (res ?? {}));
 			if (didSucceed) {
 				const { importedCount, skippedCount, skippedServers, skippedDetails } =
 					stats;
@@ -196,7 +206,7 @@ export function ServerImportDrawer({
 					notifyInfo(
 						"Skipped existing servers",
 						skippedDescription ||
-							`${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped (already installed).`,
+						`${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped (already installed).`,
 					);
 				}
 				if (onImported) onImported();
@@ -253,46 +263,46 @@ export function ServerImportDrawer({
 							{preview.success && preview.data?.items?.length ? (
 								<div className="space-y-2 text-sm">
 									{preview.data.items.map((it) => {
-									const name = typeof it.name === "string" ? it.name : "Unnamed";
-									const hasError = it.ok === false;
-									const errorMessage =
-										typeof it.error === "string"
-											? it.error
-											: it.error instanceof Error
-												? it.error.message
-												: undefined;
-									const toolsCount = Array.isArray(it.tools?.items)
-										? it.tools?.items?.length ?? 0
-										: 0;
-									const resourcesCount = Array.isArray(it.resources?.items)
-										? it.resources?.items?.length ?? 0
-										: 0;
-									const templatesCount = Array.isArray(it.resource_templates?.items)
-										? it.resource_templates?.items?.length ?? 0
-										: 0;
-									const promptsCount = Array.isArray(it.prompts?.items)
-										? it.prompts?.items?.length ?? 0
-										: 0;
+										const name = typeof it.name === "string" ? it.name : "Unnamed";
+										const hasError = it.ok === false;
+										const errorMessage =
+											typeof it.error === "string"
+												? it.error
+												: it.error instanceof Error
+													? it.error.message
+													: undefined;
+										const toolsCount = Array.isArray(it.tools?.items)
+											? it.tools?.items?.length ?? 0
+											: 0;
+										const resourcesCount = Array.isArray(it.resources?.items)
+											? it.resources?.items?.length ?? 0
+											: 0;
+										const templatesCount = Array.isArray(it.resource_templates?.items)
+											? it.resource_templates?.items?.length ?? 0
+											: 0;
+										const promptsCount = Array.isArray(it.prompts?.items)
+											? it.prompts?.items?.length ?? 0
+											: 0;
 
-									return (
-										<div key={name} className="rounded border p-2">
-											<div className="font-medium">
-												{name}{" "}
-												{hasError ? (
-													<span className="text-red-500">(error)</span>
-												) : null}
-											</div>
-											{errorMessage ? (
-												<div className="text-xs text-red-500">
-													{errorMessage}
+										return (
+											<div key={name} className="rounded border p-2">
+												<div className="font-medium">
+													{name}{" "}
+													{hasError ? (
+														<span className="text-red-500">(error)</span>
+													) : null}
 												</div>
-											) : null}
-											<div className="text-xs text-slate-500 mt-1">
-												tools: {toolsCount} • resources: {resourcesCount} • templates: {templatesCount} • prompts: {promptsCount}
+												{errorMessage ? (
+													<div className="text-xs text-red-500">
+														{errorMessage}
+													</div>
+												) : null}
+												<div className="text-xs text-slate-500 mt-1">
+													tools: {toolsCount} • resources: {resourcesCount} • templates: {templatesCount} • prompts: {promptsCount}
+												</div>
 											</div>
-										</div>
-									);
-								})}
+										);
+									})}
 								</div>
 							) : (
 								<div className="text-sm text-slate-500">No preview data.</div>

@@ -149,7 +149,7 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 				<>
 					<Inbox className="h-12 w-12 text-muted-foreground/50 mb-4" />
 					<p className="text-base font-medium text-muted-foreground">
-						{t("audit:states.empty", { defaultValue: "No audit events recorded yet" })}
+						{t("audit:states.empty", { defaultValue: "No log events recorded yet" })}
 					</p>
 					<p className="text-sm text-muted-foreground/70 mt-1">
 						{t("audit:states.emptyHint", { defaultValue: "Events will appear here as you interact with MCP servers and profiles" })}
@@ -195,7 +195,7 @@ export function AuditPage() {
 	useEffect(() => {
 		if (query.isError) {
 			notifyError(
-				t("audit:errors.loadFailed", { defaultValue: "Failed to load audit events" }),
+				t("audit:errors.loadFailed", { defaultValue: "Failed to load log events" }),
 				query.error?.message ?? String(query.error)
 			);
 		}
@@ -473,7 +473,8 @@ export function AuditPage() {
 				<div className="flex items-center gap-2 min-w-0">
 					<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
 						{t("audit:description", {
-							defaultValue: "Inspect audit events across REST and MCP flows",
+							defaultValue:
+								"Browse REST and MCP activity logs recorded by MCPMate",
 						})}
 					</p>
 					<div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
@@ -552,7 +553,7 @@ export function AuditPage() {
 						<div className="flex min-h-0 flex-1 flex-col items-center justify-center py-12 text-center">
 							<AlertCircle className="h-12 w-12 text-destructive/50 mb-4" />
 							<p className="text-base font-medium text-muted-foreground">
-								{t("audit:states.error", { defaultValue: "Failed to load audit events" })}
+								{t("audit:states.error", { defaultValue: "Failed to load log events" })}
 							</p>
 							<Button variant="outline" size="sm" className="mt-4" onClick={() => query.refetch()}>
 								{t("audit:buttons.retry", { defaultValue: "Retry" })}

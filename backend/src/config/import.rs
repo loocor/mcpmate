@@ -12,7 +12,7 @@ fn global_redb_cache() -> Result<Arc<RedbCacheManager>> {
     RedbCacheManager::global().map_err(|error| anyhow::anyhow!("Failed to init REDB cache: {}", error))
 }
 
-async fn has_server_configs(pool: &Pool<Sqlite>) -> Result<bool> {
+pub(crate) async fn has_server_configs(pool: &Pool<Sqlite>) -> Result<bool> {
     sqlx::query_scalar::<_, i64>(&format!(
         "SELECT COUNT(*) FROM {}",
         crate::common::constants::database::tables::SERVER_CONFIG
@@ -57,13 +57,7 @@ async fn import_config_with_cache(
         &dummy_pool,
         redb_cache,
         items,
-        crate::config::server::ImportOptions {
-            by_name: true,
-            by_fingerprint: true,
-            conflict_policy: crate::config::server::ConflictPolicy::Skip,
-            preview: false,
-            target_profile: None,
-        },
+        crate::config::server::ImportOptions::dashboard_import(false, None),
     )
     .await?;
 

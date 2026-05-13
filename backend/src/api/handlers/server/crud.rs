@@ -4,7 +4,7 @@
 use super::{common, shared::*};
 use crate::api::models::server::{
     ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload, ServerUpdateReq,
-    ServersImportData, ServersImportReq, SkippedServerData,
+    ServersImportData, ServersImportReq, ServersImportResp, SkippedServerData,
 };
 use crate::{
     api::handlers::{
@@ -13,9 +13,7 @@ use crate::{
     },
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
-    config::server::{
-        ConflictPolicy, ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch,
-    },
+    config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
@@ -37,10 +35,12 @@ fn validate_server_config(
 ) -> Result<(), ApiError> {
     match kind {
         "stdio" if command.is_none() => Err(ApiError::BadRequest("Command is required for stdio servers".to_owned())),
-        "streamable_http" if url.is_none() => Err(ApiError::BadRequest(format!("URL is required for {kind} servers"))),
-        "stdio" | "streamable_http" => Ok(()),
+        "sse" | "streamable_http" if url.is_none() => {
+            Err(ApiError::BadRequest(format!("URL is required for {kind} servers")))
+        }
+        "stdio" | "sse" | "streamable_http" => Ok(()),
         _ => Err(ApiError::BadRequest(format!(
-            "Invalid server type: {kind}. Must be one of: stdio, streamable_http"
+            "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
         ))),
     }
 }
@@ -55,6 +55,7 @@ fn create_server_from_config(
 ) -> Server {
     match kind {
         ServerType::Stdio => Server::new_stdio(name, command),
+        ServerType::Sse => Server::new_sse(name, url),
         ServerType::StreamableHttp => Server::new_streamable_http(name, url),
     }
 }
@@ -157,10 +158,10 @@ async fn upsert_meta_payload(
 ///
 /// This endpoint creates a new MCP server configuration. Server types must strictly use the following standard formats:
 /// - `"stdio"`: Standard input/output server, launched via command line
+/// - `"sse"`: Legacy SSE HTTP server (persisted; protocol uses Streamable HTTP via rmcp)
 /// - `"streamable_http"`: Streamable HTTP server, connected via HTTP streaming
 ///
 /// **Important**: The system will reject any non-standard formats such as "http", "streamable-http", "streamableHttp", etc.
-/// Legacy `"sse"` inputs are only accepted at compatibility import boundaries and are normalized before persistence.
 ///
 /// **Endpoint**: `POST /mcp/servers/create`
 ///
@@ -204,8 +205,8 @@ pub async fn create_server(
         ApiError::BadRequest(format!(
             "Invalid server type '{}'.\n\nCorrect format requirements:\n\
                 - Use \"stdio\" (not \"Stdio\" or other variants)\n\
-                - Use \"streamable_http\" (not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
-                Legacy \"sse\" inputs are only normalized during import. Please check your input and use the correct standard format.",
+                - Use \"sse\" or \"streamable_http\" (lowercase; not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
+                Please check your input and use the correct standard format.",
             payload.server_type
         ))
     })?;
@@ -393,10 +394,10 @@ pub async fn create_server(
 ///
 /// This endpoint updates an existing MCP server configuration. If updating the server type, it must strictly use standard formats:
 /// - `"stdio"`: Standard input/output server
+/// - `"sse"`: Legacy SSE HTTP server (persisted; protocol uses Streamable HTTP via rmcp)
 /// - `"streamable_http"`: Streamable HTTP server
 ///
 /// **Important**: The system will reject any non-standard server type formats.
-/// Legacy `"sse"` inputs are only accepted at compatibility import boundaries and are normalized before persistence.
 ///
 /// **Endpoint**: `POST /mcp/servers/update`
 ///
@@ -436,8 +437,8 @@ pub async fn update_server(
             ApiError::BadRequest(format!(
                 "Invalid server type '{}'.\n\nCorrect format requirements:\n\
                     - Use \"stdio\" (not \"Stdio\" or other variants)\n\
-                    - Use \"streamable_http\" (not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
-                    Legacy \"sse\" inputs are only normalized during import. Please check your input and use the correct standard format.",
+                    - Use \"sse\" or \"streamable_http\" (lowercase; not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
+                    Please check your input and use the correct standard format.",
                 kind
             ))
         })?;
@@ -621,7 +622,7 @@ pub async fn update_server(
 pub async fn import_servers(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServersImportReq>,
-) -> Result<Json<ServersImportData>, ApiError> {
+) -> Result<Json<ServersImportResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
 
@@ -637,18 +638,46 @@ pub async fn import_servers(
         }
     }
 
+    // Validate: require either client_identifier or mcp_servers
+    if payload.client_identifier.is_none() && payload.mcp_servers.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Either 'client_identifier' or 'mcp_servers' must be provided".to_string(),
+        ));
+    }
+
+    let mcp_servers = if let Some(ref client_id) = payload.client_identifier {
+        let service = state
+            .client_service
+            .as_ref()
+            .ok_or_else(|| ApiError::InternalError("Client service unavailable".into()))?;
+
+        service
+            .fetch_state(client_id)
+            .await
+            .map_err(|err| ApiError::InternalError(err.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("Client '{}' not found", client_id)))?;
+
+        let plan = crate::config::server::plan_import_from_client_inspection(
+            service,
+            client_id,
+            None,
+            None,
+            payload.selected_server_names.as_slice(),
+        )
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+
+        plan.items
+    } else {
+        payload.mcp_servers
+    };
+
     let outcome = import_batch(
         &db.pool,
         &state.connection_pool,
         &state.redb_cache,
-        payload.mcp_servers,
-        ImportOptions {
-            by_name: true,
-            by_fingerprint: true,
-            conflict_policy: ConflictPolicy::Skip,
-            preview: payload.dry_run,
-            target_profile: payload.target_profile_id.clone(),
-        },
+        mcp_servers,
+        ImportOptions::dashboard_import(payload.dry_run, payload.target_profile_id.clone()),
     )
     .await
     .map_err(|e| ApiError::InternalError(e.to_string()))?;
@@ -665,7 +694,7 @@ pub async fn import_servers(
     let failed_servers: Vec<String> = failed.keys().cloned().collect();
     let error_details = if failed.is_empty() { None } else { Some(failed) };
 
-    let response = Json(ServersImportData {
+    let import_data = ServersImportData {
         imported_count: imported_servers.len(),
         imported_servers,
         skipped_count: skipped_servers.len(),
@@ -673,23 +702,23 @@ pub async fn import_servers(
         failed_count: failed_servers.len(),
         failed_servers,
         error_details,
-    });
+    };
 
     let mut data = Map::new();
     data.insert(
         "imported_count".to_string(),
-        Value::from(response.0.imported_count as u64),
+        Value::from(import_data.imported_count as u64),
     );
     data.insert(
         "skipped_count".to_string(),
-        Value::from(response.0.skipped_count as u64),
+        Value::from(import_data.skipped_count as u64),
     );
-    data.insert("failed_count".to_string(), Value::from(response.0.failed_count as u64));
+    data.insert("failed_count".to_string(), Value::from(import_data.failed_count as u64));
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             crate::audit::AuditAction::ServerImport,
-            if response.0.failed_count > 0 {
+            if import_data.failed_count > 0 {
                 crate::audit::AuditStatus::Failed
             } else {
                 crate::audit::AuditStatus::Success
@@ -705,7 +734,7 @@ pub async fn import_servers(
     )
     .await;
 
-    Ok(response)
+    Ok(Json(ServersImportResp::success(import_data)))
 }
 
 fn skipped_server_to_api(source: SkippedServer) -> SkippedServerData {

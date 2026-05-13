@@ -76,7 +76,7 @@ export function AuditEventDetailDrawer(props: AuditEventDetailDrawerProps) {
 			<DrawerContent className="flex h-full flex-col overflow-hidden">
 				<DrawerHeader className="shrink-0">
 					<DrawerTitle>
-						{t("audit:drawer.title", { defaultValue: "Audit Event Details" })}
+						{t("audit:drawer.title", { defaultValue: "Log event details" })}
 					</DrawerTitle>
 					<DrawerDescription>{descriptionText}</DrawerDescription>
 				</DrawerHeader>

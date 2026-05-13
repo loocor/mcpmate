@@ -2,9 +2,12 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	extractImportStats,
-	serializeMetaForApi,
 	serversApi,
 } from "../lib/api";
+import {
+	buildDraftServersImportRequest,
+	urlWithMergedSearchParams,
+} from "../lib/server-import-payload";
 import type { ImportStats } from "../lib/api";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
@@ -16,7 +19,7 @@ export type WizardStep = "form" | "preview" | "result";
 export interface ServerInstallDraft {
 	name: string;
 	serverId?: string;
-	kind: "stdio" | "streamable_http";
+	kind: "stdio" | "sse" | "streamable_http";
 	command?: string;
 	args?: string[];
 	env?: Record<string, string>;
@@ -35,6 +38,12 @@ interface PreviewState {
 	success: boolean;
 	data?: any;
 	error?: unknown;
+}
+
+function hasEntries(
+	value?: Record<string, string>,
+): value is Record<string, string> {
+	return Boolean(value && Object.keys(value).length > 0);
 }
 
 export function useServerInstallPipeline(
@@ -84,93 +93,19 @@ export function useServerInstallPipeline(
 				kind: item.kind,
 				command: item.kind === "stdio" ? (item.command ?? null) : null,
 				args: item.args?.length ? item.args : null,
-				env: item.env && Object.keys(item.env).length ? item.env : null,
+				env: hasEntries(item.env) ? item.env : null,
 				url:
-					item.kind !== "stdio"
-						? (() => {
-								if (!item.url) return null;
-								if (!item.urlParams || !Object.keys(item.urlParams).length)
-									return item.url;
-								try {
-									const u = new URL(
-										item.url,
-										/^https?:/i.test(item.url)
-											? undefined
-											: "http://dummy.local",
-									);
-									for (const [k, v] of Object.entries(item.urlParams)) {
-										u.searchParams.set(k, v);
-									}
-									return /^https?:/i.test(item.url)
-										? u.toString()
-										: `${item.url}?${u.searchParams.toString()}`;
-								} catch {
-									// Fallback: naive concatenation
-									const qs = new URLSearchParams(item.urlParams).toString();
-									return `${item.url}?${qs}`;
-								}
-							})()
+					item.kind !== "stdio" && item.url
+						? hasEntries(item.urlParams)
+							? urlWithMergedSearchParams(item.url, item.urlParams)
+							: item.url
 						: null,
 				headers:
-					item.kind !== "stdio" &&
-					item.headers &&
-					Object.keys(item.headers).length
+					item.kind !== "stdio" && hasEntries(item.headers)
 						? item.headers
 						: null,
 			})),
 		};
-	}, []);
-
-	const buildImportPayload = useCallback((items: ServerInstallDraft[]) => {
-		const payload: Record<string, any> = {};
-		for (const item of items) {
-			const metaPayload = serializeMetaForApi(item.meta);
-			const entry: Record<string, unknown> = {
-				type: item.kind,
-			};
-			if (item.kind === "stdio" && item.command) {
-				entry.command = item.command;
-			}
-			if (item.kind !== "stdio" && item.url) {
-				// Compose full URL with urlParams (same behavior as preview)
-				if (item.urlParams && Object.keys(item.urlParams).length) {
-					try {
-						const u = new URL(
-							item.url,
-							/^https?:/i.test(item.url) ? undefined : "http://dummy.local",
-						);
-						for (const [k, v] of Object.entries(item.urlParams)) {
-							u.searchParams.set(k, v);
-						}
-						entry.url = /^https?:/i.test(item.url)
-							? u.toString()
-							: `${item.url}?${u.searchParams.toString()}`;
-					} catch {
-						const qs = new URLSearchParams(
-							item.urlParams as Record<string, string>,
-						).toString();
-						entry.url = `${item.url}?${qs}`;
-					}
-				} else {
-					entry.url = item.url;
-				}
-			}
-			if (item.args?.length) {
-				entry.args = item.args;
-			}
-			if (item.env && Object.keys(item.env).length) {
-				entry.env = item.env;
-			}
-			if (item.registryServerId) {
-				entry.registry_server_id = item.registryServerId;
-			}
-			// Do not send a separate url_params field: backend import path doesn't consume it today.
-			if (metaPayload) {
-				entry.meta = metaPayload;
-			}
-			payload[item.name] = entry;
-		}
-		return { mcpServers: payload };
 	}, []);
 
 	const begin = useCallback(
@@ -216,19 +151,17 @@ export function useServerInstallPipeline(
 	);
 
 	const performDryRun = useCallback(async () => {
-		void i18n.language;
-			if (!drafts.length) return;
+		if (!drafts.length) return;
 		try {
 			setDryRunLoading(true);
 			setDryRunError(null);
 			setDryRunStats(null);
 			setDryRunWarning(null);
-			const payload = buildImportPayload(drafts);
-			const requestBody = {
-				...payload,
-				dry_run: true,
-				...(targetProfileId ? { target_profile_id: targetProfileId } : {}),
-			};
+			const requestBody = buildDraftServersImportRequest({
+				drafts,
+				targetProfileId,
+				dryRun: true,
+			});
 			const result = await serversApi.importServers(requestBody);
 			setDryRunResult(result);
 			const stats = extractImportStats(result);
@@ -284,71 +217,92 @@ export function useServerInstallPipeline(
 		} finally {
 			setDryRunLoading(false);
 		}
-	}, [drafts, buildImportPayload, targetProfileId, t, i18n.language]);
+	}, [drafts, targetProfileId, t, i18n.language]);
 
-	const confirmImport = useCallback(async () => {
-		void i18n.language;
+	const confirmImport = useCallback(
+		async (overrideTargetProfileId?: string | null) => {
 			if (!drafts.length) return false;
-		try {
-			setImporting(true);
-			setCurrentStep("result");
-			const payload = buildImportPayload(drafts);
-			const requestBody = targetProfileId
-				? { ...payload, target_profile_id: targetProfileId }
-				: payload;
-			const result = await serversApi.importServers(requestBody);
-			setImportResult(result);
+			// Allow callers (e.g., the install wizard's `handleImport`) to
+			// provide a freshly resolved target profile id — useful when
+			// auto-add is enabled but the pipeline state has not been updated
+			// via `setTargetProfileId` yet (state updates would be stale
+			// within the same handler tick).
+			const effectiveTargetProfileId =
+				overrideTargetProfileId !== undefined
+					? overrideTargetProfileId
+					: targetProfileId;
+			try {
+				setImporting(true);
+				setCurrentStep("result");
+				const requestBody = buildDraftServersImportRequest({
+					drafts,
+					targetProfileId: effectiveTargetProfileId,
+				});
+				const result = await serversApi.importServers(requestBody);
+				setImportResult(result);
 
-			const didSucceed =
-				typeof result?.success === "boolean"
-					? result.success
-					: (result as { status?: string })?.status === "success" ||
-						!("error" in (result ?? {}));
-			if (didSucceed) {
-				const stats = extractImportStats(result);
-				const { importedCount, skippedCount, skippedServers, skippedDetails } =
-					stats;
-				const skippedSummary = summarizeSkipped(skippedDetails, t);
-				const fallbackList = formatNameList(skippedServers, t);
-				const skippedDescription = skippedSummary
-					? skippedSummary
-					: skippedCount > 0
-						? `${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped${fallbackList ? ` (${fallbackList})` : ""}`
-						: "";
-				const shouldAutoClose = importedCount > 0;
-				if (importedCount > 0) {
-					const parts: string[] = [
-						`${importedCount} server${importedCount > 1 ? "s" : ""} imported`,
-					];
-					if (skippedCount > 0) {
-						parts.push(skippedDescription);
+				const didSucceed =
+					typeof result?.success === "boolean"
+						? result.success
+						: (result as { status?: string })?.status === "success" ||
+							!("error" in (result ?? {}));
+				if (didSucceed) {
+					const stats = extractImportStats(result);
+					const {
+						importedCount,
+						skippedCount,
+						skippedServers,
+						skippedDetails,
+					} = stats;
+					const skippedSummary = summarizeSkipped(skippedDetails, t);
+					const fallbackList = formatNameList(skippedServers, t);
+					const skippedDescription = skippedSummary
+						? skippedSummary
+						: skippedCount > 0
+							? `${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped${fallbackList ? ` (${fallbackList})` : ""}`
+							: "";
+					const shouldAutoClose = importedCount > 0;
+					if (importedCount > 0) {
+						const parts: string[] = [
+							`${importedCount} server${importedCount > 1 ? "s" : ""} imported`,
+						];
+						if (skippedCount > 0) {
+							parts.push(skippedDescription);
+						}
+						notifySuccess("Servers installed", parts.join("; "));
+					} else if (skippedCount > 0) {
+						notifyInfo(
+							"No new servers installed",
+							skippedDescription ||
+								`${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped (already installed).`,
+						);
+					} else {
+						notifySuccess(
+							"Servers installed",
+							"Import completed (no changes)",
+						);
 					}
-					notifySuccess("Servers installed", parts.join("; "));
-				} else if (skippedCount > 0) {
-					notifyInfo(
-						"No new servers installed",
-						skippedDescription ||
-							`${skippedCount} server${skippedCount > 1 ? "s" : ""} skipped (already installed).`,
-					);
-				} else {
-					notifySuccess("Servers installed", "Import completed (no changes)");
+					if (shouldAutoClose) {
+						opts.onImported?.();
+					}
+					return true;
 				}
-				if (shouldAutoClose) {
-					opts.onImported?.();
-				}
-				return true;
+				notifyError(
+					"Import failed",
+					String(result.error ?? "Unknown error"),
+				);
+				return false;
+			} catch (error) {
+				const message =
+					error instanceof Error ? error.message : String(error ?? "");
+				notifyError("Import failed", message || "Unexpected error");
+				return false;
+			} finally {
+				setImporting(false);
 			}
-			notifyError("Import failed", String(result.error ?? "Unknown error"));
-			return false;
-		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : String(error ?? "");
-			notifyError("Import failed", message || "Unexpected error");
-			return false;
-		} finally {
-			setImporting(false);
-		}
-	}, [drafts, buildImportPayload, opts, targetProfileId, t, i18n.language]);
+		},
+		[drafts, targetProfileId, t, i18n.language, opts],
+	);
 
 	const state = useMemo(
 		() => ({

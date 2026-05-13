@@ -96,7 +96,7 @@ export function useFormSync({
 
 	// Batch update HTTP-based transport fields
 	useEffect(() => {
-		if (isRestoringRef.current || kind !== "streamable_http") return;
+		if (isRestoringRef.current || kind === "stdio") return;
 		formStateRef.current.streamable_http.url = watchedUrl || "";
 		formStateRef.current.streamable_http.headers = cloneKeyValuePairs(watchedHeaders || []);
 	}, [kind, watchedUrl, watchedHeaders, formStateRef, isRestoringRef]);

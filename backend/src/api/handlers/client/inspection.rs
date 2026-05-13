@@ -104,7 +104,7 @@ pub(super) fn configured_server_entries_data(
     (report.analysis.clone(), entries)
 }
 
-pub(super) fn parse_rule_from_api_data(parse: &ClientConfigFileParseData) -> ClientConfigFileParse {
+pub(crate) fn parse_rule_from_api_data(parse: &ClientConfigFileParseData) -> ClientConfigFileParse {
     ClientConfigFileParse {
         format: match parse.format.as_str() {
             "json5" => TemplateFormat::Json5,

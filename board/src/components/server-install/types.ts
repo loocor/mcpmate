@@ -10,6 +10,7 @@ export const DEFAULT_INGEST_MESSAGE =
 // Server type options for Segment component
 export const SERVER_TYPE_OPTIONS: SegmentOption[] = [
 	{ value: "stdio", label: "Stdio" },
+	{ value: "sse", label: "SSE" },
 	{ value: "streamable_http", label: "Streamable HTTP" },
 ];
 
@@ -50,7 +51,7 @@ export const urlParamSchema = z.object({
 export const manualServerSchema = z
 	.object({
 		name: z.string().min(1, "manual.errors.nameRequired"),
-		kind: z.enum(["stdio", "streamable_http"], {
+		kind: z.enum(["stdio", "sse", "streamable_http"], {
 			required_error: "manual.errors.kindRequired",
 		}),
 		command: z.string().optional(),

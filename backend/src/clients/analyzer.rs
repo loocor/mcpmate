@@ -1,5 +1,7 @@
 use crate::clients::document::parse_config_to_json_value;
-use crate::clients::models::{CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ContainerType, FormatRule};
+use crate::clients::models::{
+    CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat,
+};
 use crate::clients::utils::get_nested_value;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -158,7 +160,15 @@ pub(crate) fn inspect_config_content(
     let document = if content.is_empty() {
         Value::Null
     } else {
-        parse_config_to_json_value(content, Some(parse_rule.format.as_str())).unwrap_or(Value::Null)
+        parse_config_to_json_value(content, Some(parse_rule.format.as_str()))
+            .or_else(|| {
+                if matches!(parse_rule.format, TemplateFormat::Json) {
+                    parse_config_to_json_value(content, Some("json5"))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Value::Null)
     };
     let inspection = inspect_config_value(&document, parse_rule, transports);
     let analysis = config_analysis_from_inspection(&inspection);
@@ -180,24 +190,64 @@ pub(crate) fn inspect_config_value(
     let mut seen_names = HashSet::new();
 
     for container_key in &parse_rule.container_keys {
-        let Some(container) = get_nested_value(document, container_key) else {
-            continue;
-        };
-
-        matched_container = true;
-        collect_entries_from_container(
-            &mut entries,
-            &mut seen_names,
-            container,
-            parse_rule.container_type,
-            container_key,
-            transports,
-        );
+        for container in matching_nested_values(document, container_key) {
+            matched_container = true;
+            collect_entries_from_container(
+                &mut entries,
+                &mut seen_names,
+                container,
+                parse_rule.container_type,
+                container_key,
+                transports,
+            );
+        }
     }
 
     ConfigInspection {
         matched_container,
         entries,
+    }
+}
+
+fn matching_nested_values<'a>(
+    document: &'a Value,
+    container_key: &str,
+) -> Vec<&'a Value> {
+    if !container_key.contains('*') {
+        return get_nested_value(document, container_key).into_iter().collect();
+    }
+
+    let parts = container_key.split('.').collect::<Vec<_>>();
+    let mut matches = Vec::new();
+    collect_matching_nested_values(document, &parts, &mut matches);
+    matches
+}
+
+fn collect_matching_nested_values<'a>(
+    current: &'a Value,
+    parts: &[&str],
+    matches: &mut Vec<&'a Value>,
+) {
+    let Some((part, remaining)) = parts.split_first() else {
+        matches.push(current);
+        return;
+    };
+
+    if *part == "*" {
+        if let Some(map) = current.as_object() {
+            for value in map.values() {
+                collect_matching_nested_values(value, remaining, matches);
+            }
+        } else if let Some(items) = current.as_array() {
+            for value in items {
+                collect_matching_nested_values(value, remaining, matches);
+            }
+        }
+        return;
+    }
+
+    if let Some(next) = current.get(*part) {
+        collect_matching_nested_values(next, remaining, matches);
     }
 }
 
@@ -439,7 +489,7 @@ fn normalize_transport_name(raw: &str) -> Option<&str> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "stdio" => Some("stdio"),
         "sse" => Some("sse"),
-        "http" | "streamablehttp" | "streamable_http" => Some("streamable_http"),
+        "http" | "streamablehttp" | "streamable-http" | "streamable_http" => Some("streamable_http"),
         _ => None,
     }
 }
@@ -508,6 +558,28 @@ mod tests {
         );
 
         assert_eq!(entry_names(&report), vec!["MCPMate".to_string()]);
+        assert_eq!(report.analysis.server_count, 1);
+    }
+
+    #[test]
+    fn inspect_config_content_matches_wildcard_container_segments() {
+        let transports = stdio_transports();
+        let report = inspect_config_content(
+            r#"{
+                "projects": {
+                    "/Volumes/External/GitHub/MCPMate": {
+                        "mcpServers": {
+                            "project-server": {"command":"node","args":["server.js"]}
+                        }
+                    }
+                }
+            }"#,
+            &object_map_rule("projects.*.mcpServers"),
+            Some(&transports),
+        );
+
+        assert!(report.inspection.matched_container);
+        assert_eq!(entry_names(&report), vec!["project-server".to_string()]);
         assert_eq!(report.analysis.server_count, 1);
     }
 
@@ -628,5 +700,56 @@ mod tests {
 
         assert!(!result.mcpmate_present);
         assert_eq!(result.server_count, 0);
+    }
+
+    /// Cursor templates ship static `type` in the outbound schema while `requires_type_field: false`.
+    /// User entries often omit `type` (Cursor remote example is URL-only). `FormatRule::normalized` must
+    /// not set inbound `include_type` unless the rule explicitly opted in.
+    #[test]
+    fn cursor_like_streamable_rule_matches_url_only_entry_without_user_type() {
+        let mut transports = HashMap::new();
+        transports.insert(
+            "streamable_http".to_string(),
+            FormatRule {
+                template: serde_json::json!({
+                    "type": "streamable_http",
+                    "url": "{{{url}}}"
+                }),
+                include_type: false,
+                ..FormatRule::default()
+            },
+        );
+        let value = serde_json::json!({
+            "url": "http://127.0.0.1:9/mcp"
+        });
+        let entry = inspect_named_entry("context-mode", &value, Some(&transports));
+        assert_eq!(entry.transport, "streamable_http");
+        let resolved = entry.resolved_import_transport().expect("resolved transport");
+        assert_eq!(resolved.kind, "streamable_http");
+    }
+
+    #[test]
+    fn cursor_like_stdio_rule_matches_command_only_entry_without_user_type() {
+        let mut transports = HashMap::new();
+        transports.insert(
+            "stdio".to_string(),
+            FormatRule {
+                template: serde_json::json!({
+                    "type": "stdio",
+                    "command": "{{command}}",
+                    "args": "{{{json args}}}"
+                }),
+                include_type: false,
+                ..FormatRule::default()
+            },
+        );
+        let value = serde_json::json!({
+            "command": "npx",
+            "args": ["-y", "@lobster/context-mode"]
+        });
+        let entry = inspect_named_entry("context-mode", &value, Some(&transports));
+        assert_eq!(entry.transport, "stdio");
+        let resolved = entry.resolved_import_transport().expect("resolved transport");
+        assert_eq!(resolved.kind, "stdio");
     }
 }

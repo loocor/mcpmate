@@ -1,8 +1,10 @@
-import { useQueryClient } from "@tanstack/react-query";
-import React, { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { MessagesSquare } from "lucide-react";
+import React from "react";
 import { useTranslation } from "react-i18next";
-import { Outlet, useNavigate } from "react-router-dom";
-import { openFeedbackEmail } from "../../lib/feedback-email";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { MCPMATE_DISCORD_COMMUNITY_HREF } from "../../lib/mcpmate-community-urls";
+import { onboardingApi } from "../../lib/onboarding-api";
 import {
 	auditApi,
 	configSuitsApi,
@@ -34,11 +36,18 @@ async function invalidateDesktopCoreQueries(
 	]);
 }
 
-function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw: unknown): void {
+function asRecordPayload(raw: unknown): Record<string, unknown> | undefined {
 	if (!raw || typeof raw !== "object") {
+		return undefined;
+	}
+	return raw as Record<string, unknown>;
+}
+
+function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw: unknown): void {
+	const payload = asRecordPayload(raw);
+	if (!payload) {
 		return;
 	}
-	const payload = raw as Record<string, unknown>;
 	const text = typeof payload.text === "string" ? payload.text : "";
 	if (!text.trim()) {
 		return;
@@ -56,17 +65,28 @@ function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw
 
 export function Layout() {
 	const queryClient = useQueryClient();
-	const { sidebarOpen, theme, setSidebarOpen } = useAppStore();
+	const { sidebarOpen, setSidebarOpen } = useAppStore();
 	const navigate = useNavigate();
+	const location = useLocation();
 	const { t, i18n } = useTranslation();
-	const [desktopSourceReady, setDesktopSourceReady] = useState(
-		() => !isTauriEnvironmentSync(),
-	);
+	const { data: onboardingResp } = useQuery({
+		queryKey: ["onboardingStatus"],
+		queryFn: () => onboardingApi.getStatus(),
+		staleTime: 60_000,
+		retry: false,
+		refetchOnWindowFocus: false,
+	});
 
 	React.useEffect(() => {
-		if (!desktopSourceReady) {
+		if (location.pathname === "/onboarding") {
 			return;
 		}
+		if (onboardingResp?.data?.completed === false) {
+			navigate("/onboarding", { replace: true });
+		}
+	}, [location.pathname, navigate, onboardingResp?.data?.completed]);
+
+	React.useEffect(() => {
 		const staleMs = 30 * 1000;
 		void queryClient.prefetchQuery({
 			queryKey: ["systemMetrics"],
@@ -92,70 +112,6 @@ export function Layout() {
 			staleTime: staleMs,
 			retry: false,
 		});
-	}, [queryClient, desktopSourceReady]);
-
-	// Apply theme and react to changes (system/manual)
-	React.useEffect(() => {
-		const apply = () => {
-			const isDark =
-				theme === "dark" ||
-				(theme === "system" &&
-					window.matchMedia("(prefers-color-scheme: dark)").matches);
-			document.documentElement.classList.toggle("dark", isDark);
-		};
-
-		apply();
-
-		let mediaQuery: MediaQueryList | null = null;
-		const onChange = (e: MediaQueryListEvent) => {
-			if (theme === "system") {
-				document.documentElement.classList.toggle("dark", e.matches);
-			}
-		};
-		if (theme === "system") {
-			mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-			mediaQuery.addEventListener("change", onChange);
-		}
-
-		return () => {
-			if (mediaQuery) mediaQuery.removeEventListener("change", onChange);
-		};
-	}, [theme]);
-
-	React.useEffect(() => {
-		let cancelled = false;
-
-		const syncDesktopCoreSource = async () => {
-			if (!isTauriEnvironmentSync()) {
-				setDesktopSourceReady(true);
-				return;
-			}
-
-			try {
-				const { invoke } = await import("@tauri-apps/api/core");
-				const source = (await invoke("mcp_shell_read_core_source")) as {
-					apiBaseUrl?: string;
-				};
-				if (!cancelled && typeof source.apiBaseUrl === "string") {
-					applyDesktopApiBaseUrl(source.apiBaseUrl);
-					void invalidateDesktopCoreQueries(queryClient);
-				}
-			} catch (error) {
-				if (import.meta.env.DEV) {
-					console.warn("[Layout] Failed to resolve desktop core source", error);
-				}
-			} finally {
-				if (!cancelled) {
-					setDesktopSourceReady(true);
-				}
-			}
-		};
-
-		void syncDesktopCoreSource();
-
-		return () => {
-			cancelled = true;
-		};
 	}, [queryClient]);
 
 	React.useEffect(() => {
@@ -164,9 +120,9 @@ export function Layout() {
 		let unlistenCoreState: (() => void) | undefined;
 		let cancelled = false;
 
-		const bind = async () => {
+		async function bind(): Promise<void> {
 			if (!isTauriEnvironmentSync()) {
-				return; // Skip binding in web dev/runtime
+				return;
 			}
 			try {
 				const { listen } = await import("@tauri-apps/api/event");
@@ -177,11 +133,9 @@ export function Layout() {
 				unlistenSettings = await listen(
 					"mcpmate://open-settings",
 					(event) => {
-						const payload =
-							event.payload && typeof event.payload === "object"
-								? (event.payload as { tab?: string })
-								: undefined;
-						const target = payload?.tab ? `/settings?tab=${payload.tab}` : "/settings";
+						const payload = asRecordPayload(event.payload);
+						const tab = typeof payload?.tab === "string" ? payload.tab : undefined;
+						const target = tab ? `/settings?tab=${tab}` : "/settings";
 						navigate(target);
 					},
 				);
@@ -189,12 +143,10 @@ export function Layout() {
 					handleImportServerPayload(navigate, event.payload);
 				});
 				unlistenCoreState = await listen("mcpmate://core/status-changed", (event) => {
-					const payload =
-						event.payload && typeof event.payload === "object"
-							? (event.payload as { apiBaseUrl?: string })
-							: undefined;
-					if (typeof payload?.apiBaseUrl === "string") {
-						applyDesktopApiBaseUrl(payload.apiBaseUrl);
+					const payload = asRecordPayload(event.payload);
+					const apiBaseUrl = payload?.apiBaseUrl;
+					if (typeof apiBaseUrl === "string") {
+						applyDesktopApiBaseUrl(apiBaseUrl);
 						void invalidateDesktopCoreQueries(queryClient);
 					}
 				});
@@ -208,7 +160,7 @@ export function Layout() {
 					console.warn("[Layout] Failed to bind desktop shell events", error);
 				}
 			}
-		};
+		}
 
 		void bind();
 		return () => {
@@ -279,14 +231,6 @@ export function Layout() {
 	const termsHref = `https://mcp.umate.ai/terms?lang=${langParam}`;
 	const privacyHref = `https://mcp.umate.ai/privacy?lang=${langParam}`;
 
-	const handleFooterFeedbackClick = useCallback(() => {
-		void openFeedbackEmail();
-	}, []);
-
-	if (!desktopSourceReady) {
-		return <div className="min-h-screen bg-background" />;
-	}
-
 	return (
 		<div className="h-screen flex flex-col overflow-hidden">
 			<Sidebar />
@@ -333,24 +277,22 @@ export function Layout() {
 							</div>
 						</div>
 						<div className="flex items-center gap-2">
-							<button
-								type="button"
-								className="inline-flex items-center gap-1 hover:underline text-inherit p-0 border-0 bg-transparent cursor-pointer"
-								onClick={handleFooterFeedbackClick}
-								aria-label={t("header.sendFeedback", {
-									defaultValue: "Send feedback via email",
+							<a
+								className="inline-flex items-center gap-1.5 hover:underline text-inherit"
+								href={MCPMATE_DISCORD_COMMUNITY_HREF}
+								target="_blank"
+								rel="noopener noreferrer"
+								aria-label={t("layout.discordAria", {
+									defaultValue: "Open MCPMate Discord community in a new tab",
 								})}
-								title={t("header.sendFeedback", {
-									defaultValue: "Send feedback via email",
+								title={t("layout.discordAria", {
+									defaultValue: "Open MCPMate Discord community in a new tab",
 								})}
 							>
-								{/* Fallback emoji icon to avoid extra imports */}
-								<span role="img" aria-hidden="true">
-									💬
-								</span>
-								<span>{t("layout.feedback", { defaultValue: "Feedback" })}</span>
-							</button>
-						</div>
+									<MessagesSquare className="h-3.5 w-3.5 shrink-0 text-[#5865F2]" aria-hidden />
+									<span>{t("layout.discord", { defaultValue: "Discord" })}</span>
+								</a>
+							</div>
 					</footer>
 				</div>
 			</main>

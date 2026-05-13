@@ -20,9 +20,7 @@ import type {
  ClientConfigFileParse,
  ClientConfigFileParseInspectCall,
  ClientConfigFileParseInspectResp,
-	ClientConfigImportData,
-	ClientConfigImportReq,
-	ClientConfigResp,
+ClientConfigResp,
 	ClientConfigRestoreReq,
 	ClientConfigUpdateReq,
 	ClientConfigUpdateResp,
@@ -227,7 +225,7 @@ export function syncApiBaseUrlForRuntimePort(apiPort: number) {
 	setApiBaseUrl(`http://127.0.0.1:${apiPort}`);
 }
 
-const resolveWebSocketUrl = (): string => {
+export const resolveWebSocketUrl = (): string => {
 	if (typeof window === "undefined") {
 		return "";
 	}
@@ -361,15 +359,6 @@ function asOptionalString(v: unknown): string | undefined {
 function asStringOrNull(v: unknown): string | null | undefined {
 	if (v === null) return null;
 	return typeof v === "string" ? v : undefined;
-}
-
-/** Single server entry for import fallback JSON */
-interface McpImportServerEntry {
-	type: string;
-	command?: string;
-	args?: string[];
-	env?: Record<string, string>;
-	url?: string;
 }
 
 interface NotificationData {
@@ -1112,55 +1101,10 @@ export const serversApi = {
 		if (metaPayload) {
 			base.meta = metaPayload;
 		}
-		try {
-			return await fetchApi<ServerDetailsResp>("/api/mcp/servers/create", {
-				method: "POST",
-				body: JSON.stringify(base),
-			});
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			// Fallback to import when the create endpoint rejects (schema/DB constraints)
-			if (
-				serverConfig.pending_import !== true &&
-				/Check constraint violation|Unprocessable Entity|Invalid server type|missing field `server_type`/i.test(
-					msg,
-				)
-			) {
-				const name = String(serverConfig.name || "").trim();
-				const importBody: { mcpServers: Record<string, McpImportServerEntry> } =
-					{ mcpServers: {} };
-				const cfg: McpImportServerEntry = { type: serverType };
-				if (serverType === "stdio") {
-					if (serverConfig.command) cfg.command = serverConfig.command;
-					if (Array.isArray(serverConfig.args)) cfg.args = serverConfig.args;
-					if (serverConfig.env) cfg.env = serverConfig.env;
-				} else {
-					if (sc.url) cfg.url = sc.url;
-					else if (serverConfig.command) cfg.url = serverConfig.command;
-				}
-				importBody.mcpServers[name] = cfg;
-				await fetchApi<ApiWrapper<ServersImportData>>("/api/mcp/servers/import", {
-					method: "POST",
-					body: JSON.stringify(importBody),
-				});
-				// Return a minimal compatible response; list refetch will normalize
-				return {
-					success: true,
-					data: {
-						id: name,
-						name,
-						status: "unknown",
-						server_type: serverType,
-						instances: [],
-						command: serverConfig.command,
-						args: serverConfig.args,
-						env: serverConfig.env,
-					},
-					error: null,
-				} as unknown as ServerDetailsResp;
-			}
-			throw e;
-		}
+		return await fetchApi<ServerDetailsResp>("/api/mcp/servers/create", {
+			method: "POST",
+			body: JSON.stringify(base),
+		});
 	},
 
 	updateServer: async (
@@ -1233,9 +1177,11 @@ export const serversApi = {
 	): Promise<CapabilityListResult> =>
 		fetchCapabilityList("/api/mcp/servers/resources/templates", serverId, refresh),
 
-	// Import servers from JSON-like configuration object
+	// Import servers from JSON-like configuration object, or from a registered client's config
 	importServers: async (payload: {
-		mcpServers: Record<string, unknown>;
+		mcpServers?: Record<string, unknown>;
+		client_identifier?: string;
+		selected_server_names?: string[];
 		target_profile_id?: string | null;
 		dry_run?: boolean;
 	}): Promise<ApiWrapper<ServersImportData>> => {
@@ -1632,6 +1578,12 @@ export const toolsApi = {
 
 // System Management API
 export const systemApi = {
+	getReadiness: () =>
+		fetchApi<{
+			type?: string;
+			status?: string;
+			reason?: string;
+		}>("/api/system/readiness"),
 	getStatus: () => fetchApi<SystemStatus>("/api/system/status"),
 	getMetrics: () => fetchApi<SystemMetrics>("/api/system/metrics"),
 	getSettings: async (): Promise<{
@@ -2415,9 +2367,24 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
-	list: async (refresh = false) => {
+	list: async (
+		refresh = false,
+		options?: { persistDetected?: boolean; includeDetected?: boolean },
+	) => {
 		const q = new URLSearchParams({ refresh: String(refresh) });
+		if (typeof options?.persistDetected === "boolean") {
+			q.set("persist_detected", String(options.persistDetected));
+		}
+		if (typeof options?.includeDetected === "boolean") {
+			q.set("include_detected", String(options.includeDetected));
+		}
 		const resp = await fetchApi<ClientCheckResp>(`/api/client/list?${q}`);
+		return extractApiData(resp);
+	},
+
+	detect: async (refresh = false) => {
+		const q = new URLSearchParams({ refresh: String(refresh) });
+		const resp = await fetchApi<ClientCheckResp>(`/api/client/detect?${q}`);
 		return extractApiData(resp);
 	},
 
@@ -2481,6 +2448,7 @@ export const clientsApi = {
         support_url?: string;
         logo_url?: string;
 		config_file_parse?: ClientConfigFileParse;
+			clear_config_file_parse?: boolean;
 		transports?: Record<string, TransportRuleData>;
 		clear_transports?: boolean;
 	}) => {
@@ -2554,27 +2522,6 @@ export const clientsApi = {
 		return extractApiData(resp);
 	},
 
-	// Import servers from analyzed client configuration entries
-	importFromClient: async (
-		identifier: string,
-		options: { entries: ServerEntryData[]; profile_id?: string | null },
-	): Promise<ClientConfigImportData> => {
-		const body: ClientConfigImportReq = {
-			identifier,
-			entries: options.entries,
-		};
-		if ("profile_id" in options) {
-			body.profile_id = options.profile_id ?? null;
-		}
-		const resp = await fetchApi<ApiWrapper<ClientConfigImportData>>(
-			`/api/client/config/import`,
-			{
-				method: "POST",
-				body: JSON.stringify(body),
-			},
-		);
-		return extractApiData(resp);
-	},
 };
 
 // Token Estimate API

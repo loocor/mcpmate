@@ -1,10 +1,13 @@
 import type { TFunction } from "i18next";
 import { clientsApi } from "./api";
+import { mapDashboardSettingsToClientBackupPolicy } from "./client-backup-policy";
+import type { DashboardSettings } from "./store";
 import type {
 	ClientBackupPolicyPayload,
 	ClientCapabilityConfigData,
 	ClientConfigMode,
 	ClientConfigSelected,
+	ClientInfo,
 } from "./types";
 
 const CUSTOM_PROFILE_MISSING_ERROR = "customProfileMissing";
@@ -92,4 +95,41 @@ export async function applyClientConfigWithResolvedSelection(input: {
 		preview: false,
 		backup_policy: input.backupPolicy,
 	});
+}
+
+/**
+ * Runs the same non-preview apply path as the client detail "Apply" / "Re-apply" action for each
+ * eligible row: resolves mode (per-client or dashboard default), skips transparent / non-writable
+ * / non-approved clients, then calls {@link applyClientConfigWithResolvedSelection}.
+ */
+export async function applyManagedClientsForIdentifiers(input: {
+	clients: ClientInfo[];
+	identifiers: ReadonlySet<string>;
+	dashboardSettings: DashboardSettings;
+}): Promise<void> {
+	const backupPolicy = mapDashboardSettingsToClientBackupPolicy(input.dashboardSettings);
+	for (const client of input.clients) {
+		if (!input.identifiers.has(client.identifier)) {
+			continue;
+		}
+		const mode =
+			resolveClientConfigMode(client.config_mode) ?? input.dashboardSettings.clientDefaultMode;
+		if (mode === "transparent") {
+			continue;
+		}
+		if (
+			!canApplyClientConfigWithState({
+				mode,
+				writableConfig: client.writable_config,
+				approvalStatus: client.approval_status,
+			})
+		) {
+			continue;
+		}
+		await applyClientConfigWithResolvedSelection({
+			identifier: client.identifier,
+			mode,
+			backupPolicy,
+		});
+	}
 }

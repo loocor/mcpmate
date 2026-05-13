@@ -11,7 +11,8 @@ use aide::axum::{
 use super::AppState;
 use crate::api::handlers::system;
 use crate::api::models::system::{
-    ManagementActionResp, SystemMetricsResp, SystemSettingsResp, SystemSettingsUpdateReq, SystemStatusResp,
+    ManagementActionResp, SystemMetricsResp, SystemReadinessResp, SystemSettingsResp, SystemSettingsUpdateReq,
+    SystemStatusResp,
 };
 use crate::{aide_wrapper, aide_wrapper_payload};
 
@@ -19,6 +20,12 @@ aide_wrapper!(
     system::get_status,
     SystemStatusResp,
     "Get system status including uptime and server counts"
+);
+
+aide_wrapper!(
+    system::get_readiness,
+    SystemReadinessResp,
+    "Get backend readiness for frontend startup"
 );
 
 aide_wrapper!(
@@ -54,6 +61,7 @@ aide_wrapper!(
 
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
+        .api_route("/system/readiness", get_with(get_readiness_aide, get_readiness_docs))
         .api_route("/system/status", get_with(get_status_aide, get_status_docs))
         .api_route(
             "/system/settings",

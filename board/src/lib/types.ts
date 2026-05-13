@@ -535,17 +535,15 @@ export interface MCPConfig {
  *
  * Supported server types:
  * - "stdio": process-backed server
+ * - "sse": legacy SSE HTTP server (persisted; protocol uses Streamable HTTP)
  * - "streamable_http": HTTP-based server
- *
- * Legacy "sse" inputs are normalized earlier in import/install flows and
- * should not be authored in this contract.
  */
 export interface MCPServerConfig {
   /** Server name */
   name: string;
 
   /** Direct server type accepted by the backend CRUD API. */
-  kind: "stdio" | "streamable_http";
+  kind: "stdio" | "sse" | "streamable_http";
 
   /** 启动命令（stdio类型必填） */
   command?: string;
@@ -611,8 +609,8 @@ export interface RetryPolicy {
  */
 export function validateServerType(
   kind: string,
-): kind is "stdio" | "streamable_http" {
-  const validTypes = ["stdio", "streamable_http"] as const;
+): kind is "stdio" | "sse" | "streamable_http" {
+  const validTypes = ["stdio", "sse", "streamable_http"] as const;
   return validTypes.some((type) => type === kind);
 }
 
@@ -627,9 +625,7 @@ export function getServerTypeErrorMessage(invalidKind: string): string {
 
 Correct format requirements:
 - Use "stdio" (not "Stdio" or other variants)
-- Use "streamable_http" (not "http", "streamable-http", or "streamableHttp")
-
-Legacy "sse" inputs are normalized only during import.`;
+- Use "sse" or "streamable_http" (lowercase; not "http", "streamable-http", or "streamableHttp")`;
 }
 
 // Config Suits Types
@@ -1065,18 +1061,6 @@ export type ClientConfigSelected =
   | { servers: { server_ids: string[] } }
   | string;
 
-export interface ClientImportedServer {
-  name: string;
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  server_type: string;
-  // Legacy fields kept optional for backward compatibility
-  kind?: string;
-  status?: string;
-  url?: string | null;
-}
-
 export interface ServerEntryData {
   name: string;
   transport: string;
@@ -1088,35 +1072,6 @@ export interface ServerEntryData {
   env: Record<string, string>;
   headers: Record<string, string>;
   url?: string | null;
-}
-
-export interface ClientImportSummary {
-  attempted: boolean;
-  imported_count: number;
-  skipped_count: number;
-  failed_count: number;
-  errors?: Record<string, string> | null;
-  skipped_servers?: SkippedServer[] | null;
-}
-
-export interface ClientConfigImportData {
-  summary: ClientImportSummary;
-  imported_servers?: ClientImportedServer[] | null;
-  profile_id?: string | null;
-  scheduled?: boolean | null;
-  scheduled_reason?: string | null;
-}
-
-export interface ClientConfigImportResp {
-  data?: ClientConfigImportData | null;
-  error?: unknown | null;
-  success: boolean;
-}
-
-export interface ClientConfigImportReq {
-  identifier: string;
-  entries: ServerEntryData[];
-  profile_id?: string | null;
 }
 
 export interface ClientConfigData {

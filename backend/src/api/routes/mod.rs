@@ -6,6 +6,7 @@ pub mod ai;
 pub mod audit;
 pub mod client;
 pub mod inspector;
+pub mod onboarding;
 pub mod openapi;
 pub mod profile;
 pub mod registry;
@@ -201,6 +202,7 @@ async fn create_router_internal(
         .merge(audit::routes(state.clone()))
         .merge(server::routes(state.clone()))
         .merge(system::routes(state.clone()))
+        .merge(onboarding::routes(state.clone()))
         .merge(profile::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
         .merge(inspector::routes(state.clone()))
@@ -215,6 +217,7 @@ async fn create_router_internal(
         .layer(axum::middleware::from_fn(crate::common::env::origin_guard_middleware));
 
     let inspector_ws = Router::new()
+        .route("/readiness", get(crate::api::handlers::system::readiness_ws))
         .route(
             "/inspector/events",
             get(crate::api::handlers::inspector::tool_call_events_ws),

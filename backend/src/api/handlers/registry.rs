@@ -587,7 +587,7 @@ pub async fn refresh_managed_server_metadata(
     .await;
 
     let mut oauth_status = None;
-    if refreshed.server_type == crate::common::server::ServerType::StreamableHttp {
+    if refreshed.server_type.is_http_transport() {
         let manager = crate::core::oauth::manager::OAuthManager::new(db.pool.clone());
         if let Ok(status) = manager.get_status(&server_id).await {
             if status.configured {

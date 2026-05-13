@@ -48,7 +48,7 @@ async fn preview_one(
     };
 
     let mut client: Option<reqwest::Client> = None;
-    if matches!(kind, crate::common::server::ServerType::StreamableHttp) {
+    if kind.is_http_transport() {
         if let Some(headers) = effective_headers.as_ref() {
             let mut header_map = reqwest::header::HeaderMap::new();
             for (k, v) in headers.iter() {

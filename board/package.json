@@ -8,7 +8,9 @@
 		"build": "vite build",
 		"lint": "eslint .",
 		"biome": "bunx @biomejs/biome check .",
-		"preview": "vite preview"
+		"preview": "vite preview",
+		"e2e": "node ./scripts/run-playwright.mjs test",
+		"e2e:headed": "node ./scripts/run-playwright.mjs test --headed"
 	},
 	"dependencies": {
 		"@hookform/resolvers": "^5.0.1",
@@ -31,7 +33,6 @@
 		"@tauri-apps/api": "^2.10.0",
 		"@tauri-apps/plugin-clipboard-manager": "^2.0.1",
 		"@tauri-apps/plugin-dialog": "^2.7.0",
-		"@tauri-apps/plugin-opener": "^2.5.0",
 		"acorn": "^8.15.0",
 		"class-variance-authority": "^0.7.0",
 		"clsx": "^2.1.0",
@@ -64,6 +65,7 @@
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.9.1",
+		"@playwright/test": "^1.54.2",
 		"@types/node": "^24.5.2",
 		"@types/react": "^18.3.5",
 		"@types/react-dom": "^18.3.0",
