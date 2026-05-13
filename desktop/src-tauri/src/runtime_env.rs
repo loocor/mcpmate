@@ -71,11 +71,7 @@ fn ensure_desktop_runtime_path() -> Result<String> {
     let npx_shim = bin_dir.join("npx");
     ensure_executable_shim(
         &npx_shim,
-        &format!(
-            "#!/bin/sh\nset -e\nBUNX=\"{}\"\nif [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi\nif command -v npx >/dev/null 2>&1; then exec \"$(command -v npx)\" \"$@\"; fi\necho 'npx is unavailable (no bunx in {} and npx not found in PATH)' 1>&2\nexit 127\n",
-            bunx_path.display(),
-            bun_runtime_dir.display()
-        ),
+        &npx_shim_body(&bin_dir, &bunx_path, &bun_runtime_dir),
     )?;
 
     let python3_candidates = [
@@ -111,15 +107,34 @@ fn ensure_desktop_runtime_path() -> Result<String> {
 }
 
 #[cfg(target_os = "macos")]
+fn npx_shim_body(
+    bin_dir: &std::path::Path,
+    bunx_path: &std::path::Path,
+    bun_runtime_dir: &std::path::Path,
+) -> String {
+    format!(
+        "#!/bin/sh\nset -e\nBUNX=\"{}\"\nSELF_DIR=\"{}\"\nif [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi\nSEARCH_PATH=\"\"\nOLD_IFS=\"$IFS\"\nIFS=:; for entry in $PATH; do\n  if [ \"$entry\" = \"$SELF_DIR\" ]; then\n    continue\n  fi\n  if [ -z \"$SEARCH_PATH\" ]; then\n    SEARCH_PATH=\"$entry\"\n  else\n    SEARCH_PATH=\"$SEARCH_PATH:$entry\"\n  fi\ndone\nIFS=\"$OLD_IFS\"\nif [ -n \"$SEARCH_PATH\" ] && PATH=\"$SEARCH_PATH\" command -v npx >/dev/null 2>&1; then\n  exec env PATH=\"$SEARCH_PATH\" \"$(PATH=\"$SEARCH_PATH\" command -v npx)\" \"$@\"\nfi\necho 'npx is unavailable (no bunx in {} and no system npx outside {})' 1>&2\nexit 127\n",
+        bunx_path.display(),
+        bin_dir.display(),
+        bun_runtime_dir.display(),
+        bin_dir.display(),
+    )
+}
+
+#[cfg(target_os = "macos")]
 fn ensure_executable_shim(path: &std::path::Path, body: &str) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    if path.exists() {
-        return Ok(());
+    let needs_write = match fs::read_to_string(path) {
+        Ok(existing) => existing != body,
+        Err(_) => true,
+    };
+
+    if needs_write {
+        let mut file = fs::File::create(path)?;
+        file.write_all(body.as_bytes())?;
     }
 
-    let mut file = fs::File::create(path)?;
-    file.write_all(body.as_bytes())?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
     Ok(())
 }
@@ -180,9 +195,51 @@ mod tests {
         assert!(path.contains("/opt/homebrew/bin") || path.contains("/usr/local/bin"));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn npx_shim_body_removes_self_dir_from_path_lookup() {
+        let body = npx_shim_body(
+            std::path::Path::new("/tmp/mcpmate/bin"),
+            std::path::Path::new("/tmp/mcpmate/runtimes/bun/bunx"),
+            std::path::Path::new("/tmp/mcpmate/runtimes/bun"),
+        );
+
+        assert!(body.contains("SELF_DIR=\"/tmp/mcpmate/bin\""));
+        assert!(body.contains("PATH=\"$SEARCH_PATH\" command -v npx"));
+        assert!(body.contains("no system npx outside /tmp/mcpmate/bin"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn ensure_executable_shim_rewrites_existing_body() {
+        let unique = format!(
+            "mcpmate-runtime-env-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        );
+        let base = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&base).expect("create temp dir");
+        let path = base.join("shim");
+
+        fs::write(&path, "old body").expect("write old body");
+        ensure_executable_shim(&path, "new body").expect("rewrite shim");
+
+        let body = fs::read_to_string(&path).expect("read rewritten shim");
+        assert_eq!(body, "new body");
+
+        fs::remove_dir_all(base).expect("remove temp dir");
+    }
+
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn service_environment_is_empty_off_macos() {
-        assert!(service_environment_entries().expect("service environment entries").is_empty());
+        assert!(
+            service_environment_entries()
+                .expect("service environment entries")
+                .is_empty()
+        );
     }
 }
