@@ -169,7 +169,18 @@ async function installOnboardingApiMocks(
         return ok({ success: true, data: { ok: true } });
 
       case "/api/mcp/servers/import":
-        return ok({ success: true, imported: scanCandidates.length });
+        return ok({
+          success: true,
+          data: {
+            imported_count: scanCandidates.length,
+            imported_servers: scanCandidates.map((candidate) => candidate.name),
+            skipped_count: 0,
+            skipped_servers: [],
+            failed_count: 0,
+            failed_servers: [],
+            error_details: null,
+          },
+        });
 
       case "/api/mcp/servers":
         return ok({ success: true, servers: [] });

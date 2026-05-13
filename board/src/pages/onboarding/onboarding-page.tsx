@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Check,
   ExternalLink,
+  Github,
   Globe,
   MessagesSquare,
   Loader2,
@@ -15,7 +16,6 @@ import {
 import { useCallback, useEffect, useMemo, useReducer, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { SiBun, SiDiscord, SiGithub, SiNodedotjs, SiUv } from "@icons-pack/react-simple-icons";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Alert, AlertDescription } from "../../components/ui/alert";
@@ -94,7 +94,7 @@ function RuntimeBrandIcon({ kind }: { kind: RuntimeKind }) {
   if (kind === "node") {
     return (
       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-50 dark:bg-emerald-950/40">
-        <SiNodedotjs className="h-7 w-7 text-[#339933]" />
+        <Terminal className="h-7 w-7 text-emerald-600 dark:text-emerald-400" />
       </div>
     );
   }
@@ -102,14 +102,14 @@ function RuntimeBrandIcon({ kind }: { kind: RuntimeKind }) {
   if (kind === "bun") {
     return (
       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 dark:bg-amber-950/40">
-        <SiBun className="h-7 w-7 text-[#FBF0DF]" />
+        <Rocket className="h-7 w-7 text-amber-600 dark:text-amber-300" />
       </div>
     );
   }
 
   return (
     <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-50 dark:bg-violet-950/40">
-      <SiUv className="h-7 w-7 text-[#DE5FE9]" />
+      <Server className="h-7 w-7 text-violet-600 dark:text-violet-400" />
     </div>
   );
 }
@@ -1328,14 +1328,14 @@ function CommunityLinkBrandIcon({ linkKey }: { linkKey: (typeof COMMUNITY_LINKS)
   if (linkKey === "discord") {
     return (
       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 dark:bg-indigo-950/40">
-        <SiDiscord className="h-7 w-7 text-[#5865F2]" />
+        <MessagesSquare className="h-7 w-7 text-[#5865F2]" />
       </div>
     );
   }
   if (linkKey === "github") {
     return (
       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800">
-        <SiGithub className="h-7 w-7 text-slate-800 dark:text-slate-200" />
+        <Github className="h-7 w-7 text-slate-800 dark:text-slate-200" />
       </div>
     );
   }
