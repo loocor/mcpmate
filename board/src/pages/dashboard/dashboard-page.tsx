@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import {
 	Activity,
+	AppWindow,
 	Play,
 	RefreshCw,
 	Server,
 	Sliders,
 	Square,
-	Users,
 } from "lucide-react";
 import React from "react";
 import { useTranslation } from "react-i18next";
@@ -705,7 +705,7 @@ export function DashboardPage() {
 								<CardTitle className="text-sm font-medium">
 									{t("dashboard:cards.clients", { defaultValue: "Clients" })}
 								</CardTitle>
-								<Users className="h-4 w-4 text-slate-500" />
+								<AppWindow className="h-4 w-4 text-slate-500" />
 							</CardHeader>
 							<CardContent>
 								<div className="space-y-1.5">

@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import React, { useCallback } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { openFeedbackEmail } from "../../lib/feedback-email";
+import { SiDiscord } from "@icons-pack/react-simple-icons";
+import { MCPMATE_DISCORD_COMMUNITY_HREF } from "../../lib/mcpmate-community-urls";
 import { onboardingApi } from "../../lib/onboarding-api";
 import {
 	auditApi,
@@ -230,10 +231,6 @@ export function Layout() {
 	const termsHref = `https://mcp.umate.ai/terms?lang=${langParam}`;
 	const privacyHref = `https://mcp.umate.ai/privacy?lang=${langParam}`;
 
-	const handleFooterFeedbackClick = useCallback(() => {
-		void openFeedbackEmail();
-	}, []);
-
 	return (
 		<div className="h-screen flex flex-col overflow-hidden">
 			<Sidebar />
@@ -280,23 +277,21 @@ export function Layout() {
 							</div>
 						</div>
 						<div className="flex items-center gap-2">
-							<button
-								type="button"
-								className="inline-flex items-center gap-1 hover:underline text-inherit p-0 border-0 bg-transparent cursor-pointer"
-								onClick={handleFooterFeedbackClick}
-								aria-label={t("header.sendFeedback", {
-									defaultValue: "Send feedback via email",
+							<a
+								className="inline-flex items-center gap-1.5 hover:underline text-inherit"
+								href={MCPMATE_DISCORD_COMMUNITY_HREF}
+								target="_blank"
+								rel="noopener noreferrer"
+								aria-label={t("layout.discordAria", {
+									defaultValue: "Open MCPMate Discord community in a new tab",
 								})}
-								title={t("header.sendFeedback", {
-									defaultValue: "Send feedback via email",
+								title={t("layout.discordAria", {
+									defaultValue: "Open MCPMate Discord community in a new tab",
 								})}
 							>
-								{/* Fallback emoji icon to avoid extra imports */}
-								<span role="img" aria-hidden="true">
-									💬
-								</span>
-								<span>{t("layout.feedback", { defaultValue: "Feedback" })}</span>
-							</button>
+								<SiDiscord className="h-3.5 w-3.5 shrink-0 text-[#5865F2]" aria-hidden />
+								<span>{t("layout.discord", { defaultValue: "Discord" })}</span>
+							</a>
 						</div>
 					</footer>
 				</div>

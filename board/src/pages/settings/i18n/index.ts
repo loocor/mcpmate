@@ -4,7 +4,7 @@ export const settingsTranslations = {
     tabs: {
       general: "General",
       appearance: "Appearance",
-      audit: "Audit",
+      audit: "Logs",
       profile: "Profile",
       system: "System",
       serverControls: "Server",
@@ -264,11 +264,12 @@ export const settingsTranslations = {
       restore: "Restore",
     },
     audit: {
-      title: "Audit Policy",
-      description: "Manage how long audit events are retained in the database.",
+      title: "Log retention",
+      description:
+        "Control how long activity log events are kept in the local database.",
       liveLogsTitle: "Detail Live Logs",
       liveLogsDescription:
-        "Control whether audit-backed live logs are shown in the Profile detail page.",
+        "Control whether paginated live logs (backed by stored events) appear on the Profile detail page.",
       liveLogsClientTitle: "Client Detail Logs",
       liveLogsClientDescription:
         "Show paginated live logs on the Client detail page.",
@@ -278,10 +279,10 @@ export const settingsTranslations = {
       liveLogsProfileTitle: "Profile Detail Logs",
       liveLogsProfileDescription:
         "Show paginated live logs on the Profile detail page.",
-      saved: "Retention policy saved",
-      saveFailed: "Failed to save policy",
+      saved: "Log retention settings saved",
+      saveFailed: "Failed to save log retention settings",
       typeTitle: "Retention Strategy",
-      typeDescription: "Select how events are automatically pruned.",
+      typeDescription: "Choose how stored log events are pruned automatically.",
       typeCombined: "Combined (days + count)",
       typeDays: "Keep by days",
       typeCount: "Keep by count",
@@ -317,7 +318,7 @@ export const settingsTranslations = {
     tabs: {
       general: "通用",
       appearance: "外观",
-      audit: "审计",
+      audit: "日志",
       profile: "配置集",
       system: "系统",
       serverControls: "服务器",
@@ -559,20 +560,21 @@ export const settingsTranslations = {
       restore: "恢复",
     },
     audit: {
-      title: "审计",
-      description: "管理审计事件在数据库中的保留时长。",
+      title: "日志保留",
+      description: "控制活动日志事件在本地数据库中的保留时长。",
       liveLogsTitle: "详情页现场日志",
-      liveLogsDescription: "控制 Profile 详情页是否显示基于审计事件的分页日志。",
+      liveLogsDescription:
+        "控制是否在配置集详情页显示基于已存储事件的分页现场日志。",
       liveLogsClientTitle: "客户端详情日志",
       liveLogsClientDescription: "在客户端详情页显示分页现场日志。",
       liveLogsServerTitle: "服务器详情日志",
       liveLogsServerDescription: "在服务器详情页显示分页现场日志。",
       liveLogsProfileTitle: "Profile 详情日志",
       liveLogsProfileDescription: "在 Profile 详情页显示分页现场日志。",
-      saved: "审计保留策略已保存",
-      saveFailed: "保存审计策略失败",
+      saved: "日志保留设置已保存",
+      saveFailed: "保存日志保留设置失败",
       typeTitle: "保留策略",
-      typeDescription: "选择自动清理审计事件的方式。",
+      typeDescription: "选择如何自动清理已存储的日志事件。",
       typeCombined: "组合模式（天数 + 数量）",
       typeDays: "按天数保留",
       typeCount: "按数量保留",
@@ -606,7 +608,7 @@ export const settingsTranslations = {
     tabs: {
       general: "一般",
       appearance: "外観",
-      audit: "監査ポリシー",
+      audit: "ログ",
       profile: "プロファイル管理",
       system: "システム",
       serverControls: "サーバー",
@@ -862,11 +864,12 @@ export const settingsTranslations = {
       restore: "復元",
     },
     audit: {
-      title: "監査ポリシー",
-      description: "監査イベントをデータベースに保持する期間を管理します。",
+      title: "ログの保持",
+      description:
+        "アクティビティログをローカルデータベースにどのくらい保持するかを設定します。",
       liveLogsTitle: "詳細ページのライブログ",
       liveLogsDescription:
-        "Profile 詳細ページで監査ベースのページングログを表示するかを制御します。",
+        "プロファイル詳細ページで、保存済みイベントに基づくページング付きライブログを表示するかどうかを制御します。",
       liveLogsClientTitle: "クライアント詳細ログ",
       liveLogsClientDescription:
         "クライアント詳細ページにページング対応ライブログを表示します。",
@@ -876,10 +879,10 @@ export const settingsTranslations = {
       liveLogsProfileTitle: "Profile 詳細ログ",
       liveLogsProfileDescription:
         "Profile 詳細ページにページング対応ライブログを表示します。",
-      saved: "監査保持ポリシーを保存しました",
-      saveFailed: "監査ポリシーの保存に失敗しました",
+      saved: "ログ保持設定を保存しました",
+      saveFailed: "ログ保持設定の保存に失敗しました",
       typeTitle: "保持戦略",
-      typeDescription: "監査イベントを自動的に整理する方法を選択してください。",
+      typeDescription: "保存済みログイベントを自動的に整理する方法を選択します。",
       typeCombined: "複合（期間 + 件数）",
       typeDays: "日数で保持",
       typeCount: "件数で保持",

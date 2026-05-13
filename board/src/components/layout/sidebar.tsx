@@ -149,13 +149,13 @@ export function Sidebar() {
         <div className={cn("flex mt-4", !sidebarOpen && "justify-center")}>
           {sidebarOpen ? (
             <span className="px-3 text-xs font-semibold text-muted-foreground mb-1">
-              {t("nav.developer", { defaultValue: "DEVELOPER" })}
+              {t("nav.developer", { defaultValue: "Advanced" })}
             </span>
           ) : null}
         </div>
 
         <SidebarLink to="/audit" icon={<FileSearch size={20} />}>
-          {sidebarOpen && t("nav.audit", { defaultValue: "Audit" })}
+          {sidebarOpen && t("nav.audit", { defaultValue: "Logs" })}
         </SidebarLink>
 
         <SidebarLink to="/runtime" icon={<Activity size={20} />}>

@@ -181,7 +181,7 @@ export const profilesTranslations = {
 			},
 			logs: {
 				title: "Logs",
-				description: "Runtime and audit logs related to this profile.",
+				description: "Runtime and activity logs related to this profile.",
 				searchPlaceholder: "Search logs...",
 				refresh: "Refresh Logs",
 				expand: "Expand Logs",
@@ -498,7 +498,7 @@ export const profilesTranslations = {
 				},
 				logs: {
 					title: "日志",
-					description: "展示与该配置集相关的运行日志与审计事件。",
+					description: "展示与该配置集相关的运行日志与活动记录。",
 					searchPlaceholder: "搜索日志...",
 					refresh: "刷新日志",
 					expand: "展开日志",
@@ -823,7 +823,7 @@ export const profilesTranslations = {
 				},
 				logs: {
 					title: "ログ",
-					description: "このプロファイルに関連する実行ログと監査イベントを表示します。",
+					description: "このプロファイルに関連する実行ログとアクティビティログを表示します。",
 					searchPlaceholder: "ログを検索...",
 					refresh: "ログを更新",
 					expand: "ログを展開",

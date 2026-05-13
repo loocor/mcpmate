@@ -1318,7 +1318,7 @@ export function ServerDetailPage() {
 											title={t("detail.logs.title", { defaultValue: "Logs" })}
 											description={t("detail.logs.description", {
 												defaultValue:
-													"Runtime and audit logs related to this server.",
+													"Runtime and activity logs related to this server.",
 											})}
 											searchPlaceholder={t("detail.logs.searchPlaceholder", {
 												defaultValue: "Search logs...",

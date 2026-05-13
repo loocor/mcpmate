@@ -316,7 +316,7 @@ export function SettingsPage() {
 		],
 		[t, i18n.language],
 	);
-		const [policyType, setPolicyType] = useState<string>("combined");
+	const [policyType, setPolicyType] = useState<string>("combined");
 	const [policyDays, setPolicyDays] = useState<number>(30);
 	const [policyCount, setPolicyCount] = useState<number>(100000);
 	const [sweepInterval, setSweepInterval] = useState<number>(3600);
@@ -416,11 +416,11 @@ export function SettingsPage() {
 		mutationFn: (data: { policy: AuditRetentionPolicy; sweep_interval_secs: number }) =>
 			auditApi.setPolicy(data),
 		onSuccess: () => {
-			notifySuccess(t("settings:audit.saved", { defaultValue: "Retention policy saved" }));
+			notifySuccess(t("settings:audit.saved", { defaultValue: "Log retention settings saved" }));
 			policyQuery.refetch();
 		},
 		onError: (e) => {
-			notifyError(t("settings:audit.saveFailed", { defaultValue: "Failed to save policy" }), String(e));
+			notifyError(t("settings:audit.saveFailed", { defaultValue: "Failed to save log retention settings" }), String(e));
 		},
 	});
 
@@ -802,10 +802,10 @@ export function SettingsPage() {
 				first_contact_behavior: currentFirstContactBehavior,
 				policySnapshot: defaultClientPolicyQuery.data
 					? {
-							config_mode: defaultClientPolicyQuery.data.config_mode,
-							first_contact_behavior:
-								defaultClientPolicyQuery.data.first_contact_behavior,
-						}
+						config_mode: defaultClientPolicyQuery.data.config_mode,
+						first_contact_behavior:
+							defaultClientPolicyQuery.data.first_contact_behavior,
+					}
 					: null,
 			});
 		},
@@ -834,10 +834,10 @@ export function SettingsPage() {
 				first_contact_behavior: next,
 				policySnapshot: defaultClientPolicyQuery.data
 					? {
-							config_mode: defaultClientPolicyQuery.data.config_mode,
-							first_contact_behavior:
-								defaultClientPolicyQuery.data.first_contact_behavior,
-						}
+						config_mode: defaultClientPolicyQuery.data.config_mode,
+						first_contact_behavior:
+							defaultClientPolicyQuery.data.first_contact_behavior,
+					}
 					: null,
 			});
 		},
@@ -1071,7 +1071,7 @@ export function SettingsPage() {
 					<TabsTrigger value="audit" className={tabTriggerClass}>
 						<FileSearch className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
-							{t("settings:tabs.audit", { defaultValue: "Audit" })}
+							{t("settings:tabs.audit", { defaultValue: "Logs" })}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="system" className={tabTriggerClass}>
@@ -1705,12 +1705,12 @@ export function SettingsPage() {
 						<Card className="h-full">
 							<CardHeader>
 								<CardTitle>
-									{t("settings:audit.title", { defaultValue: "Audit Policy" })}
+									{t("settings:audit.title", { defaultValue: "Log retention" })}
 								</CardTitle>
 								<CardDescription>
 									{t("settings:audit.description", {
 										defaultValue:
-											"Manage how long audit events are retained in the database.",
+											"Control how long activity log events are kept in the local database.",
 									})}
 								</CardDescription>
 							</CardHeader>
@@ -1723,7 +1723,7 @@ export function SettingsPage() {
 											})}
 										</h3>
 										<p className={settingItemDescriptionClass}>
-											{t("settings:audit.typeDescription", { defaultValue: "Select how events are automatically pruned." })}
+											{t("settings:audit.typeDescription", { defaultValue: "Choose how stored log events are pruned automatically." })}
 										</p>
 									</div>
 									<div className="flex sm:justify-end">
@@ -1996,7 +1996,7 @@ export function SettingsPage() {
 											type="number"
 											min={1}
 											value={apiPort}
-										readOnly={isSystemReadonlyInWeb}
+											readOnly={isSystemReadonlyInWeb}
 											onChange={(e) =>
 												setApiPort(
 													e.target.value === "" ? "" : Number(e.target.value),
@@ -2028,7 +2028,7 @@ export function SettingsPage() {
 											type="number"
 											min={1}
 											value={mcpPort}
-										readOnly={isSystemReadonlyInWeb}
+											readOnly={isSystemReadonlyInWeb}
 											onChange={(e) =>
 												setMcpPort(
 													e.target.value === "" ? "" : Number(e.target.value),
@@ -2246,16 +2246,16 @@ export function SettingsPage() {
 											disabled={
 												inspectorTimeoutMutation.isPending ||
 												inspectorTimeoutInput ===
-													(systemSettingsQuery.data?.inspector_timeout_ms ?? 8000)
+												(systemSettingsQuery.data?.inspector_timeout_ms ?? 8000)
 											}
 										>
 											{inspectorTimeoutMutation.isPending
 												? t("settings:developer.saving", {
-														defaultValue: "Saving...",
-													})
+													defaultValue: "Saving...",
+												})
 												: t("settings:developer.save", {
-														defaultValue: "Save",
-													})}
+													defaultValue: "Save",
+												})}
 										</Button>
 									</div>
 								</div>

@@ -1429,7 +1429,7 @@ export const clientsTranslations = {
       },
       logs: {
         title: "日志",
-        description: "展示该客户端关联的运行日志与审计事件。",
+        description: "展示该客户端关联的运行日志与活动记录。",
         searchPlaceholder: "搜索日志...",
         refresh: "刷新日志",
         expand: "展开日志",
@@ -2257,7 +2257,7 @@ export const clientsTranslations = {
       logs: {
         title: "ログ",
         description:
-          "このクライアントに関連する実行ログと監査イベントを表示します。",
+          "このクライアントに関連する実行ログとアクティビティログを表示します。",
         searchPlaceholder: "ログを検索...",
         refresh: "ログを更新",
         expand: "ログを展開",

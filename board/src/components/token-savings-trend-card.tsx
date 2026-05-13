@@ -2,6 +2,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { useMemo, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import type { LegendProps, TooltipProps } from "recharts";
 import { Info, Loader2, Sparkles, TrendingUp } from "lucide-react";
 import {
   Card,
@@ -99,12 +100,12 @@ function parseStoredHistory(raw: string | null): HistoryPoint[] {
   }
 }
 
-function TokenLegend({ payload }: { payload?: Array<{ value?: string; color?: string; dataKey?: string }> }) {
+function TokenLegend({ payload }: Pick<LegendProps, "payload">) {
   if (!payload || payload.length === 0) return null;
   return (
     <div className={DASHBOARD_CHART_LEGEND_WRAPPER_CLASS}>
       {payload.map((entry, index) => {
-        const key = entry.dataKey ?? entry.value ?? index;
+        const key = `${String(entry.dataKey ?? "")}-${index}`;
         const color = entry.color ?? "#9ca3af";
         const displayName = entry.value ?? "";
         const isBeforeFiltering = entry.dataKey === "beforeFiltering";
@@ -282,10 +283,10 @@ export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps)
   const hasCachedSeries = history.length > 1;
   const isEmptyAfterLoad = !isStatsPending && savingsStats === null;
 
-  const renderTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number; name?: string; color?: string; dataKey?: string; payload?: HistoryPoint }>; label?: string }) => {
+  const renderTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
     if (!active || !payload || payload.length === 0) return null;
 
-    const dataPoint = payload[0]?.payload;
+    const dataPoint = payload[0]?.payload as HistoryPoint | undefined;
 
     return (
       <div className="rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-xs text-slate-100 shadow-lg">
@@ -336,7 +337,7 @@ export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps)
       defaultValue: "Current values are recalculated from active profiles using tokenizer-based capability payloads.",
     }),
     t("tokenSavings.infoLine2", {
-      defaultValue: "Each successful MCP list or call event in audit logs is matched to its profile and contributes that profile's current savings.",
+      defaultValue: "Each successful MCP list or call event in activity logs is matched to its profile and contributes that profile's current savings.",
     }),
     t("tokenSavings.infoLine3", {
       defaultValue: "This is not a frozen historical ledger yet: when profile configuration changes, earlier totals can be recomputed.",
