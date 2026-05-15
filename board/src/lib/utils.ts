@@ -1,20 +1,13 @@
 import { type ClassValue, clsx } from "clsx";
 import { formatDistance } from "date-fns";
-import { zhCN } from "date-fns/locale";
-import { ja } from "date-fns/locale";
+import { ja, zhCN } from "date-fns/locale";
 import { twMerge } from "tailwind-merge";
 
-/**
- * Combines multiple class names with Tailwind support
- */
-export function cn(...inputs: ClassValue[]) {
+export function cn(...inputs: ClassValue[]): string {
 	return twMerge(clsx(inputs));
 }
 
-/**
- * Formats a number of bytes to a human-readable string
- */
-export function formatBytes(bytes: number, decimals = 2) {
+export function formatBytes(bytes: number, decimals = 2): string {
 	if (bytes === 0) return "0 Bytes";
 
 	const k = 1024;
@@ -26,10 +19,7 @@ export function formatBytes(bytes: number, decimals = 2) {
 	return parseFloat((bytes / k ** i).toFixed(dm)) + " " + sizes[i];
 }
 
-/**
- * Formats an uptime in seconds to a human-readable string
- */
-export function formatUptime(seconds: number) {
+export function formatUptime(seconds: number): string {
 	if (seconds < 60) return `${seconds}s`;
 
 	const minutes = Math.floor(seconds / 60);
@@ -42,21 +32,17 @@ export function formatUptime(seconds: number) {
 	return `${days}d ${hours % 24}h`;
 }
 
-/**
- * Formats a timestamp to a relative time
- */
-export function formatRelativeTime(timestamp: string, locale?: string) {
+export function formatRelativeTime(timestamp: string, locale?: string): string {
 	try {
 		const date = new Date(timestamp);
 
-		// Select locale based on language
 		let dateLocale;
 		if (locale?.startsWith("zh")) {
 			dateLocale = zhCN;
 		} else if (locale?.startsWith("ja")) {
 			dateLocale = ja;
 		} else {
-			dateLocale = undefined; // Use default English
+			dateLocale = undefined;
 		}
 
 		return formatDistance(date, new Date(), {
@@ -68,15 +54,11 @@ export function formatRelativeTime(timestamp: string, locale?: string) {
 	}
 }
 
-/**
- * Get a color variant based on status
- */
 export function getStatusVariant(
 	status: string,
 ): "success" | "warning" | "destructive" | "secondary" | "default" {
 	const statusLower = status.toLowerCase();
 
-	// Active/Ready states
 	if (
 		[
 			"connected",
@@ -93,7 +75,6 @@ export function getStatusVariant(
 		return "success";
 	}
 
-	// Warning/Initializing states
 	if (
 		[
 			"disconnected",
@@ -103,30 +84,25 @@ export function getStatusVariant(
 			"connecting",
 			"pending",
 			"disabled",
+			"fallback",
 		].includes(statusLower)
 	) {
 		return "warning";
 	}
 
-	// Idle state - server is enabled but not running
-	if (["idle"].includes(statusLower)) {
+	if (statusLower === "idle") {
 		return "secondary";
 	}
 
-	// Error states
 	if (
-		["error", "unhealthy", "stopped", "failed", "timeout"].includes(statusLower)
+		["error", "unhealthy", "stopped", "failed", "timeout", "offline"].includes(statusLower)
 	) {
 		return "destructive";
 	}
 
-	// Unknown or other states
 	return "default";
 }
 
-/**
- * Formats a backup timestamp to a user-friendly local time format
- */
 export function formatLocalDateTime(
     timestamp: string | number | Date | null | undefined,
     options?: Intl.DateTimeFormatOptions,
@@ -149,15 +125,39 @@ export function formatLocalDateTime(
     }
 }
 
-// Backwards-compat wrapper: now always absolute local time
 export function formatBackupTime(timestamp: string | null | undefined): string {
     return formatLocalDateTime(timestamp);
 }
 
-/**
- * Truncate a string if it's too long
- */
-export function truncate(str: string | undefined | null, length: number) {
+export function formatPathWithTilde(
+	absolutePath: string | null | undefined,
+	homeDir?: string | null,
+): string {
+	const raw = absolutePath?.trim() ?? "";
+	const home = homeDir?.trim() ?? "";
+	if (!raw || !home) {
+		return raw;
+	}
+
+	const pathNorm = raw.replace(/\\/g, "/");
+	const homeNorm = home.replace(/\\/g, "/").replace(/\/+$/, "");
+	if (!homeNorm) {
+		return raw;
+	}
+
+	if (pathNorm === homeNorm) {
+		return "~";
+	}
+
+	const prefix = `${homeNorm}/`;
+	if (pathNorm.startsWith(prefix)) {
+		return `~/${pathNorm.slice(prefix.length)}`;
+	}
+
+	return raw;
+}
+
+export function truncate(str: string | undefined | null, length: number): string {
 	if (!str || typeof str !== "string") return "N/A";
 	if (str.length <= length) return str;
 	return `${str.slice(0, length)}...`;

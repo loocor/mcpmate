@@ -24,6 +24,8 @@ export interface RuntimeEntry {
   available: boolean;
   version?: string;
   path?: string;
+  /** "mcpMate" if MCPMate-managed, "system" if found on system PATH, undefined if unavailable */
+  source?: string;
 }
 
 export interface RuntimeCheckData {
