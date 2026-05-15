@@ -4,9 +4,10 @@
 //! that replaces the complex database-driven approach with direct file detection.
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
-use crate::common::{RuntimeType, constants::commands, paths::global_paths};
+use crate::common::{MCPMatePaths, RuntimeType, constants::commands, paths::global_paths};
 
 /// Unified runtime management service
 ///
@@ -19,10 +20,17 @@ pub struct RuntimeManager {
 }
 
 impl RuntimeManager {
-    /// Create a new runtime manager
+    /// Create a new runtime manager using global paths
     pub fn new() -> Self {
         let runtimes_dir = global_paths().runtimes_dir();
         Self { runtimes_dir }
+    }
+
+    /// Create a new runtime manager with explicit paths
+    pub fn with_paths(paths: &MCPMatePaths) -> Self {
+        Self {
+            runtimes_dir: paths.runtimes_dir(),
+        }
     }
 
     /// Check if a runtime is installed
@@ -58,14 +66,6 @@ impl RuntimeManager {
         self.resolve_command_path(runtime_type, command)
     }
 
-    /// Get runtime path for a command alias.
-    pub fn get_runtime_for_command(
-        &self,
-        command: &str,
-    ) -> Option<PathBuf> {
-        self.get_command_path(command)
-    }
-
     fn resolve_command_path(
         &self,
         runtime_type: RuntimeType,
@@ -79,7 +79,44 @@ impl RuntimeManager {
             candidates.push(runtime_dir.join("bin").join(&executable_name));
         }
 
-        candidates.into_iter().find(|path| path.exists())
+        if let Some(path) = candidates.into_iter().find(|path| path.is_file()) {
+            return Some(path);
+        }
+
+        self.find_nested_executable(&runtime_dir, &executable_name)
+    }
+
+    fn find_nested_executable(
+        &self,
+        runtime_dir: &Path,
+        executable_name: &str,
+    ) -> Option<PathBuf> {
+        if !runtime_dir.exists() {
+            return None;
+        }
+
+        for entry in WalkDir::new(runtime_dir)
+            .min_depth(1)
+            .max_depth(6)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Ok(e) => Some(e),
+                Err(e) => {
+                    tracing::debug!("WalkDir error scanning runtimes: {}", e);
+                    None
+                }
+            })
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            if entry.file_name().to_string_lossy() == executable_name {
+                return Some(entry.path().to_path_buf());
+            }
+        }
+
+        None
     }
 
     /// List all installed runtimes
@@ -158,41 +195,4 @@ pub struct RuntimeInfo {
     pub path: Option<PathBuf>,
     /// Status message
     pub message: String,
-}
-
-impl RuntimeInfo {
-    /// Get display name for the runtime
-    pub fn display_name(&self) -> &str {
-        self.runtime_type.as_str()
-    }
-}
-
-/// Simple runtime cache for backward compatibility
-/// This is a simplified version that wraps RuntimeManager
-#[derive(Debug, Clone)]
-pub struct RuntimeCache {
-    manager: RuntimeManager,
-}
-
-impl RuntimeCache {
-    /// Create a new runtime cache
-    pub fn new() -> Self {
-        Self {
-            manager: RuntimeManager::new(),
-        }
-    }
-
-    /// Get runtime path for a command (npx -> Bun, uvx -> Uv, etc.)
-    pub async fn get_runtime_for_command(
-        &self,
-        command: &str,
-    ) -> Option<std::path::PathBuf> {
-        self.manager.get_runtime_for_command(command)
-    }
-}
-
-impl Default for RuntimeCache {
-    fn default() -> Self {
-        Self::new()
-    }
 }

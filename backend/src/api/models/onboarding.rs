@@ -36,6 +36,10 @@ pub struct RuntimeEntry {
     pub version: Option<String>,
     #[schemars(description = "Resolved filesystem path, if available")]
     pub path: Option<String>,
+    #[schemars(
+        description = "Source of the detected runtime: \"mcpMate\" if MCPMate-managed, \"system\" if found on system PATH, null if unavailable"
+    )]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

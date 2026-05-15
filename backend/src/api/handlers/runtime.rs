@@ -1,4 +1,5 @@
 use chrono;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,7 +12,7 @@ use crate::{
     api::{models::runtime::*, routes::AppState},
     audit::{AuditAction, AuditStatus},
     common::{RuntimeType, paths::global_paths},
-    runtime::{RuntimeInstaller, RuntimeManager},
+    runtime::{CommandResolver, RuntimeInstaller, RuntimeManager, ResolveSource},
 };
 
 pub async fn install(
@@ -19,7 +20,7 @@ pub async fn install(
     Json(request): Json<RuntimeInstallReq>,
 ) -> Result<Json<RuntimeInstallResp>, StatusCode> {
     let started_at = std::time::Instant::now();
-    let runtime_type = request.runtime_type.clone();
+    let runtime_type = request.runtime_type;
 
     let result = runtime_install_core(&request).await;
 
@@ -40,7 +41,7 @@ pub async fn install(
     };
 
     let mut data = Map::new();
-    data.insert("runtime_type".to_string(), Value::String(runtime_type.clone()));
+    data.insert("runtime_type".to_string(), Value::String(runtime_type.to_string()));
     if let Ok(ref resp) = result {
         if let Some(ref inner) = resp.data {
             data.insert("success".to_string(), Value::Bool(inner.success));
@@ -125,7 +126,7 @@ pub async fn reset_cache(
 }
 
 async fn runtime_install_core(request: &RuntimeInstallReq) -> Result<RuntimeInstallResp, StatusCode> {
-    let runtime_type: RuntimeType = request.runtime_type.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let runtime_type = request.runtime_type;
 
     let manager = RuntimeManager::new();
     let existing_installation = manager.is_installed(runtime_type);
@@ -146,13 +147,16 @@ async fn runtime_install_core(request: &RuntimeInstallReq) -> Result<RuntimeInst
         Ok(()) => RuntimeInstallData {
             success: true,
             message: format!("Successfully downloaded and installed {}", runtime_type),
-            runtime_type: runtime_type.to_string(),
+            runtime_type,
         },
-        Err(error) => RuntimeInstallData {
-            success: false,
-            message: format!("Installation failed: {error:#}"),
-            runtime_type: runtime_type.to_string(),
-        },
+        Err(error) => {
+            let message = build_install_failure_message(&manager, runtime_type, &error);
+            RuntimeInstallData {
+                success: false,
+                message,
+                runtime_type,
+            }
+        }
     };
 
     Ok(RuntimeInstallResp::success(data))
@@ -162,10 +166,68 @@ async fn perform_installation(
     request: &RuntimeInstallReq,
     runtime_type: RuntimeType,
 ) -> Result<(), anyhow::Error> {
-    RuntimeInstaller::new()
-        .install_runtime(runtime_type, request.version.as_deref())
-        .await
-        .map(|_| ())
+    let max_attempts = request.max_retries.unwrap_or(0).saturating_add(1).clamp(1, 5);
+    let mut last_error: Option<anyhow::Error> = None;
+
+    for attempt in 1..=max_attempts {
+        match RuntimeInstaller::new()
+            .install_runtime(runtime_type, request.version.as_deref())
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                tracing::warn!(
+                    "Runtime {} install attempt {}/{} failed: {:#}",
+                    runtime_type,
+                    attempt,
+                    max_attempts,
+                    error
+                );
+
+                // Fail fast on deterministic (non-network) errors
+                if !looks_like_network_error(&error) {
+                    return Err(error);
+                }
+
+                last_error = Some(error);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Runtime installation failed")))
+}
+
+fn build_install_failure_message(
+    manager: &RuntimeManager,
+    runtime_type: RuntimeType,
+    error: &anyhow::Error,
+) -> String {
+    let mut message = format!("Installation failed: {error:#}");
+
+    if looks_like_network_error(error) {
+        message.push_str(" Network may be unstable. Please check your connection and retry installation.");
+    }
+
+    if let Some(path) = manager.get_executable_path(runtime_type) {
+        message.push_str(&format!(
+            " Existing MCPMate-managed runtime was detected at {}.",
+            path.display()
+        ));
+    }
+
+    message
+}
+
+fn looks_like_network_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string().to_ascii_lowercase();
+        message.contains("timed out")
+            || message.contains("timeout")
+            || message.contains("connection reset")
+            || message.contains("connection refused")
+            || message.contains("network")
+            || message.contains("dns")
+    })
 }
 
 async fn runtime_status_core(_app_state: &AppState) -> Result<RuntimeStatusResp, StatusCode> {
@@ -175,7 +237,10 @@ async fn runtime_status_core(_app_state: &AppState) -> Result<RuntimeStatusResp,
         create_runtime_status(RuntimeType::Node)
     );
 
+    let user_home = dirs::home_dir().map(|p| p.to_string_lossy().to_string());
+
     Ok(RuntimeStatusResp::success(RuntimeStatusData {
+        user_home,
         uv: uv_status,
         bun: bun_status,
         node: node_status,
@@ -186,27 +251,46 @@ async fn create_runtime_status(runtime_type: RuntimeType) -> RuntimeStatus {
     let manager = RuntimeManager::new();
     let available = manager.is_installed(runtime_type);
     let path = manager.get_executable_path(runtime_type);
+    let paths = global_paths().clone();
+    let cmd = runtime_type.canonical_command();
 
-    let version = match &path {
-        Some(p) => get_version_from_exec_async(p).await,
-        None => None,
+    // Use unified resolver for system fallback detection
+    let system_fallback_path = if !available {
+        CommandResolver::new(&paths)
+            .resolve(cmd)
+            .filter(|r| r.source == ResolveSource::SystemPath)
+            .map(|r| r.path.to_string_lossy().to_string())
+    } else {
+        None
     };
 
-    let message = manager
-        .list_installed()
-        .into_iter()
-        .find(|info| info.runtime_type == runtime_type)
-        .map(|info| info.message)
-        .unwrap_or_else(|| match available {
-            true => format!("✓ {} is available", runtime_type),
-            false => format!("✗ {} is not installed", runtime_type),
-        });
+    let version = if let Some(ref p) = path {
+        get_version_from_exec_async(p.as_path()).await
+    } else if let Some(ref sys) = system_fallback_path {
+        get_version_from_exec_async(Path::new(sys)).await
+    } else {
+        None
+    };
+
+    let message = if available {
+        manager
+            .list_installed()
+            .into_iter()
+            .find(|info| info.runtime_type == runtime_type)
+            .map(|info| info.message)
+            .unwrap_or_else(|| format!("✓ {} is available (MCPMate managed)", runtime_type))
+    } else if let Some(sys_path) = system_fallback_path.as_ref() {
+        format!("✓ {} is available (system fallback at {})", runtime_type, sys_path)
+    } else {
+        format!("✗ {} is not installed", runtime_type)
+    };
 
     RuntimeStatus {
-        runtime_type: runtime_type.to_string(),
+        runtime_type,
         available,
         path: path.as_ref().map(|p| p.to_string_lossy().to_string()),
         version,
+        system_fallback_path,
         message,
     }
 }
@@ -264,33 +348,38 @@ async fn reset_cache_core(
         ],
     };
 
-    let removal_results = cache_paths
-        .into_iter()
-        .filter(|p| p.exists())
-        .map(|p| {
-            std::fs::remove_dir_all(&p)
-                .map(|_| {
-                    tracing::info!("Removed runtime cache dir: {:?}", p);
-                    true
-                })
-                .unwrap_or_else(|e| {
-                    tracing::warn!("Failed to remove {:?}: {}", p, e);
-                    false
-                })
-        })
-        .collect::<Vec<_>>();
+    let cleanup_timestamp_path = base.join(".last_cleanup");
 
-    let all_successful = removal_results.iter().all(|&success| success);
+    let (all_successful, _removed_count) = task::spawn_blocking(move || {
+        let mut removed = 0usize;
+        let mut all_ok = true;
+        for p in &cache_paths {
+            if p.exists() {
+                match std::fs::remove_dir_all(p) {
+                    Ok(()) => {
+                        tracing::info!("Removed runtime cache dir: {:?}", p);
+                        removed += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to remove {:?}: {}", p, e);
+                        all_ok = false;
+                    }
+                }
+            }
+        }
 
-    // Record cleanup time if successful
-    if all_successful {
-        let cleanup_timestamp_path = base.join(".last_cleanup");
-        let timestamp = chrono::Utc::now().to_rfc3339();
+        if all_ok {
+            let timestamp = chrono::Utc::now().to_rfc3339();
+            match std::fs::write(&cleanup_timestamp_path, timestamp) {
+                Ok(()) => tracing::info!("Recorded cleanup timestamp at {:?}", cleanup_timestamp_path),
+                Err(e) => tracing::warn!("Failed to write cleanup timestamp: {}", e),
+            }
+        }
 
-        std::fs::write(&cleanup_timestamp_path, timestamp)
-            .map(|_| tracing::info!("Recorded cleanup timestamp at {:?}", cleanup_timestamp_path))
-            .unwrap_or_else(|e| tracing::warn!("Failed to write cleanup timestamp: {}", e));
-    }
+        (all_ok, removed)
+    })
+    .await
+    .unwrap_or((false, 0));
 
     Ok(RuntimeCacheResetResp::success(RuntimeCacheResetData {
         success: all_successful,
@@ -298,7 +387,13 @@ async fn reset_cache_core(
 }
 
 async fn get_version_from_exec_async(path: &std::path::Path) -> Option<String> {
-    let output = AsyncCommand::new(path).arg("--version").output().await.ok()?;
+    let output = match AsyncCommand::new(path).arg("--version").output().await {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("Failed to get version from {:?}: {}", path, e);
+            return None;
+        }
+    };
 
     output.status.success().then(|| {
         let version_string = String::from_utf8_lossy(&output.stdout).trim().to_string();

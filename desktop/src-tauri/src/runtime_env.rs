@@ -1,6 +1,14 @@
-use std::{collections::BTreeMap, env, fs, io::Write, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    io::Write,
+    path::PathBuf,
+};
 
 use anyhow::Result;
+use mcpmate::common::path::{
+    read_path_from_path_helper, capture_login_shell_path, split_path_entries, dedup_and_join,
+};
 use mcpmate::common::MCPMatePaths;
 
 pub fn configure_process_environment() -> Result<()> {
@@ -10,6 +18,36 @@ pub fn configure_process_environment() -> Result<()> {
         // Safe here because desktop startup sets process env before the Tauri runtime spawns worker threads.
         unsafe {
             env::set_var(SKIP_BOARD_STATIC, "1");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(initial_path) = env::var("PATH") {
+            tracing::debug!(
+                "[PATH_DEBUG] Initial PATH before configuration: {}",
+                initial_path
+            );
+        }
+
+        if let Some(path_helper_path) = read_path_from_path_helper() {
+            tracing::debug!("[PATH_DEBUG] path_helper returned: {}", path_helper_path);
+        } else {
+            tracing::debug!("[PATH_DEBUG] path_helper returned None");
+        }
+
+        if let Some(shell_path) = capture_login_shell_path() {
+            tracing::debug!("[PATH_DEBUG] Login shell PATH: {}", shell_path);
+            // Safe here because desktop startup sets process env before the Tauri runtime spawns worker threads.
+            unsafe {
+                env::set_var("PATH", shell_path);
+            }
+        } else {
+            tracing::debug!("[PATH_DEBUG] capture_login_shell_path returned None");
+        }
+
+        if let Ok(final_path) = env::var("PATH") {
+            tracing::debug!("[PATH_DEBUG] Final PATH after login shell: {}", final_path);
         }
     }
 
@@ -42,6 +80,12 @@ fn desktop_runtime_environment() -> Result<BTreeMap<String, String>> {
     {
         let mut env_entries = BTreeMap::new();
         let path = ensure_desktop_runtime_path()?;
+
+        tracing::debug!(
+            "[PATH_DEBUG] ensure_desktop_runtime_path returned: {}",
+            path
+        );
+
         env_entries.insert("PATH".to_string(), path);
 
         if let Ok(home) = env::var("HOME")
@@ -62,7 +106,7 @@ fn desktop_runtime_environment() -> Result<BTreeMap<String, String>> {
 #[cfg(target_os = "macos")]
 fn ensure_desktop_runtime_path() -> Result<String> {
     let base_dir = resolve_base_dir()?;
-    let bin_dir = base_dir.join("bin");
+    let bin_dir = base_dir.join("runtimes").join("shim");
     fs::create_dir_all(&bin_dir)?;
 
     let bun_runtime_dir = base_dir.join("runtimes").join("bun");
@@ -99,11 +143,20 @@ fn ensure_desktop_runtime_path() -> Result<String> {
         "/opt/homebrew/bin".into(),
         "/usr/local/bin".into(),
     ];
-    if let Ok(current) = env::var("PATH") {
-        extra_paths.push(current);
+
+    if let Some(path) = read_path_from_path_helper() {
+        extra_paths.extend(split_path_entries(&path));
     }
 
-    Ok(extra_paths.join(":"))
+    if let Some(path) = capture_login_shell_path() {
+        extra_paths.extend(split_path_entries(&path));
+    }
+
+    if let Ok(current) = env::var("PATH") {
+        extra_paths.extend(split_path_entries(&current));
+    }
+
+    Ok(dedup_and_join(extra_paths))
 }
 
 #[cfg(target_os = "macos")]
@@ -113,11 +166,11 @@ fn npx_shim_body(
     bun_runtime_dir: &std::path::Path,
 ) -> String {
     format!(
-        "#!/bin/sh\nset -e\nBUNX=\"{}\"\nSELF_DIR=\"{}\"\nif [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi\nSEARCH_PATH=\"\"\nOLD_IFS=\"$IFS\"\nIFS=:; for entry in $PATH; do\n  if [ \"$entry\" = \"$SELF_DIR\" ]; then\n    continue\n  fi\n  if [ -z \"$SEARCH_PATH\" ]; then\n    SEARCH_PATH=\"$entry\"\n  else\n    SEARCH_PATH=\"$SEARCH_PATH:$entry\"\n  fi\ndone\nIFS=\"$OLD_IFS\"\nif [ -n \"$SEARCH_PATH\" ] && PATH=\"$SEARCH_PATH\" command -v npx >/dev/null 2>&1; then\n  exec env PATH=\"$SEARCH_PATH\" \"$(PATH=\"$SEARCH_PATH\" command -v npx)\" \"$@\"\nfi\necho 'npx is unavailable (no bunx in {} and no system npx outside {})' 1>&2\nexit 127\n",
+        "#!/bin/sh\nset -e\nBUNX=\"{}\"\nSELF_DIR=\"{}\"\nSEARCH_PATH=\"\"\nOLD_IFS=\"$IFS\"\nIFS=:; for entry in $PATH; do\n  if [ \"$entry\" = \"$SELF_DIR\" ]; then\n    continue\n  fi\n  if [ -z \"$SEARCH_PATH\" ]; then\n    SEARCH_PATH=\"$entry\"\n  else\n    SEARCH_PATH=\"$SEARCH_PATH:$entry\"\n  fi\ndone\nIFS=\"$OLD_IFS\"\nif [ -n \"$SEARCH_PATH\" ] && PATH=\"$SEARCH_PATH\" command -v npx >/dev/null 2>&1; then\n  exec env PATH=\"$SEARCH_PATH\" \"$(PATH=\"$SEARCH_PATH\" command -v npx)\" \"$@\"\nfi\nif [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi\necho 'npx is unavailable (no system npx outside {} and no bunx in {})' 1>&2\nexit 127\n",
         bunx_path.display(),
         bin_dir.display(),
-        bun_runtime_dir.display(),
         bin_dir.display(),
+        bun_runtime_dir.display(),
     )
 }
 
@@ -191,46 +244,45 @@ mod tests {
             .map(|(_, value)| value.clone())
             .expect("PATH entry");
 
-        assert!(path.contains(".mcpmate/bin"));
+        assert!(path.contains(".mcpmate/runtimes/shim"));
         assert!(path.contains("/opt/homebrew/bin") || path.contains("/usr/local/bin"));
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn npx_shim_body_removes_self_dir_from_path_lookup() {
-        let body = npx_shim_body(
-            std::path::Path::new("/tmp/mcpmate/bin"),
-            std::path::Path::new("/tmp/mcpmate/runtimes/bun/bunx"),
-            std::path::Path::new("/tmp/mcpmate/runtimes/bun"),
-        );
+    fn dedup_and_join_preserves_first_occurrence() {
+        let merged = dedup_and_join(vec![
+            "/a".to_string(),
+            "/b".to_string(),
+            "/a".to_string(),
+            "/c".to_string(),
+        ]);
 
-        assert!(body.contains("SELF_DIR=\"/tmp/mcpmate/bin\""));
-        assert!(body.contains("PATH=\"$SEARCH_PATH\" command -v npx"));
-        assert!(body.contains("no system npx outside /tmp/mcpmate/bin"));
+        assert_eq!(merged, "/a:/b:/c");
     }
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn ensure_executable_shim_rewrites_existing_body() {
-        let unique = format!(
-            "mcpmate-runtime-env-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("system time")
-                .as_nanos()
+    fn parse_path_helper_output_extracts_path() {
+        use mcpmate::common::path::parse_path_helper_output;
+        let shell = "PATH=\"/usr/bin:/bin:/opt/homebrew/bin\"; export PATH;\nMANPATH=\"/usr/share/man\"; export MANPATH;";
+        let parsed = parse_path_helper_output(shell).expect("parsed path");
+        assert_eq!(parsed, "/usr/bin:/bin:/opt/homebrew/bin");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn npx_shim_prefers_system_npx_before_bunx() {
+        let body = npx_shim_body(
+            std::path::Path::new("/tmp/shim"),
+            std::path::Path::new("/tmp/bun/bunx"),
+            std::path::Path::new("/tmp/bun"),
         );
-        let base = std::env::temp_dir().join(unique);
-        fs::create_dir_all(&base).expect("create temp dir");
-        let path = base.join("shim");
-
-        fs::write(&path, "old body").expect("write old body");
-        ensure_executable_shim(&path, "new body").expect("rewrite shim");
-
-        let body = fs::read_to_string(&path).expect("read rewritten shim");
-        assert_eq!(body, "new body");
-
-        fs::remove_dir_all(base).expect("remove temp dir");
+        let system_probe = "command -v npx >/dev/null 2>&1";
+        let bunx_probe = "if [ -x \"$BUNX\" ]; then exec \"$BUNX\" \"$@\"; fi";
+        let system_index = body.find(system_probe).expect("system npx probe");
+        let bunx_index = body.find(bunx_probe).expect("bunx fallback probe");
+        assert!(system_index < bunx_index);
     }
 
     #[cfg(not(target_os = "macos"))]

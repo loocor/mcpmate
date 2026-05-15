@@ -2,13 +2,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // Import the unified response macro
+use crate::common::types::RuntimeType;
 use crate::macros::resp::api_resp;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for runtime installation")]
 pub struct RuntimeInstallReq {
     #[schemars(description = "Runtime type to install (uv, bun, or node)")]
-    pub runtime_type: String,
+    pub runtime_type: RuntimeType,
     #[schemars(description = "Specific version to install (optional)")]
     pub version: Option<String>,
     #[schemars(description = "Installation timeout in seconds")]
@@ -29,20 +30,24 @@ pub struct RuntimeInstallData {
     #[schemars(description = "Installation result message")]
     pub message: String,
     #[schemars(description = "Runtime type that was installed")]
-    pub runtime_type: String,
+    pub runtime_type: RuntimeType,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Runtime status information")]
 pub struct RuntimeStatus {
     #[schemars(description = "Runtime type (uv, bun, or node)")]
-    pub runtime_type: String,
-    #[schemars(description = "Whether runtime is available")]
+    pub runtime_type: RuntimeType,
+    #[schemars(description = "Whether MCPMate-managed runtime is available")]
     pub available: bool,
-    #[schemars(description = "Path to runtime executable")]
+    #[schemars(description = "Path to MCPMate-managed runtime executable")]
     pub path: Option<String>,
     #[schemars(description = "Runtime version string")]
     pub version: Option<String>,
+    #[schemars(
+        description = "Path to system runtime, if available as fallback. null if MCPMate-managed runtime is available or no system runtime found"
+    )]
+    pub system_fallback_path: Option<String>,
     #[schemars(description = "Status message with details")]
     pub message: String,
 }
@@ -50,6 +55,8 @@ pub struct RuntimeStatus {
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Response for runtime status check")]
 pub struct RuntimeStatusData {
+    #[schemars(description = "Server user home directory (for UI path shortening, e.g. tilde prefix)")]
+    pub user_home: Option<String>,
     #[schemars(description = "UV runtime status")]
     pub uv: RuntimeStatus,
     #[schemars(description = "Bun runtime status")]

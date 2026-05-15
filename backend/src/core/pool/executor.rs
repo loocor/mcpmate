@@ -429,7 +429,6 @@ impl UpstreamConnectionPool {
             crate::common::server::TransportType::Stdio,
             Some(ct),
             database_pool,
-            self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
         )
         .await?;
 

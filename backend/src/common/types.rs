@@ -65,7 +65,9 @@ impl FromStr for ClientCategory {
 }
 
 /// Supported runtime types for MCPMate
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(description = "Runtime type: uv, bun, or node")]
 pub enum RuntimeType {
     /// uv runtime (Python package manager and environment manager)
     Uv,
