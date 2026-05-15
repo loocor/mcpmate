@@ -234,7 +234,9 @@ fn service_install_ctx(
                     .ok()
                     .map(|v| v.trim().to_string())
                     .filter(|v| !v.is_empty())
-                    .unwrap_or_else(|| "info".to_string()),
+                    .unwrap_or_else(|| {
+                        if cfg!(debug_assertions) { "debug".to_string() } else { "info".to_string() }
+                    }),
             ),
         ],
         contents: None,

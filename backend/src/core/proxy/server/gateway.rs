@@ -43,7 +43,6 @@ pub struct ProxyServer {
     pub audit_database: Option<Arc<AuditDatabase>>,
     pub audit_service: Option<Arc<AuditService>>,
     pub profile_service: Option<Arc<crate::core::profile::ProfileService>>,
-    pub runtime_cache: Arc<crate::runtime::RuntimeCache>,
     pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
     pub paginator: crate::core::foundation::pagination::ProxyPaginator,
     pub builtin_services: Arc<BuiltinServiceRegistry>,
@@ -68,7 +67,6 @@ impl Clone for ProxyServer {
             audit_database: self.audit_database.clone(),
             audit_service: self.audit_service.clone(),
             profile_service: self.profile_service.clone(),
-            runtime_cache: self.runtime_cache.clone(),
             redb_cache: self.redb_cache.clone(),
             paginator: self.paginator.clone(),
             builtin_services: self.builtin_services.clone(),
@@ -715,7 +713,6 @@ impl ProxyServer {
             audit_database: None,
             audit_service: None,
             profile_service: None,
-            runtime_cache: Arc::new(crate::runtime::RuntimeCache::new()),
             redb_cache,
             paginator,
             builtin_services,
@@ -754,7 +751,6 @@ impl ProxyServer {
         {
             let mut pool = self.connection_pool.lock().await;
             pool.set_database(Some(db_arc));
-            pool.set_runtime_cache(Some(self.runtime_cache.clone()));
         }
         self.setup_event_handlers().await?;
         tracing::debug!(
