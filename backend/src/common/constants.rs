@@ -28,6 +28,11 @@ pub mod commands {
 
     /// NPX command
     pub const NPX: &str = "npx";
+
+    /// Python interpreter commands used for UV-managed Python fallback
+    pub const PYTHON: &str = "python";
+    pub const PYTHON3: &str = "python3";
+    pub const PY: &str = "py";
 }
 
 /// Environment variable name constants
