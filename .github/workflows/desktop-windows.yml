@@ -16,6 +16,14 @@ on:
         description: "Tauri bundle types"
         required: false
         default: "msi"
+      profile:
+        description: "Cargo profile"
+        type: choice
+        required: false
+        default: "debug"
+        options:
+          - debug
+          - release
   push:
     branches:
       - main
@@ -70,19 +78,25 @@ jobs:
         shell: bash
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
+          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'debug' }}
           TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           chmod +x packaging/desktop/windows-build-tauri-release.sh
+          PROFILE="${INPUT_PROFILE:-debug}"
           bash packaging/desktop/windows-build-tauri-release.sh \
+            --profile "$PROFILE" \
             --target "${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}" \
             --bundles "${INPUT_BUNDLES:-msi}" \
             --output-dir "${GITHUB_WORKSPACE}/desktop-windows-artifacts/${{ matrix.arch }}"
 
       - name: Smoke test (sidecar arch + MSI format)
         shell: bash
+        env:
+          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'debug' }}
         run: |
           set -euo pipefail
-          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}/release/bundle"
+          PROFILE="${INPUT_PROFILE:-debug}"
+          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}/${PROFILE}/bundle"
           echo "--- bundle layout ---"
           find "$BUNDLE_DIR" -type f 2>/dev/null | head -40 || true
           echo "--- sidecar architecture ---"
