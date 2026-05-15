@@ -6,9 +6,10 @@ use std::{
 };
 
 use anyhow::Result;
-use mcpmate::common::path::{
-    read_path_from_path_helper, capture_login_shell_path, split_path_entries, dedup_and_join,
-};
+use mcpmate::common::path::{dedup_and_join, split_path_entries};
+#[cfg(target_os = "macos")]
+use mcpmate::common::path::{capture_login_shell_path, read_path_from_path_helper};
+#[cfg(target_os = "macos")]
 use mcpmate::common::MCPMatePaths;
 
 pub fn configure_process_environment() -> Result<()> {
