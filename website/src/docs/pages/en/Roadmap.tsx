@@ -9,7 +9,7 @@ const inProgress = [
 	{
 		title: "Platform maturity catch-up",
 		description:
-			"macOS is the most stable shell today; current work is focused on bringing Windows and Linux installers, runtime behavior, and desktop polish closer to that bar.",
+			"macOS, Windows, and Linux desktop builds are all treated as Beta while we keep tightening installer behavior, runtime detection, and desktop polish across platforms.",
 	},
 	{
 		title: "Container and split deployment",

@@ -161,7 +161,7 @@ runtime list           # List installed runtimes
 
 ### Desktop App
 
-Cross-platform desktop application built with Tauri 2. Complete graphical interface for managing MCP servers, profiles, and tools with real-time monitoring, intelligent client detection, and system tray integration. macOS is available now; Windows is in beta; Linux is in development.
+Cross-platform desktop application built with Tauri 2. Complete graphical interface for managing MCP servers, profiles, and tools with real-time monitoring, intelligent client detection, and system tray integration. macOS, Windows, and Linux desktop builds are currently available as Beta releases.
 
 ### Logs
 
@@ -173,7 +173,7 @@ Structured operational log for MCP proxy activity. Collects MCP operations and m
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/loocor/MCPMate/releases).
 
-> **Note**: macOS builds are currently unsigned and not notarized. You may need to right-click and select "Open" to bypass Gatekeeper on first launch. Code signing and notarization are planned for a future release.
+> **Note**: macOS builds are signed and notarized to reduce system security prompts and improve package trust.
 
 ### Option B: Build from Source
 

@@ -50,7 +50,7 @@ const ja = {
 	"download.col_arch": "アーキテクチャ",
 	"download.col_status": "状態",
 	"download.col_downloads": "ダウンロード",
-	"download.status_unstable": "不安定",
+	"download.status_beta": "Beta",
 	"download.available": "利用可能",
 	"download.loading": "読み込み中…",
 	"download.all_releases": "すべてのリリース",
@@ -58,7 +58,7 @@ const ja = {
 	"download.retry": "再試行",
 	"download.table_caption": "GitHub の最新リリースに紐づく MCPMate デスクトップインストーラ",
 	"download.platform_availability_note":
-		"Windows と Linux は引き続き改善中です。インストーラはダウンロードできますが、機能が未整備または不安定な場合があります。",
+		"macOS、Windows、Linux の各インストーラはいずれも現在 Beta です。macOS ビルドは署名と公証に対応し、システムのセキュリティ警告を減らします。",
 	"download.latest_label": "最新",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
@@ -208,7 +208,7 @@ const ja = {
 		"MCPMate は、複数の MCP 対応 AI クライアントを管理し、各クライアントに表示されるサーバー、ツール、プロンプトを一箇所で制御したい開発者向けです。散在する設定ファイルを別々に編集する必要はありません。",
 	"faq.platforms.title": "どのプラットフォームに対応していますか？",
 	"faq.platforms.answer":
-			"現在は macOS 向けインストーラが最も安定しています。Windows と Linux 向けインストーラも GitHub Releases から入手できますが、これらのプラットフォームは引き続き改善中で、一部機能が未整備または不安定な場合があります。",
+			"macOS、Windows、Linux の各インストーラは GitHub Releases から入手でき、いずれも現在 Beta です。macOS ビルドは署名と公証に対応し、クロスプラットフォームのデスクトップ体験は引き続き改善中です。",
 	"faq.security.title": "セキュリティはどうなっていますか？",
 	"faq.security.answer":
 		"コアは Rust で構築され、完全にローカルで実行されます。MCPMate では、プロファイルとクライアントごとに公開される機能を制御できます。",

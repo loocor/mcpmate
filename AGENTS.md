@@ -20,6 +20,7 @@
 
 ## Build, Test, and Development Commands
 - `backend/`: Run `cargo check` and `cargo clippy --all-targets --all-features -D warnings` for fast feedback, then `cargo fmt --all` before committing. Boot the proxy with `cargo run -- --help` (API 8080, MCP 8000) or `cargo run RUST_LOG=debug`. Execute `cargo test` and `cargo test --features interop`; package via `cargo build --release --features interop` or scripts in `packaging/standalone/` when preparing releases. Uses the official `rmcp` crate from crates.io for MCP protocol support.
+- Formatting hygiene: when running code formatters (e.g., `rustfmt`), format only the files that actually contain business/functional changes, and avoid large-scale whole-repo formatting to prevent irrelevant diffs.
 - `extension/cherry/`: Validate with `cargo test`, lint with `cargo clippy -D warnings`, and exercise examples such as `cargo run --example basic_usage` to confirm LevelDB integration.
 - `board/` & `website/`: Prefer Bun. Install dependencies with `bun install`, develop via `bun run dev`, lint with `bun run lint`, and produce bundles through `bun run build` (fallback to `npm` only if Bun is unavailable). Prefer `.env` driven configuration rather than hardcoding API endpoints.
 - `desktop/`: Build with `cargo tauri dev` for development or `cargo tauri build` for production from `desktop/` or `desktop/src-tauri/`. See `desktop/README.md` for detailed build options, signing setup, and platform-specific instructions.
@@ -174,7 +175,7 @@
 - Record outcomes, metrics, and anomalies in the current testing checklist before the PR leaves draft.
 
 ## Commit & Pull Request Guidelines
-- Use `<type>[: (scope)] summary` prefixes (e.g., `feat:`, `refactor:`, `fix:`, `chore:`).
+- Use `<type>[: (scope)] summary` prefixes (e.g., `feat:`, `ref:`, `fix:`, `chore:`).
 - PRs must note motivation, linked issues, config/migration impact, and test evidence (`cargo test`, `cargo test --features interop`, Inspector + SQLite checks); update affected docs or presets in the same change.
 
 - Commit message formatting (enforced convention)
@@ -185,7 +186,7 @@
   - Example:
 
     ```
-    refactor(core): accept &dyn CapCache in runtime::list and update call sites
+    ref(core): accept &dyn CapCache in runtime::list and update call sites
 
     - Switch runtime::list signature to &dyn CapCache to decouple from RedbCacheManager.
     - Update proxy and API handlers to pass trait objects (using .as_ref() on Arc).

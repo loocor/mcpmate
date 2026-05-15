@@ -161,7 +161,7 @@ runtime list           # 列出已安装的运行时
 
 ### 桌面应用
 
-基于 Tauri 2 的跨平台桌面应用，提供完整的图形界面管理 MCP 服务器、配置集和工具，支持实时监控、智能客户端检测和系统托盘集成。macOS 现已可用；Windows 处于 Beta 阶段；Linux 正在开发中。
+基于 Tauri 2 的跨平台桌面应用，提供完整的图形界面管理 MCP 服务器、配置集和工具，支持实时监控、智能客户端检测和系统托盘集成。macOS、Windows 与 Linux 桌面构建目前均以 Beta 版本提供。
 
 ### 日志
 
@@ -173,7 +173,7 @@ runtime list           # 列出已安装的运行时
 
 从 [GitHub Releases](https://github.com/loocor/MCPMate/releases) 下载适合你平台的最新版本。
 
-> **注意**：macOS 构建目前未经签名和公证。首次启动时可能需要右键点击选择"打开"以绕过 Gatekeeper。代码签名和公证将在后续版本中加入。
+> **注意**：macOS 构建已加入签名与公证，以减少系统安全提示并提升安装包可信度。
 
 ### 方式二：从源码构建
 

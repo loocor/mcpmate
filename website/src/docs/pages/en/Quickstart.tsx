@@ -8,7 +8,7 @@ import { buildHowTo } from "../../../utils/schema";
 const howToSteps = [
 	{
 		name: "Get the desktop installer",
-		text: "Start on GitHub Releases and download the installer for your platform. macOS builds are the most stable today; Windows and Linux installers are available too, but those platforms are still catching up.",
+		text: "Start on GitHub Releases and download the installer for your platform. macOS, Windows, and Linux builds are all currently in Beta.",
 	},
 	{
 		name: "Launch MCPMate",
@@ -61,9 +61,13 @@ export default function Quickstart() {
 			<Ul>
 				<Li>Choose the installer for your platform from the Releases page.</Li>
 				<Li>
-					macOS installers are the most stable today. Windows and Linux
-					installers are available too, but some features may still be
-					incomplete or unstable while those platforms catch up.
+					macOS, Windows, and Linux installers are all currently in Beta.
+					They are available for download while the cross-platform desktop
+					experience continues to mature.
+				</Li>
+				<Li>
+					macOS builds are signed and notarized to reduce system security
+					prompts and improve package trust.
 				</Li>
 				<Li>
 					Launch MCPMate after installation. The desktop app packages the

@@ -9,7 +9,7 @@ const inProgress = [
 	{
 		title: "平台成熟度补齐",
 		description:
-			"当前 macOS 仍是最稳定的桌面外壳；接下来的重点，是让 Windows 与 Linux 在安装包、运行时表现和桌面体验上尽快追平。",
+			"macOS、Windows 与 Linux 桌面构建目前均按 Beta 呈现；接下来的重点，是继续统一三端的安装包行为、运行时检测和桌面体验细节。",
 	},
 	{
 		title: "容器与分离部署",
