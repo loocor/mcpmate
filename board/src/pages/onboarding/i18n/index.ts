@@ -22,11 +22,11 @@ export const onboardingTranslations = {
       consent: "Allow scanning local runtimes and MCP server configurations",
       consentRequired: "Please accept the scanning authorization to continue",
     },
-    runtime: {
-      title: "Check Your Environment",
-      description:
-        "MCP servers need a JavaScript or Python runtime. We'll check what's available on your system.",
-      allGood: "All required runtimes detected. You're ready to go!",
+      runtime: {
+        title: "Check Your Environment",
+        description:
+          "We'll check which runtimes on your system are usable by MCPMate.",
+        allGood: "All required runtimes detected. You're ready to go!",
       install: {
         nodeTitle: "Node.js",
         nodeDescription: "JavaScript runtime for npm-based MCP servers.",
@@ -42,6 +42,7 @@ export const onboardingTranslations = {
         successTitle: "Install complete",
         successDescription: "{{runtime}} installation finished.",
         errorTitle: "Install failed",
+        required: "Install runtimes to continue",
       },
       noJs: {
         title: "No JavaScript runtime found.",
@@ -124,10 +125,10 @@ export const onboardingTranslations = {
       consent: "允许扫描本地运行时和 MCP 服务器配置",
       consentRequired: "请先同意扫描授权后再继续",
     },
-    runtime: {
-      title: "检查运行环境",
-      description:
-        "MCP 服务器需要 JavaScript 或 Python 运行时。先看看你的系统里有哪些可用。",
+      runtime: {
+        title: "检查运行环境",
+        description:
+          "检测你的系统中哪些运行时可以被 MCPMate 正常使用。",
       allGood: "已检测到所有必要运行时，可以直接继续。",
       install: {
         nodeTitle: "Node.js",
@@ -144,6 +145,7 @@ export const onboardingTranslations = {
         successTitle: "安装完成",
         successDescription: "{{runtime}} 安装完成。",
         errorTitle: "安装失败",
+        required: "请先完成运行时安装",
       },
       noJs: {
         title: "未检测到 JavaScript 运行时。",
@@ -241,6 +243,7 @@ export const onboardingTranslations = {
         successTitle: "インストール完了",
         successDescription: "{{runtime}} のインストールが完了しました。",
         errorTitle: "インストール失敗",
+        required: "ランタイムをインストールして続行",
       },
       noJs: {
         title: "JavaScript ランタイムが見つかりません。",

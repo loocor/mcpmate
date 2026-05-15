@@ -18,7 +18,7 @@ import type {
 	ClearCacheResponse,
 	InstallResponse,
 } from "../../lib/types";
-import { formatBytes, formatLocalDateTime } from "../../lib/utils";
+import { formatBytes, formatLocalDateTime, formatPathWithTilde } from "../../lib/utils";
 
 type RuntimeKind = "uv" | "bun" | "node";
 
@@ -46,19 +46,19 @@ function normalizeRuntimeKind(
 	}
 }
 
-function getRuntimeFolder(path: string | null | undefined): string {
-	if (!path) {
-		return "";
+function getRuntimeBadgeStatus(
+	managedReady: boolean,
+	hasSystemFallback: boolean,
+): "running" | "fallback" | "offline" {
+	if (managedReady) {
+		return "running";
 	}
 
-	const normalizedPath = path.replace(/\\/g, "/");
-	const lastSlashIndex = normalizedPath.lastIndexOf("/");
-
-	if (lastSlashIndex === -1) {
-		return "";
+	if (hasSystemFallback) {
+		return "fallback";
 	}
 
-	return normalizedPath.slice(0, lastSlashIndex);
+	return "offline";
 }
 
 export function RuntimePage() {
@@ -217,6 +217,7 @@ export function RuntimePage() {
 	const isBusy =
 		resetAllM.isPending || resetOneM.isPending || installM.isPending;
 	const status = runtimeStatusQ.data;
+	const userHome = status?.user_home ?? null;
 	const cache = runtimeCacheQ.data;
 	const capStats = capabilitiesStatsQ.data;
 	const getRuntimeLabel = (kind: RuntimeKind) =>
@@ -246,13 +247,24 @@ export function RuntimePage() {
 		});
 		confirmLoading = resetOneM.isPending;
 	} else if (confirm?.type === "install") {
-		confirmTitle = t("runtime:dialogs.installTitle", {
-			key: getRuntimeLabel(confirm.key),
-		});
-		confirmDescription = t("runtime:dialogs.installDescription", {
-			key: getRuntimeLabel(confirm.key),
-		});
-		confirmLabel = t("runtime:dialogs.installRepair");
+		const managedReady = status?.[confirm.key]?.available ?? false;
+		if (managedReady) {
+			confirmTitle = t("runtime:dialogs.reinstallTitle", {
+				key: getRuntimeLabel(confirm.key),
+			});
+			confirmDescription = t("runtime:dialogs.reinstallDescription", {
+				key: getRuntimeLabel(confirm.key),
+			});
+			confirmLabel = t("runtime:dialogs.reinstallConfirm");
+		} else {
+			confirmTitle = t("runtime:dialogs.installTitle", {
+				key: getRuntimeLabel(confirm.key),
+			});
+			confirmDescription = t("runtime:dialogs.installDescription", {
+				key: getRuntimeLabel(confirm.key),
+			});
+			confirmLabel = t("runtime:dialogs.installConfirm");
+		}
 		confirmVariant = "default";
 		confirmLoading = installM.isPending;
 	} else if (confirm?.type === "capabilitiesReset") {
@@ -281,78 +293,86 @@ export function RuntimePage() {
 			</div>
 
 			{runtimeStatusQ.isLoading || runtimeCacheQ.isLoading ? (
-				<div className="grid gap-4 md:grid-cols-3">
+				<div className="grid auto-rows-fr gap-4 md:grid-cols-3">
 					{[0, 1, 2].map((i) => (
 						<div
 							key={i}
-							className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+							className="flex h-full min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900"
 						>
-							{/* Status badge only */}
-							<div className="flex justify-end mb-4">
+							<div className="mb-4 flex shrink-0 justify-end">
 								<div className="h-6 w-16 animate-pulse rounded-full bg-slate-100 dark:bg-slate-900" />
 							</div>
 
-							{/* Main content blocks - simplified */}
-							<div className="space-y-3">
-								{/* Main info block */}
+							<div className="min-h-0 flex-1 space-y-3">
 								<div className="h-16 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
-
-								{/* Cache info block */}
 								<div className="h-12 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
 							</div>
 
-							{/* Single button */}
-							<div className="mt-4 flex justify-start">
-								<div className="h-8 w-24 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+							<div className="mt-4 flex w-full shrink-0 items-center justify-between gap-2">
+								<div className="h-9 w-[7.5rem] animate-pulse rounded-md bg-slate-100 dark:bg-slate-900" />
+								<div className="h-9 w-[7.5rem] animate-pulse rounded-md bg-slate-100 dark:bg-slate-900" />
 							</div>
 						</div>
 					))}
 				</div>
 			) : (
-				<div className="grid gap-4 md:grid-cols-3">
+				<div className="grid auto-rows-fr gap-4 md:grid-cols-3">
 					{RUNTIME_KINDS.map((key) => {
 						const st = status?.[key];
 						const c = cache?.[key];
-						const statusStr = st?.available ? "running" : "stopped";
-						const folder = getRuntimeFolder(st?.path);
+						const managedReady = Boolean(st?.available);
+						const systemPath = (st?.system_fallback_path ?? "").trim();
+						const hasSystemFallback = Boolean(systemPath) && !managedReady;
+						const badgeStatus = getRuntimeBadgeStatus(
+								managedReady,
+								hasSystemFallback,
+							);
+						const badgeLabel = hasSystemFallback
+							? t("runtime:status.fallback", { defaultValue: "Fallback" })
+							: undefined;
+						const executablePath =
+							(st?.path ?? "").trim() || (hasSystemFallback ? systemPath : "");
+						const pathForDisplay = formatPathWithTilde(executablePath, userHome);
 
 						return (
 							<div
 								key={key}
-								className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:border-primary/40 hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
+								className="flex h-full min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:border-primary/40 hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
 							>
-								<div className="flex items-center justify-between mb-2">
+								<div className="mb-2 flex shrink-0 items-center justify-between">
 									<div className="flex items-center gap-2">
 										<Wrench className="h-4 w-4 text-slate-500" />
 										<div className="font-semibold uppercase">
 											{t(`runtime:types.${key}`)}
 										</div>
 									</div>
-									<StatusBadge status={statusStr} />
+									<StatusBadge status={badgeStatus} statusLabel={badgeLabel} />
 								</div>
 
-								<div className="space-y-1 text-sm">
+								<div className="min-h-0 flex-1 space-y-1 text-sm">
 									<div className="flex items-center justify-between">
 										<span className="text-slate-500">
 											{t("runtime:labels.version")}
 										</span>
 										<span>
-										{st?.version ||
-											t("runtime:fallbacks.notAvailable", {
-												defaultValue: "N/A",
-											})}
-									</span>
+											{st?.version ||
+												t("runtime:fallbacks.notAvailable", {
+													defaultValue: "N/A",
+												})}
+										</span>
 									</div>
-									{folder ? (
-										<div className="flex items-center justify-between">
-											<span className="text-slate-500">
-												{t("runtime:labels.folder")}
-											</span>
-											<span className="truncate max-w-[60%]" title={folder}>
-												{folder}
-											</span>
-										</div>
-									) : null}
+									<div className="flex items-center justify-between">
+										<span className="text-slate-500">
+											{t("runtime:labels.path", { defaultValue: "Path" })}
+										</span>
+										<span
+											className="truncate max-w-[60%]"
+											title={executablePath || undefined}
+										>
+											{pathForDisplay ||
+												t("runtime:fallbacks.empty", { defaultValue: "—" })}
+										</span>
+									</div>
 									<div className="flex items-center justify-between">
 										<span className="text-slate-500">
 											{t("runtime:labels.message")}
@@ -385,27 +405,35 @@ export function RuntimePage() {
 											{t("runtime:labels.lastModified")}
 										</span>
 										<span>
-                                {c?.last_modified
-                                    ? formatLocalDateTime(c.last_modified)
-                                    : t("runtime:fallbacks.empty", { defaultValue: "—" })}
+											{c?.last_modified
+												? formatLocalDateTime(c.last_modified)
+												: t("runtime:fallbacks.empty", { defaultValue: "—" })}
 										</span>
 									</div>
 								</div>
 
-								<div className="mt-4 flex items-center gap-2">
+								<footer className="mt-4 flex w-full shrink-0 items-center justify-between gap-2">
 									<Button
 										size="sm"
+										className="shrink-0"
 										disabled={installM.isPending}
 										onClick={() => setConfirm({ type: "install", key })}
 									>
 										<Wrench
 											className={`mr-2 h-4 w-4 ${installM.isPending ? "animate-spin" : ""}`}
 										/>
-										{t("runtime:buttons.installRepair")}
+										{managedReady
+											? t("runtime:buttons.reinstall", {
+												defaultValue: "Reinstall",
+											})
+											: t("runtime:buttons.install", {
+												defaultValue: "Install",
+											})}
 									</Button>
 									<Button
 										variant="outline"
 										size="sm"
+										className="shrink-0"
 										disabled={resetOneM.isPending}
 										onClick={() => setConfirm({ type: "resetOne", key })}
 									>
@@ -414,7 +442,7 @@ export function RuntimePage() {
 										/>
 										{t("runtime:buttons.resetCache")}
 									</Button>
-								</div>
+								</footer>
 							</div>
 						);
 					})}
@@ -459,7 +487,10 @@ export function RuntimePage() {
 										className="truncate max-w-[60%]"
 										title={capStats?.storage?.db_path || ""}
 									>
-										{capStats?.storage?.db_path || t("runtime:fallbacks.empty", { defaultValue: "—" })}
+										{formatPathWithTilde(
+											capStats?.storage?.db_path ?? "",
+											userHome,
+										) || t("runtime:fallbacks.empty", { defaultValue: "—" })}
 									</span>
 								</div>
 								<div className="flex items-center justify-between">
@@ -473,9 +504,9 @@ export function RuntimePage() {
 										{t("runtime:capabilities.labels.lastCleanup")}
 									</span>
 									<span>
-                                {capStats.storage.last_cleanup
-                                    ? formatLocalDateTime(capStats.storage.last_cleanup)
-                                    : t("runtime:fallbacks.empty", { defaultValue: "—" })}
+										{capStats.storage.last_cleanup
+											? formatLocalDateTime(capStats.storage.last_cleanup)
+											: t("runtime:fallbacks.empty", { defaultValue: "—" })}
 									</span>
 								</div>
 								<div className="flex items-center justify-between">
@@ -483,7 +514,7 @@ export function RuntimePage() {
 										{t("runtime:capabilities.labels.generated")}
 									</span>
 									<span>
-                                {formatLocalDateTime(capStats.generatedAt)}
+										{formatLocalDateTime(capStats.generatedAt)}
 									</span>
 								</div>
 							</div>
@@ -576,28 +607,28 @@ export function RuntimePage() {
 				</CardContent>
 			</Card>
 			{/* Global confirmation dialog */}
-				<ConfirmDialog
-					isOpen={confirm !== null}
-					onClose={() => setConfirm(null)}
-					onConfirm={async () => {
-						if (!confirm) return;
-						if (confirm.type === "resetAll") {
-							resetAllM.mutate();
-						} else if (confirm.type === "resetOne") {
-							resetOneM.mutate(confirm.key);
-						} else if (confirm.type === "install") {
-							installM.mutate(confirm.key);
-						} else if (confirm.type === "capabilitiesReset") {
-							capResetM.mutate();
-						}
-					}}
-					title={confirmTitle}
-					description={confirmDescription}
-					confirmLabel={confirmLabel}
-					cancelLabel={t("runtime:dialogs.cancel")}
-					variant={confirmVariant}
-					isLoading={confirmLoading}
-				/>
+			<ConfirmDialog
+				isOpen={confirm !== null}
+				onClose={() => setConfirm(null)}
+				onConfirm={async () => {
+					if (!confirm) return;
+					if (confirm.type === "resetAll") {
+						resetAllM.mutate();
+					} else if (confirm.type === "resetOne") {
+						resetOneM.mutate(confirm.key);
+					} else if (confirm.type === "install") {
+						installM.mutate(confirm.key);
+					} else if (confirm.type === "capabilitiesReset") {
+						capResetM.mutate();
+					}
+				}}
+				title={confirmTitle}
+				description={confirmDescription}
+				confirmLabel={confirmLabel}
+				cancelLabel={t("runtime:dialogs.cancel")}
+				variant={confirmVariant}
+				isLoading={confirmLoading}
+			/>
 		</div>
 	);
 }
