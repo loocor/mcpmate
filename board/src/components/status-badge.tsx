@@ -5,6 +5,7 @@ import { Badge } from "./ui/badge";
 
 interface StatusBadgeProps {
 	status?: string;
+	statusLabel?: string;
 	instances?: InstanceSummary[];
 	showLabel?: boolean;
 	className?: string;
@@ -12,8 +13,24 @@ interface StatusBadgeProps {
 	isServerEnabled?: boolean;
 }
 
+function getStatusDotClass(variant: ReturnType<typeof getStatusVariant>): string {
+	switch (variant) {
+		case "success":
+			return "bg-emerald-400";
+		case "warning":
+			return "bg-amber-400";
+		case "destructive":
+			return "bg-red-400";
+		case "secondary":
+			return "bg-slate-400";
+		default:
+			return "bg-slate-400";
+	}
+}
+
 export function StatusBadge({
 	status = "unknown",
+	statusLabel,
 	instances = [],
 	showLabel = true,
 	className = "",
@@ -21,12 +38,10 @@ export function StatusBadge({
 	isServerEnabled = false,
 }: StatusBadgeProps) {
 	const { t } = useTranslation();
-	// If instances array is provided, determine overall status based on instance statuses
 	let statusStr = status?.toString().toLowerCase() || "unknown";
 	let shouldBlink = false;
 
-	if (instances && instances.length > 0) {
-		// Check if any instance is in ready or busy state
+	if (instances.length > 0) {
 		const hasActiveInstance = instances.some((instance) =>
 			[
 				"ready",
@@ -40,21 +55,18 @@ export function StatusBadge({
 			].includes((instance.status || "").toLowerCase()),
 		);
 
-		// Check if any instance is in error state
 		const hasErrorInstance = instances.some((instance) =>
 			["error", "unhealthy", "stopped", "failed"].includes(
 				(instance.status || "").toLowerCase(),
 			),
 		);
 
-		// Check if any instance is initializing
 		const hasInitializingInstance = instances.some((instance) =>
 			["initializing", "starting", "connecting"].includes(
 				(instance.status || "").toLowerCase(),
 			),
 		);
 
-		// 状态优先级：如果有任何实例是活跃的，整个服务就是活跃的
 		if (hasActiveInstance) {
 			statusStr = "ready";
 		} else if (hasInitializingInstance) {
@@ -65,21 +77,18 @@ export function StatusBadge({
 		} else {
 			statusStr = "shutdown";
 		}
-	} else {
-		// Handle case where no instances but we know server status
-		if (instances.length === 0 && isServerEnabled) {
-			statusStr = "idle"; // Server is enabled but not running (no instances)
-		} else if (
-			["error", "unhealthy", "stopped", "failed"].includes(statusStr) &&
-			blinkOnError
-		) {
-			shouldBlink = true;
-		}
+	} else if (isServerEnabled) {
+		statusStr = "idle";
+	} else if (
+		["error", "unhealthy", "stopped", "failed"].includes(statusStr) &&
+		blinkOnError
+	) {
+		shouldBlink = true;
 	}
 
 	const variant = getStatusVariant(statusStr);
+	const dotClass = getStatusDotClass(variant);
 
-	// Determine display text based on status
 	let displayText = statusStr;
 	if (
 		[
@@ -96,6 +105,8 @@ export function StatusBadge({
 		displayText = t("status.ready");
 	} else if (["error", "unhealthy", "failed"].includes(statusStr)) {
 		displayText = t("status.error");
+	} else if (statusStr === "offline") {
+		displayText = t("status.disconnected");
 	} else if (
 		["shutdown", "disconnected", "stopped", "disabled"].includes(statusStr)
 	) {
@@ -108,6 +119,10 @@ export function StatusBadge({
 		displayText = t("status.unknown");
 	}
 
+	if (statusLabel != null && statusLabel.trim().length > 0) {
+		displayText = statusLabel.trim();
+	}
+
 	return (
 		<Badge
 			variant={variant}
@@ -115,17 +130,7 @@ export function StatusBadge({
 		>
 			<span className="flex items-center">
 				<span
-					className={`mr-1 h-2 w-2 rounded-full ${
-						variant === "success"
-							? "bg-emerald-400"
-							: variant === "warning"
-								? "bg-amber-400"
-								: variant === "destructive"
-									? "bg-red-400"
-									: variant === "secondary"
-										? "bg-slate-400"
-										: "bg-slate-400"
-					}`}
+					className={`mr-1 h-2 w-2 rounded-full ${dotClass}`}
 				/>
 				{showLabel && displayText}
 			</span>

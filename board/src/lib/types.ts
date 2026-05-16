@@ -752,18 +752,24 @@ export interface BatchOperationResponse {
 }
 
 // Runtime Types
+export type RuntimeType = "uv" | "bun" | "node";
+
 export interface RuntimeStatusItem {
-  runtime_type: string;
+  runtime_type: RuntimeType;
   available: boolean;
   path?: string | null;
   version?: string | null;
+  /** Present when managed runtime is missing but a system PATH binary was detected */
+  system_fallback_path?: string | null;
   message: string;
 }
 
 export interface RuntimeStatusResponse {
-  uv: RuntimeStatusItem;
-  bun: RuntimeStatusItem;
-  node: RuntimeStatusItem;
+	/** Server process home directory; used to shorten paths with a tilde in the UI */
+	user_home?: string | null;
+	uv: RuntimeStatusItem;
+	bun: RuntimeStatusItem;
+	node: RuntimeStatusItem;
 }
 
 export interface RuntimeCacheItem {
@@ -786,7 +792,7 @@ export interface RuntimeCacheResponse {
 }
 
 export interface InstallRuntimeRequest {
-  runtime_type: string; // "uv" | "bun" | "node"
+  runtime_type: RuntimeType; // "uv" | "bun" | "node"
   version?: string;
   timeout?: number;
   max_retries?: number;
@@ -797,7 +803,7 @@ export interface InstallRuntimeRequest {
 export interface InstallResponse {
   success: boolean;
   message: string;
-  runtime_type: string;
+  runtime_type: RuntimeType;
 }
 
 export interface ClearCacheResponse {
