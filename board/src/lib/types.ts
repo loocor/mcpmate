@@ -1073,6 +1073,7 @@ export interface ServerEntryData {
   import_status?: "importable" | "skipped" | string;
   skip_reason?: string | null;
   issue?: string | null;
+  managed_by_mcpmate?: boolean;
   command?: string | null;
   args: string[];
   env: Record<string, string>;

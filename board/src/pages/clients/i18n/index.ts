@@ -627,7 +627,11 @@ export const clientsTranslations = {
         title: "Import Review",
         description: "Summary of servers detected from current client config.",
         fields: {
+          detected: "Detected",
           importable: "Importable",
+          managedByMcpmate: "Managed",
+          notImportable: "Not Importable",
+          selected: "Selected",
           skipped: "Skipped",
         },
         sections: {
@@ -1384,7 +1388,11 @@ export const clientsTranslations = {
         title: "导入复核",
         description: "概览当前客户端配置中检测到的服务器。",
         fields: {
+          detected: "已检测",
           importable: "可导入",
+          managedByMcpmate: "已托管",
+          notImportable: "不可导入",
+          selected: "已选择",
           skipped: "已跳过",
         },
         sections: {
@@ -2160,7 +2168,11 @@ export const clientsTranslations = {
         title: "インポート確認",
         description: "現在の設定から検出したサーバーの概要です。",
         fields: {
+          detected: "検出済み",
           importable: "インポート可能",
+          managedByMcpmate: "管理済み",
+          notImportable: "インポート不可",
+          selected: "選択済み",
           skipped: "スキップ",
         },
         sections: {
