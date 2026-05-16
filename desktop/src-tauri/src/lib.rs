@@ -229,7 +229,8 @@ fn dispatch_mcpmate_deep_link(app: &tauri::AppHandle, url: &str, context: &'stat
     let url = url.to_string();
     tauri::async_runtime::spawn(async move {
         if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()).await {
-            warn!(error = %err, target_url = %url, context, "Failed to handle mcpmate deep link");
+            let sanitized_url = utils::sanitize_url_for_logging(&url);
+            warn!(error = %err, target_url = %sanitized_url, context, "Failed to handle mcpmate deep link");
         }
     });
 }
@@ -469,7 +470,13 @@ pub fn run() -> Result<()> {
 
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            info!(args = ?argv, cwd = %cwd, "Secondary MCPMate instance intercepted");
+            let has_deep_link_arg = argv.iter().any(|arg| arg.contains("mcpmate://"));
+            info!(
+                argv_len = argv.len(),
+                has_deep_link_arg,
+                cwd = %cwd,
+                "Secondary MCPMate instance intercepted"
+            );
             #[cfg(target_os = "linux")]
             {
                 let urls = extract_linux_fallback_deep_links_from_argv(&argv);
