@@ -68,6 +68,12 @@ export const settingsTranslations = {
       serviceStatusFallback:
         "Desktop will attach when the configured local service becomes available.",
       serviceLevel: "Service level: {{value}}",
+      localServiceStatus: {
+        not_installed: "Not installed",
+        stopped: "Stopped",
+        running: "Running",
+        running_unhealthy: "Running (unhealthy)",
+      },
       statusAction: "Status",
       startAction: "Start",
       restartAction: "Restart",
@@ -379,6 +385,12 @@ export const settingsTranslations = {
       serviceStatusFallback:
         "当已配置的本地服务可用时，桌面端会自动连接。",
       serviceLevel: "服务级别：{{value}}",
+      localServiceStatus: {
+        not_installed: "未安装",
+        stopped: "已停止",
+        running: "运行中",
+        running_unhealthy: "运行中（异常）",
+      },
       statusAction: "状态",
       startAction: "启动",
       restartAction: "重启",
@@ -671,6 +683,12 @@ export const settingsTranslations = {
       serviceStatusFallback:
         "設定済みのローカルサービスが利用可能になると、Desktop は自動で接続します。",
       serviceLevel: "サービスレベル: {{value}}",
+      localServiceStatus: {
+        not_installed: "未インストール",
+        stopped: "停止中",
+        running: "実行中",
+        running_unhealthy: "実行中（異常）",
+      },
       statusAction: "状態",
       startAction: "開始",
       restartAction: "再起動",
