@@ -624,6 +624,13 @@ export function SettingsPage() {
 				}),
 		[localhostRuntimeMode, t, i18n.language],
 	);
+	const localServiceStatusLabel = useMemo(
+		() =>
+			t(`settings:system.localServiceStatus.${localService.status}`, {
+				defaultValue: localService.label || localService.status,
+			}),
+		[localService.label, localService.status, t],
+	);
 
 	const isSystemReadonlyInWeb = !isTauriShell;
 	const applyDisabled =
@@ -1936,7 +1943,7 @@ export function SettingsPage() {
 													})}
 												</p>
 												<p className="text-sm text-slate-600 dark:text-slate-300">
-													{localService.label}
+													{localServiceStatusLabel}
 												</p>
 												<p className="text-xs text-muted-foreground">
 													{t("settings:system.runtimeModeCurrent", {
