@@ -117,6 +117,24 @@ impl From<ConfigImportSkipReason> for SkipReason {
     }
 }
 
+impl SkipReason {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::DuplicateName => "duplicate_name",
+            Self::DuplicateFingerprint => "duplicate_fingerprint",
+            Self::ConfigInvalidEntry => "config_invalid_entry",
+            Self::ConfigMissingCommand => "config_missing_command",
+            Self::ConfigMissingUrl => "config_missing_url",
+            Self::ConfigUnrecognized => "config_unrecognized",
+            Self::UrlQueryMismatch { .. } => "url_query_mismatch",
+        }
+    }
+
+    pub(crate) fn is_duplicate_fingerprint(&self) -> bool {
+        matches!(self, Self::DuplicateFingerprint)
+    }
+}
+
 pub struct ClientImportPlan {
     pub items: HashMap<String, ServersImportConfig>,
     pub skipped_servers: Vec<SkippedServer>,
@@ -142,6 +160,92 @@ fn record_conflict(
         }
         ConflictPolicy::Update => false,
     }
+}
+
+struct ImportCandidate {
+    server_type: ServerType,
+    persisted_kind: &'static str,
+    fingerprint: String,
+    url_signature: Option<fingerprint::UrlSignature>,
+}
+
+fn prepare_import_candidate(cfg: &ServersImportConfig) -> Result<ImportCandidate> {
+    let lc = cfg.kind.trim().to_ascii_lowercase();
+    let server_type = ServerType::from_client_format(&lc)
+        .map_err(|_| anyhow::anyhow!(format!("Invalid server type '{}'", cfg.kind)))?;
+    let persisted_kind = server_type.client_format();
+    validate_server_config(persisted_kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    let mut url_signature: Option<fingerprint::UrlSignature> = None;
+    let fp = match server_type {
+        ServerType::Stdio => fingerprint::fingerprint_for_stdio(
+            cfg.command.as_deref().unwrap_or_default(),
+            cfg.args.as_deref().unwrap_or(&[]),
+        ),
+        ServerType::Sse | ServerType::StreamableHttp => {
+            let sig = fingerprint::url_signature(cfg.url.as_deref().unwrap_or_default());
+            let key = format!("{}|{}", sig.fingerprint, persisted_kind);
+            url_signature = Some(sig);
+            key
+        }
+    };
+
+    Ok(ImportCandidate {
+        server_type,
+        persisted_kind,
+        fingerprint: fp,
+        url_signature,
+    })
+}
+
+fn import_conflict_reason(
+    existing: &ExistingIndex,
+    name: &str,
+    candidate: &ImportCandidate,
+    opts: &ImportOptions,
+) -> Option<SkipReason> {
+    if opts.by_fingerprint
+        && !candidate.fingerprint.is_empty()
+        && existing.fingerprints.contains(&candidate.fingerprint)
+    {
+        return Some(SkipReason::DuplicateFingerprint);
+    }
+
+    if opts.by_fingerprint {
+        if let Some(sig) = candidate.url_signature.as_ref() {
+            if existing.url_bases.contains(&sig.base) {
+                let existing_sig = existing.url_signatures.get(&sig.base);
+                return Some(SkipReason::UrlQueryMismatch {
+                    existing_query: existing_sig.and_then(|s| s.display_query()),
+                    incoming_query: sig.display_query(),
+                });
+            }
+        }
+    }
+
+    if opts.by_name && existing.names.contains(name) {
+        return Some(SkipReason::DuplicateName);
+    }
+
+    None
+}
+
+pub(crate) async fn find_import_conflicts(
+    db_pool: &Pool<Sqlite>,
+    items: &HashMap<String, ServersImportConfig>,
+    opts: &ImportOptions,
+) -> Result<HashMap<String, SkipReason>> {
+    let existing = ExistingIndex::build(db_pool).await?;
+    let mut conflicts = HashMap::new();
+
+    for (name, cfg) in items {
+        let candidate = prepare_import_candidate(cfg)?;
+        if let Some(reason) = import_conflict_reason(&existing, name, &candidate, opts) {
+            conflicts.insert(name.clone(), reason);
+        }
+    }
+
+    Ok(conflicts)
 }
 
 fn build_imported_server(
@@ -287,63 +391,11 @@ pub async fn import_batch(
     let existing = ExistingIndex::build(db_pool).await?;
 
     for (name, cfg) in items.into_iter() {
-        let lc = cfg.kind.trim().to_ascii_lowercase();
-        let server_type = ServerType::from_client_format(&lc)
-            .map_err(|_| anyhow::anyhow!(format!("Invalid server type '{}'", cfg.kind)))?;
-        let persisted_kind = server_type.client_format();
-        validate_server_config(persisted_kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
-
-        // Compute fingerprint
-        let mut url_signature: Option<fingerprint::UrlSignature> = None;
-        let fp = match server_type {
-            ServerType::Stdio => fingerprint::fingerprint_for_stdio(
-                cfg.command.as_deref().unwrap_or_default(),
-                cfg.args.as_deref().unwrap_or(&[]),
-            ),
-            ServerType::Sse | ServerType::StreamableHttp => {
-                let sig = fingerprint::url_signature(cfg.url.as_deref().unwrap_or_default());
-                let key = format!("{}|{}", sig.fingerprint, persisted_kind);
-                url_signature = Some(sig);
-                key
+        let candidate = prepare_import_candidate(&cfg)?;
+        if let Some(reason) = import_conflict_reason(&existing, &name, &candidate, &opts) {
+            if record_conflict(&mut outcome, &name, reason, opts.conflict_policy) {
+                continue;
             }
-        };
-
-        // Dedup
-        let by_name_dup = opts.by_name && existing.names.contains(&name);
-        let by_fp_dup = opts.by_fingerprint && !fp.is_empty() && existing.fingerprints.contains(&fp);
-
-        if by_fp_dup
-            && record_conflict(
-                &mut outcome,
-                &name,
-                SkipReason::DuplicateFingerprint,
-                opts.conflict_policy,
-            )
-        {
-            continue;
-        }
-
-        if opts.by_fingerprint && !by_fp_dup {
-            if let Some(sig) = url_signature.as_ref() {
-                if existing.url_bases.contains(&sig.base) {
-                    let existing_sig = existing.url_signatures.get(&sig.base);
-                    if record_conflict(
-                        &mut outcome,
-                        &name,
-                        SkipReason::UrlQueryMismatch {
-                            existing_query: existing_sig.and_then(|s| s.display_query()),
-                            incoming_query: sig.display_query(),
-                        },
-                        opts.conflict_policy,
-                    ) {
-                        continue;
-                    }
-                }
-            }
-        }
-
-        if by_name_dup && record_conflict(&mut outcome, &name, SkipReason::DuplicateName, opts.conflict_policy) {
-            continue;
         }
 
         // Normalize args/env once for both preview and apply.
@@ -354,14 +406,18 @@ pub async fn import_batch(
 
         // Preview: report would-be imported without DB side-effects
         if opts.preview {
-            outcome
-                .imported
-                .push(build_imported_server(name, &cfg, args_norm, env_norm, persisted_kind));
+            outcome.imported.push(build_imported_server(
+                name,
+                &cfg,
+                args_norm,
+                env_norm,
+                candidate.persisted_kind,
+            ));
             continue;
         }
 
         // Apply: upsert server, args, env, headers
-        let mut server = match server_type {
+        let mut server = match candidate.server_type {
             ServerType::Stdio => Server::new_stdio(name.clone(), cfg.command.clone()),
             ServerType::Sse => Server::new_sse(name.clone(), cfg.url.clone()),
             ServerType::StreamableHttp => Server::new_streamable_http(name.clone(), cfg.url.clone()),
@@ -500,7 +556,7 @@ pub async fn import_batch(
             &cfg,
             args_norm,
             env_norm,
-            server_type.client_format(),
+            candidate.persisted_kind,
         ));
     }
 
