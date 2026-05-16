@@ -527,6 +527,25 @@ export function DashboardPage() {
 
 	const showLocalCoreBanner =
 		isTauriShell && coreView?.selectedSource === "localhost";
+	const localCoreRuntimeMode = coreView?.localhostRuntimeMode;
+	const localCoreServiceStatus = coreView?.localService.status;
+	const localCoreStatusLabel = localCoreServiceStatus
+		? t(`dashboard:core.localServiceStatus.${localCoreServiceStatus}`, {
+				defaultValue: localCoreServiceStatus,
+			})
+		: "";
+	const localCoreDetail =
+		localCoreRuntimeMode && localCoreServiceStatus
+			? t(
+					`dashboard:core.localServiceDetail.${localCoreRuntimeMode}.${localCoreServiceStatus}`,
+					{
+						defaultValue: t("dashboard:core.localServiceDetailFallback", {
+							defaultValue:
+								"The configured local core status will appear here.",
+						}),
+					},
+				)
+			: "";
 
 	/**
 	 * Hover lift + shadow need top paint room inside the scrollport. Paired -mt/pt on this wrapper
@@ -555,10 +574,10 @@ export function DashboardPage() {
 							</span>
 						</div>
 						<p className="text-sm text-slate-700 dark:text-slate-300">
-							{coreView.localService.label}
+							{localCoreStatusLabel}
 						</p>
 						<p className="text-xs text-slate-500 dark:text-slate-400">
-							{coreView.localService.detail}
+							{localCoreDetail}
 						</p>
 					</div>
 					<div className="flex shrink-0 items-center gap-2">
