@@ -24,6 +24,8 @@ export interface RuntimeEntry {
   available: boolean;
   version?: string;
   path?: string;
+  /** "mcpMate" | "system" | "uvPython"; undefined if unavailable */
+  source?: "mcpMate" | "system" | "uvPython";
 }
 
 export interface RuntimeCheckData {

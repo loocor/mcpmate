@@ -50,11 +50,76 @@ type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
 type RuntimeKind = "node" | "bun" | "uv";
 type WelcomeLanguage = "en" | "zh-cn" | "ja";
 
+const RUNTIME_NAME_PRIORITY: Record<RuntimeKind, string[]> = {
+  node: ["node", "npx"],
+  bun: ["bun", "bunx"],
+  uv: ["uv", "uvx"],
+};
+
+type RuntimeState = {
+  available: boolean;
+  isManaged: boolean;
+};
+
+function computeRuntimeStateByKind(runtimes: RuntimeEntry[]): Map<RuntimeKind, RuntimeState> {
+  const state = new Map<RuntimeKind, RuntimeState>();
+
+  (Object.keys(RUNTIME_NAME_PRIORITY) as RuntimeKind[]).forEach((kind) => {
+    const priorities = RUNTIME_NAME_PRIORITY[kind];
+    const entries = priorities
+      .map((runtimeName) =>
+        runtimes.find((runtime) => runtime.name.toLowerCase() === runtimeName),
+      )
+      .filter((entry): entry is RuntimeEntry => Boolean(entry));
+
+    const available = entries.some((entry) => entry.available);
+    const isManaged = entries.some(
+      (entry) => entry.available && entry.source === "mcpMate",
+    );
+
+    state.set(kind, { available, isManaged });
+  });
+
+  return state;
+}
+
+/** True when node, bun, and uv are all available (managed or system fallback) for onboarding gate. */
+function areAllOnboardingRuntimeKindsAvailable(runtimes: RuntimeEntry[] | undefined): boolean {
+  const runtimeStateByKind = computeRuntimeStateByKind(runtimes ?? []);
+  return (Object.keys(RUNTIME_NAME_PRIORITY) as RuntimeKind[]).every((kind) => {
+    const runtimeState = runtimeStateByKind.get(kind);
+    return Boolean(runtimeState?.available);
+  });
+}
+
 function normalizeWelcomeLanguage(language?: string): WelcomeLanguage {
   const lower = language?.toLowerCase() ?? "";
   if (lower.startsWith("zh")) return "zh-cn";
   if (lower.startsWith("ja")) return "ja";
   return "en";
+}
+
+function welcomeLanguageToI18nCode(language: WelcomeLanguage): string {
+  switch (language) {
+    case "zh-cn":
+      return "zh-CN";
+    case "ja":
+      return "ja-JP";
+    case "en":
+      return "en";
+  }
+}
+
+function getStepButtonClass(index: number, stepIndex: number): string {
+  if (index < stepIndex) {
+    return "text-emerald-600 dark:text-emerald-400";
+  }
+
+  if (index === stepIndex) {
+    return "font-medium text-slate-900 dark:text-white";
+  }
+
+  return "text-slate-400";
 }
 
 function groupSelectedServerNamesByClient(
@@ -121,7 +186,6 @@ const STEP_ORDER: WizardStep[] = [
   "servers",
   "community",
 ];
-const ONBOARDING_SELECTIONS_STORAGE_KEY = "mcpmate_onboarding_selections";
 
 const clientNameCollator = new Intl.Collator(undefined, {
   sensitivity: "base",
@@ -153,11 +217,6 @@ interface WizardState {
   selectedClients: Set<string>;
   selectedServers: Set<string>;
   welcomeConsent: boolean;
-}
-
-interface PersistedOnboardingSelections {
-  selectedClients: string[];
-  selectedServers: string[];
 }
 
 type WizardAction =
@@ -205,41 +264,11 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   }
 }
 
-function readPersistedSelections(): PersistedOnboardingSelections {
-  if (typeof window === "undefined") {
-    return { selectedClients: [], selectedServers: [] };
-  }
-
-  try {
-    const raw = window.localStorage.getItem(ONBOARDING_SELECTIONS_STORAGE_KEY);
-    if (!raw) {
-      return { selectedClients: [], selectedServers: [] };
-    }
-
-    const parsed = JSON.parse(raw) as Partial<PersistedOnboardingSelections>;
-    const selectedClients = Array.isArray(parsed.selectedClients)
-      ? parsed.selectedClients.filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      )
-      : [];
-    const selectedServers = Array.isArray(parsed.selectedServers)
-      ? parsed.selectedServers.filter(
-        (value): value is string => typeof value === "string" && value.trim().length > 0,
-      )
-      : [];
-
-    return { selectedClients, selectedServers };
-  } catch {
-    return { selectedClients: [], selectedServers: [] };
-  }
-}
-
 function buildInitialWizardState(step: WizardStep): WizardState {
-  const persisted = readPersistedSelections();
   return {
     step,
-    selectedClients: new Set(persisted.selectedClients),
-    selectedServers: new Set(persisted.selectedServers),
+    selectedClients: new Set(),
+    selectedServers: new Set(),
     welcomeConsent: false,
   };
 }
@@ -273,12 +302,61 @@ export function OnboardingPage() {
     normalizeWelcomeLanguage(dashboardSettings.language),
   );
   const [welcomeConsentError, setWelcomeConsentError] = useState(false);
+  const [installingKinds, setInstallingKinds] = useState<Set<RuntimeKind>>(new Set());
 
   useEffect(() => {
     if (activeStep !== state.step) {
       dispatch({ type: "SET_STEP", step: activeStep as WizardStep });
     }
   }, [activeStep, state.step]);
+
+  const installRuntime = useCallback(
+    async (kind: RuntimeKind) => {
+      if (installingKinds.has(kind)) {
+        return;
+      }
+
+      setInstallingKinds((prev) => new Set(prev).add(kind));
+
+      try {
+        await runtimeApi.install({ runtime_type: kind, verbose: true });
+        await qc.refetchQueries({ queryKey: ["onboardingRuntimeCheck"], type: "active" });
+        notifySuccess(
+          t("runtime.install.successTitle", { defaultValue: "Install complete" }),
+          t("runtime.install.successDescription", {
+            defaultValue: "{{runtime}} installation finished.",
+            runtime: kind.toUpperCase(),
+          }),
+        );
+      } catch (error) {
+        notifyError(
+          t("runtime.install.errorTitle", { defaultValue: "Install failed" }),
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        setInstallingKinds((prev) => {
+          const next = new Set(prev);
+          next.delete(kind);
+          return next;
+        });
+      }
+    },
+    [installingKinds, qc, t],
+  );
+
+  const runtimeStepIndex = STEP_ORDER.indexOf("runtime");
+  const currentStepIndex = STEP_ORDER.indexOf(state.step);
+  const shouldFetchRuntimeCheck = currentStepIndex <= runtimeStepIndex;
+
+  const { data: runtimeCheckForGate, isLoading: runtimeCheckForGateLoading } = useQuery<RuntimeCheckResp>({
+    queryKey: ["onboardingRuntimeCheck"],
+    queryFn: () => onboardingApi.runtimeCheck(),
+    staleTime: 60_000,
+    refetchInterval: state.step === "runtime" ? 3_000 : false,
+    refetchIntervalInBackground: false,
+    enabled: shouldFetchRuntimeCheck,
+  });
+  const runtimeCheckRuntimes = runtimeCheckForGate?.data?.runtimes;
 
   const goToStep = useCallback(
     (step: WizardStep) => {
@@ -287,9 +365,21 @@ export function OnboardingPage() {
         setWelcomeConsentError(true);
         return;
       }
+      // Gate: block forward navigation past runtime step when runtimes are unmet
+      const runtimeIndex = STEP_ORDER.indexOf("runtime");
+      const targetIndex = STEP_ORDER.indexOf(step);
+      const currentIndex = STEP_ORDER.indexOf(state.step);
+      if (currentIndex <= runtimeIndex && targetIndex > runtimeIndex) {
+        if (runtimeCheckForGateLoading || !runtimeCheckRuntimes) {
+          return;
+        }
+        if (!areAllOnboardingRuntimeKindsAvailable(runtimeCheckRuntimes)) {
+          return;
+        }
+      }
       setActiveStep(step);
     },
-    [setActiveStep, state.step, state.welcomeConsent],
+    [setActiveStep, state.step, state.welcomeConsent, runtimeCheckForGateLoading, runtimeCheckRuntimes],
   );
 
   const goToNextStep = useCallback(() => {
@@ -311,25 +401,9 @@ export function OnboardingPage() {
 
   useEffect(() => {
     if (statusResp?.data?.completed) {
-      window.localStorage.removeItem(ONBOARDING_SELECTIONS_STORAGE_KEY);
       navigate("/", { replace: true });
     }
   }, [statusResp, navigate]);
-
-  useEffect(() => {
-    if (statusResp?.data?.completed) {
-      return;
-    }
-
-    const payload: PersistedOnboardingSelections = {
-      selectedClients: Array.from(state.selectedClients),
-      selectedServers: Array.from(state.selectedServers),
-    };
-    window.localStorage.setItem(
-      ONBOARDING_SELECTIONS_STORAGE_KEY,
-      JSON.stringify(payload),
-    );
-  }, [state.selectedClients, state.selectedServers, statusResp?.data?.completed]);
 
   const handleComplete = useCallback(async () => {
     setCompleting(true);
@@ -428,7 +502,6 @@ export function OnboardingPage() {
 
       await onboardingApi.complete(true);
       await qc.invalidateQueries({ queryKey: ["onboardingStatus"] });
-      window.localStorage.removeItem(ONBOARDING_SELECTIONS_STORAGE_KEY);
       navigate("/", { replace: true });
     } catch (error) {
       notifyError(
@@ -470,6 +543,13 @@ export function OnboardingPage() {
   const stepIdx = STEP_ORDER.indexOf(state.step);
   const isFirst = stepIdx === 0;
   const isLast = stepIdx === STEP_ORDER.length - 1;
+
+  const runtimeUnmet = useMemo(() => {
+    if (state.step !== "runtime") {
+      return false;
+    }
+    return !areAllOnboardingRuntimeKindsAvailable(runtimeCheckRuntimes);
+  }, [runtimeCheckRuntimes, state.step]);
 
   const termsLabel = t("layout.terms", { defaultValue: "Terms" });
   const privacyLabel = t("layout.privacy", { defaultValue: "Privacy" });
@@ -526,12 +606,7 @@ export function OnboardingPage() {
                   type="button"
                   onClick={() => goToStep(s.key)}
                   aria-current={i === stepIdx ? "step" : undefined}
-                  className={`flex items-center gap-1 ${i < stepIdx
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : i === stepIdx
-                      ? "font-medium text-slate-900 dark:text-white"
-                      : "text-slate-400"
-                    } transition-colors hover:text-slate-700 dark:hover:text-slate-200`}
+                  className={`flex items-center gap-1 ${getStepButtonClass(i, stepIdx)} transition-colors hover:text-slate-700 dark:hover:text-slate-200`}
                 >
                   {i < stepIdx ? (
                     <Check className="h-3.5 w-3.5" />
@@ -568,7 +643,14 @@ export function OnboardingPage() {
               onGetStarted={handleGetStarted}
             />
           )}
-          {state.step === "runtime" && <RuntimeStep />}
+          {state.step === "runtime" && (
+            <RuntimeStep
+              runtimes={runtimeCheckRuntimes}
+              isLoading={runtimeCheckForGateLoading}
+              installingKinds={installingKinds}
+              onInstall={installRuntime}
+            />
+          )}
           {state.step === "clients" && (
             <ClientsStep
               selectedClients={state.selectedClients}
@@ -648,9 +730,13 @@ export function OnboardingPage() {
                     <Check className="ml-1.5 h-4 w-4" />
                   </Button>
                 ) : (
-                  <Button onClick={goToNextStep}>
-                    {t("nav.next", { defaultValue: "Next" })}
-                    <ArrowRight className="ml-1.5 h-4 w-4" />
+                  <Button onClick={goToNextStep} disabled={runtimeUnmet}>
+                    {runtimeUnmet
+                      ? t("runtime.install.required", {
+                        defaultValue: "Install runtimes to continue",
+                      })
+                      : t("nav.next", { defaultValue: "Next" })}
+                    {!runtimeUnmet && <ArrowRight className="ml-1.5 h-4 w-4" />}
                   </Button>
                 )}
               </div>
@@ -691,9 +777,8 @@ function WelcomeStep({
   const { t, i18n } = useTranslation("onboarding");
   const consentId = useId();
 
-  // Sync language with i18n
   useEffect(() => {
-    const i18nLang = language === "zh-cn" ? "zh-CN" : language === "ja" ? "ja-JP" : "en";
+    const i18nLang = welcomeLanguageToI18nCode(language);
     if (i18n.language !== i18nLang) {
       i18n.changeLanguage(i18nLang);
     }
@@ -784,58 +869,29 @@ function WelcomeStep({
 
 // ── Runtime step ──────────────────────────────────────────────────────────────
 
-function RuntimeStep() {
+function RuntimeStep({
+  runtimes: runtimeQueryRuntimes,
+  isLoading: runtimeQueryLoading,
+  installingKinds,
+  onInstall,
+}: {
+  runtimes: RuntimeEntry[] | undefined;
+  isLoading: boolean;
+  installingKinds: Set<RuntimeKind>;
+  onInstall: (kind: RuntimeKind) => Promise<void>;
+}) {
   const { t, i18n } = useTranslation("onboarding");
   const [searchParams] = useSearchParams();
-  const qc = useQueryClient();
-  const [installingKinds, setInstallingKinds] = useState<Set<RuntimeKind>>(
-    new Set(),
-  );
-  const { data, isLoading } = useQuery<RuntimeCheckResp>({
-    queryKey: ["onboardingRuntimeCheck"],
-    queryFn: () => onboardingApi.runtimeCheck(),
-    staleTime: 60_000,
-  });
-  const installRuntime = useCallback(
-    async (kind: RuntimeKind) => {
-      if (installingKinds.has(kind)) return;
-      setInstallingKinds((prev) => new Set(prev).add(kind));
-      try {
-        await runtimeApi.install({ runtime_type: kind, verbose: true });
-        await qc.invalidateQueries({ queryKey: ["onboardingRuntimeCheck"] });
-        notifySuccess(
-          t("runtime.install.successTitle", { defaultValue: "Install complete" }),
-          t("runtime.install.successDescription", {
-            defaultValue: "{{runtime}} installation finished.",
-            runtime: kind.toUpperCase(),
-          }),
-        );
-      } catch (error) {
-        notifyError(
-          t("runtime.install.errorTitle", { defaultValue: "Install failed" }),
-          error instanceof Error ? error.message : String(error),
-        );
-      } finally {
-        setInstallingKinds((prev) => {
-          const next = new Set(prev);
-          next.delete(kind);
-          return next;
-        });
-      }
-    },
-    [installingKinds, qc, t],
-  );
 
   const preview = searchParams.get("runtimePreview");
   const previewMode: "real" | "partial" | "none" =
     preview === "partial" || preview === "none" ? preview : "real";
 
-  const baseRuntimes = data?.data?.runtimes ?? [];
+  const baseRuntimes = runtimeQueryRuntimes ?? [];
   const runtimeSeeds: RuntimeEntry[] = useMemo(
     () => [
       { name: "node", available: true },
       { name: "bun", available: true },
-      { name: "python3", available: true },
       { name: "uv", available: true },
     ],
     [],
@@ -860,14 +916,14 @@ function RuntimeStep() {
     }));
   }, [previewMode, sourceRuntimes]);
 
-  const showLoading = previewMode === "real" && isLoading;
+  const showLoading = previewMode === "real" && runtimeQueryLoading;
 
   const getRuntimeKindFromEntry = useCallback(
     (name: string): RuntimeKind | null => {
       const n = name.toLowerCase();
       if (n === "node" || n === "npx") return "node";
       if (n === "bun" || n === "bunx") return "bun";
-      if (n === "python3" || n === "uv" || n === "uvx") return "uv";
+      if (n === "uv" || n === "uvx") return "uv";
       return null;
     },
     [],
@@ -913,6 +969,11 @@ function RuntimeStep() {
     return set;
   }, [getRuntimeKindFromEntry, runtimes]);
 
+  const runtimeStateByKind = useMemo(
+    () => computeRuntimeStateByKind(runtimes),
+    [runtimes],
+  );
+
   return (
     <div className="mx-auto flex min-h-[520px] w-full flex-col justify-center">
       <div className="mb-8 text-center">
@@ -925,20 +986,24 @@ function RuntimeStep() {
         <p className="mt-2 text-slate-600 dark:text-slate-400">
           {t("runtime.description", {
             defaultValue:
-              "MCP servers need a JavaScript or Python runtime. We'll check what's available on your system.",
+              "We'll check which runtimes on your system are usable by MCPMate.",
           })}
         </p>
       </div>
 
       {showLoading ? (
         <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
+          <Loader2 className="h-8 w-8 animate-spin text-emerald-500" />
         </div>
       ) : (
         <>
           <div className="mb-6 grid gap-4 md:grid-cols-3">
             {runtimeCardMeta.map((card) => {
-              const available = availableKinds.has(card.key);
+              const runtimeState = runtimeStateByKind.get(card.key) ?? {
+                available: availableKinds.has(card.key),
+                isManaged: false,
+              };
+              const { available, isManaged } = runtimeState;
               return (
                 <div
                   key={card.key}
@@ -969,25 +1034,40 @@ function RuntimeStep() {
                   </p>
                   <Button
                     size="sm"
-                    variant={available ? "secondary" : "default"}
+                    variant={available && isManaged ? "secondary" : "default"}
                     className="w-fit"
-                    disabled={available || installingKinds.has(card.key)}
-                    onClick={() => void installRuntime(card.key)}
+                    disabled={(available && isManaged) || installingKinds.has(card.key)}
+                    onClick={() => void onInstall(card.key)}
                   >
-                    {available ? (
-                      t("runtime.install.ready", { defaultValue: "Ready" })
-                    ) : installingKinds.has(card.key) ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        {t("runtime.install.installing", {
-                          defaultValue: "Installing...",
-                        })}
-                      </>
-                    ) : (
-                      t("runtime.install.clickToInstall", {
+                    {(() => {
+                      if (installingKinds.has(card.key)) {
+                        return (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            {t("runtime.install.installing", {
+                              defaultValue: "Installing...",
+                            })}
+                          </>
+                        );
+                      }
+
+                      if (available && isManaged) {
+                        return (
+                          <>
+                            <Check className="mr-1 h-3.5 w-3.5" />
+                            {t("runtime.install.ready", { defaultValue: "Ready" })}
+                          </>
+                        );
+                      }
+                      if (available && !isManaged) {
+                        return t("runtime.install.replaceWithManaged", {
+                          defaultValue: "Replace with managed",
+                        });
+                      }
+                      return t("runtime.install.clickToInstall", {
                         defaultValue: "Click to install",
-                      })
-                    )}
+                      });
+                    })()}
                   </Button>
                 </div>
               );
@@ -1093,8 +1173,8 @@ function ClientsStep({
                 type="button"
                 onClick={() => onToggle(client.identifier)}
                 className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                  ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                  : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+                    ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
+                    : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
                   }`}
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">

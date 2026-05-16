@@ -9,15 +9,17 @@ export const runtimeTranslations = {
 		status: {
 			running: "running",
 			stopped: "stopped",
+			fallback: "Fallback",
 		},
 		buttons: {
 			resetAllCaches: "Reset All Caches",
-			installRepair: "Install / Repair",
+			install: "Install",
+			reinstall: "Reinstall",
 			resetCache: "Reset Cache",
 		},
 		labels: {
 			version: "Version",
-			folder: "Folder",
+			path: "Path",
 			message: "Message",
 			cache: "Cache",
 			size: "Size",
@@ -72,12 +74,16 @@ export const runtimeTranslations = {
 		dialogs: {
 			resetAllTitle: "Reset all runtime caches?",
 			resetOneTitle: "Reset {{key}} cache?",
-			installTitle: "Install/Repair {{key}} runtime?",
+			installTitle: "Install {{key}} runtime?",
+			reinstallTitle: "Reinstall {{key}} runtime?",
 			resetAllDescription: "This will clear all runtime caches. Continue?",
 			resetOneDescription: "This will clear {{key}} cache. Continue?",
 			installDescription:
-				"This will install or repair {{key}} on the server. Continue?",
-			installRepair: "Install / Repair",
+				"This will install the MCPMate-managed {{key}} runtime on the server. Continue?",
+			reinstallDescription:
+				"This will reinstall or repair the MCPMate-managed {{key}} runtime on the server. Continue?",
+			installConfirm: "Install",
+			reinstallConfirm: "Reinstall",
 			confirm: "Confirm",
 			cancel: "Cancel",
 		},
@@ -92,15 +98,17 @@ export const runtimeTranslations = {
 		status: {
 			running: "运行中",
 			stopped: "已停止",
+			fallback: "系统回退",
 		},
 		buttons: {
 			resetAllCaches: "重置所有缓存",
-			installRepair: "安装 / 修复",
+			install: "安装",
+			reinstall: "重新安装",
 			resetCache: "重置缓存",
 		},
 		labels: {
 			version: "版本",
-			folder: "文件夹",
+			path: "路径",
 			message: "消息",
 			cache: "缓存",
 			size: "大小",
@@ -153,11 +161,15 @@ export const runtimeTranslations = {
 		dialogs: {
 			resetAllTitle: "重置所有运行时缓存？",
 			resetOneTitle: "重置 {{key}} 缓存？",
-			installTitle: "安装/修复 {{key}} 运行时？",
+			installTitle: "安装 {{key}} 运行时？",
+			reinstallTitle: "重新安装 {{key}} 运行时？",
 			resetAllDescription: "这将清除所有运行时缓存。继续？",
 			resetOneDescription: "这将清除 {{key}} 缓存。继续？",
-			installDescription: "这将在服务器上安装或修复 {{key}}。继续？",
-			installRepair: "安装 / 修复",
+			installDescription: "这将在服务器上安装由 MCPMate 托管的 {{key}} 运行时。继续？",
+			reinstallDescription:
+				"这将在服务器上重新安装或修复由 MCPMate 托管的 {{key}} 运行时。继续？",
+			installConfirm: "安装",
+			reinstallConfirm: "重新安装",
 			confirm: "确认",
 			cancel: "取消",
 		},
@@ -172,15 +184,17 @@ export const runtimeTranslations = {
 		status: {
 			running: "実行中",
 			stopped: "停止済み",
+			fallback: "フォールバック",
 		},
 		buttons: {
 			resetAllCaches: "すべてのキャッシュをリセット",
-			installRepair: "インストール / 修復",
+			install: "インストール",
+			reinstall: "再インストール",
 			resetCache: "キャッシュをリセット",
 		},
 		labels: {
 			version: "バージョン",
-			folder: "フォルダ",
+			path: "パス",
 			message: "メッセージ",
 			cache: "キャッシュ",
 			size: "サイズ",
@@ -235,13 +249,17 @@ export const runtimeTranslations = {
 		dialogs: {
 			resetAllTitle: "すべてのランタイムキャッシュをリセットしますか？",
 			resetOneTitle: "{{key}} キャッシュをリセットしますか？",
-			installTitle: "{{key}} ランタイムをインストール/修復しますか？",
+			installTitle: "{{key}} ランタイムをインストールしますか？",
+			reinstallTitle: "{{key}} ランタイムを再インストールしますか？",
 			resetAllDescription:
 				"すべてのランタイムキャッシュがクリアされます。続行しますか？",
 			resetOneDescription: "{{key}} キャッシュがクリアされます。続行しますか？",
 			installDescription:
-				"サーバーで {{key}} をインストールまたは修復します。続行しますか？",
-			installRepair: "インストール / 修復",
+				"サーバーに MCPMate 管理の {{key}} ランタイムをインストールします。続行しますか？",
+			reinstallDescription:
+				"サーバー上の MCPMate 管理の {{key}} ランタイムを再インストールまたは修復します。続行しますか？",
+			installConfirm: "インストール",
+			reinstallConfirm: "再インストール",
 			confirm: "確認",
 			cancel: "キャンセル",
 		},
