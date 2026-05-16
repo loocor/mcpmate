@@ -234,6 +234,25 @@ fn dispatch_mcpmate_deep_link(app: &tauri::AppHandle, url: &str, context: &'stat
     });
 }
 
+#[cfg(target_os = "linux")]
+fn extract_linux_fallback_deep_links_from_argv(args: &[String]) -> Vec<String> {
+    let normalize = |arg: &String| arg.trim().trim_matches('"').trim_matches('\'');
+    if args.len() == 2 && normalize(&args[1]).starts_with("mcpmate://") {
+        return Vec::new();
+    }
+
+    args.iter()
+        .filter_map(|arg| {
+            let trimmed = normalize(arg);
+            if trimmed.starts_with("mcpmate://") {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 async fn read_core_state_view(
     config: &DesktopCoreSourceConfig,
     managed_state: &DesktopManagedCoreState,
@@ -448,6 +467,13 @@ pub fn run() -> Result<()> {
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             info!(args = ?argv, cwd = %cwd, "Secondary MCPMate instance intercepted");
+            #[cfg(target_os = "linux")]
+            {
+                let urls = extract_linux_fallback_deep_links_from_argv(&argv);
+                for url in urls {
+                    dispatch_mcpmate_deep_link(app, url.as_str(), "single_instance_linux_argv");
+                }
+            }
             let handle = app.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(err) = shell::ensure_window_visibility(&handle) {
