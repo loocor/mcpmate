@@ -186,8 +186,12 @@ impl RuntimeInstaller {
         match result {
             Ok(final_path) => Ok(final_path),
             Err(error) => {
-                let _ = Self::clean_dir(&staging_dir).await;
-                let _ = Self::clean_dir(&final_staging).await;
+                if let Err(e) = Self::clean_dir(&staging_dir).await {
+                    tracing::warn!("Failed to clean staging dir: {}", e);
+                }
+                if let Err(e) = Self::clean_dir(&final_staging).await {
+                    tracing::warn!("Failed to clean final staging dir: {}", e);
+                }
                 Err(error)
             }
         }

@@ -17,7 +17,6 @@ pub async fn connect_server(
     transport_type: TransportType,
     ct: Option<CancellationToken>,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
-    runtime_cache: Option<&crate::runtime::RuntimeCache>,
 ) -> Result<(
     crate::core::transport::ClientService,
     Vec<Tool>,
@@ -29,7 +28,7 @@ pub async fn connect_server(
             let ct = ct.unwrap_or_default();
 
             let result =
-                stdio::connect_stdio_server(server_name, server_config, ct, database_pool, runtime_cache).await?;
+                stdio::connect_stdio_server(server_name, server_config, ct, database_pool).await?;
 
             Ok(result)
         }
@@ -41,7 +40,7 @@ pub async fn connect_server(
     }
 }
 
-/// Connect to a server with simplified interface (no runtime cache)
+/// Connect to a server with simplified interface
 pub async fn connect_server_simple(
     server_name: &str,
     server_config: &MCPServerConfig,
@@ -58,7 +57,6 @@ pub async fn connect_server_simple(
         server_config,
         server_type,
         transport_type,
-        None,
         None,
         None,
     )

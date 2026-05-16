@@ -18,10 +18,13 @@ use crate::core::foundation::utils::{
 };
 use crate::core::models::MCPServerConfig;
 
-/// Prepare and configure command with environment variables
+/// Prepare and configure command with environment variables.
+///
+/// Uses the unified resolver (managed → enriched PATH) to find the
+/// executable.  For python commands, adds a transport-specific UV
+/// Python fallback as a last resort.
 async fn prepare_server_command(
     server_config: &MCPServerConfig,
-    runtime_cache: Option<&crate::runtime::RuntimeCache>,
 ) -> Result<(tokio::process::Command, String)> {
     let command = server_config
         .command
@@ -30,42 +33,42 @@ async fn prepare_server_command(
 
     let transformed_command = crate::core::foundation::utils::transform_command(command);
 
+    let paths = crate::common::paths::global_paths();
+    let resolver = crate::runtime::CommandResolver::new(paths);
+
     tracing::debug!(
-        "Executing command: {} (transformed from: {})",
+        "[stdio:resolve] command='{}' (original='{}') enriched_PATH={}",
         transformed_command,
-        command
+        command,
+        resolver.enriched_path()
     );
 
-    let mut cmd = prepare_command(&transformed_command, server_config.args.as_ref());
+    // Use the unified resolver (managed → enriched PATH → UV Python fallback)
+    let resolved = resolver.resolve(&transformed_command);
 
-    // Handle runtime cache if available
-    if let Some(cache) = runtime_cache {
-        if let Some(runtime_path) = cache.get_runtime_for_command(&transformed_command).await {
+    let cmd = match resolved {
+        Some(ref r) => {
             tracing::debug!(
-                "Using MCPMate managed runtime for command '{}' (transformed from '{}'): {}",
+                "[stdio:resolve] Resolved '{}' via {:?} → {}",
                 transformed_command,
-                command,
-                runtime_path.display()
+                r.source,
+                r.path.display()
             );
-
-            let runtime_command = runtime_path.to_string_lossy();
-            cmd = prepare_command(&runtime_command, server_config.args.as_ref());
-        } else {
-            tracing::warn!(
-                "MCPMate runtime for command '{}' (transformed from '{}') not available in .mcpmate/runtimes, falling back to system runtime",
-                transformed_command,
-                command
-            );
+            prepare_command(&r.path.to_string_lossy(), server_config.args.as_ref())
         }
-    } else {
-        tracing::warn!("Runtime cache not available, using system runtime for command '{command}'");
+        None => {
+            tracing::warn!(
+                "[stdio:resolve] Command '{}' not found, using as-is",
+                transformed_command
+            );
+            prepare_command(&transformed_command, server_config.args.as_ref())
+        }
+    };
 
-        // Create necessary directories for runtime
-        let paths = crate::common::paths::global_paths();
-        paths
-            .ensure_directories()
-            .context("Failed to create necessary directories")?;
-    }
+    // Ensure runtime directories exist
+    paths
+        .ensure_directories()
+        .context("Failed to create necessary directories")?;
 
     Ok((cmd, transformed_command))
 }
@@ -106,11 +109,16 @@ async fn connect_with_timeout(
     server_name: &str,
     connection_timeout: std::time::Duration,
 ) -> Result<crate::core::transport::ClientService> {
+    if let Ok(path) = std::env::var("PATH") {
+        tracing::debug!("[PATH_DEBUG] Server '{}' spawning with PATH: {}", server_name, path);
+    }
+
     // Use builder to capture stderr for logging
     let (child_process, stderr_handle) = TokioChildProcess::builder(cmd)
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| {
+            tracing::error!("Failed to create child process for '{}': {}", server_name, e);
             ct.cancel();
             anyhow::anyhow!("Failed to create child process: {e}")
         })?;
@@ -191,27 +199,26 @@ async fn cancel_service_safely(service: crate::core::transport::ClientService) {
     }
 }
 
-/// Core connection function with customizable environment preparation
-async fn connect_stdio_server_core(
+/// Universal stdio server connection function with optional database support
+pub async fn connect_stdio_server(
     server_name: &str,
     server_config: &MCPServerConfig,
     ct: CancellationToken,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
-    runtime_cache: Option<&crate::runtime::RuntimeCache>,
 ) -> Result<(
     crate::core::transport::ClientService,
     Vec<Tool>,
     Option<ServerCapabilities>,
     Option<u32>,
 )> {
-    // Prepare command and handle runtime cache
-    let (mut cmd, transformed_command) = prepare_server_command(server_config, runtime_cache).await?;
+    // Prepare command — unified resolver handles managed + enriched PATH
+    let (mut cmd, transformed_command) = prepare_server_command(server_config).await?;
 
     // Setup environment variables
     setup_command_environment(&mut cmd, server_config, &transformed_command, database_pool).await?;
 
     // Determine appropriate timeouts
-    let command = server_config.command.as_ref().unwrap(); // Safe because prepare_server_command already checked
+    let command = server_config.command.as_ref().expect("command already validated in prepare_server_command");
     let connection_timeout = get_connection_timeout(command);
     let tools_timeout = get_tools_timeout(command);
 
@@ -264,9 +271,9 @@ async fn get_process_id_for_server(
         // Get the command name (last part of the path)
         let cmd_name = command.split('/').next_back().unwrap_or(command);
 
-        // Create a new System instance
-        let mut system = sysinfo::System::new_all();
-        system.refresh_all();
+        // Create a new System instance and only refresh process info
+        let mut system = sysinfo::System::new();
+        system.refresh_processes();
 
         // Find the process by name
         for (pid, process) in system.processes() {
@@ -289,20 +296,4 @@ async fn get_process_id_for_server(
     }
 
     None
-}
-
-/// Universal stdio server connection function with optional database and runtime cache support
-pub async fn connect_stdio_server(
-    server_name: &str,
-    server_config: &MCPServerConfig,
-    ct: CancellationToken,
-    database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
-    runtime_cache: Option<&crate::runtime::RuntimeCache>,
-) -> Result<(
-    crate::core::transport::ClientService,
-    Vec<Tool>,
-    Option<ServerCapabilities>,
-    Option<u32>,
-)> {
-    connect_stdio_server_core(server_name, server_config, ct, database_pool, runtime_cache).await
 }

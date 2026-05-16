@@ -3,9 +3,11 @@
 //! Simplified runtime management with file-system based detection.
 //! Provides unified runtime management through RuntimeManager.
 
+pub mod detection; // Runtime availability detection (scoped to spawn PATH)
 pub mod downloader; // Simplified downloader
 pub mod installer; // Simplified installer
 pub mod manager; // Unified runtime manager
+pub mod resolver; // Unified command resolution (managed → system PATH)
 
 // Re-export common types from common::env and common::types
 pub use crate::common::env::{Architecture, Environment, OperatingSystem, detect_environment};
@@ -13,21 +15,9 @@ pub use crate::common::{RuntimeError, RuntimeType};
 
 // Re-export core runtime services
 pub use crate::runtime::{
+    detection::{RuntimeDetection, RuntimeDetector, RuntimeProbe},
     downloader::RuntimeDownloader,
     installer::RuntimeInstaller,
-    manager::{RuntimeCache, RuntimeInfo, RuntimeManager},
+    manager::{RuntimeInfo, RuntimeManager},
+    resolver::{CommandResolver, ResolveSource, ResolvedCommand},
 };
-
-use std::path::PathBuf;
-
-/// Get the installation path of the runtime
-/// Simplified wrapper around RuntimeManager
-pub fn get_runtime_path(
-    runtime_type: RuntimeType,
-    _version: Option<&str>, // Version parameter kept for API compatibility but ignored
-) -> anyhow::Result<PathBuf> {
-    let manager = RuntimeManager::new();
-    manager
-        .get_executable_path(runtime_type)
-        .ok_or_else(|| anyhow::anyhow!("Runtime {} not found", runtime_type.as_str()))
-}

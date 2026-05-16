@@ -1,9 +1,8 @@
-use std::{collections::HashMap, process::Output, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{Json, extract::State};
 use schemars::JsonSchema;
 use serde::Serialize;
-use tokio::time::Instant;
 
 use super::ApiError;
 use super::client::parse_rule_from_api_data;
@@ -17,6 +16,7 @@ use crate::common::constants::database::tables;
 use crate::common::server::ServerType;
 use crate::config::server::import::build_import_plan_from_entries;
 use crate::macros::resp::api_resp;
+use crate::runtime::{RuntimeDetection, RuntimeDetector, RuntimeProbe, ResolveSource};
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Onboarding action result")]
@@ -234,119 +234,94 @@ pub async fn server_scan(
     })))
 }
 
-fn runtime_locator_command() -> &'static str {
-    if cfg!(windows) { "where" } else { "which" }
-}
-
-#[derive(Clone, Copy)]
-struct RuntimeCheckProbe<'a> {
-    program: &'a str,
-    args: &'a [&'a str],
-}
-
-const NODE_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
-    program: "node",
+const NODE_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
+    command: "node",
     args: &["--version"],
 }];
-const NPX_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
-    program: "npx",
+const NPX_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
+    command: "npx",
     args: &["--version"],
 }];
-const BUN_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
-    program: "bun",
+const BUN_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
+    command: "bun",
     args: &["--version"],
 }];
-const BUNX_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
-    program: "bunx",
+const BUNX_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
+    command: "bunx",
     args: &["--version"],
 }];
-#[cfg(windows)]
-const PYTHON_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[
-    RuntimeCheckProbe {
-        program: "python",
+#[cfg(all(windows, test))]
+const PYTHON_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[
+    RuntimeProbe {
+        command: "python",
         args: &["--version"],
     },
-    RuntimeCheckProbe {
-        program: "py",
+    RuntimeProbe {
+        command: "py",
         args: &["-3", "--version"],
     },
 ];
-#[cfg(not(windows))]
-const PYTHON_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
-    program: "python3",
+#[cfg(all(not(windows), test))]
+const PYTHON_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
+    command: "python3",
     args: &["--version"],
 }];
-const UV_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
-    program: "uv",
+const UV_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
+    command: "uv",
     args: &["--version"],
 }];
-const UVX_RUNTIME_PROBES: &[RuntimeCheckProbe<'_>] = &[RuntimeCheckProbe {
-    program: "uvx",
+const UVX_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
+    command: "uvx",
     args: &["--version"],
 }];
 
-const RUNTIME_CHECK_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
-const RUNTIME_CHECK_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
+fn runtime_detection_to_entry(detection: RuntimeDetection) -> RuntimeEntry {
+    let source = detection
+        .resolve_source
+        .as_ref()
+        .map(resolve_source_to_label);
 
-fn remaining_runtime_check_budget(started_at: Instant) -> Option<Duration> {
-    RUNTIME_CHECK_TOTAL_TIMEOUT.checked_sub(started_at.elapsed())
+    RuntimeEntry {
+        name: detection.name,
+        available: detection.available,
+        version: detection.version,
+        path: detection.path,
+        source,
+    }
 }
 
-async fn run_command_with_timeout(
-    program: &str,
-    args: &[&str],
-    timeout: Duration,
-) -> Option<Output> {
-    if timeout.is_zero() {
-        return None;
+fn resolve_source_to_label(source: &ResolveSource) -> String {
+    match source {
+        ResolveSource::McpMateManaged => "mcpMate".to_string(),
+        ResolveSource::SystemPath => "system".to_string(),
+        ResolveSource::UvPython => "uvPython".to_string(),
+    }
+}
+
+fn update_runtime_summary(
+    entry: &RuntimeEntry,
+    has_js: &mut bool,
+    has_python: &mut bool,
+) {
+    if !entry.available {
+        return;
     }
 
-    let mut command = tokio::process::Command::new(program);
-    command.kill_on_drop(true).args(args);
-
-    tokio::time::timeout(timeout, command.output()).await.ok()?.ok()
-}
-
-fn resolve_runtime_path(stdout: &[u8]) -> Option<String> {
-    String::from_utf8_lossy(stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string)
-}
-
-async fn run_runtime_check_command(
-    program: &str,
-    args: &[&str],
-    started_at: Instant,
-) -> Option<Output> {
-    let remaining = remaining_runtime_check_budget(started_at)?;
-    run_command_with_timeout(program, args, remaining.min(RUNTIME_CHECK_COMMAND_TIMEOUT)).await
-}
-
-fn normalize_runtime_version(
-    stdout: &[u8],
-    stderr: &[u8],
-) -> Option<String> {
-    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
-    let raw = if stdout.is_empty() { stderr } else { stdout };
-    let trimmed = raw
-        .split_once('(')
-        .map(|(head, _)| head.trim().to_string())
-        .unwrap_or(raw);
-    if trimmed.is_empty() { None } else { Some(trimmed) }
+    match entry.name.as_str() {
+        "node" | "bun" | "npx" | "bunx" => *has_js = true,
+        "uv" | "uvx" => *has_python = true,
+        _ => {}
+    }
 }
 
 /// GET /api/onboarding/runtime-check
-/// Detects available runtimes (node, bun, python3, uv, etc.) on the host system.
+/// Detects available runtimes (node, bun, uv, etc.) on the host system.
 pub async fn runtime_check(State(_state): State<Arc<AppState>>) -> Result<Json<RuntimeCheckResp>, ApiError> {
-    let checks: &[(&str, &[RuntimeCheckProbe<'_>])] = &[
+    let checks: &[(&str, &[RuntimeProbe<'_>])] = &[
         ("node", NODE_RUNTIME_PROBES),
         ("npx", NPX_RUNTIME_PROBES),
         ("bun", BUN_RUNTIME_PROBES),
         ("bunx", BUNX_RUNTIME_PROBES),
-        ("python3", PYTHON_RUNTIME_PROBES),
         ("uv", UV_RUNTIME_PROBES),
         ("uvx", UVX_RUNTIME_PROBES),
     ];
@@ -354,47 +329,12 @@ pub async fn runtime_check(State(_state): State<Arc<AppState>>) -> Result<Json<R
     let mut runtimes = Vec::with_capacity(checks.len());
     let mut has_js = false;
     let mut has_python = false;
-    let started_at = Instant::now();
-    let locator = runtime_locator_command();
+    let mut detector = RuntimeDetector::new(crate::common::paths::global_paths());
 
     for &(name, probes) in checks {
-        let mut available = false;
-        let mut version = None;
-        let mut resolved_program = None;
-
-        for probe in probes {
-            let result = run_runtime_check_command(probe.program, probe.args, started_at).await;
-            if let Some(output) = result.filter(|output| output.status.success()) {
-                available = true;
-                version = normalize_runtime_version(&output.stdout, &output.stderr);
-                resolved_program = Some(probe.program);
-                break;
-            }
-        }
-
-        let path = if let Some(program) = resolved_program {
-            run_runtime_check_command(locator, &[program], started_at)
-                .await
-                .filter(|output| output.status.success())
-                .and_then(|output| resolve_runtime_path(&output.stdout))
-        } else {
-            None
-        };
-
-        if available {
-            match name {
-                "node" | "bun" | "npx" | "bunx" => has_js = true,
-                "python3" | "uv" | "uvx" => has_python = true,
-                _ => {}
-            }
-        }
-
-        runtimes.push(RuntimeEntry {
-            name: name.to_string(),
-            available,
-            version,
-            path,
-        });
+        let entry = runtime_detection_to_entry(detector.detect(name, probes).await);
+        update_runtime_summary(&entry, &mut has_js, &mut has_python);
+        runtimes.push(entry);
     }
 
     Ok(Json(RuntimeCheckResp::success(RuntimeCheckData {
@@ -434,6 +374,41 @@ mod tests {
     use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
     use tokio::sync::Mutex;
+
+    #[test]
+    fn resolve_source_to_label_classifies_correctly() {
+        assert_eq!(resolve_source_to_label(&ResolveSource::McpMateManaged), "mcpMate");
+        assert_eq!(resolve_source_to_label(&ResolveSource::SystemPath), "system");
+        assert_eq!(resolve_source_to_label(&ResolveSource::UvPython), "uvPython");
+    }
+
+    #[test]
+    fn runtime_detection_to_entry_uses_resolve_source() {
+        use crate::runtime::RuntimeDetection;
+        let detection = RuntimeDetection {
+            name: "node".to_string(),
+            available: true,
+            version: Some("v22.0.0".to_string()),
+            path: Some("/opt/homebrew/bin/node".to_string()),
+            resolve_source: Some(ResolveSource::SystemPath),
+        };
+        let entry = runtime_detection_to_entry(detection);
+        assert_eq!(entry.source.as_deref(), Some("system"));
+    }
+
+    #[test]
+    fn runtime_detection_to_entry_no_source_when_unavailable() {
+        use crate::runtime::RuntimeDetection;
+        let detection = RuntimeDetection {
+            name: "node".to_string(),
+            available: false,
+            version: None,
+            path: None,
+            resolve_source: None,
+        };
+        let entry = runtime_detection_to_entry(detection);
+        assert!(entry.source.is_none());
+    }
 
     struct TestContext {
         _temp_dir: TempDir,
@@ -719,7 +694,7 @@ mod tests {
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<HashSet<_>>();
-        let expected = HashSet::from(["node", "npx", "bun", "bunx", "python3", "uv", "uvx"]);
+        let expected = HashSet::from(["node", "npx", "bun", "bunx", "uv", "uvx"]);
         assert_eq!(names, expected);
 
         let has_js_from_rows = data
@@ -729,23 +704,10 @@ mod tests {
         let has_python_from_rows = data
             .runtimes
             .iter()
-            .any(|entry| entry.available && matches!(entry.name.as_str(), "python3" | "uv" | "uvx"));
+            .any(|entry| entry.available && matches!(entry.name.as_str(), "uv" | "uvx"));
 
         assert_eq!(data.has_js_runtime, has_js_from_rows);
         assert_eq!(data.has_python_runtime, has_python_from_rows);
-    }
-
-    #[test]
-    fn resolve_runtime_path_uses_first_non_empty_line() {
-        assert_eq!(
-            resolve_runtime_path(b"\nC:/Python312/python.exe\r\nC:/Windows/py.exe\r\n").as_deref(),
-            Some("C:/Python312/python.exe")
-        );
-    }
-
-    #[test]
-    fn resolve_runtime_path_returns_none_for_blank_output() {
-        assert!(resolve_runtime_path(b"\n  \r\n").is_none());
     }
 
     #[cfg(windows)]
@@ -753,7 +715,7 @@ mod tests {
     fn python_runtime_probes_cover_windows_launchers() {
         let programs = PYTHON_RUNTIME_PROBES
             .iter()
-            .map(|probe| probe.program)
+            .map(|probe| probe.command)
             .collect::<HashSet<_>>();
 
         assert!(programs.contains("python"));
@@ -764,48 +726,7 @@ mod tests {
     #[test]
     fn python_runtime_probes_use_python3_off_windows() {
         assert_eq!(PYTHON_RUNTIME_PROBES.len(), 1);
-        assert_eq!(PYTHON_RUNTIME_PROBES[0].program, "python3");
+        assert_eq!(PYTHON_RUNTIME_PROBES[0].command, "python3");
         assert_eq!(PYTHON_RUNTIME_PROBES[0].args, ["--version"]);
-    }
-
-    #[tokio::test]
-    async fn runtime_check_command_times_out_for_long_running_process() {
-        #[cfg(unix)]
-        let result = run_command_with_timeout("sh", &["-c", "sleep 1"], Duration::from_millis(50)).await;
-
-        #[cfg(windows)]
-        let result =
-            run_command_with_timeout("cmd", &["/C", "ping -n 2 127.0.0.1 >NUL"], Duration::from_millis(50)).await;
-
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn normalize_runtime_version_extracts_stdout_first() {
-        assert_eq!(
-            normalize_runtime_version(b"v22.12.0\n", b"").as_deref(),
-            Some("v22.12.0")
-        );
-    }
-
-    #[test]
-    fn normalize_runtime_version_falls_back_to_stderr() {
-        assert_eq!(
-            normalize_runtime_version(b"", b"v22.12.0\n").as_deref(),
-            Some("v22.12.0")
-        );
-    }
-
-    #[test]
-    fn normalize_runtime_version_strips_trailing_explanation() {
-        assert_eq!(
-            normalize_runtime_version(b"v22.12.0 (Some extra info)\n", b"").as_deref(),
-            Some("v22.12.0")
-        );
-    }
-
-    #[test]
-    fn normalize_runtime_version_returns_none_for_blank_output() {
-        assert!(normalize_runtime_version(b"\n", b"  \n").is_none());
     }
 }
