@@ -24,8 +24,8 @@ export interface RuntimeEntry {
   available: boolean;
   version?: string;
   path?: string;
-  /** "mcpMate" if MCPMate-managed, "system" if found on system PATH, undefined if unavailable */
-  source?: string;
+  /** "mcpMate" | "system" | "uvPython"; undefined if unavailable */
+  source?: "mcpMate" | "system" | "uvPython";
 }
 
 export interface RuntimeCheckData {
