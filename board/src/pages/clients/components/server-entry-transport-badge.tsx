@@ -1,5 +1,6 @@
 import { Badge } from "../../../components/ui/badge";
 import type { ServerEntryData } from "../../../lib/types";
+import { formatTransportTag } from "../transport-labels";
 
 interface ServerEntryTransportBadgeProps {
   entry: ServerEntryData;
@@ -19,7 +20,7 @@ export function ServerEntryTransportBadge({
 
   return (
     <Badge variant={variant} className="text-[10px] px-1.5 py-0">
-      {entry.transport}
+      {formatTransportTag(entry.transport)}
     </Badge>
   );
 }

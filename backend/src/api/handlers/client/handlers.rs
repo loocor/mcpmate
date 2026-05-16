@@ -3,8 +3,8 @@
 use super::backups::parse_policy_payload;
 use super::inspection::{
     build_config_file_parse_inspect_data, build_parse_metadata, configured_server_entries_data,
-    derive_attachment_state, detect_mcpmate_in_client_config, inspect_client_config_lenient, parse_api_transports,
-    parse_rule_from_api_data, transports_data_from_state,
+    derive_attachment_state, detect_mcpmate_in_client_config, inspect_client_config_lenient,
+    mark_configured_server_managed_status, parse_api_transports, parse_rule_from_api_data, transports_data_from_state,
 };
 use super::runtime::sync_bound_client_runtime_state;
 use crate::api::models::client::{
@@ -291,10 +291,22 @@ pub async fn config_details(
             fallback_parsed_config_content(content.as_deref(), state.config_format(), config_path.as_deref())
         });
 
-    let (configured_servers_analysis, configured_server_entries) = inspected_config
+    let (configured_servers_analysis, mut configured_server_entries) = inspected_config
         .as_ref()
         .map(configured_server_entries_data)
         .unwrap_or_default();
+    if let Some(database) = app_state.database.as_ref() {
+        mark_configured_server_managed_status(&database.pool, &mut configured_server_entries)
+            .await
+            .map_err(|err| {
+                tracing::error!(
+                    client = %request.identifier,
+                    error = %err,
+                    "Failed to annotate configured server managed status"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
 
     let last_modified = config_path.as_deref().and_then(get_config_last_modified);
 
@@ -3140,6 +3152,73 @@ mod tests {
         assert_eq!(details.configured_server_entries[1].import_status, "importable");
         assert_eq!(details.configured_server_entries[1].skip_reason, None);
         assert_eq!(details.mcp_servers_count, 2);
+    }
+
+    #[tokio::test]
+    async fn config_details_marks_managed_entries_by_fingerprint() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("already-imported.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{
+                "mcpServers": {
+                    "mcp-server-context7": {"url": "https://context7.com/mcp"}
+                }
+            }"#,
+        )
+        .await
+        .expect("seed client config file");
+
+        sqlx::query(&format!(
+            "INSERT INTO {} (id, name, server_type, url) VALUES (?, ?, ?, ?)",
+            crate::common::constants::database::tables::SERVER_CONFIG
+        ))
+        .bind("existing-context7")
+        .bind("mcp-server-context7")
+        .bind("streamable_http")
+        .bind("https://context7.com/mcp")
+        .execute(&context.db_pool)
+        .await
+        .expect("insert existing server");
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                config_mode: Some("hosted".to_string()),
+                transport: Some("stdio".to_string()),
+                display_name: Some("Already Imported Client".to_string()),
+                connection_mode: Some("local_config_detected".to_string()),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(json_object_parse("mcpServers")),
+                transports: Some(HashMap::from([(
+                    "streamable_http".to_string(),
+                    selected_streamable_http_rule(),
+                )])),
+                ..settings_update_req("already.imported.client")
+            }),
+        )
+        .await
+        .expect("update client settings");
+
+        assert!(update_response.success);
+
+        let Json(details_response) = config_details(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "already.imported.client".to_string(),
+            }),
+        )
+        .await
+        .expect("load client details");
+
+        assert!(details_response.success);
+        let details = details_response.data.expect("details data");
+        assert_eq!(details.configured_server_entries.len(), 1);
+        let entry = &details.configured_server_entries[0];
+        assert_eq!(entry.name, "mcp-server-context7");
+        assert_eq!(entry.import_status, "importable");
+        assert_eq!(entry.skip_reason, None);
+        assert!(entry.managed_by_mcpmate);
     }
 
     #[tokio::test]
