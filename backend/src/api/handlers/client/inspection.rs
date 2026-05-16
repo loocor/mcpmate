@@ -9,6 +9,7 @@ use crate::clients::models::{
 };
 use crate::clients::service::core::ClientStateRow;
 use crate::clients::service::rules::ConfigRuleInspection;
+use crate::config::server::import::{ImportOptions, build_import_plan_from_entries, find_import_conflicts};
 use std::collections::HashMap;
 
 fn parse_data_from_rule(rule: &ClientConfigFileParse) -> ClientConfigFileParseData {
@@ -102,6 +103,30 @@ pub(super) fn configured_server_entries_data(
         .map(ServerEntryData::from)
         .collect::<Vec<_>>();
     (report.analysis.clone(), entries)
+}
+
+pub(super) async fn mark_configured_server_managed_status(
+    db_pool: &sqlx::SqlitePool,
+    entries: &mut [ServerEntryData],
+) -> anyhow::Result<()> {
+    let plan = build_import_plan_from_entries(entries.iter().cloned().map(Into::into));
+    let conflicts = find_import_conflicts(
+        db_pool,
+        &plan.items,
+        &ImportOptions {
+            by_name: false,
+            ..ImportOptions::dashboard_import(true, None)
+        },
+    )
+    .await?;
+
+    for entry in entries {
+        entry.managed_by_mcpmate = conflicts
+            .get(&entry.name)
+            .is_some_and(|reason| reason.is_duplicate_fingerprint());
+    }
+
+    Ok(())
 }
 
 pub(crate) fn parse_rule_from_api_data(parse: &ClientConfigFileParseData) -> ClientConfigFileParse {

@@ -107,6 +107,7 @@ import { formatBackupTime } from "../../lib/utils";
 import { ClientImportReviewDrawer } from "./components/client-import-review-drawer";
 import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
 import { ServerEntryTransportBadge } from "./components/server-entry-transport-badge";
+import { formatTransportTag } from "./transport-labels";
 
 type UnifyRouteMode = "broker_only" | "server_level" | "capability_level";
 type DirectExposureRouteMode = Extract<
@@ -2005,10 +2006,10 @@ export function ClientDetailPage() {
                               (transport) => (
                                 <span
                                   key={transport}
-                                  className="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
+                                  className="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-medium tracking-wide"
                                   title={transport}
                                 >
-                                  {transport}
+                                  {formatTransportTag(transport)}
                                 </span>
                               ),
                             )}

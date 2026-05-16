@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "../../../components/ui/button";
@@ -14,6 +15,30 @@ import type { ServerEntryData } from "../../../lib/types";
 import { ServerEntryTransportBadge } from "./server-entry-transport-badge";
 
 const REDACTED_VALUE = "[REDACTED]";
+const AVAILABILITY_CLASS_NAMES = {
+  importable:
+    "rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+  managed:
+    "rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+  notImportable:
+    "rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+} as const;
+const AVAILABILITY_LABELS = {
+  importable: {
+    defaultValue: "Importable",
+    key: "detail.importReview.fields.importable",
+  },
+  managed: {
+    defaultValue: "Managed",
+    key: "detail.importReview.fields.managedByMcpmate",
+  },
+  notImportable: {
+    defaultValue: "Not Importable",
+    key: "detail.importReview.fields.notImportable",
+  },
+} as const;
+
+type EntryAvailability = keyof typeof AVAILABILITY_CLASS_NAMES;
 
 interface ImportPreviewEntry {
   args: string[];
@@ -21,6 +46,7 @@ interface ImportPreviewEntry {
   env: Record<string, string>;
   headers: Record<string, string>;
   import_status?: string;
+  managed_by_mcpmate?: boolean;
   issue?: string | null;
   name: string;
   skip_reason?: string | null;
@@ -36,19 +62,41 @@ interface SkippedServerPreview {
 interface ImportPreviewSnapshot {
   entries: ImportPreviewEntry[];
   summary: {
+    detectedCount: number;
     failedCount: number;
     importableCount: number;
+    managedCount: number;
     skippedCount: number;
     skippedServers: SkippedServerPreview[];
   };
 }
 
 function isImportableEntry(entry: ServerEntryData): boolean {
-  return entry.import_status === "importable";
+  return (
+    entry.import_status === "importable" && entry.managed_by_mcpmate !== true
+  );
 }
 
 function isSkippedEntry(entry: ServerEntryData): boolean {
   return entry.import_status === "skipped";
+}
+
+function getEntryAvailability(entry: ServerEntryData): EntryAvailability {
+  if (entry.managed_by_mcpmate === true) {
+    return "managed";
+  }
+  if (isImportableEntry(entry)) {
+    return "importable";
+  }
+  return "notImportable";
+}
+
+function getAvailabilityLabel(
+  t: TFunction<"clients">,
+  availability: EntryAvailability,
+): string {
+  const label = AVAILABILITY_LABELS[availability];
+  return t(label.key, { defaultValue: label.defaultValue });
 }
 
 function redactSecrets(values: Record<string, string>): Record<string, string> {
@@ -62,6 +110,7 @@ function buildPreviewEntry(entry: ServerEntryData): ImportPreviewEntry {
     name: entry.name,
     transport: entry.transport,
     import_status: entry.import_status,
+    managed_by_mcpmate: entry.managed_by_mcpmate,
     skip_reason: entry.skip_reason,
     issue: entry.issue,
     command: entry.command,
@@ -87,6 +136,9 @@ interface ImportPreviewModel {
 }
 
 function buildImportPreviewModel(entries: ServerEntryData[]): ImportPreviewModel {
+  const managedCount = entries.filter(
+    (entry) => entry.managed_by_mcpmate === true,
+  ).length;
   const skippedServers = entries
     .filter(isSkippedEntry)
     .map(buildSkippedServerPreview);
@@ -99,8 +151,10 @@ function buildImportPreviewModel(entries: ServerEntryData[]): ImportPreviewModel
     snapshot: {
       entries: entries.map(buildPreviewEntry),
       summary: {
+        detectedCount: entries.length,
         failedCount: 0,
         importableCount: importableNames.length,
+        managedCount,
         skippedCount: skippedServers.length,
         skippedServers,
       },
@@ -130,7 +184,12 @@ export function ClientImportReviewDrawer({
     () => buildImportPreviewModel(entries),
     [entries],
   );
-  const { importableCount, skippedCount } = importPreviewSnapshot.summary;
+  const {
+    detectedCount,
+    importableCount,
+    managedCount,
+    skippedCount,
+  } = importPreviewSnapshot.summary;
   const importableKey = importableNames.join("\u0000");
   const [selectedNames, setSelectedNames] = useState<Set<string>>(new Set());
   const selectedImportableCount = selectedNames.size;
@@ -182,8 +241,13 @@ export function ClientImportReviewDrawer({
                   </div>
                   <ul className="divide-y max-h-[30vh] overflow-auto">
                     {entries.map((entry) => {
-                      const importable = isImportableEntry(entry);
+                      const availability = getEntryAvailability(entry);
+                      const importable = availability === "importable";
                       const selected = selectedNames.has(entry.name);
+                      const availabilityLabel = getAvailabilityLabel(
+                        t,
+                        availability,
+                      );
                       return (
                         <li
                           key={entry.name}
@@ -201,7 +265,12 @@ export function ClientImportReviewDrawer({
                               {entry.name}
                             </span>
                           </label>
-                          <ServerEntryTransportBadge entry={entry} />
+                          <div className="flex shrink-0 items-center gap-2">
+                            <ServerEntryTransportBadge entry={entry} />
+                            <span className={AVAILABILITY_CLASS_NAMES[availability]}>
+                              {availabilityLabel}
+                            </span>
+                          </div>
                         </li>
                       );
                     })}
@@ -216,11 +285,23 @@ export function ClientImportReviewDrawer({
                 </div>
                 <div>{selectedImportableCount}</div>
                 <div className="text-slate-500">
+                  {t("detail.importReview.fields.detected", {
+                    defaultValue: "Detected",
+                  })}
+                </div>
+                <div>{detectedCount}</div>
+                <div className="text-slate-500">
                   {t("detail.importReview.fields.importable", {
                     defaultValue: "Importable",
                   })}
                 </div>
                 <div>{importableCount}</div>
+                <div className="text-slate-500">
+                  {t("detail.importReview.fields.managedByMcpmate", {
+                    defaultValue: "Managed",
+                  })}
+                </div>
+                <div>{managedCount}</div>
                 <div className="text-slate-500">
                   {t("detail.importReview.fields.skipped", {
                     defaultValue: "Skipped",
