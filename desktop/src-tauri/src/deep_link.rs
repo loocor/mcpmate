@@ -1,7 +1,7 @@
 //! Routes registered `mcpmate://` URLs (OAuth, extension-driven server import).
 
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -18,7 +18,7 @@ pub struct ImportServerDeepLinkPayload {
 }
 
 /// Dispatch `mcpmate://auth`, `mcpmate://import/server`, etc.
-pub fn route_mcpmate_deep_link(app: &AppHandle, url_str: &str) -> Result<(), String> {
+pub async fn route_mcpmate_deep_link(app: &AppHandle, url_str: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url_str).map_err(|e| e.to_string())?;
     if parsed.scheme() != "mcpmate" {
         return Ok(());
@@ -26,12 +26,12 @@ pub fn route_mcpmate_deep_link(app: &AppHandle, url_str: &str) -> Result<(), Str
 
     match parsed.host_str() {
         Some("auth") => crate::account::handle_oauth_url(app, url_str),
-        Some("import") => handle_import_path(app, &parsed),
+        Some("import") => handle_import_path(app, &parsed).await,
         _ => Ok(()),
     }
 }
 
-fn handle_import_path(app: &AppHandle, parsed: &url::Url) -> Result<(), String> {
+async fn handle_import_path(app: &AppHandle, parsed: &url::Url) -> Result<(), String> {
     let path = parsed.path().trim_end_matches('/');
     if path != "/server" {
         return Ok(());
@@ -48,7 +48,7 @@ fn handle_import_path(app: &AppHandle, parsed: &url::Url) -> Result<(), String> 
     // Persist the payload so frontend can pull it during cold start even if the
     // first event dispatch happens before React listeners are mounted.
     if let Some(state) = app.try_state::<crate::DeepLinkState>() {
-        tauri::async_runtime::block_on(state.set_pending_server_import(payload.clone()));
+        state.set_pending_server_import(payload.clone()).await;
     }
 
     // Ensure a visible, focused main window before dispatching the import event.

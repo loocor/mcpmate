@@ -36,7 +36,9 @@ use core_service::{
 };
 use deep_link::ImportServerDeepLinkPayload;
 use mcpmate::system::config::api_url_from_port;
-use mcpmate::system::settings::{apply_settings_with_effects_for_paths, get_settings_sync_for_paths};
+use mcpmate::system::settings::{
+    apply_settings_with_effects_for_paths, get_settings_sync_for_paths,
+};
 use oauth_callback_access::OAuthCallbackAccessState;
 use shell::{ShellPreferences, ShellState};
 use source_config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
@@ -47,8 +49,8 @@ use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
-use tracing_subscriber::{self, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::{self, EnvFilter};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -111,7 +113,6 @@ struct DesktopCoreSourceView {
     local_service: LocalCoreServiceStatusView,
     remote_available: bool,
 }
-
 
 #[derive(Clone, Default)]
 struct DesktopManagedCoreState {
@@ -221,6 +222,16 @@ fn emit_core_state_changed(app: &tauri::AppHandle, view: &DesktopCoreSourceView)
     if let Err(err) = app.emit(shell::EVENT_CORE_STATE_CHANGED, view) {
         warn!(error = %err, "Failed to emit core-state-changed event");
     }
+}
+
+fn dispatch_mcpmate_deep_link(app: &tauri::AppHandle, url: &str, context: &'static str) {
+    let handle = app.clone();
+    let url = url.to_string();
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()).await {
+            warn!(error = %err, target_url = %url, context, "Failed to handle mcpmate deep link");
+        }
+    });
 }
 
 async fn read_core_state_view(
@@ -352,10 +363,7 @@ pub fn run() -> Result<()> {
                                 let handle3 = handle2.clone();
                                 tauri::async_runtime::spawn(async move {
                                     match update
-                                        .download_and_install(
-                                            |_chunk_len, _content_len| {},
-                                            || {},
-                                        )
+                                        .download_and_install(|_chunk_len, _content_len| {}, || {})
                                         .await
                                     {
                                         Ok(()) => {
@@ -412,7 +420,8 @@ pub fn run() -> Result<()> {
                 if let Err(err) = shell::ensure_window_visibility(&handle) {
                     warn!(error = %err, "Failed to show main window for about navigation");
                 }
-                if let Err(err) = handle.emit(shell::EVENT_OPEN_SETTINGS, json!({ "tab": "about" })) {
+                if let Err(err) = handle.emit(shell::EVENT_OPEN_SETTINGS, json!({ "tab": "about" }))
+                {
                     warn!(error = %err, "Failed to emit open-settings event for about navigation");
                 }
             });
@@ -437,6 +446,18 @@ pub fn run() -> Result<()> {
     };
 
     let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            info!(args = ?argv, cwd = %cwd, "Secondary MCPMate instance intercepted");
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = shell::ensure_window_visibility(&handle) {
+                    warn!(
+                        error = %err,
+                        "Failed to reveal main window after single-instance handoff"
+                    );
+                }
+            });
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -742,17 +763,13 @@ pub fn run() -> Result<()> {
                 let handle = app.handle().clone();
                 let _ = app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
-                        if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()) {
-                            warn!(error = %err, "Failed to handle mcpmate deep link");
-                        }
+                        dispatch_mcpmate_deep_link(&handle, url.as_str(), "on_open_url");
                     }
                 });
                 if let Ok(Some(urls)) = app.deep_link().get_current() {
                     let handle = app.handle().clone();
                     for url in urls {
-                        if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()) {
-                            warn!(error = %err, "Failed to handle startup mcpmate deep link");
-                        }
+                        dispatch_mcpmate_deep_link(&handle, url.as_str(), "get_current");
                     }
                 }
             }
@@ -883,19 +900,16 @@ async fn mcp_shell_apply_core_source(
     config.remote.base_url = payload.remote_base_url.trim().to_string();
     config.apply_constraints();
 
-    let mut settings = get_settings_sync_for_paths(global_paths()).map_err(|err| err.to_string())?;
+    let mut settings =
+        get_settings_sync_for_paths(global_paths()).map_err(|err| err.to_string())?;
     let previous_settings = settings.clone();
     settings.api_port = config.localhost.api_port;
     settings.mcp_port = config.localhost.mcp_port;
 
-    let applied = apply_settings_with_effects_for_paths(
-        global_paths(),
-        &previous_settings,
-        &settings,
-        None,
-    )
-    .await
-    .map_err(|err| err.to_string())?;
+    let applied =
+        apply_settings_with_effects_for_paths(global_paths(), &previous_settings, &settings, None)
+            .await
+            .map_err(|err| err.to_string())?;
 
     if let Some(task) = applied.client_reapply_task {
         mcpmate::system::settings::spawn_mcp_port_reapply_result_logger(task);
@@ -1305,7 +1319,12 @@ fn initialize_desktop_logging() -> Result<std::path::PathBuf> {
         .filename_prefix("desktop-shell")
         .filename_suffix("log")
         .build(&logs_dir)
-        .with_context(|| format!("failed to create rolling log appender in {}", logs_dir.display()))?;
+        .with_context(|| {
+            format!(
+                "failed to create rolling log appender in {}",
+                logs_dir.display()
+            )
+        })?;
 
     let env_filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
@@ -1404,7 +1423,11 @@ fn spawn_desktop_managed_core(
         .arg("--mcp-port")
         .arg(config.localhost.mcp_port.to_string())
         .arg("--log-level")
-        .arg(if cfg!(debug_assertions) { "debug" } else { "info" })
+        .arg(if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "info"
+        })
         .stdin(Stdio::null())
         .current_dir(&base_dir)
         .env("MCPMATE_DATA_DIR", &base_dir)
@@ -1418,7 +1441,10 @@ fn spawn_desktop_managed_core(
     let child = command
         .spawn()
         .context("failed to spawn desktop-managed localhost core")?;
-    info!(pid = child.id(), "Spawned desktop-managed localhost core process");
+    info!(
+        pid = child.id(),
+        "Spawned desktop-managed localhost core process"
+    );
     Ok(child)
 }
 
