@@ -49,7 +49,7 @@ export function getOAuthRedirectUriForForm(storedRedirectUri?: string | null): s
 export async function resolveOAuthCallbackAccess(
 	serverId: string,
 ): Promise<OAuthCallbackAccessContract> {
-	if (isHttpCallbackSurface() || !isTauriEnvironmentSync()) {
+	if (!isTauriEnvironmentSync() && isHttpCallbackSurface()) {
 		return {
 			kind: "web",
 			redirect_uri: buildWebOAuthRedirectUri(),
