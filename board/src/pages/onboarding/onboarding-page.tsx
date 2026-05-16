@@ -344,14 +344,19 @@ export function OnboardingPage() {
     [installingKinds, qc, t],
   );
 
-  const { data: runtimeCheckForGate } = useQuery<RuntimeCheckResp>({
+  const runtimeStepIndex = STEP_ORDER.indexOf("runtime");
+  const currentStepIndex = STEP_ORDER.indexOf(state.step);
+  const shouldFetchRuntimeCheck = currentStepIndex <= runtimeStepIndex;
+
+  const { data: runtimeCheckForGate, isLoading: runtimeCheckForGateLoading } = useQuery<RuntimeCheckResp>({
     queryKey: ["onboardingRuntimeCheck"],
     queryFn: () => onboardingApi.runtimeCheck(),
     staleTime: 60_000,
     refetchInterval: state.step === "runtime" ? 3_000 : false,
     refetchIntervalInBackground: false,
-    enabled: state.step === "runtime",
+    enabled: shouldFetchRuntimeCheck,
   });
+  const runtimeCheckRuntimes = runtimeCheckForGate?.data?.runtimes;
 
   const goToStep = useCallback(
     (step: WizardStep) => {
@@ -365,13 +370,16 @@ export function OnboardingPage() {
       const targetIndex = STEP_ORDER.indexOf(step);
       const currentIndex = STEP_ORDER.indexOf(state.step);
       if (currentIndex <= runtimeIndex && targetIndex > runtimeIndex) {
-        if (!areAllOnboardingRuntimeKindsAvailable(runtimeCheckForGate?.data?.runtimes)) {
+        if (runtimeCheckForGateLoading || !runtimeCheckRuntimes) {
+          return;
+        }
+        if (!areAllOnboardingRuntimeKindsAvailable(runtimeCheckRuntimes)) {
           return;
         }
       }
       setActiveStep(step);
     },
-    [setActiveStep, state.step, state.welcomeConsent, runtimeCheckForGate?.data?.runtimes],
+    [setActiveStep, state.step, state.welcomeConsent, runtimeCheckForGateLoading, runtimeCheckRuntimes],
   );
 
   const goToNextStep = useCallback(() => {
@@ -540,8 +548,8 @@ export function OnboardingPage() {
     if (state.step !== "runtime") {
       return false;
     }
-    return !areAllOnboardingRuntimeKindsAvailable(runtimeCheckForGate?.data?.runtimes);
-  }, [runtimeCheckForGate?.data?.runtimes, state.step]);
+    return !areAllOnboardingRuntimeKindsAvailable(runtimeCheckRuntimes);
+  }, [runtimeCheckRuntimes, state.step]);
 
   const termsLabel = t("layout.terms", { defaultValue: "Terms" });
   const privacyLabel = t("layout.privacy", { defaultValue: "Privacy" });
@@ -637,6 +645,8 @@ export function OnboardingPage() {
           )}
           {state.step === "runtime" && (
             <RuntimeStep
+              runtimes={runtimeCheckRuntimes}
+              isLoading={runtimeCheckForGateLoading}
               installingKinds={installingKinds}
               onInstall={installRuntime}
             />
@@ -860,28 +870,24 @@ function WelcomeStep({
 // ── Runtime step ──────────────────────────────────────────────────────────────
 
 function RuntimeStep({
+  runtimes: runtimeQueryRuntimes,
+  isLoading: runtimeQueryLoading,
   installingKinds,
   onInstall,
 }: {
+  runtimes: RuntimeEntry[] | undefined;
+  isLoading: boolean;
   installingKinds: Set<RuntimeKind>;
   onInstall: (kind: RuntimeKind) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation("onboarding");
   const [searchParams] = useSearchParams();
 
-  const { data, isLoading } = useQuery<RuntimeCheckResp>({
-    queryKey: ["onboardingRuntimeCheck"],
-    queryFn: () => onboardingApi.runtimeCheck(),
-    staleTime: 60_000,
-    refetchInterval: 3_000,
-    refetchIntervalInBackground: false,
-  });
-
   const preview = searchParams.get("runtimePreview");
   const previewMode: "real" | "partial" | "none" =
     preview === "partial" || preview === "none" ? preview : "real";
 
-  const baseRuntimes = data?.data?.runtimes ?? [];
+  const baseRuntimes = runtimeQueryRuntimes ?? [];
   const runtimeSeeds: RuntimeEntry[] = useMemo(
     () => [
       { name: "node", available: true },
@@ -910,7 +916,7 @@ function RuntimeStep({
     }));
   }, [previewMode, sourceRuntimes]);
 
-  const showLoading = previewMode === "real" && isLoading;
+  const showLoading = previewMode === "real" && runtimeQueryLoading;
 
   const getRuntimeKindFromEntry = useCallback(
     (name: string): RuntimeKind | null => {
