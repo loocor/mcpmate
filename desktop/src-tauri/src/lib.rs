@@ -101,6 +101,19 @@ struct DesktopCoreSourcePayload {
     remote_base_url: String,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FrontendImportDiagnosticPayload {
+    stage: String,
+    handled: bool,
+    has_payload: bool,
+    has_text: bool,
+    text_len: Option<usize>,
+    has_format: bool,
+    has_source: bool,
+    current_path: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopCoreSourceView {
@@ -227,6 +240,12 @@ fn emit_core_state_changed(app: &tauri::AppHandle, view: &DesktopCoreSourceView)
 fn dispatch_mcpmate_deep_link(app: &tauri::AppHandle, url: &str, context: &'static str) {
     let handle = app.clone();
     let url = url.to_string();
+    let sanitized_url = utils::sanitize_url_for_logging(&url);
+    info!(
+        context,
+        target_url = %sanitized_url,
+        "Dispatching MCPMate deep link"
+    );
     tauri::async_runtime::spawn(async move {
         if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()).await {
             let sanitized_url = utils::sanitize_url_for_logging(&url);
@@ -480,6 +499,10 @@ pub fn run() -> Result<()> {
             #[cfg(target_os = "linux")]
             {
                 let urls = extract_linux_fallback_deep_links_from_argv(&argv);
+                info!(
+                    fallback_deep_link_count = urls.len(),
+                    "Linux single-instance argv fallback scan completed"
+                );
                 for url in urls {
                     dispatch_mcpmate_deep_link(app, url.as_str(), "single_instance_linux_argv");
                 }
@@ -798,14 +821,29 @@ pub fn run() -> Result<()> {
             {
                 let handle = app.handle().clone();
                 let _ = app.deep_link().on_open_url(move |event| {
-                    for url in event.urls() {
+                    let urls = event.urls();
+                    info!(
+                        url_count = urls.len(),
+                        "Received desktop deep-link open-url event"
+                    );
+                    for url in urls {
                         dispatch_mcpmate_deep_link(&handle, url.as_str(), "on_open_url");
                     }
                 });
-                if let Ok(Some(urls)) = app.deep_link().get_current() {
-                    let handle = app.handle().clone();
-                    for url in urls {
-                        dispatch_mcpmate_deep_link(&handle, url.as_str(), "get_current");
+                match app.deep_link().get_current() {
+                    Ok(Some(urls)) => {
+                        info!(
+                            url_count = urls.len(),
+                            "Found desktop deep-link current URLs during startup"
+                        );
+                        let handle = app.handle().clone();
+                        for url in urls {
+                            dispatch_mcpmate_deep_link(&handle, url.as_str(), "get_current");
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        warn!(error = %err, "Failed to read desktop deep-link current URLs");
                     }
                 }
             }
@@ -825,6 +863,7 @@ pub fn run() -> Result<()> {
         mcp_shell_apply_core_source,
         mcp_shell_manage_local_core_service,
         mcp_deep_link_take_pending_server_import,
+        mcp_deep_link_log_frontend_import,
         mcp_account_start_github_login,
         mcp_account_get_status,
         mcp_account_logout,
@@ -1163,7 +1202,37 @@ async fn mcp_shell_manage_local_core_service(
 async fn mcp_deep_link_take_pending_server_import(
     state: tauri::State<'_, DeepLinkState>,
 ) -> Result<Option<ImportServerDeepLinkPayload>, String> {
-    Ok(state.take_pending_server_import().await)
+    let payload = state.take_pending_server_import().await;
+    info!(
+        has_payload = payload.is_some(),
+        text_len = payload.as_ref().map(|payload| payload.text.len()),
+        has_format = payload
+            .as_ref()
+            .is_some_and(|payload| payload.format.is_some()),
+        has_source = payload
+            .as_ref()
+            .is_some_and(|payload| payload.source.is_some()),
+        "Frontend requested pending import/server deep-link payload"
+    );
+    Ok(payload)
+}
+
+#[tauri::command]
+fn mcp_deep_link_log_frontend_import(
+    payload: FrontendImportDiagnosticPayload,
+) -> Result<(), String> {
+    info!(
+        stage = %payload.stage,
+        handled = payload.handled,
+        has_payload = payload.has_payload,
+        has_text = payload.has_text,
+        text_len = payload.text_len,
+        has_format = payload.has_format,
+        has_source = payload.has_source,
+        current_path = %payload.current_path.as_deref().unwrap_or("unknown"),
+        "Frontend import/server deep-link diagnostic"
+    );
+    Ok(())
 }
 
 #[tauri::command]
