@@ -17,9 +17,18 @@ runs:
       with:
         targets: ${{ inputs.rust-target }}
 
+    - name: Preflight Rust toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        which cargo
+        cargo -V
+        rustup show active-toolchain
+
     - name: Cache Rust build
       uses: Swatinem/rust-cache@v2
       with:
+        cache-bin: false
         workspaces: |
           backend -> target
           desktop/src-tauri -> target

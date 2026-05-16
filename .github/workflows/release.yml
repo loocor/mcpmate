@@ -85,6 +85,7 @@ jobs:
         run: |
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
+            --profile release \
             --target "${{ matrix.target }}" \
             --bundles app,dmg \
             --with-updater \
@@ -189,6 +190,7 @@ jobs:
         run: |
           chmod +x packaging/desktop/windows-build-tauri-release.sh
           packaging/desktop/windows-build-tauri-release.sh \
+            --profile release \
             --target "${{ matrix.target }}" \
             --bundles msi \
             --with-updater \
@@ -321,6 +323,7 @@ jobs:
         run: |
           chmod +x packaging/desktop/linux-build-tauri-release.sh
           packaging/desktop/linux-build-tauri-release.sh \
+            --profile release \
             --target "${{ matrix.target }}" \
             --bundles "${{ matrix.bundles }}" \
             --with-updater \
