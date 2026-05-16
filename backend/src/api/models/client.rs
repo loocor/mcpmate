@@ -484,6 +484,9 @@ pub struct ServerEntryData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Inspection issue code for malformed config entries")]
     pub issue: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Whether this entry is already managed by MCPMate")]
+    pub managed_by_mcpmate: bool,
     #[schemars(description = "Command to execute the server (stdio only)")]
     pub command: Option<String>,
     #[schemars(description = "Command line arguments (stdio only)")]
@@ -510,6 +513,7 @@ impl From<InspectedServerEntry> for ServerEntryData {
             import_status,
             skip_reason,
             issue: entry.issue,
+            managed_by_mcpmate: false,
             command: entry.command,
             args: entry.args,
             env: entry.env,
