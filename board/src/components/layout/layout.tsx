@@ -43,14 +43,70 @@ function asRecordPayload(raw: unknown): Record<string, unknown> | undefined {
 	return raw as Record<string, unknown>;
 }
 
-function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw: unknown): void {
+type DesktopInvoke = (
+	command: string,
+	args?: Record<string, unknown>,
+) => Promise<unknown>;
+
+function summarizeImportServerPayload(raw: unknown): {
+	hasPayload: boolean;
+	hasText: boolean;
+	textLength?: number;
+	hasFormat: boolean;
+	hasSource: boolean;
+} {
 	const payload = asRecordPayload(raw);
 	if (!payload) {
-		return;
+		return {
+			hasPayload: false,
+			hasText: false,
+			hasFormat: false,
+			hasSource: false,
+		};
+	}
+	const text = typeof payload.text === "string" ? payload.text : "";
+	return {
+		hasPayload: true,
+		hasText: Boolean(text.trim()),
+		textLength: text.length,
+		hasFormat: typeof payload.format === "string",
+		hasSource: typeof payload.source === "string",
+	};
+}
+
+function logDesktopImportDiagnostic(
+	invoke: DesktopInvoke,
+	stage: string,
+	raw: unknown,
+	handled: boolean,
+): void {
+	const summary = summarizeImportServerPayload(raw);
+	void invoke("mcp_deep_link_log_frontend_import", {
+		payload: {
+			stage,
+			handled,
+			hasPayload: summary.hasPayload,
+			hasText: summary.hasText,
+			textLen: summary.textLength,
+			hasFormat: summary.hasFormat,
+			hasSource: summary.hasSource,
+			currentPath: window.location.pathname,
+		},
+	}).catch((error) => {
+		if (import.meta.env.DEV) {
+			console.warn("[Layout] Failed to log desktop import diagnostic", error);
+		}
+	});
+}
+
+function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw: unknown): boolean {
+	const payload = asRecordPayload(raw);
+	if (!payload) {
+		return false;
 	}
 	const text = typeof payload.text === "string" ? payload.text : "";
 	if (!text.trim()) {
-		return;
+		return false;
 	}
 
 	const format = typeof payload.format === "string" ? payload.format : undefined;
@@ -61,6 +117,7 @@ function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw
 		source,
 	});
 	navigate("/servers");
+	return true;
 }
 
 export function Layout() {
@@ -140,7 +197,13 @@ export function Layout() {
 					},
 				);
 				unlistenImportServer = await listen("mcp-import/server", (event) => {
-					handleImportServerPayload(navigate, event.payload);
+					const handled = handleImportServerPayload(navigate, event.payload);
+					logDesktopImportDiagnostic(
+						invoke,
+						"event:mcp-import/server",
+						event.payload,
+						handled,
+					);
 				});
 				unlistenCoreState = await listen("mcpmate://core/status-changed", (event) => {
 					const payload = asRecordPayload(event.payload);
@@ -154,7 +217,13 @@ export function Layout() {
 				const pending = await invoke<unknown>(
 					"mcp_deep_link_take_pending_server_import",
 				);
-				handleImportServerPayload(navigate, pending);
+				const handled = handleImportServerPayload(navigate, pending);
+				logDesktopImportDiagnostic(
+					invoke,
+					"invoke:mcp_deep_link_take_pending_server_import",
+					pending,
+					handled,
+				);
 			} catch (error) {
 				if (import.meta.env.DEV) {
 					console.warn("[Layout] Failed to bind desktop shell events", error);
