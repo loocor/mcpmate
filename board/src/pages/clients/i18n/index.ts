@@ -122,6 +122,7 @@ export const clientsTranslations = {
       title: "No clients found",
       description:
         "Make sure MCPMate backend is running and detection is enabled",
+      action: "Add First Client",
     },
     detail: {
       noIdentifier: "No client identifier provided.",
@@ -947,6 +948,7 @@ export const clientsTranslations = {
     emptyState: {
       title: "未找到任何客户端",
       description: "请确认 MCPMate 后端已运行并开启检测",
+      action: "添加第一个客户端",
     },
     detail: {
       noIdentifier: "未提供客户端标识符。",
@@ -1746,6 +1748,7 @@ export const clientsTranslations = {
     emptyState: {
       title: "クライアントが見つかりません",
       description: "MCPMate バックエンドが動作し検出が有効か確認してください",
+      action: "最初のクライアントを追加",
     },
     detail: {
       noIdentifier: "クライアント識別子が指定されていません。",

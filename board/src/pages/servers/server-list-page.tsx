@@ -895,6 +895,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 	const filteredAndSortedServers = useMemo(() => {
 		return sortedServers;
 	}, [sortedServers]);
+	const hasNoServerRecords = (serverListResponse?.servers?.length ?? 0) === 0;
 
 	const statsCards = useMemo(() => {
 		const list = serverListResponse?.servers ?? [];
@@ -1099,6 +1100,19 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 	);
 
 	// Prepare empty state
+	const emptyStateAction = hasNoServerRecords ? (
+		<Button
+			onClick={() => setManualOpen(true)}
+			size="sm"
+			className="mt-4"
+		>
+			<Plus className="mr-2 h-4 w-4" />
+			{t("emptyState.action", {
+				defaultValue: "Add First Server",
+			})}
+		</Button>
+	) : undefined;
+
 	const emptyState = (
 		<Card>
 			<CardContent className="flex flex-col items-center justify-center p-6">
@@ -1108,18 +1122,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 					description={t("emptyState.description", {
 						defaultValue: "Add your first MCP server to get started",
 					})}
-					action={
-						<Button
-							onClick={() => setManualOpen(true)}
-							size="sm"
-							className="mt-4"
-						>
-							<Plus className="mr-2 h-4 w-4" />
-							{t("emptyState.action", {
-								defaultValue: "Add First Server",
-							})}
-						</Button>
-					}
+					action={emptyStateAction}
 				/>
 			</CardContent>
 		</Card>
