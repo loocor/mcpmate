@@ -99,6 +99,7 @@ export function ClientsPage() {
 	});
 
 	const clients: ClientInfo[] = data?.client ?? EMPTY_CLIENTS;
+	const hasNoClientRecords = clients.length === 0;
 	const detectedCount = clients.filter((c) => !!c.detected).length;
 	const approvedCount = clients.filter((c) => getGovernanceStatus(c) === "allowed").length;
 	const pendingCount = clients.filter((c) => getGovernanceStatus(c) === "pending").length;
@@ -383,6 +384,20 @@ export function ClientsPage() {
 			));
 
 	// Prepare empty state
+	const emptyStateAction = hasNoClientRecords ? (
+		<Button
+			size="sm"
+			className="mt-4"
+			onClick={() => {
+				setEditingClient(null);
+				setIsClientFormOpen(true);
+			}}
+		>
+			<Plus className="mr-2 h-4 w-4" />
+			{t("emptyState.action", { defaultValue: "Add First Client" })}
+		</Button>
+	) : undefined;
+
 	const emptyState = (
 		<Card>
 			<CardContent className="flex flex-col items-center justify-center p-6">
@@ -395,6 +410,7 @@ export function ClientsPage() {
 						defaultValue:
 							"Make sure MCPMate backend is running and detection is enabled",
 					})}
+					action={emptyStateAction}
 				/>
 			</CardContent>
 		</Card>
