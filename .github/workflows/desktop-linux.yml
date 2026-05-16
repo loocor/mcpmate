@@ -16,6 +16,14 @@ on:
         description: "Tauri bundle types"
         required: false
         default: "appimage,deb"
+      profile:
+        description: "Cargo profile"
+        type: choice
+        required: false
+        default: "debug"
+        options:
+          - debug
+          - release
   push:
     branches:
       - main
@@ -84,19 +92,25 @@ jobs:
       - name: Build Linux desktop artifacts
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
+          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'debug' }}
           TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           chmod +x packaging/desktop/linux-build-tauri-release.sh
           BUNDLES="${INPUT_BUNDLES:-appimage,deb}"
+          PROFILE="${INPUT_PROFILE:-debug}"
           packaging/desktop/linux-build-tauri-release.sh \
+            --profile "$PROFILE" \
             --target "${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}" \
             --bundles "${BUNDLES}" \
             --output-dir "${GITHUB_WORKSPACE}/desktop-linux-artifacts/${{ matrix.arch }}"
 
       - name: Smoke test (sidecar arch + bundle format)
+        env:
+          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'debug' }}
         run: |
           set -euo pipefail
-          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}/release/bundle"
+          PROFILE="${INPUT_PROFILE:-debug}"
+          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.arch == 'x64' && 'x86_64-unknown-linux-gnu' || 'aarch64-unknown-linux-gnu' }}/${PROFILE}/bundle"
           echo "--- bundle layout ---"
           find "$BUNDLE_DIR" -type f | head -40 || true
           echo "--- sidecar architecture ---"
