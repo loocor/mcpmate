@@ -255,6 +255,18 @@ fn dispatch_mcpmate_deep_link(app: &tauri::AppHandle, url: &str, context: &'stat
 }
 
 #[cfg(target_os = "linux")]
+fn register_linux_deep_link_handlers(app: &tauri::App) {
+    match app.deep_link().register_all() {
+        Ok(()) => {
+            info!("Registered Linux desktop deep-link handlers");
+        }
+        Err(err) => {
+            warn!(error = %err, "Failed to register Linux desktop deep-link handlers");
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn extract_linux_fallback_deep_links_from_argv(args: &[String]) -> Vec<String> {
     fn normalize_arg(arg: &str) -> &str {
         arg.trim().trim_matches('"').trim_matches('\'')
@@ -536,6 +548,8 @@ pub fn run() -> Result<()> {
             );
             configure_tauri_environment()?;
             initialize_menu(app)?;
+            #[cfg(target_os = "linux")]
+            register_linux_deep_link_handlers(app);
 
             let data_paths = global_paths().clone();
             let shell_prefs = ShellPreferences::load(&data_paths)?;
