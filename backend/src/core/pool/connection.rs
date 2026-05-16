@@ -140,8 +140,6 @@ pub struct UpstreamConnectionPool {
     pub process_monitor: Option<Arc<ProcessMonitor>>,
     /// Database reference for checking server status (used by sync manager)
     pub database: Option<Arc<crate::config::database::Database>>,
-    /// Runtime cache for fast runtime queries
-    pub runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
     /// Failure tracking for circuit breaking/backoff
     pub failure_states: HashMap<String, types::FailureState>,
     /// Optional shared HTTP client registry for transport reuse
@@ -176,7 +174,6 @@ impl UpstreamConnectionPool {
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
             database,
-            runtime_cache: None, // Will be set by the proxy server
             failure_states: HashMap::new(),
             http_clients: {
                 // Prefer new env name MCPMATE_HTTP_CLIENT_REUSE, fallback to legacy MCMP_MATE_HTTP_CLIENT_REUSE
@@ -226,14 +223,6 @@ impl UpstreamConnectionPool {
         tracing::info!("Database reference updated for connection pool");
     }
 
-    /// Set the runtime cache reference
-    pub fn set_runtime_cache(
-        &mut self,
-        runtime_cache: Option<Arc<crate::runtime::RuntimeCache>>,
-    ) {
-        self.runtime_cache = runtime_cache;
-        tracing::info!("Runtime cache reference updated for connection pool");
-    }
 
     /// Idle timeout for standard instances (may become configurable later)
     pub fn standard_instance_idle_timeout() -> Duration {
@@ -650,7 +639,6 @@ impl UpstreamConnectionPool {
             effective_transport,
             None, // No cancellation token needed for short-lived validation
             Some(&db.pool),
-            self.runtime_cache.as_ref().map(|rc| rc.as_ref()),
         );
 
         // Validation connect timeout: configurable via MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS (default 60000ms)

@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
@@ -14,6 +15,10 @@ use crate::common::RuntimeType;
 use crate::common::env::{Architecture, OperatingSystem, detect_environment};
 
 const NODE_DIST_INDEX_URL: &str = "https://nodejs.org/dist/index.json";
+const DOWNLOAD_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+const DOWNLOAD_CONTENT_TIMEOUT: Duration = Duration::from_secs(120);
+const NODE_DIST_INDEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const NODE_DIST_INDEX_DECODE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 struct ResolvedRuntimeDownload {
@@ -70,11 +75,11 @@ impl RuntimeDownloader {
             resolved.url
         );
 
-        let response = self
-            .client
-            .get(&resolved.url)
-            .send()
+        let response = self.client.get(&resolved.url).send();
+
+        let response = tokio::time::timeout(DOWNLOAD_REQUEST_TIMEOUT, response)
             .await
+            .context("Download request timed out")?
             .context("Failed to start download")?;
 
         if !response.status().is_success() {
@@ -86,7 +91,10 @@ impl RuntimeDownloader {
             .await
             .context("Failed to create download file")?;
 
-        let content = response.bytes().await.context("Failed to read download content")?;
+        let content = tokio::time::timeout(DOWNLOAD_CONTENT_TIMEOUT, response.bytes())
+            .await
+            .context("Download content timed out")?
+            .context("Failed to read download content")?;
 
         file.write_all(&content)
             .await
@@ -209,11 +217,11 @@ impl RuntimeDownloader {
     }
 
     async fn fetch_node_dist_index(&self) -> Result<Vec<NodeDistIndexEntry>> {
-        let response = self
-            .client
-            .get(NODE_DIST_INDEX_URL)
-            .send()
+        let response = self.client.get(NODE_DIST_INDEX_URL).send();
+
+        let response = tokio::time::timeout(NODE_DIST_INDEX_REQUEST_TIMEOUT, response)
             .await
+            .context("Node.js dist index request timed out")?
             .context("Failed to fetch Node.js dist index")?;
 
         if !response.status().is_success() {
@@ -223,10 +231,13 @@ impl RuntimeDownloader {
             ));
         }
 
-        response
-            .json::<Vec<NodeDistIndexEntry>>()
-            .await
-            .context("Failed to decode Node.js dist index")
+        tokio::time::timeout(
+            NODE_DIST_INDEX_DECODE_TIMEOUT,
+            response.json::<Vec<NodeDistIndexEntry>>(),
+        )
+        .await
+        .context("Node.js dist index decode timed out")?
+        .context("Failed to decode Node.js dist index")
     }
 
     fn resolve_node_index_entry<'a>(

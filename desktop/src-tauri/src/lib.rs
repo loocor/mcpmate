@@ -1309,6 +1309,9 @@ fn initialize_desktop_logging() -> Result<std::path::PathBuf> {
 
     let env_filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
+    } else if cfg!(debug_assertions) {
+        // Debug builds: capture debug-level logs (PATH tracing, resolver, etc.)
+        EnvFilter::new("debug,tao=warn,wry=warn,hyper=warn,reqwest=warn,tokio=warn")
     } else {
         EnvFilter::new("info,tao=warn,wry=warn,hyper=warn,reqwest=warn,tokio=warn")
     };
@@ -1382,6 +1385,11 @@ fn spawn_desktop_managed_core(
 ) -> Result<Child> {
     let binary = resolve_local_core_binary(app)?;
     let base_dir = global_paths().base_dir().to_path_buf();
+
+    if let Ok(path) = std::env::var("PATH") {
+        tracing::debug!("[PATH_DEBUG] Core process will inherit PATH: {}", path);
+    }
+
     info!(
         binary = %binary.display(),
         working_directory = %base_dir.display(),
@@ -1396,7 +1404,7 @@ fn spawn_desktop_managed_core(
         .arg("--mcp-port")
         .arg(config.localhost.mcp_port.to_string())
         .arg("--log-level")
-        .arg("info")
+        .arg(if cfg!(debug_assertions) { "debug" } else { "info" })
         .stdin(Stdio::null())
         .current_dir(&base_dir)
         .env("MCPMATE_DATA_DIR", &base_dir)
