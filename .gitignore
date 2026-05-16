@@ -34,3 +34,5 @@ node-compile-cache/
 rmcp/
 /docs/
 account/
+builder/
+.worktrees/

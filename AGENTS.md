@@ -33,6 +33,14 @@
 - Do not add fallback behavior unless the design or product requirements explicitly call for it. If fallback semantics are ambiguous, stop and ask rather than inventing one.
 - Do not embed migration logic in the main program. When migration is needed, provide it as a separate tool or script so runtime code stays simple and focused.
 
+## Worktree Discipline
+- When a task uses Git worktrees, create every worktree under the repository root at `.worktrees/<semantic-task-name>/`; do not create sibling worktrees next to the main repository directory.
+- Name worktree directories after the task or branch intent, for example `.worktrees/fix-windows-oauth-callback`, `.worktrees/fix-linux-deeplink-running-instance`, or `.worktrees/chore-macos-sign-notarize`.
+- Keep `.worktrees/` ignored by git. Treat worktree directories as local execution roots, not project source folders.
+- Start each worktree session from inside the specific worktree directory and verify context with `pwd`, `git branch --show-current`, and `git status --short` before reading, editing, testing, or committing.
+- If a conversation starts in the main repository but targets a worktree, immediately switch command execution to the requested `.worktrees/<semantic-task-name>/` path and repeat the context verification before making changes.
+- Never edit the main repository worktree for a task that has been assigned to a separate worktree unless Loocor explicitly asks for a main-worktree change.
+
 ## Delivery Discipline & Design Alignment
 - Treat `.claude/plans/configuration-mode-implementation.md` as the delivery contract for configuration-mode work unless Loocor explicitly approves a scope change.
 - A validation-grade or minimum unifying implementation may be used to verify an idea, but it must never be reported as phase-complete or delivery-ready.
