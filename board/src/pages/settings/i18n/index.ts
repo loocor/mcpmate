@@ -68,6 +68,31 @@ export const settingsTranslations = {
       serviceStatusFallback:
         "Desktop will attach when the configured local service becomes available.",
       serviceLevel: "Service level: {{value}}",
+      localServiceStatus: {
+        not_installed: "Not installed",
+        stopped: "Stopped",
+        running: "Running",
+        running_unhealthy: "Running (unhealthy)",
+      },
+      localServiceDetail: {
+        desktop_managed: {
+          not_installed: "MCPMate Desktop will start the local core when needed.",
+          stopped:
+            "The local core is stopped. Starting it keeps it alive while MCPMate Desktop is running.",
+          running:
+            "MCPMate Desktop is managing the local core and will stop it when the app quits.",
+          running_unhealthy:
+            "MCPMate Desktop started the local core, but health checks are failing.",
+        },
+        service: {
+          not_installed: "The local core service has not been installed yet.",
+          stopped: "The local core service is installed but not running.",
+          running:
+            "The local core service is running and responding to health checks.",
+          running_unhealthy:
+            "The service manager reports the local core as running, but health checks are failing.",
+        },
+      },
       statusAction: "Status",
       startAction: "Start",
       restartAction: "Restart",
@@ -379,6 +404,29 @@ export const settingsTranslations = {
       serviceStatusFallback:
         "当已配置的本地服务可用时，桌面端会自动连接。",
       serviceLevel: "服务级别：{{value}}",
+      localServiceStatus: {
+        not_installed: "未安装",
+        stopped: "已停止",
+        running: "运行中",
+        running_unhealthy: "运行中（异常）",
+      },
+      localServiceDetail: {
+        desktop_managed: {
+          not_installed: "MCPMate Desktop 会在需要时启动本地 Core。",
+          stopped:
+            "本地 Core 当前已停止；启动后会在 MCPMate Desktop 运行期间保持可用。",
+          running: "本地 Core 由 MCPMate Desktop 管理，并会在应用退出时停止。",
+          running_unhealthy:
+            "MCPMate Desktop 已启动本地 Core，但健康检查失败。",
+        },
+        service: {
+          not_installed: "本地 Core 服务尚未安装。",
+          stopped: "本地 Core 服务已安装，但当前未运行。",
+          running: "本地 Core 服务正在运行，并且健康检查正常。",
+          running_unhealthy:
+            "系统服务管理器显示本地 Core 正在运行，但健康检查失败。",
+        },
+      },
       statusAction: "状态",
       startAction: "启动",
       restartAction: "重启",
@@ -671,6 +719,34 @@ export const settingsTranslations = {
       serviceStatusFallback:
         "設定済みのローカルサービスが利用可能になると、Desktop は自動で接続します。",
       serviceLevel: "サービスレベル: {{value}}",
+      localServiceStatus: {
+        not_installed: "未インストール",
+        stopped: "停止中",
+        running: "実行中",
+        running_unhealthy: "実行中（異常）",
+      },
+      localServiceDetail: {
+        desktop_managed: {
+          not_installed:
+            "MCPMate Desktop は必要に応じてローカル Core を起動します。",
+          stopped:
+            "ローカル Core は停止中です。起動すると MCPMate Desktop の実行中は維持されます。",
+          running:
+            "ローカル Core は MCPMate Desktop により管理され、アプリ終了時に停止します。",
+          running_unhealthy:
+            "MCPMate Desktop はローカル Core を起動しましたが、ヘルスチェックに失敗しています。",
+        },
+        service: {
+          not_installed:
+            "ローカル Core サービスはまだインストールされていません。",
+          stopped:
+            "ローカル Core サービスはインストール済みですが、現在は停止しています。",
+          running:
+            "ローカル Core サービスは実行中で、ヘルスチェックにも応答しています。",
+          running_unhealthy:
+            "サービスマネージャー上はローカル Core が実行中ですが、ヘルスチェックに失敗しています。",
+        },
+      },
       statusAction: "状態",
       startAction: "開始",
       restartAction: "再起動",

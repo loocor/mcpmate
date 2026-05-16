@@ -624,6 +624,21 @@ export function SettingsPage() {
 				}),
 		[localhostRuntimeMode, t, i18n.language],
 	);
+	const localServiceStatusLabel = t(
+		`settings:system.localServiceStatus.${localService.status}`,
+		{
+			defaultValue: localService.status,
+		},
+	);
+	const localServiceDetail = t(
+		`settings:system.localServiceDetail.${localhostRuntimeMode}.${localService.status}`,
+		{
+			defaultValue: t("settings:system.serviceStatusFallback", {
+				defaultValue:
+					"The desktop will attach to the configured localhost core service when it is available.",
+			}),
+		},
+	);
 
 	const isSystemReadonlyInWeb = !isTauriShell;
 	const applyDisabled =
@@ -1936,7 +1951,7 @@ export function SettingsPage() {
 													})}
 												</p>
 												<p className="text-sm text-slate-600 dark:text-slate-300">
-													{localService.label}
+													{localServiceStatusLabel}
 												</p>
 												<p className="text-xs text-muted-foreground">
 													{t("settings:system.runtimeModeCurrent", {
@@ -1950,11 +1965,7 @@ export function SettingsPage() {
 													})}
 												</p>
 												<p className="text-xs leading-5 text-muted-foreground">
-													{localService.detail ||
-														t("settings:system.serviceStatusFallback", {
-															defaultValue:
-																"The desktop will attach to the configured localhost core service when it is available.",
-														})}
+													{localServiceDetail}
 												</p>
 											</div>
 											{localhostRuntimeMode === "service" ? (

@@ -35,8 +35,7 @@ export const clientsTranslations = {
         add: {
           title: "Add Client",
           notificationTitle: "Feature in Development",
-          notificationMessage:
-            "This feature is being implemented, please stay tuned",
+          notificationMessage: "This feature is being implemented, please stay tuned",
         },
       },
     },
@@ -120,8 +119,8 @@ export const clientsTranslations = {
     },
     emptyState: {
       title: "No clients found",
-      description:
-        "Make sure MCPMate backend is running and detection is enabled",
+      description: "Make sure MCPMate backend is running and detection is enabled",
+      action: "Add First Client",
     },
     detail: {
       noIdentifier: "No client identifier provided.",
@@ -138,10 +137,8 @@ export const clientsTranslations = {
       directExposure: {
         title: "Capability Level",
         badge: "Direct Exposure",
-        description:
-          "Adjust which capabilities from this server should be exposed directly to the current client.",
-        serverDescriptionFallback:
-          "Choose which capabilities from this server should be exposed directly to the client.",
+        description: "Adjust which capabilities from this server should be exposed directly to the current client.",
+        serverDescriptionFallback: "Choose which capabilities from this server should be exposed directly to the client.",
         toolsTitle: "Tools",
         toolsSummary: "{{enabled}} / {{total}} capabilities exposed directly",
         tabs: {
@@ -182,8 +179,7 @@ export const clientsTranslations = {
         },
         notifications: {
           savedTitle: "Direct capabilities updated",
-          savedMessage:
-            "The direct capability exposure settings have been updated.",
+          savedMessage: "The direct capability exposure settings have been updated.",
           saveFailedTitle: "Unable to update direct capabilities",
         },
       },
@@ -219,15 +215,12 @@ export const clientsTranslations = {
       form: {
         titleCreate: "Add Client Record",
         titleEdit: "Edit Client Record",
-        descriptionCreate:
-          "Create a client record with its management shape and metadata.",
-        descriptionEdit:
-          "Update this client record and its management settings.",
+        descriptionCreate: "Create a client record with its management shape and metadata.",
+        descriptionEdit: "Update this client record and its management settings.",
         tabs: { basic: "Basic", meta: "Meta" },
         connectionShape: {
           label: "Client Shape",
-          description:
-            "Choose whether this client has a writable local config file or is a non-writable remote/unknown client.",
+          description: "Choose whether this client has a writable local config file or is a non-writable remote/unknown client.",
           options: {
             localWithConfig: "Local + Config",
             localWithoutConfig: "Local / Unknown Config",
@@ -253,10 +246,8 @@ export const clientsTranslations = {
           label: "Transport Rules",
           suggestedVariants: "Suggested variants",
           empty: "Select at least one transport to edit its write rules.",
-          stdioDescription:
-            "Define the field names used to write command-based MCP servers for this client.",
-          httpDescription:
-            "Define the field names used to write URL-based MCP servers for this client.",
+          stdioDescription: "Define the field names used to write command-based MCP servers for this client.",
+          httpDescription: "Define the field names used to write URL-based MCP servers for this client.",
           commandField: "Command Field",
           argsField: "Args Field",
           envField: "Env Field",
@@ -274,18 +265,15 @@ export const clientsTranslations = {
             zedStyle: "Zed-style",
           },
           help: {
-            summary:
-              "These fields describe the target client's config keys, not MCPMate's own protocol fields.",
+            summary: "These fields describe the target client's config keys, not MCPMate's own protocol fields.",
             docs: "If you are unsure which keys a client expects, check that client's official documentation or an existing working config file first.",
-            presets:
-              "Use the suggested variants below as a starting point, then verify the result against the client's real config structure.",
+            presets: "Use the suggested variants below as a starting point, then verify the result against the client's real config structure.",
             openDocs: "Open client documentation",
           },
           validation: {
             commandRequired: "STDIO requires a command field.",
             urlRequired: "HTTP-based transports require a URL field.",
-            typeValueRequired:
-              "Type value is required when including the type field.",
+            typeValueRequired: "Type value is required when including the type field.",
           },
         },
         fields: {
@@ -293,22 +281,19 @@ export const clientsTranslations = {
           identifier: {
             label: "Client ID",
             placeholder: "cursor-desktop",
-            description:
-              "Spaces and casing are normalized automatically when creating a new record.",
+            description: "Spaces and casing are normalized automatically when creating a new record.",
           },
           clientVersion: { label: "Client Version", placeholder: "optional" },
           configPath: {
             label: "Config File Path",
             placeholder: "~/.cursor/mcp.json",
-            description:
-              "A writable local config path enables MCPMate to manage this client through file-based configuration operations.",
+            description: "A writable local config path enables MCPMate to manage this client through file-based configuration operations.",
             browse: "Choose…",
             browseAria: "Browse for configuration file on disk",
             dialogTitle: "Select configuration file",
             pickFailedTitle: "Unable to read selected file",
             webPickInfoTitle: "Browser file access",
-            webPickInfoDescription:
-              "Your browser cannot read the absolute path automatically. Please paste it manually if needed.",
+            webPickInfoDescription: "Your browser cannot read the absolute path automatically. Please paste it manually if needed.",
           },
           configFileParse: {
             label: "Parse Rules",
@@ -319,10 +304,8 @@ export const clientsTranslations = {
             showAdvanced: "Show details",
             hideAdvanced: "Hide details",
             validationTitle: "File association check",
-            validationSuccess:
-              "The selected file matches the current parse rules.",
-            validationHint:
-              "Pick a config file and MCPMate will validate whether these rules can find MCP server entries.",
+            validationSuccess: "The selected file matches the current parse rules.",
+            validationHint: "Pick a config file and MCPMate will validate whether these rules can find MCP server entries.",
             detectedFormat: "Detected format",
             containerMatch: "Container",
             serverCount: "Servers",
@@ -330,8 +313,7 @@ export const clientsTranslations = {
             matchNo: "Missing",
             summaryViewButton: "Summary view",
             codeViewButton: "Code preview",
-            keysRequired:
-              "Add at least one config node path before saving parse rules.",
+            keysRequired: "Add at least one config node path before saving parse rules.",
             containerTypeOptions: {
               standard: "Object Map",
               array: "Array",
@@ -356,8 +338,7 @@ export const clientsTranslations = {
           formatRulesJsonText: {
             label: "Format Rules (JSON)",
             placeholder: "Paste JSON format rules here",
-            description:
-              "Advanced: Fine-grained transport format rules as JSON. Leave empty to reset to defaults.",
+            description: "Advanced: Fine-grained transport format rules as JSON. Leave empty to reset to defaults.",
           },
           logoUrl: {
             label: "Logo URL",
@@ -378,8 +359,7 @@ export const clientsTranslations = {
           description: {
             label: "Description",
             placeholder: "A short summary of this client.",
-            description:
-              "These meta fields are stored for display and guidance; the old template files remain only as compatibility seeds.",
+            description: "These meta fields are stored for display and guidance; the old template files remain only as compatibility seeds.",
           },
         },
         buttons: {
@@ -390,8 +370,7 @@ export const clientsTranslations = {
         },
         confirmDelete: {
           title: "Delete Client Record",
-          description:
-            "Are you sure you want to delete this client record? This action cannot be undone.",
+          description: "Are you sure you want to delete this client record? This action cannot be undone.",
           confirm: "Delete",
           cancel: "Cancel",
         },
@@ -409,11 +388,9 @@ export const clientsTranslations = {
             message: "The client record has been deleted.",
           },
           createBackupPolicyFailed: {
-            message:
-              "Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
+            message: "Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
           },
-          formatRulesJsonParseError:
-            "Failed to parse format rules JSON. Please check the syntax and try again.",
+          formatRulesJsonParseError: "Failed to parse format rules JSON. Please check the syntax and try again.",
           saveFailed: { title: "Unable to save client record" },
           deleteFailed: {
             title: "Unable to delete client record",
@@ -423,39 +400,29 @@ export const clientsTranslations = {
       },
       configuration: {
         title: "Configuration Mode",
-        description:
-          "If you don't understand what this means, please don't make any changes and keep the current settings.",
+        description: "If you don't understand what this means, please don't make any changes and keep the current settings.",
         warnings: {
-          mixedRouting:
-            "Mixed routing: splitting stateful workflows may cause issues.",
+          mixedRouting: "Mixed routing: splitting stateful workflows may cause issues.",
         },
         errors: {
-          customProfileMissing:
-            "The client-specific custom workspace is missing. Create it again before applying configuration.",
+          customProfileMissing: "The client-specific custom workspace is missing. Create it again before applying configuration.",
         },
-        writeTargetRequiredReason:
-          "Applying governance to the client configuration requires a verified writable local MCP config file.",
-        applyRequiresApprovedReason:
-          "Applying client configuration requires an approved governance state and a verified local config target.",
-        managementSettingsPendingReason:
-          "Save management settings after this client leaves pending approval.",
+        writeTargetRequiredReason: "Applying governance to the client configuration requires a verified writable local MCP config file.",
+        applyRequiresApprovedReason: "Applying client configuration requires an approved governance state and a verified local config target.",
+        managementSettingsPendingReason: "Save management settings after this client leaves pending approval.",
         apply: "Apply",
         reapply: "Re-apply",
         sections: {
           mode: {
             title: "1. Management Mode",
             descriptions: {
-              unify:
-                "Unify starts with builtin MCP tools only and works with capabilities from globally enabled servers during the current session.",
-              hosted:
-                "Hosted keeps a durable managed configuration for this client and remembers the selected working state.",
+              unify: "Unify starts with builtin MCP tools only and works with capabilities from globally enabled servers during the current session.",
+              hosted: "Hosted keeps a durable managed configuration for this client and remembers the selected working state.",
               transparent:
                 "MCPMate writes the selected profile servers directly into this client's MCP configuration and does not preserve capability-level controls.",
             },
-            managedDisabledReason:
-              "Hosted and Unify require at least one supported transport.",
-            transparentDisabledReason:
-              "Transparent requires a writable local config path.",
+            managedDisabledReason: "Hosted and Unify require at least one supported transport.",
+            transparentDisabledReason: "Transparent requires a writable local config path.",
             options: {
               unify: "Unify",
               hosted: "Hosted Mode",
@@ -479,18 +446,12 @@ export const clientsTranslations = {
                 "Directly expose all capabilities from selected eligible servers to this client. Exposed capabilities are excluded from the UCAN catalog.",
               unify_capability_level:
                 "Directly expose only selected capabilities (tools, prompts, resources, templates) from eligible servers to this client. (Advanced)",
-              default:
-                "Review the profiles that are currently active for this client runtime.",
-              profile:
-                "Browse the shared scene library and choose the exact working set for this client.",
-              custom:
-                "Create client-specific adjustments on top of the current unify-mode working state.",
-              transparentDefault:
-                "Write the servers from all currently activated profiles directly into this client's MCP configuration.",
-              transparentProfile:
-                "Write the servers from the selected shared profiles directly into this client's MCP configuration.",
-              transparentCustom:
-                "Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
+              default: "Review the profiles that are currently active for this client runtime.",
+              profile: "Browse the shared scene library and choose the exact working set for this client.",
+              custom: "Create client-specific adjustments on top of the current unify-mode working state.",
+              transparentDefault: "Write the servers from all currently activated profiles directly into this client's MCP configuration.",
+              transparentProfile: "Write the servers from the selected shared profiles directly into this client's MCP configuration.",
+              transparentCustom: "Write the servers from the client-specific custom profile directly into this client's MCP configuration.",
             },
             options: {
               default: "Active",
@@ -506,20 +467,14 @@ export const clientsTranslations = {
           profiles: {
             title: "3. Profiles",
             descriptions: {
-              unify:
-                "Unify does not maintain a profile working set here. Use profiles for Hosted Mode or Transparent Mode workflows instead.",
-              default:
-                "Review the profiles that are already active for this client runtime. This view is read-only to keep the active scene set consistent.",
-              profile:
-                "Choose the reusable shared profiles that define this client's working set.",
-              custom:
-                "Create and maintain client-specific overrides for the current working state.",
+              unify: "Unify does not maintain a profile working set here. Use profiles for Hosted Mode or Transparent Mode workflows instead.",
+              default: "Review the profiles that are already active for this client runtime. This view is read-only to keep the active scene set consistent.",
+              profile: "Choose the reusable shared profiles that define this client's working set.",
+              custom: "Create and maintain client-specific overrides for the current working state.",
               transparentDefault:
                 "Transparent mode will write the enabled servers from all currently activated profiles directly into this client's MCP configuration.",
-              transparentProfile:
-                "Select which shared profiles contribute enabled servers to this client's MCP configuration in transparent mode.",
-              transparentCustom:
-                "Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
+              transparentProfile: "Select which shared profiles contribute enabled servers to this client's MCP configuration in transparent mode.",
+              transparentCustom: "Transparent mode uses only the enabled servers from this client-specific custom profile when writing the MCP configuration.",
             },
             empty: {
               active: "No active profiles found",
@@ -528,12 +483,9 @@ export const clientsTranslations = {
             ghost: {
               titleCustom: "Customize current state",
               titleDefault: "Open profiles library",
-              subtitleCustom:
-                "Create and manage client-specific overrides for the current workspace",
-              subtitleCustomTransparent:
-                "Configure which servers should be written into this client directly.",
-              subtitleDefault:
-                "Browse reusable shared scenes and edit them from the profiles page",
+              subtitleCustom: "Create and manage client-specific overrides for the current workspace",
+              subtitleCustomTransparent: "Configure which servers should be written into this client directly.",
+              subtitleDefault: "Browse reusable shared scenes and edit them from the profiles page",
             },
           },
           unify: {
@@ -551,8 +503,7 @@ export const clientsTranslations = {
             descriptions: {
               broker_only:
                 "All enabled MCP servers, including servers marked for direct exposure, remain reachable through the builtin UCAN tools in Broker Only mode.",
-              server_level:
-                "Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
+              server_level: "Select the eligible servers whose tools, prompts, resources, and resource templates should be exposed directly to the client.",
               capability_level:
                 "Select eligible servers and configure direct exposure at capability level across tools, prompts, resources, and templates. (Advanced)",
             },
@@ -561,8 +512,7 @@ export const clientsTranslations = {
                 "In Broker Only mode, all enabled MCP servers — including servers marked for direct exposure — are still accessed through the UCAN catalog and call tools.",
             },
             empty: {
-              no_eligible:
-                "No eligible servers found. Enable Unify Direct Exposure on a server first.",
+              no_eligible: "No eligible servers found. Enable Unify Direct Exposure on a server first.",
             },
           },
         },
@@ -617,12 +567,10 @@ export const clientsTranslations = {
           delete: "Delete",
         },
         empty: "No backups.",
-        emptyDisabledByPolicy:
-          "Backups are currently disabled by system policy.",
+        emptyDisabledByPolicy: "Backups are currently disabled by system policy.",
         bulk: {
           title: "Delete Selected Backups",
-          description:
-            "Are you sure you want to delete {{count}} backup(s)? This action cannot be undone.",
+          description: "Are you sure you want to delete {{count}} backup(s)? This action cannot be undone.",
         },
       },
       logs: {
@@ -645,8 +593,7 @@ export const clientsTranslations = {
       confirm: {
         deleteTitle: "Delete Backup",
         restoreTitle: "Restore Backup",
-        deleteDescription:
-          "Are you sure you want to delete this backup? This action cannot be undone.",
+        deleteDescription: "Are you sure you want to delete this backup? This action cannot be undone.",
         restoreDescription:
           "Restore the local client configuration file from the selected backup? MCPMate management mode and capability settings stay unchanged.",
         deleteLabel: "Delete",
@@ -665,14 +612,12 @@ export const clientsTranslations = {
         title: "Backup Policy",
         fields: {
           policy: "Policy",
-          policyDescription:
-            'Backup retention strategy. For now, only "keep_n" is supported, which keeps at most N recent backups and prunes older ones.',
+          policyDescription: 'Backup retention strategy. For now, only "keep_n" is supported, which keeps at most N recent backups and prunes older ones.',
           options: {
             keepN: "keep_n",
           },
           limit: "Limit",
-          limitDescription:
-            "Maximum number of backups to keep for this client. Set to 0 for no limit.",
+          limitDescription: "Maximum number of backups to keep for this client. Set to 0 for no limit.",
         },
         buttons: {
           save: "Save Policy",
@@ -731,8 +676,7 @@ export const clientsTranslations = {
         },
         managementSaved: {
           title: "Saved",
-          message:
-            "Management settings were saved in MCPMate. Local client configuration was not updated.",
+          message: "Management settings were saved in MCPMate. Local client configuration was not updated.",
         },
         applyFailed: {
           title: "Apply failed",
@@ -947,6 +891,7 @@ export const clientsTranslations = {
     emptyState: {
       title: "未找到任何客户端",
       description: "请确认 MCPMate 后端已运行并开启检测",
+      action: "添加首个客户端",
     },
     detail: {
       noIdentifier: "未提供客户端标识符。",
@@ -1046,8 +991,7 @@ export const clientsTranslations = {
         tabs: { basic: "基础", meta: "元数据" },
         connectionShape: {
           label: "客户端形态",
-          description:
-            "选择该客户端是否具备可写本地配置文件，或属于不可写的远程/未知客户端。",
+          description: "选择该客户端是否具备可写本地配置文件，或属于不可写的远程/未知客户端。",
           options: {
             localWithConfig: "本地 + 配置文件",
             localWithoutConfig: "本地 / 未知配置",
@@ -1058,8 +1002,7 @@ export const clientsTranslations = {
           label: "传输支持",
           placeholder: "选择支持的传输方式",
           empty: "未找到传输方式。",
-          description:
-            "选择该客户端支持的运行时传输方式。该数组会作为 hosted / unify 传输选择的唯一约束来源。",
+          description: "选择该客户端支持的运行时传输方式。该数组会作为 hosted / unify 传输选择的唯一约束来源。",
           validation: {
             required: "保存前请至少选择一种支持的传输方式。",
           },
@@ -1092,11 +1035,9 @@ export const clientsTranslations = {
             zedStyle: "Zed 风格",
           },
           help: {
-            summary:
-              "这些字段表示目标客户端配置里的键名，不是 MCPMate 自己的协议字段。",
+            summary: "这些字段表示目标客户端配置里的键名，不是 MCPMate 自己的协议字段。",
             docs: "如果不确定客户端期望哪些键，请优先查看该客户端官方文档，或参考一份已正常工作的现有配置。",
-            presets:
-              "下方推荐变体可作为起点，但仍应根据该客户端的真实配置结构进行核对。",
+            presets: "下方推荐变体可作为起点，但仍应根据该客户端的真实配置结构进行核对。",
             openDocs: "打开客户端文档",
           },
           validation: {
@@ -1116,15 +1057,13 @@ export const clientsTranslations = {
           configPath: {
             label: "配置文件路径",
             placeholder: "~/.cursor/mcp.json",
-            description:
-              "可写的本地配置路径会让 MCPMate 能通过文件配置操作来管理该客户端。",
+            description: "可写的本地配置路径会让 MCPMate 能通过文件配置操作来管理该客户端。",
             browse: "选择…",
             browseAria: "从磁盘选择配置文件",
             dialogTitle: "选择配置文件",
             pickFailedTitle: "无法读取所选文件",
             webPickInfoTitle: "浏览器文件访问",
-            webPickInfoDescription:
-              "浏览器无法自动读取绝对路径，如有需要请手动粘贴。",
+            webPickInfoDescription: "浏览器无法自动读取绝对路径，如有需要请手动粘贴。",
           },
           configFileParse: {
             label: "解析规则",
@@ -1136,8 +1075,7 @@ export const clientsTranslations = {
             hideAdvanced: "隐藏详情",
             validationTitle: "文件关联检查",
             validationSuccess: "所选文件与当前解析规则匹配。",
-            validationHint:
-              "选择一个配置文件后，MCPMate 会验证这些规则是否能定位到 MCP server 条目。",
+            validationHint: "选择一个配置文件后，MCPMate 会验证这些规则是否能定位到 MCP server 条目。",
             detectedFormat: "检测到的格式",
             containerMatch: "容器",
             serverCount: "服务器",
@@ -1170,8 +1108,7 @@ export const clientsTranslations = {
           formatRulesJsonText: {
             label: "格式规则（JSON）",
             placeholder: "在此粘贴 JSON 格式规则",
-            description:
-              "高级：为传输格式定义细粒度规则（JSON 格式）。留空将重置为默认值。",
+            description: "高级：为传输格式定义细粒度规则（JSON 格式）。留空将重置为默认值。",
           },
           logoUrl: {
             label: "Logo 地址",
@@ -1192,8 +1129,7 @@ export const clientsTranslations = {
           description: {
             label: "描述",
             placeholder: "简要描述这个客户端。",
-            description:
-              "这些元数据字段仅用于展示与提示；旧模板文件现在只保留兼容性 seed 作用。",
+            description: "这些元数据字段仅用于展示与提示；旧模板文件现在只保留兼容性 seed 作用。",
           },
         },
         buttons: {
@@ -1222,11 +1158,9 @@ export const clientsTranslations = {
             message: "客户端记录已删除。",
           },
           createBackupPolicyFailed: {
-            message:
-              "客户端记录已创建，但初始化备份策略失败。你可以稍后在备份设置中重试。",
+            message: "客户端记录已创建，但初始化备份策略失败。你可以稍后在备份设置中重试。",
           },
-          formatRulesJsonParseError:
-            "格式规则 JSON 解析失败。请检查语法后重试。",
+          formatRulesJsonParseError: "格式规则 JSON 解析失败。请检查语法后重试。",
           saveFailed: { title: "无法保存客户端记录" },
           deleteFailed: {
             title: "无法删除客户端记录",
@@ -1238,34 +1172,25 @@ export const clientsTranslations = {
         title: "配置模式",
         description: "若不清楚含义，请勿修改并保持现有设置。",
         warnings: {
-          mixedRouting:
-            "混合路由：若把有状态工作流拆成代理与直连调用，可能出现问题。",
+          mixedRouting: "混合路由：若把有状态工作流拆成代理与直连调用，可能出现问题。",
         },
         errors: {
-          customProfileMissing:
-            "该客户端的专属自定义工作区已缺失，请先重新创建后再应用配置。",
+          customProfileMissing: "该客户端的专属自定义工作区已缺失，请先重新创建后再应用配置。",
         },
-        writeTargetRequiredReason:
-          "要把治理配置真正应用到客户端配置文件，必须先确认一个已验证且可写的本地 MCP 配置文件。",
-        applyRequiresApprovedReason:
-          "要把客户端配置真正应用落盘，必须先处于已允许治理状态，并且拥有一个已验证的本地配置目标。",
-        managementSettingsPendingReason:
-          "请在该客户端结束待审批状态后再保存管理设置。",
+        writeTargetRequiredReason: "要把治理配置真正应用到客户端配置文件，必须先确认一个已验证且可写的本地 MCP 配置文件。",
+        applyRequiresApprovedReason: "要把客户端配置真正应用落盘，必须先处于已允许治理状态，并且拥有一个已验证的本地配置目标。",
+        managementSettingsPendingReason: "请在该客户端结束待审批状态后再保存管理设置。",
         apply: "应用",
         reapply: "重新应用",
         sections: {
           mode: {
             title: "1. 管理模式",
             descriptions: {
-              unify:
-                "统一模式初始仅提供内建 MCP 工具，并在当前会话中面向全局启用服务器的能力工作。",
-              hosted:
-                "托管模式会为该客户端保留持久化托管配置，并记住当前选择的工作状态。",
-              transparent:
-                "MCPMate 会将所选配置集中的服务器直接写入该客户端的 MCP 配置，且不会保留能力层级的控制。",
+              unify: "统一模式初始仅提供内建 MCP 工具，并在当前会话中面向全局启用服务器的能力工作。",
+              hosted: "托管模式会为该客户端保留持久化托管配置，并记住当前选择的工作状态。",
+              transparent: "MCPMate 会将所选配置集中的服务器直接写入该客户端的 MCP 配置，且不会保留能力层级的控制。",
             },
-            managedDisabledReason:
-              "托管模式与统一模式至少需要一种后端已声明支持的传输方式。",
+            managedDisabledReason: "托管模式与统一模式至少需要一种后端已声明支持的传输方式。",
             transparentDisabledReason: "透明模式需要可写的本地配置文件路径。",
             options: {
               unify: "统一模式",
@@ -1282,23 +1207,16 @@ export const clientsTranslations = {
               capability_level: "能力级直达",
             },
             descriptions: {
-              unify:
-                "统一模式不使用仪表板中的配置集选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的能力。",
-              unify_broker_only:
-                "所有能力均通过 UCAN 代理目录访问。内建 MCP 工具会浏览并调用来自全局启用服务器的能力。",
-              unify_server_level:
-                "将所选符合条件的服务器的全部能力直接暴露给该客户端。已暴露的能力不会出现在 UCAN 目录中。",
-              unify_capability_level:
-                "仅从符合条件的服务器中选择部分能力（工具、提示、资源、模板）直接暴露给该客户端。（进阶）",
+              unify: "统一模式不使用仪表板中的配置集选择。请在当前会话内通过内建 UCAN 工具浏览并调用来自全局启用服务器的能力。",
+              unify_broker_only: "所有能力均通过 UCAN 代理目录访问。内建 MCP 工具会浏览并调用来自全局启用服务器的能力。",
+              unify_server_level: "将所选符合条件的服务器的全部能力直接暴露给该客户端。已暴露的能力不会出现在 UCAN 目录中。",
+              unify_capability_level: "仅从符合条件的服务器中选择部分能力（工具、提示、资源、模板）直接暴露给该客户端。（进阶）",
               default: "查看当前已对该客户端运行态生效的配置集。",
               profile: "浏览共享场景库，并为该客户端选择精确的工作集。",
               custom: "在当前统一模式工作状态之上创建客户端专属调整。",
-              transparentDefault:
-                "将当前所有已激活配置集中的服务器直接写入该客户端的 MCP 配置。",
-              transparentProfile:
-                "将所选共享配置集中的服务器直接写入该客户端的 MCP 配置。",
-              transparentCustom:
-                "将该客户端专属自定义配置集中的服务器直接写入该客户端的 MCP 配置。",
+              transparentDefault: "将当前所有已激活配置集中的服务器直接写入该客户端的 MCP 配置。",
+              transparentProfile: "将所选共享配置集中的服务器直接写入该客户端的 MCP 配置。",
+              transparentCustom: "将该客户端专属自定义配置集中的服务器直接写入该客户端的 MCP 配置。",
             },
             options: {
               default: "当前生效",
@@ -1314,18 +1232,13 @@ export const clientsTranslations = {
           profiles: {
             title: "3. 配置集",
             descriptions: {
-              unify:
-                "统一模式不会在这里维护配置集工作集。配置集仅用于托管模式或透明模式工作流。",
-              default:
-                "查看当前已对该客户端运行态生效的配置集。为保持场景一致性，此视图为只读。",
+              unify: "统一模式不会在这里维护配置集工作集。配置集仅用于托管模式或透明模式工作流。",
+              default: "查看当前已对该客户端运行态生效的配置集。为保持场景一致性，此视图为只读。",
               profile: "选择定义该客户端工作集的可复用共享配置集。",
               custom: "为当前工作状态创建并维护客户端专属覆盖项。",
-              transparentDefault:
-                "透明模式会将当前所有已激活配置集中已启用的服务器直接写入该客户端的 MCP 配置。",
-              transparentProfile:
-                "选择哪些共享配置集为透明模式下该客户端的 MCP 配置提供已启用服务器。",
-              transparentCustom:
-                "透明模式在写入 MCP 配置时，仅使用该客户端专属自定义配置集中已启用的服务器。",
+              transparentDefault: "透明模式会将当前所有已激活配置集中已启用的服务器直接写入该客户端的 MCP 配置。",
+              transparentProfile: "选择哪些共享配置集为透明模式下该客户端的 MCP 配置提供已启用服务器。",
+              transparentCustom: "透明模式在写入 MCP 配置时，仅使用该客户端专属自定义配置集中已启用的服务器。",
             },
             empty: {
               active: "未找到已激活的配置集",
@@ -1335,15 +1248,13 @@ export const clientsTranslations = {
               titleCustom: "自定义当前状态",
               titleDefault: "打开配置集库",
               subtitleCustom: "为当前工作集创建并管理客户端专属覆盖项",
-              subtitleCustomTransparent:
-                "配置哪些服务器会被直接写入当前客户端。",
+              subtitleCustomTransparent: "配置哪些服务器会被直接写入当前客户端。",
               subtitleDefault: "浏览可复用共享场景，并在配置集页面中维护它们",
             },
           },
           unify: {
             title: "2. 配置详情",
-            description:
-              "统一模式初始仅提供内建 MCP 工具。它会在当前 MCP 会话中通过会话内建工具浏览全局启用服务器的 capabilities，并在会话结束后自动重置。",
+            description: "统一模式初始仅提供内建 MCP 工具。它会在当前 MCP 会话中通过会话内建工具浏览全局启用服务器的 capabilities，并在会话结束后自动重置。",
             items: {
               builtinOnly: "仅内建工具",
               sessionScoped: "会话内建流程",
@@ -1353,20 +1264,15 @@ export const clientsTranslations = {
           exposure: {
             title: "3. 直达暴露",
             descriptions: {
-              broker_only:
-                "在仅代理路由模式下，包括标记为直达暴露在内的所有已启用 MCP 服务器，仍通过内建 UCAN 工具访问。",
-              server_level:
-                "选择应将工具、提示、资源与资源模板直接暴露给该客户端的符合条件服务器。",
-              capability_level:
-                "选择符合条件的服务器，并在工具、提示、资源、模板四类能力上进行能力级直达配置。（进阶）",
+              broker_only: "在仅代理路由模式下，包括标记为直达暴露在内的所有已启用 MCP 服务器，仍通过内建 UCAN 工具访问。",
+              server_level: "选择应将工具、提示、资源与资源模板直接暴露给该客户端的符合条件服务器。",
+              capability_level: "选择符合条件的服务器，并在工具、提示、资源、模板四类能力上进行能力级直达配置。（进阶）",
             },
             labels: {
-              ucanRoutingDescription:
-                "在仅代理路由模式下，包括标记为直达暴露的服务器在内，所有已启用的 MCP 服务器仍通过 UCAN 目录与工具调用访问。",
+              ucanRoutingDescription: "在仅代理路由模式下，包括标记为直达暴露的服务器在内，所有已启用的 MCP 服务器仍通过 UCAN 目录与工具调用访问。",
             },
             empty: {
-              no_eligible:
-                "暂无可选符合条件服务器。请先在服务器详情中启用统一模式直达暴露。",
+              no_eligible: "暂无可选符合条件服务器。请先在服务器详情中启用统一模式直达暴露。",
             },
           },
         },
@@ -1448,26 +1354,22 @@ export const clientsTranslations = {
         deleteTitle: "删除备份",
         restoreTitle: "恢复备份",
         deleteDescription: "确定要删除该备份吗？此操作不可撤销。",
-        restoreDescription:
-          "要从选定备份恢复本地客户端配置文件吗？MCPMate 的管理模式与能力设置不会改变。",
+        restoreDescription: "要从选定备份恢复本地客户端配置文件吗？MCPMate 的管理模式与能力设置不会改变。",
         deleteLabel: "删除",
         restoreLabel: "恢复",
         cancelLabel: "取消",
         detachTitle: "从客户端配置中移除 MCPMate？",
-        detachDescription:
-          "将从客户端配置文件中移除 MCPMate 服务器条目。该客户端正在运行的 MCP 连接可能会中断，直到再次接入；请确认后继续。",
+        detachDescription: "将从客户端配置文件中移除 MCPMate 服务器条目。该客户端正在运行的 MCP 连接可能会中断，直到再次接入；请确认后继续。",
         detachLabel: "断开",
         attachTitle: "将 MCPMate 写回客户端配置？",
-        attachDescription:
-          "将把 MCPMate 服务器条目写回客户端配置文件，客户端的 MCP 会话可能会重连；请确认后继续。",
+        attachDescription: "将把 MCPMate 服务器条目写回客户端配置文件，客户端的 MCP 会话可能会重连；请确认后继续。",
         attachLabel: "接入",
       },
       policy: {
         title: "备份策略",
         fields: {
           policy: "策略",
-          policyDescription:
-            "备份保留策略。目前仅支持“keep_n”，会保留最近 N 个备份并清理更早的备份。",
+          policyDescription: "备份保留策略。目前仅支持“keep_n”，会保留最近 N 个备份并清理更早的备份。",
           options: {
             keepN: "keep_n",
           },
@@ -1746,6 +1648,7 @@ export const clientsTranslations = {
     emptyState: {
       title: "クライアントが見つかりません",
       description: "MCPMate バックエンドが動作し検出が有効か確認してください",
+      action: "最初のクライアントを追加",
     },
     detail: {
       noIdentifier: "クライアント識別子が指定されていません。",
@@ -1762,10 +1665,8 @@ export const clientsTranslations = {
       directExposure: {
         title: "能力レベル直達",
         badge: "直接公開",
-        description:
-          "このサーバーのどのケイパビリティを現在のクライアントへ直接公開するかを調整します。",
-        serverDescriptionFallback:
-          "このサーバーからクライアントへ直接公開するケイパビリティを選択します。",
+        description: "このサーバーのどのケイパビリティを現在のクライアントへ直接公開するかを調整します。",
+        serverDescriptionFallback: "このサーバーからクライアントへ直接公開するケイパビリティを選択します。",
         toolsTitle: "ツール",
         toolsSummary: "直接公開 {{enabled}} / {{total}} ケイパビリティ",
         tabs: {
@@ -1842,14 +1743,12 @@ export const clientsTranslations = {
       form: {
         titleCreate: "クライアントレコードを追加",
         titleEdit: "クライアントレコードを編集",
-        descriptionCreate:
-          "管理形態とメタデータを含むクライアントレコードを作成します。",
+        descriptionCreate: "管理形態とメタデータを含むクライアントレコードを作成します。",
         descriptionEdit: "このクライアントレコードと管理設定を更新します。",
         tabs: { basic: "基本", meta: "メタデータ" },
         connectionShape: {
           label: "クライアント形態",
-          description:
-            "このクライアントが書き込み可能なローカル設定ファイルを持つか、書き込み不可のリモート/未知クライアントかを選択します。",
+          description: "このクライアントが書き込み可能なローカル設定ファイルを持つか、書き込み不可のリモート/未知クライアントかを選択します。",
           options: {
             localWithConfig: "ローカル + 設定ファイル",
             localWithoutConfig: "ローカル / 不明な設定",
@@ -1863,8 +1762,7 @@ export const clientsTranslations = {
           description:
             "このクライアントが対応するランタイムトランスポートを選択します。この配列は hosted / unify のトランスポート選択を制約する唯一の情報源です。",
           validation: {
-            required:
-              "保存する前に、少なくとも 1 つの対応トランスポートを選択してください。",
+            required: "保存する前に、少なくとも 1 つの対応トランスポートを選択してください。",
           },
           options: {
             stdio: "STDIO",
@@ -1875,12 +1773,9 @@ export const clientsTranslations = {
         transportRules: {
           label: "トランスポートルール",
           suggestedVariants: "推奨バリアント",
-          empty:
-            "少なくとも 1 つのトランスポートを選択してから書き込みルールを編集してください。",
-          stdioDescription:
-            "このクライアントへコマンド型 MCP サーバーを書き込む際のフィールド名を定義します。",
-          httpDescription:
-            "このクライアントへ URL 型 MCP サーバーを書き込む際のフィールド名を定義します。",
+          empty: "少なくとも 1 つのトランスポートを選択してから書き込みルールを編集してください。",
+          stdioDescription: "このクライアントへコマンド型 MCP サーバーを書き込む際のフィールド名を定義します。",
+          httpDescription: "このクライアントへ URL 型 MCP サーバーを書き込む際のフィールド名を定義します。",
           commandField: "コマンドフィールド",
           argsField: "引数フィールド",
           envField: "環境変数フィールド",
@@ -1898,18 +1793,15 @@ export const clientsTranslations = {
             zedStyle: "Zed スタイル",
           },
           help: {
-            summary:
-              "これらのフィールドは、MCPMate 自身のプロトコル項目ではなく、対象クライアント設定内のキー名を表します。",
+            summary: "これらのフィールドは、MCPMate 自身のプロトコル項目ではなく、対象クライアント設定内のキー名を表します。",
             docs: "クライアントが期待するキー名に迷った場合は、まずそのクライアントの公式ドキュメントまたは既存の正常な設定を確認してください。",
-            presets:
-              "下の推奨バリアントは出発点として使えますが、最終的にはそのクライアントの実際の設定構造に合わせて確認してください。",
+            presets: "下の推奨バリアントは出発点として使えますが、最終的にはそのクライアントの実際の設定構造に合わせて確認してください。",
             openDocs: "クライアントのドキュメントを開く",
           },
           validation: {
             commandRequired: "STDIO では command フィールドが必要です。",
             urlRequired: "HTTP 系トランスポートでは URL フィールドが必要です。",
-            typeValueRequired:
-              "type フィールドを含める場合は type 値が必要です。",
+            typeValueRequired: "type フィールドを含める場合は type 値が必要です。",
           },
         },
         fields: {
@@ -1920,8 +1812,7 @@ export const clientsTranslations = {
           identifier: {
             label: "クライアント ID",
             placeholder: "cursor-desktop",
-            description:
-              "新規レコード作成時は、スペースと大文字小文字が自動で正規化されます。",
+            description: "新規レコード作成時は、スペースと大文字小文字が自動で正規化されます。",
           },
           clientVersion: {
             label: "クライアントバージョン",
@@ -1930,15 +1821,13 @@ export const clientsTranslations = {
           configPath: {
             label: "設定ファイルパス",
             placeholder: "~/.cursor/mcp.json",
-            description:
-              "書き込み可能なローカル設定パスがある場合、MCPMate はファイルベースの設定操作でこのクライアントを管理できます。",
+            description: "書き込み可能なローカル設定パスがある場合、MCPMate はファイルベースの設定操作でこのクライアントを管理できます。",
             browse: "選択…",
             browseAria: "ディスク上の設定ファイルを選択",
             dialogTitle: "設定ファイルを選択",
             pickFailedTitle: "選択したファイルを読み取れませんでした",
             webPickInfoTitle: "ブラウザのファイルアクセス",
-            webPickInfoDescription:
-              "ブラウザは絶対パスを自動取得できません。必要なら手動で貼り付けてください。",
+            webPickInfoDescription: "ブラウザは絶対パスを自動取得できません。必要なら手動で貼り付けてください。",
           },
           configFileParse: {
             label: "解析ルール",
@@ -1949,10 +1838,8 @@ export const clientsTranslations = {
             showAdvanced: "詳細を表示",
             hideAdvanced: "詳細を非表示",
             validationTitle: "ファイル関連付けチェック",
-            validationSuccess:
-              "選択したファイルは現在の解析ルールに一致しています。",
-            validationHint:
-              "設定ファイルを選択すると、MCPMate がこれらのルールで MCP server エントリを見つけられるか検証します。",
+            validationSuccess: "選択したファイルは現在の解析ルールに一致しています。",
+            validationHint: "設定ファイルを選択すると、MCPMate がこれらのルールで MCP server エントリを見つけられるか検証します。",
             detectedFormat: "検出フォーマット",
             containerMatch: "コンテナ",
             serverCount: "サーバー",
@@ -1960,8 +1847,7 @@ export const clientsTranslations = {
             matchNo: "見つかりません",
             summaryViewButton: "サマリー表示",
             codeViewButton: "コードプレビュー",
-            keysRequired:
-              "解析ルールを保存する前に、設定ノードパスを少なくとも1つ追加してください。",
+            keysRequired: "解析ルールを保存する前に、設定ノードパスを少なくとも1つ追加してください。",
             containerTypeOptions: {
               standard: "オブジェクトマップ",
               array: "配列",
@@ -1986,8 +1872,7 @@ export const clientsTranslations = {
           formatRulesJsonText: {
             label: "フォーマットルール（JSON）",
             placeholder: "JSON フォーマットルールをここに貼り付けてください",
-            description:
-              "高度な設定：トランスポート形式の細粒度ルールを JSON で定義します。空にするとデフォルト値にリセットされます。",
+            description: "高度な設定：トランスポート形式の細粒度ルールを JSON で定義します。空にするとデフォルト値にリセットされます。",
           },
           logoUrl: {
             label: "ロゴ URL",
@@ -2008,8 +1893,7 @@ export const clientsTranslations = {
           description: {
             label: "説明",
             placeholder: "このクライアントの概要を入力してください。",
-            description:
-              "これらのメタデータは表示とガイダンスのために保存されます。旧テンプレートファイルは互換性 seed としてのみ残ります。",
+            description: "これらのメタデータは表示とガイダンスのために保存されます。旧テンプレートファイルは互換性 seed としてのみ残ります。",
           },
         },
         buttons: {
@@ -2020,8 +1904,7 @@ export const clientsTranslations = {
         },
         confirmDelete: {
           title: "クライアントレコードを削除",
-          description:
-            "このクライアントレコードを削除してもよろしいですか？この操作は元に戻せません。",
+          description: "このクライアントレコードを削除してもよろしいですか？この操作は元に戻せません。",
           confirm: "削除",
           cancel: "キャンセル",
         },
@@ -2039,11 +1922,9 @@ export const clientsTranslations = {
             message: "クライアントレコードを削除しました。",
           },
           createBackupPolicyFailed: {
-            message:
-              "クライアントレコードは作成されましたが、初期バックアップポリシーの適用に失敗しました。後でバックアップ設定から再試行できます。",
+            message: "クライアントレコードは作成されましたが、初期バックアップポリシーの適用に失敗しました。後でバックアップ設定から再試行できます。",
           },
-          formatRulesJsonParseError:
-            "フォーマットルール JSON の解析に失敗しました。構文を確認して再度お試しください。",
+          formatRulesJsonParseError: "フォーマットルール JSON の解析に失敗しました。構文を確認して再度お試しください。",
           saveFailed: { title: "クライアントレコードを保存できませんでした" },
           deleteFailed: {
             title: "クライアントレコードを削除できません",
@@ -2055,36 +1936,26 @@ export const clientsTranslations = {
         title: "設定モード",
         description: "意味が不明な場合は変更せず現状の設定を維持してください。",
         warnings: {
-          mixedRouting:
-            "混合ルーティング: ステートフルな手順を分割すると問題が起きる可能性があります。",
+          mixedRouting: "混合ルーティング: ステートフルな手順を分割すると問題が起きる可能性があります。",
         },
         errors: {
-          customProfileMissing:
-            "このクライアント専用のカスタムワークスペースが見つかりません。設定を適用する前に再作成してください。",
+          customProfileMissing: "このクライアント専用のカスタムワークスペースが見つかりません。設定を適用する前に再作成してください。",
         },
-        writeTargetRequiredReason:
-          "クライアント設定ファイルへガバナンスを適用するには、検証済みで書き込み可能なローカル MCP 設定ファイルが必要です。",
-        applyRequiresApprovedReason:
-          "クライアント設定を適用するには、許可済みのガバナンス状態と検証済みのローカル設定対象が必要です。",
-        managementSettingsPendingReason:
-          "このクライアントが承認待ち状態を抜けてから管理設定を保存してください。",
+        writeTargetRequiredReason: "クライアント設定ファイルへガバナンスを適用するには、検証済みで書き込み可能なローカル MCP 設定ファイルが必要です。",
+        applyRequiresApprovedReason: "クライアント設定を適用するには、許可済みのガバナンス状態と検証済みのローカル設定対象が必要です。",
+        managementSettingsPendingReason: "このクライアントが承認待ち状態を抜けてから管理設定を保存してください。",
         apply: "適用",
         reapply: "再適用",
         sections: {
           mode: {
             title: "1. 管理モード",
             descriptions: {
-              unify:
-                "統一モードは内蔵 MCP ツールのみで開始し、現在のセッションではグローバルに有効なサーバーのケイパビリティを扱います。",
-              hosted:
-                "ホスト型モードはこのクライアントの持続的な管理設定を保持し、現在のワーク状態を記憶します。",
-              transparent:
-                "MCPMate は選択したプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込み、ケイパビリティ単位の制御は保持しません。",
+              unify: "統一モードは内蔵 MCP ツールのみで開始し、現在のセッションではグローバルに有効なサーバーのケイパビリティを扱います。",
+              hosted: "ホスト型モードはこのクライアントの持続的な管理設定を保持し、現在のワーク状態を記憶します。",
+              transparent: "MCPMate は選択したプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込み、ケイパビリティ単位の制御は保持しません。",
             },
-            managedDisabledReason:
-              "ホスト型モードと統一モードを使うには、少なくとも 1 つのサポート対象トランスポートが必要です。",
-            transparentDisabledReason:
-              "トランスペアレントモードには、書き込み可能なローカル設定ファイルのパスが必要です。",
+            managedDisabledReason: "ホスト型モードと統一モードを使うには、少なくとも 1 つのサポート対象トランスポートが必要です。",
+            transparentDisabledReason: "トランスペアレントモードには、書き込み可能なローカル設定ファイルのパスが必要です。",
             options: {
               unify: "統一モード",
               hosted: "ホスト型モード",
@@ -2108,18 +1979,12 @@ export const clientsTranslations = {
                 "選択した対象サーバーから、このクライアントへケイパビリティを直接公開します。公開されたケイパビリティは UCAN カタログには載りません。",
               unify_capability_level:
                 "対象サーバーから選択したケイパビリティ（ツール、プロンプト、リソース、テンプレート）のみをこのクライアントへ直接公開します。（上級）",
-              default:
-                "このクライアントの実行時に現在有効なプロファイルを確認します。",
-              profile:
-                "共有シーンライブラリを参照し、このクライアントの正確なワークセットを選択します。",
-              custom:
-                "現在の統一モードのワーク状態の上にクライアント専用の調整を作成します。",
-              transparentDefault:
-                "現在有効なすべてのプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
-              transparentProfile:
-                "選択した共有プロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
-              transparentCustom:
-                "このクライアント専用のカスタムプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
+              default: "このクライアントの実行時に現在有効なプロファイルを確認します。",
+              profile: "共有シーンライブラリを参照し、このクライアントの正確なワークセットを選択します。",
+              custom: "現在の統一モードのワーク状態の上にクライアント専用の調整を作成します。",
+              transparentDefault: "現在有効なすべてのプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
+              transparentProfile: "選択した共有プロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
+              transparentCustom: "このクライアント専用のカスタムプロファイルのサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
             },
             options: {
               default: "有効なプロファイル",
@@ -2137,16 +2002,12 @@ export const clientsTranslations = {
             descriptions: {
               unify:
                 "統一モードではここでプロファイルのワークセットを維持しません。プロファイルはホスト型モードまたはトランスペアレントモードのワークフローで使用します。",
-              default:
-                "このクライアントの実行時にすでに有効なプロファイルを確認します。シーンの一貫性を保つため、このビューは読み取り専用です。",
-              profile:
-                "このクライアントのワークセットを定義する再利用可能な共有プロファイルを選択します。",
-              custom:
-                "現在のワーク状態に対するクライアント専用オーバーライドを作成・維持します。",
+              default: "このクライアントの実行時にすでに有効なプロファイルを確認します。シーンの一貫性を保つため、このビューは読み取り専用です。",
+              profile: "このクライアントのワークセットを定義する再利用可能な共有プロファイルを選択します。",
+              custom: "現在のワーク状態に対するクライアント専用オーバーライドを作成・維持します。",
               transparentDefault:
                 "トランスペアレントモードでは、現在有効なすべてのプロファイルの有効化されたサーバーをこのクライアントの MCP 設定へ直接書き込みます。",
-              transparentProfile:
-                "トランスペアレントモードでこのクライアントの MCP 設定に有効化されたサーバーを提供する共有プロファイルを選択します。",
+              transparentProfile: "トランスペアレントモードでこのクライアントの MCP 設定に有効化されたサーバーを提供する共有プロファイルを選択します。",
               transparentCustom:
                 "トランスペアレントモードで MCP 設定を書き込む際は、このクライアント専用カスタムプロファイルの有効化されたサーバーのみを使用します。",
             },
@@ -2157,12 +2018,9 @@ export const clientsTranslations = {
             ghost: {
               titleCustom: "現在の状態をカスタマイズ",
               titleDefault: "プロファイルライブラリを開く",
-              subtitleCustom:
-                "現在のワークスペースに対するクライアント専用オーバーライドを作成・管理",
-              subtitleCustomTransparent:
-                "このクライアントへ直接書き込むサーバーを設定します。",
-              subtitleDefault:
-                "再利用可能な共有シーンを参照し、プロファイルページで編集します",
+              subtitleCustom: "現在のワークスペースに対するクライアント専用オーバーライドを作成・管理",
+              subtitleCustomTransparent: "このクライアントへ直接書き込むサーバーを設定します。",
+              subtitleDefault: "再利用可能な共有シーンを参照し、プロファイルページで編集します",
             },
           },
           unify: {
@@ -2180,18 +2038,15 @@ export const clientsTranslations = {
             descriptions: {
               broker_only:
                 "ブローカーのみモードでは、直接公開対象としてマークされたサーバーを含む、有効な MCP サーバーはすべて内蔵 UCAN ツール経由で利用できます。",
-              server_level:
-                "ツール、プロンプト、リソース、リソーステンプレートをこのクライアントへ直接公開する対象サーバーを選択します。",
-              capability_level:
-                "対象サーバーを選び、ツール、プロンプト、リソース、テンプレートを能力単位で直接公開する設定を行います。（上級）",
+              server_level: "ツール、プロンプト、リソース、リソーステンプレートをこのクライアントへ直接公開する対象サーバーを選択します。",
+              capability_level: "対象サーバーを選び、ツール、プロンプト、リソース、テンプレートを能力単位で直接公開する設定を行います。（上級）",
             },
             labels: {
               ucanRoutingDescription:
                 "ブローカーのみモードでは、直接公開としてマークされたサーバーを含め、有効な MCP サーバーはすべて UCAN カタログとツール呼び出し経由でアクセスされます。",
             },
             empty: {
-              no_eligible:
-                "対象となるサーバーがありません。先にサーバー詳細で Unify の直接公開を有効にしてください。",
+              no_eligible: "対象となるサーバーがありません。先にサーバー詳細で Unify の直接公開を有効にしてください。",
             },
           },
         },
@@ -2246,18 +2101,15 @@ export const clientsTranslations = {
           delete: "削除",
         },
         empty: "バックアップはありません。",
-        emptyDisabledByPolicy:
-          "システムポリシーにより現在バックアップは無効です。",
+        emptyDisabledByPolicy: "システムポリシーにより現在バックアップは無効です。",
         bulk: {
           title: "選択したバックアップを削除",
-          description:
-            "{{count}} 件のバックアップを削除しますか？この操作は元に戻せません。",
+          description: "{{count}} 件のバックアップを削除しますか？この操作は元に戻せません。",
         },
       },
       logs: {
         title: "ログ",
-        description:
-          "このクライアントに関連する実行ログとアクティビティログを表示します。",
+        description: "このクライアントに関連する実行ログとアクティビティログを表示します。",
         searchPlaceholder: "ログを検索...",
         refresh: "ログを更新",
         expand: "ログを展開",
@@ -2275,10 +2127,8 @@ export const clientsTranslations = {
       confirm: {
         deleteTitle: "バックアップを削除",
         restoreTitle: "バックアップを復元",
-        deleteDescription:
-          "このバックアップを削除しますか？この操作は元に戻せません。",
-        restoreDescription:
-          "選択したバックアップからローカルのクライアント設定ファイルを復元しますか？MCPMate の管理モードと能力設定は変更されません。",
+        deleteDescription: "このバックアップを削除しますか？この操作は元に戻せません。",
+        restoreDescription: "選択したバックアップからローカルのクライアント設定ファイルを復元しますか？MCPMate の管理モードと能力設定は変更されません。",
         deleteLabel: "削除",
         restoreLabel: "復元",
         cancelLabel: "キャンセル",
@@ -2295,14 +2145,12 @@ export const clientsTranslations = {
         title: "バックアップポリシー",
         fields: {
           policy: "ポリシー",
-          policyDescription:
-            'バックアップ保持方針です。現在は "keep_n" のみ対応し、最新 N 件を保持して古いものを削除します。',
+          policyDescription: 'バックアップ保持方針です。現在は "keep_n" のみ対応し、最新 N 件を保持して古いものを削除します。',
           options: {
             keepN: "keep_n",
           },
           limit: "上限",
-          limitDescription:
-            "このクライアントで保持するバックアップ数の上限です。0 にすると無制限です。",
+          limitDescription: "このクライアントで保持するバックアップ数の上限です。0 にすると無制限です。",
         },
         buttons: {
           save: "ポリシーを保存",
@@ -2361,8 +2209,7 @@ export const clientsTranslations = {
         },
         managementSaved: {
           title: "保存しました",
-          message:
-            "管理設定を MCPMate に保存しました。ローカルのクライアント設定は更新していません。",
+          message: "管理設定を MCPMate に保存しました。ローカルのクライアント設定は更新していません。",
         },
         applyFailed: {
           title: "適用に失敗しました",
@@ -2374,8 +2221,7 @@ export const clientsTranslations = {
         },
         nothingToImport: {
           title: "インポート不要",
-          message:
-            "すべての項目がスキップされたか、インポート可能なサーバーがありません。",
+          message: "すべての項目がスキップされたか、インポート可能なサーバーがありません。",
         },
         importFailed: {
           title: "インポートに失敗しました",

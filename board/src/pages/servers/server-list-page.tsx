@@ -288,7 +288,7 @@ export function ServerListPage() {
 	);
 
 	const {
-		data: serverListResponse,
+		data: serverData,
 		isLoading,
 		refetch,
 		isRefetching,
@@ -324,8 +324,8 @@ export function ServerListPage() {
 	});
 
 	React.useEffect(() => {
-		if (sortedServers.length === 0 && serverListResponse?.servers) {
-			const initialSorted = [...serverListResponse.servers].sort((a, b) => {
+		if (sortedServers.length === 0 && serverData?.servers) {
+			const initialSorted = [...serverData.servers].sort((a, b) => {
 				const aValue = a[sortState.field as keyof ServerSummary];
 				const bValue = b[sortState.field as keyof ServerSummary];
 
@@ -342,7 +342,7 @@ export function ServerListPage() {
 			});
 			setSortedServers(initialSorted);
 		}
-	}, [serverListResponse?.servers, sortedServers.length, sortState]);
+	}, [serverData?.servers, sortedServers.length, sortState]);
 
 	// Enable/disable server
 	async function toggleServerAsync(
@@ -885,7 +885,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 				`${t("debug.info.baseUrl", { defaultValue: "API Base URL" })}: ${window.location.origin}`,
 				`${t("debug.info.currentTime", { defaultValue: "Current Time" })}: ${new Date().toLocaleString()}`,
 				`${t("debug.info.error", { defaultValue: "Error" })}: ${error instanceof Error ? error.message : String(error)}`,
-				`${t("debug.info.data", { defaultValue: "Servers Data" })}: ${JSON.stringify(serverListResponse, null, 2)}`,
+				`${t("debug.info.data", { defaultValue: "Servers Data" })}: ${JSON.stringify(serverData, null, 2)}`,
 			];
 			setDebugInfo(debugLines.join("\n"));
 		}
@@ -895,9 +895,10 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 	const filteredAndSortedServers = useMemo(() => {
 		return sortedServers;
 	}, [sortedServers]);
+	const hasNoServerRecords = serverData?.servers?.length === 0;
 
 	const statsCards = useMemo(() => {
-		const list = serverListResponse?.servers ?? [];
+		const list = serverData?.servers ?? [];
 		return [
 			{
 				title: t("statsCards.total.title", {
@@ -941,7 +942,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 				}),
 			},
 		];
-	}, [serverListResponse, t]);
+	}, [serverData, t]);
 
 	// Prepare loading skeleton
 	const loadingSkeleton =
@@ -982,7 +983,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 	// Toolbar config
 	type ToolbarServer = ServerSummary & { [key: string]: unknown };
 	const toolbarConfig: PageToolbarConfig<ToolbarServer> = {
-		data: (serverListResponse?.servers || []) as ToolbarServer[],
+		data: (serverData?.servers || []) as ToolbarServer[],
 		search: {
 			placeholder: t("toolbar.search.placeholder", {
 				defaultValue: "Search servers...",
@@ -1099,6 +1100,19 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 	);
 
 	// Prepare empty state
+	const emptyStateAction = hasNoServerRecords ? (
+		<Button
+			onClick={() => setManualOpen(true)}
+			size="sm"
+			className="mt-4"
+		>
+			<Plus className="mr-2 h-4 w-4" />
+			{t("emptyState.action", {
+				defaultValue: "Add First Server",
+			})}
+		</Button>
+	) : undefined;
+
 	const emptyState = (
 		<Card>
 			<CardContent className="flex flex-col items-center justify-center p-6">
@@ -1108,18 +1122,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 					description={t("emptyState.description", {
 						defaultValue: "Add your first MCP server to get started",
 					})}
-					action={
-						<Button
-							onClick={() => setManualOpen(true)}
-							size="sm"
-							className="mt-4"
-						>
-							<Plus className="mr-2 h-4 w-4" />
-							{t("emptyState.action", {
-								defaultValue: "Add First Server",
-							})}
-						</Button>
-					}
+					action={emptyStateAction}
 				/>
 			</CardContent>
 		</Card>
