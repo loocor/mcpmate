@@ -236,14 +236,17 @@ fn dispatch_mcpmate_deep_link(app: &tauri::AppHandle, url: &str, context: &'stat
 
 #[cfg(target_os = "linux")]
 fn extract_linux_fallback_deep_links_from_argv(args: &[String]) -> Vec<String> {
-    let normalize = |arg: &String| arg.trim().trim_matches('"').trim_matches('\'');
-    if args.len() == 2 && normalize(&args[1]).starts_with("mcpmate://") {
+    fn normalize_arg(arg: &str) -> &str {
+        arg.trim().trim_matches('"').trim_matches('\'')
+    }
+
+    if args.len() == 2 && normalize_arg(&args[1]).starts_with("mcpmate://") {
         return Vec::new();
     }
 
     args.iter()
         .filter_map(|arg| {
-            let trimmed = normalize(arg);
+            let trimmed = normalize_arg(arg);
             if trimmed.starts_with("mcpmate://") {
                 Some(trimmed.to_string())
             } else {
