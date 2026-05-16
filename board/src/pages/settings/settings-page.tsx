@@ -624,25 +624,20 @@ export function SettingsPage() {
 				}),
 		[localhostRuntimeMode, t, i18n.language],
 	);
-	const localServiceStatusLabel = useMemo(
-		() =>
-			t(`settings:system.localServiceStatus.${localService.status}`, {
-				defaultValue: localService.status,
-			}),
-		[localService.status, t],
+	const localServiceStatusLabel = t(
+		`settings:system.localServiceStatus.${localService.status}`,
+		{
+			defaultValue: localService.status,
+		},
 	);
-	const localServiceDetail = useMemo(
-		() =>
-			t(
-				`settings:system.localServiceDetail.${localhostRuntimeMode}.${localService.status}`,
-				{
-					defaultValue: t("settings:system.serviceStatusFallback", {
-						defaultValue:
-							"The desktop will attach to the configured localhost core service when it is available.",
-					}),
-				},
-			),
-		[localhostRuntimeMode, localService.status, t],
+	const localServiceDetail = t(
+		`settings:system.localServiceDetail.${localhostRuntimeMode}.${localService.status}`,
+		{
+			defaultValue: t("settings:system.serviceStatusFallback", {
+				defaultValue:
+					"The desktop will attach to the configured localhost core service when it is available.",
+			}),
+		},
 	);
 
 	const isSystemReadonlyInWeb = !isTauriShell;

@@ -86,7 +86,7 @@ export function ClientsPage() {
 		validValues: ["all", "allowed", "pending", "denied"],
 	});
 
-	const { data, isLoading, isRefetching, refetch } = useQuery({
+	const { data: clientData, isLoading, isRefetching, refetch } = useQuery({
 		queryKey: ["clients"],
 		queryFn: async () => {
 			const resp = await clientsApi.list(false);
@@ -98,8 +98,8 @@ export function ClientsPage() {
 		refetchOnReconnect: false,
 	});
 
-	const clients: ClientInfo[] = data?.client ?? EMPTY_CLIENTS;
-	const hasNoClientRecords = clients.length === 0;
+	const clients: ClientInfo[] = clientData?.client ?? EMPTY_CLIENTS;
+	const hasNoClientRecords = clientData?.client?.length === 0;
 	const detectedCount = clients.filter((c) => !!c.detected).length;
 	const approvedCount = clients.filter((c) => getGovernanceStatus(c) === "allowed").length;
 	const pendingCount = clients.filter((c) => getGovernanceStatus(c) === "pending").length;
