@@ -573,11 +573,13 @@ export function DashboardPage() {
 									})}
 							</span>
 						</div>
-						<p className="text-sm text-slate-700 dark:text-slate-300">
-							{localCoreStatusLabel}
-						</p>
-						<p className="text-xs text-slate-500 dark:text-slate-400">
-							{localCoreDetail}
+						<p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+							<span className="text-sm text-slate-700 dark:text-slate-300">
+								{localCoreStatusLabel}
+							</span>
+							<span className="text-xs text-slate-500 dark:text-slate-400">
+								{localCoreDetail}
+							</span>
 						</p>
 					</div>
 					<div className="flex shrink-0 items-center gap-2">
