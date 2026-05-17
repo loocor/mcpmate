@@ -52,6 +52,14 @@
 			"../../backend/target/sidecars/bridge",
 			"../../backend/target/sidecars/mcpmate-core"
 		],
+		"linux": {
+			"deb": {
+				"desktopTemplate": "templates/linux/mcpmate.desktop"
+			},
+			"rpm": {
+				"desktopTemplate": "templates/linux/mcpmate.desktop"
+			}
+		},
 		"macOS": {
 			"entitlements": "entitlements.plist",
 			"minimumSystemVersion": "10.15",
