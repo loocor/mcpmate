@@ -226,23 +226,23 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 				<div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto pr-1">
 					<UISidebar>
 						<SidebarContent>
-							{nav.groups.map((g) => {
+							{nav.groups.map((g, idx) => {
 								const isRoot = !g.group || g.group.trim() === "";
 								if (isRoot) {
 									return (
-										<SidebarGroup key={g.group || "__root"}>
+										<SidebarGroup key={g.group || `__root-${idx}`}>
 											<SidebarMenu>
-												{g.pages.map((p: DocPage | DocGroup) => (
+												{g.pages.map((p: DocPage | DocGroup) =>
 													"path" in p ? (
 														<SidebarMenuItem key={p.path}>
 															<Link to={p.path}>
 																<SidebarMenuButton
-										active={current?.path === p.path}
-										onClick={() => {
-											// Collapse all collapsible menu items when clicking root-level items
-											setOpenGroup(null);
-											setOpenSubGroup(null);
-										}}
+																	active={current?.path === p.path}
+																	onClick={() => {
+																		// Collapse all collapsible menu items when clicking root-level items
+																		setOpenGroup(null);
+																		setOpenSubGroup(null);
+																	}}
 																	onMouseEnter={() => {
 																		// Preload the component on hover
 																		p.component();
@@ -252,8 +252,8 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 																</SidebarMenuButton>
 															</Link>
 														</SidebarMenuItem>
-													) : null
-												))}
+													) : null,
+												)}
 											</SidebarMenu>
 										</SidebarGroup>
 									);
@@ -267,15 +267,15 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 									<SidebarGroup key={g.group}>
 										<button
 											type="button"
-										onClick={() => {
-											// Toggle current group: if it's open, close it; if it's closed, open it
-											if (openGroup === g.group) {
-												setOpenGroup(null);
-												setOpenSubGroup(null);
-											} else {
-												setOpenGroup(g.group);
-											}
-										}}
+											onClick={() => {
+												// Toggle current group: if it's open, close it; if it's closed, open it
+												if (openGroup === g.group) {
+													setOpenGroup(null);
+													setOpenSubGroup(null);
+												} else {
+													setOpenGroup(g.group);
+												}
+											}}
 											className="group w-full text-left rounded-md px-2 py-2.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
 											aria-expanded={!collapsed}
 										>
@@ -297,20 +297,20 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 													{g.pages.map((p) => {
 														if ("group" in p) {
 															const sg: DocGroup = p;
-													const key = `${g.group}/${sg.group}`;
-													const opened = openSubGroup === key;
-													return (
+															const key = `${g.group}/${sg.group}`;
+															const opened = openSubGroup === key;
+															return (
 																<div
 																	key={sg.group}
 																	className="mb-2"
 																>
 																	<button
 																		type="button"
-																onClick={() => {
-																	// Toggle sub-group: if it's open, close it; if it's closed, open it
-																	setOpenGroup(g.group);
-																	setOpenSubGroup(opened ? null : key);
-																}}
+																		onClick={() => {
+																			// Toggle sub-group: if it's open, close it; if it's closed, open it
+																			setOpenGroup(g.group);
+																			setOpenSubGroup(opened ? null : key);
+																		}}
 																		className="group w-full text-left rounded-md px-2 py-2 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
 																		aria-expanded={opened}
 																	>
@@ -326,18 +326,18 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 																	</button>
 																	{opened && (
 																		<div className="mt-1 ml-3 pl-2 border-l border-slate-200 dark:border-slate-700">
-															{sg.pages.map((sp) => {
-																if (!("path" in sp)) {
-																	return null;
-																}
-																return (
-																	<SidebarMenuItem key={sp.path}>
-																		<Link to={sp.path}>
-																			<SidebarMenuButton
-																				active={current?.path === sp.path}
-																				onMouseEnter={() => {
-																					sp.component();
-																				}}
+																			{sg.pages.map((sp) => {
+																				if (!("path" in sp)) {
+																					return null;
+																				}
+																				return (
+																					<SidebarMenuItem key={sp.path}>
+																						<Link to={sp.path}>
+																							<SidebarMenuButton
+																								active={current?.path === sp.path}
+																								onMouseEnter={() => {
+																									sp.component();
+																								}}
 																			>
 																				{renderMenuLabel(sp.title)}
 																			</SidebarMenuButton>

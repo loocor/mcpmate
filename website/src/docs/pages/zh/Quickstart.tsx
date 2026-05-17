@@ -8,7 +8,7 @@ import { buildHowTo } from "../../../utils/schema";
 const howToSteps = [
 	{
 		name: "下载桌面应用",
-		text: "先到 GitHub Releases 下载适合你平台的安装包。当前 macOS 构建最稳定；Windows 和 Linux 安装包也已提供，但这两个平台仍在持续补齐体验。",
+		text: "先到 GitHub Releases 下载适合你平台的安装包。macOS、Windows 与 Linux 构建目前均为 Beta 状态。",
 	},
 	{
 		name: "启动 MCPMate",
@@ -55,7 +55,10 @@ export default function QuickstartZH() {
 			<Ul>
 				<Li>打开 Releases 页面，选择适合你平台的安装包。</Li>
 				<Li>
-					当前 macOS 安装包最稳定。Windows 和 Linux 安装包也可下载，但部分功能可能仍在补齐或暂时不稳定。
+					macOS、Windows 与 Linux 安装包目前均为 Beta 状态，可下载使用，同时跨平台桌面体验仍在持续打磨。
+				</Li>
+				<Li>
+					macOS 构建已加入签名与公证，以减少系统安全提示并提升安装包可信度。
 				</Li>
 				<Li>
 					安装后启动 MCPMate。桌面应用会把仪表盘与本地代理一起打包好，让你从一个入口就能开始管理。

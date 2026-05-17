@@ -50,7 +50,7 @@ const en = {
 	"download.col_arch": "Architecture",
 	"download.col_status": "Status",
 	"download.col_downloads": "Downloads",
-	"download.status_unstable": "Unstable",
+	"download.status_beta": "Beta",
 	"download.available": "Available",
 	"download.loading": "Loading…",
 	"download.all_releases": "All releases",
@@ -58,7 +58,7 @@ const en = {
 	"download.retry": "Retry",
 	"download.table_caption": "MCPMate desktop installers linked to the latest GitHub release",
 	"download.platform_availability_note":
-		"Windows and Linux are under active improvement. Installers are available to download, but features may be unavailable or unstable until those platforms catch up.",
+		"macOS, Windows, and Linux installers are currently in Beta. macOS builds are signed and notarized to reduce system security prompts.",
 	"download.latest_label": "Latest",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
@@ -223,7 +223,7 @@ const en = {
 		"MCPMate is for developers who manage multiple MCP-compatible AI clients and want a single place to control which servers, tools, and prompts each client sees without scattered config files.",
 	"faq.platforms.title": "Which platforms are supported?",
 	"faq.platforms.answer":
-		"macOS installers are the most stable today. Windows and Linux installers are available from GitHub Releases, but those platforms are still catching up and some features may be incomplete or unstable.",
+		"macOS, Windows, and Linux installers are available from GitHub Releases and are currently in Beta. macOS builds are signed and notarized, while the cross-platform desktop experience continues to mature.",
 	"faq.security.title": "How does MCPMate handle security?",
 	"faq.security.answer":
 		"The core is built in Rust and runs entirely on your machine. MCPMate lets you control which capabilities are exposed per profile and per client.",

@@ -49,7 +49,7 @@ const zh = {
 	"download.col_arch": "架构",
 	"download.col_status": "状态",
 	"download.col_downloads": "下载",
-	"download.status_unstable": "不稳定",
+	"download.status_beta": "Beta",
 	"download.available": "可用",
 	"download.loading": "加载中…",
 	"download.all_releases": "所有版本",
@@ -57,7 +57,7 @@ const zh = {
 	"download.retry": "重试",
 	"download.table_caption": "指向 GitHub 最新版本的 MCPMate 桌面安装包",
 	"download.platform_availability_note":
-		"Windows、Linux 正在积极完善中：当前安装包可下载，但功能可能不可用或不稳定。",
+		"macOS、Windows 与 Linux 安装包目前均为 Beta 状态。macOS 构建已加入签名与公证，以减少系统安全提示。",
 	"download.latest_label": "最新版本",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
@@ -203,7 +203,7 @@ const zh = {
 		"MCPMate 适合管理多个 MCP 兼容 AI 客户端的开发者，希望在一处控制每个客户端能看到哪些服务器、工具和提示词，而不是到处改分散的配置文件。",
 	"faq.platforms.title": "支持哪些平台？",
 	"faq.platforms.answer":
-			"当前 macOS 安装包最稳定。Windows 与 Linux 安装包也已在 GitHub Releases 提供下载，但这些平台仍在持续完善中，部分功能可能不完整或不稳定。",
+			"macOS、Windows 与 Linux 安装包均可从 GitHub Releases 获取，目前都处于 Beta 状态。macOS 构建已加入签名与公证，跨平台桌面体验仍在持续打磨。",
 	"faq.security.title": "安全如何保障？",
 	"faq.security.answer":
 		"核心采用 Rust 实现，完全在本机运行。MCPMate 让你按配置集和客户端控制哪些能力被暴露。",
