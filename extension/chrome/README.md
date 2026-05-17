@@ -17,6 +17,10 @@ The payload JSON matches desktop handling in `deep_link.rs`:
 - Detects likely MCP snippets that contain `mcpServers` in `pre`/`code` blocks.
 - Injects a compact bar on each block: **MCPMate logo** (inline SVG, same mark as `icons/logo.svg`) by default—avoids page CSP blocking `chrome-extension://` images; on hover/focus it expands to **Add to MCPMate** (English UI; i18n later).
 - Sends source URL along with snippet text for auditability.
+- Adds an extension popup discovery panel with **Portals**, **Top Servers**, and **Top Clients** tabs.
+- Loads Top Servers from the MCPMate account service public catalog at `https://auth.mcp.umate.ai/discovery/servers`.
+- Does not upload detected snippets or import metadata. Discovery data is curated and published by the account service.
+- Uses `config.js` as the extension deployment config. Update `accountApiOrigin` there if the account API origin changes.
 - Extension toolbar uses an **inline copy** of the logo in `content.js` (`MCPMATE_LOGO_SVG`); keep it in sync with `icons/logo.svg` / `website/public/logo.svg` when the brand mark changes. **`manifest.json` icons** use PNGs (`icons/icon-{16,32,48,128}.png`) because Chrome’s extension UI does not reliably show SVG there; regenerate those PNGs from `desktop/tauri/src-tauri/icons/icon.png` when the app icon changes (e.g. `sips -z <size> <size> icon.png --out icons/icon-<size>.png` on macOS).
 
 ## Install (store)
@@ -45,3 +49,4 @@ Status: Available on Chrome Web Store and Microsoft Edge Add-ons.
 - Very large snippets may exceed URL limits; extension warns above ~48k characters.
 - If MCPMate desktop is not installed, browser may show no handler for `mcpmate:`.
 - Chrome Web Store expects PNGs at fixed sizes; this folder already ships `icons/icon-*.png` derived from the desktop app icon.
+- Discovery data is owned by the separate MCPMate account service, not by the marketing website.
