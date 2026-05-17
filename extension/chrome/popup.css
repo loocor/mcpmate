@@ -1,10 +1,10 @@
 :root {
-	color-scheme: dark;
+	color-scheme: light;
 	font-family:
 		Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
 		sans-serif;
-	background: #0f172a;
-	color: #e5edf8;
+	background: #f8fafc;
+	color: #0f172a;
 }
 
 * {
@@ -14,7 +14,7 @@
 body {
 	width: 380px;
 	margin: 0;
-	background: #0f172a;
+	background: #f8fafc;
 }
 
 button {
@@ -25,7 +25,7 @@ button {
 	display: flex;
 	min-height: 520px;
 	flex-direction: column;
-	gap: 14px;
+	gap: 12px;
 	padding: 16px;
 }
 
@@ -33,13 +33,42 @@ button {
 	display: flex;
 	align-items: center;
 	gap: 12px;
+	padding-bottom: 4px;
+}
+
+.brand {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .logo {
-	width: 38px;
-	height: 38px;
-	border-radius: 8px;
-	background: #1e293b;
+	width: 28px;
+	height: 28px;
+}
+
+.header-copy {
+	min-width: 0;
+	flex: 1;
+}
+
+.header-badge {
+	display: inline-flex;
+	align-items: center;
+	height: 22px;
+	padding: 0 8px;
+	border: 1px solid #e2e8f0;
+	border-radius: 999px;
+	background: #fff;
+	color: #475569;
+	font-size: 11px;
+	font-weight: 700;
 }
 
 h1 {
@@ -50,18 +79,18 @@ h1 {
 
 p {
 	margin: 3px 0 0;
-	color: #94a3b8;
+	color: #64748b;
 	font-size: 12px;
 }
 
 .tabs {
 	display: grid;
 	grid-template-columns: repeat(3, 1fr);
-	gap: 6px;
+	gap: 4px;
 	padding: 4px;
-	border: 1px solid #243047;
+	border: 1px solid #e2e8f0;
 	border-radius: 8px;
-	background: #111827;
+	background: #f1f5f9;
 }
 
 .tab {
@@ -69,15 +98,16 @@ p {
 	border: 0;
 	border-radius: 6px;
 	background: transparent;
-	color: #94a3b8;
+	color: #64748b;
 	cursor: pointer;
 	font-size: 12px;
 	font-weight: 700;
 }
 
 .tab.is-active {
-	background: #2563eb;
-	color: #fff;
+	background: #fff;
+	color: #0f172a;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .panel {
@@ -99,9 +129,10 @@ p {
 	display: grid;
 	gap: 7px;
 	padding: 12px;
-	border: 1px solid #243047;
+	border: 1px solid #e2e8f0;
 	border-radius: 8px;
-	background: #111827;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .card-title {
@@ -109,7 +140,7 @@ p {
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	color: #f8fafc;
+	color: #0f172a;
 	font-size: 13px;
 	font-weight: 800;
 }
@@ -118,23 +149,24 @@ p {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
-	color: #cbd5e1;
+	color: #475569;
 	font-size: 11px;
 }
 
 .pill {
 	padding: 3px 7px;
 	border-radius: 999px;
-	background: #1e293b;
-	color: #cbd5e1;
+	background: #f1f5f9;
+	color: #475569;
 }
 
 .status {
 	margin-bottom: 10px;
 	padding: 10px;
-	border: 1px solid #243047;
+	border: 1px solid #e2e8f0;
 	border-radius: 8px;
-	color: #cbd5e1;
+	background: #fff;
+	color: #475569;
 	font-size: 12px;
 }
 
@@ -152,13 +184,14 @@ p {
 .footer button,
 .open-button {
 	min-height: 34px;
-	border: 1px solid #334155;
+	border: 1px solid #e2e8f0;
 	border-radius: 7px;
-	background: #172033;
-	color: #e2e8f0;
+	background: #fff;
+	color: #0f172a;
 	cursor: pointer;
 	font-size: 12px;
 	font-weight: 700;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .open-button {
@@ -167,5 +200,6 @@ p {
 
 .footer button:hover,
 .open-button:hover {
-	border-color: #60a5fa;
+	border-color: #94a3b8;
+	background: #f8fafc;
 }

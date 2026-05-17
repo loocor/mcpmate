@@ -21,6 +21,7 @@ The payload JSON matches desktop handling in `deep_link.rs`:
 - Loads Top Servers from the MCPMate account service public catalog at `https://auth.mcp.umate.ai/discovery/servers`.
 - Does not upload detected snippets or import metadata. Discovery data is curated and published by the account service.
 - Uses `config.js` as the extension deployment config. Update `accountApiOrigin` there if the account API origin changes.
+- Popup styling mirrors the shadcn Dashboard visual language with lightweight static HTML/CSS/JS, avoiding a React bundle inside the extension.
 - Extension toolbar uses an **inline copy** of the logo in `content.js` (`MCPMATE_LOGO_SVG`); keep it in sync with `icons/logo.svg` / `website/public/logo.svg` when the brand mark changes. **`manifest.json` icons** use PNGs (`icons/icon-{16,32,48,128}.png`) because Chrome’s extension UI does not reliably show SVG there; regenerate those PNGs from `desktop/tauri/src-tauri/icons/icon.png` when the app icon changes (e.g. `sips -z <size> <size> icon.png --out icons/icon-<size>.png` on macOS).
 
 ## Install (store)
