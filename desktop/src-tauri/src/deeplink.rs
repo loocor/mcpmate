@@ -249,7 +249,11 @@ pub fn reconcile_linux_deep_link_handlers(app: &tauri::App) {
     }
 
     if linux_packaged_handler_supports_deep_link_arg() {
-        cleanup_linux_runtime_deep_link_handler(app);
+        let app_handle = app.handle().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            cleanup_linux_runtime_deep_link_handler(&app_handle);
+        });
+        info!("Scheduled Linux runtime deep-link handler cleanup");
     } else {
         info!(
             "Skipping Linux runtime deep-link handler cleanup because packaged handler is not ready"
@@ -267,7 +271,7 @@ fn linux_packaged_handler_supports_deep_link_arg() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn cleanup_linux_runtime_deep_link_handler(app: &tauri::App) {
+fn cleanup_linux_runtime_deep_link_handler(app: &AppHandle) {
     let Ok(current_exe) = std::env::current_exe() else {
         warn!("Failed to resolve current executable for Linux deep-link handler cleanup");
         return;
