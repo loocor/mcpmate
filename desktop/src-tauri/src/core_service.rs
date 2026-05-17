@@ -1,7 +1,6 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
-use tracing::{info, warn};
 use mcpmate::common::global_paths;
 use mcpmate::system::config::api_url_from_port;
 use service_manager::{
@@ -9,8 +8,9 @@ use service_manager::{
     ServiceStatus, ServiceStatusCtx, ServiceStopCtx, ServiceUninstallCtx,
 };
 use tauri::{AppHandle, Manager};
+use tracing::{info, warn};
 
-use crate::source_config::DesktopCoreSourceConfig;
+use crate::config::DesktopCoreSourceConfig;
 
 pub const LOCAL_CORE_SERVICE_LABEL: &str = "ai.umate.mcpmate.core";
 
@@ -205,7 +205,7 @@ fn service_install_ctx(
     let base_dir = global_paths().base_dir().to_path_buf();
     let label = service_label()?;
     let program = resolve_local_core_binary(app)?;
-    let environment = crate::runtime_env::merge_service_environment(vec![
+    let environment = crate::environment::merge_service_environment(vec![
         (
             "MCPMATE_DATA_DIR".to_string(),
             base_dir.display().to_string(),
@@ -235,7 +235,11 @@ fn service_install_ctx(
                     .map(|v| v.trim().to_string())
                     .filter(|v| !v.is_empty())
                     .unwrap_or_else(|| {
-                        if cfg!(debug_assertions) { "debug".to_string() } else { "info".to_string() }
+                        if cfg!(debug_assertions) {
+                            "debug".to_string()
+                        } else {
+                            "info".to_string()
+                        }
                     }),
             ),
         ],

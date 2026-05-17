@@ -7,8 +7,17 @@ use std::{
 use anyhow::{Context, Result};
 use mcpmate::common::MCPMatePaths;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, Wry, image::Image, menu::MenuItem, tray::TrayIcon};
+use tauri::{
+    AppHandle, Manager, Wry,
+    image::Image,
+    menu::{HELP_SUBMENU_ID, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu},
+    tray::TrayIcon,
+    utils::config::WindowConfig,
+    webview::{NewWindowResponse, WebviewWindowBuilder},
+};
+use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex as AsyncMutex;
+use tracing::warn;
 
 /// tray-icon resets `NSImage.template` to off on every [`TrayIcon::set_icon`] on macOS; re-enable
 /// so the menu bar follows effective appearance (wallpaper tint, light/dark, etc.).
@@ -50,6 +59,8 @@ pub const MENU_STOP_SERVICE: &str = "mcpmate.tray.stop_service";
 pub const MENU_OPEN_SETTINGS: &str = "mcpmate.tray.open_settings";
 pub const MENU_SHOW_ABOUT: &str = "mcpmate.tray.show_about";
 pub const MENU_QUIT: &str = "mcpmate.tray.quit";
+pub const APP_MENU_CHECK_UPDATES: &str = "menu.help.check_for_updates";
+pub const APP_MENU_ABOUT: &str = "menu.help.about";
 
 pub const EVENT_OPEN_SETTINGS: &str = "mcpmate://open-settings";
 pub const EVENT_CORE_STATE_CHANGED: &str = "mcpmate://core/status-changed";
@@ -341,6 +352,140 @@ pub fn apply_activation_policy(
     Ok(())
 }
 
+pub fn initialize_app_menu(app: &mut tauri::App) -> Result<()> {
+    let app_handle = app.handle();
+
+    let menu = Menu::default(app_handle)?;
+
+    let about_item = MenuItem::with_id(app, APP_MENU_ABOUT, "About MCPMate", true, None::<&str>)?;
+    let check_updates_item = MenuItem::with_id(
+        app,
+        APP_MENU_CHECK_UPDATES,
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
+
+    if let Some(MenuItemKind::Submenu(help_menu)) = menu.get(&HELP_SUBMENU_ID.to_string()) {
+        let existing_items = help_menu.items()?.len();
+        help_menu.insert(&check_updates_item, 0)?;
+        help_menu.insert(&about_item, 0)?;
+        if existing_items > 0 {
+            let separator = PredefinedMenuItem::separator(app)?;
+            help_menu.insert(&separator, 2)?;
+        }
+    } else {
+        let help_menu = Submenu::with_id_and_items(
+            app,
+            HELP_SUBMENU_ID,
+            "Help",
+            true,
+            &[&about_item, &check_updates_item],
+        )?;
+        menu.append(&help_menu)?;
+    }
+
+    app.set_menu(menu)?;
+
+    Ok(())
+}
+
+pub(crate) fn spawn_main_window<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    if manager.get_webview_window("main").is_some() {
+        return Ok(());
+    }
+
+    let window_config = manager
+        .app_handle()
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|cfg| cfg.label == "main")
+        .cloned()
+        .unwrap_or_else(default_main_window_config);
+
+    let app_handle = manager.app_handle().clone();
+
+    let mut builder = WebviewWindowBuilder::from_config(manager, &window_config)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Transparent)
+            .hidden_title(true);
+    }
+
+    #[cfg(debug_assertions)]
+    let init_script = String::from(
+        r#"window.__MCPMATE_IS_TAURI__ = true;
+        "#,
+    );
+
+    #[cfg(not(debug_assertions))]
+    let init_script = String::from(
+        r#"window.addEventListener('contextmenu', (event) => {
+            if (event.metaKey || event.ctrlKey) {
+                return;
+            }
+            event.preventDefault();
+        });
+        window.__MCPMATE_IS_TAURI__ = true;
+        "#,
+    );
+    builder = builder.initialization_script(&init_script);
+
+    let builder = builder.on_new_window(move |url, _features| {
+        let scheme = url.scheme();
+        match scheme {
+            "http" | "https" => {
+                if let Err(err) = app_handle.opener().open_url(url.as_str(), None::<String>) {
+                    warn!(
+                        error = %err,
+                        target_url = %url,
+                        "Failed to open external link from webview"
+                    );
+                }
+                NewWindowResponse::Deny
+            }
+            "tauri" | "app" | "about" | "mcpmate" | "" => NewWindowResponse::Allow,
+            other => {
+                warn!(target_url = %url, scheme = other, "Blocked unsupported window.open URL scheme");
+                NewWindowResponse::Deny
+            }
+        }
+    });
+
+    let window = builder.build()?;
+
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    window.open_devtools();
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = manager.app_handle().show();
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
+
+    Ok(())
+}
+
+fn default_main_window_config() -> WindowConfig {
+    WindowConfig {
+        label: "main".into(),
+        title: "MCPMate".into(),
+        width: 1280.0,
+        height: 800.0,
+        resizable: true,
+        create: false,
+        ..Default::default()
+    }
+}
+
 pub fn ensure_window_visibility<M>(manager: &M) -> Result<()>
 where
     M: Manager<Wry>,
@@ -351,7 +496,7 @@ where
         return Ok(());
     }
 
-    super::spawn_main_window(manager)?;
+    spawn_main_window(manager)?;
 
     if let Some(window) = manager.get_webview_window("main") {
         #[cfg(target_os = "macos")]

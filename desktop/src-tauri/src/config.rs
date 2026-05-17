@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use mcpmate::common::{constants::ports, MCPMatePaths};
+use mcpmate::common::{MCPMatePaths, constants::ports};
 use mcpmate::system::settings::get_settings_sync_for_paths;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
