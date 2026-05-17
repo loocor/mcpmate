@@ -142,12 +142,17 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Prepare notary API key file
-        if: ${{ secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_PRIVATE_KEY != '' }}
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
           set -euo pipefail
+
+          if [[ -z "$APPLE_API_KEY" || -z "$APPLE_API_ISSUER" || -z "$APPLE_API_PRIVATE_KEY" ]]; then
+            echo "App Store Connect API key credentials not configured; using Apple ID notarization credentials."
+            exit 0
+          fi
 
           KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
           printf '%s' "$APPLE_API_PRIVATE_KEY" > "$KEY_PATH"
