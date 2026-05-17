@@ -7,7 +7,7 @@ type Release = {
 	date: string; // YYYY-MM-DD
 	highlights?: string[];
 	changes: {
-		type: "feat" | "fix" | "chore" | "docs" | "refactor" | string;
+		type: "feat" | "fix" | "chore" | "docs" | "ref" | string;
 		text: string;
 	}[];
 	tags?: string[];

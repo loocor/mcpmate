@@ -1,5 +1,58 @@
 [
 	{
+		"version": "0.2.0",
+		"date": "2026-05-17",
+		"highlights": [
+			"MCPMate v0.2.0 focuses on making the desktop app easier to trust, easier to set up, and more consistent across platforms. First-run onboarding now guides setup from client detection through MCP server import, runtime detection is clearer in the dashboard, macOS builds are signed and notarized, and all desktop platforms are presented as Beta while the cross-platform experience continues to mature."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Added first-run onboarding so new users can detect clients, import existing MCP server configs, and complete setup from a guided dashboard flow."
+			},
+			{
+				"type": "feat",
+				"text": "Improved runtime detection with layered command resolution and dashboard status, making missing or mismatched local dependencies easier to understand."
+			},
+			{
+				"type": "feat",
+				"text": "Added managed import status previews so MCPMate can show which config entries are already under management before import."
+			},
+			{
+				"type": "feat",
+				"text": "Prepared signed and notarized macOS builds to reduce system security prompts and improve package trust."
+			},
+			{
+				"type": "ref",
+				"text": "Unified client config inspection and MCP server add/import flows so different entry points present more consistent server state."
+			},
+			{
+				"type": "ref",
+				"text": "Shared profile and meta-tool foundations now make profile-related tools and agent workflows more efficient and stable."
+			},
+			{
+				"type": "fix",
+				"text": "Stabilized Linux deeplink handoff when MCPMate is already running."
+			},
+			{
+				"type": "fix",
+				"text": "Improved Windows OAuth callback routing inside the desktop app."
+			},
+			{
+				"type": "fix",
+				"text": "Polished runtime, local core, drawer, and empty-state details across the dashboard."
+			},
+			{
+				"type": "fix",
+				"text": "Aligned config import previews and client detail views with backend analysis results."
+			},
+			{
+				"type": "chore",
+				"text": "Prepared release workflows for signed desktop distribution across the v0.2.0 release cycle."
+			}
+		]
+	},
+	{
 		"version": "0.1.13",
 		"date": "2026-05-05",
 		"highlights": [
@@ -31,7 +84,7 @@
 				"text": "Desktop startup reliability: dashboard resync after core startup, IPv4 loopback URLs, Tauri localhost origin, and log rotation with URL sanitization for safer diagnostics."
 			},
 			{
-				"type": "refactor",
+				"type": "ref",
 				"text": "CI: desktop workflows unified with reusable composite actions for consistent build/test/release across platforms."
 			}
 		]
@@ -228,7 +281,7 @@
 		],
 		"changes": [
 			{
-				"type": "refactor",
+				"type": "ref",
 				"text": "Upgraded backend transport integration to rmcp 1.2 and removed downstream SSE runtime handling; downstream MCP transport now focuses on stdio and Streamable HTTP."
 			},
 			{
@@ -286,7 +339,7 @@
 		],
 		"changes": [
 			{
-				"type": "refactor",
+				"type": "ref",
 				"text": "Replaced Inspector SSE event transport with WebSocket and removed obsolete SSE pipeline code."
 			},
 			{

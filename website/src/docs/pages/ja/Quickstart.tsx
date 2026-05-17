@@ -8,7 +8,7 @@ import { buildHowTo } from "../../../utils/schema";
 const howToSteps = [
 	{
 		name: "デスクトップインストーラを入手",
-		text: "まずは GitHub Releases から利用中のプラットフォーム向けインストーラを取得します。現時点では macOS 版が最も安定しており、Windows と Linux 版も入手できますが、まだ追い込み中の部分があります。",
+		text: "まずは GitHub Releases から利用中のプラットフォーム向けインストーラを取得します。macOS、Windows、Linux の各ビルドはいずれも現在 Beta です。",
 	},
 	{
 		name: "MCPMate を起動",
@@ -57,7 +57,10 @@ export default function Quickstart() {
 			<Ul>
 				<Li>Releases ページを開き、利用するプラットフォーム向けのインストーラを選びます。</Li>
 				<Li>
-					現在は macOS 版が最も安定しています。Windows と Linux 版も利用できますが、一部機能は未整備または不安定な場合があります。
+					macOS、Windows、Linux の各インストーラはいずれも現在 Beta です。クロスプラットフォームのデスクトップ体験を磨きながら、ダウンロード可能な状態で提供しています。
+				</Li>
+				<Li>
+					macOS ビルドは署名と公証に対応し、システムのセキュリティ警告を減らし、配布パッケージの信頼性を高めます。
 				</Li>
 				<Li>
 					インストール後に MCPMate を起動します。デスクトップアプリにはダッシュボードとローカルプロキシが同梱されているため、ひとつの入口から始められます。

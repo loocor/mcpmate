@@ -30,8 +30,8 @@ export type DesktopBuildRowId =
 	| "linux-x64"
 	| "linux-arm64";
 
-/** macOS installers are treated as stable; Windows/Linux remain marked unstable in UI. */
-export type BuildTier = "stable" | "unstable";
+/** Desktop installers are marked beta across macOS, Windows, and Linux. */
+export type BuildTier = "stable" | "beta";
 
 export interface DesktopBuildRow {
 	id: DesktopBuildRowId;
@@ -48,42 +48,42 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 		id: "macos-aarch64",
 		platformI18nKey: "download.platform_macos",
 		archI18nKey: "download.arch_arm64",
-		tier: "stable",
+		tier: "beta",
 		assetSuffixes: ["macos_aarch64.dmg", "macos_arm64.dmg"],
 	},
 	{
 		id: "macos-x64",
 		platformI18nKey: "download.platform_macos",
 		archI18nKey: "download.arch_x64",
-		tier: "stable",
+		tier: "beta",
 		assetSuffixes: ["macos_x86_64.dmg", "macos_x64.dmg"],
 	},
 	{
 		id: "windows-x64",
 		platformI18nKey: "download.platform_windows",
 		archI18nKey: "download.arch_x64",
-		tier: "unstable",
+		tier: "beta",
 		assetSuffixes: ["windows_x64.msi"],
 	},
 	{
 		id: "windows-arm64",
 		platformI18nKey: "download.platform_windows",
 		archI18nKey: "download.arch_arm64",
-		tier: "unstable",
+		tier: "beta",
 		assetSuffixes: ["windows_arm64.msi"],
 	},
 	{
 		id: "linux-x64",
 		platformI18nKey: "download.platform_linux",
 		archI18nKey: "download.arch_x64",
-		tier: "unstable",
+		tier: "beta",
 		assetSuffixes: ["linux_x64.deb", "linux_amd64.deb"],
 	},
 	{
 		id: "linux-arm64",
 		platformI18nKey: "download.platform_linux",
 		archI18nKey: "download.arch_arm64",
-		tier: "unstable",
+		tier: "beta",
 		assetSuffixes: ["linux_arm64.deb", "linux_aarch64.deb"],
 	},
 ] as const;

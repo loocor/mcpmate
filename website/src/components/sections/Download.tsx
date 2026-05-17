@@ -138,7 +138,7 @@ const QuickStartSection = () => {
                     const url = row.asset?.browser_download_url;
                     const hasAsset = Boolean(row.asset);
                     const loading = releaseState.status === "loading";
-                    const unstable = row.tier === "unstable";
+                    const isBeta = row.tier === "beta";
                     const lifetimeDownloads = releaseState.status === "ok" && releaseState.allReleases !== null
                       ? cumulativeDownloadsForRow(releaseState.allReleases, row)
                       : null;
@@ -151,8 +151,8 @@ const QuickStartSection = () => {
                           {loading ? (
                             <span className="text-slate-400">{t("download.loading")}</span>
                           ) : hasAsset ? (
-                            unstable ? (
-                              <span className="text-amber-700 dark:text-amber-400 font-medium">{t("download.status_unstable")}</span>
+                            isBeta ? (
+                              <span className="text-amber-700 dark:text-amber-400 font-medium">{t("download.status_beta")}</span>
                             ) : (
                               <span className="text-emerald-700 dark:text-emerald-400">{t("download.available")}</span>
                             )
