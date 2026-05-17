@@ -165,3 +165,18 @@ pub fn handle_oauth_url(app: &AppHandle, url_str: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+#[tauri::command]
+pub(crate) fn mcp_account_start_github_login(app: AppHandle) -> Result<(), String> {
+    start_github_login(&app)
+}
+
+#[tauri::command]
+pub(crate) fn mcp_account_get_status(app: AppHandle) -> Result<AccountStatus, String> {
+    get_status(&app)
+}
+
+#[tauri::command]
+pub(crate) fn mcp_account_logout() -> Result<(), String> {
+    logout()
+}

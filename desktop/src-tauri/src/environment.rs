@@ -1,16 +1,11 @@
-use std::{
-    collections::BTreeMap,
-    env, fs,
-    io::Write,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, env, fs, io::Write, path::PathBuf};
 
 use anyhow::Result;
-use mcpmate::common::path::{dedup_and_join, split_path_entries};
-#[cfg(target_os = "macos")]
-use mcpmate::common::path::{capture_login_shell_path, read_path_from_path_helper};
 #[cfg(target_os = "macos")]
 use mcpmate::common::MCPMatePaths;
+#[cfg(target_os = "macos")]
+use mcpmate::common::path::{capture_login_shell_path, read_path_from_path_helper};
+use mcpmate::common::path::{dedup_and_join, split_path_entries};
 
 pub fn configure_process_environment() -> Result<()> {
     const SKIP_BOARD_STATIC: &str = "MCPMATE_SKIP_BOARD_STATIC";

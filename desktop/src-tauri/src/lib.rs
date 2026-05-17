@@ -10,40 +10,35 @@ use anyhow::{Context, Error, Result};
 use mcpmate::common::{MCPMatePaths, global_paths, set_global_paths};
 use serde_json::json;
 use tauri::{
-    Emitter, Manager, RunEvent, WindowEvent, Wry,
-    menu::{
-        HELP_SUBMENU_ID, Menu, MenuBuilder, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu,
-    },
+    Emitter, Manager, RunEvent, WindowEvent,
+    menu::{MenuBuilder, MenuItem},
     tray::TrayIconBuilder,
-    utils::config::WindowConfig,
-    webview::{NewWindowResponse, WebviewWindowBuilder},
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 mod account;
 mod audit;
+mod config;
 mod core_service;
-mod deep_link;
-mod oauth_callback_access;
-mod runtime_env;
+mod deeplink;
+mod environment;
+mod oauth;
 mod shell;
-mod source_config;
 mod utils;
+use config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
 use core_service::{
     LocalCoreServiceStatusView, install_local_service, read_local_service_status,
     resolve_local_core_binary, restart_local_service, start_local_service, stop_local_service,
     sync_local_service_definition, uninstall_local_service,
 };
-use deep_link::ImportServerDeepLinkPayload;
+use deeplink::DeepLinkState;
 use mcpmate::system::config::api_url_from_port;
 use mcpmate::system::settings::{
     apply_settings_with_effects_for_paths, get_settings_sync_for_paths,
 };
-use oauth_callback_access::OAuthCallbackAccessState;
+use oauth::OAuthCallbackAccessState;
 use shell::{ShellPreferences, ShellState};
-use source_config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
 use tauri_plugin_deep_link::DeepLinkExt;
-use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::Builder as UpdaterPluginBuilder;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex as AsyncMutex;
@@ -54,26 +49,6 @@ use tracing_subscriber::{self, EnvFilter};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-const MENU_CHECK_UPDATES_ID: &str = "menu.help.check_for_updates";
-const MENU_ABOUT_ID: &str = "menu.help.about";
-
-#[derive(Clone, Default)]
-pub(crate) struct DeepLinkState {
-    pending_server_import: Arc<AsyncMutex<Option<ImportServerDeepLinkPayload>>>,
-}
-
-impl DeepLinkState {
-    async fn set_pending_server_import(&self, payload: ImportServerDeepLinkPayload) {
-        let mut guard = self.pending_server_import.lock().await;
-        *guard = Some(payload);
-    }
-
-    async fn take_pending_server_import(&self) -> Option<ImportServerDeepLinkPayload> {
-        let mut guard = self.pending_server_import.lock().await;
-        guard.take()
-    }
-}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,19 +74,6 @@ struct DesktopCoreSourcePayload {
     localhost_api_port: u16,
     localhost_mcp_port: u16,
     remote_base_url: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FrontendImportDiagnosticPayload {
-    stage: String,
-    handled: bool,
-    has_payload: bool,
-    has_text: bool,
-    text_len: Option<usize>,
-    has_format: bool,
-    has_source: bool,
-    current_path: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -237,273 +199,6 @@ fn emit_core_state_changed(app: &tauri::AppHandle, view: &DesktopCoreSourceView)
     }
 }
 
-fn dispatch_mcpmate_deep_link(app: &tauri::AppHandle, url: &str, context: &'static str) {
-    let handle = app.clone();
-    let url = url.to_string();
-    let sanitized_url = utils::sanitize_url_for_logging(&url);
-    info!(
-        context,
-        target_url = %sanitized_url,
-        "Dispatching MCPMate deep link"
-    );
-    tauri::async_runtime::spawn(async move {
-        if let Err(err) = deep_link::route_mcpmate_deep_link(&handle, url.as_str()).await {
-            let sanitized_url = utils::sanitize_url_for_logging(&url);
-            warn!(error = %err, target_url = %sanitized_url, context, "Failed to handle mcpmate deep link");
-        }
-    });
-}
-
-#[cfg(target_os = "linux")]
-const LINUX_MCPMATE_SCHEME_HANDLER: &str = "x-scheme-handler/mcpmate";
-
-#[cfg(target_os = "linux")]
-const LINUX_PACKAGED_DESKTOP_FILE: &str = "/usr/share/applications/MCPMate.desktop";
-
-#[cfg(target_os = "linux")]
-fn reconcile_linux_deep_link_handlers(app: &tauri::App) {
-    if std::env::var_os("APPIMAGE").is_some() {
-        match app.deep_link().register_all() {
-            Ok(()) => {
-                info!("Registered Linux AppImage deep-link handlers");
-            }
-            Err(err) => {
-                warn!(error = %err, "Failed to register Linux AppImage deep-link handlers");
-            }
-        }
-        return;
-    }
-
-    if linux_packaged_handler_supports_deep_link_arg() {
-        cleanup_linux_runtime_deep_link_handler(app);
-    } else {
-        info!(
-            "Skipping Linux runtime deep-link handler cleanup because packaged handler is not ready"
-        );
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn linux_packaged_handler_supports_deep_link_arg() -> bool {
-    let Ok(content) = std::fs::read_to_string(LINUX_PACKAGED_DESKTOP_FILE) else {
-        return false;
-    };
-    content.lines().any(|line| {
-        line.trim_start()
-            .strip_prefix("MimeType=")
-            .is_some_and(|value| {
-                value
-                    .split(';')
-                    .any(|entry| entry == LINUX_MCPMATE_SCHEME_HANDLER)
-            })
-    }) && content
-        .lines()
-        .any(|line| line.trim_start().starts_with("Exec=") && line.contains("%u"))
-}
-
-#[cfg(target_os = "linux")]
-fn cleanup_linux_runtime_deep_link_handler(app: &tauri::App) {
-    let Ok(current_exe) = std::env::current_exe() else {
-        warn!("Failed to resolve current executable for Linux deep-link handler cleanup");
-        return;
-    };
-    let Some(binary_name) = current_exe.file_name().and_then(|name| name.to_str()) else {
-        warn!("Failed to resolve current executable name for Linux deep-link handler cleanup");
-        return;
-    };
-    let handler_file_name = format!("{binary_name}-handler.desktop");
-    let Ok(applications_dir) = app.path().data_dir().map(|path| path.join("applications")) else {
-        warn!("Failed to resolve Linux applications directory for deep-link handler cleanup");
-        return;
-    };
-    let handler_path = applications_dir.join(&handler_file_name);
-    let Ok(content) = std::fs::read_to_string(&handler_path) else {
-        return;
-    };
-    if !is_tauri_generated_linux_deep_link_handler(&content, binary_name) {
-        warn!(
-            handler_path = %handler_path.display(),
-            "Skipping Linux deep-link handler cleanup because file does not look generated by MCPMate"
-        );
-        return;
-    }
-
-    match std::fs::remove_file(&handler_path) {
-        Ok(()) => {
-            info!(
-                handler_path = %handler_path.display(),
-                "Removed legacy Linux runtime deep-link handler"
-            );
-        }
-        Err(err) => {
-            warn!(error = %err, handler_path = %handler_path.display(), "Failed to remove legacy Linux runtime deep-link handler");
-            return;
-        }
-    }
-    cleanup_linux_mimeapps_references(&handler_file_name);
-    refresh_linux_applications_database(&applications_dir);
-    set_linux_packaged_deep_link_default();
-}
-
-#[cfg(target_os = "linux")]
-fn is_tauri_generated_linux_deep_link_handler(content: &str, binary_name: &str) -> bool {
-    let has_scheme = content.lines().any(|line| {
-        line.trim_start()
-            .strip_prefix("MimeType=")
-            .is_some_and(|value| {
-                value
-                    .split(';')
-                    .any(|entry| entry == LINUX_MCPMATE_SCHEME_HANDLER)
-            })
-    });
-    let has_exec = content.lines().any(|line| {
-        line.trim_start()
-            .strip_prefix("Exec=")
-            .is_some_and(|value| value.contains(binary_name) && value.contains("%u"))
-    });
-
-    has_scheme
-        && has_exec
-        && content
-            .lines()
-            .any(|line| line.trim() == "Type=Application")
-        && content.lines().any(|line| line.trim() == "Name=MCPMate")
-        && content.lines().any(|line| line.trim() == "NoDisplay=true")
-}
-
-#[cfg(target_os = "linux")]
-fn cleanup_linux_mimeapps_references(handler_file_name: &str) {
-    let Some(home) = std::env::var_os("HOME") else {
-        return;
-    };
-    let home = std::path::PathBuf::from(home);
-    let mimeapps_paths = [
-        home.join(".config/mimeapps.list"),
-        home.join(".local/share/applications/mimeapps.list"),
-    ];
-
-    for path in mimeapps_paths {
-        match remove_linux_mimeapps_handler_reference(&path, handler_file_name) {
-            Ok(true) => {
-                info!(
-                    mimeapps_path = %path.display(),
-                    handler_file_name,
-                    "Removed legacy Linux deep-link handler reference"
-                );
-            }
-            Ok(false) => {}
-            Err(err) => {
-                warn!(error = %err, mimeapps_path = %path.display(), "Failed to update Linux mimeapps list");
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn refresh_linux_applications_database(applications_dir: &std::path::Path) {
-    match Command::new("update-desktop-database")
-        .arg(applications_dir)
-        .status()
-    {
-        Ok(status) if status.success() => {
-            info!(
-                applications_dir = %applications_dir.display(),
-                "Refreshed Linux desktop applications database"
-            );
-        }
-        Ok(status) => {
-            warn!(
-                status = ?status.code(),
-                applications_dir = %applications_dir.display(),
-                "update-desktop-database exited unsuccessfully"
-            );
-        }
-        Err(err) => {
-            warn!(error = %err, "Failed to run update-desktop-database");
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn set_linux_packaged_deep_link_default() {
-    match Command::new("xdg-mime")
-        .args(["default", "MCPMate.desktop", LINUX_MCPMATE_SCHEME_HANDLER])
-        .status()
-    {
-        Ok(status) if status.success() => {
-            info!("Set packaged MCPMate desktop entry as Linux deep-link default");
-        }
-        Ok(status) => {
-            warn!(
-                status = ?status.code(),
-                "xdg-mime exited unsuccessfully while setting MCPMate deep-link default"
-            );
-        }
-        Err(err) => {
-            warn!(error = %err, "Failed to run xdg-mime for MCPMate deep-link default");
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn remove_linux_mimeapps_handler_reference(
-    path: &std::path::Path,
-    handler_file_name: &str,
-) -> Result<bool> {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Ok(false);
-    };
-    let mut changed = false;
-    let mut lines = Vec::new();
-
-    for line in content.lines() {
-        if let Some(value) = line.strip_prefix("x-scheme-handler/mcpmate=") {
-            let remaining = value
-                .split(';')
-                .filter(|entry| !entry.is_empty() && *entry != handler_file_name)
-                .collect::<Vec<_>>();
-            if remaining.len() != value.split(';').filter(|entry| !entry.is_empty()).count() {
-                changed = true;
-                if !remaining.is_empty() {
-                    lines.push(format!("x-scheme-handler/mcpmate={};", remaining.join(";")));
-                }
-                continue;
-            }
-        }
-        lines.push(line.to_string());
-    }
-
-    if changed {
-        let mut updated = lines.join("\n");
-        updated.push('\n');
-        std::fs::write(path, updated)
-            .with_context(|| format!("failed to write {}", path.display()))?;
-    }
-    Ok(changed)
-}
-
-#[cfg(target_os = "linux")]
-fn extract_linux_fallback_deep_links_from_argv(args: &[String]) -> Vec<String> {
-    fn normalize_arg(arg: &str) -> &str {
-        arg.trim().trim_matches('"').trim_matches('\'')
-    }
-
-    if args.len() == 2 && normalize_arg(&args[1]).starts_with("mcpmate://") {
-        return Vec::new();
-    }
-
-    args.iter()
-        .filter_map(|arg| {
-            let trimmed = normalize_arg(arg);
-            if trimmed.starts_with("mcpmate://") {
-                Some(trimmed.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 async fn read_core_state_view(
     config: &DesktopCoreSourceConfig,
     managed_state: &DesktopManagedCoreState,
@@ -594,7 +289,7 @@ pub fn run() -> Result<()> {
     builder = builder.manage(desktop_managed_core_state.clone());
 
     builder = builder.on_menu_event(|app_handle, event| {
-        if event.id.as_ref() == MENU_CHECK_UPDATES_ID {
+        if event.id.as_ref() == shell::APP_MENU_CHECK_UPDATES {
             let handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let updater = match handle.updater() {
@@ -684,7 +379,7 @@ pub fn run() -> Result<()> {
                     }
                 }
             });
-        } else if event.id.as_ref() == MENU_ABOUT_ID {
+        } else if event.id.as_ref() == shell::APP_MENU_ABOUT {
             let handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(err) = shell::ensure_window_visibility(&handle) {
@@ -726,13 +421,17 @@ pub fn run() -> Result<()> {
             );
             #[cfg(target_os = "linux")]
             {
-                let urls = extract_linux_fallback_deep_links_from_argv(&argv);
+                let urls = deeplink::extract_linux_fallback_deep_links_from_argv(&argv);
                 info!(
                     fallback_deep_link_count = urls.len(),
                     "Linux single-instance argv fallback scan completed"
                 );
                 for url in urls {
-                    dispatch_mcpmate_deep_link(app, url.as_str(), "single_instance_linux_argv");
+                    deeplink::dispatch_mcpmate_deep_link(
+                        app,
+                        url.as_str(),
+                        "single_instance_linux_argv",
+                    );
                 }
             }
             let handle = app.clone();
@@ -763,9 +462,9 @@ pub fn run() -> Result<()> {
                 "Desktop shell startup context"
             );
             configure_tauri_environment()?;
-            initialize_menu(app)?;
+            shell::initialize_app_menu(app)?;
             #[cfg(target_os = "linux")]
-            reconcile_linux_deep_link_handlers(app);
+            deeplink::reconcile_linux_deep_link_handlers(app);
 
             let data_paths = global_paths().clone();
             let shell_prefs = ShellPreferences::load(&data_paths)?;
@@ -1035,7 +734,7 @@ pub fn run() -> Result<()> {
                 stop_service_item.clone(),
             ))?;
 
-            spawn_main_window(app)?;
+            shell::spawn_main_window(app)?;
 
             {
                 let handle = app.handle().clone();
@@ -1057,7 +756,11 @@ pub fn run() -> Result<()> {
                         "Received desktop deep-link open-url event"
                     );
                     for url in urls {
-                        dispatch_mcpmate_deep_link(&handle, url.as_str(), "on_open_url");
+                        deeplink::dispatch_mcpmate_deep_link(
+                            &handle,
+                            url.as_str(),
+                            "on_open_url",
+                        );
                     }
                 });
                 match app.deep_link().get_current() {
@@ -1068,7 +771,11 @@ pub fn run() -> Result<()> {
                         );
                         let handle = app.handle().clone();
                         for url in urls {
-                            dispatch_mcpmate_deep_link(&handle, url.as_str(), "get_current");
+                            deeplink::dispatch_mcpmate_deep_link(
+                                &handle,
+                                url.as_str(),
+                                "get_current",
+                            );
                         }
                     }
                     Ok(None) => {}
@@ -1092,13 +799,13 @@ pub fn run() -> Result<()> {
         mcp_shell_read_core_source,
         mcp_shell_apply_core_source,
         mcp_shell_manage_local_core_service,
-        mcp_deep_link_take_pending_server_import,
-        mcp_deep_link_log_frontend_import,
-        mcp_account_start_github_login,
-        mcp_account_get_status,
-        mcp_account_logout,
-        mcp_oauth_prepare_callback_access,
-        mcp_oauth_open_authorization_url
+        deeplink::mcp_deep_link_take_pending_server_import,
+        deeplink::mcp_deep_link_log_frontend_import,
+        account::mcp_account_start_github_login,
+        account::mcp_account_get_status,
+        account::mcp_account_logout,
+        oauth::mcp_oauth_prepare_callback_access,
+        oauth::mcp_oauth_open_authorization_url
     ]);
 
     builder
@@ -1428,218 +1135,8 @@ async fn mcp_shell_manage_local_core_service(
     Ok(view)
 }
 
-#[tauri::command]
-async fn mcp_deep_link_take_pending_server_import(
-    state: tauri::State<'_, DeepLinkState>,
-) -> Result<Option<ImportServerDeepLinkPayload>, String> {
-    let payload = state.take_pending_server_import().await;
-    info!(
-        has_payload = payload.is_some(),
-        text_len = payload.as_ref().map(|payload| payload.text.len()),
-        has_format = payload
-            .as_ref()
-            .is_some_and(|payload| payload.format.is_some()),
-        has_source = payload
-            .as_ref()
-            .is_some_and(|payload| payload.source.is_some()),
-        "Frontend requested pending import/server deep-link payload"
-    );
-    Ok(payload)
-}
-
-#[tauri::command]
-fn mcp_deep_link_log_frontend_import(
-    payload: FrontendImportDiagnosticPayload,
-) -> Result<(), String> {
-    info!(
-        stage = %payload.stage,
-        handled = payload.handled,
-        has_payload = payload.has_payload,
-        has_text = payload.has_text,
-        text_len = payload.text_len,
-        has_format = payload.has_format,
-        has_source = payload.has_source,
-        current_path = %payload.current_path.as_deref().unwrap_or("unknown"),
-        "Frontend import/server deep-link diagnostic"
-    );
-    Ok(())
-}
-
-#[tauri::command]
-fn mcp_account_start_github_login(app: tauri::AppHandle) -> Result<(), String> {
-    account::start_github_login(&app)
-}
-
-#[tauri::command]
-fn mcp_account_get_status(app: tauri::AppHandle) -> Result<account::AccountStatus, String> {
-    account::get_status(&app)
-}
-
-#[tauri::command]
-fn mcp_account_logout() -> Result<(), String> {
-    account::logout()
-}
-
-#[tauri::command]
-async fn mcp_oauth_prepare_callback_access(
-    app: tauri::AppHandle,
-    access_state: tauri::State<'_, OAuthCallbackAccessState>,
-    server_id: String,
-    api_base_url: String,
-) -> Result<oauth_callback_access::OAuthCallbackAccessContract, String> {
-    oauth_callback_access::prepare_callback_access(
-        app,
-        access_state.inner().clone(),
-        server_id,
-        api_base_url,
-    )
-    .await
-}
-
-#[tauri::command]
-fn mcp_oauth_open_authorization_url(
-    app: tauri::AppHandle,
-    authorization_url: String,
-) -> Result<(), String> {
-    oauth_callback_access::open_authorization_url(&app, &authorization_url)
-}
-
 fn configure_tauri_environment() -> Result<()> {
-    runtime_env::configure_process_environment()
-}
-
-fn initialize_menu(app: &mut tauri::App) -> Result<()> {
-    let app_handle = app.handle();
-
-    let menu = Menu::default(app_handle)?;
-
-    let about_item = MenuItem::with_id(app, MENU_ABOUT_ID, "About MCPMate", true, None::<&str>)?;
-    let check_updates_item = MenuItem::with_id(
-        app,
-        MENU_CHECK_UPDATES_ID,
-        "Check for Updates…",
-        true,
-        None::<&str>,
-    )?;
-
-    if let Some(MenuItemKind::Submenu(help_menu)) = menu.get(&HELP_SUBMENU_ID.to_string()) {
-        let existing_items = help_menu.items()?.len();
-        help_menu.insert(&check_updates_item, 0)?;
-        help_menu.insert(&about_item, 0)?;
-        if existing_items > 0 {
-            let separator = PredefinedMenuItem::separator(app)?;
-            help_menu.insert(&separator, 2)?;
-        }
-    } else {
-        let help_menu = Submenu::with_id_and_items(
-            app,
-            HELP_SUBMENU_ID,
-            "Help",
-            true,
-            &[&about_item, &check_updates_item],
-        )?;
-        menu.append(&help_menu)?;
-    }
-
-    app.set_menu(menu)?;
-
-    Ok(())
-}
-
-pub(crate) fn spawn_main_window<M>(manager: &M) -> Result<()>
-where
-    M: Manager<Wry>,
-{
-    if manager.get_webview_window("main").is_some() {
-        return Ok(());
-    }
-
-    let window_config = manager
-        .app_handle()
-        .config()
-        .app
-        .windows
-        .iter()
-        .find(|cfg| cfg.label == "main")
-        .cloned()
-        .unwrap_or_else(default_main_window_config);
-
-    let app_handle = manager.app_handle().clone();
-
-    let mut builder = WebviewWindowBuilder::from_config(manager, &window_config)?;
-
-    #[cfg(target_os = "macos")]
-    {
-        builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Transparent)
-            .hidden_title(true);
-    }
-
-    #[cfg(debug_assertions)]
-    let init_script = String::from(
-        r#"window.__MCPMATE_IS_TAURI__ = true;
-        "#,
-    );
-
-    #[cfg(not(debug_assertions))]
-    let init_script = String::from(
-        r#"window.addEventListener('contextmenu', (event) => {
-            if (event.metaKey || event.ctrlKey) {
-                return;
-            }
-            event.preventDefault();
-        });
-        window.__MCPMATE_IS_TAURI__ = true;
-        "#,
-    );
-    builder = builder.initialization_script(&init_script);
-
-    let builder = builder.on_new_window(move |url, _features| {
-        let scheme = url.scheme();
-        match scheme {
-            "http" | "https" => {
-                if let Err(err) = app_handle.opener().open_url(url.as_str(), None::<String>) {
-                    warn!(
-                        error = %err,
-                        target_url = %url,
-                        "Failed to open external link from webview"
-                    );
-                }
-                NewWindowResponse::Deny
-            }
-            "tauri" | "app" | "about" | "mcpmate" | "" => NewWindowResponse::Allow,
-            other => {
-                warn!(target_url = %url, scheme = other, "Blocked unsupported window.open URL scheme");
-                NewWindowResponse::Deny
-            }
-        }
-    });
-
-    let window = builder.build()?;
-
-    #[cfg(any(debug_assertions, feature = "devtools"))]
-    window.open_devtools();
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = manager.app_handle().show();
-    }
-    let _ = window.show();
-    let _ = window.set_focus();
-
-    Ok(())
-}
-
-fn default_main_window_config() -> WindowConfig {
-    WindowConfig {
-        label: "main".into(),
-        title: "MCPMate".into(),
-        width: 1280.0,
-        height: 800.0,
-        resizable: true,
-        create: false,
-        ..Default::default()
-    }
+    environment::configure_process_environment()
 }
 
 fn initialize_desktop_logging() -> Result<std::path::PathBuf> {

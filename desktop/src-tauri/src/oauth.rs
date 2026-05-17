@@ -11,7 +11,7 @@ use axum::{
     routing::get,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State as TauriState};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::{Duration, sleep};
@@ -109,7 +109,10 @@ pub async fn prepare_callback_access(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|error| error.to_string())?;
-    let port = listener.local_addr().map_err(|error| error.to_string())?.port();
+    let port = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
     let redirect_uri = format!("http://127.0.0.1:{port}{CALLBACK_PATH}");
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -163,6 +166,24 @@ pub fn open_authorization_url(app: &AppHandle, authorization_url: &str) -> Resul
     app.opener()
         .open_url(authorization_url, None::<String>)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn mcp_oauth_prepare_callback_access(
+    app: AppHandle,
+    access_state: TauriState<'_, OAuthCallbackAccessState>,
+    server_id: String,
+    api_base_url: String,
+) -> Result<OAuthCallbackAccessContract, String> {
+    prepare_callback_access(app, access_state.inner().clone(), server_id, api_base_url).await
+}
+
+#[tauri::command]
+pub(crate) fn mcp_oauth_open_authorization_url(
+    app: AppHandle,
+    authorization_url: String,
+) -> Result<(), String> {
+    open_authorization_url(&app, &authorization_url)
 }
 
 async fn handle_loopback_callback(
