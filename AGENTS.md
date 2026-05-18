@@ -43,6 +43,7 @@
 - Sensitive work may be tracked through private repository issues or private draft items in the same Project. Do not make private strategy, credentials, commercial planning, or unfinished market assumptions public unless Loocor explicitly approves it.
 - When a task is split across multiple worktrees, keep each worktree aligned with one Project item or one clearly named sub-slice of that item. Avoid broad worktrees that mix unrelated Project tracks.
 - At task completion, update the Project item status and add the final validation summary or PR link before reporting the work as done.
+- Treat branch-level GitHub workflow runs as short-lived operational evidence. Clean stale or redundant execution records after their signal has been captured, but do not delete active runs, the current debugging trail, or the latest meaningful success/failure pair too early.
 
 ## Project Skills
 - Repository-local skills live under `.agents/skills/` at the repository root. This is the default project-level location for Codex-compatible skills in MCPMate.

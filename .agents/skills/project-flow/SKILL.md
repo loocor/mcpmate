@@ -52,6 +52,18 @@ Treat stale metadata as a workflow problem that should be fixed during the task,
 - Keep sensitive strategy, commercial planning, or unfinished market positioning private unless Loocor explicitly approves disclosure.
 - Do not mix unrelated tracks in the same branch, worktree, or PR.
 
+## Workflow run hygiene
+
+Treat branch-level GitHub Actions history as operational evidence, not as a permanent archive.
+
+- Do not delete runs that are still active, queued, or part of the current debugging loop.
+- Keep a short lag window before cleanup so validation-in-progress is not disrupted. For MCPMate, default to cleaning only runs that are clearly stale relative to the current task context.
+- Prefer cleaning redundant or obsolete runs after the useful signal has been captured in the PR or Project item.
+- Preserve the newest successful run and the newest failing run when they still explain the current branch state.
+- If a run is the only evidence for a release, packaging, signing, or flaky CI diagnosis, keep it until that thread is resolved.
+
+When the user asks to clean old workflow runs, interpret that as removing stale or redundant execution records while preserving the latest meaningful evidence.
+
 ## Reporting expectations
 
 In the final report, include:
