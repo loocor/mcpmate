@@ -264,7 +264,7 @@ const Privacy = () => {
 									</li>
 									<li>
 										The discovery panel reads the public catalog published by the
-										MCPMate account service, but it does not upload current page
+										MCPMate Admin service, but it does not upload current page
 										content, configuration snippets, or import metadata.
 									</li>
 									<li>

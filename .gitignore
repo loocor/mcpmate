@@ -33,6 +33,6 @@ node-compile-cache/
 # external projects
 rmcp/
 /docs/
-account/
+admin/
 builder/
 .worktrees/
