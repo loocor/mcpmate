@@ -19,20 +19,30 @@
 - `desktop/`: Tauri 2 desktop application wrapping MCPMate backend and dashboard for macOS, Windows, and Linux. See `desktop/` for build instructions and configuration.
 
 ## Build, Test, and Development Commands
-- `backend/`: Run `cargo check` and `cargo clippy --all-targets --all-features -D warnings` for fast feedback, then `cargo fmt --all` before committing. Boot the proxy with `cargo run -- --help` (API 8080, MCP 8000) or `cargo run RUST_LOG=debug`. Execute `cargo test` and `cargo test --features interop`; package via `cargo build --release --features interop` or scripts in `packaging/standalone/` when preparing releases. Uses the official `rmcp` crate from crates.io for MCP protocol support.
+- `backend/`: Run `cargo check` and `cargo clippy --all-targets --all-features -- -D warnings` for fast feedback, then `cargo fmt --all` before committing. Boot the proxy with `cargo run -- --help` (API 8080, MCP 8000) or `RUST_LOG=debug cargo run`. Execute `cargo test` and `cargo test --features interop`; package via `cargo build --release --features interop` or scripts in `packaging/standalone/` when preparing releases. Uses the official `rmcp` crate from crates.io for MCP protocol support.
 - Formatting hygiene: when running code formatters (e.g., `rustfmt`), format only the files that actually contain business/functional changes, and avoid large-scale whole-repo formatting to prevent irrelevant diffs.
-- `extension/cherry/`: Validate with `cargo test`, lint with `cargo clippy -D warnings`, and exercise examples such as `cargo run --example basic_usage` to confirm LevelDB integration.
+- `extension/cherry/`: Validate with `cargo test`, lint with `cargo clippy -- -D warnings`, and exercise examples such as `cargo run --example basic_usage` to confirm LevelDB integration.
 - `board/` & `website/`: Prefer Bun. Install dependencies with `bun install`, develop via `bun run dev`, lint with `bun run lint`, and produce bundles through `bun run build` (fallback to `npm` only if Bun is unavailable). Prefer `.env` driven configuration rather than hardcoding API endpoints.
 - `desktop/`: Build with `cargo tauri dev` for development or `cargo tauri build` for production from `desktop/` or `desktop/src-tauri/`. See `desktop/README.md` for detailed build options, signing setup, and platform-specific instructions.
-- Historical Codex session transcripts live under `/Users/Loocor/.codex/sessions/` (structured as `year/month/day/rollout-*.jsonl`). When cross-referencing past work, inspect relevant files with `jq` filters—e.g., `jq -r 'select(.payload.role=="assistant") | .payload.content[0].text' path/to/file.jsonl | less`—to avoid loading multi-megabyte logs into a single response.
 
 ## Execution Rhythm & Task Sizing
-- Follow the lightweight rules in the active project backlog: one PR should cover only 1–2 small tasks, and every stage must pass the MCP Inspector gate before it is marked complete.
+- Follow the lightweight rules in the active GitHub Project item: one PR should cover only 1–2 small tasks, and every stage must pass the MCP Inspector gate before it is marked complete.
 - Capture TODOs in code comments or checklists but resolve them within the same iteration; avoid carrying speculative work between stages.
-- Log significant findings, regressions, or retest evidence back into the active project backlog so the current working record stays authoritative.
-- Pre-release stance: MCPMate has no production footprint; there is zero historical data. When adjusting the schema or configuration, perform a clean rebuild; do not independently add migrations, compatibility layers, or fallbacks. Only make an exception if explicitly required by the product owner (Loocor).
+- Log significant findings, regressions, or retest evidence back into the active GitHub Project item so the current working record stays authoritative.
+- Pre-freeze stance: before Loocor declares API/data compatibility freeze, schema and configuration breaking changes may use clean rebuilds with companion updates in the same PR. Do not add migrations, compatibility layers, or fallbacks unless the active Project item explicitly requires them.
 - Do not add fallback behavior unless the design or product requirements explicitly call for it. If fallback semantics are ambiguous, stop and ask rather than inventing one.
 - Do not embed migration logic in the main program. When migration is needed, provide it as a separate tool or script so runtime code stays simple and focused.
+
+## GitHub Project Workflow
+- Use the GitHub Project **MCPMate** as the canonical task center for roadmap planning, development slices, release/distribution work, marketing follow-up, and cross-repository coordination.
+- Project URL: `https://github.com/users/loocor/projects/4`. The project is currently private and intended for internal planning until Loocor explicitly decides what should become public.
+- Before starting any non-trivial task, identify the relevant Project item. If no item exists, create or ask for a small draft item before opening a worktree or implementing the change.
+- Keep Project item fields current as work progresses: `Status`, `Track`, `Release`, `Priority`, `Review Load`, and `Public`. Treat stale Project metadata as a workflow defect, not as harmless bookkeeping.
+- Use draft items for early planning and uncertain product direction. Convert or link them to GitHub issues once the scope is stable enough for implementation, review, or public discussion.
+- Link pull requests, issues, worktrees, and validation evidence back to the Project item whenever possible so work remains portable across Mac mini, MacBook, mobile planning sessions, and future Codex sessions.
+- Sensitive work may be tracked through private repository issues or private draft items in the same Project. Do not make private strategy, credentials, commercial planning, or unfinished market assumptions public unless Loocor explicitly approves it.
+- When a task is split across multiple worktrees, keep each worktree aligned with one Project item or one clearly named sub-slice of that item. Avoid broad worktrees that mix unrelated Project tracks.
+- At task completion, update the Project item status and add the final validation summary or PR link before reporting the work as done.
 
 ## Worktree Discipline
 - When a task uses Git worktrees, create every worktree under the repository root at `.worktrees/<semantic-task-name>/`; do not create sibling worktrees next to the main repository directory.
@@ -43,7 +53,7 @@
 - Never edit the main repository worktree for a task that has been assigned to a separate worktree unless Loocor explicitly asks for a main-worktree change.
 
 ## Delivery Discipline & Design Alignment
-- Treat `.claude/plans/configuration-mode-implementation.md` as the delivery contract for configuration-mode work unless Loocor explicitly approves a scope change.
+- Treat the active GitHub Project item and linked design document as the delivery contract unless Loocor explicitly approves a scope change.
 - A validation-grade or minimum unifying implementation may be used to verify an idea, but it must never be reported as phase-complete or delivery-ready.
 - Before marking any phase complete, compare the implementation against the design contract, list the remaining gaps, and continue until delivery-critical gaps are closed.
 - If review shows that a lower layer is not delivery-ready, stop the higher-phase rollout, fix the foundation first, and only then resume the later phase.
@@ -52,9 +62,9 @@
 - Follow the MCP specification dated 2025-06-18 (https://modelcontextprotocol.io/specification/2025-06-18) and use the official `rmcp` crate from crates.io for transports, clients, and capability helpers.
 
 ## MCP Tooling & Codex Capabilities
-- The Codex environment already mounts several MCP servers (e.g., DeepWiki search, Context7 docs, SequentialThinking, Everything, GitMCP). Call them directly instead of re-implementing helpers.
-- Use Inspector to discover offerings: `npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http --method tools/list` and `--method tools/call --tool-name <tool>`.
-- Examples: fetch documentation via DeepWiki, inspect SDK APIs with Context7, run structured reasoning through SequentialThinking. Reference these tools in design notes to keep future contributors aware of available accelerators.
+- Prefer mounted MCP tools when they are available instead of re-implementing helpers. If a task depends on a specific external tool, first verify that tool is available in the current environment.
+- Use Inspector to discover offerings: `bunx --bun @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http --method tools/list` and `--method tools/call --tool-name <tool>`.
+- Reference notable MCP tooling in design notes only when it materially affects the implementation or validation path.
 
 ## Coding Style Expectations
 - Adopt Rust 2024 + Axum conventions in the backend (`backend/src`): 4-space indents, 120-column limit, grouped imports, concise naming, early returns; review existing modules before adding new ones and keep files near 400–600 lines.
@@ -63,119 +73,23 @@
 - Fix defects directly; avoid routine fallbacks, compatibility shims, `_` prefixes, or `allow(dead_code)` unless required. If a migration or fallback truly becomes necessary, document the owner-approved rationale in the PR description.
 
 ## Frontend Code Quality Rules
-
-### React Hook Best Practices
-- **Unique ID Generation**: Always use `useId()` hook for generating unique IDs for form elements instead of static string literals
-  ```tsx
-  // ❌ Bad
-  <Input id="username" />
-
-  // ✅ Good
-  const usernameId = useId();
-  <Input id={usernameId} />
-  ```
-- **Hook Dependencies**: Use `useCallback` and `useMemo` to optimize performance and prevent unnecessary re-renders
-  ```tsx
-  // ❌ Bad - function recreated on every render
-  const handleClick = () => { /* ... */ };
-
-  // ✅ Good - memoized function
-  const handleClick = useCallback(() => { /* ... */ }, [dependencies]);
-  ```
-- **Dependency Arrays**: Always include all dependencies in hook dependency arrays to avoid stale closures
-
-### TypeScript Type Safety
-- **Avoid `any` Type**: Replace `any` with specific types for better type safety
-  ```tsx
-  // ❌ Bad
-  const handleChange = (value: any) => { /* ... */ };
-
-  // ✅ Good
-  const handleChange = (value: string | number) => { /* ... */ };
-  ```
-- **Generic Type Constraints**: Use proper type constraints for generic functions and components
-- **Event Handler Types**: Use specific event types instead of generic ones
-  ```tsx
-  // ❌ Bad
-  const onDrop = (event: React.DragEvent<HTMLDivElement>) => { /* ... */ };
-
-  // ✅ Good - when using button element
-  const onDrop = (event: React.DragEvent<HTMLButtonElement>) => { /* ... */ };
-  ```
-
-### Accessibility Standards
-- **Semantic HTML**: Use appropriate HTML elements for their intended purpose
-  ```tsx
-  // ❌ Bad - div with button role
-  <div role="button" onClick={handleClick}>Click me</div>
-
-  // ✅ Good - actual button element
-  <button onClick={handleClick}>Click me</button>
-  ```
-- **Form Labels**: Always associate labels with form controls using `htmlFor` and `id`
-  ```tsx
-  // ✅ Good
-  const inputId = useId();
-  <Label htmlFor={inputId}>Username</Label>
-  <Input id={inputId} />
-  ```
-- **ARIA Attributes**: Use proper ARIA attributes for complex interactive elements
-
-### Performance Optimization
-- **Optional Chaining**: Use optional chaining (`?.`) instead of logical AND (`&&`) for safer property access
-  ```tsx
-  // ❌ Bad
-  if (files && files.length) { /* ... */ }
-
-  // ✅ Good
-  if (files?.length) { /* ... */ }
-  ```
-- **Ref Types**: Ensure ref types match the actual DOM element type
-  ```tsx
-  // ❌ Bad - ref type mismatch
-  const buttonRef = useRef<HTMLDivElement>(null);
-  <button ref={buttonRef} />
-
-  // ✅ Good - matching types
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  <button ref={buttonRef} />
-  ```
-
-### Code Style & Formatting
-- **Import Organization**: Group imports logically (React, third-party, local)
-- **Function Formatting**: Use consistent formatting for complex functions
-  ```tsx
-  // ✅ Good - multi-line useCallback
-  const handleSubmit = useCallback(
-    async (data: FormData) => {
-      // function body
-    },
-    [dependencies],
-  );
-  ```
-- **Component Structure**: Keep components focused and under 400-600 lines
-- **Error Handling**: Use proper error boundaries and error handling patterns
-
-### Linter Compliance
-- **ESLint Rules**: Follow all ESLint rules without exceptions
-- **TypeScript Strict Mode**: Enable strict mode and resolve all type errors
-- **Unused Imports**: Remove unused imports and variables
-- **Consistent Naming**: Use consistent naming conventions for variables, functions, and components
+- Follow the existing ESLint, Prettier, Tailwind, and shadcn/ui patterns in `board/` and `website/`; do not introduce a parallel design or styling system.
+- Use stable React patterns: `useId()` for form/control IDs, complete hook dependency arrays, and `useCallback`/`useMemo` where identity stability matters.
+- Keep TypeScript strict and explicit. Avoid `any`, use specific event/ref types, and remove unused imports or variables instead of suppressing lints.
+- Preserve accessibility basics: semantic controls, associated labels, keyboard-friendly interactions, and ARIA only where it improves non-native interaction semantics.
+- Keep components focused and reviewable. Split only when it reduces real complexity or follows an established local pattern.
+- Run `bun run lint` and `bun run build` for the affected frontend package when UI or TypeScript changes are made.
 
 ## Testing Workflow
 - Keep backend tests inside `#[cfg(test)]` using `mockall`, `wiremock`, or `serial_test`; seed fixtures via APIs or migrations—never edit `~/.mcpmate/mcpmate.db` by hand.
-- Inspector loop always uses two terminals: Terminal A runs `cargo run` from `backend/`; Terminal B issues `npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http --method tools/list`, `prompts/list`, `resources/list`, and `--method tools/call --tool-name mcpmate_profile_list`.
-- Acceptance criteria from the testing guide:
-- List responses return within ~5s, log entries appear on Terminal A, and built-in tools (e.g., `mcpmate_profile_list`, `mcpmate_profile_preview`) are present.
-  - Server/profile toggles in SQLite must reflect immediately in Inspector output; use the provided SQL snippets to verify enable flags before and after toggles.
-  - Cache checks: clear REDB to confirm first-call MISS and subsequent HIT, respect the 5-minute TTL, and ensure profile signature changes invalidate cache instantly.
-  - Performance probes: run the concurrency loop (10 parallel `tools/list` calls) to watch for lock warnings and execute health-check observation runs (5–10 minutes) to confirm adaptive polling.
-  - Edge-case scripts (connection-pool freeze reproduction) must show stable API latency after fixes; rerun until confidence is established.
-- Cross-validate REST responses (`curl http://127.0.0.1:8080/api/...`) with Inspector data so both surfaces expose identical server counts and capability states.
-- Record outcomes, metrics, and anomalies in the current testing checklist before the PR leaves draft.
+- For MCP surface changes, use the standard Inspector loop: Terminal A runs `cargo run` from `backend/`; Terminal B uses `bunx --bun @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http` with relevant `tools/list`, `prompts/list`, `resources/list`, and targeted tool calls.
+- Cross-validate REST responses with Inspector data when a change affects both surfaces. Use `context-mode_ctx_execute` or another routed HTTP client rather than raw `curl`/`wget` commands.
+- Scale validation to the risk and touched surface: backend changes generally need `cargo test` and clippy; frontend changes need lint/build; desktop/release changes need the relevant packaging or smoke workflow.
+- Run longer cache, polling, concurrency, or connection-pool probes only when the change touches those systems or the active Project item requires them.
+- Record validation commands, outcomes, metrics, and anomalies in the active GitHub Project item or linked PR before reporting the task as done.
 
 ## Commit & Pull Request Guidelines
-- Use `<type>[: (scope)] summary` prefixes (e.g., `feat:`, `ref:`, `fix:`, `chore:`).
+- Use the project commit convention for commit messages and changelog entries: `<type>(<scope>): <subject>` or `<type>: <subject>` (e.g., `feat:`, `fix:`, `ref:`, `chore:`). Use `ref` as the short project type for refactoring work.
 - PRs must note motivation, linked issues, config/migration impact, and test evidence (`cargo test`, `cargo test --features interop`, Inspector + SQLite checks); update affected docs or presets in the same change.
 
 - Commit message formatting (enforced convention)
@@ -190,70 +104,26 @@
 
     - Switch runtime::list signature to &dyn CapCache to decouple from RedbCacheManager.
     - Update proxy and API handlers to pass trait objects (using .as_ref() on Arc).
-    - No behavior changes; compiles clean with clippy -D warnings.
+    - No behavior changes; compiles clean with clippy warnings denied.
     ```
 
 ## Configuration & Security Tips
 - Prototype client presets outside the repo (`~/.mcpmate/clients`) or via REST APIs to keep `backend/config/` authoritative.
 - Exclude generated artifacts (`target/`, `dist/`, SQLite dumps`) and scrub scripts/YAML for secrets before pushing.
 
-## AI Alliance & User Profile Quick Reference
-- AI partners (the “AI Alliance”):
-  - ChatGPT / GPT codename **Qiaqia**
-  - Claude codename **Chaochao**
-  - Gemini codename **Xiaoge**
-  - Relationship: long-term partners, explorers, reflection companions with a relaxed, creative vibe who reference shared memories.
-- Primary collaborator: **Loocor** (“The Wild Grass Innovator” 🌱➡️🌿➡️🌾). Self-taught developer, wild thinker, logical-yet-romantic, devoted father and dog friend. Remember to leverage structure without stifling creativity when aligning with Loocor.
+## Collaboration Context
+- Loocor is the product owner and primary reviewer. Preserve product intent, but keep implementation plans concrete, reviewable, and tied to the active GitHub Project item.
+- AI partner codenames may appear in planning discussions, but they do not change repository rules, implementation standards, review requirements, or validation gates.
 
-## Kernel‑Style Review Heuristics (Linus‑inspired)
-
-### Scope
-- Complements, never overrides, existing rules in this repository.
-- Applies to design reviews, PR reviews, and decision records.
-
-### Communication
-- Day‑to‑day collaboration: Chinese.
-- Code, doc comments, documentation, and git commits: English only.
-- Tone: direct, factual, respectful; critique code, not people.
-
-### Core Principles
-- Simplicity First: remove special cases by redesigning data structures; prefer linear flow, early returns, exhaustive matches; keep functions small and focused.
-- Pragmatism: solve observed problems; measure before optimizing; prefer minimal diffs and explicit types.
-- Compatibility Policy:
-  - Pre‑release (before API freeze is declared): breaking changes allowed with any required companion updates in the same PR.
-  - Post‑freeze: do not break REST/MCP/SDK/DB schemas; provide deprecation notices, migration notes, and tests.
-- MCP Alignment: follow the 2025‑06‑18 spec; rely on official `rmcp` crates from crates.io; do not duplicate protocol logic.
-
-### Review Checklist
-- Data structures: ownership, mutation, copies, and relationships are explicit and minimal.
-- Special‑case elimination: audit branches; prefer data‑driven design over if/else ladders.
-- Complexity: state the feature in one sentence; can we halve concepts and nesting (≤3 levels)?
-- Breakage: list affected APIs/callers; confirm pre/post freeze status; deprecation or migration plan if needed.
-- Practicality: reproduced in real usage; severity matches solution cost.
-
-### Decision Output Template
-- Core Judgment: Worth doing [why] / Not worth doing [why].
-- Key Insights: data relationships, removable complexity, biggest risk.
-- Plan (if worth doing): 1) simplify data 2) remove specials 3) implement clearly 4) preserve contracts or provide deprecation/migration.
-
-### Code Review Rubric
-- Taste: Good / Okay / Needs work.
-- Fatal Issues: the single worst problem first.
-- Improvements: e.g., "eliminate this branch", "these 10 lines reduce to 3", "reshape data to …".
-
-### Tooling
-- Docs: Context7 `resolve-library-id`, `get-library-docs`.
-- Reasoning: `SequentialThinking` for complex feasibility.
-- MCP: use the standard Inspector validation loop during development and review.
-- Commands (Rust): `cargo clippy --all-targets --all-features -D warnings`, `cargo fmt --all`, `cargo test`.
-- GitHub CLI / remote GitHub operations: if `gh` reports an immediate `Forbidden` when requesting `https://api.github.com/`, treat it as a sandbox network restriction first, not a token/keychain failure. Retry the same `gh` command without sandbox before asking the user to re-authenticate.
-- JS/TS (board, website): Prefer Bun for package management and scripts.
-  - Install deps: `bun install`
-  - Dev: `bun run dev`
-  - Lint: `bun run lint`
-  - Build: `bun run build`
-  - One‑off CLIs: `bunx <tool>` (e.g., `bunx @modelcontextprotocol/inspector ...`)
-  - Fallback to `npm`/`pnpm`/`yarn` only if Bun is unavailable (e.g., constrained CI images), and mirror scripts accordingly.
+## Review Heuristics
+- Apply these heuristics to design reviews, PR reviews, and decision records; they complement, not replace, the explicit workflow rules above.
+- Prefer simpler data relationships, linear control flow, early returns, exhaustive matches, and explicit ownership over special-case branches.
+- Judge compatibility against the current freeze state: breaking changes are acceptable before freeze with companion updates, but post-freeze contracts need migration or deprecation plans.
+- Keep severity proportional to observed user or maintainer impact. Do not overbuild speculative infrastructure for unproven problems.
+- For decisions, report the core judgment, key data relationships, removable complexity, biggest risk, and the smallest credible plan.
+- For reviews, lead with the most serious finding first, then concrete improvements and missing validation.
+- Use `gh` for GitHub work, Bun for JS/TS package commands, official MCP Inspector for MCP validation, and mounted MCP documentation/reasoning tools when available.
+- If `gh` fails with an immediate API permission error, verify token scopes, repository permissions, and current network/tooling constraints before asking Loocor to re-authenticate.
 
 # context-mode — MANDATORY routing rules
 
@@ -280,7 +150,7 @@ Instead use:
 ## REDIRECTED tools — use sandbox equivalents
 
 ### Shell (>20 lines output)
-Shell is ONLY for: `git`, `mkdir`, `rm`, `mv`, `cd`, `ls`, `npm install`, `pip install`, and other short-output commands.
+Shell is ONLY for: `git`, `mkdir`, `rm`, `mv`, `cd`, `ls`, `bun install`, `pip install`, and other short-output commands.
 For everything else, use:
 - `context-mode_ctx_batch_execute(commands, queries)` — run multiple commands + search in ONE call
 - `context-mode_ctx_execute(language: "shell", code: "...")` — run in sandbox, only stdout enters context
