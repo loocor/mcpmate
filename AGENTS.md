@@ -44,6 +44,14 @@
 - When a task is split across multiple worktrees, keep each worktree aligned with one Project item or one clearly named sub-slice of that item. Avoid broad worktrees that mix unrelated Project tracks.
 - At task completion, update the Project item status and add the final validation summary or PR link before reporting the work as done.
 
+## Project Skills
+- Repository-local skills live under `.agents/skills/` at the repository root. This is the default project-level location for Codex-compatible skills in MCPMate.
+- Prefer short, workflow-oriented skill names such as `project-flow` or `validation`. Do not prepend `mcpmate-` unless a name collision becomes real rather than hypothetical.
+- Use project skills to capture stable workflows, operating rules, reusable validation paths, or script entrypoints that should stay consistent across sessions and machines.
+- When a workflow becomes primarily deterministic, move the repeatable mechanics into a skill-local `scripts/` directory and keep the `SKILL.md` focused on trigger conditions, sequencing, and decision rules.
+- Keep skill instructions implementation-agnostic where possible. Put MCPMate-specific paths, commands, and policy hooks in the skill only when they are truly part of the repository contract.
+- When a project skill materially changes the expected workflow, update this `AGENTS.md` in the same PR so the repository contract and the skill catalog stay aligned.
+
 ## Worktree Discipline
 - When a task uses Git worktrees, create every worktree under the repository root at `.worktrees/<semantic-task-name>/`; do not create sibling worktrees next to the main repository directory.
 - Name worktree directories after the task or branch intent, for example `.worktrees/fix-windows-oauth-callback`, `.worktrees/fix-linux-deeplink-running-instance`, or `.worktrees/chore-macos-sign-notarize`.
