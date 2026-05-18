@@ -1,5 +1,5 @@
 /**
- * MCPMate Chrome extension content script.
+ * MCPMate browser extension content script.
  * Attaches import affordances directly to matching `pre` / `code` blocks.
  */
 (function () {
