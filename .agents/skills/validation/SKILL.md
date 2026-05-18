@@ -13,19 +13,6 @@ Use this skill to choose the smallest complete validation set for the touched su
 - Keep backend, frontend, desktop, and MCP verification consistent.
 - Distinguish new failures from pre-existing failures instead of skipping checks.
 
-## Validation matrix
-
-Choose the rows that match the changed surface.
-
-| Surface | Minimum validation |
-| --- | --- |
-| `backend/` Rust logic | `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings` |
-| MCP surface or proxy behavior | Inspector loop with targeted `tools/list`, `prompts/list`, `resources/list`, and relevant tool calls |
-| REST + MCP shared behavior | Cross-check routed HTTP results against Inspector output |
-| `board/` or `website/` | `bun run lint`, `bun run build` |
-| `desktop/` packaging or integration | Relevant Tauri build or smoke workflow for the touched path |
-| Release or distribution scripts | Run the script or smoke command directly and record exact outcome |
-
 ## Rules
 
 1. Do not skip validation because it might fail.
@@ -37,23 +24,13 @@ Choose the rows that match the changed surface.
 4. Call out pre-existing or unrelated failures explicitly in the final report.
 5. Use routed HTTP tooling instead of raw `curl` or `wget`.
 
-## Inspector loop
+## When to read more
 
-When MCP behavior changes, use the standard two-terminal mental model:
+Read `references/validation-playbook.md` when the task needs:
 
-- Terminal A: run the backend service.
-- Terminal B: use `bunx --bun @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http` with the relevant list or call methods.
-
-Scale the loop to the change. Simple metadata edits may need only targeted `tools/list`; behavior changes need the affected tool calls too.
-
-## Evidence handling
-
-Record the following in the PR or active Project item:
-
-- Commands run.
-- Pass or fail result.
-- Any important timings or anomalies.
-- Remaining risk or unverified edges.
+- the full surface-to-command matrix
+- Inspector loop details
+- evidence handling and reporting expectations
 
 ## Final report shape
 

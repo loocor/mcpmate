@@ -10,10 +10,8 @@
 - At the end of the task, deliver a single comprehensive report: implementation results, key decisions and their rationale, validation and testing conclusions, and follow-up recommendations. This keeps momentum while ensuring a complete perspective for review.
 
 ## Project Structure & Module Organization
-- `backend/`: Rust workspace containing the `mcpmate` proxy crate and the `bridge` binary; entrypoints live in `backend/src/main.rs` and `backend/src/bin/bridge.rs`. Core proxy logic sits under `backend/src/core`, HTTP handlers under `backend/src/api`, shared utilities in `backend/src/common`, `backend/src/clients`, and `backend/src/runtime`, with macros in `backend/src/macros`. Presets reside in `backend/config/`, and packaging helpers now live in `packaging/standalone/`. Uses the official `rmcp` crate from crates.io for MCP protocol support.
-- `extension/`: Extensions directory for optional integrations and plugins. Currently contains:
-  - `cherry/`: Rust library that manages Cherry Studio LevelDB configurations with UTF-16 JSON encoding, exposing typed helpers to list, add, or remove MCP servers for desktop clients.
-  - `extension/chrome/`: Chromium extension that detects `mcpServers` snippets and opens `mcpmate://import/server` for the MCPMate desktop app.
+- `backend/`: Rust workspace containing the `mcpmate` proxy crate and the `bridge` binary. Core proxy logic lives under `backend/src/core`, HTTP handlers under `backend/src/api`, shared utilities under `backend/src/common`, `backend/src/clients`, and `backend/src/runtime`, presets under `backend/config/`, and packaging helpers under `packaging/standalone/`. Uses the official `rmcp` crate from crates.io.
+- `extension/`: Optional integrations, including `cherry/` for Cherry Studio LevelDB configuration management and `extension/chrome/` for browser-based server import discovery.
 - `board/`: React + Vite operational dashboard (`mcpmate-dashboard`) that surfaces proxy state, analytics, and administrative flows; connects to the backend APIs via React Query, Zustand state, and Radix UI components.
 - `website/`: Marketing and landing site built on Vite + React with Tailwind styling, housing public product messaging and contact flows.
 - `desktop/`: Tauri 2 desktop application wrapping MCPMate backend and dashboard for macOS, Windows, and Linux. See `desktop/` for build instructions and configuration.
@@ -24,6 +22,7 @@
 - `extension/cherry/`: Validate with `cargo test`, lint with `cargo clippy -- -D warnings`, and exercise examples such as `cargo run --example basic_usage` to confirm LevelDB integration.
 - `board/` & `website/`: Prefer Bun. Install dependencies with `bun install`, develop via `bun run dev`, lint with `bun run lint`, and produce bundles through `bun run build` (fallback to `npm` only if Bun is unavailable). Prefer `.env` driven configuration rather than hardcoding API endpoints.
 - `desktop/`: Build with `cargo tauri dev` for development or `cargo tauri build` for production from `desktop/` or `desktop/src-tauri/`. See `desktop/README.md` for detailed build options, signing setup, and platform-specific instructions.
+- Use the repo-local `validation` skill for procedural validation details, Inspector loops, and evidence recording.
 
 ## Execution Rhythm & Task Sizing
 - Follow the lightweight rules in the active GitHub Project item: one PR should cover only 1–2 small tasks, and every stage must pass the MCP Inspector gate before it is marked complete.
@@ -35,31 +34,17 @@
 
 ## GitHub Project Workflow
 - Use the GitHub Project **MCPMate** as the canonical task center for roadmap planning, development slices, release/distribution work, marketing follow-up, and cross-repository coordination.
-- Project URL: `https://github.com/users/loocor/projects/4`. The project is currently private and intended for internal planning until Loocor explicitly decides what should become public.
 - Before starting any non-trivial task, identify the relevant Project item. If no item exists, create or ask for a small draft item before opening a worktree or implementing the change.
-- Keep Project item fields current as work progresses: `Status`, `Track`, `Release`, `Priority`, `Review Load`, and `Public`. Treat stale Project metadata as a workflow defect, not as harmless bookkeeping.
-- Use draft items for early planning and uncertain product direction. Convert or link them to GitHub issues once the scope is stable enough for implementation, review, or public discussion.
-- Link pull requests, issues, worktrees, and validation evidence back to the Project item whenever possible so work remains portable across Mac mini, MacBook, mobile planning sessions, and future Codex sessions.
-- Sensitive work may be tracked through private repository issues or private draft items in the same Project. Do not make private strategy, credentials, commercial planning, or unfinished market assumptions public unless Loocor explicitly approves it.
-- When a task is split across multiple worktrees, keep each worktree aligned with one Project item or one clearly named sub-slice of that item. Avoid broad worktrees that mix unrelated Project tracks.
-- At task completion, update the Project item status and add the final validation summary or PR link before reporting the work as done.
-- Treat branch-level GitHub workflow runs as short-lived operational evidence. Clean stale or redundant execution records after their signal has been captured, but do not delete active runs, the current debugging trail, or the latest meaningful success/failure pair too early.
+- Keep Project item metadata current and attach PR or validation evidence before reporting a task done.
+- Use the repo-local `project-flow` skill for Project field expectations, worktree discipline, and workflow run hygiene.
 
 ## Project Skills
 - Repository-local skills live under `.agents/skills/` at the repository root. This is the default project-level location for Codex-compatible skills in MCPMate.
-- Prefer short, workflow-oriented skill names such as `project-flow` or `validation`. Do not prepend `mcpmate-` unless a name collision becomes real rather than hypothetical.
+- Prefer short, workflow-oriented skill names such as `project-flow`, `validation`, or `review-flow`. Do not prepend `mcpmate-` unless a name collision becomes real rather than hypothetical.
 - Use project skills to capture stable workflows, operating rules, reusable validation paths, or script entrypoints that should stay consistent across sessions and machines.
 - When a workflow becomes primarily deterministic, move the repeatable mechanics into a skill-local `scripts/` directory and keep the `SKILL.md` focused on trigger conditions, sequencing, and decision rules.
 - Keep skill instructions implementation-agnostic where possible. Put MCPMate-specific paths, commands, and policy hooks in the skill only when they are truly part of the repository contract.
 - When a project skill materially changes the expected workflow, update this `AGENTS.md` in the same PR so the repository contract and the skill catalog stay aligned.
-
-## Worktree Discipline
-- When a task uses Git worktrees, create every worktree under the repository root at `.worktrees/<semantic-task-name>/`; do not create sibling worktrees next to the main repository directory.
-- Name worktree directories after the task or branch intent, for example `.worktrees/fix-windows-oauth-callback`, `.worktrees/fix-linux-deeplink-running-instance`, or `.worktrees/chore-macos-sign-notarize`.
-- Keep `.worktrees/` ignored by git. Treat worktree directories as local execution roots, not project source folders.
-- Start each worktree session from inside the specific worktree directory and verify context with `pwd`, `git branch --show-current`, and `git status --short` before reading, editing, testing, or committing.
-- If a conversation starts in the main repository but targets a worktree, immediately switch command execution to the requested `.worktrees/<semantic-task-name>/` path and repeat the context verification before making changes.
-- Never edit the main repository worktree for a task that has been assigned to a separate worktree unless Loocor explicitly asks for a main-worktree change.
 
 ## Delivery Discipline & Design Alignment
 - Treat the active GitHub Project item and linked design document as the delivery contract unless Loocor explicitly approves a scope change.
@@ -83,38 +68,20 @@
 
 ## Frontend Code Quality Rules
 - Follow the existing ESLint, Prettier, Tailwind, and shadcn/ui patterns in `board/` and `website/`; do not introduce a parallel design or styling system.
-- Use stable React patterns: `useId()` for form/control IDs, complete hook dependency arrays, and `useCallback`/`useMemo` where identity stability matters.
-- Keep TypeScript strict and explicit. Avoid `any`, use specific event/ref types, and remove unused imports or variables instead of suppressing lints.
+- Keep React and TypeScript explicit and stable: use `useId()` for form/control IDs, complete hook dependency arrays, specific event/ref types, and no `any` or unused-code suppression where real fixes are possible.
 - Preserve accessibility basics: semantic controls, associated labels, keyboard-friendly interactions, and ARIA only where it improves non-native interaction semantics.
 - Keep components focused and reviewable. Split only when it reduces real complexity or follows an established local pattern.
 - Run `bun run lint` and `bun run build` for the affected frontend package when UI or TypeScript changes are made.
 
 ## Testing Workflow
-- Keep backend tests inside `#[cfg(test)]` using `mockall`, `wiremock`, or `serial_test`; seed fixtures via APIs or migrations—never edit `~/.mcpmate/mcpmate.db` by hand.
-- For MCP surface changes, use the standard Inspector loop: Terminal A runs `cargo run` from `backend/`; Terminal B uses `bunx --bun @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http` with relevant `tools/list`, `prompts/list`, `resources/list`, and targeted tool calls.
-- Cross-validate REST responses with Inspector data when a change affects both surfaces. Use `context-mode_ctx_execute` or another routed HTTP client rather than raw `curl`/`wget` commands.
-- Scale validation to the risk and touched surface: backend changes generally need `cargo test` and clippy; frontend changes need lint/build; desktop/release changes need the relevant packaging or smoke workflow.
-- Run longer cache, polling, concurrency, or connection-pool probes only when the change touches those systems or the active Project item requires them.
-- Record validation commands, outcomes, metrics, and anomalies in the active GitHub Project item or linked PR before reporting the task as done.
+- Keep backend tests inside `#[cfg(test)]` using `mockall`, `wiremock`, or `serial_test`; seed fixtures via APIs or migrations rather than editing `~/.mcpmate/mcpmate.db` by hand.
+- Match validation depth to the touched surface and use routed HTTP tooling rather than raw `curl` or `wget`.
+- Use the repo-local `validation` skill for the detailed surface matrix, Inspector loop, and evidence checklist.
 
 ## Commit & Pull Request Guidelines
 - Use the project commit convention for commit messages and changelog entries: `<type>(<scope>): <subject>` or `<type>: <subject>` (e.g., `feat:`, `fix:`, `ref:`, `chore:`). Use `ref` as the short project type for refactoring work.
 - PRs must note motivation, linked issues, config/migration impact, and test evidence (`cargo test`, `cargo test --features interop`, Inspector + SQLite checks); update affected docs or presets in the same change.
-
-- Commit message formatting (enforced convention)
-  - Title: one line, imperative mood. No trailing period.
-  - Blank line after the title.
-  - Body: dash bullets, each one concise sentence ending with a period; no empty lines between bullets.
-  - Keep lines reasonably short (≤ 100 chars when practical).
-  - Example:
-
-    ```
-    ref(core): accept &dyn CapCache in runtime::list and update call sites
-
-    - Switch runtime::list signature to &dyn CapCache to decouple from RedbCacheManager.
-    - Update proxy and API handlers to pass trait objects (using .as_ref() on Arc).
-    - No behavior changes; compiles clean with clippy warnings denied.
-    ```
+- Commit messages: one-line imperative title with no trailing period, blank line before the body, then concise dash bullets ending with periods.
 
 ## Configuration & Security Tips
 - Prototype client presets outside the repo (`~/.mcpmate/clients`) or via REST APIs to keep `backend/config/` authoritative.
@@ -125,14 +92,9 @@
 - AI partner codenames may appear in planning discussions, but they do not change repository rules, implementation standards, review requirements, or validation gates.
 
 ## Review Heuristics
-- Apply these heuristics to design reviews, PR reviews, and decision records; they complement, not replace, the explicit workflow rules above.
-- Prefer simpler data relationships, linear control flow, early returns, exhaustive matches, and explicit ownership over special-case branches.
-- Judge compatibility against the current freeze state: breaking changes are acceptable before freeze with companion updates, but post-freeze contracts need migration or deprecation plans.
-- Keep severity proportional to observed user or maintainer impact. Do not overbuild speculative infrastructure for unproven problems.
-- For decisions, report the core judgment, key data relationships, removable complexity, biggest risk, and the smallest credible plan.
-- For reviews, lead with the most serious finding first, then concrete improvements and missing validation.
-- Use `gh` for GitHub work, Bun for JS/TS package commands, official MCP Inspector for MCP validation, and mounted MCP documentation/reasoning tools when available.
-- If `gh` fails with an immediate API permission error, verify token scopes, repository permissions, and current network/tooling constraints before asking Loocor to re-authenticate.
+- Lead reviews with the highest-severity issue first, or say clearly when no findings remain.
+- Prefer simpler data relationships, explicit ownership, and the smallest credible improvement over special-case growth.
+- Judge compatibility against the current freeze state and use the repo-local `review-flow` skill when the full review rubric is needed.
 
 # context-mode — MANDATORY routing rules
 
