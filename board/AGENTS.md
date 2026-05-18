@@ -10,7 +10,7 @@
 ## Project Structure & Module Organization (this repo)
 - Frontend app built with Vite + React 18 + TypeScript + Tailwind + shadcn/ui.
 - Development proxy is configured in `vite.config.ts` to forward `/api` and `/ws` to `http://localhost:8080`.
-- Market: official MCP registry only in-dashboard. Web snippets are imported via the Chrome extension (`extension/chrome`) using `mcpmate://import/server` on the desktop app.
+- Market: official MCP registry only in-dashboard. Web snippets are imported via the browser extension (`extension/browser`) using `mcpmate://import/server` on the desktop app.
 - Key folders and files:
   - `src/App.tsx` – routes and top-level layout wiring.
   - `src/components/` – reusable UI (status badge, forms, layout, shadcn/ui wrappers).

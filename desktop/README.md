@@ -95,7 +95,7 @@ You can override runtime ports or modes without recompiling by exporting the fol
 
 - The existing `cargo test` suite still reports doctest failures that predate this integration (`aide_wrapper_*` macros). Track and resolve separately.
 - Icon assets are placeholders; replace `src-tauri/icons/icon.png` before branding.
-- Market shows the official registry in-dashboard. Snippet import from the open web uses `mcpmate://import/server` (see `src-tauri/src/deep_link.rs` and `extension/chrome/`).
+- Market shows the official registry in-dashboard. Snippet import from the open web uses `mcpmate://import/server` (see `src-tauri/src/deep_link.rs` and `extension/browser/`).
 
 ## Diagnostics (optional)
 

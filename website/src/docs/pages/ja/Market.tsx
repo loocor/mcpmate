@@ -27,7 +27,7 @@ export default function MarketJA() {
 					マーケットには公式 MCP レジストリが表示されます。検索（デバウンス入力付き）とソート（最近、アルファベット順）はキャッシュ済みページに対してクライアント側で動作し、必要に応じて追加ページを読み込みます。
 				</Li>
 				<Li>
-					任意のウェブサイトからサーバースニペットをインポートするには、デスクトップアプリで <code>mcpmate://import/server</code> を開く <strong>MCPMate サーバー インポート</strong> Chrome拡張機能（<code>extension/chrome</code>）を使用します。
+					任意のウェブサイトからサーバースニペットをインポートするには、デスクトップアプリで <code>mcpmate://import/server</code> を開く <strong>MCPMate Discovery Browser Extension</strong>（<code>extension/browser</code>）を使用します。
 				</Li>
 				<Li>
 					Settings → <strong>MCP マーケット</strong> では、既定マーケットの選択、非表示項目の管理、ブラウザー拡張の入口確認を行えます。
