@@ -32,8 +32,8 @@ export default function MarketEN() {
 				</Li>
 				<Li>
 					To import server snippets from arbitrary websites, use the{" "}
-					<strong>MCPMate Server Import</strong> Chrome extension (
-					<code>extension/chrome</code>) which opens{" "}
+					<strong>MCPMate Discovery Browser Extension</strong> (
+					<code>extension/browser</code>) which opens{" "}
 					<code>mcpmate://import/server</code> on the desktop app.
 				</Li>
 				<Li>

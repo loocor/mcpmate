@@ -11,7 +11,7 @@
 
 ## Project Structure & Module Organization
 - `backend/`: Rust workspace containing the `mcpmate` proxy crate and the `bridge` binary. Core proxy logic lives under `backend/src/core`, HTTP handlers under `backend/src/api`, shared utilities under `backend/src/common`, `backend/src/clients`, and `backend/src/runtime`, presets under `backend/config/`, and packaging helpers under `packaging/standalone/`. Uses the official `rmcp` crate from crates.io.
-- `extension/`: Optional integrations, including `cherry/` for Cherry Studio LevelDB configuration management and `extension/chrome/` for browser-based server import discovery.
+- `extension/`: Optional integrations, including `cherry/` for Cherry Studio LevelDB configuration management and `extension/browser/` for browser-based server import discovery.
 - `board/`: React + Vite operational dashboard (`mcpmate-dashboard`) that surfaces proxy state, analytics, and administrative flows; connects to the backend APIs via React Query, Zustand state, and Radix UI components.
 - `website/`: Marketing and landing site built on Vite + React with Tailwind styling, housing public product messaging and contact flows.
 - `desktop/`: Tauri 2 desktop application wrapping MCPMate backend and dashboard for macOS, Windows, and Linux. See `desktop/` for build instructions and configuration.

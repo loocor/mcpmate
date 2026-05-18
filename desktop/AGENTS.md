@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the MCPMate backend and dashboard. It serves as a beta shell for Windows and Linux before fully native clients ship. The dashboard Market is official-registry only; third-party portal iframes and market proxy have been removed in favor of the Chrome extension (`extension/chrome`) plus `mcpmate://import/server`.
+MCPMate Desktop (Tauri) is a cross-platform desktop application that wraps the MCPMate backend and dashboard. It serves as a beta shell for Windows and Linux before fully native clients ship. The dashboard Market is official-registry only; third-party portal iframes and market proxy have been removed in favor of the browser extension (`extension/browser`) plus `mcpmate://import/server`.
 
 ## Architecture
 
@@ -119,7 +119,7 @@ src-tauri/
 
 1. Launch dev build: `cargo tauri dev`
 2. Open Market → confirm official registry loads
-3. From a browser with `extension/chrome` loaded, trigger `mcpmate://import/server?p=...` and confirm the Servers Uni-Import drawer opens
+3. From a browser with `extension/browser` loaded, trigger `mcpmate://import/server?p=...` and confirm the Servers Uni-Import drawer opens
 
 ### Debugging Backend Issues
 
@@ -165,4 +165,4 @@ See `docs/desktop/desktop-release-guide.md` for full details. Key steps:
 
 ### `mcpmate://` deep links
 
-`deep_link.rs` dispatches `mcpmate://auth` (OAuth callback) and `mcpmate://import/server` (base64 JSON payload with server snippet text). Keep URL contracts stable for the Chrome extension and any external integrators.
+`deep_link.rs` dispatches `mcpmate://auth` (OAuth callback) and `mcpmate://import/server` (base64 JSON payload with server snippet text). Keep URL contracts stable for the browser extension and any external integrators.
