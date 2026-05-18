@@ -2501,7 +2501,7 @@ function MarketBlacklistCard({
 							<p className="text-sm text-muted-foreground">
 								{t("settings:market.installChromeExtensionDescription", {
 									defaultValue:
-										"Add the MCPMate Chrome extension to detect importable MCP server snippets and one-click import them into MCPMate.",
+										"Install the MCPMate browser extension from Chrome Web Store to detect importable MCP server snippets and send them to MCPMate.",
 								})}
 							</p>
 						</div>
@@ -2532,7 +2532,7 @@ function MarketBlacklistCard({
 							<p className="text-sm text-muted-foreground">
 								{t("settings:market.installEdgeExtensionDescription", {
 									defaultValue:
-										"Add the MCPMate Edge extension to discover importable MCP server configurations on web pages and import with one click.",
+										"Install the MCPMate browser extension from Microsoft Edge Add-ons to discover importable MCP server configurations on web pages.",
 								})}
 							</p>
 						</div>
