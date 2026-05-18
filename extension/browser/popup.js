@@ -1,9 +1,9 @@
-const ACCOUNT_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.accountApiOrigin;
+const ADMIN_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.adminApiOrigin;
 const DISCOVERY_MODE = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryMode || "account";
 const DISCOVERY_ENDPOINTS = {
-	portals: `${ACCOUNT_ORIGIN}/discovery/portals`,
-	servers: `${ACCOUNT_ORIGIN}/discovery/servers`,
-	clients: `${ACCOUNT_ORIGIN}/discovery/clients`,
+	portals: `${ADMIN_ORIGIN}/discovery/portals`,
+	servers: `${ADMIN_ORIGIN}/discovery/servers`,
+	clients: `${ADMIN_ORIGIN}/discovery/clients`,
 };
 const MOCK_DISCOVERY_ENDPOINTS = {
 	portals: chrome.runtime.getURL("mock/portals.json"),
