@@ -64,11 +64,17 @@ const zh = {
 	"download.platform_linux": "Linux",
 	"download.arch_arm64": "arm64",
 	"download.arch_x64": "x64",
-		"download.getting_started": "新手引导",
+	"download.getting_started": "新手引导",
 	"download.getting_started.desc":
 		"按照快速开始指南完成 MCPMate 安装，并连接你的第一个 MCP 服务。",
 	"download.read_guide": "查看指南",
-							
+	"download.nightly.title": "Nightly 开发构建",
+	"download.nightly.desc":
+		"面向早期体验的自动构建安装包，与稳定版本分开发布。",
+	"download.nightly.cta": "打开 Nightly 通道",
+	"download.nightly.disclaimer":
+		"Nightly 构建可能不稳定，也可能在没有迁移支持的情况下变化。正式安装请使用稳定版本。",
+
 	// 功能区
 	"features.title": "强大功能",
 	"features.subtitle": "MCPMate 把零散的 MCP 配置工作，变成一个本地控制平面里的导入、投放、检视与切换流程。",

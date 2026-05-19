@@ -1,0 +1,749 @@
+# Scheduled desktop dev channel. Successful runs update the fixed `nightly`
+# prerelease; failed runs remain visible only in GitHub Actions.
+
+name: Nightly Dev Build
+
+on:
+  # Daily at 18:20 UTC / 02:20 Asia/Singapore.
+  schedule:
+    - cron: "20 18 * * *"
+
+concurrency:
+  group: nightly-dev-build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CI: "true"
+  DEV_CHANNEL_TAG: nightly
+  NIGHTLY_UPDATER_ENDPOINT: https://github.com/loocor/mcpmate/releases/download/nightly/update.json
+  NIGHTLY_ARTIFACT_RETENTION_DAYS: 7
+
+jobs:
+  prepare:
+    name: Prepare dev build metadata
+    runs-on: ubuntu-22.04
+    outputs:
+      build_id: ${{ steps.meta.outputs.build_id }}
+      build_date: ${{ steps.meta.outputs.build_date }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      source_sha: ${{ steps.meta.outputs.source_sha }}
+      source_ref: ${{ steps.meta.outputs.source_ref }}
+      app_version: ${{ steps.meta.outputs.app_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Resolve dev build metadata
+        id: meta
+        run: |
+          set -euo pipefail
+
+          source_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          build_date="$(date -u +'%Y%m%d')"
+          build_id="nightly-${build_date}-${short_sha}"
+          source_ref="${{ github.event.repository.default_branch }}"
+          base_version="$(jq -r '.version' desktop/src-tauri/tauri.conf.json)"
+          base_version="${base_version%%-*}"
+          IFS='.' read -r version_major version_minor _version_patch <<< "$base_version"
+
+          if ! [[ "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]] || (( GITHUB_RUN_NUMBER > 65535 )); then
+            echo "GITHUB_RUN_NUMBER must be a Windows MSI-compatible version patch value" >&2
+            exit 1
+          fi
+
+          app_version="${version_major}.${version_minor}.${GITHUB_RUN_NUMBER}"
+
+          {
+            echo "source_sha=${source_sha}"
+            echo "short_sha=${short_sha}"
+            echo "build_date=${build_date}"
+            echo "build_id=${build_id}"
+            echo "source_ref=${source_ref}"
+            echo "app_version=${app_version}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Nightly dev build"
+            echo ""
+            echo "- Build ID: \`${build_id}\`"
+            echo "- Source: \`${source_ref}\`"
+            echo "- Commit: \`${source_sha}\`"
+            echo "- App version: \`${app_version}\`"
+            echo "- Channel tag: \`${DEV_CHANNEL_TAG}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-macos:
+    needs: prepare
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            target: aarch64-apple-darwin
+            asset_arch: aarch64
+          - arch: x64
+            target: x86_64-apple-darwin
+            asset_arch: x86_64
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-desktop-build
+        with:
+          rust-target: ${{ matrix.target }}
+
+      - name: Inject app version
+        uses: ./.github/actions/inject-version
+        with:
+          release-tag: v${{ needs.prepare.outputs.app_version }}
+
+      - name: Validate macOS signing/notarization secrets
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          test -n "$APPLE_CERTIFICATE_P12_BASE64" || { echo "missing APPLE_CERTIFICATE_P12_BASE64" >&2; exit 1; }
+          test -n "$APPLE_CERTIFICATE_PASSWORD" || { echo "missing APPLE_CERTIFICATE_PASSWORD" >&2; exit 1; }
+          test -n "$KEYCHAIN_PASSWORD" || { echo "missing KEYCHAIN_PASSWORD" >&2; exit 1; }
+          test -n "$APPLE_SIGNING_IDENTITY" || { echo "missing APPLE_SIGNING_IDENTITY" >&2; exit 1; }
+
+          has_api_key=0
+          if [[ -n "$APPLE_API_KEY" && -n "$APPLE_API_ISSUER" && -n "$APPLE_API_PRIVATE_KEY" ]]; then
+            has_api_key=1
+          fi
+
+          has_apple_id=0
+          if [[ -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
+            has_apple_id=1
+          fi
+
+          if [[ "$has_api_key" -eq 0 && "$has_apple_id" -eq 0 ]]; then
+            echo "missing notarization credentials: set API key triple or Apple ID triple" >&2
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/mcpmate-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/mcpmate-signing-cert.p12"
+
+          if ! echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH" 2>/dev/null; then
+            echo "$APPLE_CERTIFICATE_P12_BASE64" | base64 -D > "$CERT_PATH"
+          fi
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Prepare notary API key file
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$APPLE_API_KEY" || -z "$APPLE_API_ISSUER" || -z "$APPLE_API_PRIVATE_KEY" ]]; then
+            echo "App Store Connect API key credentials not configured; using Apple ID notarization credentials."
+            exit 0
+          fi
+
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Build signed and notarized macOS DMG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
+        run: |
+          chmod +x packaging/desktop/macos-build-tauri-release.sh
+          packaging/desktop/macos-build-tauri-release.sh \
+            --profile release \
+            --target "${{ matrix.target }}" \
+            --bundles app,dmg \
+            --with-updater \
+            --output-dir "${GITHUB_WORKSPACE}/installers"
+
+      - name: Verify macOS notarization and codesign
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          dmgs=(installers/*.dmg)
+          if [[ ${#dmgs[@]} -eq 0 ]]; then
+            echo "no DMG generated for notarization verification" >&2
+            exit 1
+          fi
+
+          for dmg in "${dmgs[@]}"; do
+            echo "verify stapler for $dmg"
+            xcrun stapler validate "$dmg"
+
+            mount_dir="$RUNNER_TEMP/mcpmate-dmg-mount"
+            mkdir -p "$mount_dir"
+            hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
+            trap 'hdiutil detach "$mount_dir" -quiet || true' EXIT
+
+            app_path=$(find "$mount_dir" -maxdepth 2 -type d -name "*.app" | head -n 1)
+            if [[ -z "$app_path" ]]; then
+              echo "no .app found inside $dmg" >&2
+              exit 1
+            fi
+
+            echo "verify codesign for $app_path"
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            spctl --assess --type execute --verbose=4 "$app_path"
+
+            hdiutil detach "$mount_dir" -quiet || true
+            trap - EXIT
+          done
+
+      - name: Normalize macOS artifact names
+        env:
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          for dmg in installers/*.dmg; do
+            mv "$dmg" "installers/MCPMate_nightly_macos_${ASSET_ARCH}.dmg"
+          done
+
+      - name: Collect updater artifacts
+        id: collect-updater
+        uses: ./.github/actions/collect-updater
+        with:
+          bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          output-dir: "${{ github.workspace }}/updater"
+          platform: macos
+
+      - name: Normalize macOS updater artifact names
+        env:
+          ASSET_ARCH: ${{ matrix.asset_arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          for bundle in updater/*.app.tar.gz; do
+            dest="updater/MCPMate_nightly_macos_${ASSET_ARCH}.app.tar.gz"
+            mv "$bundle" "$dest"
+            if [[ -f "${bundle}.sig" ]]; then
+              mv "${bundle}.sig" "${dest}.sig"
+            fi
+          done
+
+      - name: Cleanup macOS signing materials
+        if: always()
+        run: |
+          set -euo pipefail
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/mcpmate-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/mcpmate-signing-cert.p12"
+
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f "$CERT_PATH"
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8
+
+      - name: Upload macOS installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-installers-macos-${{ matrix.arch }}
+          path: installers/*.dmg
+          if-no-files-found: error
+          retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
+
+      - name: Upload macOS updater artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-updater-macos-${{ matrix.arch }}
+          path: updater/*
+          if-no-files-found: error
+          retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
+
+  build-windows:
+    needs: prepare
+    name: Windows (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            experimental: false
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-desktop-build
+        with:
+          rust-target: ${{ matrix.target }}
+
+      - name: Inject app version
+        uses: ./.github/actions/inject-version
+        with:
+          release-tag: v${{ needs.prepare.outputs.app_version }}
+
+      - name: Build Windows installers
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
+        shell: bash
+        run: |
+          chmod +x packaging/desktop/windows-build-tauri-release.sh
+          bash packaging/desktop/windows-build-tauri-release.sh \
+            --profile release \
+            --target "${{ matrix.target }}" \
+            --bundles msi \
+            --with-updater \
+            --output-dir "${GITHUB_WORKSPACE}/installers"
+
+      - name: Collect Windows updater artifacts
+        id: collect-updater
+        uses: ./.github/actions/collect-updater
+        with:
+          bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          output-dir: "${{ github.workspace }}/updater"
+          platform: windows
+
+      - name: Normalize Windows updater artifact names
+        shell: bash
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
+          HAS_UPDATER: ${{ steps.collect-updater.outputs.has-updater }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p updater-normalized
+
+          if [[ "$HAS_UPDATER" != "true" ]]; then
+            if [[ "$EXPERIMENTAL_TARGET" == "true" ]]; then
+              echo "::warning::No updater artifacts found for experimental Windows ${TARGET_ARCH} target"
+              exit 0
+            fi
+
+            echo "::error::No updater artifacts found for Windows ${TARGET_ARCH} target" >&2
+            exit 1
+          fi
+
+          found=false
+          for sig in updater/*.msi.sig; do
+            cp "$sig" "updater-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi.sig"
+            found=true
+          done
+          for bundle in updater/*.msi.zip; do
+            cp "$bundle" "updater-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi.zip"
+            if [[ -f "${bundle}.sig" ]]; then
+              cp "${bundle}.sig" "updater-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi.zip.sig"
+            fi
+            found=true
+          done
+
+          if [[ "$found" != "true" && "$EXPERIMENTAL_TARGET" == "true" ]]; then
+            echo "::warning::No normalized updater artifacts found for experimental Windows ${TARGET_ARCH} target"
+          elif [[ "$found" != "true" ]]; then
+            echo "::error::No normalized updater artifacts found for Windows ${TARGET_ARCH} target" >&2
+            exit 1
+          fi
+
+      - name: Collect Windows installers
+        id: collect-installers
+        shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.target }}
+          TARGET_ARCH: ${{ matrix.arch }}
+          EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
+        run: |
+          set -euo pipefail
+          mkdir -p installers-normalized
+
+          found=false
+          while IFS= read -r -d '' installer; do
+            cp "$installer" "installers-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi"
+            found=true
+          done < <(find "desktop/src-tauri/target/${TARGET_TRIPLE}/release/bundle" -type f -name "*.msi" -print0 2>/dev/null)
+
+          echo "has-installers=$found" >> "$GITHUB_OUTPUT"
+
+          if [[ "$found" != "true" && "$EXPERIMENTAL_TARGET" == "true" ]]; then
+            echo "::warning::No installer artifacts found for experimental Windows ${TARGET_ARCH} target"
+          elif [[ "$found" != "true" ]]; then
+            echo "::error::No installer artifacts found for Windows ${TARGET_ARCH} target" >&2
+            exit 1
+          fi
+
+      - name: Upload Windows installers
+        if: steps.collect-installers.outputs.has-installers == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-installers-windows-${{ matrix.arch }}
+          path: installers-normalized/*.msi
+          if-no-files-found: error
+          retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
+
+      - name: Upload Windows updater artifacts
+        if: steps.collect-updater.outputs.has-updater == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-updater-windows-${{ matrix.arch }}
+          path: updater-normalized/*
+          if-no-files-found: error
+          retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
+
+  build-linux:
+    needs: prepare
+    name: Linux (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            deb_arch: x64
+            bundles: appimage,deb
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            deb_arch: arm64
+            bundles: appimage,deb
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            file \
+            jq \
+            xdg-utils \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-desktop-build
+        with:
+          rust-target: ${{ matrix.target }}
+
+      - name: Inject app version
+        uses: ./.github/actions/inject-version
+        with:
+          release-tag: v${{ needs.prepare.outputs.app_version }}
+
+      - name: Build Linux bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
+        run: |
+          chmod +x packaging/desktop/linux-build-tauri-release.sh
+          packaging/desktop/linux-build-tauri-release.sh \
+            --profile release \
+            --target "${{ matrix.target }}" \
+            --bundles "${{ matrix.bundles }}" \
+            --with-updater \
+            --output-dir "${GITHUB_WORKSPACE}/installers"
+
+      - name: Collect Linux updater artifacts
+        id: collect-updater
+        uses: ./.github/actions/collect-updater
+        with:
+          bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          output-dir: "${{ github.workspace }}/updater"
+          platform: linux
+
+      - name: Normalize Linux artifact names
+        env:
+          TARGET_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p installers-normalized
+
+          for appimage in installers/*.AppImage; do
+            cp "$appimage" "installers-normalized/MCPMate_nightly_linux_${TARGET_ARCH}.AppImage"
+          done
+
+          for deb in installers/*.deb; do
+            cp "$deb" "installers-normalized/MCPMate_nightly_linux_${TARGET_ARCH}.deb"
+          done
+
+          for sig in updater/*.AppImage.sig; do
+            cp "$sig" "installers-normalized/MCPMate_nightly_linux_${TARGET_ARCH}.AppImage.sig"
+          done
+
+      - name: Upload Linux installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: nightly-installers-linux-${{ matrix.arch }}
+          path: installers-normalized/*
+          if-no-files-found: error
+          retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
+
+  publish-nightly:
+    needs: [prepare, build-macos, build-windows, build-linux]
+    name: Publish nightly prerelease
+    runs-on: ubuntu-22.04
+    env:
+      BUILD_ID: ${{ needs.prepare.outputs.build_id }}
+      BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
+      SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+      SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+      APP_VERSION: ${{ needs.prepare.outputs.app_version }}
+      RELEASE_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Download installers
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Assert nightly assets
+        run: |
+          set -euo pipefail
+
+          required_assets=(
+            "MCPMate_nightly_macos_aarch64.dmg"
+            "MCPMate_nightly_macos_x86_64.dmg"
+            "MCPMate_nightly_macos_aarch64.app.tar.gz"
+            "MCPMate_nightly_macos_aarch64.app.tar.gz.sig"
+            "MCPMate_nightly_macos_x86_64.app.tar.gz"
+            "MCPMate_nightly_macos_x86_64.app.tar.gz.sig"
+            "MCPMate_nightly_windows_x64.msi"
+            "MCPMate_nightly_linux_x64.AppImage"
+            "MCPMate_nightly_linux_x64.AppImage.sig"
+            "MCPMate_nightly_linux_x64.deb"
+            "MCPMate_nightly_linux_arm64.AppImage"
+            "MCPMate_nightly_linux_arm64.AppImage.sig"
+            "MCPMate_nightly_linux_arm64.deb"
+          )
+
+          missing=0
+          for asset in "${required_assets[@]}"; do
+            if [[ ! -f "artifacts/${asset}" ]]; then
+              echo "::error::Missing required nightly asset: ${asset}" >&2
+              missing=1
+            fi
+          done
+
+          if [[ ! -f "artifacts/MCPMate_nightly_windows_arm64.msi" ]]; then
+            echo "::warning::Experimental asset not found: MCPMate_nightly_windows_arm64.msi"
+          fi
+
+          x64_msi_sig="artifacts/MCPMate_nightly_windows_x64.msi.sig"
+          x64_msi_zip="artifacts/MCPMate_nightly_windows_x64.msi.zip"
+          x64_msi_zip_sig="artifacts/MCPMate_nightly_windows_x64.msi.zip.sig"
+
+          if [[ ! -f "$x64_msi_sig" && ! -f "$x64_msi_zip_sig" ]]; then
+            echo "::error::Missing required nightly updater asset: MCPMate_nightly_windows_x64.msi.sig or MCPMate_nightly_windows_x64.msi.zip.sig" >&2
+            missing=1
+          fi
+
+          if [[ -f "$x64_msi_zip_sig" && ! -f "$x64_msi_zip" ]]; then
+            echo "::error::Missing required nightly updater asset: MCPMate_nightly_windows_x64.msi.zip" >&2
+            missing=1
+          fi
+
+          if [[ ! -f "artifacts/MCPMate_nightly_windows_arm64.msi.sig" && ! -f "artifacts/MCPMate_nightly_windows_arm64.msi.zip.sig" ]]; then
+            echo "::warning::Experimental updater asset not found for Windows arm64"
+          fi
+
+          if [[ "$missing" -ne 0 ]]; then
+            exit 1
+          fi
+
+          find artifacts -type f | sort
+
+      - name: Generate nightly update manifest
+        run: |
+          set -euo pipefail
+
+          chmod +x packaging/desktop/generate-update-manifest.sh
+
+          MANIFEST_ARGS=(
+            --version "$APP_VERSION"
+            --output artifacts/update.json
+            --notes "MCPMate nightly dev build ${BUILD_ID}"
+          )
+
+          platform_for_asset() {
+            case "$1" in
+              *aarch64*|*arm64*)
+                case "$1" in
+                  *darwin*|*macos*|*.app.tar.gz) echo "darwin-aarch64" ;;
+                  *linux*|*.AppImage)            echo "linux-aarch64" ;;
+                  *windows*|*.nsis*|*.msi*)      echo "windows-aarch64" ;;
+                  *) return 1 ;;
+                esac ;;
+              *)
+                case "$1" in
+                  *darwin*|*macos*|*.app.tar.gz) echo "darwin-x86_64" ;;
+                  *linux*|*.AppImage)            echo "linux-x86_64" ;;
+                  *windows*|*.nsis*|*.msi*)      echo "windows-x86_64" ;;
+                  *) return 1 ;;
+                esac ;;
+            esac
+          }
+
+          while read -r sig; do
+            bundle="${sig%.sig}"
+            if [[ -f "$bundle" ]]; then
+              base="$(basename "$bundle")"
+              if ! plat="$(platform_for_asset "$base")"; then
+                echo "WARN: skip $base" >&2
+                continue
+              fi
+
+              asset_url="https://github.com/${RELEASE_REPO}/releases/download/${DEV_CHANNEL_TAG}/${base}"
+              MANIFEST_ARGS+=(--platform "$plat" "$asset_url" "$(cat "$sig")")
+            fi
+          done < <(find artifacts -name "*.sig" -type f | sort)
+
+          packaging/desktop/generate-update-manifest.sh "${MANIFEST_ARGS[@]}"
+
+          echo "--- update.json ---"
+          cat artifacts/update.json
+
+      - name: Write nightly release notes
+        run: |
+          set -euo pipefail
+
+          cat > nightly-release-notes.md <<EOF
+          # MCPMate Nightly Dev Build
+
+          Build ID: \`${BUILD_ID}\`
+
+          App version: \`${APP_VERSION}\`
+
+          Source: \`${SOURCE_REF}\` at \`${SOURCE_SHA}\`
+
+          Updater endpoint: \`${NIGHTLY_UPDATER_ENDPOINT}\`
+
+          This prerelease is generated automatically from the dev build channel for early testing. It is not a stable MCPMate release, may change without migration support, and should not be used where a supported stable release is required.
+
+          Stable releases remain on versioned \`v*\` tags and the standard GitHub Releases page.
+          EOF
+
+      - name: Create or update nightly prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          title="MCPMate Nightly ${BUILD_DATE} (${SHORT_SHA})"
+          assets=(artifacts/*)
+
+          git tag -f "$DEV_CHANNEL_TAG" "$SOURCE_SHA"
+          git push --force origin "refs/tags/${DEV_CHANNEL_TAG}"
+
+          if gh release view "$DEV_CHANNEL_TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release edit "$DEV_CHANNEL_TAG" \
+              --repo "$RELEASE_REPO" \
+              --target "$SOURCE_SHA" \
+              --title "$title" \
+              --notes-file nightly-release-notes.md \
+              --prerelease
+
+            mapfile -t old_assets < <(gh release view "$DEV_CHANNEL_TAG" --repo "$RELEASE_REPO" --json assets --jq '.assets[].name')
+            for old_asset in "${old_assets[@]}"; do
+              gh release delete-asset "$DEV_CHANNEL_TAG" "$old_asset" --repo "$RELEASE_REPO" --yes
+            done
+
+            gh release upload "$DEV_CHANNEL_TAG" "${assets[@]}" --repo "$RELEASE_REPO" --clobber
+          else
+            gh release create "$DEV_CHANNEL_TAG" "${assets[@]}" \
+              --repo "$RELEASE_REPO" \
+              --verify-tag \
+              --target "$SOURCE_SHA" \
+              --title "$title" \
+              --notes-file nightly-release-notes.md \
+              --prerelease \
+              --latest=false
+          fi
+
+      - name: Summarize nightly channel
+        run: |
+          {
+            echo "### Published nightly dev build"
+            echo ""
+            echo "- Build ID: \`${BUILD_ID}\`"
+            echo "- Release: https://github.com/${RELEASE_REPO}/releases/tag/${DEV_CHANNEL_TAG}"
+            echo "- Updater manifest: https://github.com/${RELEASE_REPO}/releases/download/${DEV_CHANNEL_TAG}/update.json"
+            echo "- Stable releases remain isolated on versioned \`v*\` tags."
+          } >> "$GITHUB_STEP_SUMMARY"

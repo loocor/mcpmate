@@ -1,4 +1,4 @@
-import { ArrowRight, Download, ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowRight, Download, ExternalLink, RefreshCw, Sparkles } from "lucide-react";
 import { useCallback, useId, useMemo } from "react";
 import { useLanguage } from "../LanguageProvider";
 import { useNavigate } from "react-router-dom";
@@ -6,7 +6,7 @@ import Button from "../ui/Button";
 import Section from "../ui/Section";
 import { useLatestGitHubRelease } from "../../hooks/useLatestGitHubRelease";
 import { trackMCPMateEvents } from "../../utils/analytics";
-import { RELEASES_PAGE_URL, attachAssetsToBuildRows, cumulativeDownloadsForRow } from "../../utils/githubRelease";
+import { NIGHTLY_RELEASE_PAGE_URL, RELEASES_PAGE_URL, attachAssetsToBuildRows, cumulativeDownloadsForRow } from "../../utils/githubRelease";
 
 const QuickStartSection = () => {
   const tableCaptionId = useId();
@@ -72,6 +72,25 @@ const QuickStartSection = () => {
                 <span>github.com/loocor/mcpmate</span>
                 <ArrowRight size={16} />
               </Button>
+            </div>
+
+            <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/20">
+              <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+                <Sparkles size={18} aria-hidden />
+                <h3 className="text-lg font-semibold">{t("download.nightly.title")}</h3>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-amber-900/80 dark:text-amber-100/80">{t("download.nightly.desc")}</p>
+              <a
+                href={NIGHTLY_RELEASE_PAGE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-950/40 dark:text-amber-100 dark:hover:bg-amber-950/50"
+                onClick={() => trackMCPMateEvents.externalLinkClick(NIGHTLY_RELEASE_PAGE_URL)}
+              >
+                <span>{t("download.nightly.cta")}</span>
+                <ExternalLink size={16} aria-hidden />
+              </a>
+              <p className="mt-3 text-xs leading-5 text-amber-900/70 dark:text-amber-100/60">{t("download.nightly.disclaimer")}</p>
             </div>
           </div>
 
