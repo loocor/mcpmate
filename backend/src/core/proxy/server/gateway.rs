@@ -229,6 +229,19 @@ impl ProxyServer {
             .map_err(|e| rmcp::ErrorData::internal_error(format!("Failed to read client state: {e}"), None))?;
 
         if let Some(ref state) = state_opt {
+            let state = if state.governance_kind() == crate::clients::models::ClientGovernanceKind::Passive {
+                svc.apply_first_contact_behavior_to_passive_state(&client.client_id, display_name)
+                    .await
+                    .map_err(|e| {
+                        rmcp::ErrorData::internal_error(
+                            format!("Failed to refresh client first-contact state: {e}"),
+                            None,
+                        )
+                    })?
+            } else {
+                state.clone()
+            };
+
             return match state.approval_status() {
                 "approved" => Ok(()),
                 "suspended" => Err(rmcp::ErrorData::invalid_request(

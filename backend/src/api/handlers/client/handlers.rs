@@ -20,7 +20,9 @@ use crate::api::models::client::{
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::document::{get_config_last_modified, infer_format_from_path, parse_config_to_json_value};
-use crate::clients::models::{AttachmentState, CapabilitySource, ClientCapabilityConfigState};
+use crate::clients::models::{
+    AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientConnectionMode, ClientGovernanceKind,
+};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
@@ -106,6 +108,18 @@ fn fallback_parsed_config_content(
     Value::String(raw_content.to_string())
 }
 
+fn should_include_default_client(descriptor: &ClientDescriptor) -> bool {
+    if !descriptor.persisted {
+        return false;
+    }
+
+    let state = &descriptor.state;
+    match state.governance_kind() {
+        ClientGovernanceKind::Active => true,
+        ClientGovernanceKind::Passive => state.connection_mode() == ClientConnectionMode::RemoteHttp,
+    }
+}
+
 pub async fn config_file_parse_inspect(
     State(app_state): State<Arc<AppState>>,
     Json(request): Json<ClientConfigFileParseInspectReq>,
@@ -181,9 +195,10 @@ pub async fn list(
         })?;
 
     let mut client_infos = Vec::with_capacity(descriptors.len());
-    for descriptor in descriptors.into_iter().filter(|descriptor| {
-        request.include_detected || (descriptor.persisted && descriptor.state.governance_kind().as_str() == "active")
-    }) {
+    for descriptor in descriptors
+        .into_iter()
+        .filter(|descriptor| request.include_detected || should_include_default_client(descriptor))
+    {
         match descriptor_to_client_info(service.as_ref(), app_state.as_ref(), descriptor).await {
             Ok(info) => client_infos.push(info),
             Err(status) => return Err(status),
@@ -2834,13 +2849,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_excludes_passive_detected_candidates_by_default() {
+    async fn list_includes_passive_runtime_clients_by_default() {
         let context = create_test_context().await;
         context
             .client_service
-            .ensure_passive_observed_row("test.passive", "Test Passive", None)
+            .persist_handshake_observation(
+                "test.passive-runtime",
+                Some("Test Passive Runtime"),
+                Some("1.0.0"),
+                Some("streamable_http"),
+                Some("remote_http"),
+                None,
+                None,
+                None,
+            )
             .await
-            .expect("seed passive client");
+            .expect("seed passive runtime client");
 
         let Json(default_response) = list(
             State(context.app_state.clone()),
@@ -2860,7 +2884,44 @@ mod tests {
                 .expect("default data")
                 .client
                 .into_iter()
-                .all(|client| client.governance_kind.as_deref() == Some("active"))
+                .any(|client| client.identifier == "test.passive-runtime"
+                    && client.governance_kind.as_deref() == Some("passive"))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_excludes_passive_detected_candidates_by_default() {
+        let context = create_test_context().await;
+        context
+            .client_service
+            .set_first_contact_behavior(crate::clients::models::FirstContactBehavior::Allow)
+            .await
+            .expect("set allow policy");
+        context
+            .client_service
+            .ensure_passive_observed_row("test.passive-detected", "Test Passive Detected", Some("/tmp/test.json"))
+            .await
+            .expect("seed passive detected client");
+
+        let Json(default_response) = list(
+            State(context.app_state.clone()),
+            Query(ClientCheckReq {
+                refresh: false,
+                persist_detected: false,
+                include_detected: false,
+            }),
+        )
+        .await
+        .expect("list managed clients");
+
+        assert!(default_response.success);
+        assert!(
+            default_response
+                .data
+                .expect("default data")
+                .client
+                .into_iter()
+                .all(|client| client.identifier != "test.passive-detected")
         );
 
         let Json(include_response) = list(
@@ -2881,7 +2942,7 @@ mod tests {
                 .expect("include data")
                 .client
                 .iter()
-                .any(|client| client.identifier == "test.passive"
+                .any(|client| client.identifier == "test.passive-detected"
                     && client.governance_kind.as_deref() == Some("passive"))
         );
     }

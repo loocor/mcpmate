@@ -895,8 +895,8 @@ mod tests {
 
         let expected_url = get_runtime_port_config().mcp_http_url();
         let rendered_url = entry.get("url").and_then(Value::as_str).expect("rendered url");
-        assert_eq!(entry.get("type").and_then(Value::as_str), Some("streamable_http"));
         assert!(rendered_url.starts_with(expected_url.as_str()));
+        assert!(entry.get("command").is_none());
         assert!(entry.get("metadata").is_none());
 
         // Regression test: managed URL must NOT be HTML-escaped
