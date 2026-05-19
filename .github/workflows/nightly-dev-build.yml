@@ -201,7 +201,7 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
-          TAURI_BUILD_EXTRA: --config ${{ github.workspace }}/desktop/src-tauri/tauri.nightly-overlay.json
+          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
         run: |
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
@@ -345,7 +345,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_EXTRA: --config ${{ github.workspace }}/desktop/src-tauri/tauri.nightly-overlay.json
+          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
         shell: bash
         run: |
           chmod +x packaging/desktop/windows-build-tauri-release.sh
@@ -504,7 +504,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_EXTRA: --config ${{ github.workspace }}/desktop/src-tauri/tauri.nightly-overlay.json
+          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
         run: |
           chmod +x packaging/desktop/linux-build-tauri-release.sh
           packaging/desktop/linux-build-tauri-release.sh \

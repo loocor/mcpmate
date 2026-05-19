@@ -75,7 +75,7 @@ const ja = {
 	"download.nightly.cta": "Nightly チャンネルを開く",
 	"download.nightly.disclaimer":
 		"Nightly ビルドは不安定な場合があり、移行サポートなしで変更されることがあります。正式なインストールには安定版を使用してください。",
-							
+
 	// 機能
 	"features.title": "強力な機能",
 	"features.subtitle":

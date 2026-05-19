@@ -74,7 +74,7 @@ const zh = {
 	"download.nightly.cta": "打开 Nightly 通道",
 	"download.nightly.disclaimer":
 		"Nightly 构建可能不稳定，也可能在没有迁移支持的情况下变化。正式安装请使用稳定版本。",
-							
+
 	// 功能区
 	"features.title": "强大功能",
 	"features.subtitle": "MCPMate 把零散的 MCP 配置工作，变成一个本地控制平面里的导入、投放、检视与切换流程。",
