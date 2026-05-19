@@ -69,6 +69,12 @@ const en = {
 	"download.getting_started.desc":
 		"Follow our quick start guide to set up MCPMate and connect your first MCP service.",
 	"download.read_guide": "Read the Guide",
+	"download.nightly.title": "Nightly dev builds",
+	"download.nightly.desc":
+		"Automatically built installers for early testing, published separately from stable releases.",
+	"download.nightly.cta": "Open nightly channel",
+	"download.nightly.disclaimer":
+		"Nightly builds may be unstable and can change without migration support. Use stable releases for supported installs.",
 
 	// Features
 	"features.title": "Powerful Features",
