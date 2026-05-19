@@ -3,7 +3,7 @@
 //! provides minimal pagination tools for MCPMate proxy servers
 //!
 //! this module provides basic pagination support for aggregated MCP resources,
-//! following the MCP specification 2025-03-26.
+//! following the MCP pagination model.
 
 use rmcp::ErrorData as McpError;
 use rmcp::model::{Cursor, PaginatedRequestParams};

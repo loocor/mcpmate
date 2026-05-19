@@ -2,6 +2,7 @@
 // Provides abstractions for streamable HTTP transport
 
 use super::TransportType;
+use crate::common::constants::protocol;
 use crate::common::http::make_streamable_config;
 use crate::core::foundation::utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout};
 use crate::core::models::MCPServerConfig;
@@ -128,7 +129,7 @@ pub async fn connect_http_server(
                             | "host"
                             | "connection"
                             | "transfer-encoding"
-                            | "mcp-protocol-version"
+                            | protocol::MCP_PROTOCOL_VERSION_HEADER_LOWER
                     );
                     if controlled {
                         continue;

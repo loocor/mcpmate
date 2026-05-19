@@ -1039,6 +1039,7 @@ async fn ensure_tool_unique_names(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::constants::protocol;
     use crate::core::cache::{CacheScope, CachedServerData, CachedToolInfo};
     use chrono::Utc;
 
@@ -1052,7 +1053,7 @@ mod tests {
             server_id: server_id.to_string(),
             server_name: "test-server".to_string(),
             server_version: Some("1.0.0".to_string()),
-            protocol_version: "2024-11-05".to_string(),
+            protocol_version: protocol::V_2024_11_05.to_string(),
             tools: (0..tool_count)
                 .map(|i| CachedToolInfo {
                     name: format!("tool_{}", i),

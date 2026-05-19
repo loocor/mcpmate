@@ -45,7 +45,8 @@ impl UpstreamClientHandler {
 
 impl ClientHandler for UpstreamClientHandler {
     fn get_info(&self) -> ClientInfo {
-        // Use widely supported version for upstream compatibility; headers handle 2025-06-18 at proxy edge
+        // Use the older widely supported version for upstream compatibility;
+        // the proxy edge validates downstream protocol headers separately.
         ClientInfo::new(ClientCapabilities::default(), Self::build_client_impl())
             .with_protocol_version(ProtocolVersion::V_2025_03_26)
     }
