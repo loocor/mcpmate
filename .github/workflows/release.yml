@@ -663,7 +663,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          previous_tag=$(gh release list --limit 20 --json tagName --jq '.[].tagName' | grep -Fxv "$RELEASE_TAG" | head -n1 || true)
+          previous_tag=$(
+            gh release list --limit 20 --exclude-pre-releases --json tagName --jq '.[].tagName' |
+              grep -Fxv "$RELEASE_TAG" |
+              grep -Fxv nightly |
+              head -n1 || true
+          )
 
           if [[ -n "$previous_tag" ]]; then
             gh api -X POST "repos/${RELEASE_REPO}/releases/generate-notes" \

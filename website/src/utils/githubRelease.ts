@@ -22,6 +22,8 @@ export const LIST_RELEASES_API_URL = `https://api.github.com/repos/${MCPMATE_GIT
 
 export const RELEASES_PAGE_URL = `https://github.com/${MCPMATE_GITHUB_OWNER}/${MCPMATE_GITHUB_REPO}/releases`;
 
+export const NIGHTLY_RELEASE_PAGE_URL = `${RELEASES_PAGE_URL}/tag/nightly`;
+
 export type DesktopBuildRowId =
 	| "macos-aarch64"
 	| "macos-x64"
