@@ -65,10 +65,16 @@ const ja = {
 	"download.platform_linux": "Linux",
 	"download.arch_arm64": "arm64",
 	"download.arch_x64": "x64",
-		"download.getting_started": "始めに",
+	"download.getting_started": "始めに",
 	"download.getting_started.desc":
 		"クイックスタートガイドに従って MCPMate をセットアップし、最初の MCP サービスを接続しましょう。",
 	"download.read_guide": "ガイドを見る",
+	"download.nightly.title": "Nightly 開発ビルド",
+	"download.nightly.desc":
+		"早期テスト向けに自動生成されるインストーラで、安定版リリースとは別に公開されます。",
+	"download.nightly.cta": "Nightly チャンネルを開く",
+	"download.nightly.disclaimer":
+		"Nightly ビルドは不安定な場合があり、移行サポートなしで変更されることがあります。正式なインストールには安定版を使用してください。",
 							
 	// 機能
 	"features.title": "強力な機能",
