@@ -235,6 +235,7 @@ pub async fn create_server(
     let server_id = crate::config::server::upsert_server(&db.pool, &server)
         .await
         .map_err(map_anyhow_error)?;
+    crate::core::capability::resolver::upsert(&server_id, &payload.name).await;
 
     if reusable_pending_server.is_some() {
         crate::config::server::delete_server_oauth_config(&db.pool, &server_id)
@@ -313,6 +314,13 @@ pub async fn create_server(
                 initial_enabled
             );
         }
+    }
+
+    if !server.pending_import {
+        let mut pool = state.connection_pool.lock().await;
+        pool.sync_servers_from_active_profile()
+            .await
+            .map_err(map_anyhow_error)?;
     }
 
     // Initial capability discovery + dual write (SQLite shadow + REDB)

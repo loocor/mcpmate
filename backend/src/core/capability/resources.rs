@@ -433,24 +433,19 @@ pub async fn read_upstream_resource(
                     server_id: server_id.to_string(),
                     affinity_key: selection.affinity_key.clone(),
                 };
-                pool.ensure_connected_with_selection(&scoped_selection)
+                let iid = pool
+                    .ensure_connected_with_selection(&scoped_selection)
                     .await
                     .context(format!(
                         "Failed to ensure scoped connection for server '{}' (resource '{}')",
                         server_id, uri
                     ))?;
-                let iid = pool.select_instance_id(&scoped_selection).map_err(|e| {
-                    anyhow::anyhow!("Failed to select scoped instance for server '{}': {}", server_id, e)
-                })?;
                 target_instance_id = Some(iid);
             } else {
-                pool.ensure_connected(server_id).await.context(format!(
+                let iid = pool.ensure_connected(server_id).await.context(format!(
                     "Failed to ensure connection for server '{}' (resource '{}')",
                     server_id, uri
                 ))?;
-                let iid = pool
-                    .get_default_instance_id(server_id)
-                    .map_err(|e| anyhow::anyhow!("Failed to get default instance for server '{}': {}", server_id, e))?;
                 target_instance_id = Some(iid);
             }
         }
