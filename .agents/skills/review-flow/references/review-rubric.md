@@ -30,3 +30,5 @@ For design or merge-readiness decisions, report:
 - key data relationships or removable complexity
 - biggest remaining risk
 - smallest credible next step
+
+Do not convert a merge-readiness judgment into `gh pr merge`, auto-merge, branch deletion, or Project `Done` status unless Loocor explicitly asks for that action in the current session.

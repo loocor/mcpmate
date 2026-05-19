@@ -81,6 +81,8 @@
 ## Commit & Pull Request Guidelines
 - Use the project commit convention for commit messages and changelog entries: `<type>(<scope>): <subject>` or `<type>: <subject>` (e.g., `feat:`, `fix:`, `ref:`, `chore:`). Use `ref` as the short project type for refactoring work.
 - PRs must note motivation, linked issues, config/migration impact, and test evidence (`cargo test`, `cargo test --features interop`, Inspector + SQLite checks); update affected docs or presets in the same change.
+- Agents may create or update PRs only when requested or when it is the natural next step for an approved task. Do not merge PRs, enable auto-merge, mark a Project item done, or delete review branches unless Loocor explicitly asks for that action in the current session.
+- Treat PR readiness as "ready for Loocor/Copilot review" by default. Loocor normally requests Copilot review manually, so keep the PR reviewable and evidence-rich instead of collapsing review and merge into one automated step.
 - Commit messages: one-line imperative title with no trailing period, blank line before the body, then concise dash bullets ending with periods.
 
 ## Configuration & Security Tips

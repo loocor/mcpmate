@@ -30,7 +30,13 @@ Use it when the user asks for any of the following:
 3. Keep the slice narrow: one PR should usually cover one item, or at most one item plus one tightly related follow-up.
 4. When a worktree is needed, align it to the Project item or sub-slice and use `.worktrees/<semantic-task-name>/`.
 5. Link the PR, worktree branch, and validation evidence back to the same Project item.
-6. Before closing the task, update Project fields and attach the final validation summary.
+6. After validation, leave the PR in a reviewable state for Loocor/Copilot review unless Loocor explicitly asks you to merge it.
+7. Before closing the task, update Project fields and attach the final validation summary.
+
+## Merge boundary
+
+- Do not merge PRs, enable auto-merge, delete review branches, or mark Project items done unless Loocor explicitly requests that action in the current session.
+- Treat "tests passed", "PR is ready", or "task is implemented" as readiness for human/Copilot review, not permission to merge.
 
 ## When to read more
 
