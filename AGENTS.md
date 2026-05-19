@@ -53,7 +53,7 @@
 - If review shows that a lower layer is not delivery-ready, stop the higher-phase rollout, fix the foundation first, and only then resume the later phase.
 
 ## Protocol Standards & SDK Alignment
-- Follow the MCP specification dated 2025-06-18 (https://modelcontextprotocol.io/specification/2025-06-18) and use the official `rmcp` crate from crates.io for transports, clients, and capability helpers.
+- Follow the MCP specification dated 2025-11-25 (https://modelcontextprotocol.io/specification/2025-11-25) and use the official `rmcp` crate from crates.io for transports, clients, and capability helpers.
 
 ## MCP Tooling & Codex Capabilities
 - Prefer mounted MCP tools when they are available instead of re-implementing helpers. If a task depends on a specific external tool, first verify that tool is available in the current environment.

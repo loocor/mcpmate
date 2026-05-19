@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use mcpmate::common::constants::{branding, client_headers};
+use mcpmate::common::constants::{branding, client_headers, protocol};
 use reqwest::{
     Client as HttpClient,
     header::{HeaderMap, HeaderName, HeaderValue},
@@ -252,7 +252,10 @@ impl BridgeServer {
             tracing::error!("Invalid MCP protocol version header: {err}");
             McpError::internal_error("Invalid MCP protocol version header", None)
         })?;
-        default_headers.insert(HeaderName::from_static("mcp-protocol-version"), header_value);
+        default_headers.insert(
+            HeaderName::from_static(protocol::MCP_PROTOCOL_VERSION_HEADER_LOWER),
+            header_value,
+        );
 
         if let Ok(appid) = std::env::var("APPID") {
             let appid = appid.trim();

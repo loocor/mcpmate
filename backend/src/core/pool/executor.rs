@@ -15,6 +15,7 @@ use tracing;
 use super::{FailureKind, UpstreamConnectionPool};
 use crate::{
     common::{
+        constants::protocol,
         server::{ServerType, TransportType},
         sync::SyncHelper,
     },
@@ -534,7 +535,7 @@ impl UpstreamConnectionPool {
                                         | "host"
                                         | "connection"
                                         | "transfer-encoding"
-                                        | "mcp-protocol-version"
+                                        | protocol::MCP_PROTOCOL_VERSION_HEADER_LOWER
                                 );
                                 if controlled {
                                     continue;

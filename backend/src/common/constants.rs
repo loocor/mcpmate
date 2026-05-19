@@ -121,6 +121,20 @@ pub mod client_headers {
     pub const MCPMATE_PROFILE_ID: &str = "x-mcpmate-profile-id";
 }
 
+/// MCP protocol constants shared across client and server boundaries.
+pub mod protocol {
+    pub const MCP_PROTOCOL_VERSION_HEADER: &str = "MCP-Protocol-Version";
+    pub const MCP_PROTOCOL_VERSION_HEADER_LOWER: &str = "mcp-protocol-version";
+
+    pub const V_2024_11_05: &str = "2024-11-05";
+    pub const V_2025_03_26: &str = "2025-03-26";
+    pub const V_2025_06_18: &str = "2025-06-18";
+    pub const V_2025_11_25: &str = "2025-11-25";
+
+    pub const CURRENT_VERSION: &str = V_2025_11_25;
+    pub const SUPPORTED_DOWNSTREAM_PROTOCOL_VERSIONS: &[&str] = &[CURRENT_VERSION, V_2025_06_18, V_2025_03_26];
+}
+
 /// Database constants for unified database operations
 pub mod database {
     /// Database table name constants

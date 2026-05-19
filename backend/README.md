@@ -189,7 +189,7 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport 
 
 ## MCP Protocol
 
-Follows the [MCP specification (2025-06-18)](https://modelcontextprotocol.io/specification/2025-06-18).
+Follows the [MCP specification (2025-11-25)](https://modelcontextprotocol.io/specification/2025-11-25).
 
 Uses the official `rmcp` crate from crates.io for protocol implementation.
 

@@ -1,17 +1,22 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use axum::body::to_bytes;
 use axum::routing::{Router, get, post};
 use futures_util::StreamExt;
 use hyper::{Request, StatusCode};
+use serde_json::{Value, json};
+use sqlx::sqlite::SqlitePoolOptions;
+use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
-use mcpmate::api::handlers::inspector;
+use mcpmate::api::handlers::{inspector, server};
 use mcpmate::api::routes::AppState;
-use mcpmate::core::cache::RedbCacheManager;
+use mcpmate::common::constants::protocol;
+use mcpmate::config::{database::Database, initialization::run_initialization};
+use mcpmate::core::cache::{RedbCacheManager, manager::CacheConfig};
 use mcpmate::core::models::Config;
 use mcpmate::core::pool::UpstreamConnectionPool;
 use mcpmate::core::profile::ConfigApplicationStateManager;
@@ -19,6 +24,11 @@ use mcpmate::inspector::{
     calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager,
 };
 use mcpmate::system::metrics::MetricsCollector;
+
+const CREATE_SERVER_PATH: &str = "/api/mcp/servers/create";
+const TOOL_LIST_PATH: &str = "/api/mcp/inspector/tool/list";
+const RESOURCE_LIST_PATH: &str = "/api/mcp/inspector/resource/list";
+const RESOURCE_READ_PATH: &str = "/api/mcp/inspector/resource/read";
 
 struct EnvVarGuard {
     key: &'static str,
@@ -69,6 +79,247 @@ fn build_test_state() -> Arc<AppState> {
         inspector_sessions,
         oauth_manager: None,
     })
+}
+
+async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
+    let db_pool = SqlitePoolOptions::new()
+        .max_connections(4)
+        .connect("sqlite::memory:")
+        .await
+        .expect("sqlite pool");
+
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&db_pool)
+        .await
+        .expect("enable foreign keys");
+    run_initialization(&db_pool).await.expect("initialize schema");
+    mcpmate::core::capability::naming::initialize(db_pool.clone());
+    mcpmate::core::capability::resolver::clear_cache().await;
+
+    let database = Arc::new(Database {
+        pool: db_pool,
+        path: temp_dir.path().join("mcpmate-test.db"),
+    });
+    let cache_path = temp_dir.path().join("capability.redb");
+    let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("redb"));
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+
+    Arc::new(AppState {
+        connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
+            Arc::new(Config::default()),
+            Some(database.clone()),
+        ))),
+        metrics_collector: Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1))),
+        http_proxy: None,
+        profile_merge_service: None,
+        database: Some(database),
+        audit_database: None,
+        audit_service: None,
+        config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+        redb_cache,
+        unified_query: None,
+        client_service: None,
+        inspector_calls,
+        inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        oauth_manager: None,
+    })
+}
+
+fn write_stdio_fixture(temp_dir: &TempDir) -> PathBuf {
+    let path = temp_dir.path().join("stdio_mcp_fixture.py");
+    let script = r#"
+import json
+import sys
+
+def reply(request_id, result):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    req = json.loads(line)
+    request_id = req.get("id")
+    method = req.get("method")
+    if request_id is None:
+        continue
+    if method == "initialize":
+        reply(request_id, {
+            "protocolVersion": "__PROTOCOL_VERSION__",
+            "capabilities": {
+                "tools": {},
+                "resources": {},
+                "prompts": {}
+            },
+            "serverInfo": {"name": "inspector-fixture", "version": "1.0.0"}
+        })
+    elif method == "tools/list":
+        reply(request_id, {
+            "tools": [{
+                "name": "echo",
+                "description": "Echo a message.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"]
+                }
+            }]
+        })
+    elif method == "tools/call":
+        message = req.get("params", {}).get("arguments", {}).get("message", "")
+        reply(request_id, {
+            "content": [{"type": "text", "text": "echo: " + message}],
+            "isError": False
+        })
+    elif method == "resources/list":
+        reply(request_id, {
+            "resources": [{
+                "uri": "test://hello",
+                "name": "hello",
+                "mimeType": "text/plain"
+            }]
+        })
+    elif method == "resources/read":
+        reply(request_id, {
+            "contents": [{
+                "uri": "test://hello",
+                "mimeType": "text/plain",
+                "text": "hello from resource"
+            }]
+        })
+    elif method == "prompts/list":
+        reply(request_id, {"prompts": []})
+    elif method == "resources/templates/list":
+        reply(request_id, {"resourceTemplates": []})
+    else:
+        sys.stdout.write(json.dumps({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": -32601, "message": "method not found"}
+        }) + "\n")
+        sys.stdout.flush()
+"#
+    .replace("__PROTOCOL_VERSION__", protocol::CURRENT_VERSION);
+
+    std::fs::write(&path, script).expect("write stdio fixture");
+    path
+}
+
+async fn read_json_response(response: axum::response::Response) -> Value {
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body");
+    let body: Value = serde_json::from_slice(&bytes).expect("json response");
+    assert!(status.is_success(), "unexpected status {status}: {body}");
+    body
+}
+
+fn json_post_request(
+    uri: &str,
+    body: Value,
+) -> Request<axum::body::Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
+}
+
+fn get_request(uri: String) -> Request<axum::body::Body> {
+    Request::builder()
+        .method("GET")
+        .uri(uri)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+fn assert_api_success(body: &Value) {
+    assert_eq!(body.pointer("/success").and_then(Value::as_bool), Some(true));
+}
+
+fn data_str<'a>(
+    body: &'a Value,
+    pointer: &str,
+) -> &'a str {
+    body.pointer(pointer)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("expected string at {pointer}: {body}"))
+}
+
+fn data_u64(
+    body: &Value,
+    pointer: &str,
+) -> u64 {
+    body.pointer(pointer)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("expected u64 at {pointer}: {body}"))
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn inspector_create_server_is_immediately_usable_without_restart() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let fixture = write_stdio_fixture(&temp_dir);
+    let python = which::which("python3").expect("python3 is required for stdio MCP fixture");
+    let state = build_database_state(&temp_dir).await;
+
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .route(RESOURCE_LIST_PATH, get(inspector::resources_list))
+        .route(RESOURCE_READ_PATH, get(inspector::resource_read))
+        .with_state(state);
+
+    let create_req = json_post_request(
+        CREATE_SERVER_PATH,
+        json!({
+            "name": "inspector-fixture",
+            "server_type": "stdio",
+            "command": python.to_string_lossy(),
+            "args": [fixture.to_string_lossy()]
+        }),
+    );
+
+    let create_body = read_json_response(app.clone().oneshot(create_req).await.unwrap()).await;
+    assert_api_success(&create_body);
+    let server_id = data_str(&create_body, "/data/id").to_string();
+    assert_eq!(
+        data_str(&create_body, "/data/protocol_version"),
+        protocol::CURRENT_VERSION
+    );
+
+    let tools_req = get_request(format!(
+        "{TOOL_LIST_PATH}?server_id={server_id}&mode=proxy&refresh=true"
+    ));
+    let tools_body = read_json_response(app.clone().oneshot(tools_req).await.unwrap()).await;
+    assert_api_success(&tools_body);
+    assert_eq!(data_u64(&tools_body, "/data/total"), 1);
+    let tool_name = data_str(&tools_body, "/data/tools/0/name");
+    assert!(
+        tool_name.ends_with("_echo"),
+        "proxy Inspector should expose the upstream echo tool with a stable unique name, got {tool_name}"
+    );
+
+    let resources_req = get_request(format!(
+        "{RESOURCE_LIST_PATH}?server_id={server_id}&mode=proxy&refresh=true"
+    ));
+    let resources_body = read_json_response(app.clone().oneshot(resources_req).await.unwrap()).await;
+    assert_api_success(&resources_body);
+    assert_eq!(data_u64(&resources_body, "/data/total"), 1);
+
+    let resource_read_req = get_request(format!(
+        "{RESOURCE_READ_PATH}?server_id={server_id}&mode=proxy&uri=test%3A%2F%2Fhello"
+    ));
+    let resource_read_body = read_json_response(app.oneshot(resource_read_req).await.unwrap()).await;
+    assert_eq!(
+        data_str(&resource_read_body, "/data/result/contents/0/text"),
+        "hello from resource"
+    );
+
+    mcpmate::core::capability::resolver::clear_cache().await;
 }
 
 #[tokio::test]
