@@ -19,6 +19,7 @@ Use this skill to keep reviews concise, severity-driven, and aligned with reposi
 2. Check whether validation depth matches the blast radius.
 3. Report findings in severity order, or say clearly when no findings remain.
 4. Keep merge-readiness notes narrow: unresolved risk, missing validation, or stale workflow state.
+5. Treat "merge-ready" as a recommendation for Loocor/Copilot review unless Loocor explicitly asks you to merge the PR in the current session.
 
 ## When to read more
 
