@@ -5,6 +5,14 @@ use crate::clients::models::{
 };
 use std::collections::HashMap;
 
+fn approval_status_for_first_contact_behavior(behavior: FirstContactBehavior) -> &'static str {
+    match behavior {
+        FirstContactBehavior::Deny => "suspended",
+        FirstContactBehavior::Review => "pending",
+        FirstContactBehavior::Allow => "approved",
+    }
+}
+
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
@@ -35,11 +43,7 @@ impl ClientConfigService {
         }
 
         let first_contact_behavior = self.get_first_contact_behavior().await?;
-        let approval_status = match first_contact_behavior {
-            FirstContactBehavior::Deny => "suspended",
-            FirstContactBehavior::Review => "pending",
-            FirstContactBehavior::Allow => "approved",
-        };
+        let approval_status = approval_status_for_first_contact_behavior(first_contact_behavior);
 
         self.create_state_row(identifier, name, ClientGovernanceKind::Passive, approval_status, None)
             .await
@@ -327,11 +331,7 @@ impl ClientConfigService {
             return self.refresh_existing_state_name(identifier, name, existing).await;
         }
         let first_contact_behavior = self.get_first_contact_behavior().await?;
-        let approval_status = match first_contact_behavior {
-            FirstContactBehavior::Deny => "suspended",
-            FirstContactBehavior::Review => "pending",
-            FirstContactBehavior::Allow => "approved",
-        };
+        let approval_status = approval_status_for_first_contact_behavior(first_contact_behavior);
 
         self.create_state_row(
             identifier,
@@ -341,6 +341,44 @@ impl ClientConfigService {
             config_path,
         )
         .await
+    }
+
+    pub async fn apply_first_contact_behavior_to_passive_state(
+        &self,
+        identifier: &str,
+        name: &str,
+    ) -> ConfigResult<ClientStateRow> {
+        let Some(existing) = self.fetch_state(identifier).await? else {
+            return self.ensure_passive_observed_row(identifier, name, None).await;
+        };
+
+        if existing.governance_kind() != ClientGovernanceKind::Passive {
+            return self.refresh_existing_state_name(identifier, name, existing).await;
+        }
+
+        let first_contact_behavior = self.get_first_contact_behavior().await?;
+        let approval_status = approval_status_for_first_contact_behavior(first_contact_behavior);
+        self.refresh_existing_state_name(identifier, name, existing).await?;
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET approval_status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ? AND governance_kind = 'passive'
+            "#,
+        )
+        .bind(approval_status)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        self.fetch_state(identifier).await?.ok_or_else(|| {
+            ConfigError::DataAccessError(format!(
+                "Failed to reload first-contact state for client {}",
+                identifier
+            ))
+        })
     }
 
     pub(crate) async fn ensure_active_state_row_with_name(
@@ -667,6 +705,65 @@ mod tests {
 
         assert_eq!(first.id, second.id);
         assert_eq!(second.approval_status.as_deref(), Some("approved"));
+    }
+
+    #[tokio::test]
+    async fn passive_first_contact_state_reapplies_current_policy() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        set_onboarding_policy(&service, OnboardingPolicy::RequireApproval)
+            .await
+            .expect("set review policy");
+        let pending = service
+            .ensure_passive_observed_row("test.client", "Test Client", None)
+            .await
+            .expect("create pending passive client");
+        assert_eq!(pending.approval_status(), "pending");
+
+        set_onboarding_policy(&service, OnboardingPolicy::AutoManage)
+            .await
+            .expect("set allow policy");
+        let approved = service
+            .apply_first_contact_behavior_to_passive_state("test.client", "Test Client")
+            .await
+            .expect("reapply allow policy");
+        assert_eq!(approved.approval_status(), "approved");
+        assert_eq!(approved.governance_kind(), ClientGovernanceKind::Passive);
+
+        set_onboarding_policy(&service, OnboardingPolicy::Manual)
+            .await
+            .expect("set deny policy");
+        let suspended = service
+            .apply_first_contact_behavior_to_passive_state("test.client", "Test Client")
+            .await
+            .expect("reapply deny policy");
+        assert_eq!(suspended.approval_status(), "suspended");
+        assert_eq!(suspended.governance_kind(), ClientGovernanceKind::Passive);
+    }
+
+    #[tokio::test]
+    async fn active_client_approval_is_not_rewritten_by_first_contact_policy() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        set_onboarding_policy(&service, OnboardingPolicy::RequireApproval)
+            .await
+            .expect("set review policy");
+        service
+            .ensure_passive_observed_row("test.client", "Test Client", None)
+            .await
+            .expect("create pending passive client");
+        service.approve_client("test.client").await.expect("approve client");
+
+        set_onboarding_policy(&service, OnboardingPolicy::Manual)
+            .await
+            .expect("set deny policy");
+        let active = service
+            .apply_first_contact_behavior_to_passive_state("test.client", "Test Client")
+            .await
+            .expect("reapply policy to active client");
+
+        assert_eq!(active.approval_status(), "approved");
+        assert_eq!(active.governance_kind(), ClientGovernanceKind::Active);
     }
 
     #[tokio::test]
