@@ -42,6 +42,7 @@
 - Repository-local skills live under `.agents/skills/` at the repository root. This is the default project-level location for Codex-compatible skills in MCPMate.
 - Prefer short, workflow-oriented skill names such as `project-flow`, `validation`, or `review-flow`. Do not prepend `mcpmate-` unless a name collision becomes real rather than hypothetical.
 - Use project skills to capture stable workflows, operating rules, reusable validation paths, or script entrypoints that should stay consistent across sessions and machines.
+- Use the repo-local `cloudflare-d1` skill when MCPMate work touches Cloudflare Workers D1 persistence, relational catalog storage, D1 migrations, local/remote D1 environment isolation, seed data, or D1-backed Admin catalog validation.
 - When a workflow becomes primarily deterministic, move the repeatable mechanics into a skill-local `scripts/` directory and keep the `SKILL.md` focused on trigger conditions, sequencing, and decision rules.
 - Keep skill instructions implementation-agnostic where possible. Put MCPMate-specific paths, commands, and policy hooks in the skill only when they are truly part of the repository contract.
 - When a project skill materially changes the expected workflow, update this `AGENTS.md` in the same PR so the repository contract and the skill catalog stay aligned.
