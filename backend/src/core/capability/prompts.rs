@@ -398,28 +398,16 @@ pub async fn get_upstream_prompt(
                     server_id: server_key.to_string(),
                     affinity_key: selection.affinity_key.clone(),
                 };
-                if let Err(e) = pool.ensure_connected_with_selection(&scoped_selection).await {
-                    return Err(anyhow!(
-                        "Failed to ensure scoped connection for server '{}': {}",
-                        server_key,
-                        e
-                    ));
-                }
                 let iid = pool
-                    .select_instance_id(&scoped_selection)
-                    .map_err(|e| anyhow!("Failed to select scoped instance for server '{}': {}", server_key, e))?;
+                    .ensure_connected_with_selection(&scoped_selection)
+                    .await
+                    .map_err(|e| anyhow!("Failed to ensure scoped connection for server '{}': {}", server_key, e))?;
                 target_instance_id = Some(iid);
             } else {
-                if let Err(e) = pool.ensure_connected(server_key).await {
-                    return Err(anyhow!(
-                        "Failed to ensure connection for server '{}': {}",
-                        server_key,
-                        e
-                    ));
-                }
                 let iid = pool
-                    .get_default_instance_id(server_key)
-                    .map_err(|e| anyhow!("Failed to get default instance for server '{}': {}", server_key, e))?;
+                    .ensure_connected(server_key)
+                    .await
+                    .map_err(|e| anyhow!("Failed to ensure connection for server '{}': {}", server_key, e))?;
                 target_instance_id = Some(iid);
             }
         }

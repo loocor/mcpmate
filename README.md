@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/Rust-1.75%2B-orange" alt="Rust">
   <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen" alt="Node.js">
-  <a href="https://modelcontextprotocol.io/specification/2025-06-18"><img src="https://img.shields.io/badge/MCP-2025--06--18-purple" alt="MCP Spec"></a>
+  <a href="https://modelcontextprotocol.io/specification/2025-11-25"><img src="https://img.shields.io/badge/MCP-2025--11--25-purple" alt="MCP Spec"></a>
 </p>
 
 ---
@@ -142,7 +142,7 @@ MCPMate sits between your AI clients and MCP servers as a transparent proxy. The
 
 ### Proxy
 
-A high-performance MCP proxy server that connects to multiple MCP servers and aggregates their tools. Implements stdio and Streamable HTTP transport protocols (aligned with MCP 2025-06-18 specification). Accepts legacy SSE-configured servers and automatically normalizes them to Streamable HTTP for backward compatibility.
+A high-performance MCP proxy server that connects to multiple MCP servers and aggregates their tools. Implements stdio and Streamable HTTP transport protocols aligned with the current MCP specification. Accepts legacy SSE-configured servers and automatically normalizes them to Streamable HTTP for backward compatibility.
 
 ### Bridge
 
@@ -220,7 +220,7 @@ Coming soon. An online environment will let you explore the dashboard, profiles,
 | **Desktop**         | Tauri 2, system tray, native notifications                          |
 | **Bridge**          | Rust binary, stdio-to-HTTP conversion                               |
 | **Runtime Manager** | Multi-runtime (Node.js, uv, Bun)                                    |
-| **Protocol**        | MCP 2025-06-18, stdio + Streamable HTTP                             |
+| **Protocol**        | MCP 2025-11-25, stdio + Streamable HTTP                             |
 
 ## 🚢 Deployment Modes
 

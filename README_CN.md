@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/Rust-1.75%2B-orange" alt="Rust">
   <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen" alt="Node.js">
-  <a href="https://modelcontextprotocol.io/specification/2025-06-18"><img src="https://img.shields.io/badge/MCP-2025--06--18-purple" alt="MCP Spec"></a>
+  <a href="https://modelcontextprotocol.io/specification/2025-11-25"><img src="https://img.shields.io/badge/MCP-2025--11--25-purple" alt="MCP Spec"></a>
 </p>
 
 ---
@@ -142,7 +142,7 @@ MCPMate 作为透明代理位于 AI 客户端和 MCP 服务器之间。**Bridge*
 
 ### Proxy
 
-高性能 MCP 代理服务器，连接多个 MCP 服务器并聚合工具。实现 stdio 和 Streamable HTTP 传输协议（符合 MCP 2025-06-18 规范），接受旧版 SSE 配置并自动归一化为 Streamable HTTP 以保持向后兼容。
+高性能 MCP 代理服务器，连接多个 MCP 服务器并聚合工具。实现 stdio 和 Streamable HTTP 传输协议，并对齐当前 MCP 规范；接受旧版 SSE 配置并自动归一化为 Streamable HTTP 以保持向后兼容。
 
 ### Bridge
 
@@ -220,7 +220,7 @@ Coming soon。线上环境将允许你在无需本地部署的情况下，探索
 | **桌面应用**     | Tauri 2, 系统托盘, 原生通知                              |
 | **Bridge**       | Rust 二进制, stdio → HTTP 转换                           |
 | **运行时管理器** | 多运行时 (Node.js, uv, Bun)                              |
-| **协议**         | MCP 2025-06-18, stdio + Streamable HTTP                  |
+| **协议**         | MCP 2025-11-25, stdio + Streamable HTTP                  |
 
 ## 🚢 部署模式
 
