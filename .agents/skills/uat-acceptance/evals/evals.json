@@ -1,0 +1,23 @@
+{
+  "skill_name": "uat-acceptance",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review a proposed MCPMate Board PR that adds a new Servers bulk-publish toolbar and decide whether it conforms to MCPMate UI/UX and UAT standards. Include findings, severity, automated checks, manual judgment, and GitHub Project feedback.",
+      "expected_output": "A conforming/non-conforming acceptance review that uses MCPMate Board UI patterns, toolbar/action placement rules, publish/audit UAT checks, and Project feedback requirements.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Create a UAT plan for the MCPMate Admin Console account maintenance and rollback flows. The output should include actors, environment, seed/reset preconditions, user paths, severity rules, and which checks can be automated with Playwright.",
+      "expected_output": "A practical Admin Console UAT plan using the bundled playbook, with local admin login, account maintenance, rollback, audit review, seed/reset, severity, and automation boundaries.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "A new Extension import review panel uses large rounded gradient cards, a hero headline, custom icons, and no audit/error state. Assess whether this matches MCPMate style and list required changes before acceptance.",
+      "expected_output": "A non-conforming UI/UX decision that identifies style mismatches against MCPMate operational density, component choices, icons, empty/error/audit requirements, and actionable required changes.",
+      "files": []
+    }
+  ]
+}
