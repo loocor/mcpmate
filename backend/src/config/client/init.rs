@@ -303,9 +303,7 @@ WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'a
                 ELSE registration_origin \
             END, \
             connection_mode = CASE \
-                WHEN connection_mode = 'local_config_detected' \
-                    AND config_path IS NOT NULL \
-                    AND TRIM(config_path) <> '' \
+                WHEN config_path IS NOT NULL AND TRIM(config_path) <> '' \
                 THEN 'local_config_detected' \
                 ELSE 'manual' \
             END",
@@ -574,9 +572,7 @@ async fn migrate_client_table_constraints(pool: &Pool<Sqlite>) -> Result<()> {
                 id, name, display_name, identifier, config_path, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
                 CASE
-                    WHEN connection_mode = 'local_config_detected'
-                        AND config_path IS NOT NULL
-                        AND TRIM(config_path) <> ''
+                    WHEN config_path IS NOT NULL AND TRIM(config_path) <> ''
                     THEN 'local_config_detected'
                     ELSE 'manual'
                 END,
@@ -839,6 +835,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn initialize_client_table_derives_local_mode_from_legacy_config_path() {
+        let pool = setup_raw_pool().await;
+
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE {table} (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                identifier TEXT NOT NULL UNIQUE,
+                config_path TEXT,
+                config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
+                transport TEXT NOT NULL DEFAULT 'auto' CHECK (
+                    transport IN ('auto', 'sse', 'stdio', 'streamable_http')
+                ),
+                client_version TEXT,
+                backup_policy TEXT NOT NULL DEFAULT 'keep_n' CHECK (
+                    backup_policy IN ('keep_last', 'keep_n', 'off')
+                ),
+                backup_limit INTEGER DEFAULT 5,
+                connection_mode TEXT NOT NULL DEFAULT 'manual' CHECK (
+                    connection_mode IN ('local_config_detected', 'manual')
+                ),
+                registration_origin TEXT NOT NULL DEFAULT 'manual' CHECK (
+                    registration_origin IN ('manual', 'config_detection', 'runtime_initialize')
+                ),
+                runtime_observed INTEGER NOT NULL DEFAULT 0 CHECK (runtime_observed IN (0, 1)),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+            table = tables::CLIENT,
+        ))
+        .execute(&pool)
+        .await
+        .expect("create legacy client table");
+
+        let legacy_config_path = "/tmp/mcpmate-legacy-client.json";
+        sqlx::query(&format!(
+            "INSERT INTO {table} (id, name, identifier, config_path, connection_mode) VALUES (?, ?, ?, ?, ?)",
+            table = tables::CLIENT,
+        ))
+        .bind("client_legacy_path")
+        .bind("Legacy Config Path")
+        .bind("legacy.path")
+        .bind(legacy_config_path)
+        .bind("manual")
+        .execute(&pool)
+        .await
+        .expect("insert legacy config path row");
+
+        initialize_client_table(&pool).await.expect("initialize client table");
+
+        let (connection_mode, registration_origin, config_path): (String, String, String) = sqlx::query_as(&format!(
+            "SELECT connection_mode, registration_origin, config_path FROM {table} WHERE identifier = ?",
+            table = tables::CLIENT,
+        ))
+        .bind("legacy.path")
+        .fetch_one(&pool)
+        .await
+        .expect("fetch normalized row");
+
+        assert_eq!(connection_mode, "local_config_detected");
+        assert_eq!(registration_origin, "config_detection");
+        assert_eq!(config_path, legacy_config_path);
+    }
+
+    #[tokio::test]
     async fn initialize_client_table_preserves_legacy_format_rules_during_constraint_rebuild() {
         let pool = setup_raw_pool().await;
 
@@ -848,6 +911,7 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 identifier TEXT NOT NULL UNIQUE,
+                config_path TEXT,
                 config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
                 transport TEXT NOT NULL DEFAULT 'auto' CHECK (
                     transport IN ('auto', 'sse', 'stdio', 'streamable_http')
@@ -876,13 +940,15 @@ mod tests {
         .expect("create legacy client table");
 
         let legacy_format_rules = r#"{"stdio":{"command_field":"command","args_field":"args","env_field":"env"}}"#;
+        let legacy_config_path = "/tmp/mcpmate-legacy-rules.json";
         sqlx::query(&format!(
-            "INSERT INTO {table} (id, name, identifier, connection_mode, format_rules) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO {table} (id, name, identifier, config_path, connection_mode, format_rules) VALUES (?, ?, ?, ?, ?, ?)",
             table = tables::CLIENT,
         ))
         .bind("client_legacy_rules")
         .bind("Legacy Format Rules")
         .bind("legacy.rules")
+        .bind(legacy_config_path)
         .bind("manual")
         .bind(legacy_format_rules)
         .execute(&pool)
@@ -891,15 +957,16 @@ mod tests {
 
         initialize_client_table(&pool).await.expect("initialize client table");
 
-        let transports: String = sqlx::query_scalar(&format!(
-            "SELECT transports FROM {table} WHERE identifier = ?",
+        let (connection_mode, transports): (String, String) = sqlx::query_as(&format!(
+            "SELECT connection_mode, transports FROM {table} WHERE identifier = ?",
             table = tables::CLIENT,
         ))
         .bind("legacy.rules")
         .fetch_one(&pool)
         .await
-        .expect("fetch migrated transports");
+        .expect("fetch migrated row");
 
+        assert_eq!(connection_mode, "local_config_detected");
         assert_eq!(transports, legacy_format_rules);
     }
 }
