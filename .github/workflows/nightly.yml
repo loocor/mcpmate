@@ -639,7 +639,7 @@ jobs:
           MANIFEST_ARGS=(
             --version "$APP_VERSION"
             --output artifacts/update.json
-            --notes "Nightly ${BUILD_ID}"
+            --notes "Nightly ${BUILD_DATE} (${SHORT_SHA})"
           )
 
           platform_for_asset() {
