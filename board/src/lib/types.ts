@@ -946,7 +946,9 @@ export interface ClientTemplateMetadata {
 export interface ClientInfo {
   identifier: string;
   display_name: string;
-  connection_mode?: "local_config_detected" | "remote_http" | "manual" | string | null;
+  config_file_state?: ClientConfigFileState | null;
+  registration_origin?: ClientRegistrationOrigin | null;
+  runtime_observed?: boolean | null;
   category: ClientCategory;
   enabled: boolean;
   detected: boolean;
@@ -1036,11 +1038,8 @@ export interface ClientRecordReviewReq {
   identifier: string;
 }
 
-export type ClientConnectionMode =
-  | "local_config_detected"
-  | "remote_http"
-  | "manual"
-  | string;
+export type ClientConfigFileState = "with_config_file" | "without_config_file";
+export type ClientRegistrationOrigin = "manual" | "config_detection" | "runtime_initialize" | string;
 
 export interface DefaultClientPolicyData {
   config_mode: string;
@@ -1095,7 +1094,9 @@ export interface ClientConfigData {
   has_mcp_config: boolean;
   configured_server_entries?: ServerEntryData[];
   last_modified?: string | null;
-  connection_mode?: ClientConnectionMode | null;
+  config_file_state?: ClientConfigFileState | null;
+  registration_origin?: ClientRegistrationOrigin | null;
+  runtime_observed?: boolean | null;
   mcp_servers_count: number;
   approval_status?: "approved" | "pending" | "suspended" | string | null;
   attachment_state?: "attached" | "detached" | "not_applicable" | string | null;
@@ -1117,7 +1118,7 @@ export interface ClientConfigData {
 export interface ClientSettingsSourceData {
   display_name: "provided" | "stored" | "default" | string;
   approval_status: "provided" | "stored" | "default" | string;
-  connection_mode: "provided" | "derived" | "stored" | string;
+  config_file_state: "provided" | "derived" | "stored" | string;
 }
 
 export interface ClientSettingsUpdateData {
@@ -1126,7 +1127,9 @@ export interface ClientSettingsUpdateData {
   config_mode?: string | null;
   transport: string;
   client_version?: string | null;
-  connection_mode?: string | null;
+  config_file_state?: ClientConfigFileState | null;
+  registration_origin?: ClientRegistrationOrigin | null;
+  runtime_observed?: boolean | null;
   config_path?: string | null;
   description?: string | null;
   homepage_url?: string | null;

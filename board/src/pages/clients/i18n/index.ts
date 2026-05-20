@@ -215,16 +215,15 @@ export const clientsTranslations = {
       form: {
         titleCreate: "Add Client Record",
         titleEdit: "Edit Client Record",
-        descriptionCreate: "Create a client record with its management shape and metadata.",
+        descriptionCreate: "Create a client record with its configuration file state and metadata.",
         descriptionEdit: "Update this client record and its management settings.",
         tabs: { basic: "Basic", meta: "Meta" },
-        connectionShape: {
-          label: "Client Shape",
-          description: "Choose whether this client has a writable local config file or is a non-writable remote/unknown client.",
+        configFile: {
+          label: "Configuration File",
+          description: "Choose whether MCPMate should manage this client through a writable local config file.",
           options: {
-            localWithConfig: "Local + Config",
-            localWithoutConfig: "Local / Unknown Config",
-            remoteHttp: "Remote HTTP",
+            withConfigFile: "With config file",
+            withoutConfigFile: "Without config file",
           },
         },
         transportSupport: {
@@ -990,16 +989,15 @@ export const clientsTranslations = {
       form: {
         titleCreate: "新增客户端记录",
         titleEdit: "编辑客户端记录",
-        descriptionCreate: "创建一个带有管理形态与元数据的客户端记录。",
+        descriptionCreate: "创建一个带有配置文件状态与元数据的客户端记录。",
         descriptionEdit: "更新该客户端记录及其管理设置。",
         tabs: { basic: "基础", meta: "元数据" },
-        connectionShape: {
-          label: "客户端形态",
-          description: "选择该客户端是否具备可写本地配置文件，或属于不可写的远程/未知客户端。",
+        configFile: {
+          label: "配置文件",
+          description: "选择 MCPMate 是否通过可写本地配置文件管理该客户端。",
           options: {
-            localWithConfig: "本地 + 配置文件",
-            localWithoutConfig: "本地 / 未知配置",
-            remoteHttp: "远程 HTTP",
+            withConfigFile: "带配置文件",
+            withoutConfigFile: "不带配置文件",
           },
         },
         transportSupport: {
@@ -1751,16 +1749,15 @@ export const clientsTranslations = {
       form: {
         titleCreate: "クライアントレコードを追加",
         titleEdit: "クライアントレコードを編集",
-        descriptionCreate: "管理形態とメタデータを含むクライアントレコードを作成します。",
+        descriptionCreate: "設定ファイル状態とメタデータを含むクライアントレコードを作成します。",
         descriptionEdit: "このクライアントレコードと管理設定を更新します。",
         tabs: { basic: "基本", meta: "メタデータ" },
-        connectionShape: {
-          label: "クライアント形態",
-          description: "このクライアントが書き込み可能なローカル設定ファイルを持つか、書き込み不可のリモート/未知クライアントかを選択します。",
+        configFile: {
+          label: "設定ファイル",
+          description: "MCPMate が書き込み可能なローカル設定ファイルを通じてこのクライアントを管理するかを選択します。",
           options: {
-            localWithConfig: "ローカル + 設定ファイル",
-            localWithoutConfig: "ローカル / 不明な設定",
-            remoteHttp: "リモート HTTP",
+            withConfigFile: "設定ファイルあり",
+            withoutConfigFile: "設定ファイルなし",
           },
         },
         transportSupport: {

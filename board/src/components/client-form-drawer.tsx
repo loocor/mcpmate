@@ -37,7 +37,6 @@ import type {
 	ClientConfigFileParseInspectExistingReq,
 	ClientConfigFileParseInspectResp,
 	ClientConfigFileParseInspectReq,
-	ClientConnectionMode,
 	TransportRuleData,
 	ClientInfo,
 } from "../lib/types";
@@ -77,7 +76,7 @@ import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type ClientFormMode = "create" | "edit";
-type ClientConnectionShape = "local_with_config" | "local_without_config" | "remote_http";
+type ClientConfigFileChoice = "with_config_file" | "without_config_file";
 const SUPPORTED_TRANSPORT_VALUES = ["streamable_http", "sse", "stdio"] as const;
 type SupportedTransportValue = (typeof SUPPORTED_TRANSPORT_VALUES)[number];
 const CONFIG_PARSE_FORMAT_VALUES = ["json", "json5", "toml", "yaml"] as const;
@@ -85,29 +84,34 @@ type ConfigParseFormatValue = (typeof CONFIG_PARSE_FORMAT_VALUES)[number];
 const CONFIG_PARSE_CONTAINER_TYPE_VALUES = ["standard", "array"] as const;
 
 function createFormSchema(t: TFunction) {
-	return z.object({
-		identifier: z.string().min(1),
-		displayName: z.string().min(1),
-		connectionShape: z.enum(["local_with_config", "local_without_config", "remote_http"]),
-		supportedTransports: z
-			.array(z.enum(SUPPORTED_TRANSPORT_VALUES))
-			.min(
-				1,
-				t("detail.form.transportSupport.validation.required", {
-					defaultValue: "Select at least one supported transport before saving.",
-				}),
-			),
-		configPath: z.string().optional(),
-		configFileParseFormat: z.enum(CONFIG_PARSE_FORMAT_VALUES),
-		configFileParseContainerType: z.enum(CONFIG_PARSE_CONTAINER_TYPE_VALUES),
-		configFileParseContainerKeysText: z.string().optional(),
-		clientVersion: z.string().optional(),
-		description: z.string().optional(),
-		homepageUrl: z.string().optional(),
-		docsUrl: z.string().optional(),
-		supportUrl: z.string().optional(),
-		logoUrl: z.string().optional(),
-	});
+	return z
+		.object({
+			identifier: z.string().min(1),
+			displayName: z.string().min(1),
+			configFileChoice: z.enum(["with_config_file", "without_config_file"]),
+			supportedTransports: z.array(z.enum(SUPPORTED_TRANSPORT_VALUES)),
+			configPath: z.string().optional(),
+			configFileParseFormat: z.enum(CONFIG_PARSE_FORMAT_VALUES),
+			configFileParseContainerType: z.enum(CONFIG_PARSE_CONTAINER_TYPE_VALUES),
+			configFileParseContainerKeysText: z.string().optional(),
+			clientVersion: z.string().optional(),
+			description: z.string().optional(),
+			homepageUrl: z.string().optional(),
+			docsUrl: z.string().optional(),
+			supportUrl: z.string().optional(),
+			logoUrl: z.string().optional(),
+		})
+		.superRefine((values, ctx) => {
+			if (values.configFileChoice === "with_config_file" && values.supportedTransports.length === 0) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["supportedTransports"],
+					message: t("detail.form.transportSupport.validation.required", {
+						defaultValue: "Select at least one supported transport before saving.",
+					}),
+				});
+			}
+		});
 }
 
 interface ClientFormDrawerProps {
@@ -492,28 +496,18 @@ function normalizeIdentifier(value: string): string {
 	return value.trim().toLowerCase().replace(/\s+/g, "-");
 }
 
-function connectionShapeToMode(shape: ClientConnectionShape): ClientConnectionMode {
-	switch (shape) {
-		case "local_with_config":
-			return "local_config_detected";
-		case "remote_http":
-			return "remote_http";
-		default:
-			return "manual";
-	}
-}
-
-function connectionModeToShape(
-	connectionMode: ClientConnectionMode | null | undefined,
+function resolveConfigFileChoice(
+	configFileState?: ClientInfo["config_file_state"],
 	configPath?: string | null,
-): ClientConnectionShape {
-	if (connectionMode === "remote_http") return "remote_http";
-	if (connectionMode === "local_config_detected" && configPath?.trim()) return "local_with_config";
-	return "local_without_config";
+): ClientConfigFileChoice {
+	if (configFileState === "with_config_file") return "with_config_file";
+	if (configFileState === "without_config_file") return "without_config_file";
+	if (configPath?.trim()) return "with_config_file";
+	return "without_config_file";
 }
 
-function hasWritableConfig(values: Pick<ClientRecordFormValues, "connectionShape" | "configPath">): boolean {
-	return values.connectionShape === "local_with_config" && Boolean(values.configPath?.trim());
+function hasWritableConfig(values: Pick<ClientRecordFormValues, "configFileChoice" | "configPath">): boolean {
+	return values.configFileChoice === "with_config_file" && Boolean(values.configPath?.trim());
 }
 
 function parseSupportedTransportValue(value: unknown): SupportedTransportValue | null {
@@ -657,7 +651,7 @@ TransportSupportCombobox.displayName = "TransportSupportCombobox";
 
 function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 	const identifier = client?.identifier ?? "";
-	const connectionShape = connectionModeToShape(client?.connection_mode, client?.config_path);
+	const configFileChoice = resolveConfigFileChoice(client?.config_file_state, client?.config_path);
 	const supportedTransports = (() => {
 		if (!client) return ["streamable_http", "stdio"] satisfies SupportedTransportValue[];
 		const fromRules = normalizeSupportedTransports(Object.keys(client?.transports ?? {}));
@@ -670,9 +664,9 @@ function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 	return {
 		identifier,
 		displayName: client?.display_name ?? "",
-		connectionShape,
+		configFileChoice,
 		supportedTransports,
-		configPath: connectionShape === "local_with_config" ? client?.config_path || "" : "",
+		configPath: configFileChoice === "with_config_file" ? client?.config_path || "" : "",
 		configFileParseFormat: (effectiveParse?.format as ConfigParseFormatValue | undefined) ?? "json",
 		configFileParseContainerType: effectiveParse?.container_type === "array" ? "array" : "standard",
 		configFileParseContainerKeysText: effectiveParse?.container_keys?.join(", ") ?? "",
@@ -850,7 +844,7 @@ export function ClientFormDrawer({
 		defaultValues: defaultValues(client),
 	});
 
-	const connectionShape = form.watch("connectionShape");
+	const configFileChoice = form.watch("configFileChoice");
 	const identifier = form.watch("identifier");
 	const configPath = form.watch("configPath");
 	const configFileParseFormat = form.watch("configFileParseFormat");
@@ -955,22 +949,10 @@ export function ClientFormDrawer({
 		}
 	}, [identifier, form, isHydrating, mode]);
 
-	useEffect(() => {
-		if (connectionShape !== "local_with_config") {
-			if (form.getValues("configPath")) {
-				form.setValue("configPath", "", { shouldDirty: true });
-			}
-			setParseInspection(null);
-			setParseInspectionError(null);
-			setShowParseCodePreview(false);
-		}
-	}, [connectionShape, form]);
-
-	const connectionOptions: SegmentOption[] = useMemo(
+	const configFileOptions: SegmentOption[] = useMemo(
 		() => [
-			{ value: "local_with_config", label: t("detail.form.connectionShape.options.localWithConfig", { defaultValue: "Local + Config" }) },
-			{ value: "local_without_config", label: t("detail.form.connectionShape.options.localWithoutConfig", { defaultValue: "Local / Unknown Config" }) },
-			{ value: "remote_http", label: t("detail.form.connectionShape.options.remoteHttp", { defaultValue: "Remote HTTP" }) },
+			{ value: "with_config_file", label: t("detail.form.configFile.options.withConfigFile", { defaultValue: "With config file" }) },
+			{ value: "without_config_file", label: t("detail.form.configFile.options.withoutConfigFile", { defaultValue: "Without config file" }) },
 		],
 		[t],
 	);
@@ -1082,7 +1064,7 @@ export function ClientFormDrawer({
 	}, [inspectMutation.isPending, parseInspection, parseInspectionError]);
 
 	useEffect(() => {
-		if (!open || connectionShape !== "local_with_config") return;
+		if (!open || configFileChoice !== "with_config_file") return;
 		const trimmedPath = configPath?.trim();
 		if (!trimmedPath) {
 			lastParseInspectionSignatureRef.current = null;
@@ -1147,7 +1129,7 @@ export function ClientFormDrawer({
 		}, 350);
 
 		return () => window.clearTimeout(timer);
-	}, [open, connectionShape, configPath, parseDraft, inspectMutation.mutateAsync, mode, identifier, client?.config_path, t]);
+	}, [open, configFileChoice, configPath, parseDraft, inspectMutation.mutateAsync, mode, identifier, client?.config_path, t]);
 
 	const handleApplyDetectedRules = useCallback(() => {
 		const inferred = parseInspection?.inferred_parse;
@@ -1215,6 +1197,7 @@ export function ClientFormDrawer({
 			const normalizedIdentifier = normalizeIdentifier(values.identifier);
 			const parseForSave = parseDraftFromValues(values);
 			const hasWritableRules = hasWritableConfig(values);
+			const clearConfigFileOnSave = values.configFileChoice === "without_config_file";
 			const supportedTransportsChanged = !isSameSupportedTransports(
 				initialSupportedTransportsRef.current,
 				values.supportedTransports,
@@ -1224,21 +1207,24 @@ export function ClientFormDrawer({
 				transportRuleEditorsSignature(transportRuleEditors) !==
 				transportRuleEditorsSignature(transportRuleEditorsFromClient(client));
 			const shouldPersistTransports =
-				mode === "create" || supportedTransportsChanged || transportEditorsChanged;
-			const transports = shouldPersistTransports
-				? mode === "edit" && !supportedTransportsChanged && !transportEditorsChanged
-					? (client?.transports ?? undefined)
-					: mode === "edit" && !hasWritableRules
-						? filterCurrentTransportPayload(client?.transports, values.supportedTransports)
-						: buildTransportRulesPayload(
-							values.supportedTransports,
-							transportRuleEditors,
-							client,
-							t,
-							hasWritableRules,
-						)
-				: undefined;
-			if (hasWritableConfig(values) && (parseForSave.container_keys?.length ?? 0) === 0) {
+				!clearConfigFileOnSave && (mode === "create" || supportedTransportsChanged || transportEditorsChanged);
+			let transports: Record<string, TransportRuleData> | undefined;
+			if (!shouldPersistTransports) {
+				transports = undefined;
+			} else if (mode === "edit" && !supportedTransportsChanged && !transportEditorsChanged) {
+				transports = client?.transports ?? undefined;
+			} else if (mode === "edit" && !hasWritableRules) {
+				transports = filterCurrentTransportPayload(client?.transports, values.supportedTransports);
+			} else {
+				transports = buildTransportRulesPayload(
+					values.supportedTransports,
+					transportRuleEditors,
+					client,
+					t,
+					hasWritableRules,
+				);
+			}
+			if (hasWritableRules && (parseForSave.container_keys?.length ?? 0) === 0) {
 				throw new Error(
 					t("detail.form.fields.configFileParse.keysRequired", {
 						defaultValue: "Add at least one config node path before saving parse rules.",
@@ -1249,16 +1235,18 @@ export function ClientFormDrawer({
 			await clientsApi.update({
 				identifier: normalizedIdentifier,
 				display_name: values.displayName || undefined,
-				connection_mode: connectionShapeToMode(values.connectionShape),
-				config_path: hasWritableConfig(values) ? values.configPath?.trim() || undefined : undefined,
+				config_file_state: values.configFileChoice,
+				config_path: hasWritableRules ? values.configPath?.trim() || undefined : undefined,
 				client_version: values.clientVersion?.trim() || undefined,
 				description: values.description || undefined,
 				homepage_url: values.homepageUrl || undefined,
 				docs_url: values.docsUrl || undefined,
 				support_url: values.supportUrl || undefined,
 				logo_url: values.logoUrl || undefined,
-				config_file_parse: hasWritableConfig(values) ? parseForSave : undefined,
+				config_file_parse: hasWritableRules ? parseForSave : undefined,
+				clear_config_file_parse: clearConfigFileOnSave,
 				transports,
+				clear_transports: clearConfigFileOnSave,
 			});
 
 			if (
@@ -1386,7 +1374,7 @@ export function ClientFormDrawer({
 					</DrawerTitle>
 					<DrawerDescription>
 						{mode === "create"
-							? t("detail.form.descriptionCreate", { defaultValue: "Create a client record with its management shape and metadata." })
+							? t("detail.form.descriptionCreate", { defaultValue: "Create a client record with its configuration file state and metadata." })
 							: t("detail.form.descriptionEdit", { defaultValue: "Update this client record and its management settings." })}
 					</DrawerDescription>
 				</DrawerHeader>
@@ -1421,18 +1409,18 @@ export function ClientFormDrawer({
 									</p>
 								) : null}
 
-								<FormField control={form.control} name="connectionShape" render={({ field }) => (
+								<FormField control={form.control} name="configFileChoice" render={({ field }) => (
 									<FormItem className="space-y-0">
 										<div className="flex items-start gap-4">
 											<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>
-												{t("detail.form.connectionShape.label", { defaultValue: "Client Shape" })}
+												{t("detail.form.configFile.label", { defaultValue: "Configuration File" })}
 											</FormLabel>
 											<div className="min-w-0 flex-1">
 												<FormControl>
-													<Segment value={field.value} onValueChange={field.onChange} options={connectionOptions} showDots={false} />
+													<Segment value={field.value} onValueChange={field.onChange} options={configFileOptions} showDots={false} />
 												</FormControl>
 												<FormDescription>
-													{t("detail.form.connectionShape.description", { defaultValue: "Choose whether this client has a writable local config file or is a non-writable remote/unknown client." })}
+													{t("detail.form.configFile.description", { defaultValue: "Choose whether MCPMate should manage this client through a writable local config file." })}
 												</FormDescription>
 												<FormMessage />
 											</div>
@@ -1440,7 +1428,7 @@ export function ClientFormDrawer({
 									</FormItem>
 								)} />
 
-								{connectionShape === "local_with_config" ? (
+								{configFileChoice === "with_config_file" ? (
 									<FormField control={form.control} name="supportedTransports" render={({ field }) => (
 										<FormItem className="space-y-0">
 											<div className="flex items-start gap-4">
@@ -1455,7 +1443,7 @@ export function ClientFormDrawer({
 									)} />
 								) : null}
 
-								{connectionShape === "local_with_config" ? (
+								{configFileChoice === "with_config_file" ? (
 									<>
 										<FormField control={form.control} name="configPath" render={({ field }) => (
 											<FormItem className="space-y-0">

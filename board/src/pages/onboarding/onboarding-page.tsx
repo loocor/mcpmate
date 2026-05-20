@@ -426,7 +426,7 @@ export function OnboardingPage() {
           await clientsApi.update({
             identifier: client.identifier,
             display_name: client.display_name || client.identifier,
-            connection_mode: "local_config_detected",
+            config_file_state: "with_config_file",
             config_path: client.config_path,
             description: client.description ?? client.template?.description ?? undefined,
             homepage_url: client.homepage_url ?? client.template?.homepage_url ?? undefined,

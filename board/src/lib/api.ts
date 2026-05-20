@@ -17,20 +17,20 @@ import type {
 	ClientCapabilityConfigReq,
 	ClientCapabilityConfigResp,
 	ClientCheckResp,
- ClientConfigFileParse,
- ClientConfigFileParseInspectCall,
- ClientConfigFileParseInspectResp,
-ClientConfigResp,
+	ClientConfigFileParse,
+	ClientConfigFileParseInspectCall,
+	ClientConfigFileParseInspectResp,
+	ClientConfigFileState,
+	ClientConfigResp,
 	ClientConfigRestoreReq,
 	ClientConfigUpdateReq,
 	ClientConfigUpdateResp,
-	ClientDeleteResp,
 	ClientAttachResp,
+	ClientDeleteResp,
 	ClientDetachResp,
-	ServerEntryData,
- TransportRuleData,
 	ClientRecordLifecycleResp,
 	ClientRecordReviewReq,
+	TransportRuleData,
 	ConfigPreset,
 	ConfigSuit,
 	ConfigSuitListResponse,
@@ -2439,16 +2439,16 @@ export const clientsApi = {
 		display_name?: string;
 		config_mode?: string;
 		transport?: string;
-		connection_mode?: string;
+		config_file_state?: ClientConfigFileState;
 		config_path?: string;
 		client_version?: string;
-        description?: string;
-        homepage_url?: string;
-        docs_url?: string;
-        support_url?: string;
-        logo_url?: string;
+		description?: string;
+		homepage_url?: string;
+		docs_url?: string;
+		support_url?: string;
+		logo_url?: string;
 		config_file_parse?: ClientConfigFileParse;
-			clear_config_file_parse?: boolean;
+		clear_config_file_parse?: boolean;
 		transports?: Record<string, TransportRuleData>;
 		clear_transports?: boolean;
 	}) => {
