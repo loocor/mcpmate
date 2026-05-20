@@ -1,7 +1,7 @@
 # Scheduled desktop dev channel. Successful runs update the fixed `nightly`
 # prerelease; failed runs remain visible only in GitHub Actions.
 
-name: Nightly Dev Build
+name: Nightly
 
 on:
   # Daily at 18:20 UTC / 02:20 Asia/Singapore.
@@ -9,7 +9,7 @@ on:
     - cron: "20 18 * * *"
 
 concurrency:
-  group: nightly-dev-build-${{ github.ref }}
+  group: nightly-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -23,7 +23,7 @@ env:
 
 jobs:
   prepare:
-    name: Prepare dev build metadata
+    name: Prepare nightly metadata
     runs-on: ubuntu-22.04
     outputs:
       build_id: ${{ steps.meta.outputs.build_id }}
@@ -69,7 +69,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           {
-            echo "### Nightly dev build"
+            echo "### Nightly"
             echo ""
             echo "- Build ID: \`${build_id}\`"
             echo "- Source: \`${source_ref}\`"
@@ -639,7 +639,7 @@ jobs:
           MANIFEST_ARGS=(
             --version "$APP_VERSION"
             --output artifacts/update.json
-            --notes "MCPMate nightly dev build ${BUILD_ID}"
+            --notes "Nightly ${BUILD_ID}"
           )
 
           platform_for_asset() {
@@ -685,8 +685,6 @@ jobs:
           set -euo pipefail
 
           cat > nightly-release-notes.md <<EOF
-          # MCPMate Nightly Dev Build
-
           Build ID: \`${BUILD_ID}\`
 
           App version: \`${APP_VERSION}\`
@@ -706,7 +704,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          title="MCPMate Nightly ${BUILD_DATE} (${SHORT_SHA})"
+          title="Nightly ${BUILD_DATE} (${SHORT_SHA})"
           assets=(artifacts/*)
 
           git tag -f "$DEV_CHANNEL_TAG" "$SOURCE_SHA"
@@ -740,7 +738,7 @@ jobs:
       - name: Summarize nightly channel
         run: |
           {
-            echo "### Published nightly dev build"
+            echo "### Published nightly"
             echo ""
             echo "- Build ID: \`${BUILD_ID}\`"
             echo "- Release: https://github.com/${RELEASE_REPO}/releases/tag/${DEV_CHANNEL_TAG}"
