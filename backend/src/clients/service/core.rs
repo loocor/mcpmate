@@ -4,8 +4,9 @@ use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     AttachmentState, BackupPolicySetting, CONFIG_TRANSPORT_PRIORITY, ClientCapabilityConfig, ClientConfigFileParse,
-    ClientConnectionMode, ClientGovernanceKind, ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode,
-    FormatRule, ManagedEndpointConfig, MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
+    ClientConfigFileState, ClientConnectionMode, ClientGovernanceKind, ClientRegistrationOrigin,
+    ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule, ManagedEndpointConfig,
+    MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
 };
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
@@ -112,6 +113,8 @@ pub struct ClientStateRow {
     pub(super) capability_source: Option<String>,
     pub(super) governance_kind: Option<String>,
     pub(super) connection_mode: Option<String>,
+    pub(super) registration_origin: Option<String>,
+    pub(super) runtime_observed: Option<i64>,
     pub(super) template_identifier: Option<String>,
     pub(super) selected_profile_ids: Option<String>,
     pub(super) custom_profile_id: Option<String>,
@@ -324,6 +327,21 @@ impl ClientStateRow {
             .unwrap_or_default()
     }
 
+    pub fn registration_origin(&self) -> ClientRegistrationOrigin {
+        self.registration_origin
+            .as_deref()
+            .and_then(|value| value.parse::<ClientRegistrationOrigin>().ok())
+            .unwrap_or_else(|| {
+                if self.runtime_observed() {
+                    ClientRegistrationOrigin::RuntimeInitialize
+                } else if self.has_config_file_target() {
+                    ClientRegistrationOrigin::ConfigDetection
+                } else {
+                    ClientRegistrationOrigin::Manual
+                }
+            })
+    }
+
     pub fn display_name(&self) -> &str {
         self.display_name
             .as_deref()
@@ -341,6 +359,22 @@ impl ClientStateRow {
 
     pub fn has_local_config_target(&self) -> bool {
         self.connection_mode() == ClientConnectionMode::LocalConfigDetected && self.config_path().is_some()
+    }
+
+    pub fn has_config_file_target(&self) -> bool {
+        self.config_path().is_some()
+    }
+
+    pub fn config_file_state(&self) -> ClientConfigFileState {
+        if self.has_config_file_target() {
+            ClientConfigFileState::WithConfigFile
+        } else {
+            ClientConfigFileState::WithoutConfigFile
+        }
+    }
+
+    pub fn runtime_observed(&self) -> bool {
+        self.runtime_observed.unwrap_or_default() != 0
     }
 
     #[allow(dead_code)]
@@ -1025,6 +1059,8 @@ impl ClientConfigService {
             capability_source: Some("activated".to_string()),
             governance_kind: Some("passive".to_string()),
             connection_mode: Some("local_config_detected".to_string()),
+            registration_origin: Some("config_detection".to_string()),
+            runtime_observed: Some(0),
             approval_status: Some("pending".to_string()),
             attachment_state: Some("detached".to_string()),
             template_identifier: Some(template.identifier.clone()),
