@@ -1,7 +1,7 @@
 use crate::clients::analyzer::InspectedServerEntry;
 use crate::clients::models::{
-    CapabilitySource, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
-    UnifyDirectExposureIntent,
+    CapabilitySource, ClientConfigFileState, ClientRegistrationOrigin, UnifyDirectCapabilityIds,
+    UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectExposureIntent,
 };
 use crate::common::ClientCategory;
 use crate::macros::resp::api_resp;
@@ -126,12 +126,15 @@ pub struct ClientInfo {
     #[schemars(description = "External client attachment state (attached/detached/not_applicable)")]
     #[serde(default)]
     pub attachment_state: Option<String>,
-    #[schemars(description = "Runtime governance kind (passive or active)")]
+    #[schemars(description = "Product-facing config file state: with_config_file or without_config_file")]
     #[serde(default)]
-    pub governance_kind: Option<String>,
-    #[schemars(description = "Runtime connection mode (local_config_detected, remote_http, or manual)")]
+    pub config_file_state: ClientConfigFileState,
+    #[schemars(description = "First registration origin: manual, config_detection, or runtime_initialize")]
     #[serde(default)]
-    pub connection_mode: Option<String>,
+    pub registration_origin: ClientRegistrationOrigin,
+    #[schemars(description = "Whether this client has been observed through the MCP runtime boundary")]
+    #[serde(default)]
+    pub runtime_observed: bool,
     #[schemars(description = "Whether current governance state is inherited from default policy")]
     #[serde(default)]
     pub governed_by_default_policy: bool,
@@ -370,12 +373,15 @@ pub struct ClientConfigData {
     #[schemars(description = "External client attachment state (attached/detached/not_applicable)")]
     #[serde(default)]
     pub attachment_state: Option<String>,
-    #[schemars(description = "Runtime governance kind (passive or active)")]
+    #[schemars(description = "Product-facing config file state: with_config_file or without_config_file")]
     #[serde(default)]
-    pub governance_kind: Option<String>,
-    #[schemars(description = "Runtime connection mode (local_config_detected, remote_http, or manual)")]
+    pub config_file_state: ClientConfigFileState,
+    #[schemars(description = "First registration origin: manual, config_detection, or runtime_initialize")]
     #[serde(default)]
-    pub connection_mode: Option<String>,
+    pub registration_origin: ClientRegistrationOrigin,
+    #[schemars(description = "Whether this client has been observed through the MCP runtime boundary")]
+    #[serde(default)]
+    pub runtime_observed: bool,
     #[schemars(description = "Whether current governance state is inherited from default policy")]
     #[serde(default)]
     pub governed_by_default_policy: bool,
@@ -670,9 +676,9 @@ pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Optional display name for active runtime client records")]
     #[serde(default)]
     pub display_name: Option<String>,
-    #[schemars(description = "Runtime connection mode: local_config_detected|remote_http|manual")]
+    #[schemars(description = "Product-facing config file state to persist")]
     #[serde(default)]
-    pub connection_mode: Option<String>,
+    pub config_file_state: Option<ClientConfigFileState>,
     #[schemars(description = "Runtime config path when the client uses a local config target")]
     #[serde(default)]
     pub config_path: Option<String>,
@@ -717,8 +723,11 @@ pub struct ClientSettingsUpdateData {
     pub transport: String,
     #[serde(default)]
     pub client_version: Option<String>,
+    pub config_file_state: ClientConfigFileState,
     #[serde(default)]
-    pub connection_mode: Option<String>,
+    pub registration_origin: ClientRegistrationOrigin,
+    #[serde(default)]
+    pub runtime_observed: bool,
     #[serde(default)]
     pub config_path: Option<String>,
     #[serde(default)]
@@ -750,8 +759,8 @@ pub struct ClientSettingsSourceData {
     pub display_name: String,
     #[schemars(description = "Source for approval_status: provided|stored|default")]
     pub approval_status: String,
-    #[schemars(description = "Source for connection_mode: provided|derived|stored")]
-    pub connection_mode: String,
+    #[schemars(description = "Source for config_file_state: provided|derived|stored")]
+    pub config_file_state: String,
 }
 
 api_resp!(

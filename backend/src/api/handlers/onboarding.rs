@@ -16,7 +16,7 @@ use crate::common::constants::database::tables;
 use crate::common::server::ServerType;
 use crate::config::server::import::build_import_plan_from_entries;
 use crate::macros::resp::api_resp;
-use crate::runtime::{RuntimeDetection, RuntimeDetector, RuntimeProbe, ResolveSource};
+use crate::runtime::{ResolveSource, RuntimeDetection, RuntimeDetector, RuntimeProbe};
 
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(description = "Onboarding action result")]
@@ -276,10 +276,7 @@ const UVX_RUNTIME_PROBES: &[RuntimeProbe<'_>] = &[RuntimeProbe {
 }];
 
 fn runtime_detection_to_entry(detection: RuntimeDetection) -> RuntimeEntry {
-    let source = detection
-        .resolve_source
-        .as_ref()
-        .map(resolve_source_to_label);
+    let source = detection.resolve_source.as_ref().map(resolve_source_to_label);
 
     RuntimeEntry {
         name: detection.name,
@@ -350,6 +347,7 @@ mod tests {
     use crate::api::models::client::{ClientConfigFileParseData, ClientConfigType};
     use crate::api::models::onboarding::{OnboardingCompleteReq, OnboardingServerScanClient, OnboardingServerScanReq};
     use crate::api::routes::AppState;
+    use crate::clients::models::ClientConfigFileState;
     use crate::clients::{
         ClientConfigService,
         service::settings::ActiveClientSettingsUpdate,
@@ -593,7 +591,7 @@ mod tests {
                 "custom.client",
                 ActiveClientSettingsUpdate {
                     display_name: Some("Custom Client".to_string()),
-                    connection_mode: Some("local_config_detected".to_string()),
+                    config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
                     clear_config_file_parse: true,
                     ..ActiveClientSettingsUpdate::default()
@@ -644,7 +642,7 @@ mod tests {
                 "custom.client",
                 ActiveClientSettingsUpdate {
                     display_name: Some("Custom Client".to_string()),
-                    connection_mode: Some("local_config_detected".to_string()),
+                    config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
                     clear_config_file_parse: true,
                     ..ActiveClientSettingsUpdate::default()

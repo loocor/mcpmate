@@ -9,6 +9,7 @@ const DEFAULT_BACKUP_LIMIT: i64 = 5;
 const DEFAULT_CAPABILITY_SOURCE: &str = "activated";
 const DEFAULT_CONNECTION_MODE: &str = "local_config_detected";
 const DEFAULT_GOVERNANCE_KIND: &str = "passive";
+const DEFAULT_REGISTRATION_ORIGIN: &str = "manual";
 pub(crate) const CLIENT_RUNTIME_SETTINGS_TABLE: &str = "client_runtime_settings";
 pub(crate) const CLIENT_TEMPLATE_RUNTIME_TABLE: &str = "client_template_runtime";
 pub(crate) const DEFAULT_CONFIG_MODE_SETTING_KEY: &str = "default_config_mode";
@@ -49,8 +50,12 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
                 governance_kind IN ('passive', 'active')
             ),
             connection_mode TEXT NOT NULL DEFAULT '{default_connection_mode}' CHECK (
-                connection_mode IN ('local_config_detected', 'remote_http', 'manual')
+                connection_mode IN ('local_config_detected', 'manual')
             ),
+            registration_origin TEXT NOT NULL DEFAULT '{default_registration_origin}' CHECK (
+                registration_origin IN ('manual', 'config_detection', 'runtime_initialize')
+            ),
+            runtime_observed INTEGER NOT NULL DEFAULT 0 CHECK (runtime_observed IN (0, 1)),
             template_identifier TEXT,
             selected_profile_ids TEXT,
             custom_profile_id TEXT,
@@ -71,6 +76,7 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         default_capability_source = DEFAULT_CAPABILITY_SOURCE,
         default_governance_kind = DEFAULT_GOVERNANCE_KIND,
         default_connection_mode = DEFAULT_CONNECTION_MODE,
+        default_registration_origin = DEFAULT_REGISTRATION_ORIGIN,
     ))
     .execute(pool)
     .await
@@ -102,7 +108,21 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         pool,
         tables::CLIENT,
         "connection_mode",
-        "TEXT NOT NULL DEFAULT 'local_config_detected' CHECK (connection_mode IN ('local_config_detected', 'remote_http', 'manual'))",
+        "TEXT NOT NULL DEFAULT 'local_config_detected' CHECK (connection_mode IN ('local_config_detected', 'manual'))",
+    )
+    .await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "registration_origin",
+        "TEXT NOT NULL DEFAULT 'manual' CHECK (registration_origin IN ('manual', 'config_detection', 'runtime_initialize'))",
+    )
+    .await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "runtime_observed",
+        "INTEGER NOT NULL DEFAULT 0 CHECK (runtime_observed IN (0, 1))",
     )
     .await?;
     ensure_column(pool, tables::CLIENT, "template_identifier", "TEXT").await?;
@@ -267,18 +287,40 @@ WHEN backup_limit IS NOT NULL AND backup_limit <> {default_backup_limit} THEN 'a
     })?;
 
     sqlx::query(&format!(
-        "UPDATE {table} SET connection_mode = ? WHERE connection_mode IS NULL OR connection_mode = ''",
-        table = tables::CLIENT
+        "UPDATE {table} SET \
+            runtime_observed = CASE \
+                WHEN connection_mode = 'remote_http' THEN 1 \
+                ELSE COALESCE(runtime_observed, 0) \
+            END, \
+            registration_origin = CASE \
+                WHEN connection_mode = 'remote_http' THEN 'runtime_initialize' \
+                WHEN registration_origin IS NULL OR registration_origin = '' OR registration_origin = ? THEN \
+                    CASE \
+                        WHEN COALESCE(runtime_observed, 0) = 1 THEN 'runtime_initialize' \
+                        WHEN config_path IS NOT NULL AND TRIM(config_path) <> '' THEN 'config_detection' \
+                        ELSE ? \
+                    END \
+                ELSE registration_origin \
+            END, \
+            connection_mode = CASE \
+                WHEN connection_mode = 'local_config_detected' \
+                    AND config_path IS NOT NULL \
+                    AND TRIM(config_path) <> '' \
+                THEN 'local_config_detected' \
+                ELSE 'manual' \
+            END",
+        table = tables::CLIENT,
     ))
-    .bind(DEFAULT_CONNECTION_MODE)
+    .bind(DEFAULT_REGISTRATION_ORIGIN)
+    .bind(DEFAULT_REGISTRATION_ORIGIN)
     .execute(pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to backfill {} connection_mode: {}", tables::CLIENT, e);
-        anyhow::anyhow!("Failed to backfill {} connection_mode: {}", tables::CLIENT, e)
+        tracing::error!("Failed to normalize {} connection state: {}", tables::CLIENT, e);
+        anyhow::anyhow!("Failed to normalize {} connection state: {}", tables::CLIENT, e)
     })?;
 
-    migrate_client_table_for_sse_transport(pool).await?;
+    migrate_client_table_constraints(pool).await?;
 
     tracing::debug!("{} table initialized", tables::CLIENT);
     Ok(())
@@ -413,7 +455,7 @@ async fn migrate_client_table_for_optional_config_mode(pool: &Pool<Sqlite>) -> R
     }
 }
 
-async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<()> {
+async fn migrate_client_table_constraints(pool: &Pool<Sqlite>) -> Result<()> {
     let create_sql: Option<String> = sqlx::query_scalar(&format!(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'",
         tables::CLIENT
@@ -425,15 +467,24 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
         return Ok(());
     };
 
-    if !create_sql.contains("transport IN ('auto', 'stdio', 'streamable_http')") {
+    let needs_sse_transport = create_sql.contains("transport IN ('auto', 'stdio', 'streamable_http')");
+    let needs_connection_mode_cleanup = create_sql.contains("'remote_http'");
+
+    if !needs_sse_transport && !needs_connection_mode_cleanup {
         return Ok(());
     }
 
-    tracing::info!("Migrating {} transport constraint to include sse", tables::CLIENT);
+    tracing::info!("Migrating {} client table constraints", tables::CLIENT);
+
+    let transports_source_expression = if column_exists(pool, tables::CLIENT, "format_rules").await? {
+        "COALESCE(NULLIF(transports, ''), format_rules)"
+    } else {
+        "transports"
+    };
 
     let migration_result = async {
         let mut tx = pool.begin().await?;
-        let temp_table = format!("{}_transport_with_sse", tables::CLIENT);
+        let temp_table = format!("{}_constraints_current", tables::CLIENT);
 
         sqlx::query(&format!(
             r#"
@@ -459,8 +510,12 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
                     governance_kind IN ('passive', 'active')
                 ),
                 connection_mode TEXT NOT NULL DEFAULT '{default_connection_mode}' CHECK (
-                    connection_mode IN ('local_config_detected', 'remote_http', 'manual')
+                    connection_mode IN ('local_config_detected', 'manual')
                 ),
+                registration_origin TEXT NOT NULL DEFAULT '{default_registration_origin}' CHECK (
+                    registration_origin IN ('manual', 'config_detection', 'runtime_initialize')
+                ),
+                runtime_observed INTEGER NOT NULL DEFAULT 0 CHECK (runtime_observed IN (0, 1)),
                 template_identifier TEXT,
                 selected_profile_ids TEXT,
                 custom_profile_id TEXT,
@@ -496,6 +551,7 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
             default_capability_source = DEFAULT_CAPABILITY_SOURCE,
             default_governance_kind = DEFAULT_GOVERNANCE_KIND,
             default_connection_mode = DEFAULT_CONNECTION_MODE,
+            default_registration_origin = DEFAULT_REGISTRATION_ORIGIN,
         ))
         .execute(&mut *tx)
         .await?;
@@ -505,7 +561,8 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
             INSERT INTO {temp_table} (
                 id, name, display_name, identifier, config_path, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
-                connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
+                connection_mode, registration_origin, runtime_observed,
+                template_identifier, selected_profile_ids, custom_profile_id,
                 unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
@@ -516,17 +573,33 @@ async fn migrate_client_table_for_sse_transport(pool: &Pool<Sqlite>) -> Result<(
             SELECT
                 id, name, display_name, identifier, config_path, config_mode, transport,
                 client_version, backup_policy, backup_limit, capability_source, governance_kind,
-                connection_mode, template_identifier, selected_profile_ids, custom_profile_id,
+                CASE
+                    WHEN connection_mode = 'local_config_detected'
+                        AND config_path IS NOT NULL
+                        AND TRIM(config_path) <> ''
+                    THEN 'local_config_detected'
+                    ELSE 'manual'
+                END,
+                CASE
+                    WHEN connection_mode = 'remote_http' THEN 'runtime_initialize'
+                    ELSE registration_origin
+                END,
+                CASE
+                    WHEN connection_mode = 'remote_http' THEN 1
+                    ELSE runtime_observed
+                END,
+                template_identifier, selected_profile_ids, custom_profile_id,
                 unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
-                merge_strategy, keep_original_config, managed_source, format_rules, config_file_parse,
+                merge_strategy, keep_original_config, managed_source, {transports_source_expression}, config_file_parse,
                 attachment_state,
                 created_at, updated_at
             FROM {table}
             "#,
             temp_table = temp_table,
             table = tables::CLIENT,
+            transports_source_expression = transports_source_expression,
         ))
         .execute(&mut *tx)
         .await?;
@@ -583,6 +656,22 @@ async fn ensure_column(
     }
 }
 
+async fn column_exists(
+    pool: &Pool<Sqlite>,
+    table: &str,
+    column: &str,
+) -> Result<bool> {
+    let rows: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT name FROM pragma_table_info('{}')",
+        table.replace('\'', "''")
+    ))
+    .fetch_all(pool)
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to inspect {} columns: {}", table, e))?;
+
+    Ok(rows.into_iter().any(|name| name == column))
+}
+
 /// Ensures the on-disk system settings store exists (JSON). Does not create or touch any SQLite
 /// `system_settings` table; schema changes for existing installs are handled out-of-band.
 pub async fn initialize_system_settings(pool: &Pool<Sqlite>) -> Result<()> {
@@ -600,14 +689,19 @@ mod tests {
         set_default_client_config_mode,
     };
     use crate::clients::models::FirstContactBehavior;
+    use crate::common::constants::database::tables;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn setup_pool() -> sqlx::Pool<sqlx::Sqlite> {
-        let pool = SqlitePoolOptions::new()
+    async fn setup_raw_pool() -> sqlx::Pool<sqlx::Sqlite> {
+        SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
-            .expect("failed to create sqlite pool");
+            .expect("failed to create sqlite pool")
+    }
+
+    async fn setup_pool() -> sqlx::Pool<sqlx::Sqlite> {
+        let pool = setup_raw_pool().await;
 
         initialize_client_table(&pool)
             .await
@@ -668,5 +762,144 @@ mod tests {
         assert_eq!(settings.mcp_port, crate::common::constants::ports::MCP_PORT);
         assert_eq!(settings.inspector_timeout_ms, 8_000);
         assert_eq!(settings.default_config_mode, "unify");
+    }
+
+    #[tokio::test]
+    async fn initialize_client_table_normalizes_legacy_remote_http_rows() {
+        let pool = setup_raw_pool().await;
+
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE {table} (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                identifier TEXT NOT NULL UNIQUE,
+                config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
+                transport TEXT NOT NULL DEFAULT 'auto' CHECK (
+                    transport IN ('auto', 'sse', 'stdio', 'streamable_http')
+                ),
+                client_version TEXT,
+                backup_policy TEXT NOT NULL DEFAULT 'keep_n' CHECK (
+                    backup_policy IN ('keep_last', 'keep_n', 'off')
+                ),
+                backup_limit INTEGER DEFAULT 5,
+                connection_mode TEXT NOT NULL DEFAULT 'local_config_detected' CHECK (
+                    connection_mode IN ('local_config_detected', 'remote_http', 'manual')
+                ),
+                registration_origin TEXT NOT NULL DEFAULT 'manual' CHECK (
+                    registration_origin IN ('manual', 'config_detection', 'runtime_initialize')
+                ),
+                runtime_observed INTEGER NOT NULL DEFAULT 0 CHECK (runtime_observed IN (0, 1)),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+            table = tables::CLIENT,
+        ))
+        .execute(&pool)
+        .await
+        .expect("create legacy client table");
+
+        sqlx::query(&format!(
+            "INSERT INTO {table} (id, name, identifier, connection_mode) VALUES (?, ?, ?, ?)",
+            table = tables::CLIENT,
+        ))
+        .bind("client_legacy")
+        .bind("Legacy Runtime")
+        .bind("legacy.runtime")
+        .bind("remote_http")
+        .execute(&pool)
+        .await
+        .expect("insert legacy remote_http row");
+
+        initialize_client_table(&pool).await.expect("initialize client table");
+
+        let (connection_mode, registration_origin, runtime_observed): (String, String, i64) = sqlx::query_as(&format!(
+            "SELECT connection_mode, registration_origin, runtime_observed FROM {table} WHERE identifier = ?",
+            table = tables::CLIENT,
+        ))
+        .bind("legacy.runtime")
+        .fetch_one(&pool)
+        .await
+        .expect("fetch normalized row");
+
+        assert_eq!(connection_mode, "manual");
+        assert_eq!(registration_origin, "runtime_initialize");
+        assert_eq!(runtime_observed, 1);
+
+        let create_sql: String = sqlx::query_scalar(&format!(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'",
+            tables::CLIENT,
+        ))
+        .fetch_one(&pool)
+        .await
+        .expect("fetch normalized schema");
+
+        assert!(!create_sql.contains("'remote_http'"));
+    }
+
+    #[tokio::test]
+    async fn initialize_client_table_preserves_legacy_format_rules_during_constraint_rebuild() {
+        let pool = setup_raw_pool().await;
+
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE {table} (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                identifier TEXT NOT NULL UNIQUE,
+                config_mode TEXT CHECK (config_mode IN ('unify','hosted','transparent')),
+                transport TEXT NOT NULL DEFAULT 'auto' CHECK (
+                    transport IN ('auto', 'sse', 'stdio', 'streamable_http')
+                ),
+                client_version TEXT,
+                backup_policy TEXT NOT NULL DEFAULT 'keep_n' CHECK (
+                    backup_policy IN ('keep_last', 'keep_n', 'off')
+                ),
+                backup_limit INTEGER DEFAULT 5,
+                connection_mode TEXT NOT NULL DEFAULT 'local_config_detected' CHECK (
+                    connection_mode IN ('local_config_detected', 'remote_http', 'manual')
+                ),
+                registration_origin TEXT NOT NULL DEFAULT 'manual' CHECK (
+                    registration_origin IN ('manual', 'config_detection', 'runtime_initialize')
+                ),
+                runtime_observed INTEGER NOT NULL DEFAULT 0 CHECK (runtime_observed IN (0, 1)),
+                format_rules TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+            table = tables::CLIENT,
+        ))
+        .execute(&pool)
+        .await
+        .expect("create legacy client table");
+
+        let legacy_format_rules = r#"{"stdio":{"command_field":"command","args_field":"args","env_field":"env"}}"#;
+        sqlx::query(&format!(
+            "INSERT INTO {table} (id, name, identifier, connection_mode, format_rules) VALUES (?, ?, ?, ?, ?)",
+            table = tables::CLIENT,
+        ))
+        .bind("client_legacy_rules")
+        .bind("Legacy Format Rules")
+        .bind("legacy.rules")
+        .bind("manual")
+        .bind(legacy_format_rules)
+        .execute(&pool)
+        .await
+        .expect("insert legacy format rules row");
+
+        initialize_client_table(&pool).await.expect("initialize client table");
+
+        let transports: String = sqlx::query_scalar(&format!(
+            "SELECT transports FROM {table} WHERE identifier = ?",
+            table = tables::CLIENT,
+        ))
+        .bind("legacy.rules")
+        .fetch_one(&pool)
+        .await
+        .expect("fetch migrated transports");
+
+        assert_eq!(transports, legacy_format_rules);
     }
 }

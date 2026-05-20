@@ -20,9 +20,7 @@ use crate::api::models::client::{
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 use crate::clients::document::{get_config_last_modified, infer_format_from_path, parse_config_to_json_value};
-use crate::clients::models::{
-    AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientConnectionMode, ClientGovernanceKind,
-};
+use crate::clients::models::{AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientGovernanceKind};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
 use crate::clients::{
@@ -116,7 +114,7 @@ fn should_include_default_client(descriptor: &ClientDescriptor) -> bool {
     let state = &descriptor.state;
     match state.governance_kind() {
         ClientGovernanceKind::Active => true,
-        ClientGovernanceKind::Passive => state.connection_mode() == ClientConnectionMode::RemoteHttp,
+        ClientGovernanceKind::Passive => state.runtime_observed(),
     }
 }
 
@@ -367,8 +365,9 @@ pub async fn config_details(
         .as_ref()
         .map(|state| state.custom_profile_missing)
         .unwrap_or(false);
-    let governance_kind = Some(state.governance_kind().as_str().to_string());
-    let connection_mode = Some(state.connection_mode().as_str().to_string());
+    let config_file_state = state.config_file_state();
+    let registration_origin = state.registration_origin();
+    let runtime_observed = state.runtime_observed();
     let governed_by_default_policy = state.governed_by_default_policy();
     let approval_status = Some(state.approval_status().to_string());
     let attachment_state = derive_attachment_state(&state, &configured_servers_analysis);
@@ -406,8 +405,9 @@ pub async fn config_details(
         custom_profile_missing,
         approval_status,
         attachment_state: Some(attachment_state),
-        governance_kind,
-        connection_mode,
+        config_file_state,
+        registration_origin,
+        runtime_observed,
         governed_by_default_policy,
         writable_config,
         config_file_parse_effective,
@@ -781,7 +781,7 @@ pub async fn update_settings(
         transport = ?request.transport,
         client_version = ?request.client_version,
         display_name = ?request.display_name,
-        connection_mode = ?request.connection_mode,
+        config_file_state = ?request.config_file_state,
         config_path = ?request.config_path,
         clear_config_file_parse = %request.clear_config_file_parse,
         "update_settings: received request"
@@ -802,7 +802,7 @@ pub async fn update_settings(
                 config_mode: request.config_mode.clone(),
                 transport: request.transport.clone(),
                 client_version: request.client_version.clone(),
-                connection_mode: request.connection_mode.clone(),
+                config_file_state: request.config_file_state,
                 config_path: request.config_path.clone(),
                 description: request.description.clone(),
                 homepage_url: request.homepage_url.clone(),
@@ -871,7 +871,9 @@ pub async fn update_settings(
         config_mode: mode,
         transport,
         client_version: version,
-        connection_mode: Some(state.connection_mode().as_str().to_string()),
+        config_file_state: state.config_file_state(),
+        registration_origin: state.registration_origin(),
+        runtime_observed: state.runtime_observed(),
         config_path: state.config_path().map(str::to_string),
         transports,
         description: runtime_metadata.description.clone(),
@@ -885,7 +887,7 @@ pub async fn update_settings(
         setting_sources: crate::api::models::client::ClientSettingsSourceData {
             display_name: settings_result.display_name_source.to_string(),
             approval_status: settings_result.approval_status_source.to_string(),
-            connection_mode: settings_result.connection_mode_source.to_string(),
+            config_file_state: settings_result.config_file_state_source.to_string(),
         },
     };
 
@@ -901,7 +903,7 @@ pub async fn update_settings(
             "transport": data.transport,
             "client_version": data.client_version,
             "display_name": data.display_name,
-            "connection_mode": data.connection_mode,
+            "config_file_state": data.config_file_state,
             "config_path": data.config_path,
             "transports": data.transports,
             "config_file_parse_effective": data.config_file_parse_effective,
@@ -1233,8 +1235,9 @@ async fn descriptor_to_client_info(
     let last_modified = descriptor.config_path.as_deref().and_then(get_config_last_modified);
 
     let approval_status = Some(state.approval_status().to_string());
-    let governance_kind = Some(state.governance_kind().as_str().to_string());
-    let connection_mode = Some(state.connection_mode().as_str().to_string());
+    let config_file_state = state.config_file_state();
+    let registration_origin = state.registration_origin();
+    let runtime_observed = state.runtime_observed();
     let governed_by_default_policy = state.governed_by_default_policy();
 
     let (config_mode, transport, client_version) = service
@@ -1282,8 +1285,9 @@ async fn descriptor_to_client_info(
         template: build_template_metadata_from_state(&state, &runtime_metadata),
         approval_status,
         attachment_state: Some(attachment_state),
-        governance_kind,
-        connection_mode,
+        config_file_state,
+        registration_origin,
+        runtime_observed,
         governed_by_default_policy,
         writable_config,
         pending_approval,
@@ -1413,6 +1417,7 @@ mod tests {
     use super::*;
     use crate::api::models::client::{ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq};
     use crate::api::routes::AppState;
+    use crate::clients::models::{ClientConfigFileState, ClientRegistrationOrigin};
     use crate::clients::{
         CapabilitySource,
         source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot},
@@ -1590,7 +1595,7 @@ mod tests {
             transport: None,
             client_version: None,
             display_name: None,
-            connection_mode: None,
+            config_file_state: None,
             config_path: None,
             description: None,
             homepage_url: None,
@@ -2819,7 +2824,7 @@ mod tests {
                 "custom.runtime",
                 ActiveClientSettingsUpdate {
                     config_mode: Some("hosted".to_string()),
-                    connection_mode: Some("manual".to_string()),
+                    config_file_state: Some(ClientConfigFileState::WithoutConfigFile),
                     description: Some("Runtime-only client".to_string()),
                     ..ActiveClientSettingsUpdate::default()
                 },
@@ -2838,7 +2843,6 @@ mod tests {
 
         assert!(response.success);
         let data = response.data.expect("response data");
-        assert_eq!(data.governance_kind.as_deref(), Some("active"));
         assert!(!data.governed_by_default_policy);
         assert!(!data.writable_config);
         assert!(data.warnings.is_empty());
@@ -2858,7 +2862,6 @@ mod tests {
                 Some("Test Passive Runtime"),
                 Some("1.0.0"),
                 Some("streamable_http"),
-                Some("remote_http"),
                 None,
                 None,
                 None,
@@ -2878,14 +2881,21 @@ mod tests {
         .expect("list managed clients");
 
         assert!(default_response.success);
-        assert!(
-            default_response
-                .data
-                .expect("default data")
-                .client
-                .into_iter()
-                .any(|client| client.identifier == "test.passive-runtime"
-                    && client.governance_kind.as_deref() == Some("passive"))
+        let runtime_client = default_response
+            .data
+            .expect("default data")
+            .client
+            .into_iter()
+            .find(|client| client.identifier == "test.passive-runtime")
+            .expect("runtime-observed passive client should be visible by default");
+        assert_eq!(
+            runtime_client.registration_origin,
+            ClientRegistrationOrigin::RuntimeInitialize
+        );
+        assert!(runtime_client.runtime_observed);
+        assert_eq!(
+            runtime_client.config_file_state,
+            ClientConfigFileState::WithoutConfigFile
         );
     }
 
@@ -2936,15 +2946,19 @@ mod tests {
         .expect("list detected candidates");
 
         assert!(include_response.success);
-        assert!(
-            include_response
-                .data
-                .expect("include data")
-                .client
-                .iter()
-                .any(|client| client.identifier == "test.passive-detected"
-                    && client.governance_kind.as_deref() == Some("passive"))
+        let detected_client = include_response
+            .data
+            .expect("include data")
+            .client
+            .into_iter()
+            .find(|client| client.identifier == "test.passive-detected")
+            .expect("detected passive client should be visible when requested");
+        assert_eq!(
+            detected_client.registration_origin,
+            ClientRegistrationOrigin::ConfigDetection
         );
+        assert!(!detected_client.runtime_observed);
+        assert_eq!(detected_client.config_file_state, ClientConfigFileState::WithConfigFile);
     }
 
     #[tokio::test]
@@ -2982,7 +2996,7 @@ mod tests {
             .set_active_client_settings(
                 "codex",
                 ActiveClientSettingsUpdate {
-                    connection_mode: Some("local_config_detected".to_string()),
+                    config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
                     clear_config_file_parse: true,
                     ..ActiveClientSettingsUpdate::default()
@@ -3039,7 +3053,7 @@ mod tests {
                 transport: Some("streamable_http".to_string()),
                 client_version: Some("1.2.3".to_string()),
                 display_name: Some("Custom Runtime".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
                 description: Some("Custom runtime client".to_string()),
                 homepage_url: Some("https://example.com".to_string()),
@@ -3055,7 +3069,7 @@ mod tests {
         assert!(response.success);
         let data = response.data.expect("response data");
         assert_eq!(data.display_name, "Custom Runtime");
-        assert_eq!(data.connection_mode.as_deref(), Some("local_config_detected"));
+        assert_eq!(data.config_file_state, ClientConfigFileState::WithConfigFile);
         assert!(data.transports.is_none());
         assert_eq!(data.description.as_deref(), Some("Custom runtime client"));
 
@@ -3096,7 +3110,7 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("stdio".to_string()),
                 display_name: Some("Client A".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
                 config_file_parse: Some(json_object_parse("mcpServers")),
                 transports: Some(HashMap::from([("streamable_http".to_string(), streamable_http_rule())])),
@@ -3178,7 +3192,7 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("stdio".to_string()),
                 display_name: Some("Zed Strict Inspect".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
                 config_file_parse: Some(json_object_parse("context_servers")),
                 transports: Some(HashMap::from([(
@@ -3248,7 +3262,7 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("stdio".to_string()),
                 display_name: Some("Already Imported Client".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
                 config_file_parse: Some(json_object_parse("mcpServers")),
                 transports: Some(HashMap::from([(
@@ -3305,7 +3319,7 @@ mod tests {
                     display_name: Some("Inspect Existing Client".to_string()),
                     config_mode: Some("hosted".to_string()),
                     transport: Some("stdio".to_string()),
-                    connection_mode: Some("local_config_detected".to_string()),
+                    config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
                     ..ActiveClientSettingsUpdate::default()
                 },
@@ -3376,7 +3390,7 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Invalid Runtime".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(missing_path.to_string_lossy().to_string()),
                 ..settings_update_req("custom.runtime.invalid")
             }),
@@ -3401,8 +3415,10 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Clear Runtime".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(json_object_parse("mcpServers")),
+                transports: Some(HashMap::from([("streamable_http".to_string(), streamable_http_rule())])),
                 ..settings_update_req("custom.runtime.clear")
             }),
         )
@@ -3416,13 +3432,19 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Clear Runtime".to_string()),
-                connection_mode: Some("manual".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithoutConfigFile),
                 ..settings_update_req("custom.runtime.clear")
             }),
         )
         .await
         .expect("manual update succeeds");
         assert!(clear_response.success);
+        let clear_data = clear_response.data.expect("response data");
+        assert_eq!(clear_data.config_file_state, ClientConfigFileState::WithoutConfigFile);
+        assert!(clear_data.config_path.is_none());
+        assert!(clear_data.config_file_parse_effective.is_none());
+        assert!(clear_data.config_file_parse_override.is_none());
+        assert!(clear_data.transports.is_none());
 
         let state = context
             .client_service
@@ -3432,6 +3454,8 @@ mod tests {
             .expect("state exists");
         assert_eq!(state.connection_mode().as_str(), "manual");
         assert_eq!(state.config_path(), None);
+        assert!(state.effective_config_file_parse().expect("config parse").is_none());
+        assert!(state.parsed_transports().expect("transports").is_empty());
     }
 
     #[tokio::test]
@@ -3446,7 +3470,7 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Empty Clear Runtime".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
                 ..settings_update_req("custom.runtime.empty-clear")
             }),
@@ -3544,7 +3568,7 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Cherry Studio".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(kv_dir.to_string_lossy().to_string()),
                 ..settings_update_req("cherry_studio")
             }),
@@ -3575,7 +3599,7 @@ mod tests {
                 config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Cherry Studio".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(kv_dir.to_string_lossy().to_string()),
                 ..settings_update_req("cherry_studio")
             }),
@@ -3606,7 +3630,7 @@ mod tests {
                     display_name: Some("Suspended Client".to_string()),
                     config_mode: Some("hosted".to_string()),
                     transport: Some("streamable_http".to_string()),
-                    connection_mode: Some("local_config_detected".to_string()),
+                    config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
                     ..ActiveClientSettingsUpdate::default()
                 },
@@ -3627,7 +3651,7 @@ mod tests {
                 transport: Some("streamable_http".to_string()),
                 client_version: Some("2.0.0".to_string()),
                 display_name: Some("Suspended Client".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
                 description: Some("Still editable while denied".to_string()),
                 ..settings_update_req("client-a")
@@ -3662,7 +3686,7 @@ mod tests {
                 transport: Some("streamable_http".to_string()),
                 client_version: Some("9.9.9".to_string()),
                 display_name: Some("Runtime Apply Client".to_string()),
-                connection_mode: Some("local_config_detected".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
                 config_path: Some(config_path.to_string_lossy().to_string()),
                 description: Some("Runtime apply test client".to_string()),
                 config_file_parse: Some(json_object_parse("mcpServers")),

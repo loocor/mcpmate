@@ -1,7 +1,8 @@
 use super::core::{ClientConfigService, ClientStateRow, PersistedTemplateConfig};
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    AttachmentState, BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, FirstContactBehavior,
+    AttachmentState, BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, ClientRegistrationOrigin,
+    FirstContactBehavior,
 };
 use std::collections::HashMap;
 
@@ -16,7 +17,7 @@ fn approval_status_for_first_contact_behavior(behavior: FirstContactBehavior) ->
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -45,8 +46,16 @@ impl ClientConfigService {
         let first_contact_behavior = self.get_first_contact_behavior().await?;
         let approval_status = approval_status_for_first_contact_behavior(first_contact_behavior);
 
-        self.create_state_row(identifier, name, ClientGovernanceKind::Passive, approval_status, None)
-            .await
+        self.create_state_row(
+            identifier,
+            name,
+            ClientGovernanceKind::Passive,
+            approval_status,
+            None,
+            ClientRegistrationOrigin::Manual,
+            false,
+        )
+        .await
     }
 
     pub async fn fetch_state(
@@ -54,7 +63,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
@@ -320,7 +329,7 @@ impl ClientConfigService {
         Ok(())
     }
 
-    /// Used by detection/list and by the MCP proxy when registering an unknown client under `review` policy.
+    /// Used by detection/list when registering a client candidate discovered from local configuration metadata.
     pub async fn ensure_passive_observed_row(
         &self,
         identifier: &str,
@@ -339,6 +348,40 @@ impl ClientConfigService {
             ClientGovernanceKind::Passive,
             approval_status,
             config_path,
+            if config_path.is_some() {
+                ClientRegistrationOrigin::ConfigDetection
+            } else {
+                ClientRegistrationOrigin::Manual
+            },
+            false,
+        )
+        .await
+    }
+
+    /// Used by the MCP proxy when an unknown client reaches MCPMate through the runtime boundary.
+    pub async fn ensure_passive_runtime_observed_row(
+        &self,
+        identifier: &str,
+        name: &str,
+    ) -> ConfigResult<ClientStateRow> {
+        if let Some(existing) = self.fetch_state(identifier).await? {
+            self.refresh_existing_state_name(identifier, name, existing).await?;
+            self.mark_runtime_observed(identifier).await?;
+            return self.fetch_state(identifier).await?.ok_or_else(|| {
+                ConfigError::DataAccessError(format!("Failed to reload runtime-observed client {}", identifier))
+            });
+        }
+        let first_contact_behavior = self.get_first_contact_behavior().await?;
+        let approval_status = approval_status_for_first_contact_behavior(first_contact_behavior);
+
+        self.create_state_row(
+            identifier,
+            name,
+            ClientGovernanceKind::Passive,
+            approval_status,
+            None,
+            ClientRegistrationOrigin::RuntimeInitialize,
+            true,
         )
         .await
     }
@@ -349,7 +392,7 @@ impl ClientConfigService {
         name: &str,
     ) -> ConfigResult<ClientStateRow> {
         let Some(existing) = self.fetch_state(identifier).await? else {
-            return self.ensure_passive_observed_row(identifier, name, None).await;
+            return self.ensure_passive_runtime_observed_row(identifier, name).await;
         };
 
         if existing.governance_kind() != ClientGovernanceKind::Passive {
@@ -359,6 +402,7 @@ impl ClientConfigService {
         let first_contact_behavior = self.get_first_contact_behavior().await?;
         let approval_status = approval_status_for_first_contact_behavior(first_contact_behavior);
         self.refresh_existing_state_name(identifier, name, existing).await?;
+        self.mark_runtime_observed(identifier).await?;
 
         sqlx::query(
             r#"
@@ -397,9 +441,38 @@ impl ClientConfigService {
                 ClientGovernanceKind::Active,
                 approval_status.unwrap_or("approved"),
                 None,
+                ClientRegistrationOrigin::Manual,
+                false,
             )
             .await
         }
+    }
+
+    pub(crate) async fn mark_runtime_observed(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET runtime_observed = 1,
+                registration_origin = CASE
+                    WHEN registration_origin IS NULL
+                        OR registration_origin = ''
+                        OR (registration_origin = 'manual' AND governance_kind = 'passive')
+                    THEN 'runtime_initialize'
+                    ELSE registration_origin
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
     }
 
     async fn refresh_existing_state_name(
@@ -468,6 +541,8 @@ impl ClientConfigService {
         governance_kind: ClientGovernanceKind,
         approval_status: &str,
         observed_config_path: Option<&str>,
+        registration_origin: ClientRegistrationOrigin,
+        runtime_observed: bool,
     ) -> ConfigResult<ClientStateRow> {
         let platform = crate::system::paths::PathService::get_current_platform();
         let template = self.template_source.get_template(identifier, platform).await?;
@@ -501,12 +576,12 @@ impl ClientConfigService {
             r#"
             INSERT INTO client (
                 id, name, display_name, identifier, config_path, backup_policy, backup_limit,
-                approval_status, governance_kind, connection_mode, template_identifier,
+                approval_status, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier,
                 config_format, protocol_revision, container_type, container_keys,
                 storage_kind, storage_adapter, storage_path_strategy,
                 merge_strategy, keep_original_config, managed_source, transports, config_file_parse, attachment_state
             )
-            VALUES (?, ?, ?, ?, ?, 'keep_n', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 'keep_n', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&generated_id)
@@ -517,6 +592,8 @@ impl ClientConfigService {
         .bind(approval_status)
         .bind(governance_kind.as_str())
         .bind(connection_mode)
+        .bind(registration_origin.as_str())
+        .bind(if runtime_observed { 1_i64 } else { 0_i64 })
         .bind(template_identifier)
         .bind(persisted_config.config_format)
         .bind(persisted_config.protocol_revision)
@@ -729,6 +806,11 @@ mod tests {
             .expect("reapply allow policy");
         assert_eq!(approved.approval_status(), "approved");
         assert_eq!(approved.governance_kind(), ClientGovernanceKind::Passive);
+        assert!(approved.runtime_observed());
+        assert_eq!(
+            approved.registration_origin(),
+            ClientRegistrationOrigin::RuntimeInitialize
+        );
 
         set_onboarding_policy(&service, OnboardingPolicy::Manual)
             .await
@@ -739,6 +821,7 @@ mod tests {
             .expect("reapply deny policy");
         assert_eq!(suspended.approval_status(), "suspended");
         assert_eq!(suspended.governance_kind(), ClientGovernanceKind::Passive);
+        assert!(suspended.runtime_observed());
     }
 
     #[tokio::test]
@@ -826,7 +909,6 @@ mod tests {
                 Some("Observed App"),
                 Some("1.2.3"),
                 Some("streamable_http"),
-                Some("remote_http"),
                 Some("Observed description"),
                 Some("https://example.com"),
                 Some("https://example.com/logo.png"),
@@ -840,7 +922,6 @@ mod tests {
                 Some("Changed App"),
                 Some("9.9.9"),
                 Some("sse"),
-                Some("remote_http"),
                 Some("Changed description"),
                 Some("https://changed.example.com"),
                 Some("https://changed.example.com/logo.png"),
@@ -858,7 +939,9 @@ mod tests {
         assert_eq!(state.display_name.as_deref(), Some("Observed App"));
         assert_eq!(state.client_version.as_deref(), Some("1.2.3"));
         assert_eq!(state.transport.as_deref(), Some("streamable_http"));
-        assert_eq!(state.connection_mode.as_deref(), Some("remote_http"));
+        assert_eq!(state.connection_mode.as_deref(), Some("manual"));
+        assert!(state.runtime_observed());
+        assert_eq!(state.registration_origin(), ClientRegistrationOrigin::RuntimeInitialize);
 
         let metadata = state.runtime_client_metadata();
         assert_eq!(metadata.description.as_deref(), Some("Observed description"));
@@ -899,7 +982,6 @@ mod tests {
                 Some("Changed Template"),
                 Some("9.9.9"),
                 Some("streamable_http"),
-                Some("remote_http"),
                 Some("Changed description"),
                 Some("https://changed.example.com"),
                 Some("https://changed.example.com/logo.png"),
@@ -925,6 +1007,11 @@ mod tests {
             .ensure_passive_observed_row("test.observed", "Observed", None)
             .await
             .expect("create passive observed row");
+        let before = service
+            .fetch_state("test.observed")
+            .await
+            .expect("fetch initial state")
+            .expect("state exists");
 
         let error = service
             .persist_handshake_observation(
@@ -932,7 +1019,6 @@ mod tests {
                 Some("Observed App"),
                 Some("1.2.3"),
                 Some("http"),
-                Some("remote_http"),
                 Some("Observed description"),
                 Some("https://example.com"),
                 Some("https://example.com/logo.png"),
@@ -945,6 +1031,41 @@ mod tests {
             message.contains("Invalid") || message.contains("transport"),
             "unexpected error: {message}"
         );
+
+        let state = service
+            .fetch_state("test.observed")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.display_name, before.display_name);
+        assert_eq!(state.client_version, before.client_version);
+        assert_eq!(state.transport, before.transport);
+        assert_eq!(state.runtime_client_metadata(), before.runtime_client_metadata());
+        assert_eq!(state.runtime_observed(), before.runtime_observed());
+    }
+
+    #[tokio::test]
+    async fn handshake_observation_without_metadata_still_marks_runtime_observed() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        service
+            .ensure_passive_observed_row("test.empty-observed", "Empty Observed", None)
+            .await
+            .expect("create passive observed row");
+
+        service
+            .persist_handshake_observation("test.empty-observed", None, None, None, None, None, None)
+            .await
+            .expect("persist empty handshake observation");
+
+        let state = service
+            .fetch_state("test.empty-observed")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert!(state.runtime_observed());
+        assert_eq!(state.registration_origin(), ClientRegistrationOrigin::RuntimeInitialize);
+        assert_eq!(state.display_name(), "Empty Observed");
     }
 
     #[tokio::test]

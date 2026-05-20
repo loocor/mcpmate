@@ -266,7 +266,7 @@ impl ProxyServer {
                 None,
             )),
             FirstContactBehavior::Review => {
-                svc.ensure_passive_observed_row(&client.client_id, display_name, None)
+                svc.ensure_passive_runtime_observed_row(&client.client_id, display_name)
                     .await
                     .map_err(|e| {
                         rmcp::ErrorData::internal_error(format!("Failed to register client for review: {e}"), None)
@@ -328,9 +328,9 @@ impl ProxyServer {
             .observed_client_info
             .as_ref()
             .and_then(|info| info.logo_url.as_deref());
-        let (transport, connection_mode) = match client.transport {
-            super::common::ClientTransport::StreamableHttp => (Some("streamable_http"), Some("remote_http")),
-            super::common::ClientTransport::Other => (None, None),
+        let transport = match client.transport {
+            super::common::ClientTransport::StreamableHttp => Some("streamable_http"),
+            super::common::ClientTransport::Other => None,
         };
 
         if let Err(err) = service
@@ -339,7 +339,6 @@ impl ProxyServer {
                 observed_display_name,
                 client_version,
                 transport,
-                connection_mode,
                 observed_description,
                 observed_homepage_url,
                 observed_logo_url,

@@ -209,6 +209,7 @@ mod tests {
 
         assert_eq!(fetched_state.identifier, "test.unknown");
         assert_eq!(fetched_state.approval_status.as_deref(), Some("pending"));
+        assert!(!fetched_state.runtime_observed());
     }
 
     #[tokio::test]
