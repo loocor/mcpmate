@@ -1,12 +1,12 @@
 use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse, ContainerType,
-    FormatRule, UnifyDirectCapabilityIds, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics,
-    UnifyDirectExposureIntent, UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic,
-    UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface,
-    UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic,
-    canonical_config_transport_key,
+    CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse,
+    ClientConfigFileState, ContainerType, FormatRule, UnifyDirectCapabilityIds, UnifyDirectExposureConfig,
+    UnifyDirectExposureDiagnostics, UnifyDirectExposureIntent, UnifyDirectPromptSurface,
+    UnifyDirectPromptSurfaceDiagnostic, UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic,
+    UnifyDirectTemplateSurface, UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface,
+    UnifyDirectToolSurfaceDiagnostic, canonical_config_transport_key,
 };
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::common::profile::{ProfileRole, ProfileType};
@@ -21,13 +21,27 @@ use std::sync::Arc;
 use tokio::fs::OpenOptions;
 
 const VALID_TRANSPORTS: &[&str] = &["auto", "sse", "stdio", "streamable_http"];
-const VALID_CONNECTION_MODES: &[&str] = &["local_config_detected", "remote_http", "manual"];
 
 fn sanitize_optional(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|trimmed| !trimmed.is_empty())
         .map(str::to_string)
+}
+
+fn validate_observed_transport(value: Option<&str>) -> ConfigResult<()> {
+    let Some(transport) = value else {
+        return Ok(());
+    };
+
+    if canonical_config_transport_key(transport).is_some() {
+        return Ok(());
+    }
+
+    Err(ConfigError::DataAccessError(format!(
+        "Invalid observed transport '{}'; expected canonical transport key",
+        transport.trim()
+    )))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -55,7 +69,7 @@ pub struct ActiveClientSettingsUpdate {
     pub config_mode: Option<String>,
     pub transport: Option<String>,
     pub client_version: Option<String>,
-    pub connection_mode: Option<String>,
+    pub config_file_state: Option<ClientConfigFileState>,
     pub config_path: Option<String>,
     pub description: Option<String>,
     pub homepage_url: Option<String>,
@@ -68,13 +82,20 @@ pub struct ActiveClientSettingsUpdate {
     pub clear_transports: bool,
 }
 
+fn config_file_state_to_connection_mode(state: ClientConfigFileState) -> &'static str {
+    match state {
+        ClientConfigFileState::WithConfigFile => "local_config_detected",
+        ClientConfigFileState::WithoutConfigFile => "manual",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveClientSettingsResult {
     pub old_effective_mode: String,
     pub new_effective_mode: String,
     pub display_name_source: &'static str,
     pub approval_status_source: &'static str,
-    pub connection_mode_source: &'static str,
+    pub config_file_state_source: &'static str,
 }
 
 impl ActiveClientSettingsResult {
@@ -158,7 +179,6 @@ impl ClientConfigService {
         observed_name: Option<&str>,
         client_version: Option<&str>,
         transport: Option<&str>,
-        connection_mode: Option<&str>,
         description: Option<&str>,
         homepage_url: Option<&str>,
         logo_url: Option<&str>,
@@ -166,28 +186,15 @@ impl ClientConfigService {
         let display_name = sanitize_optional(observed_name);
         let client_version = sanitize_optional(client_version);
         let transport = sanitize_optional(transport);
-        let connection_mode = sanitize_optional(connection_mode);
         let description = sanitize_optional(description);
         let homepage_url = sanitize_optional(homepage_url);
         let logo_url = sanitize_optional(logo_url);
 
-        if [
-            display_name.as_deref(),
-            client_version.as_deref(),
-            transport.as_deref(),
-            connection_mode.as_deref(),
-            description.as_deref(),
-            homepage_url.as_deref(),
-            logo_url.as_deref(),
-        ]
-        .iter()
-        .all(|value| value.is_none())
-        {
-            return Ok(());
-        }
+        validate_observed_transport(transport.as_deref())?;
 
         let observed_name = display_name.as_deref().unwrap_or(identifier);
         let existing_state = if let Some(state) = self.fetch_state(identifier).await? {
+            self.mark_runtime_observed(identifier).await?;
             if !can_apply_first_initialize_observation(&state)? {
                 return Ok(());
             }
@@ -197,7 +204,7 @@ impl ClientConfigService {
             if self.template_source.get_template(identifier, platform).await?.is_some() {
                 return Ok(());
             }
-            self.ensure_passive_observed_row(identifier, observed_name, None)
+            self.ensure_passive_runtime_observed_row(identifier, observed_name)
                 .await?
         };
 
@@ -211,11 +218,6 @@ impl ClientConfigService {
 
         if let Some(transport) = transport.as_deref() {
             self.update_transport(identifier, transport).await?;
-        }
-
-        if let Some(connection_mode) = connection_mode.as_deref() {
-            self.update_runtime_target(identifier, None, Some(connection_mode), false)
-                .await?;
         }
 
         if description.is_some() || homepage_url.is_some() || logo_url.is_some() {
@@ -320,7 +322,7 @@ impl ClientConfigService {
                 })?;
                 self.validate_existing_config_target(raw_path).await?;
             }
-            Some("manual") | Some("remote_http") => {
+            Some("manual") => {
                 if normalized_path.is_some() {
                     return Err(ConfigError::DataAccessError(
                         "Only clients with a local config target may store a config file path.".to_string(),
@@ -405,7 +407,7 @@ impl ClientConfigService {
             config_mode = ?update.config_mode,
             transport = ?update.transport,
             client_version = ?update.client_version,
-            connection_mode = ?update.connection_mode,
+            config_file_state = ?update.config_file_state,
             config_path = ?update.config_path,
             clear_config_file_parse = %update.clear_config_file_parse,
             "set_active_client_settings: entry"
@@ -419,18 +421,6 @@ impl ClientConfigService {
                     VALID_TRANSPORTS.join(", ")
                 );
                 tracing::error!(client = %identifier, transport = %tr, "{}", err);
-                return Err(ConfigError::DataAccessError(err));
-            }
-        }
-
-        if let Some(ref mode) = update.connection_mode {
-            if !VALID_CONNECTION_MODES.contains(&mode.as_str()) {
-                let err = format!(
-                    "Invalid connection_mode value '{}', must be one of: {}",
-                    mode,
-                    VALID_CONNECTION_MODES.join(", ")
-                );
-                tracing::error!(client = %identifier, connection_mode = %mode, "{}", err);
                 return Err(ConfigError::DataAccessError(err));
             }
         }
@@ -454,10 +444,16 @@ impl ClientConfigService {
 
         let raw_config_path = update.config_path.as_deref().map(str::trim);
         let normalized_config_path = raw_config_path.filter(|value| !value.is_empty()).map(str::to_string);
+        let clear_config_artifacts = matches!(update.config_file_state, Some(ClientConfigFileState::WithoutConfigFile));
+        let clear_config_file_parse = update.clear_config_file_parse || clear_config_artifacts;
+        let clear_transports = update.clear_transports || clear_config_artifacts;
 
-        let (resolved_connection_mode, connection_mode_source): (Option<String>, &'static str) =
-            if let Some(mode) = update.connection_mode.clone() {
-                (Some(mode), "provided")
+        let (resolved_connection_mode, config_file_state_source): (Option<String>, &'static str) =
+            if let Some(state) = update.config_file_state {
+                (
+                    Some(config_file_state_to_connection_mode(state).to_string()),
+                    "provided",
+                )
             } else {
                 match raw_config_path {
                     Some("") => (Some("manual".to_string()), "derived"),
@@ -471,7 +467,7 @@ impl ClientConfigService {
 
         let effective_parse_for_validation = match existing_state.as_ref() {
             Some(state) => state
-                .effective_config_file_parse_with(update.config_file_parse.as_ref(), update.clear_config_file_parse)?
+                .effective_config_file_parse_with(update.config_file_parse.as_ref(), clear_config_file_parse)?
                 .or_else(|| update.config_file_parse.clone()),
             None => update.config_file_parse.clone(),
         };
@@ -479,9 +475,7 @@ impl ClientConfigService {
             .as_deref()
             .or_else(|| existing_state.as_ref().and_then(|state| state.config_path()));
 
-        if !update.clear_config_file_parse
-            && matches!(resolved_connection_mode.as_deref(), Some("local_config_detected"))
-        {
+        if !clear_config_file_parse && matches!(resolved_connection_mode.as_deref(), Some("local_config_detected")) {
             if let (Some(path), Some(parse)) = (validation_path, effective_parse_for_validation.as_ref()) {
                 self.validate_config_file_parse_rule(path, parse).await?;
             }
@@ -556,17 +550,15 @@ impl ClientConfigService {
                 .await?;
         }
 
-        if update.clear_config_file_parse || update.config_file_parse.is_some() {
-            self.update_config_file_parse(
-                identifier,
-                update.config_file_parse.as_ref(),
-                update.clear_config_file_parse,
-            )
-            .await?;
+        if clear_config_artifacts {
+            self.clear_config_file_artifacts(identifier).await?;
+        } else if clear_config_file_parse || update.config_file_parse.is_some() {
+            self.update_config_file_parse(identifier, update.config_file_parse.as_ref(), clear_config_file_parse)
+                .await?;
         }
 
-        if update.clear_transports || update.transports.is_some() {
-            self.update_transports(identifier, update.transports.as_ref(), update.clear_transports)
+        if !clear_config_artifacts && (clear_transports || update.transports.is_some()) {
+            self.update_transports(identifier, update.transports.as_ref(), clear_transports)
                 .await?;
         }
 
@@ -582,7 +574,7 @@ impl ClientConfigService {
             new_effective_mode,
             display_name_source,
             approval_status_source,
-            connection_mode_source,
+            config_file_state_source,
         })
     }
 
@@ -715,7 +707,7 @@ impl ClientConfigService {
             UPDATE client
             SET config_path = CASE
                     WHEN ? IS NOT NULL THEN NULLIF(?, '')
-                    WHEN ? IN ('manual', 'remote_http') THEN NULL
+                    WHEN ? = 'manual' THEN NULL
                     ELSE NULLIF(?, '')
                 END,
                 connection_mode = CASE
@@ -832,6 +824,30 @@ impl ClientConfigService {
         .bind(config_format)
         .bind(container_type)
         .bind(container_keys)
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn clear_config_file_artifacts(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET config_file_parse = NULL,
+                config_format = NULL,
+                container_type = NULL,
+                container_keys = NULL,
+                transports = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE identifier = ?
+            "#,
+        )
         .bind(identifier)
         .execute(&*self.db_pool)
         .await

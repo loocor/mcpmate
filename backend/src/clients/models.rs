@@ -192,7 +192,6 @@ impl std::error::Error for ParseOnboardingPolicyError {}
 pub enum ClientConnectionMode {
     #[default]
     LocalConfigDetected,
-    RemoteHttp,
     Manual,
 }
 
@@ -200,7 +199,6 @@ impl ClientConnectionMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             ClientConnectionMode::LocalConfigDetected => "local_config_detected",
-            ClientConnectionMode::RemoteHttp => "remote_http",
             ClientConnectionMode::Manual => "manual",
         }
     }
@@ -221,7 +219,6 @@ impl FromStr for ClientConnectionMode {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "local_config_detected" => Ok(ClientConnectionMode::LocalConfigDetected),
-            "remote_http" => Ok(ClientConnectionMode::RemoteHttp),
             "manual" => Ok(ClientConnectionMode::Manual),
             _ => Err(ParseClientConnectionModeError),
         }
@@ -405,6 +402,87 @@ impl fmt::Display for ParseClientGovernanceKindError {
 
 impl std::error::Error for ParseClientGovernanceKindError {}
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientConfigFileState {
+    WithConfigFile,
+    #[default]
+    WithoutConfigFile,
+}
+
+impl ClientConfigFileState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClientConfigFileState::WithConfigFile => "with_config_file",
+            ClientConfigFileState::WithoutConfigFile => "without_config_file",
+        }
+    }
+}
+
+impl fmt::Display for ClientConfigFileState {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientRegistrationOrigin {
+    #[default]
+    Manual,
+    ConfigDetection,
+    RuntimeInitialize,
+}
+
+impl ClientRegistrationOrigin {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ClientRegistrationOrigin::Manual => "manual",
+            ClientRegistrationOrigin::ConfigDetection => "config_detection",
+            ClientRegistrationOrigin::RuntimeInitialize => "runtime_initialize",
+        }
+    }
+}
+
+impl fmt::Display for ClientRegistrationOrigin {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for ClientRegistrationOrigin {
+    type Err = ParseClientRegistrationOriginError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "manual" => Ok(ClientRegistrationOrigin::Manual),
+            "config_detection" => Ok(ClientRegistrationOrigin::ConfigDetection),
+            "runtime_initialize" => Ok(ClientRegistrationOrigin::RuntimeInitialize),
+            _ => Err(ParseClientRegistrationOriginError),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseClientRegistrationOriginError;
+
+impl fmt::Display for ParseClientRegistrationOriginError {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(f, "invalid client registration origin")
+    }
+}
+
+impl std::error::Error for ParseClientRegistrationOriginError {}
+
 /// Default governance when a new client identifier is observed (dashboard + MCP proxy).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -557,13 +635,10 @@ mod tests {
             ClientConnectionMode::LocalConfigDetected
         );
         assert_eq!(
-            ClientConnectionMode::from_str("remote_http").expect("parse remote http"),
-            ClientConnectionMode::RemoteHttp
-        );
-        assert_eq!(
             ClientConnectionMode::from_str("manual").expect("parse manual"),
             ClientConnectionMode::Manual
         );
+        assert!(ClientConnectionMode::from_str("remote_http").is_err());
     }
 
     #[test]
