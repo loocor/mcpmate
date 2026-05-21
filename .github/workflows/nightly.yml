@@ -1,5 +1,5 @@
-# Scheduled desktop dev channel. Successful runs update the fixed `nightly`
-# prerelease; failed runs remain visible only in GitHub Actions.
+# Scheduled desktop daily build channel. Successful runs publish dated
+# prereleases; failed runs remain visible only in GitHub Actions.
 
 name: Nightly
 
@@ -17,21 +17,19 @@ permissions:
 
 env:
   CI: "true"
-  DEV_CHANNEL_TAG: nightly
-  NIGHTLY_UPDATER_ENDPOINT: https://github.com/loocor/mcpmate/releases/download/nightly/update.json
   NIGHTLY_ARTIFACT_RETENTION_DAYS: 7
+  NIGHTLY_RELEASE_RETENTION_DAYS: 7
 
 jobs:
   prepare:
     name: Prepare nightly metadata
     runs-on: ubuntu-22.04
     outputs:
-      build_id: ${{ steps.meta.outputs.build_id }}
       build_date: ${{ steps.meta.outputs.build_date }}
-      short_sha: ${{ steps.meta.outputs.short_sha }}
       source_sha: ${{ steps.meta.outputs.source_sha }}
       source_ref: ${{ steps.meta.outputs.source_ref }}
       app_version: ${{ steps.meta.outputs.app_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -44,9 +42,8 @@ jobs:
           set -euo pipefail
 
           source_sha="$(git rev-parse HEAD)"
-          short_sha="$(git rev-parse --short=7 HEAD)"
           build_date="$(date -u +'%Y%m%d')"
-          build_id="nightly-${build_date}-${short_sha}"
+          release_tag="nightly-${build_date}"
           source_ref="${{ github.event.repository.default_branch }}"
           base_version="$(jq -r '.version' desktop/src-tauri/tauri.conf.json)"
           base_version="${base_version%%-*}"
@@ -61,9 +58,8 @@ jobs:
 
           {
             echo "source_sha=${source_sha}"
-            echo "short_sha=${short_sha}"
             echo "build_date=${build_date}"
-            echo "build_id=${build_id}"
+            echo "release_tag=${release_tag}"
             echo "source_ref=${source_ref}"
             echo "app_version=${app_version}"
           } >> "$GITHUB_OUTPUT"
@@ -71,11 +67,11 @@ jobs:
           {
             echo "### Nightly"
             echo ""
-            echo "- Build ID: \`${build_id}\`"
+            echo "- Build date: \`${build_date}\`"
             echo "- Source: \`${source_ref}\`"
             echo "- Commit: \`${source_sha}\`"
             echo "- App version: \`${app_version}\`"
-            echo "- Channel tag: \`${DEV_CHANNEL_TAG}\`"
+            echo "- Release tag: \`${release_tag}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build-macos:
@@ -192,8 +188,6 @@ jobs:
 
       - name: Build signed and notarized macOS DMG
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -201,14 +195,13 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
-          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
+          TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
-            --profile release \
+            --profile debug \
             --target "${{ matrix.target }}" \
-            --bundles app,dmg \
-            --with-updater \
+            --bundles dmg \
             --output-dir "${GITHUB_WORKSPACE}/installers"
 
       - name: Verify macOS notarization and codesign
@@ -248,35 +241,13 @@ jobs:
       - name: Normalize macOS artifact names
         env:
           ASSET_ARCH: ${{ matrix.asset_arch }}
+          BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
         run: |
           set -euo pipefail
           shopt -s nullglob
 
           for dmg in installers/*.dmg; do
-            mv "$dmg" "installers/MCPMate_nightly_macos_${ASSET_ARCH}.dmg"
-          done
-
-      - name: Collect updater artifacts
-        id: collect-updater
-        uses: ./.github/actions/collect-updater
-        with:
-          bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
-          output-dir: "${{ github.workspace }}/updater"
-          platform: macos
-
-      - name: Normalize macOS updater artifact names
-        env:
-          ASSET_ARCH: ${{ matrix.asset_arch }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-
-          for bundle in updater/*.app.tar.gz; do
-            dest="updater/MCPMate_nightly_macos_${ASSET_ARCH}.app.tar.gz"
-            mv "$bundle" "$dest"
-            if [[ -f "${bundle}.sig" ]]; then
-              mv "${bundle}.sig" "${dest}.sig"
-            fi
+            mv "$dmg" "installers/MCPMate_nightly_${BUILD_DATE}_macos_${ASSET_ARCH}.dmg"
           done
 
       - name: Cleanup macOS signing materials
@@ -296,14 +267,6 @@ jobs:
         with:
           name: nightly-installers-macos-${{ matrix.arch }}
           path: installers/*.dmg
-          if-no-files-found: error
-          retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
-
-      - name: Upload macOS updater artifacts
-        uses: actions/upload-artifact@v6
-        with:
-          name: nightly-updater-macos-${{ matrix.arch }}
-          path: updater/*
           if-no-files-found: error
           retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
 
@@ -343,67 +306,15 @@ jobs:
 
       - name: Build Windows installers
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
+          TAURI_BUILD_EXTRA: "--features devtools"
         shell: bash
         run: |
           chmod +x packaging/desktop/windows-build-tauri-release.sh
           bash packaging/desktop/windows-build-tauri-release.sh \
-            --profile release \
+            --profile debug \
             --target "${{ matrix.target }}" \
             --bundles msi \
-            --with-updater \
             --output-dir "${GITHUB_WORKSPACE}/installers"
-
-      - name: Collect Windows updater artifacts
-        id: collect-updater
-        uses: ./.github/actions/collect-updater
-        with:
-          bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
-          output-dir: "${{ github.workspace }}/updater"
-          platform: windows
-
-      - name: Normalize Windows updater artifact names
-        shell: bash
-        env:
-          TARGET_ARCH: ${{ matrix.arch }}
-          EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
-          HAS_UPDATER: ${{ steps.collect-updater.outputs.has-updater }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          mkdir -p updater-normalized
-
-          if [[ "$HAS_UPDATER" != "true" ]]; then
-            if [[ "$EXPERIMENTAL_TARGET" == "true" ]]; then
-              echo "::warning::No updater artifacts found for experimental Windows ${TARGET_ARCH} target"
-              exit 0
-            fi
-
-            echo "::error::No updater artifacts found for Windows ${TARGET_ARCH} target" >&2
-            exit 1
-          fi
-
-          found=false
-          for sig in updater/*.msi.sig; do
-            cp "$sig" "updater-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi.sig"
-            found=true
-          done
-          for bundle in updater/*.msi.zip; do
-            cp "$bundle" "updater-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi.zip"
-            if [[ -f "${bundle}.sig" ]]; then
-              cp "${bundle}.sig" "updater-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi.zip.sig"
-            fi
-            found=true
-          done
-
-          if [[ "$found" != "true" && "$EXPERIMENTAL_TARGET" == "true" ]]; then
-            echo "::warning::No normalized updater artifacts found for experimental Windows ${TARGET_ARCH} target"
-          elif [[ "$found" != "true" ]]; then
-            echo "::error::No normalized updater artifacts found for Windows ${TARGET_ARCH} target" >&2
-            exit 1
-          fi
 
       - name: Collect Windows installers
         id: collect-installers
@@ -411,6 +322,7 @@ jobs:
         env:
           TARGET_TRIPLE: ${{ matrix.target }}
           TARGET_ARCH: ${{ matrix.arch }}
+          BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
           EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
         run: |
           set -euo pipefail
@@ -418,9 +330,9 @@ jobs:
 
           found=false
           while IFS= read -r -d '' installer; do
-            cp "$installer" "installers-normalized/MCPMate_nightly_windows_${TARGET_ARCH}.msi"
+            cp "$installer" "installers-normalized/MCPMate_nightly_${BUILD_DATE}_windows_${TARGET_ARCH}.msi"
             found=true
-          done < <(find "desktop/src-tauri/target/${TARGET_TRIPLE}/release/bundle" -type f -name "*.msi" -print0 2>/dev/null)
+          done < <(find "desktop/src-tauri/target/${TARGET_TRIPLE}/debug/bundle" -type f -name "*.msi" -print0 2>/dev/null)
 
           echo "has-installers=$found" >> "$GITHUB_OUTPUT"
 
@@ -437,15 +349,6 @@ jobs:
         with:
           name: nightly-installers-windows-${{ matrix.arch }}
           path: installers-normalized/*.msi
-          if-no-files-found: error
-          retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
-
-      - name: Upload Windows updater artifacts
-        if: steps.collect-updater.outputs.has-updater == 'true'
-        uses: actions/upload-artifact@v6
-        with:
-          name: nightly-updater-windows-${{ matrix.arch }}
-          path: updater-normalized/*
           if-no-files-found: error
           retention-days: ${{ env.NIGHTLY_ARTIFACT_RETENTION_DAYS }}
 
@@ -502,44 +405,30 @@ jobs:
 
       - name: Build Linux bundles
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_BUILD_EXTRA: --config src-tauri/tauri.nightly-overlay.json
+          TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           chmod +x packaging/desktop/linux-build-tauri-release.sh
           packaging/desktop/linux-build-tauri-release.sh \
-            --profile release \
+            --profile debug \
             --target "${{ matrix.target }}" \
             --bundles "${{ matrix.bundles }}" \
-            --with-updater \
             --output-dir "${GITHUB_WORKSPACE}/installers"
-
-      - name: Collect Linux updater artifacts
-        id: collect-updater
-        uses: ./.github/actions/collect-updater
-        with:
-          bundle-dir: "desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
-          output-dir: "${{ github.workspace }}/updater"
-          platform: linux
 
       - name: Normalize Linux artifact names
         env:
           TARGET_ARCH: ${{ matrix.deb_arch }}
+          BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
         run: |
           set -euo pipefail
           shopt -s nullglob
           mkdir -p installers-normalized
 
           for appimage in installers/*.AppImage; do
-            cp "$appimage" "installers-normalized/MCPMate_nightly_linux_${TARGET_ARCH}.AppImage"
+            cp "$appimage" "installers-normalized/MCPMate_nightly_${BUILD_DATE}_linux_${TARGET_ARCH}.AppImage"
           done
 
           for deb in installers/*.deb; do
-            cp "$deb" "installers-normalized/MCPMate_nightly_linux_${TARGET_ARCH}.deb"
-          done
-
-          for sig in updater/*.AppImage.sig; do
-            cp "$sig" "installers-normalized/MCPMate_nightly_linux_${TARGET_ARCH}.AppImage.sig"
+            cp "$deb" "installers-normalized/MCPMate_nightly_${BUILD_DATE}_linux_${TARGET_ARCH}.deb"
           done
 
       - name: Upload Linux installers
@@ -555,12 +444,11 @@ jobs:
     name: Publish nightly prerelease
     runs-on: ubuntu-22.04
     env:
-      BUILD_ID: ${{ needs.prepare.outputs.build_id }}
       BUILD_DATE: ${{ needs.prepare.outputs.build_date }}
-      SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
       SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
       APP_VERSION: ${{ needs.prepare.outputs.app_version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       RELEASE_REPO: ${{ github.repository }}
     steps:
       - name: Checkout
@@ -579,19 +467,13 @@ jobs:
           set -euo pipefail
 
           required_assets=(
-            "MCPMate_nightly_macos_aarch64.dmg"
-            "MCPMate_nightly_macos_x86_64.dmg"
-            "MCPMate_nightly_macos_aarch64.app.tar.gz"
-            "MCPMate_nightly_macos_aarch64.app.tar.gz.sig"
-            "MCPMate_nightly_macos_x86_64.app.tar.gz"
-            "MCPMate_nightly_macos_x86_64.app.tar.gz.sig"
-            "MCPMate_nightly_windows_x64.msi"
-            "MCPMate_nightly_linux_x64.AppImage"
-            "MCPMate_nightly_linux_x64.AppImage.sig"
-            "MCPMate_nightly_linux_x64.deb"
-            "MCPMate_nightly_linux_arm64.AppImage"
-            "MCPMate_nightly_linux_arm64.AppImage.sig"
-            "MCPMate_nightly_linux_arm64.deb"
+            "MCPMate_nightly_${BUILD_DATE}_macos_aarch64.dmg"
+            "MCPMate_nightly_${BUILD_DATE}_macos_x86_64.dmg"
+            "MCPMate_nightly_${BUILD_DATE}_windows_x64.msi"
+            "MCPMate_nightly_${BUILD_DATE}_linux_x64.AppImage"
+            "MCPMate_nightly_${BUILD_DATE}_linux_x64.deb"
+            "MCPMate_nightly_${BUILD_DATE}_linux_arm64.AppImage"
+            "MCPMate_nightly_${BUILD_DATE}_linux_arm64.deb"
           )
 
           missing=0
@@ -602,26 +484,8 @@ jobs:
             fi
           done
 
-          if [[ ! -f "artifacts/MCPMate_nightly_windows_arm64.msi" ]]; then
-            echo "::warning::Experimental asset not found: MCPMate_nightly_windows_arm64.msi"
-          fi
-
-          x64_msi_sig="artifacts/MCPMate_nightly_windows_x64.msi.sig"
-          x64_msi_zip="artifacts/MCPMate_nightly_windows_x64.msi.zip"
-          x64_msi_zip_sig="artifacts/MCPMate_nightly_windows_x64.msi.zip.sig"
-
-          if [[ ! -f "$x64_msi_sig" && ! -f "$x64_msi_zip_sig" ]]; then
-            echo "::error::Missing required nightly updater asset: MCPMate_nightly_windows_x64.msi.sig or MCPMate_nightly_windows_x64.msi.zip.sig" >&2
-            missing=1
-          fi
-
-          if [[ -f "$x64_msi_zip_sig" && ! -f "$x64_msi_zip" ]]; then
-            echo "::error::Missing required nightly updater asset: MCPMate_nightly_windows_x64.msi.zip" >&2
-            missing=1
-          fi
-
-          if [[ ! -f "artifacts/MCPMate_nightly_windows_arm64.msi.sig" && ! -f "artifacts/MCPMate_nightly_windows_arm64.msi.zip.sig" ]]; then
-            echo "::warning::Experimental updater asset not found for Windows arm64"
+          if [[ ! -f "artifacts/MCPMate_nightly_${BUILD_DATE}_windows_arm64.msi" ]]; then
+            echo "::warning::Experimental asset not found: MCPMate_nightly_${BUILD_DATE}_windows_arm64.msi"
           fi
 
           if [[ "$missing" -ne 0 ]]; then
@@ -630,73 +494,79 @@ jobs:
 
           find artifacts -type f | sort
 
-      - name: Generate nightly update manifest
+      - name: Create nightly release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          chmod +x packaging/desktop/generate-update-manifest.sh
-
-          MANIFEST_ARGS=(
-            --version "$APP_VERSION"
-            --output artifacts/update.json
-            --notes "Nightly ${BUILD_DATE} (${SHORT_SHA})"
-          )
-
-          platform_for_asset() {
-            case "$1" in
-              *aarch64*|*arm64*)
-                case "$1" in
-                  *darwin*|*macos*|*.app.tar.gz) echo "darwin-aarch64" ;;
-                  *linux*|*.AppImage)            echo "linux-aarch64" ;;
-                  *windows*|*.nsis*|*.msi*)      echo "windows-aarch64" ;;
-                  *) return 1 ;;
-                esac ;;
-              *)
-                case "$1" in
-                  *darwin*|*macos*|*.app.tar.gz) echo "darwin-x86_64" ;;
-                  *linux*|*.AppImage)            echo "linux-x86_64" ;;
-                  *windows*|*.nsis*|*.msi*)      echo "windows-x86_64" ;;
-                  *) return 1 ;;
-                esac ;;
-            esac
-          }
-
-          while read -r sig; do
-            bundle="${sig%.sig}"
-            if [[ -f "$bundle" ]]; then
-              base="$(basename "$bundle")"
-              if ! plat="$(platform_for_asset "$base")"; then
-                echo "WARN: skip $base" >&2
-                continue
-              fi
-
-              asset_url="https://github.com/${RELEASE_REPO}/releases/download/${DEV_CHANNEL_TAG}/${base}"
-              MANIFEST_ARGS+=(--platform "$plat" "$asset_url" "$(cat "$sig")")
-            fi
-          done < <(find artifacts -name "*.sig" -type f | sort)
-
-          packaging/desktop/generate-update-manifest.sh "${MANIFEST_ARGS[@]}"
-
-          echo "--- update.json ---"
-          cat artifacts/update.json
+          git tag -f "$RELEASE_TAG" "$SOURCE_SHA"
+          git push --force origin "refs/tags/${RELEASE_TAG}"
 
       - name: Write nightly release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
+          previous_tag=""
+          mapfile -t nightly_tags < <(gh release list \
+            --repo "$RELEASE_REPO" \
+            --limit 100 \
+            --json tagName \
+            --jq '.[].tagName' | grep -E '^nightly-[0-9]{8}$' || true)
+
+          for tag in "${nightly_tags[@]}"; do
+            if [[ "$tag" != "$RELEASE_TAG" ]]; then
+              previous_tag="$tag"
+              break
+            fi
+          done
+
+          generate_args=(
+            -X POST
+            "repos/${RELEASE_REPO}/releases/generate-notes"
+            -f "tag_name=${RELEASE_TAG}"
+            -f "target_commitish=${SOURCE_SHA}"
+          )
+
+          if [[ -n "$previous_tag" ]]; then
+            generate_args+=(-f "previous_tag_name=${previous_tag}")
+          fi
+
+          if ! gh api "${generate_args[@]}" --jq '.body' > generated-nightly-notes.md; then
+            echo "## What's Changed" > generated-nightly-notes.md
+            echo "" >> generated-nightly-notes.md
+            git log -20 --pretty='- %s' >> generated-nightly-notes.md
+          elif ! grep -Eq '^[*-] ' generated-nightly-notes.md; then
+            echo "## What's Changed" > generated-nightly-commits.md
+            echo "" >> generated-nightly-commits.md
+            if [[ -n "$previous_tag" ]]; then
+              if ! gh api "repos/${RELEASE_REPO}/compare/${previous_tag}...${SOURCE_SHA}" \
+                --jq '.commits[].commit.message | split("\n")[0] | select(length > 0) | "- " + .' \
+                >> generated-nightly-commits.md; then
+                git log -20 --pretty='- %s' >> generated-nightly-commits.md
+              fi
+            else
+              git log -20 --pretty='- %s' >> generated-nightly-commits.md
+            fi
+            mv generated-nightly-commits.md generated-nightly-notes.md
+          fi
+
           cat > nightly-release-notes.md <<EOF
-          Build ID: \`${BUILD_ID}\`
+          Build date: \`${BUILD_DATE}\`
 
           App version: \`${APP_VERSION}\`
 
           Source: \`${SOURCE_REF}\` at \`${SOURCE_SHA}\`
 
-          Updater endpoint: \`${NIGHTLY_UPDATER_ENDPOINT}\`
-
-          This prerelease is generated automatically from the dev build channel for early testing. It is not a stable MCPMate release, may change without migration support, and should not be used where a supported stable release is required.
+          This prerelease is generated automatically from the daily build channel for testing and progress visibility. It is not a stable MCPMate release, may change without migration support, and should not be used where a supported stable release is required.
 
           Stable releases remain on versioned \`v*\` tags and the standard GitHub Releases page.
           EOF
+
+          echo "" >> nightly-release-notes.md
+          cat generated-nightly-notes.md >> nightly-release-notes.md
 
       - name: Create or update nightly prerelease
         env:
@@ -704,28 +574,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          title="Nightly ${BUILD_DATE} (${SHORT_SHA})"
+          title="Nightly(${BUILD_DATE})"
           assets=(artifacts/*)
 
-          git tag -f "$DEV_CHANNEL_TAG" "$SOURCE_SHA"
-          git push --force origin "refs/tags/${DEV_CHANNEL_TAG}"
-
-          if gh release view "$DEV_CHANNEL_TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
-            gh release edit "$DEV_CHANNEL_TAG" \
+          if gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
               --repo "$RELEASE_REPO" \
               --target "$SOURCE_SHA" \
               --title "$title" \
               --notes-file nightly-release-notes.md \
               --prerelease
 
-            mapfile -t old_assets < <(gh release view "$DEV_CHANNEL_TAG" --repo "$RELEASE_REPO" --json assets --jq '.assets[].name')
+            mapfile -t old_assets < <(gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" --json assets --jq '.assets[].name')
             for old_asset in "${old_assets[@]}"; do
-              gh release delete-asset "$DEV_CHANNEL_TAG" "$old_asset" --repo "$RELEASE_REPO" --yes
+              gh release delete-asset "$RELEASE_TAG" "$old_asset" --repo "$RELEASE_REPO" --yes
             done
 
-            gh release upload "$DEV_CHANNEL_TAG" "${assets[@]}" --repo "$RELEASE_REPO" --clobber
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --repo "$RELEASE_REPO" --clobber
           else
-            gh release create "$DEV_CHANNEL_TAG" "${assets[@]}" \
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
               --repo "$RELEASE_REPO" \
               --verify-tag \
               --target "$SOURCE_SHA" \
@@ -735,13 +602,33 @@ jobs:
               --latest=false
           fi
 
+      - name: Prune old nightly prereleases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t old_tags < <(gh release list \
+            --repo "$RELEASE_REPO" \
+            --limit 100 \
+            --json tagName \
+            --jq '.[].tagName' | grep -E '^nightly-[0-9]{8}$' | tail -n "+$((NIGHTLY_RELEASE_RETENTION_DAYS + 1))" || true)
+
+          for old_tag in "${old_tags[@]}"; do
+            if [[ "$old_tag" == "$RELEASE_TAG" ]]; then
+              continue
+            fi
+
+            gh release delete "$old_tag" --repo "$RELEASE_REPO" --cleanup-tag --yes
+          done
+
       - name: Summarize nightly channel
         run: |
           {
             echo "### Published nightly"
             echo ""
-            echo "- Build ID: \`${BUILD_ID}\`"
-            echo "- Release: https://github.com/${RELEASE_REPO}/releases/tag/${DEV_CHANNEL_TAG}"
-            echo "- Updater manifest: https://github.com/${RELEASE_REPO}/releases/download/${DEV_CHANNEL_TAG}/update.json"
+            echo "- Build date: \`${BUILD_DATE}\`"
+            echo "- Release: https://github.com/${RELEASE_REPO}/releases/tag/${RELEASE_TAG}"
+            echo "- Retention: latest \`${NIGHTLY_RELEASE_RETENTION_DAYS}\` nightly prereleases"
             echo "- Stable releases remain isolated on versioned \`v*\` tags."
           } >> "$GITHUB_STEP_SUMMARY"
