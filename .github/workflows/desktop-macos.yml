@@ -22,7 +22,7 @@ on:
         description: "Cargo profile"
         type: choice
         required: false
-        default: "release"
+        default: "debug"
         options:
           - debug
           - release
@@ -159,7 +159,7 @@ jobs:
       - name: Build signed and notarized macOS DMG
         env:
           INPUT_BUNDLES: ${{ github.event.inputs.bundles }}
-          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'release' }}
+          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'debug' }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -167,9 +167,10 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+          TAURI_BUILD_EXTRA: "--features devtools"
         run: |
           BUNDLES="${INPUT_BUNDLES:-app,dmg}"
-          PROFILE="${INPUT_PROFILE:-release}"
+          PROFILE="${INPUT_PROFILE:-debug}"
           chmod +x packaging/desktop/macos-build-tauri-release.sh
           packaging/desktop/macos-build-tauri-release.sh \
             --profile "$PROFILE" \
@@ -213,10 +214,10 @@ jobs:
 
       - name: Smoke test (sidecar arch + DMG output)
         env:
-          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'release' }}
+          INPUT_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'debug' }}
         run: |
           set -euo pipefail
-          PROFILE="${INPUT_PROFILE:-release}"
+          PROFILE="${INPUT_PROFILE:-debug}"
           BUNDLE_ROOT="desktop/src-tauri/target/${{ matrix.arch == 'aarch64' && 'aarch64-apple-darwin' || 'x86_64-apple-darwin' }}/${PROFILE}/bundle"
           echo "--- bundle layout ---"
           find "$BUNDLE_ROOT" -type f | head -40 || true
