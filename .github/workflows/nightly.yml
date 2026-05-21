@@ -18,7 +18,7 @@ permissions:
 env:
   CI: "true"
   NIGHTLY_ARTIFACT_RETENTION_DAYS: 7
-  NIGHTLY_RELEASE_RETENTION_DAYS: 7
+  NIGHTLY_RELEASE_RETENTION_COUNT: 7
 
 jobs:
   prepare:
@@ -455,6 +455,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
 
       - name: Download installers
         uses: actions/download-artifact@v6
@@ -612,7 +613,7 @@ jobs:
             --repo "$RELEASE_REPO" \
             --limit 100 \
             --json tagName \
-            --jq '.[].tagName' | grep -E '^nightly-[0-9]{8}$' | tail -n "+$((NIGHTLY_RELEASE_RETENTION_DAYS + 1))" || true)
+            --jq '.[].tagName' | grep -E '^nightly-[0-9]{8}$' | tail -n "+$((NIGHTLY_RELEASE_RETENTION_COUNT + 1))" || true)
 
           for old_tag in "${old_tags[@]}"; do
             if [[ "$old_tag" == "$RELEASE_TAG" ]]; then
@@ -629,6 +630,6 @@ jobs:
             echo ""
             echo "- Build date: \`${BUILD_DATE}\`"
             echo "- Release: https://github.com/${RELEASE_REPO}/releases/tag/${RELEASE_TAG}"
-            echo "- Retention: latest \`${NIGHTLY_RELEASE_RETENTION_DAYS}\` nightly prereleases"
+            echo "- Retention: latest \`${NIGHTLY_RELEASE_RETENTION_COUNT}\` nightly prereleases"
             echo "- Stable releases remain isolated on versioned \`v*\` tags."
           } >> "$GITHUB_STEP_SUMMARY"
