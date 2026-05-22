@@ -11,6 +11,8 @@ const MOCK_DISCOVERY_ENDPOINTS = {
 	clients: chrome.runtime.getURL("mock/clients.json"),
 };
 const SETTINGS_KEY = "mcpmate.discovery.settings";
+const DISCOVERY_CACHE_TTL_MS = 60 * 60 * 1000;
+const DISCOVERY_CACHE_KEY_PREFIX = "mcpmate.discovery.cache";
 const DEFAULT_SETTINGS = {
 	language: "en",
 	theme: "system",
@@ -230,6 +232,10 @@ function storageArea() {
 	return chrome?.storage?.sync || chrome?.storage?.local || null;
 }
 
+function localStorageArea() {
+	return chrome?.storage?.local || null;
+}
+
 async function readSettings() {
 	const area = storageArea();
 	if (area) {
@@ -252,6 +258,43 @@ async function writeSettings(settings) {
 	}
 	localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
 	return normalized;
+}
+
+function discoveryCacheKey(kind) {
+	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}`;
+}
+
+async function readDiscoveryCache(kind) {
+	const key = discoveryCacheKey(kind);
+	const area = localStorageArea();
+	let cached;
+	if (area) {
+		cached = (await area.get(key))[key];
+	} else {
+		try {
+			cached = JSON.parse(localStorage.getItem(key) || "null");
+		} catch {
+			return null;
+		}
+	}
+	if (!cached || Date.now() - cached.cachedAt > DISCOVERY_CACHE_TTL_MS) {
+		return null;
+	}
+	return cached.data || null;
+}
+
+async function writeDiscoveryCache(kind, data) {
+	const key = discoveryCacheKey(kind);
+	const cached = {
+		cachedAt: Date.now(),
+		data,
+	};
+	const area = localStorageArea();
+	if (area) {
+		await area.set({ [key]: cached });
+		return;
+	}
+	localStorage.setItem(key, JSON.stringify(cached));
 }
 
 function resolvedTheme(theme) {
@@ -474,10 +517,6 @@ function normalizeEntries(kind, data) {
 	return [];
 }
 
-function sectionSummary(kind, count) {
-	return `${discoverySourceLabel()} · ${count} ${kind}`;
-}
-
 function serverCategories(curated, meta) {
 	if (Array.isArray(curated.categories)) {
 		return curated.categories.slice(0, 2).join(", ");
@@ -575,19 +614,23 @@ function entryCard(kind, entry) {
 async function renderSection(kind) {
 	setSectionStatus(kind, activeCopy.loading[kind]);
 	setSectionEntries(kind, []);
-	const response = await fetch(discoveryEndpoints()[kind], {
-		headers: { accept: "application/json" },
-	});
-	if (!response.ok) {
-		throw new Error(`${kind}:${response.status}`);
+	let data = await readDiscoveryCache(kind);
+	if (!data) {
+		const response = await fetch(discoveryEndpoints()[kind], {
+			headers: { accept: "application/json" },
+		});
+		if (!response.ok) {
+			throw new Error(`${kind}:${response.status}`);
+		}
+		data = await response.json();
+		await writeDiscoveryCache(kind, data);
 	}
-	const data = await response.json();
 	const entries = normalizeEntries(kind, data);
 	if (entries.length === 0) {
 		setSectionStatus(kind, activeCopy.empty[kind]);
 		return;
 	}
-	setSectionStatus(kind, sectionSummary(kind, entries.length));
+	setSectionStatus(kind, "");
 	setSectionEntries(
 		kind,
 		entries.map((entry) => entryCard(kind, entry)),
