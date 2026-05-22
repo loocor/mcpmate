@@ -56,8 +56,7 @@ const zh = {
 	"download.load_error": "无法加载版本信息，你仍可直接打开 Releases 页面下载。",
 	"download.retry": "重试",
 	"download.table_caption": "指向 GitHub 最新版本的 MCPMate 桌面安装包",
-	"download.platform_availability_note":
-		"每日 Debug 安装包与稳定版本分开发布：",
+	"download.nightly.note": "每日 Debug 安装包与稳定版本分开发布：",
 	"download.latest_label": "最新版本",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",

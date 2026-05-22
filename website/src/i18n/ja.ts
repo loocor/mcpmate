@@ -57,8 +57,7 @@ const ja = {
 	"download.load_error": "リリース情報を読み込めませんでした。Releases ページから直接入手できます。",
 	"download.retry": "再試行",
 	"download.table_caption": "GitHub の最新リリースに紐づく MCPMate デスクトップインストーラ",
-	"download.platform_availability_note":
-		"毎日の Debug インストーラは安定版とは別に公開されます:",
+	"download.nightly.note": "毎日の Debug インストーラは安定版とは別に公開されます:",
 	"download.latest_label": "最新",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
