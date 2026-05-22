@@ -58,7 +58,7 @@ const ja = {
 	"download.retry": "再試行",
 	"download.table_caption": "GitHub の最新リリースに紐づく MCPMate デスクトップインストーラ",
 	"download.platform_availability_note":
-		"macOS、Windows、Linux の各インストーラはいずれも現在 Beta です。macOS ビルドは署名と公証に対応し、システムのセキュリティ警告を減らします。",
+		"毎日の Debug インストーラは安定版とは別に公開されます:",
 	"download.latest_label": "最新",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
@@ -69,12 +69,7 @@ const ja = {
 	"download.getting_started.desc":
 		"クイックスタートガイドに従って MCPMate をセットアップし、最初の MCP サービスを接続しましょう。",
 	"download.read_guide": "ガイドを見る",
-	"download.nightly.title": "Nightly 開発ビルド",
-	"download.nightly.desc":
-		"早期テスト向けに自動生成されるインストーラで、安定版リリースとは別に公開されます。",
 	"download.nightly.cta": "Nightly チャンネルを開く",
-	"download.nightly.disclaimer":
-		"Nightly ビルドは不安定な場合があり、移行サポートなしで変更されることがあります。正式なインストールには安定版を使用してください。",
 
 	// 機能
 	"features.title": "強力な機能",
