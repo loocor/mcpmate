@@ -57,8 +57,7 @@ const en = {
 	"download.load_error": "Release metadata could not be loaded. You can still open the releases page.",
 	"download.retry": "Retry",
 	"download.table_caption": "MCPMate desktop installers linked to the latest GitHub release",
-	"download.platform_availability_note":
-		"macOS, Windows, and Linux installers are currently in Beta. macOS builds are signed and notarized to reduce system security prompts.",
+	"download.nightly.note": "Daily Debug installers are published separately from stable releases:",
 	"download.latest_label": "Latest",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
@@ -69,12 +68,7 @@ const en = {
 	"download.getting_started.desc":
 		"Follow our quick start guide to set up MCPMate and connect your first MCP service.",
 	"download.read_guide": "Read the Guide",
-	"download.nightly.title": "Nightly dev builds",
-	"download.nightly.desc":
-		"Automatically built installers for early testing, published separately from stable releases.",
 	"download.nightly.cta": "Open nightly channel",
-	"download.nightly.disclaimer":
-		"Nightly builds may be unstable and can change without migration support. Use stable releases for supported installs.",
 
 	// Features
 	"features.title": "Powerful Features",
