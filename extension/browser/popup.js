@@ -1,4 +1,5 @@
 const ADMIN_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.adminApiOrigin;
+const BUILD_DATE = globalThis.MCPMATE_EXTENSION_BUILD.buildDate;
 const DISCOVERY_MODE = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryMode || "account";
 const DISCOVERY_ENDPOINTS = {
 	portals: `${ADMIN_ORIGIN}/discovery/portals`,
@@ -357,6 +358,7 @@ function applyCopy(language) {
 	setButtonLabel("settings-button", activeCopy.footer.settings);
 	setButtonLabel("discord-button", activeCopy.footer.discord);
 	setText("discord-label", activeCopy.footer.discord);
+	setText("build-date", BUILD_DATE);
 	for (const button of document.querySelectorAll(".open-button")) {
 		button.setAttribute("aria-label", activeCopy.visit);
 		button.title = activeCopy.visit;

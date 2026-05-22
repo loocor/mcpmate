@@ -135,9 +135,23 @@ button {
 }
 
 h1 {
+	display: flex;
+	align-items: flex-start;
+	gap: 4px;
 	margin: 0;
 	font-size: 18px;
 	line-height: 1.2;
+}
+
+.beta-badge {
+	position: relative;
+	top: -2px;
+	color: #64748b;
+	font-size: 9px;
+	font-weight: 800;
+	letter-spacing: 0;
+	line-height: 1;
+	text-transform: uppercase;
 }
 
 p {
@@ -149,7 +163,12 @@ p {
 :root[data-theme="dark"] p,
 :root[data-theme="dark"] .pill,
 :root[data-theme="dark"] .status,
-:root[data-theme="dark"] .field {
+:root[data-theme="dark"] .field,
+:root[data-theme="dark"] .build-date {
+	color: #94a3b8;
+}
+
+:root[data-theme="dark"] .beta-badge {
 	color: #94a3b8;
 }
 
@@ -326,6 +345,19 @@ p {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	min-width: 0;
+	flex: 1 1 auto;
+	justify-content: flex-start;
+}
+
+.build-date {
+	flex: 0 0 auto;
+	color: #64748b;
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 1.2;
+	text-align: right;
+	white-space: nowrap;
 }
 
 .icon-button,
