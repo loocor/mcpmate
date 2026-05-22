@@ -6,6 +6,7 @@
 	"description": "Discover curated MCP resources and send detected MCP snippets to MCPMate desktop.",
 	"homepage_url": "https://mcp.umate.ai",
 	"minimum_chrome_version": "114",
+	"permissions": ["storage"],
 	"host_permissions": ["<all_urls>"],
 	"icons": {
 		"16": "icons/icon-16.png",

@@ -5,7 +5,7 @@ The MCPMate browser extension shows curated MCP portals, servers, and clients in
 - **Product**: MCPMate
 - **Website**: [https://mcp.umate.ai](https://mcp.umate.ai)
 - **Admin API origin**: `https://auth.mcp.umate.ai`
-- **Current discovery mode**: `mock`
+- **Current discovery mode**: `account`
 
 The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 
@@ -16,7 +16,8 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 ## Features
 
 - Popup discovery tabs for **Portals**, **Servers**, and **Clients**.
-- Discovery data currently comes from packaged mock JSON while the Admin discovery APIs are not published yet. Switch `config.js` to `discoveryMode: "account"` when those APIs are ready.
+- Discovery data comes from the published MCPMate Admin discovery APIs.
+- Discovery responses are cached locally for one hour to avoid repeated popup fetches.
 - Optional language and theme preferences live inside the toolbar popup settings panel.
 - Popup styling mirrors the shadcn Dashboard visual language with lightweight static HTML/CSS/JS, avoiding a React bundle inside the extension.
 - Optional icon metadata is supported when Admin catalog entries provide it.
@@ -50,6 +51,6 @@ Status: Available on Chromium-based browser extension stores, including Chrome W
 ## Notes and limits
 
 - Reload the extension from your browser's extensions page after local changes.
-- `mock` mode is an intentional substitute for missing upstream discovery APIs, not a silent fallback. Change `config.js` when switching environments.
+- `mock` mode remains available for local UI checks only. Production config uses `account` and does not silently fall back to mock data when the Admin API is unavailable.
 - Chromium-based extension stores expect PNGs at fixed sizes; this folder already ships `icons/icon-*.png` derived from the desktop app icon.
 - Discovery data is owned by the separate MCPMate Admin service, not by the marketing website.
