@@ -155,12 +155,12 @@ const QuickStartSection = () => {
             </div>
 
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-500">
-              {t("download.platform_availability_note")}{" "}
+              {t("download.nightly.note")}
               <a
                 href={NIGHTLY_RELEASE_PAGE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline dark:text-amber-400"
+                className="ml-1 inline-flex items-center gap-1 font-medium text-amber-700 hover:underline dark:text-amber-400"
                 onClick={() => trackMCPMateEvents.externalLinkClick(NIGHTLY_RELEASE_PAGE_URL)}
               >
                 {t("download.nightly.cta")}

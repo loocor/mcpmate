@@ -57,8 +57,7 @@ const en = {
 	"download.load_error": "Release metadata could not be loaded. You can still open the releases page.",
 	"download.retry": "Retry",
 	"download.table_caption": "MCPMate desktop installers linked to the latest GitHub release",
-	"download.platform_availability_note":
-		"Daily Debug installers are published separately from stable releases:",
+	"download.nightly.note": "Daily Debug installers are published separately from stable releases:",
 	"download.latest_label": "Latest",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
