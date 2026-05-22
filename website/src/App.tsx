@@ -8,7 +8,6 @@ import Homepage from "./pages/Homepage";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import { initGA, trackPageView } from "./utils/analytics";
-import CornerRibbon from "./components/ui/CornerRibbon";
 import DomainMigrationBanner from "./components/ui/DomainMigrationBanner";
 import { renderDocRoutes } from "./docs/DocRoutes";
 
@@ -79,8 +78,6 @@ function AppInner() {
 						</Routes>
 					</main>
 					<Footer />
-					{/* Site-wide updating ribbon */}
-					<CornerRibbon />
 				</div>
 			</LanguageProvider>
 		</ThemeProvider>

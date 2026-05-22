@@ -1,4 +1,4 @@
-import { ArrowRight, Download, ExternalLink, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowRight, Download, ExternalLink, RefreshCw } from "lucide-react";
 import { useCallback, useId, useMemo } from "react";
 import { useLanguage } from "../LanguageProvider";
 import { useNavigate } from "react-router-dom";
@@ -43,57 +43,6 @@ const QuickStartSection = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="space-y-6 min-w-0">
-            <div>
-              <h3 className="text-lg font-semibold mb-2">{t("download.getting_started")}</h3>
-              <p className="text-slate-600 dark:text-slate-400 mb-4">{t("download.getting_started.desc")}</p>
-              <Button
-                variant="outline"
-                className="w-full flex items-center justify-center gap-2"
-                onClick={() => navigate(language === "zh" ? "/docs/zh/quickstart" : language === "ja" ? "/docs/ja/quickstart" : "/docs/en/quickstart")}
-              >
-                <span>{t("download.read_guide")}</span>
-                <ArrowRight size={16} />
-              </Button>
-            </div>
-
-            <div>
-              <h3 className="text-lg font-semibold mb-2">{t("contact.github")}</h3>
-              <p className="text-slate-600 dark:text-slate-400 mb-4">{t("contact.github.desc")}</p>
-              <Button
-                variant="outline"
-                className="w-full flex items-center justify-center gap-2"
-                onClick={() => {
-                  const u = "https://github.com/loocor/mcpmate";
-                  trackMCPMateEvents.externalLinkClick(u);
-                  window.open(u, "_blank");
-                }}
-              >
-                <span>github.com/loocor/mcpmate</span>
-                <ArrowRight size={16} />
-              </Button>
-            </div>
-
-            <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 shadow-sm dark:border-amber-900/60 dark:bg-amber-950/20">
-              <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
-                <Sparkles size={18} aria-hidden />
-                <h3 className="text-lg font-semibold">{t("download.nightly.title")}</h3>
-              </div>
-              <p className="mt-2 text-sm leading-6 text-amber-900/80 dark:text-amber-100/80">{t("download.nightly.desc")}</p>
-              <a
-                href={NIGHTLY_RELEASE_PAGE_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-950/40 dark:text-amber-100 dark:hover:bg-amber-950/50"
-                onClick={() => trackMCPMateEvents.externalLinkClick(NIGHTLY_RELEASE_PAGE_URL)}
-              >
-                <span>{t("download.nightly.cta")}</span>
-                <ExternalLink size={16} aria-hidden />
-              </a>
-              <p className="mt-3 text-xs leading-5 text-amber-900/70 dark:text-amber-100/60">{t("download.nightly.disclaimer")}</p>
-            </div>
-          </div>
-
           <div className="min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <h3 className="text-lg font-semibold">{t("download.official_builds")}</h3>
@@ -108,25 +57,14 @@ const QuickStartSection = () => {
                     {t("download.retry")}
                   </button>
                 ) : null}
-                <a
-                  href={RELEASES_PAGE_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                  onClick={() => trackMCPMateEvents.externalLinkClick(RELEASES_PAGE_URL)}
-                >
-                  {t("download.all_releases")}
-                  <ExternalLink size={14} aria-hidden />
-                </a>
+                {releaseState.status === "ok" ? (
+                  <span className="flex items-center gap-x-1 text-sm text-slate-600 dark:text-slate-400">
+                    <span className="font-medium text-slate-800 dark:text-slate-200">{t("download.latest_label")}: </span>
+                    <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{releaseState.latest.tag_name}</code>
+                  </span>
+                ) : null}
               </div>
             </div>
-
-            {releaseState.status === "ok" ? (
-              <p className="mb-3 flex flex-wrap items-center gap-x-1 gap-y-0.5 text-sm text-slate-600 dark:text-slate-400">
-                <span className="font-medium text-slate-800 dark:text-slate-200">{t("download.latest_label")}: </span>
-                <code className="text-sm bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{releaseState.latest.tag_name}</code>
-              </p>
-            ) : null}
 
             {releaseState.status === "error" ? <p className="text-sm text-amber-700 dark:text-amber-400 mb-3">{t("download.load_error")}</p> : null}
 
@@ -216,7 +154,51 @@ const QuickStartSection = () => {
               </table>
             </div>
 
-            <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">{t("download.platform_availability_note")}</p>
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-500">
+              {t("download.platform_availability_note")}{" "}
+              <a
+                href={NIGHTLY_RELEASE_PAGE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 font-medium text-amber-700 hover:underline dark:text-amber-400"
+                onClick={() => trackMCPMateEvents.externalLinkClick(NIGHTLY_RELEASE_PAGE_URL)}
+              >
+                {t("download.nightly.cta")}
+                <ExternalLink size={12} aria-hidden />
+              </a>
+            </p>
+          </div>
+
+          <div className="space-y-6 min-w-0">
+            <div>
+              <h3 className="text-lg font-semibold mb-2">{t("download.getting_started")}</h3>
+              <p className="text-slate-600 dark:text-slate-400 mb-4">{t("download.getting_started.desc")}</p>
+              <Button
+                variant="outline"
+                className="w-full flex items-center justify-center gap-2"
+                onClick={() => navigate(language === "zh" ? "/docs/zh/quickstart" : language === "ja" ? "/docs/ja/quickstart" : "/docs/en/quickstart")}
+              >
+                <span>{t("download.read_guide")}</span>
+                <ArrowRight size={16} />
+              </Button>
+            </div>
+
+            <div>
+              <h3 className="text-lg font-semibold mb-2">{t("contact.github")}</h3>
+              <p className="text-slate-600 dark:text-slate-400 mb-4">{t("contact.github.desc")}</p>
+              <Button
+                variant="outline"
+                className="w-full flex items-center justify-center gap-2"
+                onClick={() => {
+                  const u = "https://github.com/loocor/mcpmate";
+                  trackMCPMateEvents.externalLinkClick(u);
+                  window.open(u, "_blank");
+                }}
+              >
+                <span>github.com/loocor/mcpmate</span>
+                <ArrowRight size={16} />
+              </Button>
+            </div>
           </div>
         </div>
       </div>
