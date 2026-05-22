@@ -23,9 +23,11 @@
 > Configuring the same MCP servers across multiple clients is repetitive, token-costly, and hard to observe.
 > MCPMate proxies MCP servers, syncs client configs, trims capabilities by profile, and logs activity.
 
-This is not a brand-new project. I started shaping MCPMate around May 2024, paused active development around October, and recently came back to it with a clearer conviction: as the hype around skills- and CLI-shaped workflows settles into a more reflective phase, the long-term, irreplaceable value of MCP becomes easier to see.
+MCPMate centralizes MCP server management across Claude Desktop, Cursor, Codex, Zed, and other compatible clients.
 
-MCPMate was previously developed in private and is now being reopened in public. The direction I care about most at this stage is usability: building on MCPMate's earlier profile-based approach for removing redundant capabilities in specific scenarios, and continuing to extend its hosted mode toward a more progressively disclosed Unify mode (last year I referred to it as a more "aggressive hosted" mode, though the name itself felt somewhat awkward). One goal is to bring some of the lower-friction and lower first-token-cost qualities that people appreciated in skills- and CLI-shaped experiences into MCP itself.
+It reduces duplicated configuration, limits unnecessary tool exposure through profiles, keeps client config changes coordinated, and gives MCP usage a local dashboard, API, and structured log trail.
+
+Start with Transparent config sync, move to Hosted proxy management, and adopt Unify-style governance when you need stronger control over which tools each client can see.
 
 ## 📑 Table of Contents
 
