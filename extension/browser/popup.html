@@ -16,7 +16,10 @@
 					<img src="icons/logo.svg" alt="" class="logo" />
 				</div>
 				<div class="header-copy">
-					<h1 id="popup-title">MCPMate</h1>
+					<h1>
+						<span id="popup-title">MCPMate</span>
+						<sup class="beta-badge">Beta</sup>
+					</h1>
 					<p id="popup-copy">Curated MCP resources from MCPMate.</p>
 				</div>
 			</header>
@@ -66,11 +69,11 @@
 			</div>
 
 			<footer class="footer">
-				<button type="button" class="discord-button" data-open-url="https://discord.gg/pc5YfEVbKj" id="discord-button">
-					<span class="button-icon" data-icon="discord" aria-hidden="true"></span>
-					<span id="discord-label">Discord</span>
-				</button>
 				<div class="footer-links">
+					<button type="button" class="discord-button" data-open-url="https://discord.gg/pc5YfEVbKj" id="discord-button">
+						<span class="button-icon" data-icon="discord" aria-hidden="true"></span>
+						<span id="discord-label">Discord</span>
+					</button>
 					<button type="button" class="icon-button" data-open-url="https://mcp.umate.ai" id="website-button">
 						<span class="button-icon" data-icon="globe" aria-hidden="true"></span>
 					</button>
@@ -78,8 +81,10 @@
 						<span class="button-icon" data-icon="github" aria-hidden="true"></span>
 					</button>
 				</div>
+				<div class="build-date" id="build-date"></div>
 			</footer>
 		</main>
+		<script src="build-info.js"></script>
 		<script src="config.js"></script>
 		<script src="popup.js"></script>
 	</body>

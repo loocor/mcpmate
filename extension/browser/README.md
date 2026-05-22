@@ -22,6 +22,7 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 - Popup styling mirrors the shadcn Dashboard visual language with lightweight static HTML/CSS/JS, avoiding a React bundle inside the extension.
 - Optional icon metadata is supported when Admin catalog entries provide it.
 - Uses `config.js` as the extension deployment config. Update `adminApiOrigin` there if the Admin API origin changes.
+- Run `bun extension/browser/scripts/write-build-info.mjs` before packaging to refresh `build-info.js` with the current build date.
 - The snippet-to-desktop import path remains enabled through `content.js` and `mcpmate://import/server`.
 - What remains disabled is telemetry-style import submission to Admin APIs. The extension does not upload import events or usage analytics to Admin in the current phase.
 - `manifest.json` icons use PNGs (`icons/icon-{16,32,48,128}.png`) because Chromium extension UIs do not reliably show SVG there. The popup also switches to `icons/icon-dark-{16,32,48,128}.png` for dark mode so the toolbar mark remains legible.
