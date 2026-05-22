@@ -56,8 +56,7 @@ const zh = {
 	"download.load_error": "无法加载版本信息，你仍可直接打开 Releases 页面下载。",
 	"download.retry": "重试",
 	"download.table_caption": "指向 GitHub 最新版本的 MCPMate 桌面安装包",
-	"download.platform_availability_note":
-		"macOS、Windows 与 Linux 安装包目前均为 Beta 状态。macOS 构建已加入签名与公证，以减少系统安全提示。",
+	"download.nightly.note": "每日 Debug 安装包与稳定版本分开发布：",
 	"download.latest_label": "最新版本",
 	"download.platform_macos": "macOS",
 	"download.platform_windows": "Windows",
@@ -68,12 +67,7 @@ const zh = {
 	"download.getting_started.desc":
 		"按照快速开始指南完成 MCPMate 安装，并连接你的第一个 MCP 服务。",
 	"download.read_guide": "查看指南",
-	"download.nightly.title": "Nightly 开发构建",
-	"download.nightly.desc":
-		"面向早期体验的自动构建安装包，与稳定版本分开发布。",
 	"download.nightly.cta": "打开 Nightly 通道",
-	"download.nightly.disclaimer":
-		"Nightly 构建可能不稳定，也可能在没有迁移支持的情况下变化。正式安装请使用稳定版本。",
 
 	// 功能区
 	"features.title": "强大功能",
