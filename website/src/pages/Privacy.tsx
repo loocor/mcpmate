@@ -22,7 +22,7 @@ const Privacy = () => {
 					<div>
 						<h1 className="text-3xl font-bold mb-4">隐私政策</h1>
 						<p className="text-slate-600 dark:text-slate-400 mb-8">
-							最后更新：2025年10月12日
+							最后更新：2026年5月17日
 						</p>
 
 						<div className="space-y-8 leading-relaxed text-slate-800 dark:text-slate-200">
@@ -49,7 +49,7 @@ const Privacy = () => {
 								</h2>
 								<ul className="list-disc pl-6 space-y-2">
 									<li>
-										该扩展不会收集、存储或出售您的个人数据，也不会将数据上传到 MCPMate 云端服务。
+										默认情况下，该扩展不会上传配置片段或导入元数据。
 									</li>
 									<li>
 										扩展仅在浏览器本地读取当前页面代码块文本，用于识别 MCP 配置片段。
@@ -59,10 +59,14 @@ const Privacy = () => {
 									</li>
 									<li>
 										导入通过本机协议 <code>mcpmate://</code>{" "}
-										将内容发送到本地 MCPMate 桌面应用，不会转发给第三方服务。
+										将完整内容发送到本地 MCPMate 桌面应用，不会上传完整片段。
 									</li>
 									<li>
-										扩展不使用远程代码（remote code），也不进行广告跟踪或跨站画像。
+										扩展发现面板会读取 MCPMate Admin
+										服务发布的公开目录数据，但不会上传当前页面内容、配置片段或导入元数据。
+									</li>
+									<li>
+										扩展不出售个人数据，不使用远程代码（remote code），也不进行广告跟踪或跨站画像。
 									</li>
 								</ul>
 							</div>
@@ -212,7 +216,7 @@ const Privacy = () => {
 					<div>
 						<h1 className="text-3xl font-bold mb-4">Privacy Policy</h1>
 						<p className="text-slate-600 dark:text-slate-400 mb-8">
-							Last updated: October 12, 2025
+							Last updated: May 17, 2026
 						</p>
 
 						<div className="space-y-8 leading-relaxed text-slate-800 dark:text-slate-200">
@@ -242,8 +246,8 @@ const Privacy = () => {
 								</h2>
 								<ul className="list-disc pl-6 space-y-2">
 									<li>
-										The extension does not collect, store, or sell personal data
-										and does not upload data to MCPMate cloud services.
+										By default, the extension does not upload configuration
+										snippets or import metadata.
 									</li>
 									<li>
 										It reads code-block text locally in the browser only to detect
@@ -255,12 +259,17 @@ const Privacy = () => {
 									</li>
 									<li>
 										Transfer is local-to-device via the <code>mcpmate://</code>{" "}
-										protocol to the MCPMate desktop app, not to third-party
-										servers.
+										protocol to the MCPMate desktop app. The full snippet is not
+										uploaded.
 									</li>
 									<li>
-										The extension does not use remote code and does not perform ad
-										tracking or cross-site profiling.
+										The discovery panel reads the public catalog published by the
+										MCPMate Admin service, but it does not upload current page
+										content, configuration snippets, or import metadata.
+									</li>
+									<li>
+										The extension does not sell personal data, use remote code, or
+										perform ad tracking or cross-site profiling.
 									</li>
 								</ul>
 							</div>

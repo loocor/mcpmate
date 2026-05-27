@@ -35,6 +35,10 @@ Preview download configuration
 - Optionally set `VITE_PREVIEW_VERSION`, `VITE_PREVIEW_EXPIRES_AT` (default 2025-11-01)
 - Optionally set `VITE_DOCS_URL`, `VITE_INSTALL_URL`, `VITE_WIN_URL`, `VITE_LINUX_URL`
 
+Extension discovery
+- Extension discovery data is owned by the separate MCPMate Admin service.
+- The marketing website may link to extension docs and privacy details, but it does not host discovery APIs or collect extension import metadata.
+
 Notes
 - Waitlist section is removed; navigation now highlights "Quick Start" and a download section with macOS variants.
 - If URLs are not set, buttons render as "Coming Soon".

@@ -1,0 +1,1021 @@
+import {
+	DISCOVERY_PAGE_SIZE,
+	buildDiscoveryUrl,
+	discoveryPageState,
+	discoveryQueryForPage,
+	entriesForPageRender,
+	isPageableDiscoveryKind,
+	nextDiscoveryPageState,
+	responseMetadata,
+	shouldClearEntriesBeforeLoad,
+	shouldRenderPanel,
+	shouldStartPullRefresh,
+} from "./discovery-state.mjs";
+
+const ADMIN_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.adminApiOrigin;
+const BUILD_DATE = globalThis.MCPMATE_EXTENSION_BUILD.buildDate;
+const DISCOVERY_MODE = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryMode || "account";
+const DISCOVERY_ENDPOINTS = {
+	portals: `${ADMIN_ORIGIN}/discovery/portals`,
+	servers: `${ADMIN_ORIGIN}/discovery/servers`,
+	clients: `${ADMIN_ORIGIN}/discovery/clients`,
+};
+const MOCK_DISCOVERY_ENDPOINTS = {
+	portals: chrome.runtime.getURL("mock/portals.json"),
+	servers: chrome.runtime.getURL("mock/servers.json"),
+	clients: chrome.runtime.getURL("mock/clients.json"),
+};
+const SETTINGS_KEY = "mcpmate.discovery.settings";
+const DISCOVERY_CACHE_TTL_MS = 60 * 60 * 1000;
+const DISCOVERY_CACHE_KEY_PREFIX = "mcpmate.discovery.cache";
+const PULL_REFRESH_THRESHOLD = 56;
+const DEFAULT_SETTINGS = {
+	language: "en",
+	theme: "system",
+};
+const COPY = {
+	en: {
+		title: "MCPMate",
+		subtitle: "Curated MCP resources from MCPMate.",
+		tabs: {
+			portals: "Portals",
+			servers: "Servers",
+			clients: "Clients",
+		},
+		footer: {
+			github: "GitHub",
+			website: "Website",
+			settings: "Settings",
+			discord: "Discord",
+		},
+		actions: {
+			refresh: "Refresh",
+		},
+		settings: {
+			language: "Language",
+			theme: "Theme",
+			system: "System",
+			light: "Light",
+			dark: "Dark",
+		},
+		loading: {
+			portals: "Loading portal recommendations...",
+			servers: "Loading server recommendations...",
+			clients: "Loading client recommendations...",
+		},
+		empty: {
+			portals: "No portal recommendations are published yet.",
+			servers: "No server recommendations are published yet.",
+			clients: "No client recommendations are published yet.",
+		},
+		unavailable: {
+			portals: "Portal catalog is unavailable right now.",
+			servers: "Server catalog is unavailable right now.",
+			clients: "Client catalog is unavailable right now.",
+		},
+		mockUnavailable: {
+			portals: "Mock portal catalog is unavailable right now.",
+			servers: "Mock server catalog is unavailable right now.",
+			clients: "Mock client catalog is unavailable right now.",
+		},
+		source: {
+			account: "MCPMate catalog",
+			mock: "Mock catalog",
+		},
+		visit: "Open link",
+		loadingMore: "Loading more...",
+		pullRefresh: "Pull to refresh",
+		releaseRefresh: "Release to refresh",
+		refreshing: "Refreshing...",
+	},
+	"zh-cn": {
+		title: "MCPMate",
+		subtitle: "来自 MCPMate 的精选 MCP 资源。",
+		tabs: {
+			portals: "入口",
+			servers: "服务",
+			clients: "客户端",
+		},
+		footer: {
+			github: "GitHub",
+			website: "官网",
+			settings: "设置",
+			discord: "Discord",
+		},
+		actions: {
+			refresh: "刷新",
+		},
+		settings: {
+			language: "语言",
+			theme: "主题",
+			system: "跟随系统",
+			light: "浅色",
+			dark: "深色",
+		},
+		loading: {
+			portals: "正在加载入口推荐...",
+			servers: "正在加载服务推荐...",
+			clients: "正在加载客户端推荐...",
+		},
+		empty: {
+			portals: "暂未发布入口推荐。",
+			servers: "暂未发布服务推荐。",
+			clients: "暂未发布客户端推荐。",
+		},
+		unavailable: {
+			portals: "当前未提供入口目录。",
+			servers: "当前未提供服务目录。",
+			clients: "当前未提供客户端目录。",
+		},
+		mockUnavailable: {
+			portals: "当前未提供模拟入口目录。",
+			servers: "当前未提供模拟服务目录。",
+			clients: "当前未提供模拟客户端目录。",
+		},
+		source: {
+			account: "MCPMate 目录",
+			mock: "模拟目录",
+		},
+		visit: "打开链接",
+		loadingMore: "正在加载更多...",
+		pullRefresh: "下拉刷新",
+		releaseRefresh: "松开刷新",
+		refreshing: "正在刷新...",
+	},
+	ja: {
+		title: "MCPMate",
+		subtitle: "MCPMate の厳選 MCP リソース。",
+		tabs: {
+			portals: "ポータル",
+			servers: "サーバー",
+			clients: "クライアント",
+		},
+		footer: {
+			github: "GitHub",
+			website: "Web サイト",
+			settings: "設定",
+			discord: "Discord",
+		},
+		actions: {
+			refresh: "更新",
+		},
+		settings: {
+			language: "言語",
+			theme: "テーマ",
+			system: "システム",
+			light: "ライト",
+			dark: "ダーク",
+		},
+		loading: {
+			portals: "ポータルのおすすめを読み込み中...",
+			servers: "サーバーのおすすめを読み込み中...",
+			clients: "クライアントのおすすめを読み込み中...",
+		},
+		empty: {
+			portals: "公開済みのポータルおすすめはまだありません。",
+			servers: "公開済みのサーバーおすすめはまだありません。",
+			clients: "公開済みのクライアントおすすめはまだありません。",
+		},
+		unavailable: {
+			portals: "ポータルカタログは現在利用できません。",
+			servers: "サーバーカタログは現在利用できません。",
+			clients: "クライアントカタログは現在利用できません。",
+		},
+		mockUnavailable: {
+			portals: "モックのポータルカタログは現在利用できません。",
+			servers: "モックのサーバーカタログは現在利用できません。",
+			clients: "モックのクライアントカタログは現在利用できません。",
+		},
+		source: {
+			account: "MCPMate カタログ",
+			mock: "モックカタログ",
+		},
+		visit: "リンクを開く",
+		loadingMore: "さらに読み込み中...",
+		pullRefresh: "引いて更新",
+		releaseRefresh: "離して更新",
+		refreshing: "更新中...",
+	},
+};
+
+let activeCopy = COPY.en;
+let activePanelName = "portals";
+const discoveryStates = new Map();
+const renderedSections = new Set();
+let paginationObserver = null;
+
+function openExternalUrl(url) {
+	if (chrome?.tabs?.create) {
+		chrome.tabs.create({ url });
+		return;
+	}
+	window.open(url, "_blank", "noopener,noreferrer");
+}
+
+const ICONS = {
+	external:
+		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>',
+	github:
+		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>',
+	globe:
+		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg>',
+	discord:
+		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5h.01"/><path d="M16 12.5h.01"/><path d="M7.5 8.5c3-1 6-1 9 0"/><path d="M8 17c-1.3-.4-2.5-1-3.5-1.8.2-3.2 1-6.3 2.4-9.2A14 14 0 0 1 10 5l.6 1.2a12.5 12.5 0 0 1 2.8 0L14 5a14 14 0 0 1 3.1 1c1.4 2.9 2.2 6 2.4 9.2A13 13 0 0 1 16 17l-.8-1.2a9 9 0 0 1-6.4 0z"/></svg>',
+	refresh:
+		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
+	settings:
+		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.36.33.69.6 1H20a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-.5 1Z"/></svg>',
+};
+
+function renderInlineIcons() {
+	for (const el of document.querySelectorAll("[data-icon]")) {
+		el.innerHTML = ICONS[el.dataset.icon] || "";
+	}
+}
+
+function discoveryEndpoints() {
+	return DISCOVERY_MODE === "mock" ? MOCK_DISCOVERY_ENDPOINTS : DISCOVERY_ENDPOINTS;
+}
+
+function discoverySourceLabel() {
+	return activeCopy.source[DISCOVERY_MODE] || activeCopy.source.account;
+}
+
+function unavailableMessage(kind) {
+	return DISCOVERY_MODE === "mock"
+		? activeCopy.mockUnavailable[kind]
+		: activeCopy.unavailable[kind];
+}
+
+function normalizeLanguage(language) {
+	if (language === "zh" || language === "zh-cn") {
+		return "zh-cn";
+	}
+	if (language === "ja") {
+		return "ja";
+	}
+	return "en";
+}
+
+function normalizeTheme(theme) {
+	if (theme === "light" || theme === "dark" || theme === "system") {
+		return theme;
+	}
+	return "system";
+}
+
+function normalizeSettings(candidate) {
+	return {
+		language: normalizeLanguage(candidate?.language),
+		theme: normalizeTheme(candidate?.theme),
+	};
+}
+
+function storageArea() {
+	return chrome?.storage?.sync || chrome?.storage?.local || null;
+}
+
+function localStorageArea() {
+	return chrome?.storage?.local || null;
+}
+
+async function readSettings() {
+	const area = storageArea();
+	if (area) {
+		const stored = await area.get(SETTINGS_KEY);
+		return normalizeSettings(stored[SETTINGS_KEY] || DEFAULT_SETTINGS);
+	}
+	try {
+		return normalizeSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"));
+	} catch {
+		return DEFAULT_SETTINGS;
+	}
+}
+
+async function writeSettings(settings) {
+	const normalized = normalizeSettings(settings);
+	const area = storageArea();
+	if (area) {
+		await area.set({ [SETTINGS_KEY]: normalized });
+		return normalized;
+	}
+	localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalized));
+	return normalized;
+}
+
+function discoveryCacheKey(kind, requestUrl) {
+	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
+}
+
+async function readDiscoveryCache(kind, requestUrl) {
+	const key = discoveryCacheKey(kind, requestUrl);
+	const area = localStorageArea();
+	let cached;
+	if (area) {
+		cached = (await area.get(key))[key];
+	} else {
+		try {
+			cached = JSON.parse(localStorage.getItem(key) || "null");
+		} catch {
+			return null;
+		}
+	}
+	if (!cached || Date.now() - cached.cachedAt > DISCOVERY_CACHE_TTL_MS) {
+		return null;
+	}
+	return cached.data || null;
+}
+
+async function writeDiscoveryCache(kind, requestUrl, data) {
+	const key = discoveryCacheKey(kind, requestUrl);
+	const cached = {
+		cachedAt: Date.now(),
+		data,
+	};
+	const area = localStorageArea();
+	if (area) {
+		await area.set({ [key]: cached });
+		return;
+	}
+	localStorage.setItem(key, JSON.stringify(cached));
+}
+
+function resolvedTheme(theme) {
+	if (theme === "system") {
+		return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+	}
+	return theme;
+}
+
+function toolbarIconPaths(theme) {
+	const suffix = resolvedTheme(theme) === "dark" ? "-dark" : "";
+	return {
+		16: `icons/icon${suffix}-16.png`,
+		32: `icons/icon${suffix}-32.png`,
+		48: `icons/icon${suffix}-48.png`,
+		128: `icons/icon${suffix}-128.png`,
+	};
+}
+
+function applyToolbarIcon(theme) {
+	if (!chrome?.action?.setIcon) return;
+	chrome.action.setIcon({ path: toolbarIconPaths(theme) });
+}
+
+function applyTheme(theme) {
+	document.documentElement.dataset.theme = resolvedTheme(theme);
+	applyToolbarIcon(theme);
+}
+
+function setText(id, value) {
+	const el = document.getElementById(id);
+	if (el) el.textContent = value;
+}
+
+function documentLanguage(language) {
+	if (language === "zh-cn") {
+		return "zh-CN";
+	}
+	if (language === "ja") {
+		return "ja";
+	}
+	return "en";
+}
+
+function applyCopy(language) {
+	activeCopy = COPY[language] || COPY.en;
+	document.documentElement.lang = documentLanguage(language);
+	setText("popup-title", activeCopy.title);
+	setText("popup-copy", activeCopy.subtitle);
+	setText("tab-portals", activeCopy.tabs.portals);
+	setText("tab-servers", activeCopy.tabs.servers);
+	setText("tab-clients", activeCopy.tabs.clients);
+	setText("language-label", activeCopy.settings.language);
+	setText("theme-label", activeCopy.settings.theme);
+	setText("theme-system-option", activeCopy.settings.system);
+	setText("theme-light-option", activeCopy.settings.light);
+	setText("theme-dark-option", activeCopy.settings.dark);
+	setButtonLabel("github-button", activeCopy.footer.github);
+	setButtonLabel("website-button", activeCopy.footer.website);
+	setButtonLabel("settings-button", activeCopy.footer.settings);
+	setButtonLabel("discord-button", activeCopy.footer.discord);
+	setButtonLabel("refresh-button", activeCopy.actions.refresh);
+	setText("discord-label", activeCopy.footer.discord);
+	setText("build-date", BUILD_DATE);
+	for (const button of document.querySelectorAll(".open-button")) {
+		button.setAttribute("aria-label", activeCopy.visit);
+		button.title = activeCopy.visit;
+	}
+}
+
+function setButtonLabel(id, label) {
+	const button = document.getElementById(id);
+	if (!button) return;
+	button.setAttribute("aria-label", label);
+	button.title = label;
+}
+
+function initialBadge(name) {
+	return String(name || "?")
+		.trim()
+		.slice(0, 2)
+		.toUpperCase();
+}
+
+function renderIcon(name, iconUrl) {
+	const badge = document.createElement("span");
+	badge.className = "icon-badge";
+	if (iconUrl) {
+		const img = document.createElement("img");
+		img.src = iconUrl;
+		img.alt = "";
+		badge.appendChild(img);
+		return badge;
+	}
+	badge.textContent = initialBadge(name);
+	return badge;
+}
+
+function card({ name, description, url, source, signal, meta, iconUrl }) {
+	const el = document.createElement("article");
+	el.className = "card";
+	const title = document.createElement("div");
+	title.className = "card-title";
+
+	const heading = document.createElement("div");
+	heading.className = "card-heading";
+	heading.appendChild(renderIcon(name, iconUrl));
+
+	const headingText = document.createElement("div");
+	headingText.className = "card-heading-text";
+	const label = document.createElement("span");
+	label.textContent = name;
+	headingText.appendChild(label);
+	heading.appendChild(headingText);
+
+	const openButton = document.createElement("button");
+	openButton.type = "button";
+	openButton.className = "open-button";
+	openButton.setAttribute("aria-label", activeCopy.visit);
+	openButton.title = activeCopy.visit;
+	const icon = document.createElement("span");
+	icon.className = "button-icon";
+	icon.dataset.icon = "external";
+	icon.innerHTML = ICONS.external;
+	openButton.appendChild(icon);
+	openButton.addEventListener("click", () => openExternalUrl(url));
+	title.appendChild(heading);
+	title.appendChild(openButton);
+
+	const body = document.createElement("p");
+	body.textContent = description;
+
+	const metaEl = document.createElement("div");
+	metaEl.className = "card-meta";
+	for (const item of [signal, meta, source].filter(Boolean)) {
+		const pill = document.createElement("span");
+		pill.className = "pill";
+		pill.textContent = item;
+		metaEl.appendChild(pill);
+	}
+
+	el.appendChild(title);
+	el.appendChild(body);
+	el.appendChild(metaEl);
+	return el;
+}
+
+function endpointStatusId(kind) {
+	return `${kind.slice(0, -1)}-status`;
+}
+
+function endpointListId(kind) {
+	return `${kind.slice(0, -1)}-list`;
+}
+
+function endpointFooterId(kind) {
+	return `${kind.slice(0, -1)}-footer`;
+}
+
+function endpointSentinelId(kind) {
+	return `${kind.slice(0, -1)}-sentinel`;
+}
+
+function setSectionStatus(kind, text) {
+	document.getElementById(endpointStatusId(kind)).textContent = text;
+}
+
+function createEntryCardsFragment(kind, entries) {
+	const fragment = document.createDocumentFragment();
+	for (const entry of entries) {
+		fragment.appendChild(entryCard(kind, entry));
+	}
+	return fragment;
+}
+
+function setSectionEntries(kind, entries, { append = false } = {}) {
+	const list = document.getElementById(endpointListId(kind));
+	const cards = createEntryCardsFragment(kind, entries);
+	if (append) {
+		list.appendChild(cards);
+		return;
+	}
+	list.replaceChildren(cards);
+}
+
+function sectionHasRenderedEntries(kind) {
+	return document.getElementById(endpointListId(kind)).childElementCount > 0;
+}
+
+function setSectionFooter(kind, text) {
+	const footer = document.getElementById(endpointFooterId(kind));
+	if (footer) footer.textContent = text;
+}
+
+function discoveryMeta(entry) {
+	return (
+		entry?._meta?.["ai.mcpmate/discovery"] ||
+		entry?.metadata?.discovery ||
+		entry?.server?._meta?.["ai.mcpmate/discovery"] ||
+		{}
+	);
+}
+
+function firstTransport(server) {
+	const remote = Array.isArray(server?.remotes) ? server.remotes[0] : null;
+	if (remote?.type) return remote.type;
+	const pkg = Array.isArray(server?.packages) ? server.packages[0] : null;
+	if (pkg?.transport?.type) return pkg.transport.type;
+	return "";
+}
+
+function entryUrl(entry) {
+	const server = entry?.server || entry;
+	const official = entry?.official || server?.official || {};
+	const curated = entry?.curated || server?.curated || {};
+	return (
+		entry?.url ||
+		entry?.homepageUrl ||
+		curated.docsUrl ||
+		curated.supportUrl ||
+		official.websiteUrl ||
+		official.repository?.url ||
+		official.docsUrl ||
+		server?.websiteUrl ||
+		server?.homepageUrl ||
+		server?.repository?.url ||
+		server?.docsUrl ||
+		"https://mcp.umate.ai"
+	);
+}
+
+function iconUrl(entry) {
+	const server = entry?.server || entry;
+	const official = entry?.official || server?.official || {};
+	const meta = discoveryMeta(entry);
+	const officialIcon = Array.isArray(official.icons) ? official.icons[0]?.src : "";
+	return (
+		meta.iconUrl ||
+		meta.brandIconUrl ||
+		entry?.iconUrl ||
+		entry?.logoUrl ||
+		officialIcon ||
+		server?.iconUrl ||
+		server?.logoUrl ||
+		""
+	);
+}
+
+function normalizeEntries(kind, data) {
+	if (Array.isArray(data)) return data;
+	if (Array.isArray(data?.[kind])) return data[kind];
+	if (kind === "servers" && Array.isArray(data?.items)) return data.items;
+	return [];
+}
+
+function serverCategories(curated, meta) {
+	if (Array.isArray(curated.categories)) {
+		return curated.categories.slice(0, 2).join(", ");
+	}
+	if (Array.isArray(meta.categories)) {
+		return meta.categories.slice(0, 2).join(", ");
+	}
+	return "";
+}
+
+function entryMeta(entry, kind) {
+	const server = entry?.server || entry;
+	const official = entry?.official || server?.official || {};
+	const curated = entry?.curated || server?.curated || {};
+	const meta = discoveryMeta(entry);
+	if (kind === "servers") {
+		const categories = serverCategories(curated, meta);
+		const score =
+			typeof meta.rating?.score === "number" ? `Score ${meta.rating.score}` : "";
+		return {
+			signal: curated.recommendationTier || meta.quality?.status || score,
+			meta: categories || firstTransport(official) || firstTransport(server),
+		};
+	}
+	if (kind === "clients") {
+		return {
+			signal: entry?.signal || entry?.category || "",
+			meta: entry?.meta || entry?.config?.kind || "",
+		};
+	}
+	return {
+		signal: entry?.signal || meta.quality?.status || "",
+		meta: entry?.meta || meta.category || meta.platform || "",
+	};
+}
+
+function entryName(entry, kind) {
+	const server = entry?.server || entry;
+	const official = entry?.official || server?.official || {};
+	const curated = entry?.curated || server?.curated || {};
+	if (kind === "servers") {
+		return (
+			curated.displayName ||
+			official.title ||
+			official.name ||
+			server?.title ||
+			server?.name ||
+			"Untitled"
+		);
+	}
+	if (kind === "clients") {
+		return entry?.displayName || entry?.title || entry?.identifier || "Untitled";
+	}
+	return entry?.title || server?.title || server?.name || "Untitled";
+}
+
+function entryDescription(entry, kind) {
+	const server = entry?.server || entry;
+	const official = entry?.official || server?.official || {};
+	const curated = entry?.curated || server?.curated || {};
+	if (kind === "servers") {
+		return curated.summary || official.description || server?.description || "Curated server entry.";
+	}
+	if (kind === "clients") {
+		return entry?.description || `Curated ${kind.slice(0, -1)} entry.`;
+	}
+	return entry?.description || server?.description || `Curated ${kind.slice(0, -1)} entry.`;
+}
+
+function entrySource(entry) {
+	const server = entry?.server || entry;
+	const official = entry?.official || server?.official || {};
+	return (
+		entry?.source ||
+		official.repository?.source ||
+		server?.repository?.source ||
+		discoveryMeta(entry).source ||
+		discoverySourceLabel()
+	);
+}
+
+function entryCard(kind, entry) {
+	const metaBits = entryMeta(entry, kind);
+	return card({
+		name: entryName(entry, kind),
+		description: entryDescription(entry, kind),
+		url: entryUrl(entry),
+		source: entrySource(entry),
+		signal: metaBits.signal,
+		meta: metaBits.meta,
+		iconUrl: iconUrl(entry),
+	});
+}
+
+function discoveryRequestUrl(kind, { limit, offset }) {
+	const endpoint = discoveryEndpoints()[kind];
+	if (DISCOVERY_MODE === "mock") {
+		return endpoint;
+	}
+	return buildDiscoveryUrl(endpoint, discoveryQueryForPage({ kind, limit, offset }));
+}
+
+async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false }) {
+	const requestUrl = discoveryRequestUrl(kind, { limit, offset });
+	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl);
+	if (!data) {
+		const response = await fetch(requestUrl, {
+			headers: { accept: "application/json" },
+		});
+		if (!response.ok) {
+			throw new Error(`${kind}:${response.status}`);
+		}
+		data = await response.json();
+		await writeDiscoveryCache(kind, requestUrl, data);
+	}
+	return data;
+}
+
+function blankDiscoveryState() {
+	return {
+		entries: [],
+		hasMore: false,
+		nextOffset: 0,
+		loaded: false,
+		loading: false,
+	};
+}
+
+function sectionState(kind) {
+	if (!discoveryStates.has(kind)) {
+		discoveryStates.set(kind, blankDiscoveryState());
+	}
+	return discoveryStates.get(kind);
+}
+
+function sectionLoaded(kind) {
+	return isPageableDiscoveryKind(kind) ? sectionState(kind).loaded : renderedSections.has(kind);
+}
+
+async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = {}) {
+	const current = sectionState(kind);
+	if (current.loading) return;
+	if (!reset && (!current.loaded || !current.hasMore)) return;
+
+	const offset = reset ? 0 : current.nextOffset;
+	const limit = DISCOVERY_PAGE_SIZE;
+	const shouldClearEntries = shouldClearEntriesBeforeLoad(current, { reset });
+	discoveryStates.set(kind, { ...current, loading: true });
+	if (reset) {
+		setSectionStatus(kind, activeCopy.loading[kind]);
+		if (shouldClearEntries) {
+			setSectionEntries(kind, []);
+		}
+		setSectionFooter(kind, "");
+	} else {
+		setSectionFooter(kind, activeCopy.loadingMore);
+	}
+
+	try {
+		const data = await fetchDiscoveryData(kind, { limit, offset, bypassCache });
+		const entries = normalizeEntries(kind, data);
+		const page = discoveryPageState({
+			kind,
+			entries,
+			metadata: responseMetadata(data),
+			limit,
+			offset,
+		});
+		const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, {
+			reset,
+		});
+		discoveryStates.set(kind, { ...next, loaded: true, loading: false });
+		const entriesToRender = entriesForPageRender(next, page, { reset });
+
+		if (next.entries.length === 0) {
+			setSectionStatus(kind, activeCopy.empty[kind]);
+			setSectionEntries(kind, []);
+			setSectionFooter(kind, "");
+			return;
+		}
+
+		setSectionStatus(kind, "");
+		setSectionEntries(kind, entriesToRender, { append: !reset });
+		setSectionFooter(kind, "");
+		if (activePanelName === kind) {
+			requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
+		}
+	} catch (error) {
+		discoveryStates.set(kind, { ...current, loading: false });
+		if (reset) {
+			setSectionStatus(kind, unavailableMessage(kind));
+		} else {
+			setSectionFooter(kind, unavailableMessage(kind));
+		}
+		throw error;
+	}
+}
+
+async function refreshActivePanel() {
+	await ensureSectionRendered(activePanelName, { bypassCache: true });
+}
+
+function activePaginationSentinel() {
+	if (!isPageableDiscoveryKind(activePanelName)) return null;
+	return document.getElementById(endpointSentinelId(activePanelName));
+}
+
+function sentinelIsNearScrollEnd(sentinel, content) {
+	const sentinelRect = sentinel.getBoundingClientRect();
+	const contentRect = content.getBoundingClientRect();
+	return sentinelRect.top <= contentRect.bottom + 120;
+}
+
+function loadMoreIfActiveSentinelVisible() {
+	const sentinel = activePaginationSentinel();
+	const content = document.getElementById("content-area");
+	if (!sentinel || !content) return;
+	if (!sentinelIsNearScrollEnd(sentinel, content)) return;
+	loadDiscoveryPage(activePanelName).catch(() => {});
+}
+
+function setupPaginationObserver(content) {
+	if (!("IntersectionObserver" in window)) return;
+	paginationObserver?.disconnect();
+	paginationObserver = new IntersectionObserver(
+		(entries) => {
+			for (const entry of entries) {
+				if (!entry.isIntersecting) continue;
+				const kind = entry.target.dataset.paginationKind;
+				if (kind !== activePanelName) continue;
+				loadDiscoveryPage(kind).catch(() => {});
+			}
+		},
+		{
+			root: content,
+			rootMargin: "120px 0px 120px 0px",
+			threshold: 0,
+		},
+	);
+	for (const kind of ["servers", "clients"]) {
+		const sentinel = document.getElementById(endpointSentinelId(kind));
+		if (!sentinel) continue;
+		sentinel.dataset.paginationKind = kind;
+		paginationObserver.observe(sentinel);
+	}
+}
+
+function setRefreshIndicator(text, visible) {
+	const indicator = document.getElementById("refresh-indicator");
+	if (!indicator) return;
+	indicator.textContent = text || "";
+	indicator.classList.toggle("is-visible", visible);
+}
+
+function setupPullToRefresh(content) {
+	let pointerStartY = null;
+	let pullDistance = 0;
+	let pulling = false;
+
+	function resetPull() {
+		pointerStartY = null;
+		pullDistance = 0;
+		pulling = false;
+		setRefreshIndicator("", false);
+	}
+
+	content.addEventListener("pointerdown", (event) => {
+		if (
+			!shouldStartPullRefresh({
+				button: event.button,
+				pointerType: event.pointerType,
+				scrollTop: content.scrollTop,
+				panelName: activePanelName,
+				selectionType: window.getSelection()?.type,
+			})
+		) {
+			return;
+		}
+		pointerStartY = event.clientY;
+	});
+
+	content.addEventListener(
+		"pointermove",
+		(event) => {
+			if (pointerStartY === null || content.scrollTop > 0) return;
+			pullDistance = Math.max(0, event.clientY - pointerStartY);
+			if (pullDistance <= 0) return;
+			pulling = true;
+			event.preventDefault();
+			setRefreshIndicator(
+				pullDistance >= PULL_REFRESH_THRESHOLD
+					? activeCopy.releaseRefresh
+					: activeCopy.pullRefresh,
+				true,
+			);
+		},
+		{ passive: false },
+	);
+
+	async function finishPull() {
+		if (!pulling) {
+			resetPull();
+			return;
+		}
+		const shouldRefresh = pullDistance >= PULL_REFRESH_THRESHOLD;
+		if (!shouldRefresh) {
+			resetPull();
+			return;
+		}
+		setRefreshIndicator(activeCopy.refreshing, true);
+		try {
+			await refreshActivePanel();
+		} catch {
+			// renderSection already surfaces the section-specific error state.
+		}
+		resetPull();
+	}
+
+	content.addEventListener("pointerup", () => {
+		finishPull();
+	});
+	content.addEventListener("pointercancel", resetPull);
+}
+
+async function renderSection(kind, { bypassCache = false } = {}) {
+	if (isPageableDiscoveryKind(kind)) {
+		await loadDiscoveryPage(kind, { reset: true, bypassCache });
+		return;
+	}
+	const hasRenderedEntries = sectionHasRenderedEntries(kind);
+	setSectionStatus(kind, activeCopy.loading[kind]);
+	if (!hasRenderedEntries) {
+		setSectionEntries(kind, []);
+	}
+	setSectionFooter(kind, "");
+	const data = await fetchDiscoveryData(kind, {
+		limit: DISCOVERY_PAGE_SIZE,
+		offset: 0,
+		bypassCache,
+	});
+	const entries = normalizeEntries(kind, data);
+	if (entries.length === 0) {
+		setSectionStatus(kind, activeCopy.empty[kind]);
+		setSectionEntries(kind, []);
+		renderedSections.add(kind);
+		return;
+	}
+	setSectionStatus(kind, "");
+	setSectionEntries(kind, entries);
+	renderedSections.add(kind);
+}
+
+async function ensureSectionRendered(kind, { bypassCache = false } = {}) {
+	if (!shouldRenderPanel({ panelName: kind, loaded: sectionLoaded(kind), bypassCache })) {
+		return;
+	}
+	await renderSection(kind, { bypassCache });
+}
+
+function activatePanel(panelName) {
+	activePanelName = panelName;
+	for (const tab of document.querySelectorAll("[data-panel-target]")) {
+		tab.classList.toggle("is-active", tab.dataset.panelTarget === panelName);
+	}
+	for (const panel of document.querySelectorAll(".panel")) {
+		panel.classList.toggle("is-active", panel.dataset.panel === panelName);
+	}
+	document
+		.getElementById("settings-button")
+		.classList.toggle("is-active", panelName === "settings");
+	const content = document.getElementById("content-area");
+	if (content) content.scrollTop = 0;
+	ensureSectionRendered(panelName).catch(() => {
+		if (panelName !== "settings") {
+			setSectionStatus(panelName, unavailableMessage(panelName));
+		}
+	});
+	requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+	renderInlineIcons();
+	let settings = await readSettings();
+	const languageSelect = document.getElementById("language-select");
+	const themeSelect = document.getElementById("theme-select");
+	const content = document.getElementById("content-area");
+	languageSelect.value = settings.language;
+	themeSelect.value = settings.theme;
+	applyCopy(settings.language);
+	applyTheme(settings.theme);
+
+	ensureSectionRendered(activePanelName).catch(() => {
+		setSectionStatus(activePanelName, unavailableMessage(activePanelName));
+	});
+
+	async function persist(nextSettings) {
+		settings = await writeSettings(nextSettings);
+		applyCopy(settings.language);
+		applyTheme(settings.theme);
+	}
+
+	languageSelect.addEventListener("change", () =>
+		persist({ ...settings, language: languageSelect.value }),
+	);
+	themeSelect.addEventListener("change", () =>
+		persist({ ...settings, theme: themeSelect.value }),
+	);
+
+	for (const tab of document.querySelectorAll("[data-panel-target]")) {
+		tab.addEventListener("click", () => activatePanel(tab.dataset.panelTarget));
+	}
+	setupPaginationObserver(content);
+	setupPullToRefresh(content);
+	document.getElementById("refresh-button").addEventListener("click", () => {
+		refreshActivePanel().catch(() => {});
+	});
+	for (const button of document.querySelectorAll("[data-open-url]")) {
+		button.addEventListener("click", () => openExternalUrl(button.dataset.openUrl));
+	}
+	document
+		.getElementById("settings-button")
+		.addEventListener("click", () => activatePanel("settings"));
+	window
+		.matchMedia("(prefers-color-scheme: dark)")
+		.addEventListener("change", () => applyTheme(settings.theme));
+});
