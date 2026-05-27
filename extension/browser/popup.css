@@ -462,30 +462,50 @@ p {
 }
 
 .open-button {
-	width: 34px;
-	height: 34px;
+	width: 24px;
+	height: 24px;
+	min-height: 24px;
 	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+	color: #64748b;
 }
 
 .icon-button.is-active,
-.icon-button:focus-visible,
-.open-button:focus-visible {
+.icon-button:focus-visible {
 	border-color: #2563eb;
 	outline: none;
 }
 
+.open-button:focus-visible {
+	color: #0f172a;
+	outline: none;
+}
+
 .icon-button:hover,
-.discord-button:hover,
-.open-button:hover {
+.discord-button:hover {
 	border-color: #94a3b8;
 	background: #f8fafc;
 }
 
+.open-button:hover {
+	color: #0f172a;
+}
+
 :root[data-theme="dark"] .icon-button:hover,
-:root[data-theme="dark"] .discord-button:hover,
-:root[data-theme="dark"] .open-button:hover {
+:root[data-theme="dark"] .discord-button:hover {
 	border-color: #475569;
 	background: #1e293b;
+}
+
+:root[data-theme="dark"] .open-button:hover {
+	color: #e2e8f0;
+}
+
+:root[data-theme="dark"] .open-button {
+	background: transparent;
+	color: #94a3b8;
 }
 
 .button-icon {
