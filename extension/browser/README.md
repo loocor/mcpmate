@@ -17,6 +17,10 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 
 - Popup discovery tabs for **Portals**, **Servers**, and **Clients**.
 - Discovery data comes from the published MCPMate Admin discovery APIs.
+- Servers and clients request the `extension` surface with paginated discovery
+  queries and load more entries as the popup list is scrolled.
+- Use the popup refresh button to reload the active discovery panel; touch
+  devices can also pull down from the top of the panel.
 - Discovery responses are cached locally for one hour to avoid repeated popup fetches.
 - Optional language and theme preferences live inside the toolbar popup settings panel.
 - Popup styling mirrors the shadcn Dashboard visual language with lightweight static HTML/CSS/JS, avoiding a React bundle inside the extension.
@@ -53,5 +57,10 @@ Status: Available on Chromium-based browser extension stores, including Chrome W
 
 - Reload the extension from your browser's extensions page after local changes.
 - `mock` mode remains available for local UI checks only. Production config uses `account` and does not silently fall back to mock data when the Admin API is unavailable.
+- The paginated discovery UI uses only the existing popup, `storage` permission,
+  and published Admin API origin. It does not add background network activity,
+  remote code execution, analytics submission, or additional browser permissions.
+- Mouse and trackpad gestures are not intercepted for pull-to-refresh, so text
+  selection in catalog cards stays native.
 - Chromium-based extension stores expect PNGs at fixed sizes; this folder already ships `icons/icon-*.png` derived from the desktop app icon.
 - Discovery data is owned by the separate MCPMate Admin service, not by the marketing website.
