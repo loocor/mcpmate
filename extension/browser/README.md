@@ -57,9 +57,10 @@ Status: Available on Chromium-based browser extension stores, including Chrome W
 
 - Reload the extension from your browser's extensions page after local changes.
 - `mock` mode remains available for local UI checks only. Production config uses `account` and does not silently fall back to mock data when the Admin API is unavailable.
-- The paginated discovery UI uses only the existing popup, `storage` permission,
-  and published Admin API origin. It does not add background network activity,
-  remote code execution, analytics submission, or additional browser permissions.
+- The paginated discovery UI uses the existing popup, the `storage` permission
+  for local settings/cache, and the published Admin API origin. It does not add
+  background network activity, remote code execution, analytics submission, or
+  new host/background permissions.
 - Mouse and trackpad gestures are not intercepted for pull-to-refresh, so text
   selection in catalog cards stays native.
 - Chromium-based extension stores expect PNGs at fixed sizes; this folder already ships `icons/icon-*.png` derived from the desktop app icon.

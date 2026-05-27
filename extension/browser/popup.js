@@ -8,6 +8,7 @@ import {
 	nextDiscoveryPageState,
 	responseMetadata,
 	shouldClearEntriesBeforeLoad,
+	shouldRenderPanel,
 	shouldStartPullRefresh,
 } from "./discovery-state.mjs";
 
@@ -200,6 +201,7 @@ const COPY = {
 let activeCopy = COPY.en;
 let activePanelName = "portals";
 const discoveryStates = new Map();
+const renderedSections = new Set();
 let paginationObserver = null;
 
 function openExternalUrl(url) {
@@ -726,6 +728,10 @@ function sectionState(kind) {
 	return discoveryStates.get(kind);
 }
 
+function sectionLoaded(kind) {
+	return isPageableDiscoveryKind(kind) ? sectionState(kind).loaded : renderedSections.has(kind);
+}
+
 async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = {}) {
 	const current = sectionState(kind);
 	if (current.loading) return;
@@ -786,8 +792,7 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 }
 
 async function refreshActivePanel() {
-	if (activePanelName === "settings") return;
-	await renderSection(activePanelName, { bypassCache: true });
+	await ensureSectionRendered(activePanelName, { bypassCache: true });
 }
 
 function activePaginationSentinel() {
@@ -932,10 +937,19 @@ async function renderSection(kind, { bypassCache = false } = {}) {
 	if (entries.length === 0) {
 		setSectionStatus(kind, activeCopy.empty[kind]);
 		setSectionEntries(kind, []);
+		renderedSections.add(kind);
 		return;
 	}
 	setSectionStatus(kind, "");
 	setSectionEntries(kind, entries);
+	renderedSections.add(kind);
+}
+
+async function ensureSectionRendered(kind, { bypassCache = false } = {}) {
+	if (!shouldRenderPanel({ panelName: kind, loaded: sectionLoaded(kind), bypassCache })) {
+		return;
+	}
+	await renderSection(kind, { bypassCache });
 }
 
 function activatePanel(panelName) {
@@ -951,6 +965,11 @@ function activatePanel(panelName) {
 		.classList.toggle("is-active", panelName === "settings");
 	const content = document.getElementById("content-area");
 	if (content) content.scrollTop = 0;
+	ensureSectionRendered(panelName).catch(() => {
+		if (panelName !== "settings") {
+			setSectionStatus(panelName, unavailableMessage(panelName));
+		}
+	});
 	requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
 }
 
@@ -965,11 +984,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 	applyCopy(settings.language);
 	applyTheme(settings.theme);
 
-	for (const kind of ["portals", "servers", "clients"]) {
-		renderSection(kind).catch(() => {
-			setSectionStatus(kind, unavailableMessage(kind));
-		});
-	}
+	ensureSectionRendered(activePanelName).catch(() => {
+		setSectionStatus(activePanelName, unavailableMessage(activePanelName));
+	});
 
 	async function persist(nextSettings) {
 		settings = await writeSettings(nextSettings);

@@ -66,6 +66,10 @@ export function shouldClearEntriesBeforeLoad(current, { reset }) {
 	return reset && current.entries.length === 0;
 }
 
+export function shouldRenderPanel({ panelName, loaded, bypassCache = false }) {
+	return panelName !== "settings" && (bypassCache || !loaded);
+}
+
 export function shouldStartPullRefresh({
 	button,
 	pointerType,
