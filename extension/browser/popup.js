@@ -1,3 +1,16 @@
+import {
+	DISCOVERY_PAGE_SIZE,
+	buildDiscoveryUrl,
+	discoveryPageState,
+	discoveryQueryForPage,
+	entriesForPageRender,
+	isPageableDiscoveryKind,
+	nextDiscoveryPageState,
+	responseMetadata,
+	shouldClearEntriesBeforeLoad,
+	shouldStartPullRefresh,
+} from "./discovery-state.mjs";
+
 const ADMIN_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.adminApiOrigin;
 const BUILD_DATE = globalThis.MCPMATE_EXTENSION_BUILD.buildDate;
 const DISCOVERY_MODE = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryMode || "account";
@@ -14,6 +27,7 @@ const MOCK_DISCOVERY_ENDPOINTS = {
 const SETTINGS_KEY = "mcpmate.discovery.settings";
 const DISCOVERY_CACHE_TTL_MS = 60 * 60 * 1000;
 const DISCOVERY_CACHE_KEY_PREFIX = "mcpmate.discovery.cache";
+const PULL_REFRESH_THRESHOLD = 56;
 const DEFAULT_SETTINGS = {
 	language: "en",
 	theme: "system",
@@ -32,6 +46,9 @@ const COPY = {
 			website: "Website",
 			settings: "Settings",
 			discord: "Discord",
+		},
+		actions: {
+			refresh: "Refresh",
 		},
 		settings: {
 			language: "Language",
@@ -65,6 +82,10 @@ const COPY = {
 			mock: "Mock catalog",
 		},
 		visit: "Open link",
+		loadingMore: "Loading more...",
+		pullRefresh: "Pull to refresh",
+		releaseRefresh: "Release to refresh",
+		refreshing: "Refreshing...",
 	},
 	"zh-cn": {
 		title: "MCPMate",
@@ -79,6 +100,9 @@ const COPY = {
 			website: "官网",
 			settings: "设置",
 			discord: "Discord",
+		},
+		actions: {
+			refresh: "刷新",
 		},
 		settings: {
 			language: "语言",
@@ -112,6 +136,10 @@ const COPY = {
 			mock: "模拟目录",
 		},
 		visit: "打开链接",
+		loadingMore: "正在加载更多...",
+		pullRefresh: "下拉刷新",
+		releaseRefresh: "松开刷新",
+		refreshing: "正在刷新...",
 	},
 	ja: {
 		title: "MCPMate",
@@ -126,6 +154,9 @@ const COPY = {
 			website: "Web サイト",
 			settings: "設定",
 			discord: "Discord",
+		},
+		actions: {
+			refresh: "更新",
 		},
 		settings: {
 			language: "言語",
@@ -159,10 +190,17 @@ const COPY = {
 			mock: "モックカタログ",
 		},
 		visit: "リンクを開く",
+		loadingMore: "さらに読み込み中...",
+		pullRefresh: "引いて更新",
+		releaseRefresh: "離して更新",
+		refreshing: "更新中...",
 	},
 };
 
 let activeCopy = COPY.en;
+let activePanelName = "portals";
+const discoveryStates = new Map();
+let paginationObserver = null;
 
 function openExternalUrl(url) {
 	if (chrome?.tabs?.create) {
@@ -181,6 +219,8 @@ const ICONS = {
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg>',
 	discord:
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5h.01"/><path d="M16 12.5h.01"/><path d="M7.5 8.5c3-1 6-1 9 0"/><path d="M8 17c-1.3-.4-2.5-1-3.5-1.8.2-3.2 1-6.3 2.4-9.2A14 14 0 0 1 10 5l.6 1.2a12.5 12.5 0 0 1 2.8 0L14 5a14 14 0 0 1 3.1 1c1.4 2.9 2.2 6 2.4 9.2A13 13 0 0 1 16 17l-.8-1.2a9 9 0 0 1-6.4 0z"/></svg>',
+	refresh:
+		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
 	settings:
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.36.33.69.6 1H20a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-.5 1Z"/></svg>',
 };
@@ -261,12 +301,12 @@ async function writeSettings(settings) {
 	return normalized;
 }
 
-function discoveryCacheKey(kind) {
-	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}`;
+function discoveryCacheKey(kind, requestUrl) {
+	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
 }
 
-async function readDiscoveryCache(kind) {
-	const key = discoveryCacheKey(kind);
+async function readDiscoveryCache(kind, requestUrl) {
+	const key = discoveryCacheKey(kind, requestUrl);
 	const area = localStorageArea();
 	let cached;
 	if (area) {
@@ -284,8 +324,8 @@ async function readDiscoveryCache(kind) {
 	return cached.data || null;
 }
 
-async function writeDiscoveryCache(kind, data) {
-	const key = discoveryCacheKey(kind);
+async function writeDiscoveryCache(kind, requestUrl, data) {
+	const key = discoveryCacheKey(kind, requestUrl);
 	const cached = {
 		cachedAt: Date.now(),
 		data,
@@ -357,6 +397,7 @@ function applyCopy(language) {
 	setButtonLabel("website-button", activeCopy.footer.website);
 	setButtonLabel("settings-button", activeCopy.footer.settings);
 	setButtonLabel("discord-button", activeCopy.footer.discord);
+	setButtonLabel("refresh-button", activeCopy.actions.refresh);
 	setText("discord-label", activeCopy.footer.discord);
 	setText("build-date", BUILD_DATE);
 	for (const button of document.querySelectorAll(".open-button")) {
@@ -450,12 +491,43 @@ function endpointListId(kind) {
 	return `${kind.slice(0, -1)}-list`;
 }
 
+function endpointFooterId(kind) {
+	return `${kind.slice(0, -1)}-footer`;
+}
+
+function endpointSentinelId(kind) {
+	return `${kind.slice(0, -1)}-sentinel`;
+}
+
 function setSectionStatus(kind, text) {
 	document.getElementById(endpointStatusId(kind)).textContent = text;
 }
 
-function setSectionEntries(kind, entries) {
-	document.getElementById(endpointListId(kind)).replaceChildren(...entries);
+function createEntryCardsFragment(kind, entries) {
+	const fragment = document.createDocumentFragment();
+	for (const entry of entries) {
+		fragment.appendChild(entryCard(kind, entry));
+	}
+	return fragment;
+}
+
+function setSectionEntries(kind, entries, { append = false } = {}) {
+	const list = document.getElementById(endpointListId(kind));
+	const cards = createEntryCardsFragment(kind, entries);
+	if (append) {
+		list.appendChild(cards);
+		return;
+	}
+	list.replaceChildren(cards);
+}
+
+function sectionHasRenderedEntries(kind) {
+	return document.getElementById(endpointListId(kind)).childElementCount > 0;
+}
+
+function setSectionFooter(kind, text) {
+	const footer = document.getElementById(endpointFooterId(kind));
+	if (footer) footer.textContent = text;
 }
 
 function discoveryMeta(entry) {
@@ -613,33 +685,261 @@ function entryCard(kind, entry) {
 	});
 }
 
-async function renderSection(kind) {
-	setSectionStatus(kind, activeCopy.loading[kind]);
-	setSectionEntries(kind, []);
-	let data = await readDiscoveryCache(kind);
+function discoveryRequestUrl(kind, { limit, offset }) {
+	const endpoint = discoveryEndpoints()[kind];
+	if (DISCOVERY_MODE === "mock") {
+		return endpoint;
+	}
+	return buildDiscoveryUrl(endpoint, discoveryQueryForPage({ kind, limit, offset }));
+}
+
+async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false }) {
+	const requestUrl = discoveryRequestUrl(kind, { limit, offset });
+	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl);
 	if (!data) {
-		const response = await fetch(discoveryEndpoints()[kind], {
+		const response = await fetch(requestUrl, {
 			headers: { accept: "application/json" },
 		});
 		if (!response.ok) {
 			throw new Error(`${kind}:${response.status}`);
 		}
 		data = await response.json();
-		await writeDiscoveryCache(kind, data);
+		await writeDiscoveryCache(kind, requestUrl, data);
 	}
+	return data;
+}
+
+function blankDiscoveryState() {
+	return {
+		entries: [],
+		hasMore: false,
+		nextOffset: 0,
+		loaded: false,
+		loading: false,
+	};
+}
+
+function sectionState(kind) {
+	if (!discoveryStates.has(kind)) {
+		discoveryStates.set(kind, blankDiscoveryState());
+	}
+	return discoveryStates.get(kind);
+}
+
+async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = {}) {
+	const current = sectionState(kind);
+	if (current.loading) return;
+	if (!reset && (!current.loaded || !current.hasMore)) return;
+
+	const offset = reset ? 0 : current.nextOffset;
+	const limit = DISCOVERY_PAGE_SIZE;
+	const shouldClearEntries = shouldClearEntriesBeforeLoad(current, { reset });
+	discoveryStates.set(kind, { ...current, loading: true });
+	if (reset) {
+		setSectionStatus(kind, activeCopy.loading[kind]);
+		if (shouldClearEntries) {
+			setSectionEntries(kind, []);
+		}
+		setSectionFooter(kind, "");
+	} else {
+		setSectionFooter(kind, activeCopy.loadingMore);
+	}
+
+	try {
+		const data = await fetchDiscoveryData(kind, { limit, offset, bypassCache });
+		const entries = normalizeEntries(kind, data);
+		const page = discoveryPageState({
+			kind,
+			entries,
+			metadata: responseMetadata(data),
+			limit,
+			offset,
+		});
+		const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, {
+			reset,
+		});
+		discoveryStates.set(kind, { ...next, loaded: true, loading: false });
+		const entriesToRender = entriesForPageRender(next, page, { reset });
+
+		if (next.entries.length === 0) {
+			setSectionStatus(kind, activeCopy.empty[kind]);
+			setSectionEntries(kind, []);
+			setSectionFooter(kind, "");
+			return;
+		}
+
+		setSectionStatus(kind, "");
+		setSectionEntries(kind, entriesToRender, { append: !reset });
+		setSectionFooter(kind, "");
+		if (activePanelName === kind) {
+			requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
+		}
+	} catch (error) {
+		discoveryStates.set(kind, { ...current, loading: false });
+		if (reset) {
+			setSectionStatus(kind, unavailableMessage(kind));
+		} else {
+			setSectionFooter(kind, unavailableMessage(kind));
+		}
+		throw error;
+	}
+}
+
+async function refreshActivePanel() {
+	if (activePanelName === "settings") return;
+	await renderSection(activePanelName, { bypassCache: true });
+}
+
+function activePaginationSentinel() {
+	if (!isPageableDiscoveryKind(activePanelName)) return null;
+	return document.getElementById(endpointSentinelId(activePanelName));
+}
+
+function sentinelIsNearScrollEnd(sentinel, content) {
+	const sentinelRect = sentinel.getBoundingClientRect();
+	const contentRect = content.getBoundingClientRect();
+	return sentinelRect.top <= contentRect.bottom + 120;
+}
+
+function loadMoreIfActiveSentinelVisible() {
+	const sentinel = activePaginationSentinel();
+	const content = document.getElementById("content-area");
+	if (!sentinel || !content) return;
+	if (!sentinelIsNearScrollEnd(sentinel, content)) return;
+	loadDiscoveryPage(activePanelName).catch(() => {});
+}
+
+function setupPaginationObserver(content) {
+	if (!("IntersectionObserver" in window)) return;
+	paginationObserver?.disconnect();
+	paginationObserver = new IntersectionObserver(
+		(entries) => {
+			for (const entry of entries) {
+				if (!entry.isIntersecting) continue;
+				const kind = entry.target.dataset.paginationKind;
+				if (kind !== activePanelName) continue;
+				loadDiscoveryPage(kind).catch(() => {});
+			}
+		},
+		{
+			root: content,
+			rootMargin: "120px 0px 120px 0px",
+			threshold: 0,
+		},
+	);
+	for (const kind of ["servers", "clients"]) {
+		const sentinel = document.getElementById(endpointSentinelId(kind));
+		if (!sentinel) continue;
+		sentinel.dataset.paginationKind = kind;
+		paginationObserver.observe(sentinel);
+	}
+}
+
+function setRefreshIndicator(text, visible) {
+	const indicator = document.getElementById("refresh-indicator");
+	if (!indicator) return;
+	indicator.textContent = text || "";
+	indicator.classList.toggle("is-visible", visible);
+}
+
+function setupPullToRefresh(content) {
+	let pointerStartY = null;
+	let pullDistance = 0;
+	let pulling = false;
+
+	function resetPull() {
+		pointerStartY = null;
+		pullDistance = 0;
+		pulling = false;
+		setRefreshIndicator("", false);
+	}
+
+	content.addEventListener("pointerdown", (event) => {
+		if (
+			!shouldStartPullRefresh({
+				button: event.button,
+				pointerType: event.pointerType,
+				scrollTop: content.scrollTop,
+				panelName: activePanelName,
+				selectionType: window.getSelection()?.type,
+			})
+		) {
+			return;
+		}
+		pointerStartY = event.clientY;
+	});
+
+	content.addEventListener(
+		"pointermove",
+		(event) => {
+			if (pointerStartY === null || content.scrollTop > 0) return;
+			pullDistance = Math.max(0, event.clientY - pointerStartY);
+			if (pullDistance <= 0) return;
+			pulling = true;
+			event.preventDefault();
+			setRefreshIndicator(
+				pullDistance >= PULL_REFRESH_THRESHOLD
+					? activeCopy.releaseRefresh
+					: activeCopy.pullRefresh,
+				true,
+			);
+		},
+		{ passive: false },
+	);
+
+	async function finishPull() {
+		if (!pulling) {
+			resetPull();
+			return;
+		}
+		const shouldRefresh = pullDistance >= PULL_REFRESH_THRESHOLD;
+		if (!shouldRefresh) {
+			resetPull();
+			return;
+		}
+		setRefreshIndicator(activeCopy.refreshing, true);
+		try {
+			await refreshActivePanel();
+		} catch {
+			// renderSection already surfaces the section-specific error state.
+		}
+		resetPull();
+	}
+
+	content.addEventListener("pointerup", () => {
+		finishPull();
+	});
+	content.addEventListener("pointercancel", resetPull);
+}
+
+async function renderSection(kind, { bypassCache = false } = {}) {
+	if (isPageableDiscoveryKind(kind)) {
+		await loadDiscoveryPage(kind, { reset: true, bypassCache });
+		return;
+	}
+	const hasRenderedEntries = sectionHasRenderedEntries(kind);
+	setSectionStatus(kind, activeCopy.loading[kind]);
+	if (!hasRenderedEntries) {
+		setSectionEntries(kind, []);
+	}
+	setSectionFooter(kind, "");
+	const data = await fetchDiscoveryData(kind, {
+		limit: DISCOVERY_PAGE_SIZE,
+		offset: 0,
+		bypassCache,
+	});
 	const entries = normalizeEntries(kind, data);
 	if (entries.length === 0) {
 		setSectionStatus(kind, activeCopy.empty[kind]);
+		setSectionEntries(kind, []);
 		return;
 	}
 	setSectionStatus(kind, "");
-	setSectionEntries(
-		kind,
-		entries.map((entry) => entryCard(kind, entry)),
-	);
+	setSectionEntries(kind, entries);
 }
 
 function activatePanel(panelName) {
+	activePanelName = panelName;
 	for (const tab of document.querySelectorAll("[data-panel-target]")) {
 		tab.classList.toggle("is-active", tab.dataset.panelTarget === panelName);
 	}
@@ -651,6 +951,7 @@ function activatePanel(panelName) {
 		.classList.toggle("is-active", panelName === "settings");
 	const content = document.getElementById("content-area");
 	if (content) content.scrollTop = 0;
+	requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -658,6 +959,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	let settings = await readSettings();
 	const languageSelect = document.getElementById("language-select");
 	const themeSelect = document.getElementById("theme-select");
+	const content = document.getElementById("content-area");
 	languageSelect.value = settings.language;
 	themeSelect.value = settings.theme;
 	applyCopy(settings.language);
@@ -685,6 +987,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 	for (const tab of document.querySelectorAll("[data-panel-target]")) {
 		tab.addEventListener("click", () => activatePanel(tab.dataset.panelTarget));
 	}
+	setupPaginationObserver(content);
+	setupPullToRefresh(content);
+	document.getElementById("refresh-button").addEventListener("click", () => {
+		refreshActivePanel().catch(() => {});
+	});
 	for (const button of document.querySelectorAll("[data-open-url]")) {
 		button.addEventListener("click", () => openExternalUrl(button.dataset.openUrl));
 	}

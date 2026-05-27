@@ -8,6 +8,9 @@
 	</head>
 	<body>
 		<main class="shell">
+			<button type="button" class="refresh-float-button" id="refresh-button">
+				<span class="button-icon" data-icon="refresh" aria-hidden="true"></span>
+			</button>
 			<button type="button" class="settings-float-button" id="settings-button">
 				<span class="button-icon" data-icon="settings" aria-hidden="true"></span>
 			</button>
@@ -31,19 +34,27 @@
 			</nav>
 
 			<div class="content" id="content-area">
+				<div class="refresh-indicator" id="refresh-indicator" aria-live="polite"></div>
+
 				<section class="panel is-active" data-panel="portals" aria-label="MCP portals">
 					<div class="status" id="portal-status">Loading portal recommendations...</div>
 					<div class="list" id="portal-list"></div>
+					<div class="list-footer" id="portal-footer"></div>
+					<div class="pagination-sentinel" id="portal-sentinel" aria-hidden="true"></div>
 				</section>
 
 				<section class="panel" data-panel="servers" aria-label="MCP servers">
 					<div class="status" id="server-status">Loading server recommendations...</div>
 					<div class="list" id="server-list"></div>
+					<div class="list-footer" id="server-footer"></div>
+					<div class="pagination-sentinel" id="server-sentinel" aria-hidden="true"></div>
 				</section>
 
 				<section class="panel" data-panel="clients" aria-label="MCP clients">
 					<div class="status" id="client-status">Loading client recommendations...</div>
 					<div class="list" id="client-list"></div>
+					<div class="list-footer" id="client-footer"></div>
+					<div class="pagination-sentinel" id="client-sentinel" aria-hidden="true"></div>
 				</section>
 
 				<section class="panel" data-panel="settings" aria-label="Extension settings">
@@ -65,6 +76,7 @@
 							</select>
 						</label>
 					</div>
+					<div class="build-date" id="build-date"></div>
 				</section>
 			</div>
 
@@ -81,11 +93,10 @@
 						<span class="button-icon" data-icon="github" aria-hidden="true"></span>
 					</button>
 				</div>
-				<div class="build-date" id="build-date"></div>
 			</footer>
 		</main>
 		<script src="build-info.js"></script>
 		<script src="config.js"></script>
-		<script src="popup.js"></script>
+		<script type="module" src="popup.js"></script>
 	</body>
 </html>
