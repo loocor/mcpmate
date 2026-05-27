@@ -7,6 +7,7 @@ import {
 	entriesForPageRender,
 	nextDiscoveryPageState,
 	shouldClearEntriesBeforeLoad,
+	shouldRenderPanel,
 	shouldStartPullRefresh,
 } from "./discovery-state.mjs";
 
@@ -129,6 +130,15 @@ describe("browser extension discovery pagination", () => {
 				{ reset: false },
 			),
 		).toBe(false);
+	});
+
+	test("renders only unloaded active panels unless refresh bypasses cache", () => {
+		expect(shouldRenderPanel({ panelName: "settings", loaded: false })).toBe(false);
+		expect(shouldRenderPanel({ panelName: "clients", loaded: false })).toBe(true);
+		expect(shouldRenderPanel({ panelName: "clients", loaded: true })).toBe(false);
+		expect(
+			shouldRenderPanel({ panelName: "clients", loaded: true, bypassCache: true }),
+		).toBe(true);
 	});
 
 	test("starts pull refresh only for touch gestures at the top", () => {
