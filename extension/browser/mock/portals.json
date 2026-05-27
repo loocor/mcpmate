@@ -1,0 +1,25 @@
+{
+	"portals": [
+		{
+			"title": "Official MCP Registry",
+			"description": "Canonical registry for public MCP servers.",
+			"url": "https://modelcontextprotocol.io/registry",
+			"source": "Mock catalog",
+			"meta": "registry"
+		},
+		{
+			"title": "MCP Servers on GitHub",
+			"description": "Open-source MCP server implementations and examples.",
+			"url": "https://github.com/topics/mcp-server",
+			"source": "Mock catalog",
+			"meta": "github topic"
+		},
+		{
+			"title": "MCPMate Website",
+			"description": "Docs, downloads, and product updates for MCPMate.",
+			"url": "https://mcp.umate.ai",
+			"source": "Mock catalog",
+			"meta": "product site"
+		}
+	]
+}

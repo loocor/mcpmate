@@ -22,8 +22,8 @@ export default function MarketZH() {
 					<strong>官方</strong> 注册表支持搜索（带 300ms 防抖）与排序（最近、字母序），翻页追加加载。
 				</Li>
 				<Li>
-					在任意网页导入 MCP 配置片段可使用 Chrome 扩展（仓库内{" "}
-					<code>extension/chrome</code>），通过{" "}
+					在任意网页导入 MCP 配置片段可使用浏览器扩展（仓库内{" "}
+					<code>extension/browser</code>），通过{" "}
 					<code>mcpmate://import/server</code> 唤起桌面端。
 				</Li>
 				<Li>

@@ -294,7 +294,7 @@
 			},
 			{
 				"type": "feat",
-				"text": "Added the Chrome extension: when you see MCP Server config snippets on web pages, you can import them to MCPMate desktop in one click."
+				"text": "Added the browser extension: when you see MCP Server config snippets on web pages, you can import them to MCPMate desktop in one click."
 			},
 			{
 				"type": "chore",

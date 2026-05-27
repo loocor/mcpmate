@@ -1,0 +1,28 @@
+{
+	"clients": [
+		{
+			"title": "Claude Desktop",
+			"description": "Desktop client with native local MCP server support.",
+			"url": "https://claude.ai/download",
+			"source": "Mock catalog",
+			"signal": "native MCP",
+			"meta": "desktop"
+		},
+		{
+			"title": "Cursor",
+			"description": "Editor workflow with project-level MCP configuration.",
+			"url": "https://cursor.com",
+			"source": "Mock catalog",
+			"signal": "editor",
+			"meta": "project config"
+		},
+		{
+			"title": "VS Code",
+			"description": "Developer client path for MCP-capable extensions.",
+			"url": "https://code.visualstudio.com",
+			"source": "Mock catalog",
+			"signal": "editor",
+			"meta": "extensions"
+		}
+	]
+}

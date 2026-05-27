@@ -194,7 +194,7 @@ Theme preference is stored in `localStorage.mcp_theme` and applied early to avoi
 ## Desktop Application Support
 
 MCPBoard is designed to work both as a web application and as a desktop application through Tauri integration. When running in Tauri:
-- Registered `mcpmate://` deep links include OAuth (`mcpmate://auth`) and server import (`mcpmate://import/server`) used by the Chrome extension under `extension/chrome/`
+- Registered `mcpmate://` deep links include OAuth (`mcpmate://auth`) and server import (`mcpmate://import/server`) used by the browser extension under `extension/browser/`
 - API base URL can be configured at runtime via Settings
 - Native system integration features are available
 
