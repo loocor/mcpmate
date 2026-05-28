@@ -26,6 +26,13 @@ import {
   runtimeApi,
   serversApi,
 } from "../../lib/api";
+import {
+  adminDiscoveryClientToUpdatePayload,
+  fetchAdminDiscoveryClients,
+  fetchAdminDiscoveryServers,
+  type AdminDiscoveryClientCandidate,
+  type AdminDiscoveryServerCandidate,
+} from "../../lib/admin-discovery";
 import { websiteLangParam } from "../../lib/website-lang";
 import { applyManagedClientsForIdentifiers } from "../../lib/client-config-sync";
 import { resolveActiveDefaultProfileId } from "../../lib/default-profile";
@@ -49,6 +56,7 @@ import type { ClientInfo } from "../../lib/types";
 type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
 type RuntimeKind = "node" | "bun" | "uv";
 type WelcomeLanguage = "en" | "zh-cn" | "ja";
+type OnboardingServerCandidateWithImport = OnboardingServerCandidate | AdminDiscoveryServerCandidate;
 
 const RUNTIME_NAME_PRIORITY: Record<RuntimeKind, string[]> = {
   node: ["node", "npx"],
@@ -123,7 +131,7 @@ function getStepButtonClass(index: number, stepIndex: number): string {
 }
 
 function groupSelectedServerNamesByClient(
-  candidates: OnboardingServerCandidate[],
+  candidates: OnboardingServerCandidateWithImport[],
   selectedKeys: Set<string>,
 ): Map<string, string[]> {
   const selectedByClient = new Map<string, string[]>();
@@ -145,6 +153,18 @@ function groupSelectedServerNamesByClient(
   }
 
   return selectedByClient;
+}
+
+function groupSelectedDiscoveryServerConfigs(
+  candidates: OnboardingServerCandidateWithImport[],
+  selectedKeys: Set<string>,
+): Record<string, unknown> {
+  const mcpServers: Record<string, unknown> = {};
+  for (const candidate of candidates) {
+    if (!selectedKeys.has(candidate.key) || !("import_config" in candidate)) continue;
+    mcpServers[candidate.name] = candidate.import_config;
+  }
+  return mcpServers;
 }
 
 /** Detected clients that expose a local config path (eligible for onboarding server scan). */
@@ -296,8 +316,11 @@ export function OnboardingPage() {
 
   const [completing, setCompleting] = useState(false);
   const [serverCandidates, setServerCandidates] = useState<
-    OnboardingServerCandidate[]
+    OnboardingServerCandidateWithImport[]
   >([]);
+  const [adminClientCandidates, setAdminClientCandidates] = useState<Map<string, AdminDiscoveryClientCandidate>>(
+    () => new Map(),
+  );
   const [language, setLanguage] = useState<WelcomeLanguage>(() =>
     normalizeWelcomeLanguage(dashboardSettings.language),
   );
@@ -414,12 +437,19 @@ export function OnboardingPage() {
         serverCandidates,
         state.selectedServers,
       );
+      const selectedDiscoveryServerConfigs = groupSelectedDiscoveryServerConfigs(
+        serverCandidates,
+        state.selectedServers,
+      );
       const clientsToRegister = new Set([
         ...state.selectedClients,
         ...selectedServerNamesByClient.keys(),
       ]);
       const selectedClientList = allListed.filter((client) =>
         clientsToRegister.has(client.identifier),
+      );
+      const selectedAdminClientIds = [...clientsToRegister].filter((identifier) =>
+        adminClientCandidates.has(identifier),
       );
       await Promise.all(
         selectedClientList.map(async (client) => {
@@ -438,12 +468,54 @@ export function OnboardingPage() {
           await clientsApi.approveRecord({ identifier: client.identifier });
         }),
       );
+      if (selectedAdminClientIds.length > 0) {
+        await Promise.all(
+          selectedAdminClientIds.map(async (identifier) => {
+            const candidate = adminClientCandidates.get(identifier);
+            if (!candidate) {
+              throw new Error(
+                t("clients.adminRecommendationMissing", {
+                  defaultValue: "Client recommendation '{{identifier}}' was not found.",
+                  identifier,
+                }),
+              );
+            }
+            await clientsApi.update(adminDiscoveryClientToUpdatePayload(candidate, { forceWithoutConfigFile: true }));
+            await clientsApi.approveRecord({ identifier });
+          }),
+        );
+      }
 
-      if (selectedServerNamesByClient.size > 0) {
+      const hasDiscoveryServerConfigs = Object.keys(selectedDiscoveryServerConfigs).length > 0;
+      if (selectedServerNamesByClient.size > 0 || hasDiscoveryServerConfigs) {
         // In onboarding context, always link imported servers to the default-anchor profile
         // regardless of the autoAddServerToDefaultProfile setting (which defaults to false for new users).
         // The default anchor is seeded at app init, so it must already exist before onboarding runs.
         const targetProfileId = await resolveActiveDefaultProfileId();
+
+        if (hasDiscoveryServerConfigs) {
+          const response = await serversApi.importServers({
+            mcpServers: selectedDiscoveryServerConfigs,
+            target_profile_id: targetProfileId,
+          });
+          if (
+            response &&
+            typeof response === "object" &&
+            "success" in response &&
+            (response as { success?: boolean }).success === false
+          ) {
+            const err = (response as { error?: unknown }).error;
+            throw new Error(err ? String(err) : "Server import failed");
+          }
+          const stats = extractImportStats(response);
+          if (stats.failedCount > 0) {
+            throw new Error(
+              stats.errorDetails
+                ? JSON.stringify(stats.errorDetails)
+                : "Server import failed",
+            );
+          }
+        }
 
         for (const [clientIdentifier, selectedServerNames] of selectedServerNamesByClient) {
           const response = await serversApi.importServers(
@@ -511,6 +583,7 @@ export function OnboardingPage() {
       setCompleting(false);
     }
   }, [
+    adminClientCandidates,
     dashboardSettings,
     navigate,
     qc,
@@ -657,6 +730,7 @@ export function OnboardingPage() {
               onToggle={(id) =>
                 dispatch({ type: "TOGGLE_CLIENT", identifier: id })
               }
+              onAdminCandidatesChange={setAdminClientCandidates}
             />
           )}
           {state.step === "servers" && (
@@ -1085,9 +1159,11 @@ function RuntimeStep({
 function ClientsStep({
   selectedClients,
   onToggle,
+  onAdminCandidatesChange,
 }: {
   selectedClients: Set<string>;
   onToggle: (identifier: string) => void;
+  onAdminCandidatesChange: (candidates: Map<string, AdminDiscoveryClientCandidate>) => void;
 }) {
   const { t } = useTranslation("onboarding");
   const [logoLoadFailedClients, setLogoLoadFailedClients] = useState<Set<string>>(
@@ -1107,6 +1183,27 @@ function ClientsStep({
         .sort(compareClientsByName),
     [data?.client],
   );
+  const shouldLoadAdminRecommendations = !isLoading && !isError && detectedClients.length === 0;
+  const adminRecommendationsQuery = useQuery({
+    queryKey: ["adminDiscoveryClients", "onboarding"],
+    queryFn: () => fetchAdminDiscoveryClients({ surface: "onboarding", random: 6 }),
+    enabled: shouldLoadAdminRecommendations,
+    staleTime: 60_000,
+  });
+  const adminRecommendations = useMemo(
+    () => adminRecommendationsQuery.data ?? [],
+    [adminRecommendationsQuery.data],
+  );
+
+  useEffect(() => {
+    if (detectedClients.length > 0) {
+      onAdminCandidatesChange(new Map());
+      return;
+    }
+    onAdminCandidatesChange(
+      new Map(adminRecommendations.map((candidate) => [candidate.identifier, candidate])),
+    );
+  }, [adminRecommendations, detectedClients.length, onAdminCandidatesChange]);
 
   return (
     <div>
@@ -1151,7 +1248,25 @@ function ClientsStep({
             </Button>
           </CardContent>
         </Card>
-      ) : detectedClients.length === 0 ? (
+      ) : detectedClients.length === 0 && adminRecommendationsQuery.isLoading ? (
+        <div className="flex justify-center py-12">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
+        </div>
+      ) : detectedClients.length === 0 && adminRecommendationsQuery.isError ? (
+        <Card>
+          <CardContent className="py-8 text-center text-slate-500">
+            <p>
+              {t("clients.recommendationError", {
+                defaultValue:
+                  "No local MCP clients were detected, and MCPMate could not load Admin recommendations.",
+              })}
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              {adminRecommendationsQuery.error instanceof Error ? adminRecommendationsQuery.error.message : ""}
+            </p>
+          </CardContent>
+        </Card>
+      ) : detectedClients.length === 0 && adminRecommendations.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-slate-500">
             {t("clients.empty", {
@@ -1160,6 +1275,68 @@ function ClientsStep({
             })}
           </CardContent>
         </Card>
+      ) : detectedClients.length === 0 ? (
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {adminRecommendations.map((client) => {
+              const isSelected = selectedClients.has(client.identifier);
+              const showLogo =
+                Boolean(client.logoUrl) &&
+                !logoLoadFailedClients.has(client.identifier);
+              return (
+                <button
+                  key={client.identifier}
+                  type="button"
+                  onClick={() => onToggle(client.identifier)}
+                  className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
+                      ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
+                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+                    }`}
+                >
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
+                    {showLogo ? (
+                      <img
+                        src={client.logoUrl}
+                        alt={client.displayName || client.identifier}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        onError={() => {
+                          setLogoLoadFailedClients((prev) => {
+                            if (prev.has(client.identifier)) return prev;
+                            const next = new Set(prev);
+                            next.add(client.identifier);
+                            return next;
+                          });
+                        }}
+                      />
+                    ) : (
+                      (client.displayName || client.identifier).charAt(0).toUpperCase()
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{client.displayName || client.identifier}</div>
+                    {client.description && (
+                      <div className="mt-0.5 truncate text-xs text-slate-500">
+                        {client.description}
+                      </div>
+                    )}
+                    <div className="mt-1 text-xs text-slate-400">
+                      {t("clients.adminRecommendation", { defaultValue: "Admin recommendation" })}
+                    </div>
+                  </div>
+                  {isSelected && (
+                    <Check className="h-5 w-5 shrink-0 text-emerald-500" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-center text-xs text-slate-400 dark:text-slate-500">
+            {t("clients.recommendationNotice", {
+              defaultValue: "These are random recommendations from MCPMate Admin. Review them before applying.",
+            })}
+          </p>
+        </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {detectedClients.map((client) => {
@@ -1232,7 +1409,7 @@ function ServersStep({
   onToggle,
 }: {
   selectedServers: Set<string>;
-  onCandidatesChange: (candidates: OnboardingServerCandidate[]) => void;
+  onCandidatesChange: (candidates: OnboardingServerCandidateWithImport[]) => void;
   onToggle: (name: string) => void;
 }) {
   const { t } = useTranslation("onboarding");
@@ -1241,7 +1418,10 @@ function ServersStep({
     queryFn: () => clientsApi.detect(true),
     staleTime: 30_000,
   });
-  const allClients: ClientInfo[] = clientsQuery.data?.client ?? [];
+  const allClients: ClientInfo[] = useMemo(
+    () => clientsQuery.data?.client ?? [],
+    [clientsQuery.data?.client],
+  );
   const scannableClients = useMemo(
     () => clientsWithScannableConfig(allClients),
     [allClients],
@@ -1276,12 +1456,24 @@ function ServersStep({
     },
     staleTime: 0,
   });
+  const shouldLoadAdminRecommendations =
+    (!clientsQuery.isLoading && scannableClients.length === 0) ||
+    Boolean(scanQuery.data && scanQuery.data.candidates.length === 0);
+  const adminRecommendationsQuery = useQuery({
+    queryKey: ["adminDiscoveryServers", "onboarding"],
+    queryFn: () => fetchAdminDiscoveryServers({ surface: "onboarding", random: 6 }),
+    enabled: shouldLoadAdminRecommendations,
+    staleTime: 60_000,
+  });
 
   useEffect(() => {
-    onCandidatesChange(scanQuery.data?.candidates ?? []);
-  }, [onCandidatesChange, scanQuery.data?.candidates, scannableClientKey]);
+    onCandidatesChange(adminRecommendationsQuery.data ?? scanQuery.data?.candidates ?? []);
+  }, [adminRecommendationsQuery.data, onCandidatesChange, scanQuery.data?.candidates, scannableClientKey]);
 
-  const candidates = scanQuery.data?.candidates ?? [];
+  const usingAdminRecommendations = Boolean(adminRecommendationsQuery.data);
+  const candidates = adminRecommendationsQuery.data ?? scanQuery.data?.candidates ?? [];
+  const isScanningServers = scannableClients.length > 0 && scanQuery.isLoading;
+  const isLoadingRecommendations = shouldLoadAdminRecommendations && adminRecommendationsQuery.isLoading;
 
   return (
     <div>
@@ -1300,19 +1492,23 @@ function ServersStep({
         </p>
       </div>
 
-      {scannableClients.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center text-slate-500">
-            {t("servers.noScannableClients", {
-              defaultValue:
-                "No detected MCP clients have a local configuration path to scan yet. You can skip this step or finish client setup first.",
-            })}
-          </CardContent>
-        </Card>
-      ) : clientsQuery.isLoading || scanQuery.isLoading ? (
+      {clientsQuery.isLoading || isScanningServers || isLoadingRecommendations ? (
         <div className="flex justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
         </div>
+      ) : adminRecommendationsQuery.isError ? (
+        <Card>
+          <CardContent className="space-y-3 py-8 text-center text-slate-500">
+            <p>
+              {t("servers.recommendationError", {
+                defaultValue: "MCPMate could not load server recommendations.",
+              })}
+            </p>
+            <p className="text-xs text-slate-400">
+              {adminRecommendationsQuery.error instanceof Error ? adminRecommendationsQuery.error.message : ""}
+            </p>
+          </CardContent>
+        </Card>
       ) : candidates.length === 0 ? (
         <Card>
           <CardContent className="space-y-3 py-8 text-center text-slate-500">
@@ -1367,6 +1563,13 @@ function ServersStep({
               );
             })}
           </div>
+          {usingAdminRecommendations && (
+            <p className="text-center text-xs text-slate-400 dark:text-slate-500">
+              {t("servers.recommendationNotice", {
+                defaultValue: "These are random recommendations from MCPMate Admin. Review them before importing.",
+              })}
+            </p>
+          )}
         </div>
       )}
     </div>
