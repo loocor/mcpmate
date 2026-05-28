@@ -68,6 +68,8 @@ export const onboardingTranslations = {
       recommendationNotice:
         "These are random recommendations from MCPMate Admin. Review them before applying.",
       adminRecommendationMissing: "Client recommendation '{{identifier}}' was not found.",
+      adminRecommendationSelectedAria: "{{name}} Admin recommendation selected",
+      adminRecommendationUnselectedAria: "{{name}} Admin recommendation not selected",
       empty:
         "No MCP clients detected on this system. You can add clients manually later from the Clients page.",
     },
@@ -84,6 +86,8 @@ export const onboardingTranslations = {
         "These are random recommendations from MCPMate Admin. Review them before importing.",
       importErrorTitle: "Server import failed",
       official: "Official",
+      selectedAria: "{{name}} server selected",
+      unselectedAria: "{{name}} server not selected",
     },
     community: {
       title: "Join the Community",
@@ -178,6 +182,8 @@ export const onboardingTranslations = {
       adminRecommendation: "Admin 推荐",
       recommendationNotice: "这些是 MCPMate Admin 随机推荐的数据，请确认后再应用。",
       adminRecommendationMissing: "未找到客户端推荐「{{identifier}}」。",
+      adminRecommendationSelectedAria: "Admin 推荐 {{name}} 已选中",
+      adminRecommendationUnselectedAria: "Admin 推荐 {{name}} 未选中",
       empty: "未在本机检测到 MCP 客户端，后续可在「客户端」页面手动添加。",
     },
     servers: {
@@ -192,6 +198,8 @@ export const onboardingTranslations = {
       recommendationNotice: "这些是 MCPMate Admin 随机推荐的数据，请确认后再导入。",
       importErrorTitle: "服务器导入失败",
       official: "官方",
+      selectedAria: "服务器 {{name}} 已选中",
+      unselectedAria: "服务器 {{name}} 未选中",
     },
     community: {
       title: "加入社区",
@@ -285,6 +293,8 @@ export const onboardingTranslations = {
       recommendationNotice:
         "これらは MCPMate Admin からのランダムなおすすめです。適用前に確認してください。",
       adminRecommendationMissing: "クライアントのおすすめ「{{identifier}}」が見つかりません。",
+      adminRecommendationSelectedAria: "Admin のおすすめ {{name}} は選択済みです",
+      adminRecommendationUnselectedAria: "Admin のおすすめ {{name}} は未選択です",
       empty: "MCP クライアントが検出されませんでした。後で「クライアント」ページから手動追加できます。",
     },
     servers: {
@@ -300,6 +310,8 @@ export const onboardingTranslations = {
         "これらは MCPMate Admin からのランダムなおすすめです。インポート前に確認してください。",
       importErrorTitle: "サーバーのインポートに失敗しました",
       official: "公式",
+      selectedAria: "サーバー {{name}} は選択済みです",
+      unselectedAria: "サーバー {{name}} は未選択です",
     },
     community: {
       title: "コミュニティに参加",

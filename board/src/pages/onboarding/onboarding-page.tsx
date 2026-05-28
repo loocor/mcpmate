@@ -33,6 +33,8 @@ import {
   type AdminDiscoveryClientCandidate,
   type AdminDiscoveryServerCandidate,
 } from "../../lib/admin-discovery";
+import { readTauriAdminDiscoveryPlatform } from "../../lib/desktop-platform";
+import { isTauriEnvironmentSync } from "../../lib/platform";
 import { websiteLangParam } from "../../lib/website-lang";
 import { applyManagedClientsForIdentifiers } from "../../lib/client-config-sync";
 import { resolveActiveDefaultProfileId } from "../../lib/default-profile";
@@ -49,7 +51,7 @@ import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { cn } from "../../lib/utils";
-import { notifyError, notifySuccess } from "../../lib/notify";
+import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { ClientInfo } from "../../lib/types";
 
@@ -159,7 +161,7 @@ function groupSelectedDiscoveryServerConfigs(
   candidates: OnboardingServerCandidateWithImport[],
   selectedKeys: Set<string>,
 ): Record<string, unknown> {
-  const mcpServers: Record<string, unknown> = {};
+  const mcpServers = Object.create(null) as Record<string, unknown>;
   for (const candidate of candidates) {
     if (!selectedKeys.has(candidate.key) || !("import_config" in candidate)) continue;
     mcpServers[candidate.name] = candidate.import_config;
@@ -480,7 +482,7 @@ export function OnboardingPage() {
                 }),
               );
             }
-            await clientsApi.update(adminDiscoveryClientToUpdatePayload(candidate, { forceWithoutConfigFile: true }));
+            await clientsApi.update(adminDiscoveryClientToUpdatePayload(candidate));
             await clientsApi.approveRecord({ identifier });
           }),
         );
@@ -505,7 +507,7 @@ export function OnboardingPage() {
             (response as { success?: boolean }).success === false
           ) {
             const err = (response as { error?: unknown }).error;
-            throw new Error(err ? String(err) : "Server import failed");
+            throw new Error(err ? stringifyError(err) : "Server import failed");
           }
           const stats = extractImportStats(response);
           if (stats.failedCount > 0) {
@@ -532,7 +534,7 @@ export function OnboardingPage() {
             (response as { success?: boolean }).success === false
           ) {
             const err = (response as { error?: unknown }).error;
-            throw new Error(err ? String(err) : "Server import failed");
+            throw new Error(err ? stringifyError(err) : "Server import failed");
           }
           const stats = extractImportStats(response);
           if (stats.failedCount > 0) {
@@ -1184,12 +1186,27 @@ function ClientsStep({
     [data?.client],
   );
   const shouldLoadAdminRecommendations = !isLoading && !isError && detectedClients.length === 0;
-  const adminRecommendationsQuery = useQuery({
-    queryKey: ["adminDiscoveryClients", "onboarding"],
-    queryFn: () => fetchAdminDiscoveryClients({ surface: "onboarding", random: 6 }),
-    enabled: shouldLoadAdminRecommendations,
-    staleTime: 60_000,
+  const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
+  const adminDiscoveryPlatformQuery = useQuery({
+    queryKey: ["adminDiscoveryPlatform", "onboarding"],
+    queryFn: () => readTauriAdminDiscoveryPlatform(),
+    enabled: shouldLoadAdminRecommendations && isTauriShell,
+    staleTime: Infinity,
+    retry: false,
   });
+  const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
+  const adminRecommendationsQuery = useQuery({
+    queryKey: ["adminDiscoveryClients", "onboarding", adminDiscoveryPlatform ?? "web"],
+    queryFn: () => fetchAdminDiscoveryClients({ surface: "onboarding", random: 6, platform: adminDiscoveryPlatform }),
+    enabled: shouldLoadAdminRecommendations && (!isTauriShell || adminDiscoveryPlatformQuery.isSuccess),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const isAdminRecommendationsLoading =
+    detectedClients.length === 0 &&
+    (adminRecommendationsQuery.isLoading || (isTauriShell && adminDiscoveryPlatformQuery.isLoading));
+  const isAdminRecommendationsError = adminRecommendationsQuery.isError || adminDiscoveryPlatformQuery.isError;
+  const adminRecommendationsError = adminDiscoveryPlatformQuery.error ?? adminRecommendationsQuery.error;
   const adminRecommendations = useMemo(
     () => adminRecommendationsQuery.data ?? [],
     [adminRecommendationsQuery.data],
@@ -1248,11 +1265,11 @@ function ClientsStep({
             </Button>
           </CardContent>
         </Card>
-      ) : detectedClients.length === 0 && adminRecommendationsQuery.isLoading ? (
+      ) : isAdminRecommendationsLoading ? (
         <div className="flex justify-center py-12">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
         </div>
-      ) : detectedClients.length === 0 && adminRecommendationsQuery.isError ? (
+      ) : detectedClients.length === 0 && isAdminRecommendationsError ? (
         <Card>
           <CardContent className="py-8 text-center text-slate-500">
             <p>
@@ -1262,7 +1279,7 @@ function ClientsStep({
               })}
             </p>
             <p className="mt-1 text-xs text-slate-400">
-              {adminRecommendationsQuery.error instanceof Error ? adminRecommendationsQuery.error.message : ""}
+              {stringifyError(adminRecommendationsError)}
             </p>
           </CardContent>
         </Card>
@@ -1287,6 +1304,18 @@ function ClientsStep({
                 <button
                   key={client.identifier}
                   type="button"
+                  aria-pressed={isSelected}
+                  aria-label={t(
+                    isSelected
+                      ? "clients.adminRecommendationSelectedAria"
+                      : "clients.adminRecommendationUnselectedAria",
+                    {
+                      defaultValue: isSelected
+                        ? "{{name}} Admin recommendation selected"
+                        : "{{name}} Admin recommendation not selected",
+                      name: client.displayName || client.identifier,
+                    },
+                  )}
                   onClick={() => onToggle(client.identifier)}
                   className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
                       ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
@@ -1505,7 +1534,7 @@ function ServersStep({
               })}
             </p>
             <p className="text-xs text-slate-400">
-              {adminRecommendationsQuery.error instanceof Error ? adminRecommendationsQuery.error.message : ""}
+              {stringifyError(adminRecommendationsQuery.error)}
             </p>
           </CardContent>
         </Card>
@@ -1531,6 +1560,11 @@ function ServersStep({
                 <button
                   key={server.key}
                   type="button"
+                  aria-pressed={isSelected}
+                  aria-label={t(isSelected ? "servers.selectedAria" : "servers.unselectedAria", {
+                    defaultValue: isSelected ? "{{name}} server selected" : "{{name}} server not selected",
+                    name: server.name,
+                  })}
                   onClick={() => onToggle(server.key)}
                   className={`flex items-center gap-4 rounded-lg border-2 p-4 text-left transition-all ${isSelected
                     ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	ADMIN_DISCOVERY_BASE_URL,
 	buildAdminDiscoveryUrl,
 	adminDiscoveryClientToCandidate,
 	adminDiscoveryClientToUpdatePayload,
@@ -12,7 +13,7 @@ describe("admin discovery adapter", () => {
 		expect(
 			buildAdminDiscoveryUrl(
 				"/discovery/clients",
-				{ surface: "onboarding", random: 20, limit: 50, offset: 10 },
+				{ surface: "onboarding", random: 20, limit: 50, offset: 10, platform: "macos" },
 				"https://admin.example.com/",
 			),
 		).toBe("https://admin.example.com/discovery/clients?surface=onboarding&random=12");
@@ -52,40 +53,30 @@ describe("admin discovery adapter", () => {
 
 		expect(requests).toHaveLength(1);
 		expect(String(requests[0].input)).toBe(
-			"https://public.mcp.umate.ai/discovery/clients?surface=onboarding&random=6",
+			`${ADMIN_DISCOVERY_BASE_URL}/discovery/clients?surface=onboarding&random=6`,
 		);
 		expect(requests[0].init?.credentials).toBe("omit");
 	});
 
-	test("maps Admin clients into backend-recognized client update payloads only", () => {
+	test("maps Admin v2 client metadata into backend-recognized update payloads only", () => {
 		const payload = adminDiscoveryClientToUpdatePayload(
 			{
 				identifier: "cursor-desktop",
 				displayName: "Cursor",
 				description: "AI code editor",
-				homepage_url: "https://cursor.com",
-				logoUrl: "https://example.com/cursor.png",
-				config: {
-					kind: "has_config_file",
-					file: {
-						format: "json",
-						containerType: "standard",
-						containerKeys: ["mcpServers"],
-					},
-					transports: {
-						stdio: {
-							include_type: true,
-							type_value: "stdio",
-							command_field: "command",
-							args_field: "args",
-							env_field: "env",
-						},
-					},
+				links: {
+					homepage: "https://cursor.com",
+					docs: "https://docs.cursor.com",
+					support: "https://support.cursor.com",
 				},
-				backend_template: { should: "not pass through" },
+				icon: {
+					url: "https://example.com/cursor.png",
+				},
+				config: {
+					kind: "none",
+				},
 				unrecognized: true,
 			},
-			{ forceWithoutConfigFile: true },
 		);
 
 		expect(payload).toEqual({
@@ -94,11 +85,12 @@ describe("admin discovery adapter", () => {
 			config_file_state: "without_config_file",
 			description: "AI code editor",
 			homepage_url: "https://cursor.com",
+			docs_url: "https://docs.cursor.com",
+			support_url: "https://support.cursor.com",
 			logo_url: "https://example.com/cursor.png",
 			clear_config_file_parse: true,
 			clear_transports: true,
 		});
-		expect(payload).not.toHaveProperty("backend_template");
 		expect(payload).not.toHaveProperty("unrecognized");
 	});
 
@@ -109,8 +101,8 @@ describe("admin discovery adapter", () => {
 				identifier: "no-local-path",
 				displayName: "No Local Path",
 				config: {
-					kind: "has_config_file",
-					file: { format: "json", containerKeys: ["mcpServers"] },
+					kind: "file",
+					file: { format: "json", container: { keys: ["mcpServers"] } },
 					transports: { stdio: { command_field: "command" } },
 				},
 			}),
@@ -118,6 +110,179 @@ describe("admin discovery adapter", () => {
 			identifier: "no-local-path",
 			configFileChoice: "without_config_file",
 			configPath: "",
+		});
+	});
+
+	test("uses v2 config file paths only for the explicit current platform", () => {
+		const rawClient = {
+			identifier: "cursor-desktop",
+			displayName: "Cursor",
+			config_path: "~/Library/Application Support/Cursor/legacy-client.json",
+			config: {
+				kind: "file",
+				file: {
+					format: "json",
+					path: "~/Library/Application Support/Cursor/legacy-file.json",
+					config_path: "~/Library/Application Support/Cursor/legacy-file-config.json",
+					paths: {
+						macos: "~/Library/Application Support/Cursor/User/globalStorage/mcp.json",
+						windows: "%APPDATA%\\Cursor\\User\\globalStorage\\mcp.json",
+					},
+					container: {
+						type: "standard",
+						keys: ["mcpServers"],
+					},
+				},
+				transports: {
+					stdio: {
+						command_field: "command",
+						args_field: "args",
+						env_field: "env",
+					},
+				},
+			},
+		};
+
+		expect(adminDiscoveryClientToCandidate(rawClient)).toMatchObject({
+			configFileChoice: "without_config_file",
+			configPath: "",
+		});
+		expect(adminDiscoveryClientToCandidate(rawClient, { platform: "linux" })).toMatchObject({
+			configFileChoice: "without_config_file",
+			configPath: "",
+		});
+		expect(adminDiscoveryClientToCandidate(rawClient, { platform: "macos" })).toMatchObject({
+			configFileChoice: "with_config_file",
+			configPath: "~/Library/Application Support/Cursor/User/globalStorage/mcp.json",
+			configFileParseFormat: "json",
+			configFileParseContainerType: "standard",
+			configFileParseContainerKeysText: "mcpServers",
+			supportedTransports: ["stdio"],
+		});
+	});
+
+	test("ignores legacy config paths when the current platform path is missing", () => {
+		const rawClient = {
+			identifier: "legacy-paths",
+			displayName: "Legacy Paths",
+			config_path: "~/Library/Application Support/Legacy/client-level.json",
+			config: {
+				kind: "file",
+				file: {
+					format: "json",
+					path: "~/Library/Application Support/Legacy/file-path.json",
+					config_path: "~/Library/Application Support/Legacy/file-config-path.json",
+					paths: {
+						windows: "%APPDATA%\\Legacy\\mcp.json",
+						linux: "~/.config/legacy/mcp.json",
+					},
+					container: {
+						type: "standard",
+						keys: ["mcpServers"],
+					},
+				},
+			},
+		};
+
+		expect(adminDiscoveryClientToCandidate(rawClient, { platform: "macos" })).toMatchObject({
+			configFileChoice: "without_config_file",
+			configPath: "",
+		});
+
+		expect(
+			adminDiscoveryClientToCandidate(
+				{
+					...rawClient,
+					config: {
+						...rawClient.config,
+						file: {
+							...rawClient.config.file,
+							paths: undefined,
+						},
+					},
+				},
+				{ platform: "macos" },
+			),
+		).toMatchObject({
+			configFileChoice: "without_config_file",
+			configPath: "",
+		});
+	});
+
+	test("does not treat legacy has_config_file kind as writable config", () => {
+		const rawClient = {
+			identifier: "legacy-kind",
+			displayName: "Legacy Kind",
+			config: {
+				kind: "has_config_file",
+				file: {
+					format: "json",
+					paths: {
+						macos: "~/Library/Application Support/Legacy Kind/mcp.json",
+					},
+					container: {
+						type: "standard",
+						keys: ["mcpServers"],
+					},
+				},
+			},
+		};
+
+		expect(adminDiscoveryClientToCandidate(rawClient, { platform: "macos" })).toMatchObject({
+			configFileChoice: "without_config_file",
+			configPath: "",
+		});
+	});
+
+	test("maps a v2 Admin client candidate into a config-aware update payload", () => {
+		const candidate = adminDiscoveryClientToCandidate(
+			{
+				identifier: "cursor-desktop",
+				displayName: "Cursor",
+				config: {
+					kind: "file",
+					file: {
+						format: "json",
+						paths: {
+							macos: "~/Library/Application Support/Cursor/mcp.json",
+						},
+						container: {
+							type: "standard",
+							keys: ["mcpServers"],
+						},
+					},
+					transports: {
+						stdio: {
+							command_field: "command",
+							args_field: "args",
+							env_field: "env",
+						},
+					},
+				},
+			},
+			{ platform: "macos" },
+		);
+
+		expect(candidate).not.toBeNull();
+		expect(adminDiscoveryClientToUpdatePayload(candidate)).toMatchObject({
+			identifier: "cursor-desktop",
+			display_name: "Cursor",
+			config_file_state: "with_config_file",
+			config_path: "~/Library/Application Support/Cursor/mcp.json",
+			config_file_parse: {
+				format: "json",
+				container_type: "standard",
+				container_keys: ["mcpServers"],
+			},
+			clear_config_file_parse: false,
+			transports: {
+				stdio: {
+					command_field: "command",
+					args_field: "args",
+					env_field: "env",
+				},
+			},
+			clear_transports: false,
 		});
 	});
 
