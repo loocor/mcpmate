@@ -1,7 +1,7 @@
 import type { ClientConfigFileParse, ClientConfigFileState, TransportRuleData } from "./types";
 
 export type AdminDiscoverySurface = "onboarding" | "extension";
-type AdminDiscoveryPlatform = "macos" | "windows" | "linux";
+export type AdminDiscoveryPlatform = "macos" | "windows" | "linux";
 
 const MAX_ADMIN_DISCOVERY_LIMIT = 50;
 const MAX_ADMIN_DISCOVERY_RANDOM = 12;
@@ -19,6 +19,7 @@ export interface AdminDiscoveryQuery {
 	limit?: number;
 	offset?: number;
 	random?: number;
+	platform?: AdminDiscoveryPlatform;
 }
 
 export interface AdminDiscoveryClientCandidate {
@@ -75,6 +76,10 @@ function compactString(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function firstCompactString(...values: unknown[]): string | undefined {
+	return values.find((value): value is string => Boolean(compactString(value)))?.trim();
+}
+
 function recordValue(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -92,16 +97,6 @@ function stringRecordValue(value: unknown): Record<string, string> {
 function cappedCount(value: unknown, max: number): number | undefined {
 	if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
 	return Math.max(0, Math.min(max, Math.round(value)));
-}
-
-function currentAdminDiscoveryPlatform(): AdminDiscoveryPlatform | undefined {
-	const platform = typeof navigator === "undefined" ? "" : navigator.platform.toLowerCase();
-	const userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent.toLowerCase();
-	const value = `${platform} ${userAgent}`;
-	if (value.includes("mac")) return "macos";
-	if (value.includes("win")) return "windows";
-	if (value.includes("linux")) return "linux";
-	return undefined;
 }
 
 export function buildAdminDiscoveryUrl(
@@ -150,7 +145,7 @@ function discoveryItems(envelope: unknown, key: "clients" | "servers"): unknown[
 export async function fetchAdminDiscoveryClients(options: AdminDiscoveryQuery): Promise<AdminDiscoveryClientCandidate[]> {
 	const envelope = await fetchAdminDiscoveryEnvelope("/discovery/clients", options);
 	return discoveryItems(envelope, "clients").flatMap((item) => {
-		const candidate = adminDiscoveryClientToCandidate(item);
+		const candidate = adminDiscoveryClientToCandidate(item, { platform: options.platform });
 		return candidate ? [candidate] : [];
 	});
 }
@@ -167,25 +162,12 @@ function metadataRecord(client: Record<string, unknown>): Record<string, unknown
 	return recordValue(client.metadata);
 }
 
-function detectionRules(client: Record<string, unknown>, platform = currentAdminDiscoveryPlatform()): unknown[] {
-	const detectionRecord = recordValue(client.detection);
-	if (platform && Array.isArray(detectionRecord[platform])) {
-		return detectionRecord[platform];
-	}
-	return Object.values(detectionRecord).flatMap((value) => (Array.isArray(value) ? value : []));
-}
-
-function detectionRuleConfigPath(rule: unknown): string | undefined {
-	const record = recordValue(rule);
-	return compactString(record.config_path) ?? (record.method === "config_path" ? compactString(record.value) : undefined);
-}
-
-function configPathFromDiscoveryClient(client: Record<string, unknown>): string {
-	for (const rule of detectionRules(client)) {
-		const path = detectionRuleConfigPath(rule);
-		if (path) return path;
-	}
-	return compactString(client.config_path) ?? "";
+function configPathFromDiscoveryClient(
+	file: Record<string, unknown>,
+	platform?: AdminDiscoveryPlatform,
+): string {
+	if (!platform) return "";
+	return compactString(recordValue(file.paths)[platform]) ?? "";
 }
 
 function adminConfigFileParse(file: Record<string, unknown>): {
@@ -193,11 +175,14 @@ function adminConfigFileParse(file: Record<string, unknown>): {
 	containerType: "standard" | "array";
 	containerKeys: string[];
 } {
+	const container = recordValue(file.container);
 	return {
 		format: compactString(file.format) ?? "json",
 		containerType:
-			file.containerType === "array" || file.container_type === "array" ? "array" : "standard",
-		containerKeys: stringArrayValue(file.containerKeys ?? file.container_keys),
+			container.type === "array" || file.containerType === "array" || file.container_type === "array"
+				? "array"
+				: "standard",
+		containerKeys: stringArrayValue(container.keys ?? file.containerKeys ?? file.container_keys),
 	};
 }
 
@@ -223,17 +208,15 @@ export function adminDiscoveryClientToCandidate(
 	const identifier = compactString(client.identifier) ?? compactString(client.id) ?? compactString(client.name);
 	if (!identifier) return null;
 	const displayName =
-		compactString(client.displayName) ??
-		compactString(client.display_name) ??
-		compactString(metadata.display_name) ??
-		identifier;
-	const configPath = options?.platform
-		? configPathFromDiscoveryClient({ ...client, detection: { [options.platform]: detectionRules(client, options.platform) } })
-		: configPathFromDiscoveryClient(client);
-	const hasWritableConfig = Boolean(
-		configPath && (config.kind === "has_config_file" || config.file || Object.keys(transports).length > 0),
-	);
+		firstCompactString(client.displayName, client.display_name, metadata.display_name) ?? identifier;
+	const fileRecord = recordValue(config.file);
+	const configPath = configPathFromDiscoveryClient(fileRecord, options?.platform);
+	const configKind = compactString(config.kind);
+	const hasConfigFileKind = configKind === "file";
+	const hasWritableConfig = Boolean(configPath && hasConfigFileKind);
 	const configFileChoice: ClientConfigFileState = hasWritableConfig ? "with_config_file" : "without_config_file";
+	const links = recordValue(client.links);
+	const icon = recordValue(client.icon);
 
 	return {
 		identifier,
@@ -244,14 +227,38 @@ export function adminDiscoveryClientToCandidate(
 		configFileParseContainerType: file.containerType,
 		configFileParseContainerKeysText: file.containerKeys.join(", "),
 		description: compactString(client.description) ?? compactString(metadata.description) ?? "",
-		homepageUrl:
-			compactString(client.homepageUrl) ?? compactString(client.homepage_url) ?? compactString(metadata.homepage_url) ?? "",
-		docsUrl: compactString(client.docsUrl) ?? compactString(client.docs_url) ?? compactString(metadata.docs_url) ?? "",
-		supportUrl:
-			compactString(client.supportUrl) ?? compactString(client.support_url) ?? compactString(metadata.support_url) ?? "",
-		logoUrl: compactString(client.logoUrl) ?? compactString(client.logo_url) ?? compactString(metadata.logo_url) ?? "",
+		homepageUrl: firstCompactString(links.homepage, client.homepageUrl, client.homepage_url, metadata.homepage_url) ?? "",
+		docsUrl: firstCompactString(links.docs, client.docsUrl, client.docs_url, metadata.docs_url) ?? "",
+		supportUrl: firstCompactString(links.support, client.supportUrl, client.support_url, metadata.support_url) ?? "",
+		logoUrl: firstCompactString(icon.url, client.logoUrl, client.logo_url, metadata.logo_url) ?? "",
 		supportedTransports: Object.keys(transports),
 		transports,
+	};
+}
+
+function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClientCandidate | null {
+	const candidate = recordValue(raw);
+	const identifier = compactString(candidate.identifier);
+	const displayName = compactString(candidate.displayName);
+	if (!identifier || !displayName) return null;
+	if (candidate.configFileChoice !== "with_config_file" && candidate.configFileChoice !== "without_config_file") {
+		return null;
+	}
+	return {
+		identifier,
+		displayName,
+		configFileChoice: candidate.configFileChoice,
+		configPath: compactString(candidate.configPath) ?? "",
+		configFileParseFormat: compactString(candidate.configFileParseFormat) ?? "json",
+		configFileParseContainerType: candidate.configFileParseContainerType === "array" ? "array" : "standard",
+		configFileParseContainerKeysText: compactString(candidate.configFileParseContainerKeysText) ?? "",
+		description: compactString(candidate.description) ?? "",
+		homepageUrl: compactString(candidate.homepageUrl) ?? "",
+		docsUrl: compactString(candidate.docsUrl) ?? "",
+		supportUrl: compactString(candidate.supportUrl) ?? "",
+		logoUrl: compactString(candidate.logoUrl) ?? "",
+		supportedTransports: stringArrayValue(candidate.supportedTransports),
+		transports: recordValue(candidate.transports) as Record<string, TransportRuleData>,
 	};
 }
 
@@ -259,7 +266,7 @@ export function adminDiscoveryClientToUpdatePayload(
 	raw: unknown,
 	options?: { configPath?: string; forceWithoutConfigFile?: boolean },
 ): AdminClientUpdatePayload {
-	const candidate = adminDiscoveryClientToCandidate(raw);
+	const candidate = resolvedAdminDiscoveryClientCandidate(raw) ?? adminDiscoveryClientToCandidate(raw);
 	if (!candidate) {
 		throw new Error("Admin discovery client is missing a usable identifier.");
 	}

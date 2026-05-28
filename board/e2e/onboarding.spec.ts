@@ -288,6 +288,24 @@ async function installAdminDiscoveryMocks(
   });
 }
 
+async function installTauriPlatformMock(page: Page, platform: "macos" | "windows" | "linux"): Promise<void> {
+  await page.addInitScript((value) => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__MCPMATE_IS_TAURI__ = true;
+    w.__TAURI_INTERNALS__ = {
+      invoke: async (command: string) => {
+        if (command === "mcp_shell_read_platform") {
+          return value;
+        }
+        if (command === "mcp_shell_read_core_source") {
+          return {};
+        }
+        return null;
+      },
+    };
+  }, platform);
+}
+
 async function startOnboardingWizard(page: Page): Promise<void> {
   await page.getByRole("checkbox", { name: /Allow scanning local runtimes/i }).check();
   await page.getByRole("button", { name: /Get Started/i }).click();
@@ -380,13 +398,42 @@ test("onboarding uses Admin client recommendations when local detection is empty
   const clientUpdates: unknown[] = [];
 
   await installReadyWebSocket(page);
+  await installTauriPlatformMock(page, "macos");
   await installAdminDiscoveryMocks(page, {
     clients: [
       {
         identifier: "cursor-desktop",
         displayName: "Cursor",
         description: "AI code editor",
-        backend_template: { ignored: true },
+        links: {
+          homepage: "https://cursor.com",
+          docs: "https://docs.cursor.com",
+          support: "https://support.cursor.com",
+        },
+        icon: {
+          url: "https://example.com/cursor.png",
+        },
+        config: {
+          kind: "file",
+          file: {
+            format: "json",
+            paths: {
+              macos: "~/Library/Application Support/Cursor/mcp.json",
+              windows: "%APPDATA%\\Cursor\\mcp.json",
+            },
+            container: {
+              type: "standard",
+              keys: ["mcpServers"],
+            },
+          },
+          transports: {
+            stdio: {
+              command_field: "command",
+              args_field: "args",
+              env_field: "env",
+            },
+          },
+        },
       },
     ],
     servers: [],
@@ -420,10 +467,27 @@ test("onboarding uses Admin client recommendations when local detection is empty
   expect(clientUpdates).toContainEqual({
     identifier: "cursor-desktop",
     display_name: "Cursor",
-    config_file_state: "without_config_file",
+    config_file_state: "with_config_file",
+    config_path: "~/Library/Application Support/Cursor/mcp.json",
     description: "AI code editor",
-    clear_config_file_parse: true,
-    clear_transports: true,
+    homepage_url: "https://cursor.com",
+    docs_url: "https://docs.cursor.com",
+    support_url: "https://support.cursor.com",
+    logo_url: "https://example.com/cursor.png",
+    config_file_parse: {
+      format: "json",
+      container_type: "standard",
+      container_keys: ["mcpServers"],
+    },
+    clear_config_file_parse: false,
+    transports: {
+      stdio: {
+        command_field: "command",
+        args_field: "args",
+        env_field: "env",
+      },
+    },
+    clear_transports: false,
   });
 });
 

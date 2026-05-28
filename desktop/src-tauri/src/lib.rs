@@ -796,6 +796,7 @@ pub fn run() -> Result<()> {
     let builder = builder.invoke_handler(tauri::generate_handler![
         mcp_shell_apply_preferences,
         mcp_shell_read_preferences,
+        mcp_shell_read_platform,
         mcp_shell_read_core_source,
         mcp_shell_apply_core_source,
         mcp_shell_manage_local_core_service,
@@ -834,6 +835,21 @@ pub fn run() -> Result<()> {
         });
 
     Ok(())
+}
+
+fn desktop_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
+#[tauri::command]
+fn mcp_shell_read_platform() -> &'static str {
+    desktop_platform()
 }
 
 #[tauri::command]
@@ -1412,4 +1428,14 @@ fn try_use_default_paths() -> Result<MCPMatePaths> {
         .ensure_directories()
         .context("failed to prepare default MCPMate directories")?;
     Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::desktop_platform;
+
+    #[test]
+    fn desktop_platform_matches_admin_discovery_values() {
+        assert!(matches!(desktop_platform(), "macos" | "windows" | "linux"));
+    }
 }

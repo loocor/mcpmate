@@ -26,6 +26,7 @@ import {
 } from "../lib/admin-discovery";
 import { clientsApi } from "../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-policy";
+import { readTauriAdminDiscoveryPlatform } from "../lib/desktop-platform";
 import {
 	applyClientConfigWithResolvedSelection,
 	canApplyClientConfigWithState,
@@ -709,6 +710,25 @@ function TextInputRow({
 	);
 }
 
+function AdminCatalogOptionIcon({ candidate }: { candidate: AdminDiscoveryClientCandidate }) {
+	const [failed, setFailed] = useState(false);
+	if (candidate.logoUrl && !failed) {
+		return (
+			<img
+				src={candidate.logoUrl}
+				alt=""
+				className="h-7 w-7 rounded-md object-contain"
+				onError={() => setFailed(true)}
+			/>
+		);
+	}
+	return (
+		<span className="flex h-7 w-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
+			<ImageIcon className="h-4 w-4" />
+		</span>
+	);
+}
+
 function TransportRuleField({
 	label,
 	placeholder,
@@ -841,6 +861,7 @@ export function ClientFormDrawer({
 		defaultValues(client).supportedTransports,
 	);
 	const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
+	const drawerContentRef = useRef<HTMLDivElement | null>(null);
 	const configPathFileInputRef = useRef<HTMLInputElement>(null);
 	const autoAppliedInferenceRef = useRef<string | null>(null);
 	const lastParseInspectionSignatureRef = useRef<string | null>(null);
@@ -882,19 +903,29 @@ export function ClientFormDrawer({
 		if (typeof preview === "object") return Object.keys(preview as Record<string, unknown>).length > 0;
 		return true;
 	}, [parseInspection?.preview]);
+	const adminDiscoveryPlatformQuery = useQuery({
+		queryKey: ["adminDiscoveryPlatform", "drawer"],
+		queryFn: () => readTauriAdminDiscoveryPlatform(),
+		enabled: open && isTauriShell,
+		staleTime: Infinity,
+		retry: false,
+	});
+	const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
 	const adminCatalogQuery = useQuery({
-		queryKey: ["adminDiscoveryClients", "drawer"],
-		queryFn: () => fetchAdminDiscoveryClients({ limit: 50, offset: 0 }),
-		enabled: open,
+		queryKey: ["adminDiscoveryClients", "drawer", adminDiscoveryPlatform ?? "web"],
+		queryFn: () => fetchAdminDiscoveryClients({ limit: 50, offset: 0, platform: adminDiscoveryPlatform }),
+		enabled: open && (!isTauriShell || adminDiscoveryPlatformQuery.isSuccess),
 		staleTime: 60_000,
+		retry: false,
 	});
 	const adminCatalogOptions = useMemo(
 		() => adminCatalogQuery.data ?? [],
 		[adminCatalogQuery.data],
 	);
-	const adminCatalogEmptyText = adminCatalogQuery.isError
+	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Admin recommendations are unavailable." })
 		: t("detail.form.adminCatalog.empty", { defaultValue: "No Admin recommendations found." });
+	const adminCatalogBusy = (isTauriShell && adminDiscoveryPlatformQuery.isLoading) || adminCatalogQuery.isLoading;
 
 	const applyAdminClientCandidate = useCallback(
 		(candidate: AdminDiscoveryClientCandidate) => {
@@ -1434,7 +1465,7 @@ export function ClientFormDrawer({
 
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange}>
-			<DrawerContent>
+			<DrawerContent ref={drawerContentRef}>
 				<DrawerHeader>
 					<DrawerTitle>
 						{mode === "create"
@@ -1458,83 +1489,99 @@ export function ClientFormDrawer({
 
 							<TabsContent value="basic" className="space-y-4 pt-4">
 								<div className="space-y-4">
-									<FormItem className="space-y-0">
-										<div className="flex items-start gap-4">
-											<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>
-												{t("detail.form.adminCatalog.label", { defaultValue: "Admin Catalog" })}
-											</FormLabel>
-											<div className="min-w-0 flex-1">
-												<Popover open={isAdminCatalogOpen} onOpenChange={setIsAdminCatalogOpen}>
-													<PopoverTrigger asChild>
-														<Button
-															type="button"
-															variant="outline"
-															role="combobox"
-															aria-expanded={isAdminCatalogOpen}
-															className="w-full justify-between"
-															disabled={adminCatalogQuery.isLoading || saveMutation.isPending}
-														>
-															<span className="truncate">
-																{selectedAdminClient?.displayName ??
-																	t("detail.form.adminCatalog.placeholder", {
-																		defaultValue: "Search Admin recommendations",
-																	})}
-															</span>
-															{adminCatalogQuery.isLoading ? (
-																<Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-50" />
-															) : (
-																<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-															)}
-														</Button>
-													</PopoverTrigger>
-													<PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-														<Command>
-															<CommandInput
-																placeholder={t("detail.form.adminCatalog.search", {
-																	defaultValue: "Search clients...",
+									<FormField control={form.control} name="displayName" render={({ field }) => (
+										<FormItem className="space-y-0">
+											<div className="flex items-start gap-4">
+												<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>
+													{t("detail.form.fields.displayName.label", { defaultValue: "Client Name" })}
+												</FormLabel>
+												<div className="min-w-0 flex-1">
+													<div className="flex gap-2">
+														<FormControl>
+															<Input
+																{...field}
+																onChange={(event) => {
+																	field.onChange(event);
+																	setSelectedAdminClient(null);
+																}}
+																placeholder={t("detail.form.fields.displayName.placeholder", {
+																	defaultValue: "Cursor Desktop",
 																})}
 															/>
-															<CommandList>
-																<CommandEmpty>{adminCatalogEmptyText}</CommandEmpty>
-																<CommandGroup>
-																	{adminCatalogOptions.map((candidate) => (
-																		<CommandItem
-																			key={candidate.identifier}
-																			value={`${candidate.displayName} ${candidate.identifier}`}
-																			onSelect={() => applyAdminClientCandidate(candidate)}
-																		>
-																			<Check
-																				className={cn(
-																					"mr-2 h-4 w-4",
-																					selectedAdminClient?.identifier === candidate.identifier
-																						? "opacity-100"
-																						: "opacity-0",
-																				)}
-																			/>
-																			<div className="min-w-0">
-																				<div className="truncate">{candidate.displayName}</div>
-																				<div className="truncate text-xs text-muted-foreground">
-																					{candidate.identifier}
-																				</div>
-																			</div>
-																		</CommandItem>
-																	))}
-																</CommandGroup>
-															</CommandList>
-														</Command>
-													</PopoverContent>
-												</Popover>
-												<FormDescription>
-													{t("detail.form.adminCatalog.description", {
-														defaultValue:
-															"Load public Admin recommendations directly and map selected fields into this MCPMate client record.",
-													})}
-												</FormDescription>
+														</FormControl>
+														<Popover open={isAdminCatalogOpen} onOpenChange={setIsAdminCatalogOpen}>
+															<PopoverTrigger asChild>
+																<Button
+																	type="button"
+																	variant="outline"
+																	role="combobox"
+																	aria-expanded={isAdminCatalogOpen}
+																	aria-label={t("detail.form.adminCatalog.placeholder", {
+																		defaultValue: "Search Admin recommendations",
+																	})}
+																	className="shrink-0"
+																	disabled={adminCatalogBusy || saveMutation.isPending}
+																>
+																	{adminCatalogBusy ? (
+																		<Loader2 className="h-4 w-4 animate-spin opacity-50" />
+																	) : (
+																		<ChevronsUpDown className="h-4 w-4 opacity-50" />
+																	)}
+																</Button>
+															</PopoverTrigger>
+															<PopoverContent
+																className="max-h-[min(360px,var(--radix-popover-content-available-height))] w-[min(420px,var(--radix-popover-content-available-width))] overflow-hidden p-0"
+																align="end"
+																container={drawerContentRef.current}
+															>
+																<Command className="max-h-full">
+																	<CommandInput
+																		placeholder={t("detail.form.adminCatalog.search", {
+																			defaultValue: "Search clients...",
+																		})}
+																	/>
+																	<CommandList className="max-h-[clamp(120px,calc(var(--radix-popover-content-available-height)_-_48px),300px)] overscroll-contain">
+																		<CommandEmpty>{adminCatalogEmptyText}</CommandEmpty>
+																		<CommandGroup>
+																			{adminCatalogOptions.map((candidate) => (
+																				<CommandItem
+																					key={candidate.identifier}
+																					value={`${candidate.displayName} ${candidate.identifier}`}
+																					onSelect={() => applyAdminClientCandidate(candidate)}
+																				>
+																					<Check
+																						className={cn(
+																							"mr-2 h-4 w-4 shrink-0",
+																							selectedAdminClient?.identifier === candidate.identifier
+																								? "opacity-100"
+																								: "opacity-0",
+																						)}
+																					/>
+																					<AdminCatalogOptionIcon candidate={candidate} />
+																					<div className="min-w-0">
+																						<div className="truncate">{candidate.displayName}</div>
+																						<div className="truncate text-xs text-muted-foreground">
+																							{candidate.identifier}
+																						</div>
+																					</div>
+																				</CommandItem>
+																			))}
+																		</CommandGroup>
+																	</CommandList>
+																</Command>
+															</PopoverContent>
+														</Popover>
+													</div>
+													<FormDescription>
+														{t("detail.form.adminCatalog.description", {
+															defaultValue:
+																"Load public Admin recommendations directly and map selected fields into this MCPMate client record.",
+														})}
+													</FormDescription>
+													<FormMessage />
+												</div>
 											</div>
-										</div>
-									</FormItem>
-									<FormField control={form.control} name="displayName" render={({ field }) => (
-										<TextInputRow label={t("detail.form.fields.displayName.label", { defaultValue: "Client Name" })} placeholder={t("detail.form.fields.displayName.placeholder", { defaultValue: "Cursor Desktop" })} field={field} />
+										</FormItem>
 									)} />
 									<FormField control={form.control} name="identifier" render={({ field }) => (
 										<TextInputRow label={t("detail.form.fields.identifier.label", { defaultValue: "Client ID" })} placeholder={t("detail.form.fields.identifier.placeholder", { defaultValue: "cursor-desktop" })} field={field} disabled={mode !== "create"} />
