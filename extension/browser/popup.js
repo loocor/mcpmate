@@ -12,13 +12,13 @@ import {
 	shouldStartPullRefresh,
 } from "./discovery-state.mjs";
 
-const ADMIN_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.adminApiOrigin;
+const DISCOVERY_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryApiOrigin;
 const BUILD_DATE = globalThis.MCPMATE_EXTENSION_BUILD.buildDate;
 const DISCOVERY_MODE = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryMode || "account";
 const DISCOVERY_ENDPOINTS = {
-	portals: `${ADMIN_ORIGIN}/discovery/portals`,
-	servers: `${ADMIN_ORIGIN}/discovery/servers`,
-	clients: `${ADMIN_ORIGIN}/discovery/clients`,
+	portals: `${DISCOVERY_ORIGIN}/discovery/portals`,
+	servers: `${DISCOVERY_ORIGIN}/discovery/servers`,
+	clients: `${DISCOVERY_ORIGIN}/discovery/clients`,
 };
 const MOCK_DISCOVERY_ENDPOINTS = {
 	portals: chrome.runtime.getURL("mock/portals.json"),
@@ -304,7 +304,7 @@ async function writeSettings(settings) {
 }
 
 function discoveryCacheKey(kind, requestUrl) {
-	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
+	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${DISCOVERY_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
 }
 
 async function readDiscoveryCache(kind, requestUrl) {
