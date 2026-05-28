@@ -1,4 +1,4 @@
 globalThis.MCPMATE_EXTENSION_CONFIG = Object.freeze({
-	adminApiOrigin: "https://auth.mcp.umate.ai",
+	discoveryApiOrigin: "https://public.mcp.umate.ai",
 	discoveryMode: "account",
 });
