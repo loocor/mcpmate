@@ -1,4 +1,9 @@
 import {
+	clientConfigMeta,
+	entryUrl,
+	iconUrl,
+} from "./catalog-entry.mjs";
+import {
 	DISCOVERY_PAGE_SIZE,
 	buildDiscoveryUrl,
 	discoveryPageState,
@@ -427,8 +432,9 @@ function renderIcon(name, iconUrl) {
 	badge.className = "icon-badge";
 	if (iconUrl) {
 		const img = document.createElement("img");
-		img.src = iconUrl;
 		img.alt = "";
+		img.referrerPolicy = "no-referrer";
+		img.src = iconUrl;
 		badge.appendChild(img);
 		return badge;
 	}
@@ -549,43 +555,6 @@ function firstTransport(server) {
 	return "";
 }
 
-function entryUrl(entry) {
-	const server = entry?.server || entry;
-	const official = entry?.official || server?.official || {};
-	const curated = entry?.curated || server?.curated || {};
-	return (
-		entry?.url ||
-		entry?.homepageUrl ||
-		curated.docsUrl ||
-		curated.supportUrl ||
-		official.websiteUrl ||
-		official.repository?.url ||
-		official.docsUrl ||
-		server?.websiteUrl ||
-		server?.homepageUrl ||
-		server?.repository?.url ||
-		server?.docsUrl ||
-		"https://mcp.umate.ai"
-	);
-}
-
-function iconUrl(entry) {
-	const server = entry?.server || entry;
-	const official = entry?.official || server?.official || {};
-	const meta = discoveryMeta(entry);
-	const officialIcon = Array.isArray(official.icons) ? official.icons[0]?.src : "";
-	return (
-		meta.iconUrl ||
-		meta.brandIconUrl ||
-		entry?.iconUrl ||
-		entry?.logoUrl ||
-		officialIcon ||
-		server?.iconUrl ||
-		server?.logoUrl ||
-		""
-	);
-}
-
 function normalizeEntries(kind, data) {
 	if (Array.isArray(data)) return data;
 	if (Array.isArray(data?.[kind])) return data[kind];
@@ -618,10 +587,7 @@ function entryMeta(entry, kind) {
 		};
 	}
 	if (kind === "clients") {
-		return {
-			signal: entry?.signal || entry?.category || "",
-			meta: entry?.meta || entry?.config?.kind || "",
-		};
+		return clientConfigMeta(entry);
 	}
 	return {
 		signal: entry?.signal || meta.quality?.status || "",
@@ -683,7 +649,7 @@ function entryCard(kind, entry) {
 		source: entrySource(entry),
 		signal: metaBits.signal,
 		meta: metaBits.meta,
-		iconUrl: iconUrl(entry),
+		iconUrl: iconUrl(entry, ADMIN_ORIGIN),
 	});
 }
 
@@ -700,6 +666,7 @@ async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false }) 
 	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl);
 	if (!data) {
 		const response = await fetch(requestUrl, {
+			credentials: "omit",
 			headers: { accept: "application/json" },
 		});
 		if (!response.ok) {
