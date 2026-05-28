@@ -1,4 +1,5 @@
 use crate::clients::TemplateEngine;
+use crate::clients::admin_discovery::{admin_discovery_base_url, fetch_admin_discovery_client_templates};
 use crate::clients::detector::{ClientDetector, DetectedClient};
 use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
@@ -18,84 +19,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::OpenOptions;
-
-// Generated at build time from the repository's config/client directory
-include!(concat!(env!("OUT_DIR"), "/official_templates_generated.rs"));
-
-fn parse_embedded_template(
-    file_name: &str,
-    contents: &str,
-) -> ConfigResult<ClientTemplate> {
-    let ext = Path::new(file_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-        .ok_or_else(|| ConfigError::TemplateParseError(format!("Unsupported embedded template: {}", file_name)))?;
-
-    let mut template: ClientTemplate = match ext.as_str() {
-        "json" => serde_json::from_str(contents).map_err(|err| {
-            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
-        })?,
-        "json5" => json5::from_str(contents).map_err(|err| {
-            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
-        })?,
-        "yaml" | "yml" => serde_yaml::from_str(contents).map_err(|err| {
-            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
-        })?,
-        "toml" => toml::from_str(contents).map_err(|err| {
-            ConfigError::TemplateParseError(format!("Failed to parse embedded template {}: {}", file_name, err))
-        })?,
-        _ => {
-            return Err(ConfigError::TemplateParseError(format!(
-                "Unsupported embedded template extension {} ({})",
-                ext, file_name
-            )));
-        }
-    };
-
-    if matches!(template.format, TemplateFormat::Json) {
-        match ext.as_str() {
-            "json5" => template.format = TemplateFormat::Json5,
-            "yaml" | "yml" => template.format = TemplateFormat::Yaml,
-            "toml" => template.format = TemplateFormat::Toml,
-            _ => {}
-        }
-    }
-
-    if template.identifier.trim().is_empty() {
-        return Err(ConfigError::TemplateParseError(format!(
-            "Embedded template missing identifier field: {}",
-            file_name
-        )));
-    }
-
-    if template.config_mapping.container_keys.is_empty() {
-        return Err(ConfigError::TemplateParseError(format!(
-            "Embedded template {} missing config_mapping.container_keys",
-            template.identifier
-        )));
-    }
-
-    if template.detection.is_empty() {
-        return Err(ConfigError::TemplateParseError(format!(
-            "Embedded template {} missing detection rules",
-            template.identifier
-        )));
-    }
-
-    Ok(template)
-}
-
-fn embedded_official_templates() -> ConfigResult<Vec<ClientTemplate>> {
-    OFFICIAL_TEMPLATES
-        .iter()
-        .map(|(file_name, contents)| parse_embedded_template(file_name, contents))
-        .collect()
-}
 
 #[derive(Debug, Clone, sqlx::FromRow, Default)]
 pub struct ClientStateRow {
@@ -648,8 +574,8 @@ pub struct ClientConfigService {
 impl ClientConfigService {
     /// Bootstrap service with default template root resolution
     pub async fn bootstrap(db_pool: Arc<SqlitePool>) -> crate::clients::error::ConfigResult<Self> {
-        let templates = embedded_official_templates()?;
-        Self::seed_runtime_template_snapshots_from_templates(db_pool.as_ref(), &templates).await?;
+        let base_url = admin_discovery_base_url();
+        Self::refresh_runtime_templates_from_admin_discovery(db_pool.as_ref(), &base_url).await?;
         let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(DbTemplateSource::new(db_pool.clone())?);
         Self::with_source(db_pool, runtime_source).await
     }
@@ -979,6 +905,50 @@ impl ClientConfigService {
         Self::seed_runtime_template_snapshots_from_templates(db_pool, &templates).await
     }
 
+    pub async fn refresh_runtime_templates_from_admin_discovery(
+        db_pool: &SqlitePool,
+        base_url: &str,
+    ) -> crate::clients::error::ConfigResult<()> {
+        let templates = fetch_admin_discovery_client_templates(base_url).await?;
+        Self::replace_runtime_template_snapshots_from_templates(db_pool, &templates).await
+    }
+
+    async fn replace_runtime_template_snapshots_from_templates(
+        db_pool: &SqlitePool,
+        templates: &[ClientTemplate],
+    ) -> crate::clients::error::ConfigResult<()> {
+        let mut tx = db_pool
+            .begin()
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        sqlx::query("DELETE FROM client_template_runtime")
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        for template in templates {
+            let payload_json = serde_json::to_string(&template).map_err(|err| {
+                ConfigError::TemplateParseError(format!("Failed to serialize runtime template payload: {}", err))
+            })?;
+            sqlx::query(
+                r#"
+                INSERT INTO client_template_runtime (identifier, payload_json)
+                VALUES (?, ?)
+                "#,
+            )
+            .bind(&template.identifier)
+            .bind(payload_json)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))
+    }
+
+    #[cfg(test)]
     async fn seed_runtime_template_snapshots_from_templates(
         db_pool: &SqlitePool,
         templates: &[ClientTemplate],
@@ -1440,5 +1410,40 @@ mod render_definition_tests {
             supported_transports_from_transports(&persisted_rules),
             vec!["streamable_http".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_admin_discovery_does_not_seed_embedded_static_templates() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "clients": [],
+                "page": {
+                    "limit": 50,
+                    "offset": 0,
+                    "total": 0
+                }
+            })))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+
+        ClientConfigService::refresh_runtime_templates_from_admin_discovery(&pool, &server.uri())
+            .await
+            .expect("refresh Admin discovery");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime")
+            .fetch_one(&pool)
+            .await
+            .expect("runtime template count");
+        assert_eq!(count, 0);
     }
 }
