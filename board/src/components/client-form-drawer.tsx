@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	Check,
@@ -20,6 +20,10 @@ import { type ControllerRenderProps, useForm } from "react-hook-form";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import * as z from "zod";
+import {
+	type AdminDiscoveryClientCandidate,
+	fetchAdminDiscoveryClients,
+} from "../lib/admin-discovery";
 import { clientsApi } from "../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-policy";
 import {
@@ -826,6 +830,8 @@ export function ClientFormDrawer({
 	const [showParseCodePreview, setShowParseCodePreview] = useState(false);
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 	const [configPathPickBusy, setConfigPathPickBusy] = useState(false);
+	const [isAdminCatalogOpen, setIsAdminCatalogOpen] = useState(false);
+	const [selectedAdminClient, setSelectedAdminClient] = useState<AdminDiscoveryClientCandidate | null>(null);
 	const [transportRuleEditors, setTransportRuleEditors] = useState<TransportRuleEditors>(() =>
 		transportRuleEditorsFromClient(client),
 	);
@@ -876,6 +882,56 @@ export function ClientFormDrawer({
 		if (typeof preview === "object") return Object.keys(preview as Record<string, unknown>).length > 0;
 		return true;
 	}, [parseInspection?.preview]);
+	const adminCatalogQuery = useQuery({
+		queryKey: ["adminDiscoveryClients", "drawer"],
+		queryFn: () => fetchAdminDiscoveryClients({ limit: 50, offset: 0 }),
+		enabled: open,
+		staleTime: 60_000,
+	});
+	const adminCatalogOptions = useMemo(
+		() => adminCatalogQuery.data ?? [],
+		[adminCatalogQuery.data],
+	);
+	const adminCatalogEmptyText = adminCatalogQuery.isError
+		? t("detail.form.adminCatalog.loadError", { defaultValue: "Admin recommendations are unavailable." })
+		: t("detail.form.adminCatalog.empty", { defaultValue: "No Admin recommendations found." });
+
+	const applyAdminClientCandidate = useCallback(
+		(candidate: AdminDiscoveryClientCandidate) => {
+			setSelectedAdminClient(candidate);
+			if (mode === "create") {
+				form.setValue("identifier", candidate.identifier, { shouldDirty: true, shouldValidate: true });
+			}
+			form.setValue("displayName", candidate.displayName, { shouldDirty: true, shouldValidate: true });
+			form.setValue("configFileChoice", candidate.configFileChoice, { shouldDirty: true, shouldValidate: true });
+			form.setValue("configPath", candidate.configPath, { shouldDirty: true, shouldValidate: true });
+			form.setValue("configFileParseFormat", candidate.configFileParseFormat, {
+				shouldDirty: true,
+				shouldValidate: true,
+			});
+			form.setValue("configFileParseContainerType", candidate.configFileParseContainerType, {
+				shouldDirty: true,
+				shouldValidate: true,
+			});
+			form.setValue("configFileParseContainerKeysText", candidate.configFileParseContainerKeysText, {
+				shouldDirty: true,
+				shouldValidate: true,
+			});
+			form.setValue("description", candidate.description, { shouldDirty: true });
+			form.setValue("homepageUrl", candidate.homepageUrl, { shouldDirty: true });
+			form.setValue("docsUrl", candidate.docsUrl, { shouldDirty: true });
+			form.setValue("supportUrl", candidate.supportUrl, { shouldDirty: true });
+			form.setValue("logoUrl", candidate.logoUrl, { shouldDirty: true });
+			const supported = candidate.supportedTransports.filter(
+				(transport): transport is SupportedTransportValue =>
+					SUPPORTED_TRANSPORT_VALUES.includes(transport as SupportedTransportValue),
+			);
+			form.setValue("supportedTransports", supported, { shouldDirty: true, shouldValidate: true });
+			setTransportRuleEditors(transportRuleEditorsFromPreset(candidate.transports));
+			setIsAdminCatalogOpen(false);
+		},
+		[form, mode],
+	);
 
 	useEffect(() => {
 		if (!open) return;
@@ -888,6 +944,8 @@ export function ClientFormDrawer({
 		setIsDeleteConfirmOpen(false);
 		autoAppliedInferenceRef.current = null;
 		lastParseInspectionSignatureRef.current = null;
+		setSelectedAdminClient(null);
+		setIsAdminCatalogOpen(false);
 		setTransportRuleEditors(transportRuleEditorsFromClient(client));
 		setSelectedTransportTab("");
 		initialSupportedTransportsRef.current = defaultValues(client).supportedTransports;
@@ -895,6 +953,17 @@ export function ClientFormDrawer({
 		form.reset(defaultValues(client));
 		setIsHydrating(false);
 	}, [open, client, mode, form]);
+
+	useEffect(() => {
+		if (!open || mode !== "edit" || selectedAdminClient || adminCatalogOptions.length === 0) return;
+		const currentIdentifier = normalizeIdentifier(client?.identifier ?? identifier);
+		const matchingClient = adminCatalogOptions.find(
+			(candidate) => normalizeIdentifier(candidate.identifier) === currentIdentifier,
+		);
+		if (matchingClient) {
+			setSelectedAdminClient(matchingClient);
+		}
+	}, [adminCatalogOptions, client?.identifier, identifier, mode, open, selectedAdminClient]);
 
 	useEffect(() => {
 		if (supportedTransports.length === 0) {
@@ -1389,6 +1458,81 @@ export function ClientFormDrawer({
 
 							<TabsContent value="basic" className="space-y-4 pt-4">
 								<div className="space-y-4">
+									<FormItem className="space-y-0">
+										<div className="flex items-start gap-4">
+											<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>
+												{t("detail.form.adminCatalog.label", { defaultValue: "Admin Catalog" })}
+											</FormLabel>
+											<div className="min-w-0 flex-1">
+												<Popover open={isAdminCatalogOpen} onOpenChange={setIsAdminCatalogOpen}>
+													<PopoverTrigger asChild>
+														<Button
+															type="button"
+															variant="outline"
+															role="combobox"
+															aria-expanded={isAdminCatalogOpen}
+															className="w-full justify-between"
+															disabled={adminCatalogQuery.isLoading || saveMutation.isPending}
+														>
+															<span className="truncate">
+																{selectedAdminClient?.displayName ??
+																	t("detail.form.adminCatalog.placeholder", {
+																		defaultValue: "Search Admin recommendations",
+																	})}
+															</span>
+															{adminCatalogQuery.isLoading ? (
+																<Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-50" />
+															) : (
+																<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+															)}
+														</Button>
+													</PopoverTrigger>
+													<PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+														<Command>
+															<CommandInput
+																placeholder={t("detail.form.adminCatalog.search", {
+																	defaultValue: "Search clients...",
+																})}
+															/>
+															<CommandList>
+																<CommandEmpty>{adminCatalogEmptyText}</CommandEmpty>
+																<CommandGroup>
+																	{adminCatalogOptions.map((candidate) => (
+																		<CommandItem
+																			key={candidate.identifier}
+																			value={`${candidate.displayName} ${candidate.identifier}`}
+																			onSelect={() => applyAdminClientCandidate(candidate)}
+																		>
+																			<Check
+																				className={cn(
+																					"mr-2 h-4 w-4",
+																					selectedAdminClient?.identifier === candidate.identifier
+																						? "opacity-100"
+																						: "opacity-0",
+																				)}
+																			/>
+																			<div className="min-w-0">
+																				<div className="truncate">{candidate.displayName}</div>
+																				<div className="truncate text-xs text-muted-foreground">
+																					{candidate.identifier}
+																				</div>
+																			</div>
+																		</CommandItem>
+																	))}
+																</CommandGroup>
+															</CommandList>
+														</Command>
+													</PopoverContent>
+												</Popover>
+												<FormDescription>
+													{t("detail.form.adminCatalog.description", {
+														defaultValue:
+															"Load public Admin recommendations directly and map selected fields into this MCPMate client record.",
+													})}
+												</FormDescription>
+											</div>
+										</div>
+									</FormItem>
 									<FormField control={form.control} name="displayName" render={({ field }) => (
 										<TextInputRow label={t("detail.form.fields.displayName.label", { defaultValue: "Client Name" })} placeholder={t("detail.form.fields.displayName.placeholder", { defaultValue: "Cursor Desktop" })} field={field} />
 									)} />

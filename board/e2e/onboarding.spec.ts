@@ -14,6 +14,9 @@ type OnboardingMockOptions = {
     detected: boolean;
     config_path?: string;
     config_file_parse_effective?: unknown;
+    config_mode?: string;
+    writable_config?: boolean;
+    approval_status?: string;
   }>;
   scanCandidates?: Array<{
     key: string;
@@ -25,6 +28,14 @@ type OnboardingMockOptions = {
     source_clients?: string[];
     source_client_ids?: string[];
   }>;
+  onClientUpdate?: (payload: unknown) => void;
+  onServerImport?: (payload: unknown) => void;
+};
+
+type AdminDiscoveryMockOptions = {
+  clients?: unknown[];
+  servers?: unknown[];
+  onRequest?: (url: URL) => void;
 };
 
 async function installReadyWebSocket(page: Page): Promise<void> {
@@ -80,6 +91,7 @@ async function installOnboardingApiMocks(
         detected: true,
         config_path: "/tmp/claude_desktop_config.json",
         config_file_parse_effective: null,
+        config_mode: "transparent",
       },
     ];
   const scanCandidates =
@@ -133,13 +145,13 @@ async function installOnboardingApiMocks(
           success: true,
           data: {
             runtimes: [
-              { name: "node", available: true, version: "v20.0.0", path: "/usr/bin/node" },
-              { name: "npx", available: true, version: "10.0.0", path: "/usr/bin/npx" },
-              { name: "bun", available: false },
-              { name: "bunx", available: false },
-              { name: "python3", available: true, version: "3.11.0", path: "/usr/bin/python3" },
-              { name: "uv", available: false },
-              { name: "uvx", available: false },
+              { name: "node", available: true, version: "v20.0.0", path: "/usr/bin/node", source: "system" },
+              { name: "npx", available: true, version: "10.0.0", path: "/usr/bin/npx", source: "system" },
+              { name: "bun", available: true, version: "1.3.0", path: "/usr/bin/bun", source: "system" },
+              { name: "bunx", available: true, version: "1.3.0", path: "/usr/bin/bunx", source: "system" },
+              { name: "python3", available: true, version: "3.11.0", path: "/usr/bin/python3", source: "system" },
+              { name: "uv", available: true, version: "0.8.0", path: "/usr/bin/uv", source: "system" },
+              { name: "uvx", available: true, version: "0.8.0", path: "/usr/bin/uvx", source: "system" },
             ],
             has_js_runtime: true,
             has_python_runtime: true,
@@ -156,6 +168,7 @@ async function installOnboardingApiMocks(
         });
 
       case "/api/client/list":
+      case "/api/client/detect":
         return ok({
           success: true,
           data: {
@@ -165,10 +178,14 @@ async function installOnboardingApiMocks(
         });
 
       case "/api/client/update":
+        options.onClientUpdate?.(await request.postDataJSON());
+        return ok({ success: true, data: { ok: true } });
+
       case "/api/client/manage/approve":
         return ok({ success: true, data: { ok: true } });
 
       case "/api/mcp/servers/import":
+        options.onServerImport?.(await request.postDataJSON());
         return ok({
           success: true,
           data: {
@@ -184,6 +201,28 @@ async function installOnboardingApiMocks(
 
       case "/api/mcp/servers":
         return ok({ success: true, servers: [] });
+
+      case "/api/mcp/profile/list":
+        return ok({
+          success: true,
+          data: {
+            total: 1,
+            timestamp: new Date().toISOString(),
+            profile: [
+              {
+                id: "default-anchor",
+                name: "Default",
+                profile_type: "default",
+                multi_select: true,
+                priority: 0,
+                is_active: true,
+                is_default: true,
+                role: "default_anchor",
+                allowed_operations: [],
+              },
+            ],
+          },
+        });
 
       case "/api/system/status":
         return ok({ status: "running", uptime: 120, version: "test" });
@@ -213,6 +252,45 @@ async function installOnboardingApiMocks(
         return ok({ success: true });
     }
   });
+}
+
+async function installAdminDiscoveryMocks(
+  page: Page,
+  options: AdminDiscoveryMockOptions = {},
+): Promise<void> {
+  await page.route("**/discovery/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    options.onRequest?.(url);
+
+    const body = url.pathname.endsWith("/clients")
+      ? {
+          schemaVersion: "test",
+          generatedAt: new Date().toISOString(),
+          clients: options.clients ?? [],
+          metadata: {},
+        }
+      : {
+          schemaVersion: "test",
+          generatedAt: new Date().toISOString(),
+          servers: options.servers ?? [],
+          metadata: {},
+        };
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+      headers: {
+        "access-control-allow-origin": "*",
+      },
+    });
+  });
+}
+
+async function startOnboardingWizard(page: Page): Promise<void> {
+  await page.getByRole("checkbox", { name: /Allow scanning local runtimes/i }).check();
+  await page.getByRole("button", { name: /Get Started/i }).click();
 }
 
 test("first-time user entering / gets redirected to onboarding", async ({ page }) => {
@@ -275,7 +353,7 @@ test("onboarding wizard completes and stays out after completion", async ({ page
   await page.goto("/onboarding");
   await expect(page.getByText("Welcome to MCPMate")).toBeVisible();
 
-  await page.getByRole("button", { name: /English/i }).click();
+  await startOnboardingWizard(page);
   await expect(page.getByText("Check Your Environment")).toBeVisible();
 
   await page.getByRole("button", { name: /^Next$/ }).click();
@@ -295,4 +373,118 @@ test("onboarding wizard completes and stays out after completion", async ({ page
   await page.goto("/");
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("System Status")).toBeVisible();
+});
+
+test("onboarding uses Admin client recommendations when local detection is empty", async ({ page }) => {
+  const adminRequests: URL[] = [];
+  const clientUpdates: unknown[] = [];
+
+  await installReadyWebSocket(page);
+  await installAdminDiscoveryMocks(page, {
+    clients: [
+      {
+        identifier: "cursor-desktop",
+        displayName: "Cursor",
+        description: "AI code editor",
+        backend_template: { ignored: true },
+      },
+    ],
+    servers: [],
+    onRequest: (url) => adminRequests.push(url),
+  });
+  await installOnboardingApiMocks(page, {
+    completed: false,
+    clients: [],
+    scanCandidates: [],
+    onClientUpdate: (payload) => clientUpdates.push(payload),
+  });
+
+  await page.goto("/onboarding");
+  await startOnboardingWizard(page);
+  await page.getByRole("button", { name: /^Next$/ }).click();
+
+  await expect(page.getByText("Detected MCP Clients")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Cursor/ })).toBeVisible();
+  await expect(page.getByText("Admin recommendation")).toBeVisible();
+  await expect(page.getByText(/random recommendations from MCPMate Admin/i)).toBeVisible();
+
+  await page.getByRole("button", { name: /Cursor/ }).click();
+  await page.getByRole("button", { name: /^Next$/ }).click();
+  await page.getByRole("button", { name: /^Next$/ }).click();
+  await page.getByRole("button", { name: /Finish Setup/i }).click();
+
+  await expect.poll(() => clientUpdates.length).toBeGreaterThan(0);
+  expect(adminRequests.some((url) => url.pathname === "/discovery/clients" && url.searchParams.get("random") === "6")).toBe(
+    true,
+  );
+  expect(clientUpdates).toContainEqual({
+    identifier: "cursor-desktop",
+    display_name: "Cursor",
+    config_file_state: "without_config_file",
+    description: "AI code editor",
+    clear_config_file_parse: true,
+    clear_transports: true,
+  });
+});
+
+test("onboarding imports Admin server recommendations through existing backend import API", async ({ page }) => {
+  const adminRequests: URL[] = [];
+  const serverImports: unknown[] = [];
+
+  await installReadyWebSocket(page);
+  await installAdminDiscoveryMocks(page, {
+    clients: [],
+    servers: [
+      {
+        id: "github",
+        official: { title: "GitHub" },
+        runtime: {
+          install_config: {
+            type: "stdio",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-github"],
+            env: { GITHUB_TOKEN: "${GITHUB_TOKEN}" },
+          },
+        },
+      },
+    ],
+    onRequest: (url) => adminRequests.push(url),
+  });
+  await installOnboardingApiMocks(page, {
+    completed: false,
+    clients: [],
+    scanCandidates: [],
+    onServerImport: (payload) => serverImports.push(payload),
+  });
+
+  await page.goto("/onboarding");
+  await startOnboardingWizard(page);
+  await page.getByRole("button", { name: /^Next$/ }).click();
+  await page.getByRole("button", { name: /^Next$/ }).click();
+
+  await expect(page.getByText("Import Existing Servers")).toBeVisible();
+  await expect(page.getByRole("button", { name: /GitHub/ })).toBeVisible();
+  await expect(page.getByText(/random recommendations from MCPMate Admin/i)).toBeVisible();
+
+  await page.getByRole("button", { name: /GitHub/ }).click();
+  await page.getByRole("button", { name: /^Next$/ }).click();
+  await page.getByRole("button", { name: /Finish Setup/i }).click();
+
+  await expect.poll(() => serverImports.length).toBeGreaterThan(0);
+  expect(adminRequests.some((url) => url.pathname === "/discovery/servers" && url.searchParams.get("random") === "6")).toBe(
+    true,
+  );
+  expect(serverImports).toContainEqual(
+    expect.objectContaining({
+      mcpServers: {
+        GitHub: {
+          type: "stdio",
+          registry_server_id: "github",
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-github"],
+          env: { GITHUB_TOKEN: "${GITHUB_TOKEN}" },
+        },
+      },
+    }),
+  );
 });

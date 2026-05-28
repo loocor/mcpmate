@@ -218,6 +218,15 @@ export const clientsTranslations = {
         descriptionCreate: "Create a client record with its configuration file state and metadata.",
         descriptionEdit: "Update this client record and its management settings.",
         tabs: { basic: "Basic", meta: "Meta" },
+        adminCatalog: {
+          label: "Admin Catalog",
+          placeholder: "Search Admin recommendations",
+          search: "Search clients...",
+          empty: "No Admin recommendations found.",
+          loadError: "Admin recommendations are unavailable.",
+          description:
+            "Load public Admin recommendations directly and map selected fields into this MCPMate client record.",
+        },
         configFile: {
           label: "Configuration File",
           description: "Choose whether MCPMate should manage this client through a writable local config file.",
@@ -992,6 +1001,15 @@ export const clientsTranslations = {
         descriptionCreate: "创建一个带有配置文件状态与元数据的客户端记录。",
         descriptionEdit: "更新该客户端记录及其管理设置。",
         tabs: { basic: "基础", meta: "元数据" },
+        adminCatalog: {
+          label: "Admin 目录",
+          placeholder: "搜索 Admin 推荐",
+          search: "搜索客户端...",
+          empty: "未找到 Admin 推荐。",
+          loadError: "Admin 推荐暂不可用。",
+          description:
+            "直接加载公开 Admin 推荐，并将选中的字段映射到此 MCPMate 客户端记录。",
+        },
         configFile: {
           label: "配置文件",
           description: "选择 MCPMate 是否通过可写本地配置文件管理该客户端。",
@@ -1752,6 +1770,15 @@ export const clientsTranslations = {
         descriptionCreate: "設定ファイル状態とメタデータを含むクライアントレコードを作成します。",
         descriptionEdit: "このクライアントレコードと管理設定を更新します。",
         tabs: { basic: "基本", meta: "メタデータ" },
+        adminCatalog: {
+          label: "Admin カタログ",
+          placeholder: "Admin のおすすめを検索",
+          search: "クライアントを検索...",
+          empty: "Admin のおすすめが見つかりません。",
+          loadError: "Admin のおすすめを利用できません。",
+          description:
+            "公開 Admin のおすすめを直接読み込み、選択した項目をこの MCPMate クライアントレコードへマッピングします。",
+        },
         configFile: {
           label: "設定ファイル",
           description: "MCPMate が書き込み可能なローカル設定ファイルを通じてこのクライアントを管理するかを選択します。",
