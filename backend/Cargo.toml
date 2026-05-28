@@ -6,7 +6,6 @@ default-run = "mcpmate"
 description = "MCPMate - A comprehensive management center for Model Context Protocol (MCP) servers"
 authors = ["Loocor <loocor@gmail.com>"]
 resolver = "2"
-build = "build.rs"
 
 [lib]
 name = "mcpmate"
