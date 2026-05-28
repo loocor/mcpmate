@@ -39,5 +39,13 @@
 			},
 			"remotes": [{ "type": "stdio" }]
 		}
-	]
+	],
+	"page": {
+		"total": 3,
+		"limit": 6,
+		"offset": 0,
+		"hasMore": false,
+		"nextOffset": null,
+		"mode": "page"
+	}
 }

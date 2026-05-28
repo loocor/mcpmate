@@ -6,6 +6,7 @@ import {
 	discoveryQueryForPage,
 	entriesForPageRender,
 	nextDiscoveryPageState,
+	responseMetadata,
 	shouldClearEntriesBeforeLoad,
 	shouldRenderPanel,
 	shouldStartPullRefresh,
@@ -21,13 +22,69 @@ describe("browser extension discovery pagination", () => {
 			surface: "extension",
 		});
 		expect(
-			buildDiscoveryUrl("https://auth.mcp.umate.ai/discovery/servers", query),
-		).toBe("https://auth.mcp.umate.ai/discovery/servers?limit=6&offset=12&surface=extension");
+			buildDiscoveryUrl("https://public.mcp.umate.ai/discovery/servers", query),
+		).toBe("https://public.mcp.umate.ai/discovery/servers?limit=6&offset=12&surface=extension");
 	});
 
 	test("does not paginate portal requests", () => {
 		expect(discoveryQueryForPage({ kind: "portals", limit: 6, offset: 0 })).toEqual({
 			surface: "extension",
+		});
+	});
+
+	test("prefers v2 page metadata over legacy metadata fields", () => {
+		expect(
+			responseMetadata({
+				page: { hasMore: true, nextOffset: 6, mode: "page" },
+				metadata: { hasMore: false, nextOffset: null, mode: "page" },
+				meta: { hasMore: false, nextOffset: null, mode: "page" },
+			}),
+		).toEqual({ hasMore: true, nextOffset: 6, mode: "page" });
+	});
+
+	test("uses v2 page metadata for paginated discovery responses", () => {
+		const metadata = responseMetadata({
+			clients: [{ identifier: "claude_desktop" }],
+			page: {
+				total: 11,
+				limit: 1,
+				offset: 1,
+				hasMore: true,
+				nextOffset: 2,
+				mode: "page",
+			},
+		});
+		const state = discoveryPageState({
+			kind: "clients",
+			entries: [{ identifier: "claude_desktop" }],
+			metadata,
+			limit: 1,
+			offset: 1,
+		});
+
+		expect(state).toEqual({
+			entries: [{ identifier: "claude_desktop" }],
+			hasMore: true,
+			nextOffset: 2,
+		});
+	});
+
+	test("does not require legacy page mode when v2 page exposes next offset", () => {
+		const state = discoveryPageState({
+			kind: "clients",
+			entries: [{ identifier: "cursor" }],
+			metadata: responseMetadata({
+				clients: [{ identifier: "cursor" }],
+				page: { hasMore: true, nextOffset: 12 },
+			}),
+			limit: 6,
+			offset: 6,
+		});
+
+		expect(state).toEqual({
+			entries: [{ identifier: "cursor" }],
+			hasMore: true,
+			nextOffset: 12,
 		});
 	});
 

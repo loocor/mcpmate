@@ -1,28 +1,74 @@
 {
 	"clients": [
 		{
-			"title": "Claude Desktop",
+			"identifier": "claude_desktop",
+			"displayName": "Claude Desktop",
 			"description": "Desktop client with native local MCP server support.",
-			"url": "https://claude.ai/download",
 			"source": "Mock catalog",
-			"signal": "native MCP",
-			"meta": "desktop"
+			"links": {
+				"homepage": "https://claude.ai/download",
+				"docs": "https://support.anthropic.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop"
+			},
+			"icon": {
+				"url": "https://public.mcp.umate.ai/catalog/icons/claude-desktop.png"
+			},
+			"config": {
+				"kind": "file",
+				"file": {
+					"paths": {
+						"macos": "~/Library/Application Support/Claude/claude_desktop_config.json",
+						"windows": "%APPDATA%\\Claude\\claude_desktop_config.json"
+					},
+					"container": {
+						"keys": ["mcpServers"]
+					}
+				}
+			}
 		},
 		{
-			"title": "Cursor",
+			"identifier": "cursor",
+			"displayName": "Cursor",
 			"description": "Editor workflow with project-level MCP configuration.",
-			"url": "https://cursor.com",
 			"source": "Mock catalog",
-			"signal": "editor",
-			"meta": "project config"
+			"links": {
+				"homepage": "https://cursor.com",
+				"docs": "https://docs.cursor.com/context/model-context-protocol"
+			},
+			"icon": {
+				"url": "https://public.mcp.umate.ai/catalog/icons/cursor.png"
+			},
+			"config": {
+				"kind": "file",
+				"file": {
+					"paths": {
+						"project": ".cursor/mcp.json"
+					},
+					"container": {
+						"keys": ["mcpServers"]
+					}
+				}
+			}
 		},
 		{
-			"title": "VS Code",
-			"description": "Developer client path for MCP-capable extensions.",
-			"url": "https://code.visualstudio.com",
+			"identifier": "browser_only",
+			"displayName": "Browser Client",
+			"description": "Example client entry without local file configuration.",
 			"source": "Mock catalog",
-			"signal": "editor",
-			"meta": "extensions"
+			"links": {
+				"homepage": "https://mcp.umate.ai",
+				"support": "https://mcp.umate.ai"
+			},
+			"config": {
+				"kind": "none"
+			}
 		}
-	]
+	],
+	"page": {
+		"total": 3,
+		"limit": 6,
+		"offset": 0,
+		"hasMore": false,
+		"nextOffset": null,
+		"mode": "page"
+	}
 }

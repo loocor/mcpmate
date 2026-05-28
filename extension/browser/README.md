@@ -4,7 +4,7 @@ The MCPMate browser extension shows curated MCP portals, servers, and clients in
 
 - **Product**: MCPMate
 - **Website**: [https://mcp.umate.ai](https://mcp.umate.ai)
-- **Admin API origin**: `https://auth.mcp.umate.ai`
+- **Admin API origin**: `https://public.mcp.umate.ai`
 - **Current discovery mode**: `account`
 
 The import handoff payload JSON matches desktop handling in `deep_link.rs`:
