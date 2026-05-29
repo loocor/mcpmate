@@ -643,7 +643,7 @@ describe("admin discovery adapter", () => {
 				GITHUB_TOKEN: "${GITHUB_TOKEN}",
 			},
 			url: undefined,
-			source_clients: ["MCPMate Admin"],
+			source_clients: ["MCPMate"],
 			source_client_ids: [],
 			import_config: {
 				type: "stdio",

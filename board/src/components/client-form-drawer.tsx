@@ -19,7 +19,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNod
 import { type ControllerRenderProps, useForm } from "react-hook-form";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import * as z from "zod";
 import {
 	type AdminDiscoveryClientCandidate,
 	fetchAdminDiscoveryClientCatalog,
@@ -46,6 +45,15 @@ import type {
 	ClientInfo,
 } from "../lib/types";
 import { cn } from "../lib/utils";
+import {
+	CONFIG_PARSE_FORMAT_VALUES,
+	SUPPORTED_TRANSPORT_VALUES,
+	createClientFormSchema,
+	type ClientConfigFileChoice,
+	type ClientRecordFormValues,
+	type ConfigParseFormatValue,
+	type SupportedTransportValue,
+} from "./client-form-schema";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Button } from "./ui/button";
 import {
@@ -81,43 +89,6 @@ import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type ClientFormMode = "create" | "edit";
-type ClientConfigFileChoice = "with_config_file" | "without_config_file";
-const SUPPORTED_TRANSPORT_VALUES = ["streamable_http", "sse", "stdio"] as const;
-type SupportedTransportValue = (typeof SUPPORTED_TRANSPORT_VALUES)[number];
-const CONFIG_PARSE_FORMAT_VALUES = ["json", "json5", "toml", "yaml"] as const;
-type ConfigParseFormatValue = (typeof CONFIG_PARSE_FORMAT_VALUES)[number];
-const CONFIG_PARSE_CONTAINER_TYPE_VALUES = ["standard", "array"] as const;
-
-function createFormSchema(t: TFunction) {
-	return z
-		.object({
-			identifier: z.string().min(1),
-			displayName: z.string().min(1),
-			configFileChoice: z.enum(["with_config_file", "without_config_file"]),
-			supportedTransports: z.array(z.enum(SUPPORTED_TRANSPORT_VALUES)),
-			configPath: z.string().optional(),
-			configFileParseFormat: z.enum(CONFIG_PARSE_FORMAT_VALUES),
-			configFileParseContainerType: z.enum(CONFIG_PARSE_CONTAINER_TYPE_VALUES),
-			configFileParseContainerKeysText: z.string().optional(),
-			clientVersion: z.string().optional(),
-			description: z.string().optional(),
-			homepageUrl: z.string().optional(),
-			docsUrl: z.string().optional(),
-			supportUrl: z.string().optional(),
-			logoUrl: z.string().optional(),
-		})
-		.superRefine((values, ctx) => {
-			if (values.configFileChoice === "with_config_file" && values.supportedTransports.length === 0) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["supportedTransports"],
-					message: t("detail.form.transportSupport.validation.required", {
-						defaultValue: "Select at least one supported transport before saving.",
-					}),
-				});
-			}
-		});
-}
 
 interface ClientFormDrawerProps {
 	open: boolean;
@@ -434,8 +405,6 @@ function filterCurrentTransportPayload(
 		Object.entries(currentTransports).filter(([transport]) => allowed.has(transport as SupportedTransportValue)),
 	);
 }
-
-type ClientRecordFormValues = z.infer<ReturnType<typeof createFormSchema>>;
 
 const CLIENT_FORM_ROW_LABEL_CLASS = "w-20 shrink-0 text-right";
 
@@ -843,10 +812,10 @@ export function ClientFormDrawer({
 	onSuccess,
 	onDeleteSuccess,
 }: ClientFormDrawerProps) {
-	const { t, i18n } = useTranslation("clients");
+	const { t } = useTranslation("clients");
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
-	const formSchema = useMemo(() => createFormSchema(t), [t, i18n.language]);
+	const formSchema = useMemo(() => createClientFormSchema(t), [t]);
 	const [isHydrating, setIsHydrating] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -930,8 +899,8 @@ export function ClientFormDrawer({
 	);
 	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
 	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
-		? t("detail.form.adminCatalog.loadError", { defaultValue: "Admin recommendations are unavailable." })
-		: t("detail.form.adminCatalog.empty", { defaultValue: "No Admin recommendations found." });
+		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
+		: t("detail.form.adminCatalog.empty", { defaultValue: "No supported client presets found." });
 	const adminCatalogBusy = adminDiscoveryPlatformQuery.isLoading || adminCatalogQuery.isLoading;
 
 	const applyAdminClientCandidate = useCallback(
@@ -1525,7 +1494,7 @@ export function ClientFormDrawer({
 																	role="combobox"
 																	aria-expanded={isAdminCatalogOpen}
 																	aria-label={t("detail.form.adminCatalog.placeholder", {
-																		defaultValue: "Search Admin recommendations",
+																		defaultValue: "Choose a supported client",
 																	})}
 																	className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-muted hover:text-foreground focus-visible:ring-1"
 																	disabled={adminCatalogBusy || saveMutation.isPending}
@@ -1576,7 +1545,7 @@ export function ClientFormDrawer({
 													<FormDescription>
 														{t("detail.form.adminCatalog.description", {
 															defaultValue:
-																"Load public Admin recommendations directly and map selected fields into this MCPMate client record.",
+																"Click the dropdown arrow on the right, then choose an MCPMate-supported client to add from presets.",
 														})}
 													</FormDescription>
 													{adminCatalogDiagnostics.length > 0 ? (
@@ -1584,7 +1553,7 @@ export function ClientFormDrawer({
 															{t("detail.form.adminCatalog.partialWarning", {
 																count: adminCatalogDiagnostics.length,
 																defaultValue:
-																	"Some Admin recommendations were skipped because their discovery data is invalid.",
+																	"Some client presets were skipped because their discovery data is invalid.",
 															})}
 														</p>
 													) : null}
@@ -1807,7 +1776,7 @@ export function ClientFormDrawer({
 																		<TooltipContent side="top" align="start" className="max-w-sm space-y-2 leading-relaxed">
 																			<p>{t("detail.form.transportRules.help.summary", { defaultValue: "These fields describe the target client's config keys, not MCPMate's own protocol fields." })}</p>
 																			<p>{t("detail.form.transportRules.help.docs", { defaultValue: "If you are unsure which keys a client expects, check that client's official documentation or an existing working config file first." })}</p>
-																			<p>{t("detail.form.transportRules.help.presets", { defaultValue: "Use the suggested variants below as a starting point, then verify the result against the client's real config structure." })}</p>
+																			<p>{t("detail.form.transportRules.help.presets", { defaultValue: "Use the preset variants below as a starting point, then verify the result against the client's real config structure." })}</p>
 																			{transportRulesHelpHref ? (
 																				<a href={transportRulesHelpHref} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary hover:underline">
 																					{t("detail.form.transportRules.help.openDocs", { defaultValue: "Open client documentation" })}
@@ -1831,7 +1800,7 @@ export function ClientFormDrawer({
 																			<TabsContent key={transport} value={transport} className="mt-0">
 																				<div className="space-y-3">
 																					<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
-																						<span className="text-xs font-medium text-muted-foreground">{t("detail.form.transportRules.suggestedVariants", { defaultValue: "Suggested variants" })}</span>
+																						<span className="text-xs font-medium text-muted-foreground">{t("detail.form.transportRules.suggestedVariants", { defaultValue: "Preset variants" })}</span>
 																						{presets.map((preset) => (
 																							<Button key={preset.id} type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => applyTransportRulePreset(transport, preset)}>
 																								{preset.label}

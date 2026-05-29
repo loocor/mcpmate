@@ -39,6 +39,10 @@ import { applyManagedClientsForIdentifiers } from "../../lib/client-config-sync"
 import { resolveActiveDefaultProfileId } from "../../lib/default-profile";
 import { buildClientServersImportRequest } from "../../lib/server-import-payload";
 import {
+  groupSelectedDiscoveryServerConfigs,
+  type OnboardingServerCandidateWithImport,
+} from "../../lib/onboarding-server-selection";
+import {
   onboardingApi,
   type OnboardingServerCandidate,
   type RuntimeEntry,
@@ -57,7 +61,6 @@ import type { ClientInfo } from "../../lib/types";
 type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
 type RuntimeKind = "node" | "bun" | "uv";
 type WelcomeLanguage = "en" | "zh-cn" | "ja";
-type OnboardingServerCandidateWithImport = OnboardingServerCandidate | AdminDiscoveryServerCandidate;
 
 const ONBOARDING_RECOMMENDED_SERVER_MINIMUM = 4;
 const ONBOARDING_ADMIN_SERVER_RANDOM_COUNT = 6;
@@ -159,18 +162,6 @@ function groupSelectedServerNamesByClient(
   }
 
   return selectedByClient;
-}
-
-function groupSelectedDiscoveryServerConfigs(
-  candidates: OnboardingServerCandidateWithImport[],
-  selectedKeys: Set<string>,
-): Record<string, unknown> {
-  const mcpServers = Object.create(null) as Record<string, unknown>;
-  for (const candidate of candidates) {
-    if (!selectedKeys.has(candidate.key) || !("import_config" in candidate)) continue;
-    mcpServers[candidate.name] = candidate.import_config;
-  }
-  return mcpServers;
 }
 
 function serverCandidateDedupKey(candidate: OnboardingServerCandidateWithImport): string {
@@ -520,7 +511,7 @@ export function OnboardingPage() {
             if (!candidate) {
               throw new Error(
                 t("clients.adminRecommendationMissing", {
-                  defaultValue: "Client recommendation '{{identifier}}' was not found.",
+                  defaultValue: "Client preset '{{identifier}}' was not found.",
                   identifier,
                 }),
               );
@@ -1318,7 +1309,7 @@ function ClientsStep({
             <p>
               {t("clients.recommendationError", {
                 defaultValue:
-                  "No local MCP clients were detected, and MCPMate could not load Admin recommendations.",
+                  "No local MCP clients were detected, and MCPMate could not load preset client data.",
               })}
             </p>
             <p className="mt-1 text-xs text-slate-400">
@@ -1343,7 +1334,7 @@ function ClientsStep({
                 {t("clients.recommendationPartialWarning", {
                   count: adminRecommendationDiagnostics.length,
                   defaultValue:
-                    "Some Admin recommendations were skipped because their discovery data is invalid.",
+                    "Some client presets were skipped because their discovery data is invalid.",
                 })}
               </AlertDescription>
             </Alert>
@@ -1366,8 +1357,8 @@ function ClientsStep({
                         : "clients.adminRecommendationUnselectedAria",
                       {
                         defaultValue: isSelected
-                          ? "{{name}} Admin recommendation selected"
-                          : "{{name}} Admin recommendation not selected",
+                          ? "{{name}} preset client selected"
+                          : "{{name}} preset client not selected",
                         name: client.displayName || client.identifier,
                       },
                     )}
@@ -1405,7 +1396,7 @@ function ClientsStep({
                         </div>
                       )}
                       <div className="mt-1 text-xs text-slate-400">
-                        {t("clients.adminRecommendation", { defaultValue: "Admin recommendation" })}
+                        {t("clients.adminRecommendation", { defaultValue: "Preset client" })}
                       </div>
                     </div>
                     {isSelected && (
@@ -1418,7 +1409,7 @@ function ClientsStep({
           </div>
           <p className="text-center text-xs text-slate-400 dark:text-slate-500">
             {t("clients.recommendationNotice", {
-              defaultValue: "These are random recommendations from MCPMate Admin. Review them before applying.",
+              defaultValue: "These MCPMate-supported client presets can be applied directly.",
             })}
           </p>
         </div>
@@ -1606,7 +1597,7 @@ function ServersStep({
           <CardContent className="space-y-3 py-8 text-center text-slate-500">
             <p>
               {t("servers.recommendationError", {
-                defaultValue: "MCPMate could not load server recommendations.",
+                defaultValue: "MCPMate could not load preset server data.",
               })}
             </p>
             <p className="text-xs text-slate-400">
@@ -1678,7 +1669,7 @@ function ServersStep({
           {usingAdminRecommendations && (
             <p className="text-center text-xs text-slate-400 dark:text-slate-500">
               {t("servers.recommendationNotice", {
-                defaultValue: "These are random recommendations from MCPMate Admin. Review them before importing.",
+                defaultValue: "These MCPMate server presets can be imported directly.",
               })}
             </p>
           )}

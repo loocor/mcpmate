@@ -175,6 +175,6 @@ pub async fn start_api_server(
         }
     });
 
-    tracing::info!("API server started successfully on {}", api_bind_address);
+    tracing::info!("API server task spawned for {}", api_bind_address);
     Ok((api_task, api_cancellation_token))
 }

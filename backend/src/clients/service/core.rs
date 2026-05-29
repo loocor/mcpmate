@@ -575,7 +575,13 @@ impl ClientConfigService {
     /// Bootstrap service with default template root resolution
     pub async fn bootstrap(db_pool: Arc<SqlitePool>) -> crate::clients::error::ConfigResult<Self> {
         let base_url = admin_discovery_base_url();
-        Self::refresh_runtime_templates_from_admin_discovery(db_pool.as_ref(), &base_url).await?;
+        if let Err(err) = Self::refresh_runtime_templates_from_admin_discovery(db_pool.as_ref(), &base_url).await {
+            tracing::warn!(
+                error = %err,
+                "Admin discovery refresh failed during client config bootstrap; continuing without runtime templates"
+            );
+            Self::clear_runtime_template_snapshots(db_pool.as_ref()).await?;
+        }
         let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(DbTemplateSource::new(db_pool.clone())?);
         Self::with_source(db_pool, runtime_source).await
     }
@@ -945,6 +951,14 @@ impl ClientConfigService {
 
         tx.commit()
             .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))
+    }
+
+    async fn clear_runtime_template_snapshots(db_pool: &SqlitePool) -> crate::clients::error::ConfigResult<()> {
+        sqlx::query("DELETE FROM client_template_runtime")
+            .execute(db_pool)
+            .await
+            .map(|_| ())
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))
     }
 
@@ -1445,5 +1459,84 @@ mod render_definition_tests {
             .await
             .expect("runtime template count");
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn bootstrap_continues_when_admin_discovery_is_unavailable() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        let mut transports = HashMap::new();
+        transports.insert(
+            "stdio".to_string(),
+            FormatRule {
+                template: serde_json::json!({ "command": "{{command}}" }),
+                include_type: false,
+                ..Default::default()
+            },
+        );
+        let cached_template = ClientTemplate {
+            identifier: "cached-client".to_string(),
+            display_name: Some("Cached Client".to_string()),
+            format: TemplateFormat::Json,
+            storage: StorageConfig {
+                kind: StorageKind::File,
+                path_strategy: Some("config_path".to_string()),
+                adapter: None,
+            },
+            config_mapping: ConfigMapping {
+                container_keys: vec!["mcpServers".to_string()],
+                container_type: crate::clients::models::ContainerType::ObjectMap,
+                merge_strategy: MergeStrategy::Replace,
+                keep_original_config: false,
+                managed_endpoint: None,
+                managed_source: Some("profile".to_string()),
+                parse: None,
+                format_rules: transports,
+            },
+            ..Default::default()
+        };
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(&pool, &[cached_template])
+            .await
+            .expect("seed cached runtime template");
+        let previous = std::env::var(crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV).ok();
+        unsafe {
+            std::env::set_var(
+                crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV,
+                server.uri(),
+            );
+        }
+
+        let result = ClientConfigService::bootstrap(Arc::new(pool.clone())).await;
+
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var(crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV, value);
+            },
+            None => unsafe {
+                std::env::remove_var(crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV);
+            },
+        }
+        let service = result.expect("bootstrap should continue without Admin discovery data");
+        assert!(
+            service
+                .template_source
+                .list_client()
+                .await
+                .expect("list runtime templates")
+                .is_empty()
+        );
     }
 }

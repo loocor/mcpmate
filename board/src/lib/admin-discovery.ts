@@ -439,7 +439,7 @@ export function adminDiscoveryServerToOnboardingCandidate(raw: unknown): AdminDi
 		args,
 		env,
 		url,
-		source_clients: ["MCPMate Admin"],
+		source_clients: ["MCPMate"],
 		source_client_ids: [],
 		import_config: importConfig,
 	};
