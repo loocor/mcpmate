@@ -1,10 +1,22 @@
 # Clients Module Overview
 
-The `clients` module provides the template-driven client configuration engine.  Templates replace the legacy SQLite rules and describe how to detect clients, how to render configuration fragments, and how to write them back to disk or other storage adapters.
+The `clients` module provides the client configuration engine. Runtime templates describe how to detect config files, how to render configuration fragments, and how to write them back to disk or other storage adapters.
+
+## Catalog Source
+
+Official client templates are refreshed from MCPMate Admin public discovery:
+
+- Endpoint: `GET /discovery/clients`
+- Default base URL: `https://public.mcp.umate.ai`
+- Test/local override: `MCPMATE_ADMIN_DISCOVERY_BASE_URL`
+
+`ClientConfigService::bootstrap` fetches Admin discovery directly, maps eligible v2 `config.kind = "file"` clients into `ClientTemplate`, replaces rows in `client_template_runtime`, and then continues through `DbTemplateSource`, `TemplateEngine`, and `ClientDetector`. The backend does not expose a proxy endpoint for this catalog.
+
+The removed static source was the repository-local `config/client/*.json5` catalog and the build-time embedding chain. This does not remove JSON5 parsing for user-managed template/config files; `FileTemplateSource` still supports JSON/JSON5/YAML/TOML for test and user-template flows.
 
 ## Template Metadata Structure
 
-Template files live under `config/client/*.json5`.  Each file contains a `ClientTemplate` definition with the following sections:
+Each runtime `ClientTemplate` contains the following sections:
 
 ### Top-level Fields
 
@@ -38,20 +50,18 @@ This does **not** remove MCPMate's hosted or unify management model. Users can s
 
 ### Detection Rules
 
-Detection rules tell the engine how to recognise an installed client and which configuration file to use.
+Detection rules tell the engine which configuration file to use. Local catalog detection is config-file-only; app bundle and binary paths are not treated as successful detections.
 
 ```json5
 {
-  method: "file_path",
-  value: "/Applications/Zed.app",
-  config_path: "~/.config/zed/settings.json",
+  method: "config_path",
+  value: "~/.config/zed/settings.json",
 }
 ```
 
 - `method` – one of:
-  - `"file_path"` – check whether a file or directory exists at `value`.
   - `"config_path"` – treat `value` (or `config_path`) as the configuration file location.
-  - `"bundle_id"` – reserved for macOS bundle detection.
+  - `"file_path"` / `"bundle_id"` – still accepted for deserialization compatibility, but they do not produce successful local catalog detection.
 - `value` – method-specific payload (path or bundle id).
 - `config_path` – optional override for the resolved config file.
 - `priority` – smaller numbers run first (optional).
@@ -125,22 +135,23 @@ All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
 
 - `ContainerType` – `object_map | array`.
 - `MergeStrategy` – `replace | deep_merge`.
-- `DetectionMethod` – `file_path | bundle_id | config_path`.
+- `DetectionMethod` – `config_path` for active local catalog detection; `file_path` and `bundle_id` are compatibility-only.
 - `StorageKind` – `file | kv | custom`.
 
-## Adding a New Template
+## Adding a New Catalog Client
 
-1. Create a JSON5 file under `config/client/<identifier>.json5`.
-2. List detection rules for each platform you want to support.
-3. Describe `config_mapping` so the engine knows where to patch data.
-4. Register any new transports in `transports`.
-5. Optional: add a smoke test similar to those in `clients::service::tests`.
+1. Add or update the client in MCPMate Admin discovery data.
+2. Set `config.kind` to `"file"`.
+3. Provide platform paths under `config.file.paths.{macos,windows,linux}`.
+4. Provide `config.file.format` and `config.file.container.{type,keys}`.
+5. Register supported render rules under `config.transports`.
+6. Add mapper/service tests in `clients::admin_discovery` or focused service modules when the Admin contract changes.
 
 ## Runtime Flow
 
-1. `ClientConfigService::bootstrap` seeds official templates into the runtime database and builds an in-memory index.
+1. `ClientConfigService::bootstrap` refreshes Admin discovery into the runtime database and builds the `DbTemplateSource`.
 2. API handlers (`src/api/handlers/client/handlers.rs`) call the service to list templates, render configs, and apply changes.
-3. Storage adapters resolve target paths using detection rules and the path service; writes are performed atomically with backups.
+3. Storage adapters resolve target config paths using detection rules and the path service; writes are performed atomically with backups.
 
 ## Client Approval Workflow
 

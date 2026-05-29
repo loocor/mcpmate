@@ -62,6 +62,16 @@ export const onboardingTranslations = {
         "We found these MCP clients on your system. Select the ones you'd like MCPMate to manage.",
       error: "Failed to detect MCP clients. Please retry.",
       retry: "Retry detection",
+      recommendationError:
+        "No local MCP clients were detected, and MCPMate could not load preset client data. You can continue setup and add clients manually later.",
+      adminRecommendation: "Preset client",
+      recommendationNotice:
+        "These MCPMate-supported client presets can be applied directly.",
+      recommendationPartialWarning:
+        "{{count}} client presets were skipped because their discovery data is invalid.",
+      adminRecommendationMissing: "Client preset '{{identifier}}' was not found.",
+      adminRecommendationSelectedAria: "{{name}} preset client selected",
+      adminRecommendationUnselectedAria: "{{name}} preset client not selected",
       empty:
         "No MCP clients detected on this system. You can add clients manually later from the Clients page.",
     },
@@ -73,8 +83,13 @@ export const onboardingTranslations = {
         "No detected MCP clients have a local configuration path to scan yet. You can skip this step or finish client setup first.",
       empty: "No importable MCP servers were found across your detected clients.",
       sources: "Found in",
+      recommendationError: "MCPMate could not load preset server data. You can continue setup and add servers manually later.",
+      recommendationNotice:
+        "These MCPMate server presets can be imported directly.",
       importErrorTitle: "Server import failed",
       official: "Official",
+      selectedAria: "{{name}} server selected",
+      unselectedAria: "{{name}} server not selected",
     },
     community: {
       title: "Join the Community",
@@ -165,6 +180,13 @@ export const onboardingTranslations = {
       description: "系统中发现了这些 MCP 客户端，选择你希望 MCPMate 管理的客户端。",
       error: "检测 MCP 客户端失败，请重试。",
       retry: "重试检测",
+      recommendationError: "未在本机检测到 MCP 客户端，且 MCPMate 无法加载客户端预置数据。你可以继续完成设置，之后再手动添加客户端。",
+      adminRecommendation: "预置客户端",
+      recommendationNotice: "这些 MCPMate 支持的客户端预置可直接应用。",
+      recommendationPartialWarning: "{{count}} 条客户端预置因发现数据无效而被跳过。",
+      adminRecommendationMissing: "未找到客户端预置「{{identifier}}」。",
+      adminRecommendationSelectedAria: "预置客户端 {{name}} 已选中",
+      adminRecommendationUnselectedAria: "预置客户端 {{name}} 未选中",
       empty: "未在本机检测到 MCP 客户端，后续可在「客户端」页面手动添加。",
     },
     servers: {
@@ -175,8 +197,12 @@ export const onboardingTranslations = {
         "当前没有已检测且具备本地配置路径的客户端可供扫描。可跳过此步骤，或先完成某个客户端的配置。",
       empty: "在已检测的客户端中未发现可导入的 MCP 服务器。",
       sources: "来自",
+      recommendationError: "MCPMate 无法加载服务器预置数据。你可以继续完成设置，之后再手动添加服务器。",
+      recommendationNotice: "这些 MCPMate 服务器预置可直接导入。",
       importErrorTitle: "服务器导入失败",
       official: "官方",
+      selectedAria: "服务器 {{name}} 已选中",
+      unselectedAria: "服务器 {{name}} 未选中",
     },
     community: {
       title: "加入社区",
@@ -264,6 +290,16 @@ export const onboardingTranslations = {
       description: "このシステムで検出された MCP クライアントです。管理したいものを選択してください。",
       error: "MCP クライアントの検出に失敗しました。再試行してください。",
       retry: "検出を再試行",
+      recommendationError:
+        "ローカル MCP クライアントが検出されず、MCPMate はクライアントプリセットを読み込めませんでした。セットアップを続行し、あとで手動でクライアントを追加できます。",
+      adminRecommendation: "クライアントプリセット",
+      recommendationNotice:
+        "これらの MCPMate 対応クライアントプリセットは直接適用できます。",
+      recommendationPartialWarning:
+        "検出データが無効なため、{{count}} 件のクライアントプリセットをスキップしました。",
+      adminRecommendationMissing: "クライアントプリセット「{{identifier}}」が見つかりません。",
+      adminRecommendationSelectedAria: "クライアントプリセット {{name}} は選択済みです",
+      adminRecommendationUnselectedAria: "クライアントプリセット {{name}} は未選択です",
       empty: "MCP クライアントが検出されませんでした。後で「クライアント」ページから手動追加できます。",
     },
     servers: {
@@ -274,8 +310,13 @@ export const onboardingTranslations = {
         "スキャンできるローカル設定パスを持つ検出済みクライアントがありません。この手順をスキップするか、クライアントのセットアップを完了してください。",
       empty: "検出済みクライアントにインポート可能な MCP サーバーは見つかりませんでした。",
       sources: "検出元",
+      recommendationError: "MCPMate はサーバープリセットを読み込めませんでした。セットアップを続行し、あとで手動でサーバーを追加できます。",
+      recommendationNotice:
+        "これらの MCPMate サーバープリセットは直接インポートできます。",
       importErrorTitle: "サーバーのインポートに失敗しました",
       official: "公式",
+      selectedAria: "サーバー {{name}} は選択済みです",
+      unselectedAria: "サーバー {{name}} は未選択です",
     },
     community: {
       title: "コミュニティに参加",

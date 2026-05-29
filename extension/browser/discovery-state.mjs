@@ -28,14 +28,14 @@ export function buildDiscoveryUrl(endpoint, query) {
 }
 
 export function responseMetadata(data) {
-	return data?.metadata || data?.meta || {};
+	return data?.page || data?.metadata || data?.meta || {};
 }
 
 export function discoveryPageState({ kind, entries, metadata, limit, offset }) {
 	const hasMore =
 		isPageableDiscoveryKind(kind) &&
 		entries.length > 0 &&
-		metadata?.mode === "page" &&
+		(metadata?.mode === undefined || metadata?.mode === "page") &&
 		metadata?.hasMore === true;
 	let nextOffset = null;
 	if (hasMore) {
