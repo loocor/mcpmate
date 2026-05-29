@@ -16,7 +16,7 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 ## Features
 
 - Popup discovery tabs for **Portals**, **Servers**, and **Clients**.
-- Discovery data comes from the published MCPMate Admin discovery APIs.
+- Discovery data comes from the published Public Worker discovery APIs backed by MCPMate Admin catalog data.
 - Servers and clients request the `extension` surface with paginated discovery
   queries and load more entries as the popup list is scrolled.
 - Use the popup refresh button to reload the active discovery panel; touch
@@ -56,9 +56,9 @@ Status: Available on Chromium-based browser extension stores, including Chrome W
 ## Notes and limits
 
 - Reload the extension from your browser's extensions page after local changes.
-- `mock` mode remains available for local UI checks only. Production config uses `account` and does not silently fall back to mock data when the Admin API is unavailable.
+- `mock` mode remains available for local UI checks only. Production config uses `account` and does not silently fall back to mock data when the public discovery API is unavailable.
 - The paginated discovery UI uses the existing popup, the `storage` permission
-  for local settings/cache, and the published Admin API origin. It does not add
+  for local settings/cache, and the published public discovery API origin. It does not add
   background network activity, remote code execution, analytics submission, or
   new host/background permissions.
 - Mouse and trackpad gestures are not intercepted for pull-to-refresh, so text
