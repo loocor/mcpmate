@@ -6,6 +6,8 @@ export type AdminDiscoveryPlatform = "macos" | "windows" | "linux";
 const MAX_ADMIN_DISCOVERY_LIMIT = 50;
 const MAX_ADMIN_DISCOVERY_RANDOM = 12;
 const DEFAULT_ADMIN_DISCOVERY_BASE_URL = "https://public.mcp.umate.ai";
+const CANONICAL_TRANSPORT_KEYS = ["streamable_http", "sse", "stdio"] as const;
+const CONFIG_PARSE_FORMATS = ["json", "json5", "toml", "yaml"] as const;
 
 export const ADMIN_DISCOVERY_BASE_URL = trimTrailingSlash(
 	(typeof import.meta !== "undefined" &&
@@ -37,6 +39,16 @@ export interface AdminDiscoveryClientCandidate {
 	logoUrl: string;
 	supportedTransports: string[];
 	transports: Record<string, TransportRuleData>;
+}
+
+export interface AdminDiscoveryDiagnostic {
+	identifier?: string;
+	reason: string;
+}
+
+export interface AdminDiscoveryClientCatalog {
+	clients: AdminDiscoveryClientCandidate[];
+	diagnostics: AdminDiscoveryDiagnostic[];
 }
 
 export interface AdminClientUpdatePayload {
@@ -82,6 +94,12 @@ function firstCompactString(...values: unknown[]): string | undefined {
 
 function recordValue(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function optionalRecordValue(value: unknown): Record<string, unknown> | null {
+	if (value === undefined) return {};
+	if (value === null) return null;
+	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function stringArrayValue(value: unknown): string[] {
@@ -143,11 +161,29 @@ function discoveryItems(envelope: unknown, key: "clients" | "servers"): unknown[
 }
 
 export async function fetchAdminDiscoveryClients(options: AdminDiscoveryQuery): Promise<AdminDiscoveryClientCandidate[]> {
+	const catalog = await fetchAdminDiscoveryClientCatalog(options);
+	if (catalog.diagnostics.length > 0) {
+		console.warn("Skipped invalid Admin discovery clients.", catalog.diagnostics);
+	}
+	return catalog.clients;
+}
+
+export async function fetchAdminDiscoveryClientCatalog(options: AdminDiscoveryQuery): Promise<AdminDiscoveryClientCatalog> {
 	const envelope = await fetchAdminDiscoveryEnvelope("/discovery/clients", options);
-	return discoveryItems(envelope, "clients").flatMap((item) => {
+	const clients: AdminDiscoveryClientCandidate[] = [];
+	const diagnostics: AdminDiscoveryDiagnostic[] = [];
+	for (const item of discoveryItems(envelope, "clients")) {
 		const candidate = adminDiscoveryClientToCandidate(item, { platform: options.platform });
-		return candidate ? [candidate] : [];
-	});
+		if (candidate) {
+			clients.push(candidate);
+		} else {
+			diagnostics.push({
+				identifier: adminDiscoveryClientIdentifier(item),
+				reason: "Invalid Admin discovery client contract.",
+			});
+		}
+	}
+	return { clients, diagnostics };
 }
 
 export async function fetchAdminDiscoveryServers(options: AdminDiscoveryQuery): Promise<AdminDiscoveryServerCandidate[]> {
@@ -162,6 +198,11 @@ function metadataRecord(client: Record<string, unknown>): Record<string, unknown
 	return recordValue(client.metadata);
 }
 
+function adminDiscoveryClientIdentifier(raw: unknown): string | undefined {
+	const client = recordValue(raw);
+	return compactString(client.identifier) ?? compactString(client.id) ?? compactString(client.name);
+}
+
 function configPathFromDiscoveryClient(
 	file: Record<string, unknown>,
 	platform?: AdminDiscoveryPlatform,
@@ -174,26 +215,85 @@ function adminConfigFileParse(file: Record<string, unknown>): {
 	format: string;
 	containerType: "standard" | "array";
 	containerKeys: string[];
-} {
+} | null {
+	const format = compactString(file.format) ?? "json";
+	if (!(CONFIG_PARSE_FORMATS as readonly string[]).includes(format)) return null;
 	const container = recordValue(file.container);
+	const containerType = compactString(container.type ?? file.containerType ?? file.container_type);
+	if (containerType && !["standard", "object_map", "array"].includes(containerType)) return null;
+	const containerKeys = stringArrayValue(container.keys ?? file.containerKeys ?? file.container_keys);
+	if (containerKeys.length === 0) return null;
 	return {
-		format: compactString(file.format) ?? "json",
-		containerType:
-			container.type === "array" || file.containerType === "array" || file.container_type === "array"
-				? "array"
-				: "standard",
-		containerKeys: stringArrayValue(container.keys ?? file.containerKeys ?? file.container_keys),
+		format,
+		containerType: containerType === "array" ? "array" : "standard",
+		containerKeys,
 	};
 }
 
-function adminTransports(config: Record<string, unknown>): Record<string, TransportRuleData> {
-	const transports = recordValue(config.transports);
-	return Object.fromEntries(
-		Object.entries(transports).filter((entry): entry is [string, TransportRuleData] => {
-			const value = entry[1];
-			return Boolean(value && typeof value === "object" && !Array.isArray(value));
-		}),
-	);
+function isCanonicalTransportKey(value: string): boolean {
+	return (CANONICAL_TRANSPORT_KEYS as readonly string[]).includes(value);
+}
+
+function hasCompactString(value: unknown): boolean {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function isOptionalCompactString(value: unknown): boolean {
+	return value === undefined || value === null || hasCompactString(value);
+}
+
+function isOptionalBoolean(value: unknown): boolean {
+	return value === undefined || value === null || typeof value === "boolean";
+}
+
+function isOptionalRecord(value: unknown): boolean {
+	return value === undefined || value === null || (typeof value === "object" && value !== null && !Array.isArray(value));
+}
+
+function isValidTransportRule(key: string, rule: Record<string, unknown>): boolean {
+	for (const field of Object.keys(rule)) {
+		if (!isTransportRuleField(field)) return false;
+	}
+	if (Object.prototype.hasOwnProperty.call(rule, "requires_type_field")) return false;
+	for (const field of ["command_field", "args_field", "env_field", "type_value", "url_field", "headers_field"]) {
+		if (!isOptionalCompactString(rule[field])) return false;
+	}
+	if (!isOptionalBoolean(rule.include_type) || !isOptionalBoolean(rule.selected)) return false;
+	if (!isOptionalRecord(rule.extra_fields)) return false;
+	if (rule.include_type === true && !hasCompactString(rule.type_value)) return false;
+	if (key === "stdio") return hasCompactString(rule.command_field);
+	return hasCompactString(rule.url_field);
+}
+
+function isTransportRuleField(field: string): boolean {
+	return [
+		"template",
+		"command_field",
+		"args_field",
+		"env_field",
+		"include_type",
+		"type_value",
+		"url_field",
+		"headers_field",
+		"extra_fields",
+		"selected",
+	].includes(field);
+}
+
+function adminTransports(config: Record<string, unknown>): Record<string, TransportRuleData> | null {
+	const transports = optionalRecordValue(config.transports);
+	if (!transports) return null;
+	const entries: Array<[string, TransportRuleData]> = [];
+
+	for (const [key, value] of Object.entries(transports)) {
+		if (!isCanonicalTransportKey(key)) return null;
+		const rule = optionalRecordValue(value);
+		if (!rule) return null;
+		if (!isValidTransportRule(key, rule)) return null;
+		entries.push([key, rule as TransportRuleData]);
+	}
+
+	return Object.fromEntries(entries);
 }
 
 export function adminDiscoveryClientToCandidate(
@@ -203,8 +303,8 @@ export function adminDiscoveryClientToCandidate(
 	const client = recordValue(raw);
 	const metadata = metadataRecord(client);
 	const config = recordValue(client.config);
-	const file = adminConfigFileParse(recordValue(config.file));
 	const transports = adminTransports(config);
+	if (!transports) return null;
 	const identifier = compactString(client.identifier) ?? compactString(client.id) ?? compactString(client.name);
 	if (!identifier) return null;
 	const displayName =
@@ -214,6 +314,8 @@ export function adminDiscoveryClientToCandidate(
 	const configKind = compactString(config.kind);
 	const hasConfigFileKind = configKind === "file";
 	const hasWritableConfig = Boolean(configPath && hasConfigFileKind);
+	const file = hasWritableConfig ? adminConfigFileParse(fileRecord) : null;
+	if (hasWritableConfig && !file) return null;
 	const configFileChoice: ClientConfigFileState = hasWritableConfig ? "with_config_file" : "without_config_file";
 	const links = recordValue(client.links);
 	const icon = recordValue(client.icon);
@@ -223,9 +325,9 @@ export function adminDiscoveryClientToCandidate(
 		displayName,
 		configFileChoice,
 		configPath: configFileChoice === "with_config_file" ? configPath : "",
-		configFileParseFormat: file.format,
-		configFileParseContainerType: file.containerType,
-		configFileParseContainerKeysText: file.containerKeys.join(", "),
+		configFileParseFormat: file?.format ?? "json",
+		configFileParseContainerType: file?.containerType ?? "standard",
+		configFileParseContainerKeysText: file?.containerKeys.join(", ") ?? "",
 		description: compactString(client.description) ?? compactString(metadata.description) ?? "",
 		homepageUrl: firstCompactString(links.homepage, client.homepageUrl, client.homepage_url, metadata.homepage_url) ?? "",
 		docsUrl: firstCompactString(links.docs, client.docsUrl, client.docs_url, metadata.docs_url) ?? "",
@@ -244,6 +346,10 @@ function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClie
 	if (candidate.configFileChoice !== "with_config_file" && candidate.configFileChoice !== "without_config_file") {
 		return null;
 	}
+	const supportedTransports = stringArrayValue(candidate.supportedTransports);
+	if (supportedTransports.some((transport) => !isCanonicalTransportKey(transport))) return null;
+	const transports = adminTransports({ transports: candidate.transports });
+	if (!transports) return null;
 	return {
 		identifier,
 		displayName,
@@ -257,8 +363,8 @@ function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClie
 		docsUrl: compactString(candidate.docsUrl) ?? "",
 		supportUrl: compactString(candidate.supportUrl) ?? "",
 		logoUrl: compactString(candidate.logoUrl) ?? "",
-		supportedTransports: stringArrayValue(candidate.supportedTransports),
-		transports: recordValue(candidate.transports) as Record<string, TransportRuleData>,
+		supportedTransports,
+		transports,
 	};
 }
 
