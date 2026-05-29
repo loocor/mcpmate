@@ -4,7 +4,7 @@ The MCPMate browser extension shows curated MCP portals, servers, and clients in
 
 - **Product**: MCPMate
 - **Website**: [https://mcp.umate.ai](https://mcp.umate.ai)
-- **Public discovery API origin**: `https://public.mcp.umate.ai`
+- **Admin API origin**: `https://public.mcp.umate.ai`
 - **Current discovery mode**: `account`
 
 The import handoff payload JSON matches desktop handling in `deep_link.rs`:
@@ -25,7 +25,7 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 - Optional language and theme preferences live inside the toolbar popup settings panel.
 - Popup styling mirrors the shadcn Dashboard visual language with lightweight static HTML/CSS/JS, avoiding a React bundle inside the extension.
 - Optional icon metadata is supported when Admin catalog entries provide it.
-- Uses `config.js` as the extension deployment config. Update `discoveryApiOrigin` there if the public discovery API origin changes.
+- Uses `config.js` as the extension deployment config. Update `adminApiOrigin` there if the Admin API origin changes.
 - Run `bun extension/browser/scripts/write-build-info.mjs` before packaging to refresh `build-info.js` with the current build date.
 - The snippet-to-desktop import path remains enabled through `content.js` and `mcpmate://import/server`.
 - What remains disabled is telemetry-style import submission to Admin APIs. The extension does not upload import events or usage analytics to Admin in the current phase.

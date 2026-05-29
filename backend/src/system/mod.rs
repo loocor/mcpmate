@@ -1,8 +1,7 @@
 // MCPMate system module
-// Contains system-level functionality including metrics, detection, and paths
+// Contains system-level functionality including metrics, paths, and settings
 
 pub mod config;
-pub mod detection;
 pub mod metrics;
 pub mod paths;
 pub mod settings;

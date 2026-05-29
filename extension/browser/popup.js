@@ -1,4 +1,9 @@
 import {
+	clientCatalogMeta,
+	entryUrl,
+	iconUrl,
+} from "./catalog-entry.mjs";
+import {
 	DISCOVERY_PAGE_SIZE,
 	buildDiscoveryUrl,
 	discoveryPageState,
@@ -12,13 +17,13 @@ import {
 	shouldStartPullRefresh,
 } from "./discovery-state.mjs";
 
-const DISCOVERY_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryApiOrigin;
+const ADMIN_ORIGIN = globalThis.MCPMATE_EXTENSION_CONFIG.adminApiOrigin;
 const BUILD_DATE = globalThis.MCPMATE_EXTENSION_BUILD.buildDate;
 const DISCOVERY_MODE = globalThis.MCPMATE_EXTENSION_CONFIG.discoveryMode || "account";
 const DISCOVERY_ENDPOINTS = {
-	portals: `${DISCOVERY_ORIGIN}/discovery/portals`,
-	servers: `${DISCOVERY_ORIGIN}/discovery/servers`,
-	clients: `${DISCOVERY_ORIGIN}/discovery/clients`,
+	portals: `${ADMIN_ORIGIN}/discovery/portals`,
+	servers: `${ADMIN_ORIGIN}/discovery/servers`,
+	clients: `${ADMIN_ORIGIN}/discovery/clients`,
 };
 const MOCK_DISCOVERY_ENDPOINTS = {
 	portals: chrome.runtime.getURL("mock/portals.json"),
@@ -304,7 +309,7 @@ async function writeSettings(settings) {
 }
 
 function discoveryCacheKey(kind, requestUrl) {
-	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${DISCOVERY_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
+	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
 }
 
 async function readDiscoveryCache(kind, requestUrl) {
@@ -418,8 +423,12 @@ function setButtonLabel(id, label) {
 function initialBadge(name) {
 	return String(name || "?")
 		.trim()
-		.slice(0, 2)
+		.slice(0, 1)
 		.toUpperCase();
+}
+
+function renderFallbackIcon(badge, name) {
+	badge.replaceChildren(document.createTextNode(initialBadge(name)));
 }
 
 function renderIcon(name, iconUrl) {
@@ -427,12 +436,16 @@ function renderIcon(name, iconUrl) {
 	badge.className = "icon-badge";
 	if (iconUrl) {
 		const img = document.createElement("img");
-		img.src = iconUrl;
 		img.alt = "";
+		img.referrerPolicy = "no-referrer";
+		img.addEventListener("error", () => renderFallbackIcon(badge, name), {
+			once: true,
+		});
+		img.src = iconUrl;
 		badge.appendChild(img);
 		return badge;
 	}
-	badge.textContent = initialBadge(name);
+	renderFallbackIcon(badge, name);
 	return badge;
 }
 
@@ -481,7 +494,9 @@ function card({ name, description, url, source, signal, meta, iconUrl }) {
 
 	el.appendChild(title);
 	el.appendChild(body);
-	el.appendChild(metaEl);
+	if (metaEl.childElementCount > 0) {
+		el.appendChild(metaEl);
+	}
 	return el;
 }
 
@@ -549,43 +564,6 @@ function firstTransport(server) {
 	return "";
 }
 
-function entryUrl(entry) {
-	const server = entry?.server || entry;
-	const official = entry?.official || server?.official || {};
-	const curated = entry?.curated || server?.curated || {};
-	return (
-		entry?.url ||
-		entry?.homepageUrl ||
-		curated.docsUrl ||
-		curated.supportUrl ||
-		official.websiteUrl ||
-		official.repository?.url ||
-		official.docsUrl ||
-		server?.websiteUrl ||
-		server?.homepageUrl ||
-		server?.repository?.url ||
-		server?.docsUrl ||
-		"https://mcp.umate.ai"
-	);
-}
-
-function iconUrl(entry) {
-	const server = entry?.server || entry;
-	const official = entry?.official || server?.official || {};
-	const meta = discoveryMeta(entry);
-	const officialIcon = Array.isArray(official.icons) ? official.icons[0]?.src : "";
-	return (
-		meta.iconUrl ||
-		meta.brandIconUrl ||
-		entry?.iconUrl ||
-		entry?.logoUrl ||
-		officialIcon ||
-		server?.iconUrl ||
-		server?.logoUrl ||
-		""
-	);
-}
-
 function normalizeEntries(kind, data) {
 	if (Array.isArray(data)) return data;
 	if (Array.isArray(data?.[kind])) return data[kind];
@@ -618,10 +596,7 @@ function entryMeta(entry, kind) {
 		};
 	}
 	if (kind === "clients") {
-		return {
-			signal: entry?.signal || entry?.category || "",
-			meta: entry?.meta || entry?.config?.kind || "",
-		};
+		return clientCatalogMeta(entry);
 	}
 	return {
 		signal: entry?.signal || meta.quality?.status || "",
@@ -680,10 +655,10 @@ function entryCard(kind, entry) {
 		name: entryName(entry, kind),
 		description: entryDescription(entry, kind),
 		url: entryUrl(entry),
-		source: entrySource(entry),
+		source: kind === "clients" ? "" : entrySource(entry),
 		signal: metaBits.signal,
 		meta: metaBits.meta,
-		iconUrl: iconUrl(entry),
+		iconUrl: iconUrl(entry, ADMIN_ORIGIN),
 	});
 }
 
@@ -700,6 +675,7 @@ async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false }) 
 	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl);
 	if (!data) {
 		const response = await fetch(requestUrl, {
+			credentials: "omit",
 			headers: { accept: "application/json" },
 		});
 		if (!response.ok) {

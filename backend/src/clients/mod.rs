@@ -1,4 +1,5 @@
 pub mod adapters;
+pub mod admin_discovery;
 pub mod analyzer;
 pub mod detector;
 pub mod document;

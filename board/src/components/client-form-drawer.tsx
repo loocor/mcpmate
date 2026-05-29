@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertCircle,
 	Check,
@@ -19,9 +19,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNod
 import { type ControllerRenderProps, useForm } from "react-hook-form";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import * as z from "zod";
+import {
+	type AdminDiscoveryClientCandidate,
+	fetchAdminDiscoveryClientCatalog,
+} from "../lib/admin-discovery";
 import { clientsApi } from "../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-policy";
+import { readAdminDiscoveryPlatform } from "../lib/desktop-platform";
 import {
 	applyClientConfigWithResolvedSelection,
 	canApplyClientConfigWithState,
@@ -41,6 +45,15 @@ import type {
 	ClientInfo,
 } from "../lib/types";
 import { cn } from "../lib/utils";
+import {
+	CONFIG_PARSE_FORMAT_VALUES,
+	SUPPORTED_TRANSPORT_VALUES,
+	createClientFormSchema,
+	type ClientConfigFileChoice,
+	type ClientRecordFormValues,
+	type ConfigParseFormatValue,
+	type SupportedTransportValue,
+} from "./client-form-schema";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Button } from "./ui/button";
 import {
@@ -76,43 +89,6 @@ import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type ClientFormMode = "create" | "edit";
-type ClientConfigFileChoice = "with_config_file" | "without_config_file";
-const SUPPORTED_TRANSPORT_VALUES = ["streamable_http", "sse", "stdio"] as const;
-type SupportedTransportValue = (typeof SUPPORTED_TRANSPORT_VALUES)[number];
-const CONFIG_PARSE_FORMAT_VALUES = ["json", "json5", "toml", "yaml"] as const;
-type ConfigParseFormatValue = (typeof CONFIG_PARSE_FORMAT_VALUES)[number];
-const CONFIG_PARSE_CONTAINER_TYPE_VALUES = ["standard", "array"] as const;
-
-function createFormSchema(t: TFunction) {
-	return z
-		.object({
-			identifier: z.string().min(1),
-			displayName: z.string().min(1),
-			configFileChoice: z.enum(["with_config_file", "without_config_file"]),
-			supportedTransports: z.array(z.enum(SUPPORTED_TRANSPORT_VALUES)),
-			configPath: z.string().optional(),
-			configFileParseFormat: z.enum(CONFIG_PARSE_FORMAT_VALUES),
-			configFileParseContainerType: z.enum(CONFIG_PARSE_CONTAINER_TYPE_VALUES),
-			configFileParseContainerKeysText: z.string().optional(),
-			clientVersion: z.string().optional(),
-			description: z.string().optional(),
-			homepageUrl: z.string().optional(),
-			docsUrl: z.string().optional(),
-			supportUrl: z.string().optional(),
-			logoUrl: z.string().optional(),
-		})
-		.superRefine((values, ctx) => {
-			if (values.configFileChoice === "with_config_file" && values.supportedTransports.length === 0) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["supportedTransports"],
-					message: t("detail.form.transportSupport.validation.required", {
-						defaultValue: "Select at least one supported transport before saving.",
-					}),
-				});
-			}
-		});
-}
 
 interface ClientFormDrawerProps {
 	open: boolean;
@@ -189,12 +165,18 @@ function transportRuleEditorFromData(rule?: TransportRuleData | null): Transport
 	};
 }
 
-function transportRuleEditorsFromClient(client?: ClientInfo | null): TransportRuleEditors {
+function transportRuleEditorsFromTransportRules(
+	transports?: Record<string, TransportRuleData> | null,
+): TransportRuleEditors {
 	return {
-		streamable_http: transportRuleEditorFromData(client?.transports?.streamable_http),
-		sse: transportRuleEditorFromData(client?.transports?.sse),
-		stdio: transportRuleEditorFromData(client?.transports?.stdio),
+		streamable_http: transportRuleEditorFromData(transports?.streamable_http),
+		sse: transportRuleEditorFromData(transports?.sse),
+		stdio: transportRuleEditorFromData(transports?.stdio),
 	};
+}
+
+function transportRuleEditorsFromClient(client?: ClientInfo | null): TransportRuleEditors {
+	return transportRuleEditorsFromTransportRules(client?.transports);
 }
 
 function cloneTransportRuleEditorValue(value: TransportRuleEditorValue): TransportRuleEditorValue {
@@ -423,8 +405,6 @@ function filterCurrentTransportPayload(
 		Object.entries(currentTransports).filter(([transport]) => allowed.has(transport as SupportedTransportValue)),
 	);
 }
-
-type ClientRecordFormValues = z.infer<ReturnType<typeof createFormSchema>>;
 
 const CLIENT_FORM_ROW_LABEL_CLASS = "w-20 shrink-0 text-right";
 
@@ -705,6 +685,25 @@ function TextInputRow({
 	);
 }
 
+function AdminCatalogOptionIcon({ candidate }: { candidate: AdminDiscoveryClientCandidate }) {
+	const [failed, setFailed] = useState(false);
+	if (candidate.logoUrl && !failed) {
+		return (
+			<img
+				src={candidate.logoUrl}
+				alt=""
+				className="h-8 w-8 rounded-md object-contain"
+				onError={() => setFailed(true)}
+			/>
+		);
+	}
+	return (
+		<span className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
+			<ImageIcon className="h-4 w-4" />
+		</span>
+	);
+}
+
 function TransportRuleField({
 	label,
 	placeholder,
@@ -813,10 +812,10 @@ export function ClientFormDrawer({
 	onSuccess,
 	onDeleteSuccess,
 }: ClientFormDrawerProps) {
-	const { t, i18n } = useTranslation("clients");
+	const { t } = useTranslation("clients");
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
-	const formSchema = useMemo(() => createFormSchema(t), [t, i18n.language]);
+	const formSchema = useMemo(() => createClientFormSchema(t), [t]);
 	const [isHydrating, setIsHydrating] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -826,6 +825,8 @@ export function ClientFormDrawer({
 	const [showParseCodePreview, setShowParseCodePreview] = useState(false);
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 	const [configPathPickBusy, setConfigPathPickBusy] = useState(false);
+	const [isAdminCatalogOpen, setIsAdminCatalogOpen] = useState(false);
+	const [selectedAdminClient, setSelectedAdminClient] = useState<AdminDiscoveryClientCandidate | null>(null);
 	const [transportRuleEditors, setTransportRuleEditors] = useState<TransportRuleEditors>(() =>
 		transportRuleEditorsFromClient(client),
 	);
@@ -835,6 +836,7 @@ export function ClientFormDrawer({
 		defaultValues(client).supportedTransports,
 	);
 	const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
+	const drawerContentRef = useRef<HTMLDivElement | null>(null);
 	const configPathFileInputRef = useRef<HTMLInputElement>(null);
 	const autoAppliedInferenceRef = useRef<string | null>(null);
 	const lastParseInspectionSignatureRef = useRef<string | null>(null);
@@ -876,6 +878,67 @@ export function ClientFormDrawer({
 		if (typeof preview === "object") return Object.keys(preview as Record<string, unknown>).length > 0;
 		return true;
 	}, [parseInspection?.preview]);
+	const adminDiscoveryPlatformQuery = useQuery({
+		queryKey: ["adminDiscoveryPlatform", "drawer"],
+		queryFn: () => readAdminDiscoveryPlatform(),
+		enabled: open,
+		staleTime: Infinity,
+		retry: false,
+	});
+	const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
+	const adminCatalogQuery = useQuery({
+		queryKey: ["adminDiscoveryClients", "drawer", adminDiscoveryPlatform ?? "web"],
+		queryFn: () => fetchAdminDiscoveryClientCatalog({ limit: 50, offset: 0, platform: adminDiscoveryPlatform }),
+		enabled: open && adminDiscoveryPlatformQuery.isSuccess,
+		staleTime: 60_000,
+		retry: false,
+	});
+	const adminCatalogOptions = useMemo(
+		() => adminCatalogQuery.data?.clients ?? [],
+		[adminCatalogQuery.data],
+	);
+	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
+	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
+		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
+		: t("detail.form.adminCatalog.empty", { defaultValue: "No supported client presets found." });
+	const adminCatalogBusy = adminDiscoveryPlatformQuery.isLoading || adminCatalogQuery.isLoading;
+
+	const applyAdminClientCandidate = useCallback(
+		(candidate: AdminDiscoveryClientCandidate) => {
+			setIsAdminCatalogOpen(false);
+			setSelectedAdminClient(candidate);
+			if (mode === "create") {
+				form.setValue("identifier", candidate.identifier, { shouldDirty: true, shouldValidate: true });
+			}
+			form.setValue("displayName", candidate.displayName, { shouldDirty: true, shouldValidate: true });
+			form.setValue("configFileChoice", candidate.configFileChoice, { shouldDirty: true, shouldValidate: true });
+			form.setValue("configPath", candidate.configPath, { shouldDirty: true, shouldValidate: true });
+			form.setValue("configFileParseFormat", candidate.configFileParseFormat, {
+				shouldDirty: true,
+				shouldValidate: true,
+			});
+			form.setValue("configFileParseContainerType", candidate.configFileParseContainerType, {
+				shouldDirty: true,
+				shouldValidate: true,
+			});
+			form.setValue("configFileParseContainerKeysText", candidate.configFileParseContainerKeysText, {
+				shouldDirty: true,
+				shouldValidate: true,
+			});
+			form.setValue("description", candidate.description, { shouldDirty: true });
+			form.setValue("homepageUrl", candidate.homepageUrl, { shouldDirty: true });
+			form.setValue("docsUrl", candidate.docsUrl, { shouldDirty: true });
+			form.setValue("supportUrl", candidate.supportUrl, { shouldDirty: true });
+			form.setValue("logoUrl", candidate.logoUrl, { shouldDirty: true });
+			const supported = candidate.supportedTransports.filter(
+				(transport): transport is SupportedTransportValue =>
+					SUPPORTED_TRANSPORT_VALUES.includes(transport as SupportedTransportValue),
+			);
+			form.setValue("supportedTransports", supported, { shouldDirty: true, shouldValidate: true });
+			setTransportRuleEditors(transportRuleEditorsFromTransportRules(candidate.transports));
+		},
+		[form, mode],
+	);
 
 	useEffect(() => {
 		if (!open) return;
@@ -888,6 +951,8 @@ export function ClientFormDrawer({
 		setIsDeleteConfirmOpen(false);
 		autoAppliedInferenceRef.current = null;
 		lastParseInspectionSignatureRef.current = null;
+		setSelectedAdminClient(null);
+		setIsAdminCatalogOpen(false);
 		setTransportRuleEditors(transportRuleEditorsFromClient(client));
 		setSelectedTransportTab("");
 		initialSupportedTransportsRef.current = defaultValues(client).supportedTransports;
@@ -895,6 +960,17 @@ export function ClientFormDrawer({
 		form.reset(defaultValues(client));
 		setIsHydrating(false);
 	}, [open, client, mode, form]);
+
+	useEffect(() => {
+		if (!open || mode !== "edit" || selectedAdminClient || adminCatalogOptions.length === 0) return;
+		const currentIdentifier = normalizeIdentifier(client?.identifier ?? identifier);
+		const matchingClient = adminCatalogOptions.find(
+			(candidate) => normalizeIdentifier(candidate.identifier) === currentIdentifier,
+		);
+		if (matchingClient) {
+			setSelectedAdminClient(matchingClient);
+		}
+	}, [adminCatalogOptions, client?.identifier, identifier, mode, open, selectedAdminClient]);
 
 	useEffect(() => {
 		if (supportedTransports.length === 0) {
@@ -1365,7 +1441,7 @@ export function ClientFormDrawer({
 
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange}>
-			<DrawerContent>
+			<DrawerContent ref={drawerContentRef}>
 				<DrawerHeader>
 					<DrawerTitle>
 						{mode === "create"
@@ -1390,7 +1466,101 @@ export function ClientFormDrawer({
 							<TabsContent value="basic" className="space-y-4 pt-4">
 								<div className="space-y-4">
 									<FormField control={form.control} name="displayName" render={({ field }) => (
-										<TextInputRow label={t("detail.form.fields.displayName.label", { defaultValue: "Client Name" })} placeholder={t("detail.form.fields.displayName.placeholder", { defaultValue: "Cursor Desktop" })} field={field} />
+										<FormItem className="space-y-0">
+											<div className="flex items-start gap-4">
+												<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>
+													{t("detail.form.fields.displayName.label", { defaultValue: "Client Name" })}
+												</FormLabel>
+												<div className="min-w-0 flex-1">
+													<div className="relative">
+														<FormControl>
+															<Input
+																{...field}
+																className="pr-11"
+																onChange={(event) => {
+																	field.onChange(event);
+																	setSelectedAdminClient(null);
+																}}
+																placeholder={t("detail.form.fields.displayName.placeholder", {
+																	defaultValue: "Cursor Desktop",
+																})}
+															/>
+														</FormControl>
+														<Popover open={isAdminCatalogOpen} onOpenChange={setIsAdminCatalogOpen}>
+															<PopoverTrigger asChild>
+																<Button
+																	type="button"
+																	variant="outline"
+																	role="combobox"
+																	aria-expanded={isAdminCatalogOpen}
+																	aria-label={t("detail.form.adminCatalog.placeholder", {
+																		defaultValue: "Choose a supported client",
+																	})}
+																	className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-muted hover:text-foreground focus-visible:ring-1"
+																	disabled={adminCatalogBusy || saveMutation.isPending}
+																>
+																	{adminCatalogBusy ? (
+																		<Loader2 className="h-4 w-4 animate-spin opacity-50" />
+																	) : (
+																		<ChevronsUpDown className="h-4 w-4 opacity-50" />
+																	)}
+																</Button>
+															</PopoverTrigger>
+															<PopoverContent
+																className="max-h-[min(360px,var(--radix-popover-content-available-height))] w-[min(420px,var(--radix-popover-content-available-width))] overflow-hidden p-0"
+																align="end"
+																container={drawerContentRef.current}
+															>
+																<Command className="max-h-full">
+																	<CommandInput
+																		placeholder={t("detail.form.adminCatalog.search", {
+																			defaultValue: "Search clients...",
+																		})}
+																	/>
+																	<CommandList className="max-h-[clamp(120px,calc(var(--radix-popover-content-available-height)_-_48px),300px)] overscroll-contain">
+																		<CommandEmpty>{adminCatalogEmptyText}</CommandEmpty>
+																		<CommandGroup>
+																			{adminCatalogOptions.map((candidate) => (
+																				<CommandItem
+																					key={candidate.identifier}
+																					value={`${candidate.displayName} ${candidate.identifier} ${candidate.description}`}
+																					onSelect={() => applyAdminClientCandidate(candidate)}
+																					className="gap-1.5 px-3 py-3"
+																				>
+																					<AdminCatalogOptionIcon candidate={candidate} />
+																					<div className="min-w-0 flex-1">
+																						<div className="truncate">{candidate.displayName}</div>
+																						<div className="truncate text-xs text-muted-foreground">
+																							{candidate.description}
+																						</div>
+																					</div>
+																				</CommandItem>
+																			))}
+																		</CommandGroup>
+																	</CommandList>
+																</Command>
+															</PopoverContent>
+														</Popover>
+													</div>
+													<FormDescription>
+														{t("detail.form.adminCatalog.description", {
+															defaultValue:
+																"Click the dropdown arrow on the right, then choose an MCPMate-supported client to add from presets.",
+														})}
+													</FormDescription>
+													{adminCatalogDiagnostics.length > 0 ? (
+														<p className="mt-1 text-xs text-amber-600">
+															{t("detail.form.adminCatalog.partialWarning", {
+																count: adminCatalogDiagnostics.length,
+																defaultValue:
+																	"Some client presets were skipped because their discovery data is invalid.",
+															})}
+														</p>
+													) : null}
+													<FormMessage />
+												</div>
+											</div>
+										</FormItem>
 									)} />
 									<FormField control={form.control} name="identifier" render={({ field }) => (
 										<TextInputRow label={t("detail.form.fields.identifier.label", { defaultValue: "Client ID" })} placeholder={t("detail.form.fields.identifier.placeholder", { defaultValue: "cursor-desktop" })} field={field} disabled={mode !== "create"} />
@@ -1606,7 +1776,7 @@ export function ClientFormDrawer({
 																		<TooltipContent side="top" align="start" className="max-w-sm space-y-2 leading-relaxed">
 																			<p>{t("detail.form.transportRules.help.summary", { defaultValue: "These fields describe the target client's config keys, not MCPMate's own protocol fields." })}</p>
 																			<p>{t("detail.form.transportRules.help.docs", { defaultValue: "If you are unsure which keys a client expects, check that client's official documentation or an existing working config file first." })}</p>
-																			<p>{t("detail.form.transportRules.help.presets", { defaultValue: "Use the suggested variants below as a starting point, then verify the result against the client's real config structure." })}</p>
+																			<p>{t("detail.form.transportRules.help.presets", { defaultValue: "Use the preset variants below as a starting point, then verify the result against the client's real config structure." })}</p>
 																			{transportRulesHelpHref ? (
 																				<a href={transportRulesHelpHref} target="_blank" rel="noopener noreferrer" className="inline-flex text-primary hover:underline">
 																					{t("detail.form.transportRules.help.openDocs", { defaultValue: "Open client documentation" })}
@@ -1630,7 +1800,7 @@ export function ClientFormDrawer({
 																			<TabsContent key={transport} value={transport} className="mt-0">
 																				<div className="space-y-3">
 																					<div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-2">
-																						<span className="text-xs font-medium text-muted-foreground">{t("detail.form.transportRules.suggestedVariants", { defaultValue: "Suggested variants" })}</span>
+																						<span className="text-xs font-medium text-muted-foreground">{t("detail.form.transportRules.suggestedVariants", { defaultValue: "Preset variants" })}</span>
 																						{presets.map((preset) => (
 																							<Button key={preset.id} type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => applyTransportRulePreset(transport, preset)}>
 																								{preset.label}
