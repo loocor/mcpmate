@@ -1,5 +1,5 @@
 import {
-	clientConfigMeta,
+	clientCatalogMeta,
 	entryUrl,
 	iconUrl,
 } from "./catalog-entry.mjs";
@@ -423,8 +423,12 @@ function setButtonLabel(id, label) {
 function initialBadge(name) {
 	return String(name || "?")
 		.trim()
-		.slice(0, 2)
+		.slice(0, 1)
 		.toUpperCase();
+}
+
+function renderFallbackIcon(badge, name) {
+	badge.replaceChildren(document.createTextNode(initialBadge(name)));
 }
 
 function renderIcon(name, iconUrl) {
@@ -434,11 +438,14 @@ function renderIcon(name, iconUrl) {
 		const img = document.createElement("img");
 		img.alt = "";
 		img.referrerPolicy = "no-referrer";
+		img.addEventListener("error", () => renderFallbackIcon(badge, name), {
+			once: true,
+		});
 		img.src = iconUrl;
 		badge.appendChild(img);
 		return badge;
 	}
-	badge.textContent = initialBadge(name);
+	renderFallbackIcon(badge, name);
 	return badge;
 }
 
@@ -487,7 +494,9 @@ function card({ name, description, url, source, signal, meta, iconUrl }) {
 
 	el.appendChild(title);
 	el.appendChild(body);
-	el.appendChild(metaEl);
+	if (metaEl.childElementCount > 0) {
+		el.appendChild(metaEl);
+	}
 	return el;
 }
 
@@ -587,7 +596,7 @@ function entryMeta(entry, kind) {
 		};
 	}
 	if (kind === "clients") {
-		return clientConfigMeta(entry);
+		return clientCatalogMeta(entry);
 	}
 	return {
 		signal: entry?.signal || meta.quality?.status || "",
@@ -646,7 +655,7 @@ function entryCard(kind, entry) {
 		name: entryName(entry, kind),
 		description: entryDescription(entry, kind),
 		url: entryUrl(entry),
-		source: entrySource(entry),
+		source: kind === "clients" ? "" : entrySource(entry),
 		signal: metaBits.signal,
 		meta: metaBits.meta,
 		iconUrl: iconUrl(entry, ADMIN_ORIGIN),

@@ -21,17 +21,23 @@ function safeHttpUrl(candidate) {
 	}
 }
 
-function safeSameOriginHttpsUrl(candidate, adminOrigin) {
+const RasterDataImagePattern = /^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
+
+function safeImageUrl(candidate, adminOrigin) {
 	if (typeof candidate !== "string" || candidate.trim() === "") {
 		return "";
 	}
+	const trimmed = candidate.trim();
+	if (RasterDataImagePattern.test(trimmed)) {
+		return trimmed;
+	}
 	try {
 		const adminUrl = new URL(adminOrigin);
-		const url = new URL(candidate.trim(), adminUrl);
-		if (adminUrl.protocol !== "https:" || url.protocol !== "https:") {
+		const url = new URL(trimmed, adminUrl);
+		if (url.protocol !== "https:") {
 			return "";
 		}
-		return url.origin === adminUrl.origin ? url.toString() : "";
+		return url.toString();
 	} catch {
 		return "";
 	}
@@ -78,6 +84,8 @@ export function iconUrl(entry, adminOrigin) {
 		server?.icon?.url,
 		meta.iconUrl,
 		meta.brandIconUrl,
+		typeof entry?.icon === "string" ? entry.icon : "",
+		typeof server?.icon === "string" ? server.icon : "",
 		entry?.iconUrl,
 		entry?.logoUrl,
 		officialIcon,
@@ -85,41 +93,37 @@ export function iconUrl(entry, adminOrigin) {
 		server?.logoUrl,
 	];
 	for (const candidate of candidates) {
-		const safeUrl = safeSameOriginHttpsUrl(candidate, adminOrigin);
+		const safeUrl = safeImageUrl(candidate, adminOrigin);
 		if (safeUrl) return safeUrl;
 	}
 	return "";
 }
 
-export function clientConfigMeta(entry) {
-	const config = entry?.config || {};
-	const kind = config.kind || "";
-	if (!kind) {
-		return {
-			signal: entry?.signal || entry?.category || "",
-			meta: entry?.meta || "",
-		};
+function firstTextValue(values) {
+	for (const value of values) {
+		if (typeof value === "string" && value.trim()) {
+			return value.trim();
+		}
 	}
-	if (kind !== "file") {
-		return {
-			signal: `config.kind=${kind}`,
-			meta: entry?.meta || "",
-		};
-	}
+	return "";
+}
 
-	const paths = config.file?.paths || {};
-	const pathPlatforms = Object.keys(paths).filter((platform) => Boolean(paths[platform]));
-	const containerKeys = config.file?.container?.keys || [];
-	const keys = Array.isArray(containerKeys) ? containerKeys : Object.keys(containerKeys);
-	const metaParts = [];
-	if (pathPlatforms.length > 0) {
-		metaParts.push(`paths: ${pathPlatforms.slice(0, 3).join(", ")}`);
+function firstArrayValue(values) {
+	for (const value of values) {
+		if (Array.isArray(value)) {
+			const text = firstTextValue(value);
+			if (text) return text;
+		}
 	}
-	if (keys.length > 0) {
-		metaParts.push(`keys: ${keys.slice(0, 3).join(", ")}`);
-	}
+	return "";
+}
+
+export function clientCatalogMeta(entry) {
+	const meta = discoveryMeta(entry);
 	return {
-		signal: "config.kind=file",
-		meta: metaParts.join("; "),
+		signal:
+			firstArrayValue([entry?.tags, entry?.categories, meta.categories]) ||
+			firstTextValue([entry?.category, entry?.type, meta.category]),
+		meta: "",
 	};
 }
