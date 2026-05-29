@@ -372,8 +372,9 @@ p {
 	border-radius: 8px;
 	background: #fff;
 	color: #0f172a;
-	font-size: 12px;
+	font-size: 20px;
 	font-weight: 800;
+	line-height: 1;
 	overflow: hidden;
 	flex: 0 0 auto;
 }

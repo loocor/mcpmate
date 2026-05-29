@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-	clientConfigMeta,
+	clientCatalogMeta,
 	entryUrl,
 	iconUrl,
 } from "./catalog-entry.mjs";
@@ -9,9 +9,10 @@ import {
 const ADMIN_ORIGIN = "https://public.mcp.umate.ai";
 
 describe("browser extension catalog entry helpers", () => {
-	test("summarizes file client paths and container keys together", () => {
+	test("summarizes client catalog category without config internals", () => {
 		expect(
-			clientConfigMeta({
+			clientCatalogMeta({
+				tags: ["application"],
 				config: {
 					kind: "file",
 					file: {
@@ -26,12 +27,12 @@ describe("browser extension catalog entry helpers", () => {
 				},
 			}),
 		).toEqual({
-			signal: "config.kind=file",
-			meta: "paths: macos, windows; keys: mcpServers",
+			signal: "application",
+			meta: "",
 		});
 	});
 
-	test("rejects arbitrary third-party icon URLs", () => {
+	test("accepts HTTPS catalog icon URLs from Admin values", () => {
 		expect(
 			iconUrl(
 				{
@@ -41,20 +42,44 @@ describe("browser extension catalog entry helpers", () => {
 				},
 				ADMIN_ORIGIN,
 			),
-		).toBe("");
+		).toBe("https://www.anthropic.com/favicon.ico");
 	});
 
-	test("accepts same-origin HTTPS Admin icon URLs", () => {
+	test("accepts portal iconUrl values", () => {
+		expect(
+			iconUrl(
+				{
+					iconUrl: "https://composio.dev/toolkits/graphics/composio_ogImage.png",
+				},
+				ADMIN_ORIGIN,
+			),
+		).toBe("https://composio.dev/toolkits/graphics/composio_ogImage.png");
+	});
+
+	test("accepts base64 raster image icons from Admin values", () => {
+		const icon =
+			"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/axjYioAAAAASUVORK5CYII=";
 		expect(
 			iconUrl(
 				{
 					icon: {
-						url: "https://public.mcp.umate.ai/catalog/icons/claude.png",
+						url: icon,
 					},
 				},
 				ADMIN_ORIGIN,
 			),
-		).toBe("https://public.mcp.umate.ai/catalog/icons/claude.png");
+		).toBe(icon);
+	});
+
+	test("rejects non-HTTPS icon URLs", () => {
+		expect(
+			iconUrl(
+				{
+					iconUrl: "http://example.com/icon.png",
+				},
+				ADMIN_ORIGIN,
+			),
+		).toBe("");
 	});
 
 	test("falls back when catalog links use unsafe schemes", () => {
