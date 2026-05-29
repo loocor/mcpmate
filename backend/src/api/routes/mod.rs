@@ -158,8 +158,14 @@ async fn create_router_internal(
         None
     };
 
-    // Initialize client configuration service when database is available
-    let client_service = if let Some(db) = database.clone() {
+    // Reuse the proxy-owned client service when available so API startup does not
+    // repeat discovery bootstrap work already completed during proxy setup.
+    let client_service = if let Some(service) = http_proxy
+        .as_ref()
+        .and_then(|proxy| proxy.client_config_service.clone())
+    {
+        Some(service)
+    } else if let Some(db) = database.clone() {
         let pool = Arc::new(db.pool.clone());
         match ClientConfigService::bootstrap(pool).await {
             Ok(service) => Some(Arc::new(service)),

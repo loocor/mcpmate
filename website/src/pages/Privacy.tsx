@@ -62,7 +62,7 @@ const Privacy = () => {
 										将完整内容发送到本地 MCPMate 桌面应用，不会上传完整片段。
 									</li>
 									<li>
-										扩展发现面板会读取 MCPMate Admin
+										扩展发现面板会读取 MCPMate
 										服务发布的公开目录数据，但不会上传当前页面内容、配置片段或导入元数据。
 									</li>
 									<li>
@@ -264,7 +264,7 @@ const Privacy = () => {
 									</li>
 									<li>
 										The discovery panel reads the public catalog published by the
-										MCPMate Admin service, but it does not upload current page
+										MCPMate service, but it does not upload current page
 										content, configuration snippets, or import metadata.
 									</li>
 									<li>

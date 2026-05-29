@@ -393,7 +393,7 @@ test("onboarding wizard completes and stays out after completion", async ({ page
   await expect(page.getByText("System Status")).toBeVisible();
 });
 
-test("onboarding uses Admin client recommendations when local detection is empty", async ({ page }) => {
+test("onboarding uses client presets when local detection is empty", async ({ page }) => {
   const adminRequests: URL[] = [];
   const clientUpdates: unknown[] = [];
 
@@ -452,8 +452,8 @@ test("onboarding uses Admin client recommendations when local detection is empty
 
   await expect(page.getByText("Detected MCP Clients")).toBeVisible();
   await expect(page.getByRole("button", { name: /Cursor/ })).toBeVisible();
-  await expect(page.getByText("Admin recommendation")).toBeVisible();
-  await expect(page.getByText(/random recommendations from MCPMate Admin/i)).toBeVisible();
+  await expect(page.getByText("Preset client")).toBeVisible();
+  await expect(page.getByText(/client presets can be applied directly/i)).toBeVisible();
 
   await page.getByRole("button", { name: /Cursor/ }).click();
   await page.getByRole("button", { name: /^Next$/ }).click();
@@ -491,7 +491,7 @@ test("onboarding uses Admin client recommendations when local detection is empty
   });
 });
 
-test("onboarding imports Admin server recommendations through existing backend import API", async ({ page }) => {
+test("onboarding imports server presets through existing backend import API", async ({ page }) => {
   const adminRequests: URL[] = [];
   const serverImports: unknown[] = [];
 
@@ -528,7 +528,7 @@ test("onboarding imports Admin server recommendations through existing backend i
 
   await expect(page.getByText("Import Existing Servers")).toBeVisible();
   await expect(page.getByRole("button", { name: /GitHub/ })).toBeVisible();
-  await expect(page.getByText(/random recommendations from MCPMate Admin/i)).toBeVisible();
+  await expect(page.getByText(/server presets can be imported directly/i)).toBeVisible();
 
   await page.getByRole("button", { name: /GitHub/ }).click();
   await page.getByRole("button", { name: /^Next$/ }).click();
