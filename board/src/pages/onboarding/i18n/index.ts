@@ -101,6 +101,7 @@ export const onboardingTranslations = {
     },
     complete: {
       applyClientsErrorTitle: "Failed to apply MCP client configurations",
+      operatorPanelErrorTitle: "Could not open tray operator panel",
     },
   },
   "zh-CN": {
@@ -200,6 +201,7 @@ export const onboardingTranslations = {
     },
     complete: {
       applyClientsErrorTitle: "应用 MCP 客户端配置失败",
+      operatorPanelErrorTitle: "无法打开托盘操作面板",
     },
   },
   "ja-JP": {
@@ -300,6 +302,7 @@ export const onboardingTranslations = {
     },
     complete: {
       applyClientsErrorTitle: "MCP クライアント設定の適用に失敗しました",
+      operatorPanelErrorTitle: "トレイ Operator Panel を開けませんでした",
     },
   },
 };

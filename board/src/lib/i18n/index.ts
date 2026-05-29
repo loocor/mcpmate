@@ -11,6 +11,7 @@ import { profilesTranslations } from "../../pages/profiles/i18n";
 import { runtimeTranslations } from "../../pages/runtime/i18n";
 import { serversTranslations } from "../../pages/servers/i18n";
 import { onboardingTranslations } from "../../pages/onboarding/i18n";
+import { operatorTranslations } from "../../pages/operator/i18n";
 import { settingsTranslations } from "../../pages/settings/i18n";
 import { systemTranslations } from "../../pages/system/i18n";
 import { commonTranslations } from "./common";
@@ -85,6 +86,9 @@ export const loadPageTranslations = {
 	},
 	onboarding: () => {
 		loadTranslations("onboarding", onboardingTranslations);
+	},
+	operator: () => {
+		loadTranslations("operator", operatorTranslations);
 	},
 };
 

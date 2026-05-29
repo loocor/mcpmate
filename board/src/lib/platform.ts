@@ -4,6 +4,7 @@ declare global {
 		__TAURI_IPC__?: unknown;
 		__TAURI_INTERNALS__?: unknown;
 		__TAURI_METADATA__?: unknown;
+		__MCPMATE_OPERATOR_WINDOW__?: boolean;
 	}
 }
 
@@ -19,7 +20,7 @@ function hasGlobalIndicators(): boolean {
 	if (typeof window === "undefined") {
 		return false;
 	}
-	const w = window as Record<string, unknown>;
+	const w = window as unknown as Record<string, unknown>;
 	return TAURI_INDICATOR_KEYS.some((key) => w[key] !== undefined);
 }
 
