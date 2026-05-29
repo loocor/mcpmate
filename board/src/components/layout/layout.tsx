@@ -173,6 +173,7 @@ export function Layout() {
 
 	React.useEffect(() => {
 		let unlistenSettings: (() => void) | undefined;
+		let unlistenFullBoardPath: (() => void) | undefined;
 		let unlistenImportServer: (() => void) | undefined;
 		let unlistenCoreState: (() => void) | undefined;
 		let cancelled = false;
@@ -194,6 +195,14 @@ export function Layout() {
 						const tab = typeof payload?.tab === "string" ? payload.tab : undefined;
 						const target = tab ? `/settings?tab=${tab}` : "/settings";
 						navigate(target);
+					},
+				);
+				unlistenFullBoardPath = await listen(
+					"mcpmate://open-full-board-path",
+					(event) => {
+						const payload = asRecordPayload(event.payload);
+						const path = typeof payload?.path === "string" ? payload.path : "/";
+						navigate(path.startsWith("/") ? path : "/");
 					},
 				);
 				unlistenImportServer = await listen("mcp-import/server", (event) => {
@@ -236,6 +245,9 @@ export function Layout() {
 			cancelled = true;
 			if (unlistenSettings) {
 				void unlistenSettings();
+			}
+			if (unlistenFullBoardPath) {
+				void unlistenFullBoardPath();
 			}
 			if (unlistenImportServer) {
 				void unlistenImportServer();

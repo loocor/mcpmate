@@ -12,7 +12,6 @@ import type { Theme } from "./types";
 export type MarketPortalMeta = MarketPortalDefinition;
 
 export type DashboardDefaultView = "list" | "grid";
-export type DashboardAppMode = "express" | "expert";
 export type DashboardLanguage = "en" | "zh-cn" | "ja";
 export type ClientDefaultMode = "unify" | "hosted" | "transparent";
 /** Default governance filter for the Clients list (URL + settings). */
@@ -28,7 +27,6 @@ export type DefaultMarket = string;
 
 export interface DashboardSettings {
 	defaultView: DashboardDefaultView;
-	appMode: DashboardAppMode;
 	language: DashboardLanguage;
 	syncServerStateToClients: boolean;
 	autoAddServerToDefaultProfile: boolean;
@@ -94,7 +92,6 @@ const DASHBOARD_SETTINGS_KEY = "mcp_dashboard_settings";
 
 const defaultDashboardSettings: DashboardSettings = {
 	defaultView: "grid",
-	appMode: "expert",
 	language: "en",
 	syncServerStateToClients: false,
 	autoAddServerToDefaultProfile: false,
@@ -138,10 +135,6 @@ function normalizeDashboardSettings(
 
 	if (patch.defaultView === "list" || patch.defaultView === "grid") {
 		next.defaultView = patch.defaultView;
-	}
-
-	if (patch.appMode === "express" || patch.appMode === "expert") {
-		next.appMode = patch.appMode;
 	}
 
 	if (

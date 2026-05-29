@@ -14,6 +14,7 @@ use tauri::{
     tray::TrayIcon,
     utils::config::WindowConfig,
     webview::{NewWindowResponse, WebviewWindowBuilder},
+    WebviewUrl,
 };
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex as AsyncMutex;
@@ -52,6 +53,7 @@ pub fn tray_template_icon() -> Image<'static> {
 
 pub const TRAY_ID: &str = "mcpmate.tray.main";
 pub const MENU_OPEN_MAIN: &str = "mcpmate.tray.open_main";
+pub const MENU_OPEN_OPERATOR: &str = "mcpmate.tray.open_operator";
 pub const MENU_SERVICE_STATUS: &str = "mcpmate.tray.service_status";
 pub const MENU_START_SERVICE: &str = "mcpmate.tray.start_service";
 pub const MENU_RESTART_SERVICE: &str = "mcpmate.tray.restart_service";
@@ -64,6 +66,13 @@ pub const APP_MENU_ABOUT: &str = "menu.help.about";
 
 pub const EVENT_OPEN_SETTINGS: &str = "mcpmate://open-settings";
 pub const EVENT_CORE_STATE_CHANGED: &str = "mcpmate://core/status-changed";
+pub const EVENT_OPEN_FULL_BOARD_PATH: &str = "mcpmate://open-full-board-path";
+
+const OPERATOR_WINDOW_LABEL: &str = "operator";
+const OPERATOR_PANEL_WIDTH: f64 = 400.0;
+const OPERATOR_PANEL_DEFAULT_HEIGHT: f64 = 640.0;
+const OPERATOR_PANEL_MIN_HEIGHT: f64 = 420.0;
+const OPERATOR_PANEL_MAX_HEIGHT: f64 = 1200.0;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -507,5 +516,130 @@ where
         let _ = window.set_focus();
     }
 
+    Ok(())
+}
+
+pub fn spawn_operator_window<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    if manager.get_webview_window(OPERATOR_WINDOW_LABEL).is_some() {
+        return Ok(());
+    }
+
+    let app_handle = manager.app_handle().clone();
+    let mut builder = WebviewWindowBuilder::new(
+        manager,
+        OPERATOR_WINDOW_LABEL,
+        WebviewUrl::App("/operator".into()),
+    )
+    .title("MCPMate Operator")
+    .inner_size(OPERATOR_PANEL_WIDTH, OPERATOR_PANEL_DEFAULT_HEIGHT)
+    .min_inner_size(OPERATOR_PANEL_WIDTH, OPERATOR_PANEL_MIN_HEIGHT)
+    .max_inner_size(OPERATOR_PANEL_WIDTH, OPERATOR_PANEL_MAX_HEIGHT)
+    .resizable(true)
+    .decorations(false)
+    .visible(false)
+    .skip_taskbar(true);
+
+    #[cfg(debug_assertions)]
+    let init_script = String::from(
+        r#"window.__MCPMATE_IS_TAURI__ = true;
+        "#,
+    );
+
+    #[cfg(not(debug_assertions))]
+    let init_script = String::from(
+        r#"window.addEventListener('contextmenu', (event) => {
+            if (event.metaKey || event.ctrlKey) {
+                return;
+            }
+            event.preventDefault();
+        });
+        window.__MCPMATE_IS_TAURI__ = true;
+        "#,
+    );
+    builder = builder.initialization_script(&init_script);
+
+    let builder = builder.on_new_window(move |url, _features| {
+        let scheme = url.scheme();
+        match scheme {
+            "http" | "https" => {
+                if let Err(err) = app_handle.opener().open_url(url.as_str(), None::<String>) {
+                    warn!(
+                        error = %err,
+                        target_url = %url,
+                        "Failed to open external link from operator webview"
+                    );
+                }
+                NewWindowResponse::Deny
+            }
+            "tauri" | "app" | "about" | "mcpmate" | "" => NewWindowResponse::Allow,
+            other => {
+                warn!(target_url = %url, scheme = other, "Blocked unsupported operator window.open URL scheme");
+                NewWindowResponse::Deny
+            }
+        }
+    });
+
+    let window = builder.build()?;
+
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    window.open_devtools();
+
+    Ok(())
+}
+
+pub fn ensure_operator_window_visibility<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    spawn_operator_window(manager)?;
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    Ok(())
+}
+
+pub fn toggle_operator_window_visibility<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        let is_visible = window.is_visible().unwrap_or(false);
+        let is_pinned = window.is_always_on_top().unwrap_or(false);
+        if is_visible && !is_pinned {
+            let _ = window.hide();
+            return Ok(());
+        }
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    ensure_operator_window_visibility(manager)
+}
+
+pub fn hide_operator_window<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        let _ = window.hide();
+    }
+    Ok(())
+}
+
+pub fn set_operator_window_pinned<M>(manager: &M, pinned: bool) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    spawn_operator_window(manager)?;
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        window
+            .set_always_on_top(pinned)
+            .context("failed to update operator panel pin state")?;
+    }
     Ok(())
 }

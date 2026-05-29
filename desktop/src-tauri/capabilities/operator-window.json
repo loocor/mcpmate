@@ -1,0 +1,14 @@
+{
+	"$schema": "../gen/schemas/desktop-capability.json",
+	"identifier": "operator-window",
+	"description": "Capability for the dedicated Tray Operator Panel window",
+	"windows": ["operator"],
+	"permissions": [
+		"core:default",
+		"dialog:default",
+		"opener:default",
+		{
+			"identifier": "opener:allow-default-urls"
+		}
+	]
+}

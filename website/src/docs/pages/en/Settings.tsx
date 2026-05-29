@@ -28,8 +28,8 @@ export default function Settings() {
 			<Ul>
 				<Li>
 					<strong>General</strong> &mdash; set the default list/grid view,
-					pick the application mode (Express vs. Expert), and choose the dashboard
-					language (English, Simplified Chinese, or Japanese).
+					choose the dashboard language (English, Simplified Chinese, or
+					Japanese), and tune behavior defaults.
 				</Li>
 				<Li>
 					<strong>Appearance</strong> &mdash; switch between light/dark/system

@@ -28,6 +28,7 @@ import { OAuthCallbackPage } from "./pages/servers/oauth-callback-page";
 import { ServerListPage } from "./pages/servers/server-list-page";
 import { SettingsPage } from "./pages/settings/settings-page";
 import { OnboardingPage } from "./pages/onboarding/onboarding-page";
+import { TrayOperatorPanelPage } from "./pages/operator/tray-operator-panel-page";
 import {
 	notificationsService,
 	setApiBaseUrl,
@@ -67,6 +68,7 @@ function App() {
 					<Routes>
 						<Route path="oauth/callback" element={<OAuthCallbackPage />} />
 						<Route path="onboarding" element={<OnboardingPage />} />
+						<Route path="operator" element={<TrayOperatorPanelPage />} />
 						<Route path="/" element={<Layout />}>
 							<Route index element={<DashboardPage />} />
 							{/* New canonical routes */}
