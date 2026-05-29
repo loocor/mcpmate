@@ -4,6 +4,7 @@ import {
 	buildAdminDiscoveryUrl,
 	adminDiscoveryClientToCandidate,
 	adminDiscoveryClientToUpdatePayload,
+	fetchAdminDiscoveryClientCatalog,
 	fetchAdminDiscoveryClients,
 	adminDiscoveryServerToOnboardingCandidate,
 } from "./admin-discovery";
@@ -56,6 +57,82 @@ describe("admin discovery adapter", () => {
 			`${ADMIN_DISCOVERY_BASE_URL}/discovery/clients?surface=onboarding&random=6`,
 		);
 		expect(requests[0].init?.credentials).toBe("omit");
+	});
+
+	test("fetches Admin discovery clients with item-level parser isolation", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (() =>
+			Promise.resolve(
+				new Response(
+					JSON.stringify({
+						clients: [
+							{
+								identifier: "cursor-desktop",
+								displayName: "Cursor",
+								config: {
+									kind: "file",
+									file: {
+										paths: { macos: "~/Library/Application Support/Cursor/mcp.json" },
+										container: { keys: ["mcpServers"] },
+									},
+									transports: {
+										stdio: { command_field: "command" },
+									},
+								},
+							},
+							{
+								identifier: "unknown-transport",
+								displayName: "Unknown Transport",
+								config: {
+									kind: "file",
+									file: {
+										paths: { macos: "~/.unknown/mcp.json" },
+										container: { keys: ["mcpServers"] },
+									},
+									transports: {
+										http: { url_field: "url" },
+									},
+								},
+							},
+							{
+								identifier: "non-object-transports",
+								displayName: "Non-object Transports",
+								config: {
+									kind: "file",
+									file: {
+										paths: { macos: "~/.bad/mcp.json" },
+										container: { keys: ["mcpServers"] },
+									},
+									transports: ["stdio"],
+								},
+							},
+						],
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			)) as typeof fetch;
+
+		try {
+			const catalog = await fetchAdminDiscoveryClientCatalog({ platform: "macos" });
+			expect(catalog.clients).toMatchObject([
+				{
+					identifier: "cursor-desktop",
+					supportedTransports: ["stdio"],
+				},
+			]);
+			expect(catalog.diagnostics).toEqual([
+				{
+					identifier: "unknown-transport",
+					reason: "Invalid Admin discovery client contract.",
+				},
+				{
+					identifier: "non-object-transports",
+					reason: "Invalid Admin discovery client contract.",
+				},
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
 	});
 
 	test("maps Admin v2 client metadata into backend-recognized update payloads only", () => {
@@ -158,6 +235,256 @@ describe("admin discovery adapter", () => {
 			configFileParseContainerType: "standard",
 			configFileParseContainerKeysText: "mcpServers",
 			supportedTransports: ["stdio"],
+		});
+	});
+
+	test("skips Admin client candidates with invalid transport contracts", () => {
+		const baseClient = {
+			identifier: "bad-transport",
+			displayName: "Bad Transport",
+			config: {
+				kind: "file",
+				file: {
+					paths: {
+						macos: "~/.bad/mcp.json",
+					},
+					container: {
+						type: "standard",
+						keys: ["mcpServers"],
+					},
+				},
+			},
+		};
+
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						http: {
+							url_field: "url",
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: {
+							command_field: "command",
+							include_type: "false",
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: {
+							command_field: "command",
+							selected: "yes",
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: {
+							command_field: "command",
+							extra_fields: [],
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: {
+							command_field: "command",
+							args_field: ["args"],
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: {
+							command_field: "command",
+							bogus: true,
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: "command",
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: {
+							command_field: "command",
+							requires_type_field: false,
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						stdio: {
+							args_field: "args",
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						streamable_http: {
+							headers_field: "headers",
+						},
+					},
+				},
+			}),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate({
+				...baseClient,
+				config: {
+					...baseClient.config,
+					transports: {
+						sse: {
+							include_type: true,
+							type_value: " ",
+							url_field: "url",
+						},
+					},
+				},
+			}),
+		).toBeNull();
+	});
+
+	test("skips writable Admin client candidates with invalid config parse contracts", () => {
+		const baseClient = {
+			identifier: "bad-parse",
+			displayName: "Bad Parse",
+			config: {
+				kind: "file",
+				file: {
+					format: "json",
+					paths: {
+						macos: "~/.bad/mcp.json",
+					},
+					container: {
+						type: "standard",
+						keys: ["mcpServers"],
+					},
+				},
+				transports: {
+					stdio: {
+						command_field: "command",
+					},
+				},
+			},
+		};
+
+		expect(
+			adminDiscoveryClientToCandidate(
+				{
+					...baseClient,
+					config: {
+						...baseClient.config,
+						file: {
+							...baseClient.config.file,
+							format: "xml",
+						},
+					},
+				},
+				{ platform: "macos" },
+			),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate(
+				{
+					...baseClient,
+					config: {
+						...baseClient.config,
+						file: {
+							...baseClient.config.file,
+							container: {
+								type: "bag",
+								keys: ["mcpServers"],
+							},
+						},
+					},
+				},
+				{ platform: "macos" },
+			),
+		).toBeNull();
+		expect(
+			adminDiscoveryClientToCandidate(
+				{
+					...baseClient,
+					config: {
+						...baseClient.config,
+						file: {
+							...baseClient.config.file,
+							container: {
+								type: "standard",
+								keys: [],
+							},
+						},
+					},
+				},
+				{ platform: "macos" },
+			),
+		).toBeNull();
+		expect(adminDiscoveryClientToCandidate(baseClient, { platform: "windows" })).toMatchObject({
+			identifier: "bad-parse",
+			configFileChoice: "without_config_file",
 		});
 	});
 

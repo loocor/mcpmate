@@ -22,11 +22,11 @@ import { useTranslation } from "react-i18next";
 import * as z from "zod";
 import {
 	type AdminDiscoveryClientCandidate,
-	fetchAdminDiscoveryClients,
+	fetchAdminDiscoveryClientCatalog,
 } from "../lib/admin-discovery";
 import { clientsApi } from "../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-policy";
-import { readTauriAdminDiscoveryPlatform } from "../lib/desktop-platform";
+import { readAdminDiscoveryPlatform } from "../lib/desktop-platform";
 import {
 	applyClientConfigWithResolvedSelection,
 	canApplyClientConfigWithState,
@@ -194,12 +194,18 @@ function transportRuleEditorFromData(rule?: TransportRuleData | null): Transport
 	};
 }
 
-function transportRuleEditorsFromClient(client?: ClientInfo | null): TransportRuleEditors {
+function transportRuleEditorsFromTransportRules(
+	transports?: Record<string, TransportRuleData> | null,
+): TransportRuleEditors {
 	return {
-		streamable_http: transportRuleEditorFromData(client?.transports?.streamable_http),
-		sse: transportRuleEditorFromData(client?.transports?.sse),
-		stdio: transportRuleEditorFromData(client?.transports?.stdio),
+		streamable_http: transportRuleEditorFromData(transports?.streamable_http),
+		sse: transportRuleEditorFromData(transports?.sse),
+		stdio: transportRuleEditorFromData(transports?.stdio),
 	};
+}
+
+function transportRuleEditorsFromClient(client?: ClientInfo | null): TransportRuleEditors {
+	return transportRuleEditorsFromTransportRules(client?.transports);
 }
 
 function cloneTransportRuleEditorValue(value: TransportRuleEditorValue): TransportRuleEditorValue {
@@ -717,13 +723,13 @@ function AdminCatalogOptionIcon({ candidate }: { candidate: AdminDiscoveryClient
 			<img
 				src={candidate.logoUrl}
 				alt=""
-				className="h-7 w-7 rounded-md object-contain"
+				className="h-8 w-8 rounded-md object-contain"
 				onError={() => setFailed(true)}
 			/>
 		);
 	}
 	return (
-		<span className="flex h-7 w-7 items-center justify-center rounded-md bg-muted text-muted-foreground">
+		<span className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
 			<ImageIcon className="h-4 w-4" />
 		</span>
 	);
@@ -905,30 +911,32 @@ export function ClientFormDrawer({
 	}, [parseInspection?.preview]);
 	const adminDiscoveryPlatformQuery = useQuery({
 		queryKey: ["adminDiscoveryPlatform", "drawer"],
-		queryFn: () => readTauriAdminDiscoveryPlatform(),
-		enabled: open && isTauriShell,
+		queryFn: () => readAdminDiscoveryPlatform(),
+		enabled: open,
 		staleTime: Infinity,
 		retry: false,
 	});
 	const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
 	const adminCatalogQuery = useQuery({
 		queryKey: ["adminDiscoveryClients", "drawer", adminDiscoveryPlatform ?? "web"],
-		queryFn: () => fetchAdminDiscoveryClients({ limit: 50, offset: 0, platform: adminDiscoveryPlatform }),
-		enabled: open && (!isTauriShell || adminDiscoveryPlatformQuery.isSuccess),
+		queryFn: () => fetchAdminDiscoveryClientCatalog({ limit: 50, offset: 0, platform: adminDiscoveryPlatform }),
+		enabled: open && adminDiscoveryPlatformQuery.isSuccess,
 		staleTime: 60_000,
 		retry: false,
 	});
 	const adminCatalogOptions = useMemo(
-		() => adminCatalogQuery.data ?? [],
+		() => adminCatalogQuery.data?.clients ?? [],
 		[adminCatalogQuery.data],
 	);
+	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
 	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Admin recommendations are unavailable." })
 		: t("detail.form.adminCatalog.empty", { defaultValue: "No Admin recommendations found." });
-	const adminCatalogBusy = (isTauriShell && adminDiscoveryPlatformQuery.isLoading) || adminCatalogQuery.isLoading;
+	const adminCatalogBusy = adminDiscoveryPlatformQuery.isLoading || adminCatalogQuery.isLoading;
 
 	const applyAdminClientCandidate = useCallback(
 		(candidate: AdminDiscoveryClientCandidate) => {
+			setIsAdminCatalogOpen(false);
 			setSelectedAdminClient(candidate);
 			if (mode === "create") {
 				form.setValue("identifier", candidate.identifier, { shouldDirty: true, shouldValidate: true });
@@ -958,8 +966,7 @@ export function ClientFormDrawer({
 					SUPPORTED_TRANSPORT_VALUES.includes(transport as SupportedTransportValue),
 			);
 			form.setValue("supportedTransports", supported, { shouldDirty: true, shouldValidate: true });
-			setTransportRuleEditors(transportRuleEditorsFromPreset(candidate.transports));
-			setIsAdminCatalogOpen(false);
+			setTransportRuleEditors(transportRuleEditorsFromTransportRules(candidate.transports));
 		},
 		[form, mode],
 	);
@@ -1496,10 +1503,11 @@ export function ClientFormDrawer({
 													{t("detail.form.fields.displayName.label", { defaultValue: "Client Name" })}
 												</FormLabel>
 												<div className="min-w-0 flex-1">
-													<div className="flex gap-2">
+													<div className="relative">
 														<FormControl>
 															<Input
 																{...field}
+																className="pr-11"
 																onChange={(event) => {
 																	field.onChange(event);
 																	setSelectedAdminClient(null);
@@ -1519,7 +1527,7 @@ export function ClientFormDrawer({
 																	aria-label={t("detail.form.adminCatalog.placeholder", {
 																		defaultValue: "Search Admin recommendations",
 																	})}
-																	className="shrink-0"
+																	className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 border-0 bg-transparent p-0 text-muted-foreground shadow-none hover:bg-muted hover:text-foreground focus-visible:ring-1"
 																	disabled={adminCatalogBusy || saveMutation.isPending}
 																>
 																	{adminCatalogBusy ? (
@@ -1546,22 +1554,15 @@ export function ClientFormDrawer({
 																			{adminCatalogOptions.map((candidate) => (
 																				<CommandItem
 																					key={candidate.identifier}
-																					value={`${candidate.displayName} ${candidate.identifier}`}
+																					value={`${candidate.displayName} ${candidate.identifier} ${candidate.description}`}
 																					onSelect={() => applyAdminClientCandidate(candidate)}
+																					className="gap-1.5 px-3 py-3"
 																				>
-																					<Check
-																						className={cn(
-																							"mr-2 h-4 w-4 shrink-0",
-																							selectedAdminClient?.identifier === candidate.identifier
-																								? "opacity-100"
-																								: "opacity-0",
-																						)}
-																					/>
 																					<AdminCatalogOptionIcon candidate={candidate} />
-																					<div className="min-w-0">
+																					<div className="min-w-0 flex-1">
 																						<div className="truncate">{candidate.displayName}</div>
 																						<div className="truncate text-xs text-muted-foreground">
-																							{candidate.identifier}
+																							{candidate.description}
 																						</div>
 																					</div>
 																				</CommandItem>
@@ -1578,6 +1579,15 @@ export function ClientFormDrawer({
 																"Load public Admin recommendations directly and map selected fields into this MCPMate client record.",
 														})}
 													</FormDescription>
+													{adminCatalogDiagnostics.length > 0 ? (
+														<p className="mt-1 text-xs text-amber-600">
+															{t("detail.form.adminCatalog.partialWarning", {
+																count: adminCatalogDiagnostics.length,
+																defaultValue:
+																	"Some Admin recommendations were skipped because their discovery data is invalid.",
+															})}
+														</p>
+													) : null}
 													<FormMessage />
 												</div>
 											</div>

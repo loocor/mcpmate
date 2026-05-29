@@ -28,13 +28,12 @@ import {
 } from "../../lib/api";
 import {
   adminDiscoveryClientToUpdatePayload,
-  fetchAdminDiscoveryClients,
+  fetchAdminDiscoveryClientCatalog,
   fetchAdminDiscoveryServers,
   type AdminDiscoveryClientCandidate,
   type AdminDiscoveryServerCandidate,
 } from "../../lib/admin-discovery";
-import { readTauriAdminDiscoveryPlatform } from "../../lib/desktop-platform";
-import { isTauriEnvironmentSync } from "../../lib/platform";
+import { readAdminDiscoveryPlatform } from "../../lib/desktop-platform";
 import { websiteLangParam } from "../../lib/website-lang";
 import { applyManagedClientsForIdentifiers } from "../../lib/client-config-sync";
 import { resolveActiveDefaultProfileId } from "../../lib/default-profile";
@@ -59,6 +58,11 @@ type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
 type RuntimeKind = "node" | "bun" | "uv";
 type WelcomeLanguage = "en" | "zh-cn" | "ja";
 type OnboardingServerCandidateWithImport = OnboardingServerCandidate | AdminDiscoveryServerCandidate;
+
+const ONBOARDING_RECOMMENDED_SERVER_MINIMUM = 4;
+const ONBOARDING_ADMIN_SERVER_RANDOM_COUNT = 6;
+const ONBOARDING_SCROLLABLE_LIST_CLASS = "max-h-[42vh] overflow-y-auto pr-1";
+const ONBOARDING_TWO_COLUMN_LIST_CLASS = "grid gap-3 sm:grid-cols-2";
 
 const RUNTIME_NAME_PRIORITY: Record<RuntimeKind, string[]> = {
   node: ["node", "npx"],
@@ -167,6 +171,45 @@ function groupSelectedDiscoveryServerConfigs(
     mcpServers[candidate.name] = candidate.import_config;
   }
   return mcpServers;
+}
+
+function serverCandidateDedupKey(candidate: OnboardingServerCandidateWithImport): string {
+  const launchTarget =
+    candidate.kind === "stdio"
+      ? [candidate.command ?? "", ...candidate.args].join(" ")
+      : candidate.url ?? "";
+  return [
+    candidate.name.trim().toLowerCase(),
+    candidate.kind.trim().toLowerCase(),
+    launchTarget.trim().toLowerCase(),
+  ].join("::");
+}
+
+function mergeLocalAndAdminServerCandidates(
+  localCandidates: OnboardingServerCandidate[],
+  adminCandidates: AdminDiscoveryServerCandidate[],
+): OnboardingServerCandidateWithImport[] {
+  const seenKeys = new Set<string>();
+  const seenCandidateShapes = new Set<string>();
+  const merged: OnboardingServerCandidateWithImport[] = [];
+
+  for (const candidate of localCandidates) {
+    seenKeys.add(candidate.key);
+    seenCandidateShapes.add(serverCandidateDedupKey(candidate));
+    merged.push(candidate);
+  }
+
+  for (const candidate of adminCandidates) {
+    const shapeKey = serverCandidateDedupKey(candidate);
+    if (seenKeys.has(candidate.key) || seenCandidateShapes.has(shapeKey)) {
+      continue;
+    }
+    seenKeys.add(candidate.key);
+    seenCandidateShapes.add(shapeKey);
+    merged.push(candidate);
+  }
+
+  return merged;
 }
 
 /** Detected clients that expose a local config path (eligible for onboarding server scan). */
@@ -1186,31 +1229,31 @@ function ClientsStep({
     [data?.client],
   );
   const shouldLoadAdminRecommendations = !isLoading && !isError && detectedClients.length === 0;
-  const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
   const adminDiscoveryPlatformQuery = useQuery({
     queryKey: ["adminDiscoveryPlatform", "onboarding"],
-    queryFn: () => readTauriAdminDiscoveryPlatform(),
-    enabled: shouldLoadAdminRecommendations && isTauriShell,
+    queryFn: () => readAdminDiscoveryPlatform(),
+    enabled: shouldLoadAdminRecommendations,
     staleTime: Infinity,
     retry: false,
   });
   const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
   const adminRecommendationsQuery = useQuery({
     queryKey: ["adminDiscoveryClients", "onboarding", adminDiscoveryPlatform ?? "web"],
-    queryFn: () => fetchAdminDiscoveryClients({ surface: "onboarding", random: 6, platform: adminDiscoveryPlatform }),
-    enabled: shouldLoadAdminRecommendations && (!isTauriShell || adminDiscoveryPlatformQuery.isSuccess),
+    queryFn: () => fetchAdminDiscoveryClientCatalog({ surface: "onboarding", random: 6, platform: adminDiscoveryPlatform }),
+    enabled: shouldLoadAdminRecommendations && adminDiscoveryPlatformQuery.isSuccess,
     staleTime: 60_000,
     retry: false,
   });
   const isAdminRecommendationsLoading =
     detectedClients.length === 0 &&
-    (adminRecommendationsQuery.isLoading || (isTauriShell && adminDiscoveryPlatformQuery.isLoading));
+    (adminRecommendationsQuery.isLoading || adminDiscoveryPlatformQuery.isLoading);
   const isAdminRecommendationsError = adminRecommendationsQuery.isError || adminDiscoveryPlatformQuery.isError;
   const adminRecommendationsError = adminDiscoveryPlatformQuery.error ?? adminRecommendationsQuery.error;
   const adminRecommendations = useMemo(
-    () => adminRecommendationsQuery.data ?? [],
+    () => adminRecommendationsQuery.data?.clients ?? [],
     [adminRecommendationsQuery.data],
   );
+  const adminRecommendationDiagnostics = adminRecommendationsQuery.data?.diagnostics ?? [];
 
   useEffect(() => {
     if (detectedClients.length > 0) {
@@ -1294,28 +1337,103 @@ function ClientsStep({
         </Card>
       ) : detectedClients.length === 0 ? (
         <div className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {adminRecommendations.map((client) => {
+          {adminRecommendationDiagnostics.length > 0 ? (
+            <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertDescription>
+                {t("clients.recommendationPartialWarning", {
+                  count: adminRecommendationDiagnostics.length,
+                  defaultValue:
+                    "Some Admin recommendations were skipped because their discovery data is invalid.",
+                })}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          <div className={ONBOARDING_SCROLLABLE_LIST_CLASS}>
+            <div className={ONBOARDING_TWO_COLUMN_LIST_CLASS}>
+              {adminRecommendations.map((client) => {
+                const isSelected = selectedClients.has(client.identifier);
+                const showLogo =
+                  Boolean(client.logoUrl) &&
+                  !logoLoadFailedClients.has(client.identifier);
+                return (
+                  <button
+                    key={client.identifier}
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={t(
+                      isSelected
+                        ? "clients.adminRecommendationSelectedAria"
+                        : "clients.adminRecommendationUnselectedAria",
+                      {
+                        defaultValue: isSelected
+                          ? "{{name}} Admin recommendation selected"
+                          : "{{name}} Admin recommendation not selected",
+                        name: client.displayName || client.identifier,
+                      },
+                    )}
+                    onClick={() => onToggle(client.identifier)}
+                    className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
+                        ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
+                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+                      }`}
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
+                      {showLogo ? (
+                        <img
+                          src={client.logoUrl}
+                          alt={client.displayName || client.identifier}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                          onError={() => {
+                            setLogoLoadFailedClients((prev) => {
+                              if (prev.has(client.identifier)) return prev;
+                              const next = new Set(prev);
+                              next.add(client.identifier);
+                              return next;
+                            });
+                          }}
+                        />
+                      ) : (
+                        (client.displayName || client.identifier).charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{client.displayName || client.identifier}</div>
+                      {client.description && (
+                        <div className="mt-0.5 truncate text-xs text-slate-500">
+                          {client.description}
+                        </div>
+                      )}
+                      <div className="mt-1 text-xs text-slate-400">
+                        {t("clients.adminRecommendation", { defaultValue: "Admin recommendation" })}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <Check className="h-5 w-5 shrink-0 text-emerald-500" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <p className="text-center text-xs text-slate-400 dark:text-slate-500">
+            {t("clients.recommendationNotice", {
+              defaultValue: "These are random recommendations from MCPMate Admin. Review them before applying.",
+            })}
+          </p>
+        </div>
+      ) : (
+        <div className={ONBOARDING_SCROLLABLE_LIST_CLASS}>
+          <div className={ONBOARDING_TWO_COLUMN_LIST_CLASS}>
+            {detectedClients.map((client) => {
               const isSelected = selectedClients.has(client.identifier);
               const showLogo =
-                Boolean(client.logoUrl) &&
+                Boolean(client.logo_url) &&
                 !logoLoadFailedClients.has(client.identifier);
               return (
                 <button
                   key={client.identifier}
                   type="button"
-                  aria-pressed={isSelected}
-                  aria-label={t(
-                    isSelected
-                      ? "clients.adminRecommendationSelectedAria"
-                      : "clients.adminRecommendationUnselectedAria",
-                    {
-                      defaultValue: isSelected
-                        ? "{{name}} Admin recommendation selected"
-                        : "{{name}} Admin recommendation not selected",
-                      name: client.displayName || client.identifier,
-                    },
-                  )}
                   onClick={() => onToggle(client.identifier)}
                   className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
                       ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
@@ -1325,8 +1443,8 @@ function ClientsStep({
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
                     {showLogo ? (
                       <img
-                        src={client.logoUrl}
-                        alt={client.displayName || client.identifier}
+                        src={client.logo_url ?? undefined}
+                        alt={client.display_name || client.identifier}
                         className="h-full w-full object-cover"
                         loading="lazy"
                         onError={() => {
@@ -1339,19 +1457,25 @@ function ClientsStep({
                         }}
                       />
                     ) : (
-                      (client.displayName || client.identifier).charAt(0).toUpperCase()
+                      (client.display_name || client.identifier)
+                        .charAt(0)
+                        .toUpperCase()
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium">{client.displayName || client.identifier}</div>
+                    <div className="font-medium">
+                      {client.display_name || client.identifier}
+                    </div>
                     {client.description && (
                       <div className="mt-0.5 truncate text-xs text-slate-500">
                         {client.description}
                       </div>
                     )}
-                    <div className="mt-1 text-xs text-slate-400">
-                      {t("clients.adminRecommendation", { defaultValue: "Admin recommendation" })}
-                    </div>
+                    {client.config_path && (
+                      <div className="mt-1 truncate font-mono text-xs text-slate-400">
+                        {client.config_path}
+                      </div>
+                    )}
                   </div>
                   {isSelected && (
                     <Check className="h-5 w-5 shrink-0 text-emerald-500" />
@@ -1360,72 +1484,6 @@ function ClientsStep({
               );
             })}
           </div>
-          <p className="text-center text-xs text-slate-400 dark:text-slate-500">
-            {t("clients.recommendationNotice", {
-              defaultValue: "These are random recommendations from MCPMate Admin. Review them before applying.",
-            })}
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {detectedClients.map((client) => {
-            const isSelected = selectedClients.has(client.identifier);
-            const showLogo =
-              Boolean(client.logo_url) &&
-              !logoLoadFailedClients.has(client.identifier);
-            return (
-              <button
-                key={client.identifier}
-                type="button"
-                onClick={() => onToggle(client.identifier)}
-                className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                    ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                    : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
-                  }`}
-              >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
-                  {showLogo ? (
-                    <img
-                      src={client.logo_url ?? undefined}
-                      alt={client.display_name || client.identifier}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                      onError={() => {
-                        setLogoLoadFailedClients((prev) => {
-                          if (prev.has(client.identifier)) return prev;
-                          const next = new Set(prev);
-                          next.add(client.identifier);
-                          return next;
-                        });
-                      }}
-                    />
-                  ) : (
-                    (client.display_name || client.identifier)
-                      .charAt(0)
-                      .toUpperCase()
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">
-                    {client.display_name || client.identifier}
-                  </div>
-                  {client.description && (
-                    <div className="mt-0.5 truncate text-xs text-slate-500">
-                      {client.description}
-                    </div>
-                  )}
-                  {client.config_path && (
-                    <div className="mt-1 truncate font-mono text-xs text-slate-400">
-                      {client.config_path}
-                    </div>
-                  )}
-                </div>
-                {isSelected && (
-                  <Check className="h-5 w-5 shrink-0 text-emerald-500" />
-                )}
-              </button>
-            );
-          })}
         </div>
       )}
     </div>
@@ -1485,24 +1543,42 @@ function ServersStep({
     },
     staleTime: 0,
   });
+  const localServerCandidates = useMemo(
+    () => scanQuery.data?.candidates ?? [],
+    [scanQuery.data?.candidates],
+  );
   const shouldLoadAdminRecommendations =
     (!clientsQuery.isLoading && scannableClients.length === 0) ||
-    Boolean(scanQuery.data && scanQuery.data.candidates.length === 0);
+    Boolean(
+      scanQuery.data &&
+      localServerCandidates.length < ONBOARDING_RECOMMENDED_SERVER_MINIMUM,
+    );
   const adminRecommendationsQuery = useQuery({
     queryKey: ["adminDiscoveryServers", "onboarding"],
-    queryFn: () => fetchAdminDiscoveryServers({ surface: "onboarding", random: 6 }),
+    queryFn: () => fetchAdminDiscoveryServers({
+      surface: "onboarding",
+      random: ONBOARDING_ADMIN_SERVER_RANDOM_COUNT,
+    }),
     enabled: shouldLoadAdminRecommendations,
     staleTime: 60_000,
   });
+  const candidates = useMemo(
+    () =>
+      mergeLocalAndAdminServerCandidates(
+        localServerCandidates,
+        adminRecommendationsQuery.data ?? [],
+      ),
+    [adminRecommendationsQuery.data, localServerCandidates],
+  );
 
   useEffect(() => {
-    onCandidatesChange(adminRecommendationsQuery.data ?? scanQuery.data?.candidates ?? []);
-  }, [adminRecommendationsQuery.data, onCandidatesChange, scanQuery.data?.candidates, scannableClientKey]);
+    onCandidatesChange(candidates);
+  }, [candidates, onCandidatesChange]);
 
-  const usingAdminRecommendations = Boolean(adminRecommendationsQuery.data);
-  const candidates = adminRecommendationsQuery.data ?? scanQuery.data?.candidates ?? [];
+  const usingAdminRecommendations = Boolean(adminRecommendationsQuery.data?.length);
   const isScanningServers = scannableClients.length > 0 && scanQuery.isLoading;
-  const isLoadingRecommendations = shouldLoadAdminRecommendations && adminRecommendationsQuery.isLoading;
+  const isLoadingRecommendations =
+    candidates.length === 0 && shouldLoadAdminRecommendations && adminRecommendationsQuery.isLoading;
 
   return (
     <div>
@@ -1525,7 +1601,7 @@ function ServersStep({
         <div className="flex justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
         </div>
-      ) : adminRecommendationsQuery.isError ? (
+      ) : adminRecommendationsQuery.isError && candidates.length === 0 ? (
         <Card>
           <CardContent className="space-y-3 py-8 text-center text-slate-500">
             <p>
@@ -1551,51 +1627,53 @@ function ServersStep({
         </Card>
       ) : (
         <div className="space-y-3">
-          <div className="grid gap-3">
-            {candidates.map((server) => {
-              const isSelected = selectedServers.has(server.key);
-              const detail =
-                server.kind === "stdio" ? server.command : server.url;
-              return (
-                <button
-                  key={server.key}
-                  type="button"
-                  aria-pressed={isSelected}
-                  aria-label={t(isSelected ? "servers.selectedAria" : "servers.unselectedAria", {
-                    defaultValue: isSelected ? "{{name}} server selected" : "{{name}} server not selected",
-                    name: server.name,
-                  })}
-                  onClick={() => onToggle(server.key)}
-                  className={`flex items-center gap-4 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                    ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                    : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
-                    }`}
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
-                    <Server className="h-5 w-5 text-violet-600 dark:text-violet-400" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{server.name}</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                        {server.kind}
-                      </span>
+          <div className={ONBOARDING_SCROLLABLE_LIST_CLASS}>
+            <div className={ONBOARDING_TWO_COLUMN_LIST_CLASS}>
+              {candidates.map((server) => {
+                const isSelected = selectedServers.has(server.key);
+                const detail =
+                  server.kind === "stdio" ? server.command : server.url;
+                return (
+                  <button
+                    key={server.key}
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={t(isSelected ? "servers.selectedAria" : "servers.unselectedAria", {
+                      defaultValue: isSelected ? "{{name}} server selected" : "{{name}} server not selected",
+                      name: server.name,
+                    })}
+                    onClick={() => onToggle(server.key)}
+                    className={`flex items-center gap-4 rounded-lg border-2 p-4 text-left transition-all ${isSelected
+                      ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
+                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+                      }`}
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                      <Server className="h-5 w-5 text-violet-600 dark:text-violet-400" />
                     </div>
-                    {detail && (
-                      <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
-                        {detail}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{server.name}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          {server.kind}
+                        </span>
                       </div>
-                    )}
-                    <div className="mt-1.5 text-xs text-slate-400">
-                      {t("servers.sources", { defaultValue: "Found in" })}: {server.source_clients.join(", ")}
+                      {detail && (
+                        <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
+                          {detail}
+                        </div>
+                      )}
+                      <div className="mt-1.5 text-xs text-slate-400">
+                        {t("servers.sources", { defaultValue: "Found in" })}: {server.source_clients.join(", ")}
+                      </div>
                     </div>
-                  </div>
-                  {isSelected && (
-                    <Check className="h-5 w-5 shrink-0 text-emerald-500" />
-                  )}
-                </button>
-              );
-            })}
+                    {isSelected && (
+                      <Check className="h-5 w-5 shrink-0 text-emerald-500" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           {usingAdminRecommendations && (
             <p className="text-center text-xs text-slate-400 dark:text-slate-500">

@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeDesktopPlatform, readTauriAdminDiscoveryPlatform } from "./desktop-platform";
+import {
+	normalizeDesktopPlatform,
+	readAdminDiscoveryPlatform,
+	readBrowserAdminDiscoveryPlatform,
+	readTauriAdminDiscoveryPlatform,
+} from "./desktop-platform";
 
 describe("desktop platform helper", () => {
 	test("normalizes only Admin discovery supported platforms", () => {
@@ -34,5 +39,34 @@ describe("desktop platform helper", () => {
 		});
 
 		expect(platform).toBeUndefined();
+	});
+
+	test("infers Admin discovery platform from browser navigator values", () => {
+		expect(readBrowserAdminDiscoveryPlatform({ userAgentData: { platform: "macOS" } })).toBe("macos");
+		expect(readBrowserAdminDiscoveryPlatform({ platform: "Win32" })).toBe("windows");
+		expect(readBrowserAdminDiscoveryPlatform({ userAgent: "Mozilla/5.0 (X11; Linux x86_64)" })).toBe("linux");
+		expect(readBrowserAdminDiscoveryPlatform({ platform: "FreeBSD" })).toBeUndefined();
+	});
+
+	test("uses browser platform outside Tauri for Admin discovery", async () => {
+		const platform = await readAdminDiscoveryPlatform({
+			isTauri: () => false,
+			invoke: async () => {
+				throw new Error("invoke should not be called");
+			},
+			navigatorLike: { platform: "MacIntel" },
+		});
+
+		expect(platform).toBe("macos");
+	});
+
+	test("prefers explicit Tauri platform over browser platform", async () => {
+		const platform = await readAdminDiscoveryPlatform({
+			isTauri: () => true,
+			invoke: async () => "windows",
+			navigatorLike: { platform: "MacIntel" },
+		});
+
+		expect(platform).toBe("windows");
 	});
 });
