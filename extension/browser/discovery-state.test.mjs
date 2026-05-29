@@ -13,7 +13,19 @@ import {
 } from "./discovery-state.mjs";
 
 describe("browser extension discovery pagination", () => {
+	test("configures account discovery against the public worker", async () => {
+		delete globalThis.MCPMATE_EXTENSION_CONFIG;
+
+		await import(`./config.js?test=${Date.now()}`);
+
+		expect(globalThis.MCPMATE_EXTENSION_CONFIG).toEqual({
+			adminApiOrigin: "https://public.mcp.umate.ai",
+			discoveryMode: "account",
+		});
+	});
+
 	test("builds account discovery page URLs for the extension surface", () => {
+		const endpoint = "https://public.mcp.umate.ai/discovery/servers";
 		const query = discoveryQueryForPage({ kind: "servers", limit: 6, offset: 12 });
 
 		expect(query).toEqual({
@@ -22,8 +34,10 @@ describe("browser extension discovery pagination", () => {
 			surface: "extension",
 		});
 		expect(
-			buildDiscoveryUrl("https://public.mcp.umate.ai/discovery/servers", query),
-		).toBe("https://public.mcp.umate.ai/discovery/servers?limit=6&offset=12&surface=extension");
+			buildDiscoveryUrl(endpoint, query),
+		).toBe(
+			"https://public.mcp.umate.ai/discovery/servers?limit=6&offset=12&surface=extension",
+		);
 	});
 
 	test("does not paginate portal requests", () => {
