@@ -250,11 +250,18 @@ pub(crate) fn map_admin_discovery_clients(payload: Value) -> ConfigResult<Vec<Cl
         ));
     };
 
-    clients
-        .iter()
-        .map(map_admin_discovery_client)
-        .collect::<ConfigResult<Vec<Option<ClientTemplate>>>>()
-        .map(|templates| templates.into_iter().flatten().collect())
+    let mut templates = Vec::new();
+    for client in clients {
+        match map_admin_discovery_client(client) {
+            Ok(Some(template)) => templates.push(template),
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(error = %err, "Skipping invalid Admin discovery client");
+            }
+        }
+    }
+
+    Ok(templates)
 }
 
 fn map_admin_discovery_client(value: &Value) -> ConfigResult<Option<ClientTemplate>> {
@@ -443,14 +450,27 @@ fn transport_rules_from_config(
 
     for (key, value) in transports {
         let Some(canonical_key) = canonical_config_transport_key(key) else {
-            continue;
+            return Err(ConfigError::TemplateParseError(format!(
+                "Admin discovery client {identifier} has invalid transport rule '{key}'; expected one of: streamable_http, sse, stdio"
+            )));
         };
+        if key != canonical_key {
+            return Err(ConfigError::TemplateParseError(format!(
+                "Admin discovery client {identifier} has invalid transport rule '{key}'; expected canonical key '{canonical_key}'"
+            )));
+        }
         if !value.is_object() {
             return Err(ConfigError::TemplateParseError(format!(
                 "Admin discovery client {identifier} has invalid transport rule '{key}'"
             )));
         }
+        validate_admin_transport_rule_contract(value, identifier, key, canonical_key)?;
         let rule = serde_json::from_value::<FormatRule>(value.clone()).map_err(|err| {
+            ConfigError::TemplateParseError(format!(
+                "Admin discovery client {identifier} transport rule '{key}' is invalid: {err}"
+            ))
+        })?;
+        rule.validate_for_transport(canonical_key).map_err(|err| {
             ConfigError::TemplateParseError(format!(
                 "Admin discovery client {identifier} transport rule '{key}' is invalid: {err}"
             ))
@@ -459,6 +479,68 @@ fn transport_rules_from_config(
     }
 
     Ok(rules)
+}
+
+fn validate_admin_transport_rule_contract(
+    value: &Value,
+    identifier: &str,
+    key: &str,
+    transport: &str,
+) -> ConfigResult<()> {
+    let Some(rule) = value.as_object() else {
+        return Err(ConfigError::TemplateParseError(format!(
+            "Admin discovery client {identifier} has invalid transport rule '{key}'"
+        )));
+    };
+    if rule.contains_key("requires_type_field") {
+        return Err(ConfigError::TemplateParseError(format!(
+            "Admin discovery client {identifier} transport rule '{key}' must not include legacy requires_type_field"
+        )));
+    }
+    for field in rule.keys() {
+        if !is_admin_transport_rule_field(field) {
+            return Err(ConfigError::TemplateParseError(format!(
+                "Admin discovery client {identifier} transport rule '{key}' has unsupported field '{field}'"
+            )));
+        }
+    }
+    if rule.get("include_type").and_then(Value::as_bool) == Some(true)
+        && compact_string(rule.get("type_value")).is_none()
+    {
+        return Err(ConfigError::TemplateParseError(format!(
+            "Admin discovery client {identifier} transport rule '{key}' is invalid: type_value is required when include_type is true"
+        )));
+    }
+
+    match transport {
+        "stdio" if compact_string(rule.get("command_field")).is_none() => {
+            Err(ConfigError::TemplateParseError(format!(
+                "Admin discovery client {identifier} transport rule '{key}' is invalid: command_field is required for stdio"
+            )))
+        }
+        "sse" | "streamable_http" if compact_string(rule.get("url_field")).is_none() => {
+            Err(ConfigError::TemplateParseError(format!(
+                "Admin discovery client {identifier} transport rule '{key}' is invalid: url_field is required for {transport}"
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn is_admin_transport_rule_field(field: &str) -> bool {
+    matches!(
+        field,
+        "template"
+            | "command_field"
+            | "args_field"
+            | "env_field"
+            | "include_type"
+            | "type_value"
+            | "url_field"
+            | "headers_field"
+            | "extra_fields"
+            | "selected"
+    )
 }
 
 fn metadata_from_client(client: &Map<String, Value>) -> HashMap<String, Value> {
@@ -763,6 +845,302 @@ mod tests {
     }
 
     #[test]
+    fn rejects_admin_v2_transport_rule_with_unknown_key() {
+        let client = serde_json::json!({
+            "identifier": "cursor",
+            "config": {
+                "kind": "file",
+                "file": {
+                    "paths": {
+                        "macos": "~/.cursor/mcp.json"
+                    },
+                    "container": {
+                        "keys": ["mcpServers"]
+                    }
+                },
+                "transports": {
+                    "http": {
+                        "url_field": "url"
+                    }
+                }
+            }
+        });
+
+        let Err(ConfigError::TemplateParseError(message)) = map_admin_discovery_client(&client) else {
+            panic!("expected template parse error");
+        };
+        assert!(message.contains("invalid transport rule 'http'"));
+        assert!(message.contains("streamable_http, sse, stdio"));
+
+        let whitespace_key_client = serde_json::json!({
+            "identifier": "cursor",
+            "config": {
+                "kind": "file",
+                "file": {
+                    "paths": {
+                        "macos": "~/.cursor/mcp.json"
+                    },
+                    "container": {
+                        "keys": ["mcpServers"]
+                    }
+                },
+                "transports": {
+                    " stdio ": {
+                        "command_field": "command"
+                    }
+                }
+            }
+        });
+
+        let Err(ConfigError::TemplateParseError(whitespace_message)) =
+            map_admin_discovery_client(&whitespace_key_client)
+        else {
+            panic!("expected template parse error");
+        };
+        assert!(whitespace_message.contains("expected canonical key 'stdio'"));
+    }
+
+    #[test]
+    fn rejects_admin_v2_transport_rule_with_unknown_field() {
+        let client = serde_json::json!({
+            "identifier": "cursor",
+            "config": {
+                "kind": "file",
+                "file": {
+                    "paths": {
+                        "macos": "~/.cursor/mcp.json"
+                    },
+                    "container": {
+                        "keys": ["mcpServers"]
+                    }
+                },
+                "transports": {
+                    "stdio": {
+                        "command_field": "command",
+                        "bogus": true
+                    }
+                }
+            }
+        });
+
+        let Err(ConfigError::TemplateParseError(message)) = map_admin_discovery_client(&client) else {
+            panic!("expected template parse error");
+        };
+        assert!(message.contains("unsupported field 'bogus'"));
+    }
+
+    #[test]
+    fn rejects_admin_v2_transport_rule_missing_required_fields() {
+        let stdio_client = serde_json::json!({
+            "identifier": "missing-stdio-command",
+            "config": {
+                "kind": "file",
+                "file": {
+                    "paths": {
+                        "macos": "~/.missing/mcp.json"
+                    },
+                    "container": {
+                        "keys": ["mcpServers"]
+                    }
+                },
+                "transports": {
+                    "stdio": {
+                        "args_field": "args"
+                    }
+                }
+            }
+        });
+        let Err(ConfigError::TemplateParseError(stdio_message)) = map_admin_discovery_client(&stdio_client) else {
+            panic!("expected template parse error");
+        };
+        assert!(stdio_message.contains("command_field is required for stdio"));
+
+        let stdio_template_client = serde_json::json!({
+            "identifier": "missing-explicit-stdio-command",
+            "config": {
+                "kind": "file",
+                "file": {
+                    "paths": {
+                        "macos": "~/.missing/mcp.json"
+                    },
+                    "container": {
+                        "keys": ["mcpServers"]
+                    }
+                },
+                "transports": {
+                    "stdio": {
+                        "template": {
+                            "command": "{{command}}"
+                        }
+                    }
+                }
+            }
+        });
+        let Err(ConfigError::TemplateParseError(stdio_template_message)) =
+            map_admin_discovery_client(&stdio_template_client)
+        else {
+            panic!("expected template parse error");
+        };
+        assert!(stdio_template_message.contains("command_field is required for stdio"));
+
+        let http_client = serde_json::json!({
+            "identifier": "missing-http-url",
+            "config": {
+                "kind": "file",
+                "file": {
+                    "paths": {
+                        "macos": "~/.missing/mcp.json"
+                    },
+                    "container": {
+                        "keys": ["mcpServers"]
+                    }
+                },
+                "transports": {
+                    "streamable_http": {
+                        "headers_field": "headers"
+                    }
+                }
+            }
+        });
+        let Err(ConfigError::TemplateParseError(http_message)) = map_admin_discovery_client(&http_client) else {
+            panic!("expected template parse error");
+        };
+        assert!(http_message.contains("url_field is required for streamable_http"));
+    }
+
+    #[test]
+    fn isolates_invalid_admin_v2_clients_while_mapping_valid_clients() {
+        let payload = serde_json::json!({
+            "clients": [
+                admin_discovery_file_client("valid"),
+                {
+                    "identifier": "legacy-transport",
+                    "config": {
+                        "kind": "file",
+                        "file": {
+                            "paths": {
+                                "macos": "~/.legacy/mcp.json"
+                            },
+                            "container": {
+                                "keys": ["mcpServers"]
+                            }
+                        },
+                        "transports": {
+                            "stdio": {
+                                "command_field": "command",
+                                "requires_type_field": false
+                            }
+                        }
+                    }
+                },
+                {
+                    "identifier": "unknown-transport",
+                    "config": {
+                        "kind": "file",
+                        "file": {
+                            "paths": {
+                                "macos": "~/.unknown/mcp.json"
+                            },
+                            "container": {
+                                "keys": ["mcpServers"]
+                            }
+                        },
+                        "transports": {
+                            "http": {
+                                "url_field": "url"
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let templates = map_admin_discovery_clients(payload).expect("map discovery clients");
+
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].identifier, "valid");
+    }
+
+    #[test]
+    fn rejects_admin_v2_transport_rule_with_legacy_include_type_alias() {
+        let payload = serde_json::json!({
+            "clients": [
+                {
+                    "identifier": "zed",
+                    "displayName": "Zed",
+                    "config": {
+                        "kind": "file",
+                        "file": {
+                            "format": "json",
+                            "paths": {
+                                "macos": "~/.config/zed/settings.json"
+                            },
+                            "container": {
+                                "type": "object_map",
+                                "keys": ["context_servers"]
+                            }
+                        },
+                        "transports": {
+                            "stdio": {
+                                "template": {
+                                    "enabled": true,
+                                    "source": "custom",
+                                    "command": "{{command}}",
+                                    "args": "{{{json args}}}",
+                                    "env": "{{{json env}}}"
+                                },
+                                "command_field": "command",
+                                "args_field": "args",
+                                "env_field": "env",
+                                "include_type": false,
+                                "requires_type_field": false
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let Err(ConfigError::TemplateParseError(message)) = map_admin_discovery_client(&payload["clients"][0]) else {
+            panic!("expected template parse error");
+        };
+        assert!(message.contains("must not include legacy requires_type_field"));
+    }
+
+    #[test]
+    fn rejects_admin_v2_transport_rule_with_only_legacy_include_type_alias() {
+        let payload = serde_json::json!({
+            "clients": [
+                {
+                    "identifier": "zed",
+                    "config": {
+                        "kind": "file",
+                        "file": {
+                            "paths": {
+                                "macos": "~/.config/zed/settings.json"
+                            },
+                            "container": {
+                                "keys": ["context_servers"]
+                            }
+                        },
+                        "transports": {
+                            "stdio": {
+                                "command_field": "command",
+                                "requires_type_field": false
+                            }
+                        }
+                    }
+                }
+            ]
+        });
+
+        let Err(ConfigError::TemplateParseError(message)) = map_admin_discovery_client(&payload["clients"][0]) else {
+            panic!("expected template parse error");
+        };
+        assert!(message.contains("must not include legacy requires_type_field"));
+    }
+
+    #[test]
     fn maps_admin_v2_file_client_with_default_format_and_container_type() {
         let payload = serde_json::json!({
             "clients": [
@@ -823,7 +1201,7 @@ mod tests {
             ]
         });
 
-        let Err(ConfigError::TemplateParseError(message)) = map_admin_discovery_clients(payload) else {
+        let Err(ConfigError::TemplateParseError(message)) = map_admin_discovery_client(&payload["clients"][0]) else {
             panic!("expected template parse error");
         };
         assert!(message.contains("unsupported config.file.merge.strategy 'append'"));
