@@ -191,6 +191,14 @@ export function MetricsTrendChart({
 						defaultValue: "No metrics have been reported yet.",
 					})}
 				</p>
+				{!isCompact ? (
+					<p className="max-w-sm text-xs text-slate-500 dark:text-slate-400">
+						{t("dashboard:metrics.waitingFirstSample", {
+							defaultValue:
+								"Leave this page open; the chart fills as samples arrive (about every 30 seconds).",
+						})}
+					</p>
+				) : null}
 			</DashboardChartPlaceholder>
 		);
 	}

@@ -20,9 +20,8 @@ Date: 2026-05-28
   the existing Full Console behind it. This clarified the Full Console
   relationship, but the horizontal strip layout was not selected.
 
-The generated image originals remain under:
-
-`/Users/loocor/.codex/generated_images/019e6e11-ced5-7d72-bcda-3f74f723ba6e/`
+The repository-preserved image variants are listed above. Generated originals
+were temporary local artifacts and are not part of this design record.
 
 ## Discussion Summary
 

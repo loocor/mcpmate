@@ -718,8 +718,13 @@ export function TrayOperatorPanelPage() {
 		return null;
 	}, [coreView?.localhostMcpPort, systemSettingsQuery.data?.mcp_http_url]);
 
+	const coreRestartAvailable =
+		!isTauriShell || coreView?.selectedSource === "localhost";
+	const localCoreServiceControlsAvailable =
+		isTauriShell && coreView?.selectedSource === "localhost";
+
 	const coreServiceRunning = isTauriShell
-		? Boolean(coreView?.localService?.running)
+		? localCoreServiceControlsAvailable && Boolean(coreView?.localService?.running)
 		: systemQuery.data?.status === "running";
 
 	const coreActionBusy = React.useMemo(() => {
@@ -733,6 +738,9 @@ export function TrayOperatorPanelPage() {
 	}, [coreBusyAction, coreRestartBusy]);
 
 	const handleCoreRestart = React.useCallback(async () => {
+		if (!coreRestartAvailable) {
+			return;
+		}
 		setDesktopError(null);
 		setCoreRestartBusy(true);
 		try {
@@ -750,10 +758,10 @@ export function TrayOperatorPanelPage() {
 		} finally {
 			setCoreRestartBusy(false);
 		}
-	}, [isTauriShell, manageLocalCore, queryClient]);
+	}, [coreRestartAvailable, isTauriShell, manageLocalCore, queryClient]);
 
 	const handleCoreToggleService = React.useCallback(async () => {
-		if (!isTauriShell) {
+		if (!localCoreServiceControlsAvailable) {
 			return;
 		}
 		setDesktopError(null);
@@ -762,7 +770,7 @@ export function TrayOperatorPanelPage() {
 		} catch (error) {
 			setDesktopError(error instanceof Error ? error.message : String(error));
 		}
-	}, [coreServiceRunning, isTauriShell, manageLocalCore]);
+	}, [coreServiceRunning, localCoreServiceControlsAvailable, manageLocalCore]);
 
 	const runDesktopAction = React.useCallback(async (action: () => Promise<void>) => {
 		if (!isTauriEnvironmentSync()) {
@@ -797,6 +805,8 @@ export function TrayOperatorPanelPage() {
 				onToggleService={() => {
 					void handleCoreToggleService();
 				}}
+				restartAvailable={coreRestartAvailable}
+				serviceControlsAvailable={localCoreServiceControlsAvailable}
 				serviceRunning={coreServiceRunning}
 			/>
 		) : undefined;

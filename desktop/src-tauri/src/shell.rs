@@ -810,6 +810,7 @@ where
     .transparent(true)
     .visible(false)
     .skip_taskbar(true)
+    .disable_drag_drop_handler()
     .background_color(OPERATOR_PANEL_TRANSPARENT_BACKGROUND);
 
     #[cfg(debug_assertions)]
