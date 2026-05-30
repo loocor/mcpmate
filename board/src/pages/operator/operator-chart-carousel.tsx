@@ -80,7 +80,7 @@ function buildLoopTrack(slides: OperatorChartSlideDef[]): OperatorChartSlideDef[
 export function OperatorChartCarousel() {
 	usePageTranslations("dashboard");
 	usePageTranslations("operator");
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const trackRef = React.useRef<HTMLDivElement>(null);
 	const jumpingRef = React.useRef(false);
 	const [activeIndex, setActiveIndex] = React.useState(METRICS_LOGICAL_INDEX);
@@ -89,18 +89,24 @@ export function OperatorChartCarousel() {
 		() => [
 			{
 				id: "metrics",
-				title: t("dashboard:metrics.title", { defaultValue: "Metrics" }),
+				title: t("dashboard:metrics.title", {
+					lng: i18n.language,
+					defaultValue: "Metrics",
+				}),
 				icon: Activity,
 				render: () => <MetricsTrendChart variant="compact" />,
 			},
 			{
 				id: "tokens",
-				title: t("dashboard:tokenSavings.title", { defaultValue: "Token Savings" }),
+				title: t("dashboard:tokenSavings.title", {
+					lng: i18n.language,
+					defaultValue: "Token Savings",
+				}),
 				icon: Sparkles,
 				render: () => <TokenSavingsTrendCard hideHeader variant="compact" />,
 			},
 		],
-		[t],
+		[t, i18n.language],
 	);
 
 	const loopTrack = React.useMemo(() => buildLoopTrack(logicalSlides), [logicalSlides]);

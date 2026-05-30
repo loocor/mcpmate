@@ -39,6 +39,8 @@ export function OperatorCoreRowDetail({
 	mcpEndpointLoading,
 	onRestart,
 	onToggleService,
+	restartAvailable,
+	serviceControlsAvailable,
 	serviceRunning,
 }: {
 	busyAction: "start" | "stop" | "restart" | null;
@@ -48,12 +50,14 @@ export function OperatorCoreRowDetail({
 	mcpEndpointLoading: boolean;
 	onRestart: () => void;
 	onToggleService: () => void;
+	restartAvailable: boolean;
+	serviceControlsAvailable: boolean;
 	serviceRunning: boolean;
 }) {
 	const { t } = useTranslation();
 	const controlsBusy = busyAction !== null;
-	const serviceControlDisabled = !isTauriShell || controlsBusy;
-	const restartDisabled = controlsBusy || mcpEndpointLoading;
+	const serviceControlDisabled = !serviceControlsAvailable || controlsBusy;
+	const restartDisabled = !restartAvailable || controlsBusy || mcpEndpointLoading;
 
 	const restartLabel = t("operator:detail.core.controls.restart", {
 		defaultValue: "Restart",
@@ -68,6 +72,11 @@ export function OperatorCoreRowDetail({
 	const desktopOnlyHint = t("operator:detail.core.serviceDesktopOnly", {
 		defaultValue: "Start and stop are available in MCPMate Desktop.",
 	});
+	const localSourceOnlyHint = t("operator:detail.core.localSourceOnly", {
+		defaultValue:
+			"Local Core controls are available only when Desktop uses the localhost source.",
+	});
+	const disabledControlHint = isTauriShell ? localSourceOnlyHint : desktopOnlyHint;
 	const copyLabel = t("operator:detail.core.copyEndpoint", {
 		defaultValue: "Copy MCPMate Server Endpoint",
 	});
@@ -118,7 +127,7 @@ export function OperatorCoreRowDetail({
 			data-testid="operator-inline-detail"
 		>
 			<div className="flex items-center gap-2">
-				{serviceControlDisabled && !isTauriShell ? (
+				{serviceControlDisabled && !controlsBusy ? (
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<span className="flex min-w-0 flex-1">
@@ -126,7 +135,7 @@ export function OperatorCoreRowDetail({
 							</span>
 						</TooltipTrigger>
 						<TooltipContent side="top" className="max-w-[220px] text-xs">
-							{desktopOnlyHint}
+							{disabledControlHint}
 						</TooltipContent>
 					</Tooltip>
 				) : (
