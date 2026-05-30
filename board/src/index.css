@@ -70,6 +70,40 @@
 		height: 100%;
 	}
 
+	html[data-mcpmate-surface="operator"],
+	html[data-mcpmate-surface="operator"] body[data-mcpmate-surface="operator"],
+	html[data-mcpmate-surface="operator"] #root[data-mcpmate-surface="operator"] {
+		background: transparent !important;
+		background-color: transparent !important;
+	}
+
+	html[data-mcpmate-surface="operator"] #root[data-mcpmate-surface="operator"] {
+		display: flex;
+		justify-content: center;
+		min-height: 100%;
+	}
+
+	html[data-mcpmate-surface="operator"] [data-operator-panel-frame="true"],
+	html[data-mcpmate-surface="operator"] [data-operator-panel-shadow="true"] {
+		background: transparent !important;
+		background-color: transparent !important;
+	}
+
+	html[data-mcpmate-surface="operator"] [data-operator-panel-frame="true"] {
+		min-height: 100%;
+	}
+
+	html[data-mcpmate-surface="operator"] [data-operator-drag-region="true"] {
+		-webkit-app-region: drag;
+		app-region: drag;
+	}
+
+	html[data-mcpmate-surface="operator"] [data-operator-no-drag="true"],
+	html[data-mcpmate-surface="operator"] [data-operator-no-drag="true"] * {
+		-webkit-app-region: no-drag;
+		app-region: no-drag;
+	}
+
 	[data-vaul-drawer][data-vaul-drawer-direction="right"]::after {
 		width: min(100%, 0px);
 	}

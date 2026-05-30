@@ -23,6 +23,10 @@ export async function showOperatorPanel(): Promise<void> {
 	await invokeDesktopCommand<void>("mcp_shell_show_operator_panel");
 }
 
+export async function showOperatorIntroOnce(): Promise<boolean> {
+	return invokeDesktopCommand<boolean>("mcp_shell_show_operator_intro_once");
+}
+
 export async function setOperatorPanelPinned(pinned: boolean): Promise<void> {
 	await invokeDesktopCommand<void>("mcp_shell_set_operator_panel_pinned", {
 		pinned,

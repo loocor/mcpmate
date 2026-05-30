@@ -53,6 +53,12 @@ export const commonTranslations = {
 				unknown: "Unknown reason",
 			},
 		},
+		backendReadiness: {
+			title: "MCPMate is starting",
+			starting: "Starting MCPMate Core...",
+			waitingForBackend: "Waiting for MCPMate backend",
+			confirmingReadiness: "Confirming backend readiness...",
+		},
 		pagination: {
 			first: "First",
 			previous: "Previous",
@@ -126,6 +132,12 @@ export const commonTranslations = {
 				unknown: "未知原因",
 			},
 		},
+		backendReadiness: {
+			title: "MCPMate 正在启动",
+			starting: "正在启动 MCPMate Core...",
+			waitingForBackend: "正在等待 MCPMate 后端",
+			confirmingReadiness: "正在确认后端就绪状态...",
+		},
 		pagination: {
 			first: "首页",
 			previous: "上一页",
@@ -198,6 +210,12 @@ export const commonTranslations = {
 				configMissingUrl: "URL がありません",
 				unknown: "不明な理由",
 			},
+		},
+		backendReadiness: {
+			title: "MCPMate を起動しています",
+			starting: "MCPMate Core を起動しています...",
+			waitingForBackend: "MCPMate backend を待機中",
+			confirmingReadiness: "backend readiness を確認中...",
 		},
 		pagination: {
 			first: "最初",

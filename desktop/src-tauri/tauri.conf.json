@@ -18,6 +18,7 @@
 	},
 	"app": {
 		"withGlobalTauri": true,
+		"macOSPrivateApi": true,
 		"enableGTKAppId": true,
 		"security": {
 			"csp": null

@@ -45,7 +45,7 @@ import { cn } from "../../lib/utils";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import { isTauriEnvironmentSync } from "../../lib/platform";
-import { showOperatorPanel } from "../../lib/desktop-operator";
+import { showOperatorIntroOnce } from "../../lib/desktop-operator";
 import type { ClientInfo } from "../../lib/types";
 
 type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
@@ -506,7 +506,7 @@ export function OnboardingPage() {
       await qc.invalidateQueries({ queryKey: ["onboardingStatus"] });
       if (isTauriEnvironmentSync()) {
         try {
-          await showOperatorPanel();
+          await showOperatorIntroOnce();
         } catch (panelError) {
           notifyError(
             t("complete.operatorPanelErrorTitle", {
