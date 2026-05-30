@@ -5,8 +5,10 @@
 	"windows": ["operator"],
 	"permissions": [
 		"core:default",
+		"core:window:allow-start-dragging",
 		"dialog:default",
 		"opener:default",
+		"clipboard-manager:allow-write-text",
 		{
 			"identifier": "opener:allow-default-urls"
 		}
