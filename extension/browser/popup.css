@@ -462,6 +462,11 @@ p {
 	padding: 0 12px;
 }
 
+.discord-button.is-feishu .button-icon svg {
+	width: 18px;
+	height: 18px;
+}
+
 .open-button {
 	width: 24px;
 	height: 24px;

@@ -3,6 +3,17 @@
  * Attaches import affordances directly to matching `pre` / `code` blocks.
  */
 (function () {
+	if (
+		!document.documentElement ||
+		document.documentElement.localName !== "html"
+	) {
+		return;
+	}
+	const contentType = document.contentType?.toLowerCase() ?? "";
+	if (contentType && !contentType.includes("html")) {
+		return;
+	}
+
 	const MAX_PAYLOAD_CHARS = 48000;
 	const SCHEME_URL = "mcpmate://import/server";
 	/** JSON/YAML-ish keys that usually wrap MCP server maps (Cursor/VS Code `mcp`, Claude Desktop `mcpServers`, etc.). */
@@ -115,7 +126,7 @@
 				filter: brightness(1.06);
 			}
 		`;
-		document.head.appendChild(style);
+		(document.head || document.documentElement).appendChild(style);
 	}
 
 	function normalizeText(text) {
