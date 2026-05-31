@@ -17,9 +17,10 @@ import { useCallback, useEffect, useMemo, useReducer, useId, useState } from "re
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/button";
-import { Card, CardContent } from "../../components/ui/card";
+import { FeishuIcon } from "../../components/icons/feishu-icon";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Segment, type SegmentOption } from "../../components/ui/segment";
+import { TooltipProvider } from "../../components/ui/tooltip";
 import {
   clientsApi,
   extractImportStats,
@@ -28,13 +29,36 @@ import {
 } from "../../lib/api";
 import {
   adminDiscoveryClientToUpdatePayload,
+  clientTagsForDetected,
+  enrichLocalServerCandidates,
   fetchAdminDiscoveryClientCatalog,
   fetchAdminDiscoveryServers,
+  filterCatalogItemsByTag,
   type AdminDiscoveryClientCandidate,
   type AdminDiscoveryServerCandidate,
+  type CatalogTagFilter,
 } from "../../lib/admin-discovery";
 import { readAdminDiscoveryPlatform } from "../../lib/desktop-platform";
 import { websiteLangParam } from "../../lib/website-lang";
+import {
+  AdminDiscoveryPartialWarning,
+  catalogTagLabel,
+  OnboardingCatalogTabPanel,
+  OnboardingCatalogToolbar,
+  OnboardingClientCard,
+  OnboardingEmptyCard,
+  OnboardingScrollableGrid,
+  OnboardingServerCard,
+  POPULAR_CLIENT_TAG_FILTERS,
+  POPULAR_SERVER_TAG_FILTERS,
+} from "./onboarding-setup-ui";
+import {
+  buildOnboardingTabOptions,
+  catalogFilterEmptyMessage,
+  OnboardingDualTabStep,
+  useLogoLoadFailures,
+  useOnboardingDualTab,
+} from "./onboarding-catalog-step";
 import { applyManagedClientsForIdentifiers } from "../../lib/client-config-sync";
 import { resolveActiveDefaultProfileId } from "../../lib/default-profile";
 import { buildClientServersImportRequest } from "../../lib/server-import-payload";
@@ -49,7 +73,11 @@ import {
   type OnboardingStatusResp,
   type RuntimeCheckResp,
 } from "../../lib/onboarding-api";
-import { MCPMATE_DISCORD_COMMUNITY_HREF } from "../../lib/mcpmate-community-urls";
+import {
+  MCPMATE_DISCORD_COMMUNITY_HREF,
+  MCPMATE_FEISHU_COMMUNITY_HREF,
+  prefersFeishuCommunity,
+} from "../../lib/mcpmate-community-urls";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
@@ -64,10 +92,7 @@ type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
 type RuntimeKind = "node" | "bun" | "uv";
 type WelcomeLanguage = "en" | "zh-cn" | "ja";
 
-const ONBOARDING_RECOMMENDED_SERVER_MINIMUM = 4;
-const ONBOARDING_ADMIN_SERVER_RANDOM_COUNT = 6;
-const ONBOARDING_SCROLLABLE_LIST_CLASS = "max-h-[42vh] overflow-y-auto pr-1";
-const ONBOARDING_TWO_COLUMN_LIST_CLASS = "grid gap-3 sm:grid-cols-2";
+const ONBOARDING_CATALOG_LIMIT = 50;
 
 const RUNTIME_NAME_PRIORITY: Record<RuntimeKind, string[]> = {
   node: ["node", "npx"],
@@ -512,7 +537,7 @@ export function OnboardingPage() {
             const candidate = adminClientCandidates.get(identifier);
             if (!candidate) {
               throw new Error(
-                t("clients.adminRecommendationMissing", {
+                t("clients.presetMissing", {
                   defaultValue: "Client preset '{{identifier}}' was not found.",
                   identifier,
                 }),
@@ -1204,7 +1229,12 @@ function RuntimeStep({
   );
 }
 
-// ── Clients step (auto-detect only) ──────────────────────────────────────────
+// ── Clients step ─────────────────────────────────────────────────────────────
+
+type ClientsSetupTab = "detected" | "popular";
+
+const CLIENTS_PRIMARY_TAB: ClientsSetupTab = "detected";
+const CLIENTS_POPULAR_TAB: ClientsSetupTab = "popular";
 
 function ClientsStep({
   selectedClients,
@@ -1216,14 +1246,11 @@ function ClientsStep({
   onAdminCandidatesChange: (candidates: Map<string, AdminDiscoveryClientCandidate>) => void;
 }) {
   const { t, i18n } = useTranslation("onboarding");
-  const [logoLoadFailedClients, setLogoLoadFailedClients] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const { data, isLoading, isError, refetch, error } = useQuery({
+  const { markFailed: markLogoLoadFailed, hasFailed: logoLoadFailed } = useLogoLoadFailures();
+  const { data, isLoading, isError, refetch, error, isFetching } = useQuery({
     queryKey: ["clients", "onboarding"],
     queryFn: () => clientsApi.detect(true),
     staleTime: 30_000,
-    refetchOnMount: "always",
   });
 
   const detectedClients = useMemo(
@@ -1233,273 +1260,307 @@ function ClientsStep({
         .sort(compareClientsByName),
     [data?.client],
   );
-  const shouldLoadAdminRecommendations = !isLoading && !isError && detectedClients.length === 0;
   const adminDiscoveryPlatformQuery = useQuery({
     queryKey: ["adminDiscoveryPlatform", "onboarding"],
     queryFn: () => readAdminDiscoveryPlatform(),
-    enabled: shouldLoadAdminRecommendations,
     staleTime: Infinity,
     retry: false,
   });
   const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
-  const adminRecommendationsQuery = useQuery({
+  const popularCatalogQuery = useQuery({
     queryKey: ["adminDiscoveryClients", "onboarding", adminDiscoveryPlatform ?? "web", i18n.language],
     queryFn: () =>
       fetchAdminDiscoveryClientCatalog({
         surface: "onboarding",
-        random: 6,
+        limit: ONBOARDING_CATALOG_LIMIT,
         platform: adminDiscoveryPlatform,
         locale: i18n.language,
       }),
-    enabled: shouldLoadAdminRecommendations && adminDiscoveryPlatformQuery.isSuccess,
+    enabled: adminDiscoveryPlatformQuery.isSuccess,
     staleTime: 60_000,
     retry: false,
   });
-  const isAdminRecommendationsLoading =
-    detectedClients.length === 0 &&
-    (adminRecommendationsQuery.isLoading || adminDiscoveryPlatformQuery.isLoading);
-  const isAdminRecommendationsError = adminRecommendationsQuery.isError || adminDiscoveryPlatformQuery.isError;
-  const adminRecommendationsError = adminDiscoveryPlatformQuery.error ?? adminRecommendationsQuery.error;
-  const adminRecommendations = useMemo(
-    () => adminRecommendationsQuery.data?.clients ?? [],
-    [adminRecommendationsQuery.data],
+  const popularClients = useMemo(
+    () => popularCatalogQuery.data?.clients ?? [],
+    [popularCatalogQuery.data],
   );
-  const adminRecommendationDiagnostics = adminRecommendationsQuery.data?.diagnostics ?? [];
+  const popularCatalogDiagnostics = popularCatalogQuery.data?.diagnostics ?? [];
+  const popularCatalogById = useMemo(
+    () => new Map(popularClients.map((client) => [client.identifier, client])),
+    [popularClients],
+  );
+  const detectedIdentifiers = useMemo(
+    () => new Set(detectedClients.map((client) => client.identifier)),
+    [detectedClients],
+  );
+  const {
+    activeTab,
+    setActiveTab,
+    primaryTagFilter: detectedTagFilter,
+    setPrimaryTagFilter: setDetectedTagFilter,
+    popularTagFilter,
+    setPopularTagFilter,
+    isPrimaryTab,
+  } = useOnboardingDualTab(
+    CLIENTS_PRIMARY_TAB,
+    CLIENTS_POPULAR_TAB,
+    detectedClients.length === 0,
+  );
+  const detectedClientsWithTags = useMemo(
+    () =>
+      detectedClients.map((client) => ({
+        ...client,
+        tags: clientTagsForDetected(
+          client.category,
+          popularCatalogById.get(client.identifier)?.tags,
+        ),
+      })),
+    [detectedClients, popularCatalogById],
+  );
+  const filteredDetectedClients = useMemo(
+    () => filterCatalogItemsByTag(detectedClientsWithTags, detectedTagFilter),
+    [detectedClientsWithTags, detectedTagFilter],
+  );
+  const filteredPopularClients = useMemo(
+    () => filterCatalogItemsByTag(popularClients, popularTagFilter),
+    [popularClients, popularTagFilter],
+  );
+
+  const clientTagLabel = useCallback(
+    (tag: CatalogTagFilter) => catalogTagLabel(t, "clients", tag),
+    [t, i18n.language],
+  );
 
   useEffect(() => {
-    if (detectedClients.length > 0) {
-      onAdminCandidatesChange(new Map());
-      return;
-    }
     onAdminCandidatesChange(
-      new Map(adminRecommendations.map((candidate) => [candidate.identifier, candidate])),
+      new Map(popularClients.map((candidate) => [candidate.identifier, candidate])),
     );
-  }, [adminRecommendations, detectedClients.length, onAdminCandidatesChange]);
+  }, [onAdminCandidatesChange, popularClients]);
+
+  const clientTabOptions = useMemo(
+    () =>
+      buildOnboardingTabOptions(
+        {
+          value: CLIENTS_PRIMARY_TAB,
+          label: t("clients.tabs.detected", { defaultValue: "From your device" }),
+          count: detectedClients.length,
+        },
+        {
+          value: CLIENTS_POPULAR_TAB,
+          label: t("clients.tabs.popular", { defaultValue: "Popular Clients" }),
+          count: popularClients.length,
+        },
+      ),
+    [detectedClients.length, popularClients.length, t, i18n.language],
+  );
+
+  const isDetectLoading = isLoading;
+  const isPopularCatalogLoading =
+    adminDiscoveryPlatformQuery.isLoading ||
+    (popularCatalogQuery.isLoading && popularClients.length === 0);
+
+  const recommendationErrorMessage = t("clients.recommendationError", {
+    defaultValue: "MCPMate could not load the popular client catalog.",
+  });
+  const emptyFilteredMessage = t("clients.emptyFiltered", {
+    defaultValue: "No clients match this category.",
+  });
 
   return (
-    <div>
-      <div className="mb-6 text-center">
-        <Users className="mx-auto mb-3 h-10 w-10 text-blue-500" />
-        <h2 className="text-2xl font-bold tracking-tight">
-          {t("clients.title", {
-            defaultValue: "Detected MCP Clients",
-          })}
-        </h2>
-        <p className="mt-2 text-slate-600 dark:text-slate-400">
-          {t("clients.description", {
+    <OnboardingDualTabStep
+      icon={<Users className="mx-auto mb-3 h-10 w-10 text-blue-500" />}
+      title={t("clients.title", { defaultValue: "Set Up MCP Clients" })}
+      description={t("clients.description", {
+        defaultValue:
+          "Choose clients to manage now or pre-select popular ones to set up after installation.",
+      })}
+      tabOptions={clientTabOptions}
+      activeTab={activeTab}
+      onTabChange={(value) => setActiveTab(value as ClientsSetupTab)}
+      isPrimaryTab={isPrimaryTab}
+      primaryLoading={isDetectLoading}
+      popularLoading={isPopularCatalogLoading}
+      primaryPanel={
+        <OnboardingCatalogTabPanel
+          footnote={t("clients.detectedNotice", {
             defaultValue:
-              "We found these MCP clients on your system. Select the ones you'd like MCPMate to manage.",
+              "We scan your device automatically. Some clients may not appear due to version or compatibility—you can add them manually later.",
           })}
-        </p>
-      </div>
-
-      {isLoading ? (
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
-        </div>
-      ) : isError ? (
-        <Card>
-          <CardContent className="py-8 text-center text-slate-500">
-            <p>
-              {t("clients.error", {
-                defaultValue:
-                  "Failed to detect MCP clients. Please retry.",
+        >
+          <OnboardingCatalogToolbar
+            tagValue={detectedTagFilter}
+            onTagChange={setDetectedTagFilter}
+            tagOptions={POPULAR_CLIENT_TAG_FILTERS}
+            tagLabel={clientTagLabel}
+            refreshAriaLabel={t("clients.rescan", { defaultValue: "Rescan" })}
+            onRefresh={() => void refetch()}
+            refreshDisabled={isFetching}
+          />
+          {isError ? (
+            <OnboardingEmptyCard
+              message={t("clients.error", {
+                defaultValue: "Failed to detect MCP clients. Please retry.",
               })}
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              {(error as Error)?.message ?? ""}
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-4"
-              onClick={() => void refetch()}
-            >
-              {t("clients.retry", { defaultValue: "Retry detection" })}
-            </Button>
-          </CardContent>
-        </Card>
-      ) : isAdminRecommendationsLoading ? (
-        <div className="flex justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
-        </div>
-      ) : detectedClients.length === 0 && isAdminRecommendationsError ? (
-        <Card>
-          <CardContent className="py-8 text-center text-slate-500">
-            <p>
-              {t("clients.recommendationError", {
-                defaultValue:
-                  "No local MCP clients were detected, and MCPMate could not load preset client data.",
+            />
+          ) : detectedClients.length === 0 ? (
+            <OnboardingEmptyCard
+              message={t("clients.empty", {
+                defaultValue: "No MCP clients detected on this device yet.",
               })}
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              {stringifyError(adminRecommendationsError)}
-            </p>
-          </CardContent>
-        </Card>
-      ) : detectedClients.length === 0 && adminRecommendations.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center text-slate-500">
-            {t("clients.empty", {
-              defaultValue:
-                "No MCP clients detected on this system. You can add clients manually later from the Clients page.",
-            })}
-          </CardContent>
-        </Card>
-      ) : detectedClients.length === 0 ? (
-        <div className="space-y-3">
-          {adminRecommendationDiagnostics.length > 0 ? (
-            <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-              <AlertDescription>
-                {t("clients.recommendationPartialWarning", {
-                  count: adminRecommendationDiagnostics.length,
-                  defaultValue:
-                    "Some client presets were skipped because their discovery data is invalid.",
-                })}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          <div className={ONBOARDING_SCROLLABLE_LIST_CLASS}>
-            <div className={ONBOARDING_TWO_COLUMN_LIST_CLASS}>
-              {adminRecommendations.map((client) => {
+              actionLabel={t("clients.emptyAction", {
+                defaultValue: "Browse popular clients",
+              })}
+              onAction={() => setActiveTab(CLIENTS_POPULAR_TAB)}
+            />
+          ) : filteredDetectedClients.length === 0 ? (
+            <OnboardingEmptyCard message={emptyFilteredMessage} />
+          ) : (
+            <OnboardingScrollableGrid>
+              {filteredDetectedClients.map((client) => {
                 const isSelected = selectedClients.has(client.identifier);
-                const showLogo =
-                  Boolean(client.logoUrl) &&
-                  !logoLoadFailedClients.has(client.identifier);
+                const catalogEntry = popularCatalogById.get(client.identifier);
+                const displayName =
+                  catalogEntry?.displayName || client.display_name || client.identifier;
+                const localizedDescription =
+                  catalogEntry?.description || client.description || undefined;
+                const logoUrl = client.logo_url ?? catalogEntry?.logoUrl ?? undefined;
+                const showLogo = Boolean(logoUrl) && !logoLoadFailed(client.identifier);
                 return (
-                  <button
+                  <OnboardingClientCard
                     key={client.identifier}
-                    type="button"
-                    aria-pressed={isSelected}
-                    aria-label={t(
-                      isSelected
-                        ? "clients.adminRecommendationSelectedAria"
-                        : "clients.adminRecommendationUnselectedAria",
-                      {
-                        defaultValue: isSelected
-                          ? "{{name}} preset client selected"
-                          : "{{name}} preset client not selected",
-                        name: client.displayName || client.identifier,
-                      },
-                    )}
-                    onClick={() => onToggle(client.identifier)}
-                    className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                      ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
-                      }`}
-                  >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
-                      {showLogo ? (
-                        <img
-                          src={client.logoUrl}
-                          alt={client.displayName || client.identifier}
-                          className="h-full w-full object-cover"
-                          loading="lazy"
-                          onError={() => {
-                            setLogoLoadFailedClients((prev) => {
-                              if (prev.has(client.identifier)) return prev;
-                              const next = new Set(prev);
-                              next.add(client.identifier);
-                              return next;
-                            });
-                          }}
-                        />
-                      ) : (
-                        (client.displayName || client.identifier).charAt(0).toUpperCase()
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{client.displayName || client.identifier}</div>
-                      {client.description && (
-                        <div className="mt-0.5 truncate text-xs text-slate-500">
-                          {client.description}
-                        </div>
-                      )}
-                      <div className="mt-1 text-xs text-slate-400">
-                        {t("clients.adminRecommendation", { defaultValue: "Preset client" })}
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <Check className="h-5 w-5 shrink-0 text-emerald-500" />
-                    )}
-                  </button>
+                    name={displayName}
+                    description={localizedDescription}
+                    logoUrl={logoUrl ?? undefined}
+                    showLogo={showLogo}
+                    isSelected={isSelected}
+                    onToggle={() => onToggle(client.identifier)}
+                    badgeLabel={t("clients.badges.detected", { defaultValue: "Detected" })}
+                    onLogoError={() => markLogoLoadFailed(client.identifier)}
+                  />
                 );
               })}
+            </OnboardingScrollableGrid>
+          )}
+          {isError ? (
+            <div className="text-center">
+              <p className="text-xs text-slate-400">
+                {error instanceof Error ? error.message : ""}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={() => void refetch()}
+              >
+                {t("clients.retry", { defaultValue: "Retry detection" })}
+              </Button>
             </div>
-          </div>
-          <p className="text-center text-xs text-slate-400 dark:text-slate-500">
-            {t("clients.recommendationNotice", {
-              defaultValue: "These MCPMate-supported client presets can be applied directly.",
-            })}
-          </p>
-        </div>
-      ) : (
-        <div className={ONBOARDING_SCROLLABLE_LIST_CLASS}>
-          <div className={ONBOARDING_TWO_COLUMN_LIST_CLASS}>
-            {detectedClients.map((client) => {
-              const isSelected = selectedClients.has(client.identifier);
-              const showLogo =
-                Boolean(client.logo_url) &&
-                !logoLoadFailedClients.has(client.identifier);
-              return (
-                <button
-                  key={client.identifier}
-                  type="button"
-                  onClick={() => onToggle(client.identifier)}
-                  className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                    ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                    : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
-                    }`}
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
-                    {showLogo ? (
-                      <img
-                        src={client.logo_url ?? undefined}
-                        alt={client.display_name || client.identifier}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                        onError={() => {
-                          setLogoLoadFailedClients((prev) => {
-                            if (prev.has(client.identifier)) return prev;
-                            const next = new Set(prev);
-                            next.add(client.identifier);
-                            return next;
-                          });
-                        }}
-                      />
-                    ) : (
-                      (client.display_name || client.identifier)
-                        .charAt(0)
-                        .toUpperCase()
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-medium">
-                      {client.display_name || client.identifier}
-                    </div>
-                    {client.description && (
-                      <div className="mt-0.5 truncate text-xs text-slate-500">
-                        {client.description}
-                      </div>
-                    )}
-                    {client.config_path && (
-                      <div className="mt-1 truncate font-mono text-xs text-slate-400">
-                        {client.config_path}
-                      </div>
-                    )}
-                  </div>
-                  {isSelected && (
-                    <Check className="h-5 w-5 shrink-0 text-emerald-500" />
+          ) : null}
+        </OnboardingCatalogTabPanel>
+      }
+      popularPanel={
+        <OnboardingCatalogTabPanel
+          footnote={t("clients.recommendationNotice", {
+            defaultValue:
+              "Pre-selected clients stay pending until installed. After installation, return here to rescan or finish binding from the Clients page.",
+          })}
+        >
+          {popularCatalogQuery.isError ? (
+            <OnboardingEmptyCard message={recommendationErrorMessage} />
+          ) : (
+            <>
+              {popularCatalogDiagnostics.length > 0 ? (
+                <AdminDiscoveryPartialWarning
+                  message={t("clients.recommendationPartialWarning", {
+                    count: popularCatalogDiagnostics.length,
+                    defaultValue:
+                      "Some client presets were skipped because their discovery data is invalid.",
+                  })}
+                />
+              ) : null}
+              <OnboardingCatalogToolbar
+                tagValue={popularTagFilter}
+                onTagChange={setPopularTagFilter}
+                tagOptions={POPULAR_CLIENT_TAG_FILTERS}
+                tagLabel={clientTagLabel}
+                refreshAriaLabel={t("clients.refresh", { defaultValue: "Refresh" })}
+                onRefresh={() => void popularCatalogQuery.refetch()}
+                refreshDisabled={popularCatalogQuery.isFetching}
+              />
+              {filteredPopularClients.length === 0 ? (
+                <OnboardingEmptyCard
+                  message={catalogFilterEmptyMessage(
+                    popularClients.length,
+                    recommendationErrorMessage,
+                    emptyFilteredMessage,
                   )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
+                />
+              ) : (
+                <TooltipProvider delayDuration={200}>
+                  <OnboardingScrollableGrid>
+                    {filteredPopularClients.map((client) => {
+                      const isSelected = selectedClients.has(client.identifier);
+                      const isDetected = detectedIdentifiers.has(client.identifier);
+                      const showLogo =
+                        Boolean(client.logoUrl) && !logoLoadFailed(client.identifier);
+                      const displayName = client.displayName || client.identifier;
+                      return (
+                        <OnboardingClientCard
+                          key={client.identifier}
+                          name={displayName}
+                          description={client.description || undefined}
+                          logoUrl={client.logoUrl || undefined}
+                          showLogo={showLogo}
+                          isSelected={isSelected}
+                          isDetected={isDetected}
+                          homepageUrl={client.homepageUrl || client.docsUrl || undefined}
+                          onToggle={() => onToggle(client.identifier)}
+                          onInstall={() => {
+                            const target = client.homepageUrl || client.docsUrl;
+                            if (target) window.open(target, "_blank", "noopener,noreferrer");
+                          }}
+                          badgeLabel={
+                            isDetected
+                              ? t("clients.badges.detected", { defaultValue: "Detected" })
+                              : t("clients.badges.installable", {
+                                  defaultValue: "Installable",
+                                })
+                          }
+                          badgeVariant={isDetected ? "success" : "warning"}
+                          installAriaLabel={t("clients.installAria", {
+                            defaultValue: "Open {{name}} official site to install",
+                            name: displayName,
+                          })}
+                          installTooltip={t("clients.installTooltip", {
+                            defaultValue: "Open the official site to download and install",
+                          })}
+                          selectedAriaLabel={t("clients.selectedAria", {
+                            defaultValue: "{{name}} pre-selected for setup",
+                            name: displayName,
+                          })}
+                          unselectedAriaLabel={t("clients.unselectedAria", {
+                            defaultValue: "{{name}} not pre-selected",
+                            name: displayName,
+                          })}
+                          onLogoError={() => markLogoLoadFailed(client.identifier)}
+                        />
+                      );
+                    })}
+                  </OnboardingScrollableGrid>
+                </TooltipProvider>
+              )}
+            </>
+          )}
+        </OnboardingCatalogTabPanel>
+      }
+    />
   );
 }
+
+type ServersSetupTab = "local" | "popular";
+
+const SERVERS_PRIMARY_TAB: ServersSetupTab = "local";
+const SERVERS_POPULAR_TAB: ServersSetupTab = "popular";
 
 function ServersStep({
   selectedServers,
@@ -1511,6 +1572,7 @@ function ServersStep({
   onToggle: (name: string) => void;
 }) {
   const { t, i18n } = useTranslation("onboarding");
+  const { markFailed: markLogoLoadFailed, hasFailed: logoLoadFailed } = useLogoLoadFailures();
   const clientsQuery = useQuery({
     queryKey: ["clients", "onboarding"],
     queryFn: () => clientsApi.detect(true),
@@ -1552,167 +1614,265 @@ function ServersStep({
       }
       return response.data;
     },
-    staleTime: 0,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
   const localServerCandidates = useMemo(
     () => scanQuery.data?.candidates ?? [],
     [scanQuery.data?.candidates],
   );
-  const shouldLoadAdminRecommendations =
-    (!clientsQuery.isLoading && scannableClients.length === 0) ||
-    Boolean(
-      scanQuery.data &&
-      localServerCandidates.length < ONBOARDING_RECOMMENDED_SERVER_MINIMUM,
-    );
-  const adminRecommendationsQuery = useQuery({
+  const {
+    activeTab,
+    setActiveTab,
+    primaryTagFilter: localTagFilter,
+    setPrimaryTagFilter: setLocalTagFilter,
+    popularTagFilter,
+    setPopularTagFilter,
+    isPrimaryTab,
+  } = useOnboardingDualTab(
+    SERVERS_PRIMARY_TAB,
+    SERVERS_POPULAR_TAB,
+    localServerCandidates.length === 0,
+  );
+  const popularServersQuery = useQuery({
     queryKey: ["adminDiscoveryServers", "onboarding", i18n.language],
     queryFn: () =>
       fetchAdminDiscoveryServers({
         surface: "onboarding",
-        random: ONBOARDING_ADMIN_SERVER_RANDOM_COUNT,
+        limit: ONBOARDING_CATALOG_LIMIT,
         locale: i18n.language,
       }),
-    enabled: shouldLoadAdminRecommendations,
     staleTime: 60_000,
   });
+  const popularServerCandidates = useMemo(
+    () => popularServersQuery.data ?? [],
+    [popularServersQuery.data],
+  );
   const candidates = useMemo(
     () =>
       mergeLocalAndAdminServerCandidates(
         localServerCandidates,
-        adminRecommendationsQuery.data ?? [],
+        popularServerCandidates,
       ),
-    [adminRecommendationsQuery.data, localServerCandidates],
+    [localServerCandidates, popularServerCandidates],
+  );
+  const enrichedLocalServerCandidates = useMemo(
+    () => enrichLocalServerCandidates(localServerCandidates, popularServerCandidates),
+    [localServerCandidates, popularServerCandidates],
+  );
+  const filteredLocalServerCandidates = useMemo(
+    () => filterCatalogItemsByTag(enrichedLocalServerCandidates, localTagFilter),
+    [enrichedLocalServerCandidates, localTagFilter],
+  );
+  const filteredPopularServerCandidates = useMemo(
+    () => filterCatalogItemsByTag(popularServerCandidates, popularTagFilter),
+    [popularServerCandidates, popularTagFilter],
+  );
+
+  const serverTagLabel = useCallback(
+    (tag: CatalogTagFilter) => catalogTagLabel(t, "servers", tag),
+    [t, i18n.language],
   );
 
   useEffect(() => {
     onCandidatesChange(candidates);
   }, [candidates, onCandidatesChange]);
 
-  const usingAdminRecommendations = Boolean(adminRecommendationsQuery.data?.length);
-  const isScanningServers = scannableClients.length > 0 && scanQuery.isLoading;
-  const isLoadingRecommendations =
-    candidates.length === 0 && shouldLoadAdminRecommendations && adminRecommendationsQuery.isLoading;
+  const serverTabOptions = useMemo(
+    () =>
+      buildOnboardingTabOptions(
+        {
+          value: SERVERS_PRIMARY_TAB,
+          label: t("servers.tabs.local", { defaultValue: "From your device" }),
+          count: localServerCandidates.length,
+        },
+        {
+          value: SERVERS_POPULAR_TAB,
+          label: t("servers.tabs.popular", { defaultValue: "Popular Servers" }),
+          count: popularServerCandidates.length,
+        },
+      ),
+    [localServerCandidates.length, popularServerCandidates.length, t, i18n.language],
+  );
+
+  const isLocalLoading =
+    clientsQuery.isLoading ||
+    (scannableClients.length > 0 && scanQuery.isLoading && localServerCandidates.length === 0);
+  const isPopularServersLoading =
+    popularServersQuery.isLoading && popularServerCandidates.length === 0;
+
+  const rescanServers = useCallback(() => {
+    void clientsQuery.refetch();
+    if (scannableClients.length > 0) {
+      void scanQuery.refetch();
+    }
+  }, [clientsQuery, scanQuery, scannableClients.length]);
+
+  const recommendationErrorMessage = t("servers.recommendationError", {
+    defaultValue: "MCPMate could not load preset server data.",
+  });
+  const emptyFilteredMessage = t("servers.emptyFiltered", {
+    defaultValue: "No servers match this category.",
+  });
 
   return (
-    <div>
-      <div className="mb-6 text-center">
-        <Server className="mx-auto mb-3 h-10 w-10 text-violet-500" />
-        <h2 className="text-2xl font-bold tracking-tight">
-          {t("servers.title", {
-            defaultValue: "Import Existing Servers",
-          })}
-        </h2>
-        <p className="mt-2 text-slate-600 dark:text-slate-400">
-          {t("servers.description", {
+    <OnboardingDualTabStep
+      icon={<Server className="mx-auto mb-3 h-10 w-10 text-violet-500" />}
+      title={t("servers.title", { defaultValue: "Set Up MCP Servers" })}
+      description={t("servers.description", {
+        defaultValue:
+          "Import servers found in local client configs or add MCPMate presets directly.",
+      })}
+      tabOptions={serverTabOptions}
+      activeTab={activeTab}
+      onTabChange={(value) => setActiveTab(value as ServersSetupTab)}
+      isPrimaryTab={isPrimaryTab}
+      primaryLoading={isLocalLoading}
+      popularLoading={isPopularServersLoading}
+      spinnerAccent="violet"
+      primaryPanel={
+        <OnboardingCatalogTabPanel
+          footnote={t("servers.localNotice", {
             defaultValue:
-              "We scanned every detected MCP client that has a local config file. Choose the servers you'd like MCPMate to import.",
+              "We scan your device automatically. Some servers may not appear due to version or compatibility—you can add them manually later.",
           })}
-        </p>
-      </div>
-
-      {clientsQuery.isLoading || isScanningServers || isLoadingRecommendations ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
-        </div>
-      ) : adminRecommendationsQuery.isError && candidates.length === 0 ? (
-        <Card>
-          <CardContent className="space-y-3 py-8 text-center text-slate-500">
-            <p>
-              {t("servers.recommendationError", {
-                defaultValue: "MCPMate could not load preset server data.",
-              })}
-            </p>
-            <p className="text-xs text-slate-400">
-              {stringifyError(adminRecommendationsQuery.error)}
-            </p>
-          </CardContent>
-        </Card>
-      ) : candidates.length === 0 ? (
-        <Card>
-          <CardContent className="space-y-3 py-8 text-center text-slate-500">
-            <p>
-              {t("servers.empty", {
+        >
+          <OnboardingCatalogToolbar
+            tagValue={localTagFilter}
+            onTagChange={setLocalTagFilter}
+            tagOptions={POPULAR_SERVER_TAG_FILTERS}
+            tagLabel={serverTagLabel}
+            refreshAriaLabel={t("servers.rescan", { defaultValue: "Rescan" })}
+            onRefresh={rescanServers}
+            refreshDisabled={clientsQuery.isFetching || scanQuery.isFetching}
+          />
+          {scannableClients.length === 0 ? (
+            <OnboardingEmptyCard
+              message={t("servers.noScannableClients", {
                 defaultValue:
-                  "No importable MCP servers were found across your detected clients.",
+                  "No detected MCP clients have a local configuration path to scan yet.",
               })}
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          <div className={ONBOARDING_SCROLLABLE_LIST_CLASS}>
-            <div className={ONBOARDING_TWO_COLUMN_LIST_CLASS}>
-              {candidates.map((server) => {
+              actionLabel={t("servers.emptyAction", {
+                defaultValue: "Browse popular servers",
+              })}
+              onAction={() => setActiveTab(SERVERS_POPULAR_TAB)}
+            />
+          ) : scanQuery.isError ? (
+            <OnboardingEmptyCard
+              message={String(
+                scanQuery.error instanceof Error ? scanQuery.error.message : "Server scan failed",
+              )}
+            />
+          ) : localServerCandidates.length === 0 ? (
+            <OnboardingEmptyCard
+              message={t("servers.empty", {
+                defaultValue:
+                  "No importable MCP servers were found in your local client configs.",
+              })}
+              actionLabel={t("servers.emptyAction", {
+                defaultValue: "Browse popular servers",
+              })}
+              onAction={() => setActiveTab(SERVERS_POPULAR_TAB)}
+            />
+          ) : filteredLocalServerCandidates.length === 0 ? (
+            <OnboardingEmptyCard message={emptyFilteredMessage} />
+          ) : (
+            <OnboardingScrollableGrid>
+              {filteredLocalServerCandidates.map((server) => {
                 const isSelected = selectedServers.has(server.key);
-                const detail =
-                  server.kind === "stdio" ? server.command : server.url;
+                const detail = server.kind === "stdio" ? server.command : server.url;
+                const logoUrl = server.logoUrl || undefined;
+                const showLogo = Boolean(logoUrl) && !logoLoadFailed(server.key);
                 return (
-                  <button
+                  <OnboardingServerCard
                     key={server.key}
-                    type="button"
-                    aria-pressed={isSelected}
-                    aria-label={t(isSelected ? "servers.selectedAria" : "servers.unselectedAria", {
-                      defaultValue: isSelected ? "{{name}} server selected" : "{{name}} server not selected",
+                    name={server.name}
+                    kind={server.kind}
+                    detail={detail ?? undefined}
+                    logoUrl={logoUrl}
+                    showLogo={showLogo}
+                    onLogoError={() => markLogoLoadFailed(server.key)}
+                    isSelected={isSelected}
+                    onToggle={() => onToggle(server.key)}
+                    sourceLabel={`${t("servers.sources", { defaultValue: "Found in" })}: ${server.source_clients.join(", ")}`}
+                    selectedAriaLabel={t("servers.selectedAria", {
+                      defaultValue: "{{name}} server selected",
                       name: server.name,
                     })}
-                    onClick={() => onToggle(server.key)}
-                    className={`flex items-center gap-4 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                      ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
-                      }`}
-                  >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
-                      <Server className="h-5 w-5 text-violet-600 dark:text-violet-400" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{server.name}</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                          {server.kind}
-                        </span>
-                      </div>
-                      {detail && (
-                        <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
-                          {detail}
-                        </div>
-                      )}
-                      <div className="mt-1.5 text-xs text-slate-400">
-                        {t("servers.sources", { defaultValue: "Found in" })}: {server.source_clients.join(", ")}
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <Check className="h-5 w-5 shrink-0 text-emerald-500" />
-                    )}
-                  </button>
+                    unselectedAriaLabel={t("servers.unselectedAria", {
+                      defaultValue: "{{name}} server not selected",
+                      name: server.name,
+                    })}
+                  />
                 );
               })}
-            </div>
-          </div>
-          {usingAdminRecommendations && (
-            <p className="text-center text-xs text-slate-400 dark:text-slate-500">
-              {t("servers.recommendationNotice", {
-                defaultValue: "These MCPMate server presets can be imported directly.",
-              })}
-            </p>
+            </OnboardingScrollableGrid>
           )}
-        </div>
-      )}
-    </div>
+        </OnboardingCatalogTabPanel>
+      }
+      popularPanel={
+        <OnboardingCatalogTabPanel
+          footnote={t("servers.recommendationNotice", {
+            defaultValue:
+              "These presets can be imported directly without an existing local client config.",
+          })}
+        >
+          {popularServersQuery.isError || popularServerCandidates.length === 0 ? (
+            <OnboardingEmptyCard message={recommendationErrorMessage} />
+          ) : (
+            <>
+              <OnboardingCatalogToolbar
+                tagValue={popularTagFilter}
+                onTagChange={setPopularTagFilter}
+                tagOptions={POPULAR_SERVER_TAG_FILTERS}
+                tagLabel={serverTagLabel}
+                refreshAriaLabel={t("servers.refresh", { defaultValue: "Refresh" })}
+                onRefresh={() => void popularServersQuery.refetch()}
+                refreshDisabled={popularServersQuery.isFetching}
+              />
+              {filteredPopularServerCandidates.length === 0 ? (
+                <OnboardingEmptyCard message={emptyFilteredMessage} />
+              ) : (
+                <OnboardingScrollableGrid>
+                  {filteredPopularServerCandidates.map((server) => {
+                    const isSelected = selectedServers.has(server.key);
+                    const logoUrl = server.logoUrl || undefined;
+                    const showLogo = Boolean(logoUrl) && !logoLoadFailed(server.key);
+                    return (
+                      <OnboardingServerCard
+                        key={server.key}
+                        name={server.name}
+                        kind={server.kind}
+                        description={server.description || undefined}
+                        logoUrl={logoUrl}
+                        showLogo={showLogo}
+                        onLogoError={() => markLogoLoadFailed(server.key)}
+                        isSelected={isSelected}
+                        onToggle={() => onToggle(server.key)}
+                        selectedAriaLabel={t("servers.selectedAria", {
+                          defaultValue: "{{name}} server selected",
+                          name: server.name,
+                        })}
+                        unselectedAriaLabel={t("servers.unselectedAria", {
+                          defaultValue: "{{name}} server not selected",
+                          name: server.name,
+                        })}
+                      />
+                    );
+                  })}
+                </OnboardingScrollableGrid>
+              )}
+            </>
+          )}
+        </OnboardingCatalogTabPanel>
+      }
+    />
   );
 }
 
 // ── Community step ────────────────────────────────────────────────────────────
 
 const COMMUNITY_LINKS = [
-  {
-    key: "discord",
-    titleKey: "community.discord.title",
-    defaultTitle: "Discord",
-    descriptionKey: "community.discord.description",
-    defaultDescription:
-      "Chat with the community, get support, and follow product updates.",
-    href: MCPMATE_DISCORD_COMMUNITY_HREF,
-  },
   {
     key: "github",
     titleKey: "community.github.title",
@@ -1732,7 +1892,53 @@ const COMMUNITY_LINKS = [
   },
 ] as const;
 
-function CommunityLinkBrandIcon({ linkKey }: { linkKey: (typeof COMMUNITY_LINKS)[number]["key"] }) {
+type CommunityChatLinkKey = "discord" | "feishu";
+
+type CommunityLink =
+  | {
+      key: CommunityChatLinkKey;
+      titleKey: string;
+      defaultTitle: string;
+      descriptionKey: string;
+      defaultDescription: string;
+      href: string;
+    }
+  | (typeof COMMUNITY_LINKS)[number];
+
+function communityChatLink(language: string): Extract<CommunityLink, { key: CommunityChatLinkKey }> {
+  if (prefersFeishuCommunity(language)) {
+    return {
+      key: "feishu",
+      titleKey: "community.feishu.title",
+      defaultTitle: "Feishu Community",
+      descriptionKey: "community.feishu.description",
+      defaultDescription:
+        "Join the Chinese user community for support, tips, and product updates.",
+      href: MCPMATE_FEISHU_COMMUNITY_HREF,
+    };
+  }
+  return {
+    key: "discord",
+    titleKey: "community.discord.title",
+    defaultTitle: "Discord",
+    descriptionKey: "community.discord.description",
+    defaultDescription: "Chat with the community, get support, and follow product updates.",
+    href: MCPMATE_DISCORD_COMMUNITY_HREF,
+  };
+}
+
+function communityLinksForLanguage(language: string): CommunityLink[] {
+  return [communityChatLink(language), ...COMMUNITY_LINKS];
+}
+
+function CommunityLinkBrandIcon({ linkKey }: { linkKey: CommunityLink["key"] }) {
+  if (linkKey === "feishu") {
+    return (
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white ring-1 ring-slate-200/80 dark:bg-slate-900 dark:ring-slate-700">
+        <FeishuIcon className="h-8 w-8" />
+      </div>
+    );
+  }
   if (linkKey === "discord") {
     return (
       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 dark:bg-indigo-950/40">
@@ -1755,7 +1961,12 @@ function CommunityLinkBrandIcon({ linkKey }: { linkKey: (typeof COMMUNITY_LINKS)
 }
 
 function CommunityStep() {
-  const { t } = useTranslation("onboarding");
+  const { t, i18n } = useTranslation("onboarding");
+  const communityLinks = useMemo(
+    () => communityLinksForLanguage(i18n.language),
+    [i18n.language],
+  );
+  const showDiscordFallback = prefersFeishuCommunity(i18n.language);
   return (
     <div className="mx-auto flex min-h-[520px] w-full flex-col justify-center">
       <div className="mb-8 text-center">
@@ -1774,7 +1985,7 @@ function CommunityStep() {
       </div>
 
       <div className="mb-6 grid gap-4 md:grid-cols-3">
-        {COMMUNITY_LINKS.map((link) => {
+        {communityLinks.map((link) => {
           const cardTitle = t(link.titleKey, { defaultValue: link.defaultTitle });
           return (
             <a
@@ -1809,6 +2020,22 @@ function CommunityStep() {
           );
         })}
       </div>
+      {showDiscordFallback ? (
+        <p className="text-center text-sm text-slate-500 dark:text-slate-400">
+          {t("community.discordFallback", {
+            defaultValue: "International users can join our",
+          })}{" "}
+          <a
+            href={MCPMATE_DISCORD_COMMUNITY_HREF}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-slate-700 underline-offset-2 hover:underline dark:text-slate-300"
+          >
+            {t("community.discord.title", { defaultValue: "Discord" })}
+          </a>
+          {t("community.discordFallbackSuffix", { defaultValue: " community." })}
+        </p>
+      ) : null}
     </div>
   );
 }
