@@ -2,6 +2,25 @@ import type { ClientConfigFileParse, ClientConfigFileState, TransportRuleData } 
 
 export type AdminDiscoverySurface = "onboarding" | "extension";
 export type AdminDiscoveryPlatform = "macos" | "windows" | "linux";
+export type AdminDiscoveryLocale = "en" | "zh" | "ja";
+
+export function adminDiscoveryLocaleFromI18n(language: string | undefined): AdminDiscoveryLocale {
+	const lower = language?.toLowerCase() ?? "";
+	if (lower.startsWith("zh")) return "zh";
+	if (lower.startsWith("ja")) return "ja";
+	return "en";
+}
+
+export function adminDiscoveryAcceptLanguage(locale: AdminDiscoveryLocale): string {
+	switch (locale) {
+		case "zh":
+			return "zh-CN,zh;q=0.9,en;q=0.8";
+		case "ja":
+			return "ja-JP,ja;q=0.9,en;q=0.8";
+		default:
+			return "en-US,en;q=0.9";
+	}
+}
 
 const MAX_ADMIN_DISCOVERY_LIMIT = 50;
 const MAX_ADMIN_DISCOVERY_RANDOM = 12;
@@ -22,6 +41,7 @@ export interface AdminDiscoveryQuery {
 	offset?: number;
 	random?: number;
 	platform?: AdminDiscoveryPlatform;
+	locale?: string;
 }
 
 export interface AdminDiscoveryClientCandidate {
@@ -126,9 +146,13 @@ export function buildAdminDiscoveryUrl(
 	if (options.surface) {
 		url.searchParams.set("surface", options.surface);
 	}
+	const locale = options.locale ? adminDiscoveryLocaleFromI18n(options.locale) : undefined;
 	const random = cappedCount(options.random, MAX_ADMIN_DISCOVERY_RANDOM);
 	if (typeof random === "number") {
 		url.searchParams.set("random", String(random));
+		if (locale) {
+			url.searchParams.set("locale", locale);
+		}
 		return url.toString();
 	}
 	const limit = cappedCount(options.limit, MAX_ADMIN_DISCOVERY_LIMIT);
@@ -138,12 +162,21 @@ export function buildAdminDiscoveryUrl(
 	if (typeof options.offset === "number" && Number.isFinite(options.offset)) {
 		url.searchParams.set("offset", String(Math.max(0, Math.round(options.offset))));
 	}
+	if (locale) {
+		url.searchParams.set("locale", locale);
+	}
 	return url.toString();
 }
 
 async function fetchAdminDiscoveryEnvelope(path: "/discovery/clients" | "/discovery/servers", options: AdminDiscoveryQuery) {
+	const locale = options.locale ? adminDiscoveryLocaleFromI18n(options.locale) : undefined;
+	const headers: HeadersInit = { Accept: "application/json" };
+	if (locale) {
+		headers["Accept-Language"] = adminDiscoveryAcceptLanguage(locale);
+	}
 	const response = await fetch(buildAdminDiscoveryUrl(path, options), {
 		credentials: "omit",
+		headers,
 	});
 	if (!response.ok) {
 		throw new Error(`Admin discovery request failed with HTTP ${response.status}`);
