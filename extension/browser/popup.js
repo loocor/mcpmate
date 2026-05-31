@@ -796,7 +796,7 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 	const offset = reset ? 0 : current.nextOffset;
 	const limit = DISCOVERY_PAGE_SIZE;
 	const shouldClearEntries = shouldClearEntriesBeforeLoad(current, { reset });
-	if (reset) {
+	if (bypassCache) {
 		await clearDiscoveryCacheForKind(kind);
 	}
 	discoveryStates.set(kind, { ...current, loading: true });
@@ -814,7 +814,7 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 		const data = await fetchDiscoveryData(kind, {
 			limit,
 			offset,
-			bypassCache: reset || bypassCache,
+			bypassCache,
 			locale: activeDiscoveryLocale(),
 			catalogGeneratedAt: reset ? null : current.catalogGeneratedAt,
 		});
