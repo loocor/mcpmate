@@ -3,9 +3,11 @@ import {
 	entryUrl,
 	iconUrl,
 } from "./catalog-entry.mjs";
+import { communityFooterForLanguage } from "./community-links.mjs";
 import {
 	discoveryAcceptLanguage,
 	discoveryLocaleFromLanguage,
+	extensionLanguageFromBrowser,
 } from "./discovery-locale.mjs";
 import {
 	DISCOVERY_PAGE_SIZE,
@@ -60,7 +62,7 @@ const COPY = {
 			github: "GitHub",
 			website: "Website",
 			settings: "Settings",
-			discord: "Discord",
+			community: "Discord",
 		},
 		actions: {
 			refresh: "Refresh",
@@ -114,7 +116,7 @@ const COPY = {
 			github: "GitHub",
 			website: "官网",
 			settings: "设置",
-			discord: "Discord",
+			community: "飞书社群",
 		},
 		actions: {
 			refresh: "刷新",
@@ -168,7 +170,7 @@ const COPY = {
 			github: "GitHub",
 			website: "Web サイト",
 			settings: "設定",
-			discord: "Discord",
+			community: "Discord",
 		},
 		actions: {
 			refresh: "更新",
@@ -235,6 +237,8 @@ const ICONS = {
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg>',
 	discord:
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5h.01"/><path d="M16 12.5h.01"/><path d="M7.5 8.5c3-1 6-1 9 0"/><path d="M8 17c-1.3-.4-2.5-1-3.5-1.8.2-3.2 1-6.3 2.4-9.2A14 14 0 0 1 10 5l.6 1.2a12.5 12.5 0 0 1 2.8 0L14 5a14 14 0 0 1 3.1 1c1.4 2.9 2.2 6 2.4 9.2A13 13 0 0 1 16 17l-.8-1.2a9 9 0 0 1-6.4 0z"/></svg>',
+	feishu:
+		'<svg viewBox="0 0 152.43 121.72" fill="none" aria-hidden="true"><path d="m59.72 78.46c10.91 5.21 22.6 9.68 34.96 12.41 9.16 2.02 18.42.19 26.07-4.59 2.1-1.31 3.48-3.13 6.17-3.19-27.19 39.64-82.54 50.85-123.14 23.88-2.49-1.44-3.78-4.35-3.78-6.13v-65.92c18.29 19.15 37.71 32.95 59.72 43.54z" fill="#3570fa"/><path d="m114.54 36.97c-15.74 4.73-23.4 15.72-35.31 26.5-14.16-24.41-33.12-45.28-56.81-63.47h71.87c10.51 10.59 16.27 23.5 20.24 36.97z" fill="#06d4b9"/><path d="m126.92 83.09c-2.69.06-4.07 1.88-6.17 3.19-7.65 4.78-16.91 6.62-26.07 4.59-12.36-2.73-24.05-7.21-34.96-12.41 7.37-4.17 13.47-9.52 19.5-14.99 11.91-10.78 19.57-21.77 35.31-26.5 12.29-3.7 25.56-3.01 37.89 2.95-11.65 12.95-15.3 28.29-25.51 43.17z" fill="#143d99"/></svg>',
 	refresh:
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
 	settings:
@@ -243,6 +247,7 @@ const ICONS = {
 
 function renderInlineIcons() {
 	for (const el of document.querySelectorAll("[data-icon]")) {
+		if (el.closest("#community-button")) continue;
 		el.innerHTML = ICONS[el.dataset.icon] || "";
 	}
 }
@@ -293,16 +298,30 @@ function localStorageArea() {
 	return chrome?.storage?.local || null;
 }
 
+function initialSettingsFromBrowser() {
+	return {
+		...DEFAULT_SETTINGS,
+		language: extensionLanguageFromBrowser(),
+	};
+}
+
 async function readSettings() {
 	const area = storageArea();
 	if (area) {
 		const stored = await area.get(SETTINGS_KEY);
-		return normalizeSettings(stored[SETTINGS_KEY] || DEFAULT_SETTINGS);
+		if (Object.prototype.hasOwnProperty.call(stored, SETTINGS_KEY)) {
+			return normalizeSettings(stored[SETTINGS_KEY]);
+		}
+		return normalizeSettings(initialSettingsFromBrowser());
 	}
 	try {
-		return normalizeSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"));
+		const raw = localStorage.getItem(SETTINGS_KEY);
+		if (raw) {
+			return normalizeSettings(JSON.parse(raw));
+		}
+		return normalizeSettings(initialSettingsFromBrowser());
 	} catch {
-		return DEFAULT_SETTINGS;
+		return normalizeSettings(initialSettingsFromBrowser());
 	}
 }
 
@@ -426,6 +445,22 @@ function documentLanguage(language) {
 	return "en";
 }
 
+function applyCommunityFooter(language) {
+	const copy = COPY[language] || COPY.en;
+	const { iconKey, href } = communityFooterForLanguage(language);
+	const button = document.getElementById("community-button");
+	if (!button) return;
+	button.dataset.openUrl = href;
+	button.classList.toggle("is-feishu", iconKey === "feishu");
+	setButtonLabel("community-button", copy.footer.community);
+	setText("community-label", copy.footer.community);
+	const iconEl = button.querySelector("[data-icon]");
+	if (iconEl) {
+		iconEl.dataset.icon = iconKey;
+		iconEl.innerHTML = ICONS[iconKey] || "";
+	}
+}
+
 function applyCopy(language) {
 	activeCopy = COPY[language] || COPY.en;
 	document.documentElement.lang = documentLanguage(language);
@@ -442,9 +477,8 @@ function applyCopy(language) {
 	setButtonLabel("github-button", activeCopy.footer.github);
 	setButtonLabel("website-button", activeCopy.footer.website);
 	setButtonLabel("settings-button", activeCopy.footer.settings);
-	setButtonLabel("discord-button", activeCopy.footer.discord);
 	setButtonLabel("refresh-button", activeCopy.actions.refresh);
-	setText("discord-label", activeCopy.footer.discord);
+	applyCommunityFooter(language);
 	setText("build-date", BUILD_DATE);
 	for (const button of document.querySelectorAll(".open-button")) {
 		button.setAttribute("aria-label", activeCopy.visit);
@@ -1013,7 +1047,6 @@ function activatePanel(panelName) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-	renderInlineIcons();
 	currentSettings = await readSettings();
 	const languageSelect = document.getElementById("language-select");
 	const themeSelect = document.getElementById("theme-select");
@@ -1021,6 +1054,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	languageSelect.value = currentSettings.language;
 	themeSelect.value = currentSettings.theme;
 	applyCopy(currentSettings.language);
+	renderInlineIcons();
 	applyTheme(currentSettings.theme);
 
 	ensureSectionRendered(activePanelName).catch(() => {
@@ -1028,8 +1062,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 	});
 
 	async function persist(nextSettings) {
+		const languageChanged = nextSettings.language !== currentSettings.language;
 		currentSettings = await writeSettings(nextSettings);
-		applyCopy(currentSettings.language);
+		if (languageChanged) {
+			applyCopy(currentSettings.language);
+		}
 		applyTheme(currentSettings.theme);
 	}
 
