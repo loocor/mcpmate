@@ -65,18 +65,18 @@ const Segment = React.forwardRef<
 				>
 					{options.map((option) => {
 						const isOptionDisabled = disabled || option.disabled;
-						const displayLabel = option.status
-							? `${option.label} (${option.status})`
-							: option.label;
+						const accessibleLabel =
+							option.ariaLabel ??
+							(option.status ? `${option.label} (${option.status})` : option.label);
 
 						const trigger = (
 							<TabsPrimitive.Trigger
 								key={option.value}
 								value={option.value}
 								disabled={isOptionDisabled}
-								aria-label={option.ariaLabel ?? displayLabel}
+								aria-label={accessibleLabel}
 								className={cn(
-									"inline-flex flex-1 items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-slate-950 data-[state=active]:shadow-sm dark:ring-offset-slate-950 dark:focus-visible:ring-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-slate-50",
+									"group inline-flex flex-1 items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-slate-950 data-[state=active]:shadow-sm dark:ring-offset-slate-950 dark:focus-visible:ring-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-slate-50",
 									"flex items-center gap-2",
 									option.disabled && "opacity-50 cursor-not-allowed",
 								)}
@@ -96,7 +96,24 @@ const Segment = React.forwardRef<
 								{option.icon && (
 									<span className="flex-shrink-0">{option.icon}</span>
 								)}
-								<span>{displayLabel}</span>
+								<span>
+									{option.label}
+									{option.status ? (
+										<sup className="ml-0.5">
+											<span
+												className={cn(
+													"inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-1 text-[9px] font-semibold leading-none tabular-nums",
+													"border-slate-300/80 bg-white/90 text-slate-500",
+													"group-data-[state=active]:border-slate-300 group-data-[state=active]:bg-slate-50 group-data-[state=active]:text-slate-700",
+													"dark:border-slate-600 dark:bg-slate-900/70 dark:text-slate-400",
+													"dark:group-data-[state=active]:border-slate-500 dark:group-data-[state=active]:bg-slate-800 dark:group-data-[state=active]:text-slate-200",
+												)}
+											>
+												{option.status}
+											</span>
+										</sup>
+									) : null}
+								</span>
 							</TabsPrimitive.Trigger>
 						);
 
