@@ -1,0 +1,16 @@
+{
+	"$schema": "../gen/schemas/desktop-capability.json",
+	"identifier": "operator-window",
+	"description": "Capability for the dedicated Tray Operator Panel window",
+	"windows": ["operator"],
+	"permissions": [
+		"core:default",
+		"core:window:allow-start-dragging",
+		"dialog:default",
+		"opener:default",
+		"clipboard-manager:allow-write-text",
+		{
+			"identifier": "opener:allow-default-urls"
+		}
+	]
+}

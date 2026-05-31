@@ -45,6 +45,10 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlSort, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
+import {
+	canIngestFromDataTransfer,
+	extractPayloadFromDataTransfer,
+} from "../../lib/server-uni-import-transfer";
 import type {
 	MCPServerConfig,
 	ServerDetail,
@@ -67,54 +71,6 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 // Helper function to get the instance count for a server
 function getCapabilitySummary(server: ServerSummary) {
 	return server.capability ?? server.capabilities ?? undefined;
-}
-
-function canIngestFromDataTransfer(dataTransfer: DataTransfer | null): boolean {
-	if (!dataTransfer) return false;
-	const types = Array.from(dataTransfer.types ?? []);
-	return (
-		types.includes("Files") ||
-		types.includes("text/plain") ||
-		types.includes("text/uri-list")
-	);
-}
-
-async function extractPayloadFromDataTransfer(
-	dataTransfer: DataTransfer,
-): Promise<{ text?: string; buffer?: ArrayBuffer; fileName?: string } | null> {
-	if (dataTransfer.files && dataTransfer.files.length > 0) {
-		const file = dataTransfer.files[0];
-		if (file.name.endsWith(".mcpb") || file.name.endsWith(".dxt")) {
-			// Try bundle-style parsing first (.mcpb, optionally .dxt if it matches the same layout)
-			return { buffer: await file.arrayBuffer(), fileName: file.name };
-		}
-		return { text: await file.text(), fileName: file.name };
-	}
-
-	const plainText = dataTransfer.getData("text/plain");
-	if (plainText) {
-		return { text: plainText };
-	}
-
-	const uriList = dataTransfer.getData("text/uri-list");
-	if (uriList) {
-		return { text: uriList };
-	}
-
-	if (dataTransfer.items && dataTransfer.items.length > 0) {
-		for (const item of Array.from(dataTransfer.items)) {
-			if (item.kind === "string") {
-				const value = await new Promise<string | null>((resolve) => {
-					item.getAsString((text) => resolve(text ?? null));
-				});
-				if (value) {
-					return { text: value };
-				}
-			}
-		}
-	}
-
-	return null;
 }
 
 export function ServerListPage() {
