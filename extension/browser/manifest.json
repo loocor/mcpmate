@@ -2,7 +2,7 @@
 	"manifest_version": 3,
 	"name": "MCPMate",
 	"short_name": "MCPMate",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Discover curated MCP resources and send detected MCP snippets to MCPMate desktop.",
 	"homepage_url": "https://mcp.umate.ai",
 	"minimum_chrome_version": "114",
@@ -27,6 +27,33 @@
 	"content_scripts": [
 		{
 			"matches": ["<all_urls>"],
+			"exclude_matches": [
+				"*://*/*.svg",
+				"*://*/*.png",
+				"*://*/*.jpg",
+				"*://*/*.jpeg",
+				"*://*/*.gif",
+				"*://*/*.webp",
+				"*://*/*.ico",
+				"*://*/*.bmp",
+				"*://*/*.avif",
+				"*://*/*.pdf",
+				"*://*/*.json",
+				"*://*/*.css",
+				"*://*/*.js",
+				"*://*/*.mjs",
+				"*://*/*.xml",
+				"*://*/*.woff",
+				"*://*/*.woff2",
+				"*://*/*.ttf",
+				"*://*/*.eot",
+				"*://*/*.mp4",
+				"*://*/*.webm",
+				"*://*/*.mp3",
+				"*://*/*.wav",
+				"*://*/*.zip",
+				"*://*/*.gz"
+			],
 			"js": ["content.js"],
 			"run_at": "document_idle"
 		}

@@ -375,11 +375,11 @@ test("onboarding wizard completes and stays out after completion", async ({ page
   await expect(page.getByText("Check Your Environment")).toBeVisible();
 
   await page.getByRole("button", { name: /^Next$/ }).click();
-  await expect(page.getByText("Detected MCP Clients")).toBeVisible();
+  await expect(page.getByText("Set Up MCP Clients")).toBeVisible();
 
   await page.getByRole("button", { name: /Claude Desktop/ }).click();
   await page.getByRole("button", { name: /^Next$/ }).click();
-  await expect(page.getByText("Import Existing Servers")).toBeVisible();
+  await expect(page.getByText("Set Up MCP Servers")).toBeVisible();
 
   await page.getByRole("button", { name: /test-server/ }).click();
   await page.getByRole("button", { name: /^Next$/ }).click();
@@ -450,10 +450,10 @@ test("onboarding uses client presets when local detection is empty", async ({ pa
   await startOnboardingWizard(page);
   await page.getByRole("button", { name: /^Next$/ }).click();
 
-  await expect(page.getByText("Detected MCP Clients")).toBeVisible();
+  await expect(page.getByText("Set Up MCP Clients")).toBeVisible();
   await expect(page.getByRole("button", { name: /Cursor/ })).toBeVisible();
-  await expect(page.getByText("Preset client")).toBeVisible();
-  await expect(page.getByText(/client presets can be applied directly/i)).toBeVisible();
+  await expect(page.getByText("Installable")).toBeVisible();
+  await expect(page.getByText(/stay pending until installed/i)).toBeVisible();
 
   await page.getByRole("button", { name: /Cursor/ }).click();
   await page.getByRole("button", { name: /^Next$/ }).click();
@@ -461,7 +461,7 @@ test("onboarding uses client presets when local detection is empty", async ({ pa
   await page.getByRole("button", { name: /Finish Setup/i }).click();
 
   await expect.poll(() => clientUpdates.length).toBeGreaterThan(0);
-  expect(adminRequests.some((url) => url.pathname === "/discovery/clients" && url.searchParams.get("random") === "6")).toBe(
+  expect(adminRequests.some((url) => url.pathname === "/discovery/clients" && url.searchParams.get("limit") === "50")).toBe(
     true,
   );
   expect(clientUpdates).toContainEqual({
@@ -526,16 +526,16 @@ test("onboarding imports server presets through existing backend import API", as
   await page.getByRole("button", { name: /^Next$/ }).click();
   await page.getByRole("button", { name: /^Next$/ }).click();
 
-  await expect(page.getByText("Import Existing Servers")).toBeVisible();
+  await expect(page.getByText("Set Up MCP Servers")).toBeVisible();
   await expect(page.getByRole("button", { name: /GitHub/ })).toBeVisible();
-  await expect(page.getByText(/server presets can be imported directly/i)).toBeVisible();
+  await expect(page.getByText(/can be imported directly without an existing local client config/i)).toBeVisible();
 
   await page.getByRole("button", { name: /GitHub/ }).click();
   await page.getByRole("button", { name: /^Next$/ }).click();
   await page.getByRole("button", { name: /Finish Setup/i }).click();
 
   await expect.poll(() => serverImports.length).toBeGreaterThan(0);
-  expect(adminRequests.some((url) => url.pathname === "/discovery/servers" && url.searchParams.get("random") === "6")).toBe(
+  expect(adminRequests.some((url) => url.pathname === "/discovery/servers" && url.searchParams.get("limit") === "50")).toBe(
     true,
   );
   expect(serverImports).toContainEqual(

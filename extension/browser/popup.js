@@ -3,6 +3,12 @@ import {
 	entryUrl,
 	iconUrl,
 } from "./catalog-entry.mjs";
+import { communityFooterForLanguage } from "./community-links.mjs";
+import {
+	discoveryAcceptLanguage,
+	discoveryLocaleFromLanguage,
+	extensionLanguageFromBrowser,
+} from "./discovery-locale.mjs";
 import {
 	DISCOVERY_PAGE_SIZE,
 	buildDiscoveryUrl,
@@ -38,6 +44,11 @@ const DEFAULT_SETTINGS = {
 	language: "en",
 	theme: "system",
 };
+let currentSettings = { ...DEFAULT_SETTINGS };
+
+function activeDiscoveryLocale() {
+	return discoveryLocaleFromLanguage(currentSettings.language);
+}
 const COPY = {
 	en: {
 		title: "MCPMate",
@@ -51,7 +62,7 @@ const COPY = {
 			github: "GitHub",
 			website: "Website",
 			settings: "Settings",
-			discord: "Discord",
+			community: "Discord",
 		},
 		actions: {
 			refresh: "Refresh",
@@ -105,7 +116,7 @@ const COPY = {
 			github: "GitHub",
 			website: "官网",
 			settings: "设置",
-			discord: "Discord",
+			community: "飞书社群",
 		},
 		actions: {
 			refresh: "刷新",
@@ -159,7 +170,7 @@ const COPY = {
 			github: "GitHub",
 			website: "Web サイト",
 			settings: "設定",
-			discord: "Discord",
+			community: "Discord",
 		},
 		actions: {
 			refresh: "更新",
@@ -226,6 +237,8 @@ const ICONS = {
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/></svg>',
 	discord:
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5h.01"/><path d="M16 12.5h.01"/><path d="M7.5 8.5c3-1 6-1 9 0"/><path d="M8 17c-1.3-.4-2.5-1-3.5-1.8.2-3.2 1-6.3 2.4-9.2A14 14 0 0 1 10 5l.6 1.2a12.5 12.5 0 0 1 2.8 0L14 5a14 14 0 0 1 3.1 1c1.4 2.9 2.2 6 2.4 9.2A13 13 0 0 1 16 17l-.8-1.2a9 9 0 0 1-6.4 0z"/></svg>',
+	feishu:
+		'<svg viewBox="0 0 152.43 121.72" fill="none" aria-hidden="true"><path d="m59.72 78.46c10.91 5.21 22.6 9.68 34.96 12.41 9.16 2.02 18.42.19 26.07-4.59 2.1-1.31 3.48-3.13 6.17-3.19-27.19 39.64-82.54 50.85-123.14 23.88-2.49-1.44-3.78-4.35-3.78-6.13v-65.92c18.29 19.15 37.71 32.95 59.72 43.54z" fill="#3570fa"/><path d="m114.54 36.97c-15.74 4.73-23.4 15.72-35.31 26.5-14.16-24.41-33.12-45.28-56.81-63.47h71.87c10.51 10.59 16.27 23.5 20.24 36.97z" fill="#06d4b9"/><path d="m126.92 83.09c-2.69.06-4.07 1.88-6.17 3.19-7.65 4.78-16.91 6.62-26.07 4.59-12.36-2.73-24.05-7.21-34.96-12.41 7.37-4.17 13.47-9.52 19.5-14.99 11.91-10.78 19.57-21.77 35.31-26.5 12.29-3.7 25.56-3.01 37.89 2.95-11.65 12.95-15.3 28.29-25.51 43.17z" fill="#143d99"/></svg>',
 	refresh:
 		'<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
 	settings:
@@ -234,6 +247,7 @@ const ICONS = {
 
 function renderInlineIcons() {
 	for (const el of document.querySelectorAll("[data-icon]")) {
+		if (el.closest("#community-button")) continue;
 		el.innerHTML = ICONS[el.dataset.icon] || "";
 	}
 }
@@ -284,16 +298,30 @@ function localStorageArea() {
 	return chrome?.storage?.local || null;
 }
 
+function initialSettingsFromBrowser() {
+	return {
+		...DEFAULT_SETTINGS,
+		language: extensionLanguageFromBrowser(),
+	};
+}
+
 async function readSettings() {
 	const area = storageArea();
 	if (area) {
 		const stored = await area.get(SETTINGS_KEY);
-		return normalizeSettings(stored[SETTINGS_KEY] || DEFAULT_SETTINGS);
+		if (Object.prototype.hasOwnProperty.call(stored, SETTINGS_KEY)) {
+			return normalizeSettings(stored[SETTINGS_KEY]);
+		}
+		return normalizeSettings(initialSettingsFromBrowser());
 	}
 	try {
-		return normalizeSettings(JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"));
+		const raw = localStorage.getItem(SETTINGS_KEY);
+		if (raw) {
+			return normalizeSettings(JSON.parse(raw));
+		}
+		return normalizeSettings(initialSettingsFromBrowser());
 	} catch {
-		return DEFAULT_SETTINGS;
+		return normalizeSettings(initialSettingsFromBrowser());
 	}
 }
 
@@ -312,7 +340,30 @@ function discoveryCacheKey(kind, requestUrl) {
 	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
 }
 
-async function readDiscoveryCache(kind, requestUrl) {
+function discoveryCachePrefixForKind(kind) {
+	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.`;
+}
+
+async function clearDiscoveryCacheForKind(kind) {
+	const prefix = discoveryCachePrefixForKind(kind);
+	const area = localStorageArea();
+	if (area) {
+		const all = await area.get(null);
+		const keysToRemove = Object.keys(all).filter((key) => key.startsWith(prefix));
+		if (keysToRemove.length > 0) {
+			await area.remove(keysToRemove);
+		}
+		return;
+	}
+	for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+		const key = localStorage.key(index);
+		if (key?.startsWith(prefix)) {
+			localStorage.removeItem(key);
+		}
+	}
+}
+
+async function readDiscoveryCache(kind, requestUrl, catalogGeneratedAt) {
 	const key = discoveryCacheKey(kind, requestUrl);
 	const area = localStorageArea();
 	let cached;
@@ -328,6 +379,12 @@ async function readDiscoveryCache(kind, requestUrl) {
 	if (!cached || Date.now() - cached.cachedAt > DISCOVERY_CACHE_TTL_MS) {
 		return null;
 	}
+	if (
+		catalogGeneratedAt &&
+		(!cached.catalogGeneratedAt || cached.catalogGeneratedAt !== catalogGeneratedAt)
+	) {
+		return null;
+	}
 	return cached.data || null;
 }
 
@@ -335,6 +392,7 @@ async function writeDiscoveryCache(kind, requestUrl, data) {
 	const key = discoveryCacheKey(kind, requestUrl);
 	const cached = {
 		cachedAt: Date.now(),
+		catalogGeneratedAt: typeof data?.generatedAt === "string" ? data.generatedAt : null,
 		data,
 	};
 	const area = localStorageArea();
@@ -387,6 +445,22 @@ function documentLanguage(language) {
 	return "en";
 }
 
+function applyCommunityFooter(language) {
+	const copy = COPY[language] || COPY.en;
+	const { iconKey, href } = communityFooterForLanguage(language);
+	const button = document.getElementById("community-button");
+	if (!button) return;
+	button.dataset.openUrl = href;
+	button.classList.toggle("is-feishu", iconKey === "feishu");
+	setButtonLabel("community-button", copy.footer.community);
+	setText("community-label", copy.footer.community);
+	const iconEl = button.querySelector("[data-icon]");
+	if (iconEl) {
+		iconEl.dataset.icon = iconKey;
+		iconEl.innerHTML = ICONS[iconKey] || "";
+	}
+}
+
 function applyCopy(language) {
 	activeCopy = COPY[language] || COPY.en;
 	document.documentElement.lang = documentLanguage(language);
@@ -403,9 +477,8 @@ function applyCopy(language) {
 	setButtonLabel("github-button", activeCopy.footer.github);
 	setButtonLabel("website-button", activeCopy.footer.website);
 	setButtonLabel("settings-button", activeCopy.footer.settings);
-	setButtonLabel("discord-button", activeCopy.footer.discord);
 	setButtonLabel("refresh-button", activeCopy.actions.refresh);
-	setText("discord-label", activeCopy.footer.discord);
+	applyCommunityFooter(language);
 	setText("build-date", BUILD_DATE);
 	for (const button of document.querySelectorAll(".open-button")) {
 		button.setAttribute("aria-label", activeCopy.visit);
@@ -662,21 +735,27 @@ function entryCard(kind, entry) {
 	});
 }
 
-function discoveryRequestUrl(kind, { limit, offset }) {
+function discoveryRequestUrl(kind, { limit, offset, locale }) {
 	const endpoint = discoveryEndpoints()[kind];
 	if (DISCOVERY_MODE === "mock") {
 		return endpoint;
 	}
-	return buildDiscoveryUrl(endpoint, discoveryQueryForPage({ kind, limit, offset }));
+	return buildDiscoveryUrl(
+		endpoint,
+		discoveryQueryForPage({ kind, limit, offset, locale }),
+	);
 }
 
-async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false }) {
-	const requestUrl = discoveryRequestUrl(kind, { limit, offset });
-	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl);
+async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false, locale, catalogGeneratedAt }) {
+	const requestUrl = discoveryRequestUrl(kind, { limit, offset, locale });
+	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl, catalogGeneratedAt);
 	if (!data) {
 		const response = await fetch(requestUrl, {
 			credentials: "omit",
-			headers: { accept: "application/json" },
+			headers: {
+				accept: "application/json",
+				...(locale ? { "Accept-Language": discoveryAcceptLanguage(locale) } : {}),
+			},
 		});
 		if (!response.ok) {
 			throw new Error(`${kind}:${response.status}`);
@@ -692,6 +771,7 @@ function blankDiscoveryState() {
 		entries: [],
 		hasMore: false,
 		nextOffset: 0,
+		catalogGeneratedAt: null,
 		loaded: false,
 		loading: false,
 	};
@@ -716,6 +796,9 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 	const offset = reset ? 0 : current.nextOffset;
 	const limit = DISCOVERY_PAGE_SIZE;
 	const shouldClearEntries = shouldClearEntriesBeforeLoad(current, { reset });
+	if (bypassCache) {
+		await clearDiscoveryCacheForKind(kind);
+	}
 	discoveryStates.set(kind, { ...current, loading: true });
 	if (reset) {
 		setSectionStatus(kind, activeCopy.loading[kind]);
@@ -728,7 +811,13 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 	}
 
 	try {
-		const data = await fetchDiscoveryData(kind, { limit, offset, bypassCache });
+		const data = await fetchDiscoveryData(kind, {
+			limit,
+			offset,
+			bypassCache,
+			locale: activeDiscoveryLocale(),
+			catalogGeneratedAt: reset ? null : current.catalogGeneratedAt,
+		});
 		const entries = normalizeEntries(kind, data);
 		const page = discoveryPageState({
 			kind,
@@ -740,8 +829,15 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 		const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, {
 			reset,
 		});
-		discoveryStates.set(kind, { ...next, loaded: true, loading: false });
-		const entriesToRender = entriesForPageRender(next, page, { reset });
+		const catalogGeneratedAt =
+			typeof data?.generatedAt === "string" ? data.generatedAt : next.catalogGeneratedAt;
+		discoveryStates.set(kind, {
+			...next,
+			catalogGeneratedAt,
+			loaded: true,
+			loading: false,
+		});
+		const entriesToRender = entriesForPageRender(next);
 
 		if (next.entries.length === 0) {
 			setSectionStatus(kind, activeCopy.empty[kind]);
@@ -751,7 +847,7 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 		}
 
 		setSectionStatus(kind, "");
-		setSectionEntries(kind, entriesToRender, { append: !reset });
+		setSectionEntries(kind, entriesToRender, { append: false });
 		setSectionFooter(kind, "");
 		if (activePanelName === kind) {
 			requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
@@ -787,7 +883,7 @@ function loadMoreIfActiveSentinelVisible() {
 	const content = document.getElementById("content-area");
 	if (!sentinel || !content) return;
 	if (!sentinelIsNearScrollEnd(sentinel, content)) return;
-	loadDiscoveryPage(activePanelName).catch(() => {});
+	loadDiscoveryPage(activePanelName).catch(() => { });
 }
 
 function setupPaginationObserver(content) {
@@ -799,7 +895,7 @@ function setupPaginationObserver(content) {
 				if (!entry.isIntersecting) continue;
 				const kind = entry.target.dataset.paginationKind;
 				if (kind !== activePanelName) continue;
-				loadDiscoveryPage(kind).catch(() => {});
+				loadDiscoveryPage(kind).catch(() => { });
 			}
 		},
 		{
@@ -908,6 +1004,7 @@ async function renderSection(kind, { bypassCache = false } = {}) {
 		limit: DISCOVERY_PAGE_SIZE,
 		offset: 0,
 		bypassCache,
+		locale: activeDiscoveryLocale(),
 	});
 	const entries = normalizeEntries(kind, data);
 	if (entries.length === 0) {
@@ -950,31 +1047,44 @@ function activatePanel(panelName) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-	renderInlineIcons();
-	let settings = await readSettings();
+	currentSettings = await readSettings();
 	const languageSelect = document.getElementById("language-select");
 	const themeSelect = document.getElementById("theme-select");
 	const content = document.getElementById("content-area");
-	languageSelect.value = settings.language;
-	themeSelect.value = settings.theme;
-	applyCopy(settings.language);
-	applyTheme(settings.theme);
+	languageSelect.value = currentSettings.language;
+	themeSelect.value = currentSettings.theme;
+	applyCopy(currentSettings.language);
+	renderInlineIcons();
+	applyTheme(currentSettings.theme);
 
 	ensureSectionRendered(activePanelName).catch(() => {
 		setSectionStatus(activePanelName, unavailableMessage(activePanelName));
 	});
 
 	async function persist(nextSettings) {
-		settings = await writeSettings(nextSettings);
-		applyCopy(settings.language);
-		applyTheme(settings.theme);
+		const languageChanged = nextSettings.language !== currentSettings.language;
+		currentSettings = await writeSettings(nextSettings);
+		if (languageChanged) {
+			applyCopy(currentSettings.language);
+		}
+		applyTheme(currentSettings.theme);
 	}
 
-	languageSelect.addEventListener("change", () =>
-		persist({ ...settings, language: languageSelect.value }),
-	);
+	function resetDiscoveryPanelsForLocaleChange() {
+		for (const kind of ["portals", "servers", "clients"]) {
+			discoveryStates.delete(kind);
+			renderedSections.delete(kind);
+		}
+	}
+
+	languageSelect.addEventListener("change", () => {
+		void persist({ ...currentSettings, language: languageSelect.value }).then(() => {
+			resetDiscoveryPanelsForLocaleChange();
+			refreshActivePanel().catch(() => { });
+		});
+	});
 	themeSelect.addEventListener("change", () =>
-		persist({ ...settings, theme: themeSelect.value }),
+		persist({ ...currentSettings, theme: themeSelect.value }),
 	);
 
 	for (const tab of document.querySelectorAll("[data-panel-target]")) {
@@ -983,7 +1093,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	setupPaginationObserver(content);
 	setupPullToRefresh(content);
 	document.getElementById("refresh-button").addEventListener("click", () => {
-		refreshActivePanel().catch(() => {});
+		refreshActivePanel().catch(() => { });
 	});
 	for (const button of document.querySelectorAll("[data-open-url]")) {
 		button.addEventListener("click", () => openExternalUrl(button.dataset.openUrl));
@@ -993,5 +1103,5 @@ document.addEventListener("DOMContentLoaded", async () => {
 		.addEventListener("click", () => activatePanel("settings"));
 	window
 		.matchMedia("(prefers-color-scheme: dark)")
-		.addEventListener("change", () => applyTheme(settings.theme));
+		.addEventListener("change", () => applyTheme(currentSettings.theme));
 });
