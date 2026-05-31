@@ -812,7 +812,7 @@ export function ClientFormDrawer({
 	onSuccess,
 	onDeleteSuccess,
 }: ClientFormDrawerProps) {
-	const { t } = useTranslation("clients");
+	const { t, i18n } = useTranslation("clients");
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
 	const formSchema = useMemo(() => createClientFormSchema(t), [t]);
@@ -887,8 +887,14 @@ export function ClientFormDrawer({
 	});
 	const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
 	const adminCatalogQuery = useQuery({
-		queryKey: ["adminDiscoveryClients", "drawer", adminDiscoveryPlatform ?? "web"],
-		queryFn: () => fetchAdminDiscoveryClientCatalog({ limit: 50, offset: 0, platform: adminDiscoveryPlatform }),
+		queryKey: ["adminDiscoveryClients", "drawer", adminDiscoveryPlatform ?? "web", i18n.language],
+		queryFn: () =>
+			fetchAdminDiscoveryClientCatalog({
+				limit: 50,
+				offset: 0,
+				platform: adminDiscoveryPlatform,
+				locale: i18n.language,
+			}),
 		enabled: open && adminDiscoveryPlatformQuery.isSuccess,
 		staleTime: 60_000,
 		retry: false,

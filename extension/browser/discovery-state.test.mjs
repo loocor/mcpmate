@@ -24,20 +24,27 @@ describe("browser extension discovery pagination", () => {
 		});
 	});
 
-	test("builds account discovery page URLs for the extension surface", () => {
+	test("builds account discovery page URLs with locale for the extension surface", () => {
 		const endpoint = "https://public.mcp.umate.ai/discovery/servers";
-		const query = discoveryQueryForPage({ kind: "servers", limit: 6, offset: 12 });
+		const query = discoveryQueryForPage({
+			kind: "servers",
+			limit: 6,
+			offset: 12,
+			locale: "zh",
+		});
 
 		expect(query).toEqual({
 			limit: 6,
 			offset: 12,
 			surface: "extension",
+			locale: "zh",
 		});
-		expect(
-			buildDiscoveryUrl(endpoint, query),
-		).toBe(
-			"https://public.mcp.umate.ai/discovery/servers?limit=6&offset=12&surface=extension",
-		);
+		const url = new URL(buildDiscoveryUrl(endpoint, query));
+		expect(url.origin + url.pathname).toBe("https://public.mcp.umate.ai/discovery/servers");
+		expect(url.searchParams.get("limit")).toBe("6");
+		expect(url.searchParams.get("offset")).toBe("12");
+		expect(url.searchParams.get("surface")).toBe("extension");
+		expect(url.searchParams.get("locale")).toBe("zh");
 	});
 
 	test("does not paginate portal requests", () => {
@@ -158,7 +165,7 @@ describe("browser extension discovery pagination", () => {
 		});
 	});
 
-	test("renders only new entries when adding a next page", () => {
+	test("renders accumulated entries after each page load", () => {
 		const current = {
 			entries: [{ identifier: "claude_desktop" }],
 			hasMore: true,
@@ -173,10 +180,7 @@ describe("browser extension discovery pagination", () => {
 		});
 		const next = nextDiscoveryPageState(current, page, { reset: false });
 
-		expect(entriesForPageRender(next, page, { reset: false })).toEqual([
-			{ identifier: "zed" },
-		]);
-		expect(entriesForPageRender(next, page, { reset: true })).toEqual([
+		expect(entriesForPageRender(next)).toEqual([
 			{ identifier: "claude_desktop" },
 			{ identifier: "zed" },
 		]);

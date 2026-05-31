@@ -4,6 +4,10 @@ import {
 	iconUrl,
 } from "./catalog-entry.mjs";
 import {
+	discoveryAcceptLanguage,
+	discoveryLocaleFromLanguage,
+} from "./discovery-locale.mjs";
+import {
 	DISCOVERY_PAGE_SIZE,
 	buildDiscoveryUrl,
 	discoveryPageState,
@@ -38,6 +42,11 @@ const DEFAULT_SETTINGS = {
 	language: "en",
 	theme: "system",
 };
+let currentSettings = { ...DEFAULT_SETTINGS };
+
+function activeDiscoveryLocale() {
+	return discoveryLocaleFromLanguage(currentSettings.language);
+}
 const COPY = {
 	en: {
 		title: "MCPMate",
@@ -312,7 +321,30 @@ function discoveryCacheKey(kind, requestUrl) {
 	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
 }
 
-async function readDiscoveryCache(kind, requestUrl) {
+function discoveryCachePrefixForKind(kind) {
+	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.`;
+}
+
+async function clearDiscoveryCacheForKind(kind) {
+	const prefix = discoveryCachePrefixForKind(kind);
+	const area = localStorageArea();
+	if (area) {
+		const all = await area.get(null);
+		const keysToRemove = Object.keys(all).filter((key) => key.startsWith(prefix));
+		if (keysToRemove.length > 0) {
+			await area.remove(keysToRemove);
+		}
+		return;
+	}
+	for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+		const key = localStorage.key(index);
+		if (key?.startsWith(prefix)) {
+			localStorage.removeItem(key);
+		}
+	}
+}
+
+async function readDiscoveryCache(kind, requestUrl, catalogGeneratedAt) {
 	const key = discoveryCacheKey(kind, requestUrl);
 	const area = localStorageArea();
 	let cached;
@@ -328,6 +360,12 @@ async function readDiscoveryCache(kind, requestUrl) {
 	if (!cached || Date.now() - cached.cachedAt > DISCOVERY_CACHE_TTL_MS) {
 		return null;
 	}
+	if (
+		catalogGeneratedAt &&
+		(!cached.catalogGeneratedAt || cached.catalogGeneratedAt !== catalogGeneratedAt)
+	) {
+		return null;
+	}
 	return cached.data || null;
 }
 
@@ -335,6 +373,7 @@ async function writeDiscoveryCache(kind, requestUrl, data) {
 	const key = discoveryCacheKey(kind, requestUrl);
 	const cached = {
 		cachedAt: Date.now(),
+		catalogGeneratedAt: typeof data?.generatedAt === "string" ? data.generatedAt : null,
 		data,
 	};
 	const area = localStorageArea();
@@ -662,21 +701,27 @@ function entryCard(kind, entry) {
 	});
 }
 
-function discoveryRequestUrl(kind, { limit, offset }) {
+function discoveryRequestUrl(kind, { limit, offset, locale }) {
 	const endpoint = discoveryEndpoints()[kind];
 	if (DISCOVERY_MODE === "mock") {
 		return endpoint;
 	}
-	return buildDiscoveryUrl(endpoint, discoveryQueryForPage({ kind, limit, offset }));
+	return buildDiscoveryUrl(
+		endpoint,
+		discoveryQueryForPage({ kind, limit, offset, locale }),
+	);
 }
 
-async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false }) {
-	const requestUrl = discoveryRequestUrl(kind, { limit, offset });
-	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl);
+async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false, locale, catalogGeneratedAt }) {
+	const requestUrl = discoveryRequestUrl(kind, { limit, offset, locale });
+	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl, catalogGeneratedAt);
 	if (!data) {
 		const response = await fetch(requestUrl, {
 			credentials: "omit",
-			headers: { accept: "application/json" },
+			headers: {
+				accept: "application/json",
+				...(locale ? { "Accept-Language": discoveryAcceptLanguage(locale) } : {}),
+			},
 		});
 		if (!response.ok) {
 			throw new Error(`${kind}:${response.status}`);
@@ -692,6 +737,7 @@ function blankDiscoveryState() {
 		entries: [],
 		hasMore: false,
 		nextOffset: 0,
+		catalogGeneratedAt: null,
 		loaded: false,
 		loading: false,
 	};
@@ -716,6 +762,9 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 	const offset = reset ? 0 : current.nextOffset;
 	const limit = DISCOVERY_PAGE_SIZE;
 	const shouldClearEntries = shouldClearEntriesBeforeLoad(current, { reset });
+	if (reset) {
+		await clearDiscoveryCacheForKind(kind);
+	}
 	discoveryStates.set(kind, { ...current, loading: true });
 	if (reset) {
 		setSectionStatus(kind, activeCopy.loading[kind]);
@@ -728,7 +777,13 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 	}
 
 	try {
-		const data = await fetchDiscoveryData(kind, { limit, offset, bypassCache });
+		const data = await fetchDiscoveryData(kind, {
+			limit,
+			offset,
+			bypassCache: reset || bypassCache,
+			locale: activeDiscoveryLocale(),
+			catalogGeneratedAt: reset ? null : current.catalogGeneratedAt,
+		});
 		const entries = normalizeEntries(kind, data);
 		const page = discoveryPageState({
 			kind,
@@ -740,8 +795,15 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 		const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, {
 			reset,
 		});
-		discoveryStates.set(kind, { ...next, loaded: true, loading: false });
-		const entriesToRender = entriesForPageRender(next, page, { reset });
+		const catalogGeneratedAt =
+			typeof data?.generatedAt === "string" ? data.generatedAt : next.catalogGeneratedAt;
+		discoveryStates.set(kind, {
+			...next,
+			catalogGeneratedAt,
+			loaded: true,
+			loading: false,
+		});
+		const entriesToRender = entriesForPageRender(next);
 
 		if (next.entries.length === 0) {
 			setSectionStatus(kind, activeCopy.empty[kind]);
@@ -751,7 +813,7 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 		}
 
 		setSectionStatus(kind, "");
-		setSectionEntries(kind, entriesToRender, { append: !reset });
+		setSectionEntries(kind, entriesToRender, { append: false });
 		setSectionFooter(kind, "");
 		if (activePanelName === kind) {
 			requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
@@ -787,7 +849,7 @@ function loadMoreIfActiveSentinelVisible() {
 	const content = document.getElementById("content-area");
 	if (!sentinel || !content) return;
 	if (!sentinelIsNearScrollEnd(sentinel, content)) return;
-	loadDiscoveryPage(activePanelName).catch(() => {});
+	loadDiscoveryPage(activePanelName).catch(() => { });
 }
 
 function setupPaginationObserver(content) {
@@ -799,7 +861,7 @@ function setupPaginationObserver(content) {
 				if (!entry.isIntersecting) continue;
 				const kind = entry.target.dataset.paginationKind;
 				if (kind !== activePanelName) continue;
-				loadDiscoveryPage(kind).catch(() => {});
+				loadDiscoveryPage(kind).catch(() => { });
 			}
 		},
 		{
@@ -908,6 +970,7 @@ async function renderSection(kind, { bypassCache = false } = {}) {
 		limit: DISCOVERY_PAGE_SIZE,
 		offset: 0,
 		bypassCache,
+		locale: activeDiscoveryLocale(),
 	});
 	const entries = normalizeEntries(kind, data);
 	if (entries.length === 0) {
@@ -951,30 +1014,40 @@ function activatePanel(panelName) {
 
 document.addEventListener("DOMContentLoaded", async () => {
 	renderInlineIcons();
-	let settings = await readSettings();
+	currentSettings = await readSettings();
 	const languageSelect = document.getElementById("language-select");
 	const themeSelect = document.getElementById("theme-select");
 	const content = document.getElementById("content-area");
-	languageSelect.value = settings.language;
-	themeSelect.value = settings.theme;
-	applyCopy(settings.language);
-	applyTheme(settings.theme);
+	languageSelect.value = currentSettings.language;
+	themeSelect.value = currentSettings.theme;
+	applyCopy(currentSettings.language);
+	applyTheme(currentSettings.theme);
 
 	ensureSectionRendered(activePanelName).catch(() => {
 		setSectionStatus(activePanelName, unavailableMessage(activePanelName));
 	});
 
 	async function persist(nextSettings) {
-		settings = await writeSettings(nextSettings);
-		applyCopy(settings.language);
-		applyTheme(settings.theme);
+		currentSettings = await writeSettings(nextSettings);
+		applyCopy(currentSettings.language);
+		applyTheme(currentSettings.theme);
 	}
 
-	languageSelect.addEventListener("change", () =>
-		persist({ ...settings, language: languageSelect.value }),
-	);
+	function resetDiscoveryPanelsForLocaleChange() {
+		for (const kind of ["portals", "servers", "clients"]) {
+			discoveryStates.delete(kind);
+			renderedSections.delete(kind);
+		}
+	}
+
+	languageSelect.addEventListener("change", () => {
+		void persist({ ...currentSettings, language: languageSelect.value }).then(() => {
+			resetDiscoveryPanelsForLocaleChange();
+			refreshActivePanel().catch(() => { });
+		});
+	});
 	themeSelect.addEventListener("change", () =>
-		persist({ ...settings, theme: themeSelect.value }),
+		persist({ ...currentSettings, theme: themeSelect.value }),
 	);
 
 	for (const tab of document.querySelectorAll("[data-panel-target]")) {
@@ -983,7 +1056,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	setupPaginationObserver(content);
 	setupPullToRefresh(content);
 	document.getElementById("refresh-button").addEventListener("click", () => {
-		refreshActivePanel().catch(() => {});
+		refreshActivePanel().catch(() => { });
 	});
 	for (const button of document.querySelectorAll("[data-open-url]")) {
 		button.addEventListener("click", () => openExternalUrl(button.dataset.openUrl));
@@ -993,5 +1066,5 @@ document.addEventListener("DOMContentLoaded", async () => {
 		.addEventListener("click", () => activatePanel("settings"));
 	window
 		.matchMedia("(prefers-color-scheme: dark)")
-		.addEventListener("change", () => applyTheme(settings.theme));
+		.addEventListener("change", () => applyTheme(currentSettings.theme));
 });

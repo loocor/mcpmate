@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
 	ADMIN_DISCOVERY_BASE_URL,
+	adminDiscoveryAcceptLanguage,
+	adminDiscoveryLocaleFromI18n,
 	buildAdminDiscoveryUrl,
 	adminDiscoveryClientToCandidate,
 	adminDiscoveryClientToUpdatePayload,
@@ -10,6 +12,29 @@ import {
 } from "./admin-discovery";
 
 describe("admin discovery adapter", () => {
+	test("maps i18n language tags to Admin discovery locale query values", () => {
+		expect(adminDiscoveryLocaleFromI18n("zh-CN")).toBe("zh");
+		expect(adminDiscoveryLocaleFromI18n("ja")).toBe("ja");
+		expect(adminDiscoveryLocaleFromI18n("en-US")).toBe("en");
+		expect(adminDiscoveryAcceptLanguage("zh")).toContain("zh-CN");
+	});
+
+	test("builds discovery URLs with locale query when requested", () => {
+		expect(
+			buildAdminDiscoveryUrl("/discovery/servers", { locale: "zh-CN" }, "https://admin.example.com"),
+		).toBe("https://admin.example.com/discovery/servers?locale=zh");
+	});
+
+	test("includes locale on random onboarding discovery requests", () => {
+		expect(
+			buildAdminDiscoveryUrl(
+				"/discovery/clients",
+				{ surface: "onboarding", random: 6, locale: "zh-CN" },
+				"https://admin.example.com",
+			),
+		).toBe("https://admin.example.com/discovery/clients?surface=onboarding&random=6&locale=zh");
+	});
+
 	test("builds direct Admin discovery URLs with capped query values", () => {
 		expect(
 			buildAdminDiscoveryUrl(
@@ -57,6 +82,31 @@ describe("admin discovery adapter", () => {
 			`${ADMIN_DISCOVERY_BASE_URL}/discovery/clients?surface=onboarding&random=6`,
 		);
 		expect(requests[0].init?.credentials).toBe("omit");
+	});
+
+	test("sends Accept-Language when locale is provided", async () => {
+		const originalFetch = globalThis.fetch;
+		const requests: Array<{ input: string | URL | Request; init?: RequestInit }> = [];
+		globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+			requests.push({ input, init });
+			return Promise.resolve(
+				new Response(JSON.stringify({ clients: [] }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+			);
+		}) as typeof fetch;
+
+		try {
+			await fetchAdminDiscoveryClients({ locale: "zh-CN" });
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+
+		expect(String(requests[0].input)).toContain("locale=zh");
+		expect(requests[0].init?.headers).toMatchObject({
+			"Accept-Language": adminDiscoveryAcceptLanguage("zh"),
+		});
 	});
 
 	test("fetches Admin discovery clients with item-level parser isolation", async () => {

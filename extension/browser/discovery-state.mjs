@@ -6,14 +6,23 @@ export function isPageableDiscoveryKind(kind) {
 	return PAGEABLE_DISCOVERY_KINDS.has(kind);
 }
 
-export function discoveryQueryForPage({ kind, limit = DISCOVERY_PAGE_SIZE, offset = 0 }) {
+export function discoveryQueryForPage({
+	kind,
+	limit = DISCOVERY_PAGE_SIZE,
+	offset = 0,
+	locale,
+}) {
+	const query = { surface: DISCOVERY_SURFACE };
+	if (locale) {
+		query.locale = locale;
+	}
 	if (!isPageableDiscoveryKind(kind)) {
-		return { surface: DISCOVERY_SURFACE };
+		return query;
 	}
 	return {
+		...query,
 		limit,
 		offset,
-		surface: DISCOVERY_SURFACE,
 	};
 }
 
@@ -58,8 +67,8 @@ export function nextDiscoveryPageState(current, page, { reset }) {
 	};
 }
 
-export function entriesForPageRender(nextState, page, { reset }) {
-	return reset ? nextState.entries : page.entries;
+export function entriesForPageRender(nextState) {
+	return nextState.entries;
 }
 
 export function shouldClearEntriesBeforeLoad(current, { reset }) {

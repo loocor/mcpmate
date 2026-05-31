@@ -1215,7 +1215,7 @@ function ClientsStep({
   onToggle: (identifier: string) => void;
   onAdminCandidatesChange: (candidates: Map<string, AdminDiscoveryClientCandidate>) => void;
 }) {
-  const { t } = useTranslation("onboarding");
+  const { t, i18n } = useTranslation("onboarding");
   const [logoLoadFailedClients, setLogoLoadFailedClients] = useState<Set<string>>(
     () => new Set(),
   );
@@ -1243,8 +1243,14 @@ function ClientsStep({
   });
   const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
   const adminRecommendationsQuery = useQuery({
-    queryKey: ["adminDiscoveryClients", "onboarding", adminDiscoveryPlatform ?? "web"],
-    queryFn: () => fetchAdminDiscoveryClientCatalog({ surface: "onboarding", random: 6, platform: adminDiscoveryPlatform }),
+    queryKey: ["adminDiscoveryClients", "onboarding", adminDiscoveryPlatform ?? "web", i18n.language],
+    queryFn: () =>
+      fetchAdminDiscoveryClientCatalog({
+        surface: "onboarding",
+        random: 6,
+        platform: adminDiscoveryPlatform,
+        locale: i18n.language,
+      }),
     enabled: shouldLoadAdminRecommendations && adminDiscoveryPlatformQuery.isSuccess,
     staleTime: 60_000,
     retry: false,
@@ -1378,8 +1384,8 @@ function ClientsStep({
                     )}
                     onClick={() => onToggle(client.identifier)}
                     className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                        ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+                      ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
+                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
                       }`}
                   >
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
@@ -1441,8 +1447,8 @@ function ClientsStep({
                   type="button"
                   onClick={() => onToggle(client.identifier)}
                   className={`flex items-center gap-3 rounded-lg border-2 p-4 text-left transition-all ${isSelected
-                      ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
-                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+                    ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30"
+                    : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
                     }`}
                 >
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 text-sm font-semibold dark:bg-slate-800">
@@ -1504,7 +1510,7 @@ function ServersStep({
   onCandidatesChange: (candidates: OnboardingServerCandidateWithImport[]) => void;
   onToggle: (name: string) => void;
 }) {
-  const { t } = useTranslation("onboarding");
+  const { t, i18n } = useTranslation("onboarding");
   const clientsQuery = useQuery({
     queryKey: ["clients", "onboarding"],
     queryFn: () => clientsApi.detect(true),
@@ -1559,11 +1565,13 @@ function ServersStep({
       localServerCandidates.length < ONBOARDING_RECOMMENDED_SERVER_MINIMUM,
     );
   const adminRecommendationsQuery = useQuery({
-    queryKey: ["adminDiscoveryServers", "onboarding"],
-    queryFn: () => fetchAdminDiscoveryServers({
-      surface: "onboarding",
-      random: ONBOARDING_ADMIN_SERVER_RANDOM_COUNT,
-    }),
+    queryKey: ["adminDiscoveryServers", "onboarding", i18n.language],
+    queryFn: () =>
+      fetchAdminDiscoveryServers({
+        surface: "onboarding",
+        random: ONBOARDING_ADMIN_SERVER_RANDOM_COUNT,
+        locale: i18n.language,
+      }),
     enabled: shouldLoadAdminRecommendations,
     staleTime: 60_000,
   });
