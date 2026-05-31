@@ -693,6 +693,10 @@ describe("admin discovery adapter", () => {
 				GITHUB_TOKEN: "${GITHUB_TOKEN}",
 			},
 			url: undefined,
+			categories: [],
+			tags: [],
+			description: "",
+			logoUrl: "",
 			source_clients: ["MCPMate"],
 			source_client_ids: [],
 			import_config: {
@@ -705,6 +709,28 @@ describe("admin discovery adapter", () => {
 				},
 			},
 		});
+	});
+
+	test("maps Admin server icon fields into logoUrl", () => {
+		expect(
+			adminDiscoveryServerToOnboardingCandidate({
+				id: "github",
+				icon: { url: "https://example.com/github.png" },
+				official: { title: "GitHub" },
+				runtime: { install_config: { type: "stdio", command: "npx" } },
+			})?.logoUrl,
+		).toBe("https://example.com/github.png");
+
+		expect(
+			adminDiscoveryServerToOnboardingCandidate({
+				id: "filesystem",
+				official: {
+					title: "Filesystem",
+					icons: [{ src: "https://example.com/filesystem.svg" }],
+				},
+				runtime: { install_config: { type: "stdio", command: "npx" } },
+			})?.logoUrl,
+		).toBe("https://example.com/filesystem.svg");
 	});
 
 	test("filters Admin servers that cannot form backend import payloads", () => {

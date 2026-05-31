@@ -57,6 +57,7 @@ export interface AdminDiscoveryClientCandidate {
 	docsUrl: string;
 	supportUrl: string;
 	logoUrl: string;
+	tags: string[];
 	supportedTransports: string[];
 	transports: Record<string, TransportRuleData>;
 }
@@ -95,6 +96,10 @@ export interface AdminDiscoveryServerCandidate {
 	args: string[];
 	env: Record<string, string>;
 	url?: string;
+	categories: string[];
+	tags: string[];
+	description: string;
+	logoUrl: string;
 	source_clients: string[];
 	source_client_ids: string[];
 	import_config: Record<string, unknown>;
@@ -353,6 +358,17 @@ export function adminDiscoveryClientToCandidate(
 	const links = recordValue(client.links);
 	const icon = recordValue(client.icon);
 
+	const tags = [
+		...new Set([
+			...stringArrayValue(client.tags),
+			...stringArrayValue(metadata.tags),
+			...stringArrayValue(client.categories),
+			...stringArrayValue(metadata.categories),
+			...(compactString(client.category) ? [compactString(client.category)!] : []),
+			...(compactString(metadata.category) ? [compactString(metadata.category)!] : []),
+		]),
+	];
+
 	return {
 		identifier,
 		displayName,
@@ -366,6 +382,7 @@ export function adminDiscoveryClientToCandidate(
 		docsUrl: firstCompactString(links.docs, client.docsUrl, client.docs_url, metadata.docs_url) ?? "",
 		supportUrl: firstCompactString(links.support, client.supportUrl, client.support_url, metadata.support_url) ?? "",
 		logoUrl: firstCompactString(icon.url, client.logoUrl, client.logo_url, metadata.logo_url) ?? "",
+		tags,
 		supportedTransports: Object.keys(transports),
 		transports,
 	};
@@ -396,6 +413,7 @@ function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClie
 		docsUrl: compactString(candidate.docsUrl) ?? "",
 		supportUrl: compactString(candidate.supportUrl) ?? "",
 		logoUrl: compactString(candidate.logoUrl) ?? "",
+		tags: stringArrayValue(candidate.tags),
 		supportedTransports,
 		transports,
 	};
@@ -436,6 +454,54 @@ export function adminDiscoveryClientToUpdatePayload(
 	};
 }
 
+function discoveryMetaRecord(raw: Record<string, unknown>): Record<string, unknown> {
+	const nestedServer = recordValue(raw.server);
+	return (
+		recordValue(recordValue(raw._meta)["ai.mcpmate/discovery"]) ||
+		recordValue(recordValue(raw.metadata).discovery) ||
+		recordValue(recordValue(nestedServer._meta)["ai.mcpmate/discovery"])
+	);
+}
+
+function iconSrcFromIconList(value: unknown): string | undefined {
+	if (!Array.isArray(value) || value.length === 0) return undefined;
+	const first = recordValue(value[0]);
+	return firstCompactString(first.src, first.url, first.href);
+}
+
+function resolveAdminDiscoveryImageUrl(value: string | undefined): string | undefined {
+	const trimmed = compactString(value);
+	if (!trimmed) return undefined;
+	if (/^data:image\//i.test(trimmed) || /^https?:\/\//i.test(trimmed)) return trimmed;
+	try {
+		return new URL(trimmed, `${ADMIN_DISCOVERY_BASE_URL}/`).toString();
+	} catch {
+		return undefined;
+	}
+}
+
+function adminDiscoveryServerLogoUrl(server: Record<string, unknown>): string {
+	const official = recordValue(server.official);
+	const curated = recordValue(server.curated);
+	const icon = recordValue(server.icon);
+	const curatedIcon = recordValue(curated.icon);
+	const meta = discoveryMetaRecord(server);
+	const officialIcon = iconSrcFromIconList(official.icons);
+	const rawUrl = firstCompactString(
+		icon.url,
+		typeof server.icon === "string" ? server.icon : undefined,
+		curatedIcon.url,
+		typeof curated.icon === "string" ? curated.icon : undefined,
+		meta.iconUrl,
+		meta.brandIconUrl,
+		compactString(server.iconUrl),
+		compactString(server.logoUrl),
+		officialIcon,
+		iconSrcFromIconList(server.icons),
+	);
+	return resolveAdminDiscoveryImageUrl(rawUrl) ?? "";
+}
+
 export function adminDiscoveryServerToOnboardingCandidate(raw: unknown): AdminDiscoveryServerCandidate | null {
 	const server = recordValue(raw);
 	const official = recordValue(server.official);
@@ -464,6 +530,15 @@ export function adminDiscoveryServerToOnboardingCandidate(raw: unknown): AdminDi
 	if (url) importConfig.url = url;
 	if (Object.keys(headers).length > 0) importConfig.headers = headers;
 
+	const categories = [
+		...new Set([
+			...stringArrayValue(curated.categories),
+			...stringArrayValue(curated.tags),
+			...stringArrayValue(server.categories),
+			...stringArrayValue(server.tags),
+		]),
+	];
+
 	return {
 		key: `admin:${registryId}`,
 		name: displayName,
@@ -472,8 +547,60 @@ export function adminDiscoveryServerToOnboardingCandidate(raw: unknown): AdminDi
 		args,
 		env,
 		url,
+		categories,
+		tags: stringArrayValue(curated.tags),
+		description:
+			firstCompactString(curated.summary, curated.description, official.description, server.description) ?? "",
+		logoUrl: adminDiscoveryServerLogoUrl(server),
 		source_clients: ["MCPMate"],
 		source_client_ids: [],
 		import_config: importConfig,
 	};
+}
+
+export type CatalogTagFilter = string;
+
+export function filterCatalogItemsByTag<T extends { tags?: string[]; categories?: string[] }>(
+	items: T[],
+	tag: CatalogTagFilter,
+): T[] {
+	if (tag === "all") return items;
+	const normalized = tag.toLowerCase();
+	return items.filter((item) => {
+		const tags = [...(item.tags ?? []), ...(item.categories ?? [])].map((entry) => entry.toLowerCase());
+		return tags.includes(normalized);
+	});
+}
+
+export function enrichLocalServerCandidates<
+	T extends { name: string; categories?: string[]; tags?: string[]; logoUrl?: string },
+>(
+	localCandidates: T[],
+	popularCandidates: Array<{ name: string; categories?: string[]; tags?: string[]; logoUrl?: string }>,
+): Array<T & { categories: string[]; tags: string[]; logoUrl?: string }> {
+	const popularByName = new Map(
+		popularCandidates.map((candidate) => [candidate.name.trim().toLowerCase(), candidate]),
+	);
+	return localCandidates.map((candidate) => {
+		const match = popularByName.get(candidate.name.trim().toLowerCase());
+		return {
+			...candidate,
+			categories: match?.categories ?? candidate.categories ?? [],
+			tags: match?.tags ?? candidate.tags ?? [],
+			logoUrl: match?.logoUrl || candidate.logoUrl || undefined,
+		};
+	});
+}
+
+export function clientTagsForDetected(
+	category: string | undefined,
+	catalogTags: string[] | undefined,
+): string[] {
+	if (catalogTags && catalogTags.length > 0) return catalogTags;
+	if (category?.trim()) {
+		const normalized = category.trim().toLowerCase();
+		if (normalized === "terminal") return ["cli"];
+		return [normalized];
+	}
+	return [];
 }
