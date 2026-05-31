@@ -22,7 +22,8 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 - Use the popup refresh button to reload the active discovery panel; touch
   devices can also pull down from the top of the panel.
 - Discovery responses are cached locally for one hour to avoid repeated popup fetches.
-- Optional language and theme preferences live inside the toolbar popup settings panel.
+- Language defaults to the browser language on first open (`zh` → 中文, `ja` → 日本語, otherwise English). Theme and language preferences live inside the toolbar popup settings panel.
+- The footer community button shows Feishu for Chinese and Discord for other languages.
 - Popup styling mirrors the shadcn Dashboard visual language with lightweight static HTML/CSS/JS, avoiding a React bundle inside the extension.
 - Optional icon metadata is supported when Admin catalog entries provide it.
 - Uses `config.js` as the extension deployment config. Update `adminApiOrigin` there if the Admin API origin changes.

@@ -1,3 +1,22 @@
+/** Maps browser language tags to extension popup language (`en` | `zh-cn` | `ja`). */
+export function extensionLanguageFromBrowser(
+	languages = globalThis.navigator?.languages ?? [globalThis.navigator?.language ?? "en"],
+) {
+	for (const tag of languages) {
+		const lower = String(tag ?? "").toLowerCase();
+		if (lower.startsWith("zh")) {
+			return "zh-cn";
+		}
+		if (lower.startsWith("ja")) {
+			return "ja";
+		}
+		if (lower.startsWith("en")) {
+			return "en";
+		}
+	}
+	return "en";
+}
+
 /** Maps extension popup language to Admin public discovery locale (`en` | `zh` | `ja`). */
 export function discoveryLocaleFromLanguage(language) {
 	if (language === "zh" || language === "zh-cn") {
