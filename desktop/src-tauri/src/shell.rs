@@ -1,19 +1,21 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
+use crate::operator_window;
 use anyhow::{Context, Result};
 use mcpmate::common::MCPMatePaths;
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Manager, Wry,
+    AppHandle, Manager, PhysicalPosition, Rect, WebviewUrl, Window, Wry,
     image::Image,
     menu::{HELP_SUBMENU_ID, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu},
     tray::TrayIcon,
-    utils::config::WindowConfig,
-    webview::{NewWindowResponse, WebviewWindowBuilder},
+    utils::config::{Color, WindowConfig},
+    webview::{NewWindowResponse, WebviewWindow, WebviewWindowBuilder},
 };
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex as AsyncMutex;
@@ -52,6 +54,7 @@ pub fn tray_template_icon() -> Image<'static> {
 
 pub const TRAY_ID: &str = "mcpmate.tray.main";
 pub const MENU_OPEN_MAIN: &str = "mcpmate.tray.open_main";
+pub const MENU_OPEN_OPERATOR: &str = "mcpmate.tray.open_operator";
 pub const MENU_SERVICE_STATUS: &str = "mcpmate.tray.service_status";
 pub const MENU_START_SERVICE: &str = "mcpmate.tray.start_service";
 pub const MENU_RESTART_SERVICE: &str = "mcpmate.tray.restart_service";
@@ -64,6 +67,71 @@ pub const APP_MENU_ABOUT: &str = "menu.help.about";
 
 pub const EVENT_OPEN_SETTINGS: &str = "mcpmate://open-settings";
 pub const EVENT_CORE_STATE_CHANGED: &str = "mcpmate://core/status-changed";
+pub const EVENT_OPEN_FULL_BOARD_PATH: &str = "mcpmate://open-full-board-path";
+
+const OPERATOR_WINDOW_LABEL: &str = "operator";
+const OPERATOR_PANEL_WIDTH: f64 = 420.0;
+const OPERATOR_PANEL_DEFAULT_HEIGHT: f64 = 640.0;
+const OPERATOR_PANEL_MIN_HEIGHT: f64 = 420.0;
+const OPERATOR_PANEL_MAX_HEIGHT: f64 = 1200.0;
+const OPERATOR_PANEL_TRAY_FOCUS_LOSS_GRACE: Duration = Duration::from_millis(500);
+const OPERATOR_PANEL_TRAY_GAP: f64 = 8.0;
+const OPERATOR_PANEL_TRANSPARENT_BACKGROUND: Color = Color(0, 0, 0, 0);
+const OPERATOR_WINDOW_INIT_SCRIPT: &str = r#"
+(function () {
+  function isOperatorDragRegion(path) {
+    for (const node of path) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (node.dataset.operatorNoDrag === "true") return false;
+      if (node.dataset.operatorDragRegion === "true") return true;
+    }
+    return false;
+  }
+
+  const CLICKABLE_TAGS = new Set([
+    "A",
+    "BUTTON",
+    "INPUT",
+    "SELECT",
+    "TEXTAREA",
+    "LABEL",
+    "SUMMARY",
+  ]);
+
+  function isClickableElement(element) {
+    return (
+      CLICKABLE_TAGS.has(element.tagName)
+      || (element.hasAttribute("contenteditable")
+        && element.getAttribute("contenteditable") !== "false")
+      || (element.hasAttribute("tabindex") && element.getAttribute("tabindex") !== "-1")
+    );
+  }
+
+  function blockOperatorHeaderDoubleClick(event) {
+    if (event.button !== 0 || event.detail < 2) return;
+    if (!isOperatorDragRegion(event.composedPath())) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  function startOperatorHeaderDrag(event) {
+    if (event.button !== 0 || event.detail !== 1) return;
+    if (!isOperatorDragRegion(event.composedPath())) return;
+    const target = event.target;
+    if (target instanceof Element && isClickableElement(target)) return;
+    event.preventDefault();
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals) return;
+    internals.invoke("plugin:window|start_dragging");
+  }
+
+  document.addEventListener("mousedown", blockOperatorHeaderDoubleClick, true);
+  document.addEventListener("mouseup", blockOperatorHeaderDoubleClick, true);
+  document.addEventListener("mousedown", startOperatorHeaderDrag, true);
+})();
+"#;
+static OPERATOR_PANEL_FOCUS_LOSS_DISMISSAL_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+static LAST_TRAY_ICON_RECT: OnceLock<Mutex<Option<Rect>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -79,6 +147,8 @@ pub enum MenuBarIconMode {
 pub struct ShellPreferences {
     pub menu_bar_icon_mode: MenuBarIconMode,
     pub show_dock_icon: bool,
+    #[serde(default)]
+    pub operator_intro_shown: bool,
 }
 
 impl Default for ShellPreferences {
@@ -86,6 +156,7 @@ impl Default for ShellPreferences {
         Self {
             menu_bar_icon_mode: MenuBarIconMode::Runtime,
             show_dock_icon: true,
+            operator_intro_shown: false,
         }
     }
 }
@@ -137,6 +208,7 @@ impl ShellPreferences {
 struct ShellRuntimeState {
     preferences: ShellPreferences,
     prefs_path: PathBuf,
+    pending_full_board_path: Option<String>,
     tray: Option<TrayIcon<Wry>>,
     status_item: Option<MenuItem<Wry>>,
     start_item: Option<MenuItem<Wry>>,
@@ -165,6 +237,28 @@ impl ShellState {
 
     pub async fn current_preferences(&self) -> ShellPreferences {
         self.inner.lock().await.preferences.clone()
+    }
+
+    pub async fn set_pending_full_board_path(&self, path: String) {
+        self.inner.lock().await.pending_full_board_path = Some(path);
+    }
+
+    pub async fn clear_pending_full_board_path(&self) {
+        self.inner.lock().await.pending_full_board_path = None;
+    }
+
+    pub async fn take_pending_full_board_path(&self) -> Option<String> {
+        self.inner.lock().await.pending_full_board_path.take()
+    }
+
+    pub async fn operator_intro_shown(&self) -> bool {
+        self.inner.lock().await.preferences.operator_intro_shown
+    }
+
+    pub async fn mark_operator_intro_shown(&self) -> Result<()> {
+        let mut guard = self.inner.lock().await;
+        guard.preferences.operator_intro_shown = true;
+        ShellPreferences::save_to_path(&guard.prefs_path, &guard.preferences)
     }
 
     pub async fn register_tray(
@@ -323,6 +417,184 @@ impl ShellState {
             .context("failed to update tray stop item state")?;
         Ok(())
     }
+}
+
+pub fn validate_full_board_path(path: &str) -> Result<String> {
+    if path.is_empty() {
+        anyhow::bail!("full board path must not be empty");
+    }
+    if path != path.trim() {
+        anyhow::bail!("full board path must not contain surrounding whitespace");
+    }
+    if !path.starts_with('/') {
+        anyhow::bail!("full board path must start with /");
+    }
+    if path.starts_with("//") {
+        anyhow::bail!("full board path must be an app route, not a protocol-relative URL");
+    }
+
+    let route_path = path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    if route_path == "/operator" || route_path.starts_with("/operator/") {
+        anyhow::bail!("full board path must not target the operator window route");
+    }
+
+    Ok(path.to_string())
+}
+
+pub fn remember_tray_icon_rect(rect: Rect) {
+    *LAST_TRAY_ICON_RECT
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("tray icon rect state poisoned") = Some(rect);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MonitorBounds {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+fn physical_point(position: &tauri::Position) -> (f64, f64) {
+    match position {
+        tauri::Position::Physical(point) => (f64::from(point.x), f64::from(point.y)),
+        tauri::Position::Logical(point) => (point.x, point.y),
+    }
+}
+
+fn physical_dimensions(size: &tauri::Size) -> (f64, f64) {
+    match size {
+        tauri::Size::Physical(size) => (f64::from(size.width), f64::from(size.height)),
+        tauri::Size::Logical(size) => (size.width, size.height),
+    }
+}
+
+fn monitor_bounds_from_physical_parts(
+    position: &PhysicalPosition<i32>,
+    size: &tauri::PhysicalSize<u32>,
+) -> MonitorBounds {
+    MonitorBounds {
+        left: f64::from(position.x),
+        top: f64::from(position.y),
+        right: f64::from(position.x) + f64::from(size.width),
+        bottom: f64::from(position.y) + f64::from(size.height),
+    }
+}
+
+fn monitor_bounds_containing_point(
+    monitors: &[MonitorBounds],
+    x: f64,
+    y: f64,
+) -> Option<MonitorBounds> {
+    monitors.iter().copied().find(|monitor| {
+        x >= monitor.left && x < monitor.right && y >= monitor.top && y < monitor.bottom
+    })
+}
+
+fn compute_operator_window_position(
+    tray_rect: Rect,
+    panel_width: f64,
+    panel_height: f64,
+    monitor: MonitorBounds,
+) -> PhysicalPosition<i32> {
+    let (tray_x, tray_y) = physical_point(&tray_rect.position);
+    let (tray_w, tray_h) = physical_dimensions(&tray_rect.size);
+    let tray_center_x = tray_x + tray_w / 2.0;
+
+    let mut x = tray_center_x - panel_width / 2.0;
+    let mut y = tray_y + tray_h + OPERATOR_PANEL_TRAY_GAP;
+
+    if y + panel_height > monitor.bottom {
+        y = tray_y - panel_height - OPERATOR_PANEL_TRAY_GAP;
+    }
+
+    x = x.clamp(
+        monitor.left,
+        (monitor.right - panel_width).max(monitor.left),
+    );
+    y = y.clamp(
+        monitor.top,
+        (monitor.bottom - panel_height).max(monitor.top),
+    );
+
+    PhysicalPosition::new(x.round() as i32, y.round() as i32)
+}
+
+fn resolve_tray_icon_rect<M>(manager: &M) -> Option<Rect>
+where
+    M: Manager<Wry>,
+{
+    if let Some(rect) = LAST_TRAY_ICON_RECT
+        .get()
+        .and_then(|state| state.lock().ok())
+        .and_then(|guard| *guard)
+    {
+        return Some(rect);
+    }
+
+    manager
+        .app_handle()
+        .tray_by_id(TRAY_ID)
+        .and_then(|tray| tray.rect().ok().flatten())
+}
+
+fn resolve_operator_monitor_bounds(
+    window: &WebviewWindow<Wry>,
+    tray_rect: Rect,
+) -> Result<MonitorBounds> {
+    let (tray_x, tray_y) = physical_point(&tray_rect.position);
+    let (tray_w, tray_h) = physical_dimensions(&tray_rect.size);
+    let tray_center_x = tray_x + tray_w / 2.0;
+    let tray_center_y = tray_y + tray_h / 2.0;
+    let available_monitor_bounds = window
+        .available_monitors()?
+        .iter()
+        .map(|monitor| monitor_bounds_from_physical_parts(monitor.position(), monitor.size()))
+        .collect::<Vec<_>>();
+
+    if let Some(bounds) =
+        monitor_bounds_containing_point(&available_monitor_bounds, tray_center_x, tray_center_y)
+    {
+        return Ok(bounds);
+    }
+
+    let monitor = window
+        .current_monitor()?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .context("failed to resolve monitor for operator panel placement")?;
+
+    Ok(monitor_bounds_from_physical_parts(
+        monitor.position(),
+        monitor.size(),
+    ))
+}
+
+fn position_operator_window_near_tray<M>(manager: &M, window: &WebviewWindow<Wry>) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    let Some(tray_rect) = resolve_tray_icon_rect(manager) else {
+        return Ok(());
+    };
+
+    let monitor_bounds = resolve_operator_monitor_bounds(window, tray_rect)?;
+    let outer_size = window.outer_size()?;
+    let position = compute_operator_window_position(
+        tray_rect,
+        f64::from(outer_size.width),
+        f64::from(outer_size.height),
+        monitor_bounds,
+    );
+
+    window
+        .set_position(position)
+        .context("failed to position operator panel near tray")?;
+    Ok(())
 }
 
 pub fn apply_activation_policy(
@@ -491,8 +763,8 @@ where
     M: Manager<Wry>,
 {
     if let Some(window) = manager.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        window.show().context("failed to show main window")?;
+        window.set_focus().context("failed to focus main window")?;
         return Ok(());
     }
 
@@ -503,9 +775,456 @@ where
         {
             let _ = manager.app_handle().show();
         }
-        let _ = window.show();
-        let _ = window.set_focus();
+        window
+            .show()
+            .context("failed to show spawned main window")?;
+        window
+            .set_focus()
+            .context("failed to focus spawned main window")?;
     }
 
     Ok(())
+}
+
+pub fn spawn_operator_window<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    if manager.get_webview_window(OPERATOR_WINDOW_LABEL).is_some() {
+        return Ok(());
+    }
+
+    let app_handle = manager.app_handle().clone();
+    let mut builder = WebviewWindowBuilder::new(
+        manager,
+        OPERATOR_WINDOW_LABEL,
+        WebviewUrl::App("/operator".into()),
+    )
+    .title("MCPMate Operator")
+    .inner_size(OPERATOR_PANEL_WIDTH, OPERATOR_PANEL_DEFAULT_HEIGHT)
+    .min_inner_size(OPERATOR_PANEL_WIDTH, OPERATOR_PANEL_MIN_HEIGHT)
+    .max_inner_size(OPERATOR_PANEL_WIDTH, OPERATOR_PANEL_MAX_HEIGHT)
+    .resizable(true)
+    .maximizable(false)
+    .decorations(false)
+    .transparent(true)
+    .visible(false)
+    .skip_taskbar(true)
+    .disable_drag_drop_handler()
+    .background_color(OPERATOR_PANEL_TRANSPARENT_BACKGROUND);
+
+    #[cfg(debug_assertions)]
+    let init_script =
+        format!("window.__MCPMATE_IS_TAURI__ = true;\n{OPERATOR_WINDOW_INIT_SCRIPT}",);
+
+    #[cfg(not(debug_assertions))]
+    let init_script = format!(
+        r#"window.addEventListener('contextmenu', (event) => {{
+            if (event.metaKey || event.ctrlKey) {{
+                return;
+            }}
+            event.preventDefault();
+        }});
+        window.__MCPMATE_IS_TAURI__ = true;
+        {OPERATOR_WINDOW_INIT_SCRIPT}"#,
+    );
+    builder = builder.initialization_script(&init_script);
+
+    let builder = builder.on_new_window(move |url, _features| {
+        let scheme = url.scheme();
+        match scheme {
+            "http" | "https" => {
+                if let Err(err) = app_handle.opener().open_url(url.as_str(), None::<String>) {
+                    warn!(
+                        error = %err,
+                        target_url = %url,
+                        "Failed to open external link from operator webview"
+                    );
+                }
+                NewWindowResponse::Deny
+            }
+            "tauri" | "app" | "about" | "mcpmate" | "" => NewWindowResponse::Allow,
+            other => {
+                warn!(target_url = %url, scheme = other, "Blocked unsupported operator window.open URL scheme");
+                NewWindowResponse::Deny
+            }
+        }
+    });
+
+    let window = builder.build()?;
+
+    window
+        .set_maximizable(false)
+        .context("failed to disable operator panel maximize")?;
+
+    window
+        .set_background_color(Some(OPERATOR_PANEL_TRANSPARENT_BACKGROUND))
+        .context("failed to set operator panel transparent background")?;
+
+    operator_window::apply_operator_window_chrome(&window)
+        .context("failed to apply operator panel window chrome")?;
+
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    window.open_devtools();
+
+    Ok(())
+}
+
+pub fn ensure_operator_window_visibility<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    show_operator_window_from_tray(manager)
+}
+
+pub async fn show_operator_intro_once<M>(manager: &M, shell_state: &ShellState) -> Result<bool>
+where
+    M: Manager<Wry>,
+{
+    if shell_state.operator_intro_shown().await {
+        return Ok(false);
+    }
+
+    ensure_operator_window_visibility(manager)?;
+    shell_state.mark_operator_intro_shown().await?;
+    Ok(true)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperatorPanelHideRequest {
+    Attached,
+}
+
+fn should_hide_operator_panel(pinned: bool, request: OperatorPanelHideRequest) -> bool {
+    match request {
+        OperatorPanelHideRequest::Attached => !pinned,
+    }
+}
+
+fn should_auto_hide_operator_panel_on_focus_change(
+    window_label: &str,
+    focused: bool,
+    pinned: bool,
+) -> bool {
+    window_label == OPERATOR_WINDOW_LABEL
+        && !focused
+        && should_hide_operator_panel(pinned, OperatorPanelHideRequest::Attached)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperatorPanelToggleAction {
+    Show,
+    Hide,
+    KeepHidden,
+}
+
+fn operator_tray_toggle_action(
+    is_visible: bool,
+    pinned: bool,
+    hidden_by_recent_focus_loss: bool,
+) -> OperatorPanelToggleAction {
+    if is_visible && should_hide_operator_panel(pinned, OperatorPanelHideRequest::Attached) {
+        OperatorPanelToggleAction::Hide
+    } else if !is_visible && hidden_by_recent_focus_loss {
+        OperatorPanelToggleAction::KeepHidden
+    } else {
+        OperatorPanelToggleAction::Show
+    }
+}
+
+fn show_operator_window_from_tray<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    spawn_operator_window(manager)?;
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        position_operator_window_near_tray(manager, &window)?;
+        clear_operator_focus_loss_dismissal();
+        operator_window::apply_operator_window_chrome(&window)
+            .context("failed to refresh operator panel window chrome")?;
+        window.show().context("failed to show operator panel")?;
+        window
+            .set_focus()
+            .context("failed to focus operator panel")?;
+    }
+    Ok(())
+}
+
+fn operator_focus_loss_dismissal_at() -> &'static Mutex<Option<Instant>> {
+    OPERATOR_PANEL_FOCUS_LOSS_DISMISSAL_AT.get_or_init(|| Mutex::new(None))
+}
+
+fn mark_operator_focus_loss_dismissal(now: Instant) {
+    *operator_focus_loss_dismissal_at()
+        .lock()
+        .expect("operator focus-loss dismissal state poisoned") = Some(now);
+}
+
+fn clear_operator_focus_loss_dismissal() {
+    *operator_focus_loss_dismissal_at()
+        .lock()
+        .expect("operator focus-loss dismissal state poisoned") = None;
+}
+
+fn take_recent_operator_focus_loss_dismissal(now: Instant) -> bool {
+    let hidden_at = operator_focus_loss_dismissal_at()
+        .lock()
+        .expect("operator focus-loss dismissal state poisoned")
+        .take();
+
+    hidden_at
+        .and_then(|hidden_at| now.checked_duration_since(hidden_at))
+        .is_some_and(|elapsed| elapsed <= OPERATOR_PANEL_TRAY_FOCUS_LOSS_GRACE)
+}
+
+pub fn toggle_operator_window_visibility<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        let is_visible = window
+            .is_visible()
+            .context("failed to read operator panel visibility")?;
+        let is_pinned = window
+            .is_always_on_top()
+            .context("failed to read operator panel pin state")?;
+
+        let hidden_by_recent_focus_loss =
+            !is_visible && take_recent_operator_focus_loss_dismissal(Instant::now());
+        if is_visible {
+            clear_operator_focus_loss_dismissal();
+        }
+        match operator_tray_toggle_action(is_visible, is_pinned, hidden_by_recent_focus_loss) {
+            OperatorPanelToggleAction::Hide => {
+                window.hide().context("failed to hide operator panel")?;
+                return Ok(());
+            }
+            OperatorPanelToggleAction::KeepHidden => return Ok(()),
+            OperatorPanelToggleAction::Show => {
+                return show_operator_window_from_tray(manager);
+            }
+        }
+    }
+
+    show_operator_window_from_tray(manager)
+}
+
+pub fn hide_operator_window<M>(manager: &M) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        clear_operator_focus_loss_dismissal();
+        window.hide().context("failed to hide operator panel")?;
+    }
+    Ok(())
+}
+
+pub fn hide_operator_window_for_attached_close(window: &Window<Wry>) -> Result<bool> {
+    if window.label() != OPERATOR_WINDOW_LABEL {
+        return Ok(false);
+    }
+
+    let is_pinned = window
+        .is_always_on_top()
+        .context("failed to read operator panel pin state")?;
+    if should_hide_operator_panel(is_pinned, OperatorPanelHideRequest::Attached) {
+        clear_operator_focus_loss_dismissal();
+        window.hide().context("failed to hide operator panel")?;
+    }
+
+    Ok(true)
+}
+
+pub fn hide_operator_window_on_focus_change(window: &Window<Wry>, focused: bool) -> Result<()> {
+    if window.label() != OPERATOR_WINDOW_LABEL || focused {
+        return Ok(());
+    }
+
+    let is_pinned = window
+        .is_always_on_top()
+        .context("failed to read operator panel pin state")?;
+    if should_auto_hide_operator_panel_on_focus_change(window.label(), focused, is_pinned) {
+        window.hide().context("failed to hide operator panel")?;
+        mark_operator_focus_loss_dismissal(Instant::now());
+    }
+
+    Ok(())
+}
+
+pub fn set_operator_window_pinned<M>(manager: &M, pinned: bool) -> Result<()>
+where
+    M: Manager<Wry>,
+{
+    spawn_operator_window(manager)?;
+    if let Some(window) = manager.get_webview_window(OPERATOR_WINDOW_LABEL) {
+        window
+            .set_always_on_top(pinned)
+            .context("failed to update operator panel pin state")?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tauri::{PhysicalPosition, PhysicalSize, Position, Size};
+
+    #[test]
+    fn operator_attached_close_keeps_pinned_panel_visible() {
+        assert!(!should_hide_operator_panel(
+            true,
+            OperatorPanelHideRequest::Attached
+        ));
+    }
+
+    #[test]
+    fn operator_focus_loss_auto_hides_unpinned_operator_panel() {
+        assert!(should_auto_hide_operator_panel_on_focus_change(
+            OPERATOR_WINDOW_LABEL,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn operator_focus_loss_keeps_pinned_operator_panel_visible() {
+        assert!(!should_auto_hide_operator_panel_on_focus_change(
+            OPERATOR_WINDOW_LABEL,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn operator_focus_gain_does_not_auto_hide() {
+        assert!(!should_auto_hide_operator_panel_on_focus_change(
+            OPERATOR_WINDOW_LABEL,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn main_window_focus_loss_does_not_auto_hide_operator_panel() {
+        assert!(!should_auto_hide_operator_panel_on_focus_change(
+            "main", false, false
+        ));
+    }
+
+    #[test]
+    fn operator_tray_toggle_keeps_hidden_after_focus_loss_dismissal() {
+        assert_eq!(
+            operator_tray_toggle_action(false, false, true),
+            OperatorPanelToggleAction::KeepHidden
+        );
+    }
+
+    #[test]
+    fn operator_tray_toggle_shows_hidden_without_focus_loss_dismissal() {
+        assert_eq!(
+            operator_tray_toggle_action(false, false, false),
+            OperatorPanelToggleAction::Show
+        );
+    }
+
+    #[test]
+    fn operator_tray_toggle_keeps_pinned_panel_visible() {
+        assert_eq!(
+            operator_tray_toggle_action(true, true, false),
+            OperatorPanelToggleAction::Show
+        );
+    }
+
+    #[test]
+    fn full_board_path_rejects_relative_paths() {
+        assert!(validate_full_board_path("clients").is_err());
+    }
+
+    #[test]
+    fn full_board_path_rejects_operator_route() {
+        assert!(validate_full_board_path("/operator").is_err());
+    }
+
+    #[test]
+    fn operator_window_positions_below_tray_icon() {
+        let tray_rect = Rect {
+            position: Position::Physical(PhysicalPosition::new(900, 10)),
+            size: Size::Physical(PhysicalSize::new(24, 24)),
+        };
+        let position = compute_operator_window_position(
+            tray_rect,
+            420.0,
+            640.0,
+            MonitorBounds {
+                left: 0.0,
+                top: 0.0,
+                right: 1440.0,
+                bottom: 900.0,
+            },
+        );
+
+        assert_eq!(position.x, 702);
+        assert_eq!(position.y, 42);
+    }
+
+    #[test]
+    fn operator_window_flips_above_tray_when_bottom_overflows() {
+        let tray_rect = Rect {
+            position: Position::Physical(PhysicalPosition::new(900, 860)),
+            size: Size::Physical(PhysicalSize::new(24, 24)),
+        };
+        let position = compute_operator_window_position(
+            tray_rect,
+            420.0,
+            640.0,
+            MonitorBounds {
+                left: 0.0,
+                top: 0.0,
+                right: 1440.0,
+                bottom: 900.0,
+            },
+        );
+
+        assert_eq!(position.x, 702);
+        assert_eq!(position.y, 212);
+    }
+
+    #[test]
+    fn operator_monitor_bounds_uses_monitor_containing_tray_icon() {
+        let monitors = [
+            MonitorBounds {
+                left: 0.0,
+                top: 0.0,
+                right: 1440.0,
+                bottom: 900.0,
+            },
+            MonitorBounds {
+                left: 1440.0,
+                top: 0.0,
+                right: 2880.0,
+                bottom: 900.0,
+            },
+        ];
+
+        assert_eq!(
+            monitor_bounds_containing_point(&monitors, 1800.0, 20.0),
+            Some(monitors[1])
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_full_board_path_round_trips_once() {
+        let state = ShellState::new(ShellPreferences::default(), PathBuf::from("prefs.json"));
+
+        state
+            .set_pending_full_board_path("/clients".to_string())
+            .await;
+
+        assert_eq!(
+            state.take_pending_full_board_path().await,
+            Some("/clients".to_string())
+        );
+        assert_eq!(state.take_pending_full_board_path().await, None);
+    }
 }

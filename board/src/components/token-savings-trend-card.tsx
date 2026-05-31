@@ -24,6 +24,8 @@ import {
   DASHBOARD_LINE_CHART_MARGIN,
   DashboardChartPlaceholder,
   DashboardChartSkeleton,
+  OPERATOR_CAROUSEL_CHART_VIEWPORT_CLASS,
+  OPERATOR_CAROUSEL_LINE_CHART_MARGIN,
 } from "./dashboard-chart-area";
 import { auditApi, capabilityTokenLedgerApi, configSuitsApi } from "../lib/api";
 import { computeProfileLedgerTokens } from "../lib/profile-token-ledger";
@@ -51,6 +53,8 @@ const TOKEN_USAGE_ACTIONS = new Set([
 
 interface TokenSavingsTrendCardProps {
   className?: string;
+  hideHeader?: boolean;
+  variant?: "default" | "compact";
 }
 
 interface GlobalSavingsStats {
@@ -136,8 +140,13 @@ function TokenLegend({ payload }: Pick<LegendProps, "payload">) {
   );
 }
 
-export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps) {
+export function TokenSavingsTrendCard({
+  className,
+  hideHeader = false,
+  variant = "default",
+}: TokenSavingsTrendCardProps) {
   const { t } = useTranslation("dashboard");
+  const isCompact = variant === "compact";
   const profileTokenEstimateMethod = useAppStore(
     (state) => state.dashboardSettings.profileTokenEstimateMethod,
   );
@@ -349,33 +358,42 @@ export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps)
   ];
 
   const chartBody = (() => {
+    const viewportClass = isCompact
+      ? OPERATOR_CAROUSEL_CHART_VIEWPORT_CLASS
+      : DASHBOARD_CHART_VIEWPORT_CLASS;
+    const chartMargin = isCompact
+      ? OPERATOR_CAROUSEL_LINE_CHART_MARGIN
+      : DASHBOARD_LINE_CHART_MARGIN;
+
     if (hasCachedSeries) {
       return (
-        <div className={DASHBOARD_CHART_VIEWPORT_CLASS}>
+        <div className={viewportClass}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={history}
-              margin={DASHBOARD_LINE_CHART_MARGIN}
+              margin={chartMargin}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.25)" />
               <XAxis
                 dataKey="time"
                 stroke="#9ca3af"
-                fontSize={11}
-                height={26}
+                fontSize={isCompact ? 10 : 11}
+                height={isCompact ? 18 : 26}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
                 stroke="#9ca3af"
-                fontSize={11}
+                fontSize={isCompact ? 10 : 11}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={formatTokenCount}
-                width={52}
+                width={isCompact ? 36 : 52}
               />
               <Tooltip content={renderTooltip} />
-              <Legend content={(props) => <TokenLegend payload={props.payload} />} />
+              {!isCompact ? (
+                <Legend content={(props) => <TokenLegend payload={props.payload} />} />
+              ) : null}
               <Line
                 type="monotone"
                 dataKey="beforeFiltering"
@@ -403,13 +421,13 @@ export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps)
       );
     }
     if (isStatsPending) {
-      return <DashboardChartSkeleton />;
+      return <DashboardChartSkeleton className={viewportClass} />;
     }
     if (isEmptyAfterLoad) {
       return (
-        <DashboardChartPlaceholder>
-          <Sparkles className="h-8 w-8 text-amber-500/80" aria-hidden />
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+        <DashboardChartPlaceholder className={viewportClass}>
+          <Sparkles className={isCompact ? "h-5 w-5 text-amber-500/80" : "h-8 w-8 text-amber-500/80"} aria-hidden />
+          <p className={isCompact ? "text-xs font-medium text-slate-700 dark:text-slate-200" : "text-sm font-medium text-slate-700 dark:text-slate-200"}>
             {t("tokenSavings.emptyOrg", {
               defaultValue:
                 "Add a server or profile to estimate token savings from capability filtering.",
@@ -419,23 +437,48 @@ export function TokenSavingsTrendCard({ className }: TokenSavingsTrendCardProps)
       );
     }
     return (
-      <DashboardChartPlaceholder>
+      <DashboardChartPlaceholder className={viewportClass}>
         <Loader2
-          className="h-7 w-7 animate-spin text-amber-500/90"
+          className={isCompact ? "h-5 w-5 animate-spin text-amber-500/90" : "h-7 w-7 animate-spin text-amber-500/90"}
           aria-hidden
         />
-        <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+        <p className={isCompact ? "text-xs font-medium text-slate-700 dark:text-slate-200" : "text-sm font-medium text-slate-700 dark:text-slate-200"}>
           {t("tokenSavings.collectingData", { defaultValue: "Collecting data..." })}
         </p>
-        <p className="max-w-sm text-xs text-slate-500 dark:text-slate-400">
-          {t("tokenSavings.collectingDataHint", {
-            defaultValue:
-              "Estimates appear once servers and profiles finish loading.",
-          })}
-        </p>
+        {!isCompact ? (
+          <p className="max-w-sm text-xs text-slate-500 dark:text-slate-400">
+            {t("tokenSavings.collectingDataHint", {
+              defaultValue:
+                "Estimates appear once servers and profiles finish loading.",
+            })}
+          </p>
+        ) : null}
       </DashboardChartPlaceholder>
     );
   })();
+
+  if (isCompact) {
+    return (
+      <div className={className}>
+        {!hideHeader ? (
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden />
+              <p className="truncate text-xs font-medium text-slate-900 dark:text-slate-100">
+                {t("tokenSavings.title", { defaultValue: "Token Savings" })}
+              </p>
+            </div>
+            {savingsStats ? (
+              <span className="shrink-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                {totalSavedDisplay}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {chartBody}
+      </div>
+    );
+  }
 
   return (
     <Card className={className}>

@@ -13,6 +13,7 @@ dist-ssr
 *.local
 lint-output.json
 lint.json
+test-results/
 
 # Editor directories and files
 .vscode/*

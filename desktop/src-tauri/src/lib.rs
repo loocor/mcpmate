@@ -12,7 +12,7 @@ use serde_json::json;
 use tauri::{
     Emitter, Manager, RunEvent, WindowEvent,
     menu::{MenuBuilder, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
@@ -23,6 +23,7 @@ mod core_service;
 mod deeplink;
 mod environment;
 mod oauth;
+mod operator_window;
 mod shell;
 mod utils;
 use config::{DesktopCoreSourceConfig, DesktopCoreSourceKind, LocalCoreRuntimeMode};
@@ -393,13 +394,27 @@ pub fn run() -> Result<()> {
         }
     });
 
-    builder = builder.on_window_event(|window, event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
+    builder = builder.on_window_event(|window, event| match event {
+        WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
-            if let Err(err) = window.hide() {
-                warn!(error = %err, "Failed to hide window on close request");
+            match shell::hide_operator_window_for_attached_close(window) {
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Err(err) = window.hide() {
+                        warn!(error = %err, "Failed to hide window on close request");
+                    }
+                }
+                Err(err) => {
+                    warn!(error = %err, "Failed to handle operator close request");
+                }
             }
         }
+        WindowEvent::Focused(focused) => {
+            if let Err(err) = shell::hide_operator_window_on_focus_change(window, *focused) {
+                warn!(error = %err, "Failed to handle operator focus change");
+            }
+        }
+        _ => {}
     });
 
     let updater_plugin = {
@@ -474,8 +489,20 @@ pub fn run() -> Result<()> {
             app.manage(shell_state.clone());
             app.manage(OAuthCallbackAccessState::default());
 
-            let open_main_item =
-                MenuItem::with_id(app, shell::MENU_OPEN_MAIN, "Open MCPMate", true, None::<&str>)?;
+            let open_main_item = MenuItem::with_id(
+                app,
+                shell::MENU_OPEN_MAIN,
+                "Open Full Board",
+                true,
+                None::<&str>,
+            )?;
+            let open_operator_item = MenuItem::with_id(
+                app,
+                shell::MENU_OPEN_OPERATOR,
+                "Open Operator Panel",
+                true,
+                None::<&str>,
+            )?;
             let service_status_item = MenuItem::with_id(
                 app,
                 shell::MENU_SERVICE_STATUS,
@@ -513,6 +540,7 @@ pub fn run() -> Result<()> {
 
             let tray_menu = MenuBuilder::new(app)
                 .item(&open_main_item)
+                .item(&open_operator_item)
                 .item(&service_status_item)
                 .item(&start_service_item)
                 .item(&restart_service_item)
@@ -531,7 +559,30 @@ pub fn run() -> Result<()> {
 
             let mut tray_builder = TrayIconBuilder::with_id(shell::TRAY_ID)
                 .menu(&tray_menu)
+                .show_menu_on_left_click(false)
                 .icon(tray_icon_image)
+                .on_tray_icon_event(|tray, event| {
+                    if event.id().as_ref() != shell::TRAY_ID {
+                        return;
+                    }
+                    if let TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        rect,
+                        ..
+                    } = event
+                        && button == MouseButton::Left
+                        && button_state == MouseButtonState::Up
+                    {
+                        shell::remember_tray_icon_rect(rect);
+                        let handle = tray.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(err) = shell::toggle_operator_window_visibility(&handle) {
+                                warn!(error = %err, "Failed to toggle operator panel from tray click");
+                            }
+                        });
+                    }
+                })
                 .on_menu_event(move |app_handle, event| {
                     let menu_id = event.id().as_ref();
                     match menu_id {
@@ -540,6 +591,14 @@ pub fn run() -> Result<()> {
                             tauri::async_runtime::spawn(async move {
                                 if let Err(err) = shell::ensure_window_visibility(&handle) {
                                     warn!(error = %err, "Failed to show main window from tray");
+                                }
+                            });
+                        }
+                        shell::MENU_OPEN_OPERATOR => {
+                            let handle = app_handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                if let Err(err) = shell::ensure_operator_window_visibility(&handle) {
+                                    warn!(error = %err, "Failed to show operator panel from tray");
                                 }
                             });
                         }
@@ -800,6 +859,12 @@ pub fn run() -> Result<()> {
         mcp_shell_read_core_source,
         mcp_shell_apply_core_source,
         mcp_shell_manage_local_core_service,
+        mcp_shell_open_full_board,
+        mcp_shell_take_pending_full_board_path,
+        mcp_shell_show_operator_panel,
+        mcp_shell_show_operator_intro_once,
+        mcp_shell_close_operator_panel,
+        mcp_shell_set_operator_panel_pinned,
         deeplink::mcp_deep_link_take_pending_server_import,
         deeplink::mcp_deep_link_log_frontend_import,
         account::mcp_account_start_github_login,
@@ -858,15 +923,12 @@ async fn mcp_shell_apply_preferences(
     state: tauri::State<'_, ShellState>,
     payload: ShellPreferencesPayload,
 ) -> Result<(), String> {
-    let prev_show_dock_icon = state
-        .inner()
-        .clone()
-        .current_preferences()
-        .await
-        .show_dock_icon;
+    let current_preferences = state.inner().clone().current_preferences().await;
+    let prev_show_dock_icon = current_preferences.show_dock_icon;
     let prefs = ShellPreferences {
         menu_bar_icon_mode: payload.menu_bar_icon_mode,
         show_dock_icon: payload.show_dock_icon,
+        operator_intro_shown: current_preferences.operator_intro_shown,
     };
     state
         .inner()
@@ -897,6 +959,68 @@ async fn mcp_shell_read_preferences(
     Ok(ShellPreferencesView::from(
         state.inner().clone().current_preferences().await,
     ))
+}
+
+#[tauri::command]
+async fn mcp_shell_open_full_board(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ShellState>,
+    path: Option<String>,
+) -> Result<(), String> {
+    let target_path = path
+        .map(|path| shell::validate_full_board_path(&path).map_err(|err| err.to_string()))
+        .transpose()?;
+
+    shell::ensure_window_visibility(&app).map_err(|err| err.to_string())?;
+
+    if let Some(path) = target_path {
+        state.set_pending_full_board_path(path).await;
+        if let Err(err) = app.emit_to(
+            "main",
+            shell::EVENT_OPEN_FULL_BOARD_PATH,
+            json!({ "pending": true }),
+        ) {
+            state.clear_pending_full_board_path().await;
+            return Err(err.to_string());
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn mcp_shell_take_pending_full_board_path(
+    state: tauri::State<'_, ShellState>,
+) -> Result<Option<String>, String> {
+    Ok(state.take_pending_full_board_path().await)
+}
+
+#[tauri::command]
+async fn mcp_shell_show_operator_panel(app: tauri::AppHandle) -> Result<(), String> {
+    shell::ensure_operator_window_visibility(&app).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn mcp_shell_show_operator_intro_once(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ShellState>,
+) -> Result<bool, String> {
+    shell::show_operator_intro_once(&app, state.inner())
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn mcp_shell_close_operator_panel(app: tauri::AppHandle) -> Result<(), String> {
+    shell::hide_operator_window(&app).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn mcp_shell_set_operator_panel_pinned(
+    app: tauri::AppHandle,
+    pinned: bool,
+) -> Result<(), String> {
+    shell::set_operator_window_pinned(&app, pinned).map_err(|err| err.to_string())
 }
 
 #[tauri::command]

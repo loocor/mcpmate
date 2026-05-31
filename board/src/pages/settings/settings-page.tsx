@@ -72,7 +72,6 @@ import {
 	type ClientBackupStrategy,
 	type ClientDefaultMode,
 	type ClientListDefaultFilter,
-	type DashboardAppMode,
 	type DashboardDefaultView,
 	type DashboardLanguage,
 	type DashboardSettings,
@@ -133,19 +132,6 @@ const DEFAULT_VIEW_CONFIG = [
 		value: "grid" as const,
 		labelKey: "settings:options.defaultView.grid",
 		fallback: "Grid",
-	},
-];
-
-const APPLICATION_MODE_CONFIG = [
-	{
-		value: "express" as const,
-		labelKey: "settings:options.appMode.express",
-		fallback: "Express",
-	},
-	{
-		value: "expert" as const,
-		labelKey: "settings:options.appMode.expert",
-		fallback: "Expert",
 	},
 ];
 
@@ -748,15 +734,6 @@ export function SettingsPage() {
 		[t, i18n.language],
 	);
 
-	const applicationModeOptions = useMemo<SegmentOption[]>(
-		() =>
-			APPLICATION_MODE_CONFIG.map(({ value, labelKey, fallback }) => ({
-				value,
-				label: t(labelKey, { defaultValue: fallback }),
-			})),
-		[t, i18n.language],
-	);
-
 	const clientModeOptions = useMemo<SegmentOption[]>(
 		() =>
 			CLIENT_MODE_CONFIG.map(
@@ -1143,36 +1120,6 @@ export function SettingsPage() {
 												setDashboardSetting(
 													"defaultView",
 													value as DashboardDefaultView,
-												)
-											}
-											showDots={false}
-										/>
-									</div>
-								</div>
-
-								{/* Application Mode */}
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
-										<h3 className="text-base font-medium">
-											{t("settings:general.appMode", {
-												defaultValue: "Application Mode",
-											})}{" "}
-											<sup>{t("wipTag", { defaultValue: "(WIP)" })}</sup>
-										</h3>
-										<p className="text-sm text-muted-foreground">
-											{t("settings:general.appModeDescription", {
-												defaultValue: "Select the interface complexity level.",
-											})}
-										</p>
-									</div>
-									<div className="w-48">
-										<Segment
-											options={applicationModeOptions}
-											value={dashboardSettings.appMode}
-											onValueChange={(value) =>
-												setDashboardSetting(
-													"appMode",
-													value as DashboardAppMode,
 												)
 											}
 											showDots={false}

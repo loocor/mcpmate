@@ -66,6 +66,104 @@ export const dashboardTranslations = {
 			restartAction: "Restart",
 			stopAction: "Stop",
 		},
+		operator: {
+			title: "Operator Panel",
+			description: "High-frequency MCP control in one compact column.",
+			fullConsole: "Full Console",
+			status: {
+				ready: "Ready",
+				warning: "Review",
+				error: "Attention",
+				idle: "Idle",
+			},
+			actions: {
+				openRuntime: "Runtime",
+				manage: "Manage",
+				review: "Review",
+				install: "Install",
+				openLogs: "Logs",
+				inspect: "Inspect",
+				discover: "Discover servers",
+			},
+			rows: {
+				core: {
+					title: "Core",
+					ready: "MCPMate Core is ready",
+					notReady: "Core needs attention",
+					meta: "{{status}} · {{uptime}} uptime",
+				},
+				profiles: {
+					title: "Profiles",
+					summary: "{{active}} active of {{total}} profiles",
+					noDefault: "No default profile selected",
+				},
+				clients: {
+					title: "Clients",
+					summary: "{{total}} clients connected",
+					meta: "{{approved}} approved · {{pending}} pending",
+					pending: "{{count}} pending",
+				},
+				servers: {
+					title: "Servers",
+					summary: "{{total}} servers installed",
+					meta: "{{connected}} connected · {{attention}} needs attention",
+					attention: "{{count}} needs attention",
+				},
+				traffic: {
+					title: "Traffic",
+					summary: "{{requests}} MCP requests",
+					meta: "{{cpu}}% CPU · {{memory}} memory",
+				},
+				attention: {
+					title: "Attention",
+					summary: "{{count}} items need review",
+					clear: "No urgent operator actions",
+					noEvents: "No recent activity",
+				},
+			},
+			detail: {
+				focus: "Current focus",
+				next: "Next actions",
+				fullConsoleHint:
+					"Use Full Console when you need raw capability data, detailed editors, or inspector workflows.",
+				core: {
+					ready: "Confirm local Core status before changing configuration.",
+					runtime: "Open Runtime for service control, ports, and health checks.",
+					logs: "Use Logs only when the compact status needs explanation.",
+				},
+				profiles: {
+					active:
+						"Keep the active profile visible without capability bulk controls.",
+					filter: "Open Full Console for server and capability selection.",
+					tokens:
+						"Use token estimates to decide whether a profile is too broad.",
+				},
+				clients: {
+					detect: "Detect local clients and approve first contact.",
+					configure:
+						"Keep config-file editing inside the full client console.",
+					review:
+						"Review pending clients before they receive profile access.",
+				},
+				servers: {
+					import: "Install from Market, Uni-Import, or dropped configuration.",
+					health: "Watch connection health before opening Inspector details.",
+					profile:
+						"Add successful installs to the active profile when needed.",
+				},
+				traffic: {
+					runtime: "Check live usage without starting from raw logs.",
+					tokens: "Use charts for trend review and Logs for exact events.",
+					time: "Time-window controls stay in the full analytics surfaces.",
+				},
+				attention: {
+					pending: "Pending clients and unhealthy servers rise to the top.",
+					audit:
+						"Open Logs when the compact row is not enough to explain an event.",
+					resolve: "Resolve detailed failures in the owning full console page.",
+				},
+			},
+		},
 		tokenSavings: {
 			title: "Token Savings",
 			description: "Estimated context savings from profile filtering",
@@ -156,6 +254,98 @@ export const dashboardTranslations = {
 			startAction: "启动",
 			restartAction: "重启",
 			stopAction: "停止",
+		},
+		operator: {
+			title: "操作面板",
+			description: "把高频 MCP 控制压缩到一列里。",
+			fullConsole: "完整控制台",
+			status: {
+				ready: "就绪",
+				warning: "待检查",
+				error: "需处理",
+				idle: "空闲",
+			},
+			actions: {
+				openRuntime: "运行时",
+				manage: "管理",
+				review: "查看",
+				install: "安装",
+				openLogs: "日志",
+				inspect: "检查",
+				discover: "发现服务",
+			},
+			rows: {
+				core: {
+					title: "Core",
+					ready: "MCPMate Core 已就绪",
+					notReady: "Core 需要处理",
+					meta: "{{status}} · 已运行 {{uptime}}",
+				},
+				profiles: {
+					title: "配置集",
+					summary: "{{total}} 个配置集中 {{active}} 个已启用",
+					noDefault: "未选择默认配置集",
+				},
+				clients: {
+					title: "客户端",
+					summary: "已连接 {{total}} 个客户端",
+					meta: "{{approved}} 个已允许 · {{pending}} 个待处理",
+					pending: "{{count}} 个待处理",
+				},
+				servers: {
+					title: "服务器",
+					summary: "已安装 {{total}} 个服务器",
+					meta: "{{connected}} 个已连接 · {{attention}} 个需处理",
+					attention: "{{count}} 个需处理",
+				},
+				traffic: {
+					title: "流量",
+					summary: "{{requests}} 次 MCP 请求",
+					meta: "{{cpu}}% CPU · {{memory}} 内存",
+				},
+				attention: {
+					title: "关注项",
+					summary: "{{count}} 项需要查看",
+					clear: "暂无紧急操作",
+					noEvents: "暂无最近活动",
+				},
+			},
+			detail: {
+				focus: "当前关注点",
+				next: "下一步操作",
+				fullConsoleHint:
+					"需要原始能力数据、详细编辑器或 Inspector 流程时，请使用完整控制台。",
+				core: {
+					ready: "调整配置前先确认本地 Core 状态。",
+					runtime: "打开运行时页面管理服务、端口和健康状态。",
+					logs: "只有当紧凑状态解释不够时再进入日志。",
+				},
+				profiles: {
+					active: "保持活跃配置集可见，但不暴露能力批量控制。",
+					filter: "服务和能力选择放在完整控制台中处理。",
+					tokens: "通过 Token 估算判断配置集是否过宽。",
+				},
+				clients: {
+					detect: "检测本地客户端，并审批首次连接。",
+					configure: "配置文件编辑保留在完整客户端控制台里。",
+					review: "待处理客户端审批后才获得配置集访问。",
+				},
+				servers: {
+					import: "从服务源、Uni-Import 或拖拽配置安装。",
+					health: "打开 Inspector 详情前先观察连接健康状态。",
+					profile: "安装成功后按需加入活跃配置集。",
+				},
+				traffic: {
+					runtime: "不用从原始日志开始，也能查看实时使用情况。",
+					tokens: "用图表看趋势，用日志定位精确事件。",
+					time: "时间窗口控制仍保留在完整分析界面。",
+				},
+				attention: {
+					pending: "待审批客户端和异常服务器会优先浮现。",
+					audit: "当紧凑条目解释不够时，打开日志查看。",
+					resolve: "详细故障在对应的完整控制台页面处理。",
+				},
+			},
 		},
 		tokenSavings: {
 			title: "Token 节省",
@@ -248,6 +438,106 @@ export const dashboardTranslations = {
 			startAction: "開始",
 			restartAction: "再起動",
 			stopAction: "停止",
+		},
+		operator: {
+			title: "オペレーターパネル",
+			description: "高頻度の MCP 操作を1列にまとめます。",
+			fullConsole: "フルコンソール",
+			status: {
+				ready: "準備完了",
+				warning: "確認",
+				error: "対応必要",
+				idle: "アイドル",
+			},
+			actions: {
+				openRuntime: "ランタイム",
+				manage: "管理",
+				review: "確認",
+				install: "インストール",
+				openLogs: "ログ",
+				inspect: "検査",
+				discover: "サーバーを探す",
+			},
+			rows: {
+				core: {
+					title: "Core",
+					ready: "MCPMate Core は準備完了です",
+					notReady: "Core の確認が必要です",
+					meta: "{{status}} · 稼働 {{uptime}}",
+				},
+				profiles: {
+					title: "プロファイル",
+					summary: "{{total}} 件中 {{active}} 件がアクティブ",
+					noDefault: "デフォルトプロファイル未選択",
+				},
+				clients: {
+					title: "クライアント",
+					summary: "{{total}} クライアントが接続済み",
+					meta: "{{approved}} 承認済み · {{pending}} 保留中",
+					pending: "{{count}} 保留中",
+				},
+				servers: {
+					title: "サーバー",
+					summary: "{{total}} サーバーがインストール済み",
+					meta: "{{connected}} 接続済み · {{attention}} 要確認",
+					attention: "{{count}} 要確認",
+				},
+				traffic: {
+					title: "トラフィック",
+					summary: "{{requests}} MCP リクエスト",
+					meta: "{{cpu}}% CPU · {{memory}} メモリ",
+				},
+				attention: {
+					title: "注意",
+					summary: "{{count}} 件の確認が必要",
+					clear: "緊急の操作はありません",
+					noEvents: "最近のアクティビティはありません",
+				},
+			},
+			detail: {
+				focus: "現在のフォーカス",
+				next: "次の操作",
+				fullConsoleHint:
+					"生の capability データ、詳細エディタ、Inspector が必要な場合はフルコンソールを使います。",
+				core: {
+					ready: "設定変更の前にローカル Core の状態を確認します。",
+					runtime: "サービス、ポート、ヘルスチェックはランタイムで管理します。",
+					logs: "コンパクト状態だけで説明できない場合にログを開きます。",
+				},
+				profiles: {
+					active:
+						"アクティブなプロファイルを表示し、capability の一括操作は隠します。",
+					filter:
+						"サーバーと capability の選択はフルコンソールで行います。",
+					tokens:
+						"トークン推定でプロファイルが広すぎないか判断します。",
+				},
+				clients: {
+					detect: "ローカルクライアントを検出し、初回接続を承認します。",
+					configure:
+						"設定ファイル編集はフルクライアントコンソール内に残します。",
+					review:
+						"保留中のクライアントは profile access の前に確認します。",
+				},
+				servers: {
+					import:
+						"Market、Uni-Import、またはドロップした設定からインストールします。",
+					health: "Inspector 詳細の前に接続状態を確認します。",
+					profile:
+						"インストール成功後、必要に応じてアクティブプロファイルへ追加します。",
+				},
+				traffic: {
+					runtime: "生ログから始めずにライブ使用状況を確認します。",
+					tokens: "傾向はチャート、正確なイベントはログで確認します。",
+					time: "時間範囲の操作はフル分析画面に残します。",
+				},
+				attention: {
+					pending: "保留クライアントと異常サーバーを優先表示します。",
+					audit:
+						"コンパクト行だけでは不足する場合、ログを開いて確認します。",
+					resolve: "詳細な障害は対応するフルコンソール画面で解決します。",
+				},
+			},
 		},
 		tokenSavings: {
 			title: "トークン節約",

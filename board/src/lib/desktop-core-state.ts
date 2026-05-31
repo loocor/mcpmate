@@ -19,7 +19,7 @@ export interface DesktopCoreSourceResponse {
 	remoteAvailable: boolean;
 }
 
-type Action = "start" | "stop" | "status" | "install" | "uninstall";
+type Action = "start" | "stop" | "restart" | "status" | "install" | "uninstall";
 
 export function useDesktopCoreState() {
 	const isTauriShell = isTauriEnvironmentSync();

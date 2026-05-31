@@ -14,12 +14,23 @@ export const DASHBOARD_CHART_VIEWPORT_CLASS =
 export const DASHBOARD_CHART_LEGEND_WRAPPER_CLASS =
 	"flex h-10 w-full max-w-full flex-shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-0.5 overflow-hidden px-2 text-xs leading-tight";
 
+/** Compact chart height for operator panel horizontal carousel slides. */
+export const OPERATOR_CAROUSEL_CHART_VIEWPORT_CLASS =
+	"h-[128px] min-h-[128px] max-h-[128px] w-full shrink-0 overflow-hidden";
+
 /** Shared LineChart margins for Metrics and Token Savings (keeps plot box aligned). */
 export const DASHBOARD_LINE_CHART_MARGIN = {
 	top: 10,
 	right: 24,
 	left: 10,
 	bottom: 8,
+} as const;
+
+export const OPERATOR_CAROUSEL_LINE_CHART_MARGIN = {
+	top: 4,
+	right: 12,
+	left: 0,
+	bottom: 0,
 } as const;
 
 export function DashboardChartSkeleton({ className }: { className?: string }) {

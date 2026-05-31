@@ -56,6 +56,8 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { cn } from "../../lib/utils";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
+import { isTauriEnvironmentSync } from "../../lib/platform";
+import { showOperatorIntroOnce } from "../../lib/desktop-operator";
 import type { ClientInfo } from "../../lib/types";
 
 type WizardStep = "welcome" | "runtime" | "clients" | "servers" | "community";
@@ -610,6 +612,18 @@ export function OnboardingPage() {
 
       await onboardingApi.complete(true);
       await qc.invalidateQueries({ queryKey: ["onboardingStatus"] });
+      if (isTauriEnvironmentSync()) {
+        try {
+          await showOperatorIntroOnce();
+        } catch (panelError) {
+          notifyError(
+            t("complete.operatorPanelErrorTitle", {
+              defaultValue: "Could not open tray operator panel",
+            }),
+            panelError instanceof Error ? panelError.message : String(panelError),
+          );
+        }
+      }
       navigate("/", { replace: true });
     } catch (error) {
       notifyError(

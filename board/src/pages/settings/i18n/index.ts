@@ -117,8 +117,6 @@ export const settingsTranslations = {
       description: "Baseline preferences for the main workspace views.",
       defaultView: "Default View",
       defaultViewDescription: "Choose the default layout for displaying items.",
-      appMode: "Application Mode",
-      appModeDescription: "Select the interface complexity level.",
       language: "Language",
       languageDescription: "Select the dashboard language.",
       languagePlaceholder: "Select language",
@@ -152,10 +150,6 @@ export const settingsTranslations = {
       defaultView: {
         list: "List",
         grid: "Grid",
-      },
-      appMode: {
-        express: "Express",
-        expert: "Expert",
       },
       clientMode: {
         unify: "Unify",
@@ -451,8 +445,6 @@ export const settingsTranslations = {
       description: "管理工作区的默认视图与基础偏好。",
       defaultView: "默认视图",
       defaultViewDescription: "选择条目显示的默认布局方式。",
-      appMode: "应用模式",
-      appModeDescription: "选择界面复杂度和信息层级。",
       language: "界面语言",
       languageDescription: "切换控制台显示语言。",
       languagePlaceholder: "请选择语言",
@@ -485,10 +477,6 @@ export const settingsTranslations = {
       defaultView: {
         list: "列表",
         grid: "网格",
-      },
-      appMode: {
-        express: "简洁",
-        expert: "专业",
       },
       clientMode: {
         unify: "统一模式",
@@ -771,8 +759,6 @@ export const settingsTranslations = {
       description: "ワークスペースの基本設定を管理します。",
       defaultView: "既定のビュー",
       defaultViewDescription: "項目の表示レイアウトを選択します。",
-      appMode: "アプリモード",
-      appModeDescription: "インターフェースの複雑さを選択します。",
       language: "表示言語",
       languageDescription: "ダッシュボードで使用する言語を切り替えます。",
       languagePlaceholder: "言語を選択",
@@ -806,10 +792,6 @@ export const settingsTranslations = {
       defaultView: {
         list: "リスト",
         grid: "グリッド",
-      },
-      appMode: {
-        express: "ライト",
-        expert: "エキスパート",
       },
       clientMode: {
         unify: "Unify",
