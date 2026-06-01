@@ -1,152 +1,200 @@
 import {
 	ArrowRight,
-	ClipboardPaste,
-	Puzzle,
+	Eye,
+	LayoutGrid,
 	RefreshCcw,
-	Search,
 	Server,
-	ShoppingCart,
-	Sparkles,
-	Terminal,
-	Zap,
+	SlidersHorizontal,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { scrollToMarketingSection } from "../../lib/section-scroll";
 import { useLanguage } from "../LanguageProvider";
-import Card from "../ui/Card";
 import Section from "../ui/Section";
 
-interface FeatureCardProps {
+interface PillarCardProps {
 	title: string;
 	description: string;
 	icon: ReactNode;
-	docPath: string;
+	videoSrc: string;
 	ctaLabel: string;
-	onOpen: (path: string) => void;
+	onAction: () => void;
 }
 
-const FeatureCard = ({
-	title,
-	description,
-	icon,
-	docPath,
-	ctaLabel,
-	onOpen,
-}: FeatureCardProps) => {
+function getDocsLocale(language: string): "en" | "ja" | "zh" {
+	if (language === "zh" || language === "ja") {
+		return language;
+	}
+
+	return "en";
+}
+
+const handleCardKeyDown = (event: KeyboardEvent<HTMLElement>, onAction: () => void) => {
+	if (event.key !== "Enter" && event.key !== " ") {
+		return;
+	}
+
+	event.preventDefault();
+	onAction();
+};
+
+const PillarCard = ({ title, description, icon, videoSrc, ctaLabel, onAction }: PillarCardProps) => {
 	return (
-		<Card hoverEffect className="h-full">
-			<div className="p-6 h-full flex flex-col">
-				<div className="w-12 h-12 flex items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 mb-4">
+		<article
+			role="button"
+			tabIndex={0}
+			aria-label={`${title}: ${ctaLabel}`}
+			onClick={onAction}
+			onKeyDown={(event) => handleCardKeyDown(event, onAction)}
+			className="feature-card glass-card-hover group/feature relative flex min-h-[17rem] cursor-pointer flex-col overflow-hidden rounded-2xl p-5 outline-none transition-[border-color,box-shadow,transform] duration-300 ease-out focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg"
+		>
+			<div
+				className="feature-card__media pointer-events-none absolute inset-x-0 top-0 h-[60%] overflow-hidden rounded-t-2xl border-b border-brand-border-subtle bg-brand-overlay opacity-0 shadow-glow-sm [clip-path:inset(0_0_100%_0)] transition-[clip-path,opacity] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/feature:opacity-100 group-hover/feature:[clip-path:inset(0_0_0_0)] group-focus-visible/feature:opacity-100 group-focus-visible/feature:[clip-path:inset(0_0_0_0)]"
+				aria-hidden
+			>
+				<video
+					src={videoSrc}
+					className="feature-card__video h-full w-full object-cover opacity-90"
+					autoPlay
+					loop
+					muted
+					playsInline
+					preload="metadata"
+					tabIndex={-1}
+				/>
+				<div className="absolute inset-0 bg-gradient-to-b from-white/10 via-transparent to-brand-bg/20" />
+			</div>
+
+			<div className="relative z-10 flex h-full min-h-[14.5rem] flex-col">
+				<div className="feature-card__icon mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-overlay-strong text-brand-indigo ring-1 ring-brand-border-subtle transition-[opacity,transform] duration-300 ease-out group-hover/feature:-translate-y-3 group-hover/feature:scale-75 group-hover/feature:opacity-0 group-focus-visible/feature:-translate-y-3 group-focus-visible/feature:scale-75 group-focus-visible/feature:opacity-0">
 					{icon}
 				</div>
-				<h3 className="text-xl font-semibold mb-2">{title}</h3>
-				<p className="text-slate-600 dark:text-slate-400 flex-1">{description}</p>
-				<button
-					type="button"
-					onClick={() => onOpen(docPath)}
-					className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 underline transition-colors"
-				>
-					{ctaLabel}
-					<ArrowRight size={14} />
-				</button>
+				<h3 className="feature-card__title mb-2 text-lg font-semibold text-brand-foreground transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/feature:translate-y-[7.25rem] group-focus-visible/feature:translate-y-[7.25rem]">
+					{title}
+				</h3>
+				<div className="feature-card__body flex flex-1 flex-col">
+					<p className="feature-card__description flex-1 text-sm leading-relaxed section-muted transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/feature:translate-y-14 group-hover/feature:opacity-0 group-focus-visible/feature:translate-y-14 group-focus-visible/feature:opacity-0">
+						{description}
+					</p>
+					<span className="feature-card__cta mt-5 inline-flex items-center gap-1 text-sm font-medium text-brand-accent">
+						{ctaLabel}
+						<ArrowRight size={14} aria-hidden />
+					</span>
+				</div>
 			</div>
-		</Card>
+
+			<div
+				className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover/feature:opacity-100 group-focus-visible/feature:opacity-100"
+				aria-hidden
+			>
+				<div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-brand-elevated/95 to-transparent" />
+			</div>
+		</article>
 	);
 };
 
 const Features = () => {
 	const { t, language } = useLanguage();
 	const navigate = useNavigate();
-	const locale = language === "zh" ? "zh" : language === "ja" ? "ja" : "en";
+	const locale = getDocsLocale(language);
 	const featureDocsBase = `/docs/${locale}`;
 	const openDoc = (path: string) => navigate(path);
-	const features = [
+
+	const pillars: Array<{
+		title: string;
+		description: string;
+		icon: ReactNode;
+		videoSrc: string;
+		docPath?: string;
+		scrollToId?: string;
+	}> = [
 		{
-			title: t("features.centralized"),
-			description: t("features.centralized.desc"),
-			icon: <Server size={24} />,
+			title: t("features.pillar1.title"),
+			description: t("features.pillar1.desc"),
+			icon: <Server size={22} aria-hidden />,
+			videoSrc: "/video/features/configure.webm",
 			docPath: `${featureDocsBase}/centralized-config`,
 		},
 		{
-			title: t("features.marketplace"),
-			description: t("features.marketplace.desc"),
-			icon: <ShoppingCart size={24} />,
-			docPath: `${featureDocsBase}/marketplace`,
-		},
-		{
-			title: t("features.context"),
-			description: t("features.context.desc"),
-			icon: <RefreshCcw size={24} />,
+			title: t("features.pillar2.title"),
+			description: t("features.pillar2.desc"),
+			icon: <RefreshCcw size={22} aria-hidden />,
+			videoSrc: "/video/features/scenarios.webm",
 			docPath: `${featureDocsBase}/context-switching`,
 		},
 		{
-			title: t("features.autodiscovery"),
-			description: t("features.autodiscovery.desc"),
-			icon: <Sparkles size={24} />,
-			docPath: `${featureDocsBase}/auto-discovery`,
-		},
-		{
-			title: t("features.uniimport"),
-			description: t("features.uniimport.desc"),
-			icon: <ClipboardPaste size={24} />,
-			docPath: `${featureDocsBase}/uni-import`,
-		},
-		{
-			title: t("features.templates"),
-			description: t("features.templates.desc"),
-			icon: <Puzzle size={24} />,
+			title: t("features.pillar3.title"),
+			description: t("features.pillar3.desc"),
+			icon: <SlidersHorizontal size={22} aria-hidden />,
+			videoSrc: "/video/features/client-tools.webm",
 			docPath: `${featureDocsBase}/granular-controls`,
 		},
 		{
-			title: t("features.inspector"),
-			description: t("features.inspector.desc"),
-			icon: <Search size={24} />,
+			title: t("features.pillar4.title"),
+			description: t("features.pillar4.desc"),
+			icon: <LayoutGrid size={22} aria-hidden />,
+			videoSrc: "/video/features/setup-modes.webm",
+			scrollToId: "modes",
+		},
+		{
+			title: t("features.pillar5.title"),
+			description: t("features.pillar5.desc"),
+			icon: <Eye size={22} aria-hidden />,
+			videoSrc: "/video/features/verify.webm",
 			docPath: `${featureDocsBase}/inspector`,
 		},
-		{
-			title: t("features.resource"),
-			description: t("features.resource.desc"),
-			icon: <Zap size={24} />,
-			docPath: `${featureDocsBase}/resource-optimization`,
-		},
-		{
-			title: t("features.bridge"),
-			description: t("features.bridge.desc"),
-			icon: <Terminal size={24} />,
-			docPath: `${featureDocsBase}/protocol-bridging`,
-		},
 	];
+
+	const handlePillarAction = (pillar: (typeof pillars)[number]) => {
+		if (pillar.scrollToId) {
+			scrollToMarketingSection(pillar.scrollToId);
+			return;
+		}
+		if (pillar.docPath) {
+			openDoc(pillar.docPath);
+		}
+	};
+
+	const renderPillar = (pillar: (typeof pillars)[number]) => (
+		<PillarCard
+			key={pillar.title}
+			title={pillar.title}
+			description={pillar.description}
+			icon={pillar.icon}
+			videoSrc={pillar.videoSrc}
+			ctaLabel={t("features.read_more")}
+			onAction={() => handlePillarAction(pillar)}
+		/>
+	);
 
 	return (
 		<Section
 			title={t("features.title")}
-			titleClassName="text-4xl"
+			titleClassName="text-3xl md:text-4xl text-brand-foreground"
 			subtitle={t("features.subtitle")}
+			subtitleClassName="section-muted"
 			centered
 			id="features"
-			className="border-t border-slate-200/70 dark:border-slate-800/60"
+			snap
+			className="features-section !py-14 md:!py-16 [@media(max-height:52rem)]:!py-10 [@media(max-height:52rem)]:md:!py-12"
 		>
-			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-				{features.map((feature) => (
-					<FeatureCard
-						key={feature.docPath}
-						title={feature.title}
-						description={feature.description}
-						icon={feature.icon}
-						docPath={feature.docPath}
-						ctaLabel={t("features.read_more")}
-						onOpen={openDoc}
-					/>
-				))}
+			<div className="features-pillar-grid hidden xl:grid xl:grid-cols-5 xl:gap-4">
+				{pillars.map(renderPillar)}
 			</div>
-			<div className="mt-12 text-center">
+
+			<div className="space-y-4 xl:hidden">
+				<div className="grid grid-cols-1 gap-4 lg:grid-cols-3">{pillars.slice(0, 3).map(renderPillar)}</div>
+				<div className="mx-auto grid max-w-3xl grid-cols-1 gap-4 lg:grid-cols-2">{pillars.slice(3).map(renderPillar)}</div>
+			</div>
+
+			<div className="mt-6 text-center md:mt-8">
 				<button
 					type="button"
 					onClick={() => navigate(`${featureDocsBase}/features-overview`)}
-					className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 underline transition-colors"
+					className="inline-flex items-center gap-1 text-sm font-medium text-brand-accent transition-colors hover:text-brand-accent-hover"
 				>
 					{t("features.explore_all")}
-					<ArrowRight size={14} />
+					<ArrowRight size={14} aria-hidden />
 				</button>
 			</div>
 		</Section>

@@ -11,6 +11,18 @@ import { initGA, trackPageView } from "./utils/analytics";
 import DomainMigrationBanner from "./components/ui/DomainMigrationBanner";
 import { renderDocRoutes } from "./docs/DocRoutes";
 
+function getShellClass(pathname: string): string {
+	if (pathname === "/") {
+		return "marketing-shell min-h-screen flex flex-col";
+	}
+
+	if (pathname.startsWith("/docs/")) {
+		return "docs-shell min-h-screen flex flex-col";
+	}
+
+	return "min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-brand-bg dark:text-brand-foreground";
+}
+
 // page view tracking component
 function Analytics() {
 	const location = useLocation();
@@ -41,6 +53,7 @@ function ScrollTopOnDocs() {
 function AppInner() {
 	const [isLoaded, setIsLoaded] = useState(false);
 	const location = useLocation();
+	const shellClass = getShellClass(location.pathname);
 
 	useEffect(() => {
 		// initialize GA
@@ -64,7 +77,7 @@ function AppInner() {
 			>
 				<Analytics />
 				<ScrollTopOnDocs />
-				<div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-50">
+				<div className={shellClass}>
 					<DomainMigrationBanner />
 					<Navbar />
 					<main

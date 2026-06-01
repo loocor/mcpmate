@@ -15,7 +15,7 @@ export type ReleaseFetchState =
 /**
  * Loads the latest release (install URLs) plus published release history (cumulative download counts).
  */
-export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => void } {
+export function useLatestGitHubRelease(includeHistory = true): ReleaseFetchState & { refetch: () => void } {
 	const [state, setState] = useState<ReleaseFetchState>({ status: "loading" });
 	const [tick, setTick] = useState(0);
 
@@ -41,6 +41,11 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 				const latest = (await latestRes.json()) as GitHubLatestRelease;
 				if (!latest?.tag_name || !Array.isArray(latest.assets)) {
 					setState({ status: "error", message: "Invalid latest payload" });
+					return;
+				}
+
+				if (!includeHistory) {
+					setState({ status: "ok", latest, allReleases: null });
 					return;
 				}
 
@@ -70,7 +75,7 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 		})();
 
 		return () => ac.abort();
-	}, [tick]);
+	}, [includeHistory, tick]);
 
 	const refetch = useCallback(() => {
 		setTick((n) => n + 1);

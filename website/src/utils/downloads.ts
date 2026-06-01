@@ -1,5 +1,23 @@
 export type Platform = 'mac' | 'windows' | 'linux';
 export type MacVariant = 'arm64' | 'x64';
+export type DesktopPlatform = 'macos' | 'windows' | 'linux';
+export type DesktopArchitecture = 'arm64' | 'x64';
+
+interface NavigatorUserAgentDataLike {
+  platform?: string;
+  getHighEntropyValues?: (hints: string[]) => Promise<{
+    architecture?: string;
+    platform?: string;
+  }>;
+}
+
+function getNavigatorUserAgentData(): NavigatorUserAgentDataLike | undefined {
+  if (typeof navigator === 'undefined') {
+    return undefined;
+  }
+
+  return (navigator as Navigator & { userAgentData?: NavigatorUserAgentDataLike }).userAgentData;
+}
 
 export function detectPlatform(): Platform {
   if (typeof window === 'undefined') return 'mac';
@@ -7,6 +25,56 @@ export function detectPlatform(): Platform {
   if (platform.includes('mac')) return 'mac';
   if (platform.includes('win')) return 'windows';
   return 'linux';
+}
+
+export function detectDesktopPlatform(): DesktopPlatform {
+  if (typeof navigator === 'undefined') {
+    return 'macos';
+  }
+
+  const uaDataPlatform = getNavigatorUserAgentData()?.platform ?? '';
+  const platform = `${uaDataPlatform} ${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+
+  if (platform.includes('mac')) return 'macos';
+  if (platform.includes('win')) return 'windows';
+  if (platform.includes('linux') || platform.includes('x11')) return 'linux';
+
+  return 'macos';
+}
+
+export function detectDesktopArchitectureSync(): DesktopArchitecture {
+  if (typeof navigator === 'undefined') {
+    return 'arm64';
+  }
+
+  const platform = `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+  if (platform.includes('arm') || platform.includes('aarch64')) {
+    return 'arm64';
+  }
+
+  return detectDesktopPlatform() === 'macos' ? 'arm64' : 'x64';
+}
+
+export async function detectDesktopArchitecture(): Promise<DesktopArchitecture> {
+  const uaData = getNavigatorUserAgentData();
+  if (!uaData?.getHighEntropyValues) {
+    return detectDesktopArchitectureSync();
+  }
+
+  try {
+    const values = await uaData.getHighEntropyValues(['architecture']);
+    const architecture = values.architecture?.toLowerCase() ?? '';
+    if (architecture.includes('arm') || architecture.includes('aarch64')) {
+      return 'arm64';
+    }
+    if (architecture.includes('x86') || architecture.includes('x64') || architecture.includes('amd64')) {
+      return 'x64';
+    }
+  } catch {
+    return detectDesktopArchitectureSync();
+  }
+
+  return detectDesktopArchitectureSync();
 }
 
 export function getPreviewVersion(): string {
