@@ -1,50 +1,126 @@
 const ja = {
-	// サイト
-	"site.title": "MCPMate - ローカル MCP コントロールプレーン",
-	"site.description": "MCPMate は、サーバー、プロファイル、クライアント、ランタイム依存関係、インポートを一箇所で管理するローカルファーストの MCP コントロールプレーンです。",
+	"site.title": "MCPMate：段階的に育てられる MCP 管理パートナー",
+	"site.description":
+		"MCP を一度インポート。まずはシンプルに始め、必要に応じてプロファイル、クライアント別ツール、設定モードを追加できます。",
 
-	// ナビゲーション
 	"nav.home": "ホーム",
-	"nav.features": "機能",
+	"nav.works_with": "対応アプリ",
 	"nav.documentation": "ドキュメント",
 	"nav.contact": "お問い合わせ",
 	"nav.preview": "クイックスタート",
-	"nav.download": "クイックスタート",
-	"nav.why": "なぜ MCPMate？",
+	"nav.download": "MCPMate を入手",
+	"nav.how": "仕組み",
+	"nav.modes": "設定モード",
 	"nav.faq": "よくある質問",
+	"nav.language": "言語",
 
-	// ヒーローセクション
-	"hero.early_access": "オープンソース",
-	"hero.title": "ローカル MCP コントロールプレーン",
-	"hero.subtitle": "サーバー、プロファイル、クライアント、ランタイムを一箇所で管理。",
+	"hero.title": "段階的に育てられる",
+	"hero.subtitle": "MCP 管理パートナー",
 	"hero.description":
-		"MCPMate は、サーバー、プロファイル、クライアント接続、ランタイム依存関係を整理するオープンソースのローカルコントロールプレーンです。設定ファイルの編集に費やす時間を減らし、本来の開発に集中できます。",
-	"hero.cta.download": "Releases を見る",
-	"hero.cta.learn": "詳細を見る",
-	"hero.stats.configValue": "ワンエンドポイント",
-	"hero.stats.config": "すべての AI クライアントに対応する単一のプロキシエンドポイント",
-	"hero.stats.resourceValue": "オンデマンド",
-	"hero.stats.resource": "プロファイルを切り替えて、必要なものだけを公開",
-	"hero.stats.integrationValue": "透明性",
-	"hero.stats.integration": "何を使うか事前に把握し、どう動くかいつでも確認",
-	"hero.dashboard": "MCPMate ダッシュボード",
-	"hero.slide.dashboard": "ダッシュボード — システムの健全性とメトリクス",
-	"hero.slide.profiles": "プロファイル — 能力セットを切り替え",
-	"hero.slide.servers": "サーバー — MCP サーバーの接続と監視",
-	"hero.slide.clients": "クライアント — エディタ統合の管理",
-	"hero.slide.market": "マーケット — 公式 MCP レジストリを閲覧",
+		"MCP を一度インポート。まずはシンプルに始め、必要に応じてプロファイル、クライアント別ツール、設定モードを追加できます。",
+	"hero.strip":
+		"シンプルに始めて、必要に応じて深く使えるローカル MCP アシスタント。設定ファイル整理ツールではありません。",
+	"hero.cta.download": "MCPMate を入手",
+	"hero.cta.learn": "仕組みを見る",
+	"hero.stats.configValue": "1 つの設定",
+	"hero.stats.config": "すべての AI クライアントに対応",
+	"hero.stats.resourceValue": "シナリオ別",
+	"hero.stats.resource": "執筆・開発・調査などをワンクリック切替",
+	"hero.stats.integrationValue": "ローカル実行",
+	"hero.stats.integration": "データはあなたのマシンに残る",
+	"hero.slide.dashboard": "ダッシュボード：稼働状態をひと目で",
+	"hero.slide.profiles": "プロファイル：タスクごとのツール一式",
+	"hero.slide.servers": "サーバー：インポート・プレビュー・管理",
+	"hero.slide.clients": "クライアント：Hosted / Unify / Transparent",
 
-	// ダウンロード
+	"clients.title": "対応 AI アプリ",
+	"clients.subtitle":
+		"リストは継続的に拡充。標準 MCP 設定に従うカスタムアプリにも対応します。",
+	"clients.more": "その他",
+	"clients.loading": "クライアント一覧を読み込み中…",
+	"clients.error": "クライアント一覧を読み込めませんでした。しばらくしてから再度お試しください。",
+	"clients.logoAlt": "{name} ロゴ",
+
+	"features.title": "なぜ MCPMate か",
+	"features.subtitle":
+		"はじめやすく、広げてもひとつ。すぐ使える導入から、クライアントやシナリオが増えても同じ設定のまま。作り直し不要。",
+	"features.pillar1.title": "一度設定すれば、どこでも使える",
+	"features.pillar1.desc":
+		"サーバー、環境変数、接続は MCPMate だけで管理。クライアントを変えても JSON を最初からコピーする必要はありません。",
+	"features.pillar2.title": "シナリオをワンクリックで切り替え",
+	"features.pillar2.desc":
+		"開発・執筆・調査をプロファイルとして保存。タスクに合わせてツール一式を切り替え、各アプリを再設定する必要はありません。",
+	"features.pillar3.title": "クライアントごとに見える範囲を分ける",
+	"features.pillar3.desc":
+		"同じサーバーライブラリでも、Cursor には開発、Claude には執筆。クライアントごとに見えるツールを分け、ノイズとトークンを抑えます。",
+	"features.pillar4.title": "用途に合わせて設定モードを選ぶ",
+	"features.pillar4.desc":
+		"Hosted と Unify は MCPMate 経由で扱います。Transparent はネイティブ設定を書き出し、クライアントが直接サーバーを見る場合に使います。",
+	"features.pillar5.title": "見える、確認できる",
+	"features.pillar5.desc":
+		"サービスの準備状態、ツール呼び出し、プロキシの挙動を、内蔵インスペクターとログで一箇所に確認できます。",
+	"features.read_more": "詳細を見る",
+	"features.explore_all": "機能ガイドをまとめて見る",
+
+	"how.title": "仕組み",
+	"how.subtitle":
+		"MCPMate は AI アプリと MCP サーバーの間に立ち、接続を一度管理し、各アプリに適したツールを届けます。",
+	"how.clients.label": "AI クライアント",
+	"how.clients.hint": "Cursor、Claude Desktop など",
+	"how.clients.badge": "複数",
+	"how.clients.label2": "IDE 拡張機能",
+	"how.clients.hint2": "VS Code、Windsurf など",
+	"how.clients.label3": "コマンドライン",
+	"how.clients.hint3": "ターミナル、Python など",
+	"how.mcpmate.label": "MCPMate",
+	"how.mcpmate.hint": "ローカルプロキシ、プロファイル、ポリシー",
+	"how.flow.proxy": "プロキシ",
+	"how.flow.route": "ルート",
+	"how.servers.label": "MCP サーバー",
+	"how.servers.hint": "ローカルまたはリモート",
+	"how.servers.badge": "ハブ",
+	"how.servers.label2": "開発ツール",
+	"how.servers.hint2": "GitHub、Postgres など",
+	"how.servers.label3": "Web・検索",
+	"how.servers.hint3": "Brave Search、Slack など",
+	"how.note":
+		"AI アプリから見れば、MCPMate は標準の MCP サーバー。破壊的な変更はありません。複雑なことは、MCPMate が自動で処理します。",
+
+	"modes.title": "3 つの設定モード",
+	"modes.subtitle":
+		"トークン消費を抑えたい、能力の濫用を避けたい——どちらにも合う設定モードがあります。",
+	"modes.hosted.title": "Hosted モード",
+	"modes.hosted.tagline": "継続制御 · ライブ切り替え",
+	"modes.hosted.desc":
+		"クライアントは MCPMate の単一エンドポイントに接続。プロファイル切り替え、ポリシー、ライブ更新は中間層で行います。",
+	"modes.hosted.b1": "作業設定を記憶",
+	"modes.hosted.b2": "プロファイルのライブ切り替え",
+	"modes.hosted.b3": "日常のメイン利用に最適",
+	"modes.unify.title": "Unify モード",
+	"modes.unify.tagline": "軽量入口 · オンデマンド探索",
+	"modes.unify.desc":
+		"アプリは少数の組み込みツールから始め、セッション中にグローバルな server 能力をオンデマンドで探索。トークン節約は CLI や Skills に匹敵します。",
+	"modes.unify.b1": "ツールリストの膨張を抑制",
+	"modes.unify.b2": "セッション内の動的探索",
+	"modes.unify.b3": "トークン節約に最適",
+	"modes.transparent.title": "Transparent モード",
+	"modes.transparent.tagline": "ネイティブ互換 · 直接出力",
+	"modes.transparent.desc":
+		"選択したサーバーを各アプリのネイティブ MCP 設定に書き込み。クライアントが直接サーバーを見る必要があるときに最適です。",
+	"modes.transparent.b1": "ネイティブ設定を出力",
+	"modes.transparent.b2": "上流への直接接続",
+	"modes.transparent.b3": "他モードと併用可能",
+
 	"download.title": "クイックスタート",
-			"download.subtitle":
+	"download.subtitle":
 		"公式インストーラは下にあります。細かく制御したい場合は GitHub でリポジトリをフォークし、Rust でソースからビルドしてください。",
-				"download.macos.arm64": "Apple Silicon（arm64）",
+	"download.macos.arm64": "Apple Silicon（arm64）",
 	"download.macos.x64": "Intel（x64）",
 	"download.windows": "Windows",
 	"download.linux": "Linux",
 	"download.btn": "ダウンロード",
 	"download.coming_soon": "近日公開",
-	"download.quick_start": "クイックスタート",
+	"download.quick_start": "MCPMate を入手",
 	"download.official_builds": "公式デスクトップビルド",
 	"download.col_platform": "プラットフォーム",
 	"download.col_arch": "アーキテクチャ",
@@ -64,195 +140,82 @@ const ja = {
 	"download.platform_linux": "Linux",
 	"download.arch_arm64": "arm64",
 	"download.arch_x64": "x64",
+	"download.cta_for": "{platform} 版をダウンロード",
+	"download.available_for": "macOS、Windows、Linux に対応",
+	"download.also_available_for": "{platforms} にも対応",
 	"download.getting_started": "始めに",
 	"download.getting_started.desc":
 		"クイックスタートガイドに従って MCPMate をセットアップし、最初の MCP サービスを接続しましょう。",
 	"download.read_guide": "ガイドを見る",
+	"download.github.desc": "ソースからビルドするか、GitHub で最新の開発状況を確認できます。",
 	"download.nightly.cta": "Nightly チャンネルを開く",
 
-	// 機能
-	"features.title": "強力な機能",
-	"features.subtitle":
-		"MCPMate は散在する MCP 設定作業を、インポート、展開、検査、切り替えのためのローカルコントロールプレーンに変えます。",
-	"features.centralized": "一元管理",
-	"features.centralized.desc":
-		"サーバー、プロファイル、クライアントを一箇所で管理。各クライアントごとに設定を編集する必要はありません。",
-	"features.resource": "リソース最適化",
-	"features.resource.desc":
-		"現在のタスクに必要なツール、プロンプト、リソースだけを公開します。",
-	"features.inspector": "インスペクター",
-	"features.inspector.desc":
-		"ダッシュボードを離れることなく、プロキシとネイティブの動作を比較し、ライブ呼び出しを実行し、生の証拠を収集できます。",
-	"features.more_coming": "さらに強力な機能を計画中です。",
-	"features.feedback_welcome": "フィードバックとご提案をお待ちしています！",
-	"features.read_more": "詳細を見る",
-	"features.explore_all": "機能ガイドをまとめて見る",
-	"features.context": "シームレスなコンテキスト切り替え",
-	"features.context.desc": "手動で能力セットを再構築する代わりに、共有プロファイルとタスクプリセットで作業モードを切り替えます。",
-	"features.bridge": "プロトコルブリッジ",
-	"features.bridge.desc":
-		"クライアントを変更することなく、stdio ベースのクライアントを Streamable HTTP サービスに接続します。",
-	"features.marketplace": "マーケット導入フロー",
-	"features.marketplace.desc":
-		"レジストリエントリを閲覧し、プレビューにインポートし、発見を運用の近くに配置します。",
-	"features.templates": "きめ細かい制御",
-	"features.templates.desc": "プロファイルレベルでサーバーと能力を有効/無効にし、公開内容を正確に制御します。",
-	"features.autodiscovery": "自動検出とインポート",
-	"features.autodiscovery.desc": "既存のクライアント設定を検出し、MCPMate に取り込みます。ゼロから始める必要はありません。",
-	"features.uniimport": "ユニインポート",
-	"features.uniimport.desc":
-		"ノイズを含むスニペットをドロップ、ペースト、または Web からキャプチャし、インポート前に正規化、プレビュー、検証します。",
+	"browserExtensions.inlineLabel": "ブラウザー拡張：",
+	"browserExtensions.footerLabel": "ブラウザー拡張機能",
+	"browserExtensions.chrome": "Chrome",
+	"browserExtensions.edge": "Edge",
+	"browserExtensions.chromeFooter": "Chrome 拡張機能",
+	"browserExtensions.edgeFooter": "Edge 拡張機能",
 
-	// 価値提案
-	"value.title": "なぜ MCPMate？",
-	"value.subtitle":
-		"MCPMate は、MCP を「技術的に接続できる」だけでなく「運用可能」にしたい人向けです。",
-	"value.creators.title": "意図に従って切り替え、ファイルをいじくり回さない",
-	"value.creators.p1": "作業モードを共有プロファイルとしてパッケージ化し、毎回サーバー、ツール、プロンプトを選び直す手間を省きます。",
-	"value.creators.p2": "互換性のあるクライアントでは、Hosted + Profiles モードを明示的に使うことで、MCPMate 内蔵の MCP ツールから共有プロファイルを切り替えられます。",
-	"value.creators.p3": "現在のタスクに必要な能力だけをセッションに残し、ノイズを減らしてトークンコストを制御しやすくします。",
-	"value.creators.diagram": "クリエイターフロー",
-	"value.managers.title": "異なるクライアント間で柔軟に展開",
-	"value.managers.p1": "より強い制御が必要な場合は Hosted モードを、直接ネイティブクライアント設定を書き込む場合はトランスペアレントモードを使用します。",
-	"value.managers.p2": "クライアントは、読み取り専用の既定として現在アクティブな共有プロファイルセットに従うか、Hosted + Profiles モードで明示的に共有プロファイルを切り替えるか、対応している場合はクライアント専用のカスタムプロファイルを使えます。",
-	"value.managers.p3": "互換性の退路を残しつつ、ほとんどのシナリオで管理されたパスを提供します。",
-	"value.managers.diagram": "チームの一貫性",
-	"value.owners.title": "ローカルでより明確に運用",
-	"value.owners.p1": "コアをローカルサービスとして実行し、必要な時だけ Web UI またはデスクトップシェルを開きます。",
-	"value.owners.p2": "ローカル API とインスペクターを使用して、自動チェック、問題の特定、動作検証を行います。",
-	"value.owners.p3": "プライバシー、可観測性、ローカル実行の事実を可視化し続け、散在する設定ファイルに埋もれさせません。",
-	"value.owners.diagram": "運用の透明性",
-
-	// アーキテクチャ（設計価値観）
-	"arch.title": "設計原則",
-	"arch.subtitle": "運用性、低摩擦、ローカル信頼性を重視。",
-	"arch.values.performance.title": "パフォーマンス優先",
-	"arch.values.performance.desc": "Rust コアがルーティング、可視性、検査を実作業に近づけます。",
-	"arch.values.performance.p1": "独立したコアサービス、ローカル API、ローカル MCP エンドポイント",
-	"arch.values.performance.p2": "各クライアントが独自の設定を維持するのではなく、同じランタイムを再利用",
-	"arch.values.performance.p3": "メトリクス、インスペクター、ランタイムステータスによる運用可視性",
-	"arch.values.experience.title": "体験重視",
-	"arch.values.experience.desc": "高度な MCP ワークフローを「ファイルを編集」ではなく「モードを切り替え」にします。",
-	"arch.values.experience.p1": "スニペット、バンドル、レジストリ、ブラウザキャプチャから同じインポートパイプラインに入力可能",
-	"arch.values.experience.p2": "プロファイルとクライアントモードで段階的に展開し、すべての接続を一度にやり直さない",
-	"arch.values.experience.p3": "Web、デスクトップ、API が同じローカルコアを共有",
-	"arch.values.security.title": "セキュリティ内蔵",
-	"arch.values.security.desc": "ローカル優先で、何が公開されるかを明示的に制御。",
-	"arch.values.security.p1": "プロファイルとクライアント選択による能力レベルの公開制御",
-	"arch.values.security.p2": "必要な場合はトランスペアレントモードで、より直接的なネイティブクライアント設定を出力",
-	"arch.values.security.p3": "大規模展開前の検証、プレビュー、運用イベントログ",
-
-	// 技術スタックテーブル
-	"arch.stack.title": "技術スタック",
-	"arch.stack.backend": "バックエンド",
-	"arch.stack.backendValue": "Rust（Axum）、SQLite",
-	"arch.stack.frontend": "フロントエンド",
-	"arch.stack.frontendValue": "React 18、TypeScript、Vite、Tailwind CSS",
-	"arch.stack.api": "API",
-	"arch.stack.apiValue": "REST API（ポート 8080）、MCP エンドポイント（ポート 8000）",
-	"arch.stack.protocols": "プロトコル",
-	"arch.stack.protocolsValue": "stdio、Streamable HTTP",
-	"arch.stack.license": "ライセンス",
-	"arch.stack.licenseValue": "AGPL-3.0",
-	"arch.stack.clients": "クライアントモード",
-	"arch.stack.clientsValue": "Hosted、Unify、Transparent",
-
-	// お問い合わせ
 	"contact.title": "お問い合わせ",
-	"contact.subtitle":
-		"MCPMate についてご質問がありますか？お気軽にお問い合わせください！",
+	"contact.subtitle": "ご質問は、メールでのご連絡が最も早く確実です。",
 	"contact.message": "メッセージを送信",
-	"contact.message.label": "あなたのメッセージ",
+	"contact.message.label": "メッセージ",
 	"contact.name": "お名前",
-	"contact.name.placeholder": "お名前を入力してください",
+	"contact.name.placeholder": "お名前を入力",
 	"contact.email": "メールアドレス",
-	"contact.email.placeholder": "メールアドレスを入力してください",
+	"contact.email.placeholder": "メールアドレスを入力",
 	"contact.message.placeholder": "どのようなご用件でしょうか？",
 	"contact.send": "送信",
-	"contact.email.us": "メールでお問い合わせ",
+	"contact.email.us": "メールで連絡",
 	"contact.email.desc": "一般的なお問い合わせやサポート",
 	"contact.github": "GitHub",
-	"contact.github.desc": "リポジトリを確認し、貢献してください",
-	"contact.error.required": "すべてのフィールドは必須です",
+	"contact.github.desc": "リポジトリを見る・貢献する",
+	"contact.error.required": "すべての項目は必須です",
 	"contact.error.email": "有効なメールアドレスを入力してください",
-	"contact.success.title": "メッセージを送信しました！",
-	"contact.success.message": "お問い合わせありがとうございます。できるだけ早くご返信いたします。",
+	"contact.error.submit": "送信に失敗しました。しばらくしてから再度お試しください。",
+	"contact.success.title": "送信しました！",
+	"contact.success.message": "お問い合わせありがとうございます。できるだけ早くご返信します。",
 
-	// フッター
-	"footer.description": "サーバー、プロファイル、クライアント、ランタイムを一箇所で管理するローカルファースト MCP コントロールプレーン。",
+	"footer.description": "段階的に育てられる MCP 管理パートナー。担う仕事とともに深まります。",
 	"footer.copyright": "© {year} MCPMate. All rights reserved.",
 	"footer.product": "製品",
 	"footer.resources": "リソース",
 	"footer.legal": "法的情報",
 	"footer.language": "言語",
+	"footer.email_label": "メール",
 	"footer.documentation": "ドキュメント",
 	"footer.changelog": "変更履歴",
 	"footer.roadmap": "ロードマップ",
 	"footer.privacy": "プライバシーポリシー",
 	"footer.terms": "利用規約",
 
-	// よくある質問
 	"faq.title": "よくある質問",
-	"faq.group.basics": "なぜ MCPMate が選ばれるのか",
-	"faq.group.setup": "どうやってスムーズに始めるか",
-	"faq.group.control": "何を自分でコントロールできるか",
-	"faq.group.compare": "既存のワークフローにどう馴染むか",
-	"faq.opensource.title": "MCPMate はオープンソースですか？",
-	"faq.opensource.answer":
-		"はい！MCPMate は AGPL-3.0 ライセンスでオープンソースです。コードは github.com/loocor/mcpmate でご覧いただけます。",
-	"faq.functions.title": "MCPMate は具体的に何をしますか？",
+	"faq.lead":
+		"お困りですか？クイックスタートをご覧いただくか、メールでお問い合わせください。",
+	"faq.cta.contact": "お問い合わせ",
+	"faq.cta.docs": "ドキュメント",
+	"faq.functions.title": "MCPMate は何をしますか？",
 	"faq.functions.answer":
-		"MCPMate は、MCP サーバー、再利用可能なプロファイル、クライアント接続、ランタイム依存関係、設定インポートをローカルダッシュボードで整理します。ライブツール呼び出しの検査、ファイル編集なしのプロファイル切り替え、既存クライアントからのサーバー設定インポートが可能です。",
-	"faq.usage.title": "MCPMate は誰向けですか？",
+		"お使いのコンピュータ上で動作します。既存設定のインポート、サーバー接続、クライアントごとのツール公開範囲の調整、動作確認ができます。まずサーバーを追加し、必要に応じてプロファイルとポリシーへ。",
+	"faq.usage.title": "誰向けの製品ですか？",
 	"faq.usage.answer":
-		"MCPMate は、複数の MCP 対応 AI クライアントを管理し、各クライアントに表示されるサーバー、ツール、プロンプトを一箇所で制御したい開発者向けです。散在する設定ファイルを別々に編集する必要はありません。",
-	"faq.platforms.title": "どのプラットフォームに対応していますか？",
-	"faq.platforms.answer":
-			"macOS、Windows、Linux の各インストーラは GitHub Releases から入手でき、いずれも現在 Beta です。macOS ビルドは署名と公証に対応し、クロスプラットフォームのデスクトップ体験は引き続き改善中です。",
-	"faq.security.title": "セキュリティはどうなっていますか？",
-	"faq.security.answer":
-		"コアは Rust で構築され、完全にローカルで実行されます。MCPMate では、プロファイルとクライアントごとに公開される機能を制御できます。",
-	"faq.privacy.title": "プライバシーとテレメトリについて",
-	"faq.privacy.answer":
-		"MCP 設定はローカルで実行され、MCPMate はツールの内容を外部サーバーに送信しません。",
-	"faq.updates.title": "MCPMate を更新するには？",
-	"faq.updates.answer":
-			"現時点で最も簡単なのは、GitHub Releases から最新インストーラを入手する方法です。デスクトップ向けの内蔵自動更新もほぼ仕上がっており、まもなくアップデートはさらにスムーズになります。ソースから MCPMate を実行している場合は、GitHub から最新の変更をプルして `cargo build --release` で再ビルドしてください。",
-	"faq.different.title": "MCPMate と他のソリューションの違いは？",
-	"faq.different.answer":
-		"MCPMate はプロファイルベースの能力制御、柔軟なクライアント展開モード、インポートプレビュー、ライブ検査を 1 つのローカル優先コントロールプレーンに統合しており、「MCP をつなぐ」だけではありません。",
-	"faq.compatible.title": "既存の MCP ツールと一緒に使えますか？",
+		"MCP を初めて使う方も、複数の AI アプリを行き来する方も、軽い使い方から始められます。インポート、ブラウザ拡張での取り込み、メニューバーでの日常操作。必要になったらプロファイル、クライアント別ツール、内蔵インスペクター、設定モードを追加し、別ツールに乗り換える必要はありません。",
+	"faq.vs_clients.title": "クライアント内蔵の MCP 設定との違いは？",
+	"faq.vs_clients.answer":
+		"多くのアプリは自分自身の MCP しか管理しません。MCPMate はすべてのクライアントのサーバーと設定を一箇所で維持し、一度インポートしてプロファイルを再利用し、切り替える前に動作を確認できます。",
+	"faq.compatible.title": "既存の MCP ツールと併用できますか？",
 	"faq.compatible.answer":
-		"はい。MCPMate は既存の MCP クライアントと連携し、Unify、Hosted、トランスペアレントモードの 3 つの経路を提供します。これにより、セッション内の UCAN 制御、より強い管理制御、直接的なネイティブクライアント出力を使い分けられます。",
-	"faq.clients.title": "MCPMate は複数の AI クライアントをまとめて管理できますか？",
+		"はい。Claude Desktop、Cursor、VS Code などからインポート。JSON、内蔵マーケット、ブラウザ拡張、Web スニペットからも追加できます。",
+	"faq.clients.title": "複数の AI クライアントを同時に管理できますか？",
 	"faq.clients.answer":
-		"はい。MCPMate はインストール済みの MCP 対応クライアントを検出し、同じダッシュボードからそれぞれを独立して管理できます。Claude Code、Cursor、VS Code などに対して、クライアントごとにプロファイルを適用し、Hosted、Unify、Transparent モードを選べます。",
-	"faq.runtime.title": "MCPMate に外部ランタイムは必要ですか？",
-	"faq.runtime.answer":
-		"一部の MCP サーバーには Node.js、Python（uv）、Bun などのランタイムが必要です。MCPMate にはランタイムページが含まれており、インストール済みランタイムを確認し、サーバーが必要とする場合はインストールや修復アクションを提供します。",
-	"faq.migration.title": "既存の MCP 設定を MCPMate に移行するには？",
-	"faq.migration.answer":
-		"クライアントページの「クライアントからインポート」アクションを使用して、検出されたクライアントの既存 MCP 設定を取り込みます。JSON や TOML スニペットのドラッグ＆ドロップ、または内蔵マーケットを使用したサーバーエントリの閲覧・インストールも可能です。",
-	"faq.hotreload.title": "プロファイル変更後に MCPMate の再起動は必要ですか？",
-	"faq.hotreload.answer":
-		"プロファイルの変更は新しいセッションに即座に反映されます。既存の Hosted モードセッションは、次回のツールリスト更新時に更新されたプロファイルを取得し、再起動は不要です。",
-	"faq.languages.title": "MCPMate UI はどの言語をサポートしていますか？",
-	"faq.languages.answer":
-		"ウェブサイトとダッシュボードは英語、簡体字中国語、日本語に対応しています。",
-	"faq.contributing.title": "MCPMate に貢献するには？",
-	"faq.contributing.answer":
-		"GitHub でリポジトリをフォークし、変更を加えてプルリクエストを作成してください。GitHub Issues でのバグ報告や機能提案も歓迎します。",
-	"faq.vs_claude_desktop.title": "MCPMate と Claude Desktop 組み込みの MCP サポートの違いは？",
-	"faq.vs_claude_desktop.answer":
-		"Claude Desktop は自身のセッションのみの MCP サーバー管理です。MCPMate は複数の AI クライアント（Claude Desktop、Cursor、VS Code など）にわたってサーバー、プロファイル、クライアント接続を統合管理するスタンドアロンのコントロールプレーンで、再利用可能なプロファイル切り替えを提供します。",
-	"faq.vs_manual.title": "MCPMate と手動での設定ファイル編集の違いは？",
-	"faq.vs_manual.answer":
-		"手動編集は一度に1つのクライアントのみ対応で、プレビュー、検証、ロールバック機能がありません。MCPMate はプレビューと検証を含む統合インポートパイプライン、クライアント間で再利用可能なプロファイル、コミット前の実際の動作検証のためのインスペクターを提供します。",
+		"はい。マシン上の AI クライアントの多くを認識し、一般的な MCP 設定レイアウトのクライアントは手動追加もできます。設定後はプロファイル・ツール・設定モードを一箇所で同期し、シーンを変えても各アプリの設定を書き直す必要はありません。",
+	"faq.security.title": "セキュリティとプライバシーは？",
+	"faq.security.answer":
+		"MCPMate は完全にローカルで動作。クライアントとプロファイルごとに公開するツールと能力を制御。ツール内容は外部サーバーに送信されません。",
 
-	// サイト更新リボン
 	"notice.construction.ribbon": "更新中",
-	"notice.construction.tooltip":
-		"継続的に更新中です。内容が変更される可能性があります。",
+	"notice.construction.tooltip": "積極的に更新中です。内容は変更される場合があります。",
 } as const;
 
 export default ja;
