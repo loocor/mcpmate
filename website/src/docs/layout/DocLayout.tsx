@@ -104,15 +104,13 @@ export default function DocLayout({ meta, children }: Props) {
 						<Sidebar topPx={topPx} />
 					</aside>
 					<article
-						className={`group flex-1 min-w-0 prose dark:prose-invert max-w-none transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}
+						className={`group prose flex-1 min-w-0 max-w-none transition-opacity duration-300 ${fadeIn ? "opacity-100" : "opacity-0"}`}
 					>
-						<h1 className="mb-4 text-3xl font-bold tracking-tight">
+						<h1 className="mb-4 text-3xl font-bold tracking-tight text-brand-foreground">
 							{meta.title}
 						</h1>
 						{meta.description ? (
-							<p className="-mt-2 mb-6 text-slate-600 dark:text-slate-400">
-								{meta.description}
-							</p>
+							<p className="-mt-2 mb-6 text-brand-muted">{meta.description}</p>
 						) : null}
 						<div className="space-y-5">{children}</div>
 					</article>

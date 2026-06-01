@@ -21,7 +21,7 @@ export function applyThemeToDocument(resolvedTheme: Theme) {
 	if (metaThemeColor) {
 		metaThemeColor.setAttribute(
 			'content',
-			resolvedTheme === 'dark' ? '#0f172a' : '#ffffff'
+			resolvedTheme === 'dark' ? '#0b0f17' : '#eef2f7'
 		);
 	}
 }

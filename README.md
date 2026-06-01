@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <strong>One local proxy that connects MCP servers and AI clients.</strong>
+  <strong>Your progressive MCP management partner.</strong>
 </p>
 
 <p align="center">
@@ -20,12 +20,22 @@
 
 ---
 
-> Configuring the same MCP servers across multiple clients is repetitive, token-costly, and hard to observe.
-> MCPMate proxies MCP servers, syncs client configs, trims capabilities by profile, and logs activity.
+> **Import MCP once. Start simple, then add profiles, per-client tools, and setup modes as your workflow grows.**
+>
+> MCPMate is a local-first assistant that grows with you—not just another config file editor.
 
-This is not a brand-new project. I started shaping MCPMate around May 2024, paused active development around October, and recently came back to it with a clearer conviction: as the hype around skills- and CLI-shaped workflows settles into a more reflective phase, the long-term, irreplaceable value of MCP becomes easier to see.
+MCPMate sits between your AI apps and MCP servers so you manage connections once and send the right tools to each app. It works with Claude Desktop, Cursor, Codex, Zed, VS Code, CLI tools, and other clients that follow the standard MCP config format.
 
-MCPMate was previously developed in private and is now being reopened in public. The direction I care about most at this stage is usability: building on MCPMate's earlier profile-based approach for removing redundant capabilities in specific scenarios, and continuing to extend its hosted mode toward a more progressively disclosed Unify mode (last year I referred to it as a more "aggressive hosted" mode, though the name itself felt somewhat awkward). One goal is to bring some of the lower-friction and lower first-token-cost qualities that people appreciated in skills- and CLI-shaped experiences into MCP itself.
+**Easy to begin, built to scale:** one import with low friction; the same setup still fits as MCP spreads across more clients, servers, and scenarios—no product swap, no restart ritual.
+
+| Stage | What you get |
+| ----- | ------------ |
+| **Start** | Import servers, verify calls, and see health in one place |
+| **Grow** | Scene profiles for coding, writing, or research; switch the full tool set in one click |
+| **Tune** | Per-client trimming from one shared server library—less clutter, lower token use |
+| **Choose how to connect** | **Transparent** (native config output), **Hosted** (durable proxy control), or **Unify** (small tool surface, on-demand discovery) |
+
+Live site: [mcp.umate.ai](https://mcp.umate.ai) · Docs: [mcp.umate.ai/docs](https://mcp.umate.ai/docs/en/quickstart)
 
 ## 📑 Table of Contents
 
@@ -53,15 +63,16 @@ MCPMate was previously developed in private and is now being reopened in public.
 
 ## 🤔 Why MCPMate?
 
-Managing MCP servers across multiple AI tools (Claude Desktop, Cursor, Zed, Codex, and user-defined clients) brings significant challenges:
+Managing MCP across multiple AI tools (Claude Desktop, Cursor, Zed, Codex, and custom clients) gets messy fast:
 
-| · | Pain Point                                                            | · | MCPMate Solution                               |
-| --- | --------------------------------------------------------------------- | --- | ---------------------------------------------- |
-| ❌   | The same MCP server needs to be configured repeatedly in each client  | ✅   | One proxy, one unified configuration           |
-| ❌   | Different work scenarios require frequent MCP configuration changes   | ✅   | Profile-based instant switching                |
-| ❌   | Running multiple MCP servers simultaneously consumes system resources | ✅   | Single proxy aggregates all upstream servers   |
-| ❌   | Configuration errors or security risks are hard to detect             | ✅   | Real-time monitoring, structured event logging |
-| ❌   | No single place to manage all MCP services                            | ✅   | Dashboard + REST API + structured logs         |
+| · | Pain Point | · | MCPMate approach |
+| --- | ---------- | --- | ---------------- |
+| ❌ | The same MCP setup is copied into every client by hand | ✅ | **Configure once, use everywhere** — servers, env vars, and connections live in one place |
+| ❌ | Switching between coding, writing, and research means re-wiring each app | ✅ | **Switch scenarios instantly** — scene profiles swap the full tool set in one click |
+| ❌ | Every client sees every tool, wasting tokens and cluttering the UI | ✅ | **Each client sees what it should** — one library, different visibility per app |
+| ❌ | One integration style does not fit every client | ✅ | **Hosted**, **Unify**, or **Transparent** setup modes for the control level you need |
+| ❌ | Hard to tell whether services are ready or calls are succeeding | ✅ | **See it, verify it** — inspector, structured logs, and dashboard in one local control plane |
+| ❌ | Many MCP processes compete for RAM and handles | ✅ | A single proxy aggregates upstream servers with connection pooling |
 
 ## 🔄 How It Works
 
@@ -121,7 +132,7 @@ flowchart LR
     class M market
 ```
 
-MCPMate sits between your AI clients and MCP servers as a transparent proxy. The **Bridge** adapts stdio-only clients (like Claude Desktop) to the HTTP proxy. The **Profile Engine** controls which tools are visible to which client — scene profiles for workflow context, app profiles for per-client tuning, and dynamic profiles that adjust at runtime. The client configuration layer covers Transparent, Hosted, and Unify management modes.
+MCPMate sits between your AI clients and MCP servers. To each app it looks like a normal MCP endpoint—no workflow disruption—while profiles, policy, and routing stay in the middle layer. The **Bridge** adapts stdio-only clients (such as Claude Desktop) to the HTTP proxy. The **Profile Engine** decides which tools each client sees—scene profiles for workflow context, app profiles for per-client tuning, and dynamic profiles that adjust at runtime. **Transparent**, **Hosted**, and **Unify** setup modes let you choose how much MCPMate sits in the path versus writing native client configs.
 
 ## 🚀 Key Features
 
