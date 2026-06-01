@@ -2,13 +2,14 @@ import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useLanguage } from "../components/LanguageProvider";
 import SchemaOrg from "../components/SchemaOrg";
-import Architecture from "../components/sections/Architecture";
-import ContactSection from "../components/sections/Contact";
-import DownloadSection from "../components/sections/Download";
+import ClientLogoWall from "../components/sections/ClientLogoWall";
+import ClientModes from "../components/sections/ClientModes";
 import FAQSection from "../components/sections/FAQ";
 import Features from "../components/sections/Features";
+import MarketingAmbientBackground from "../components/marketing/MarketingAmbientBackground";
 import Hero from "../components/sections/Hero";
-import ValueProposition from "../components/sections/ValueProposition";
+import HowItWorks from "../components/sections/HowItWorks";
+import { scrollToMarketingSection, syncMarketingScrollPadding } from "../lib/section-scroll";
 import { setDocumentMeta } from "../utils/seo";
 import { buildOrganization, buildSoftwareApplication } from "../utils/schema";
 
@@ -16,7 +17,6 @@ const Homepage = () => {
 	const { t, language } = useLanguage();
 	const location = useLocation();
 	const navigate = useNavigate();
-
 	const schemas = useMemo(
 		() => [
 			buildSoftwareApplication({
@@ -37,42 +37,41 @@ const Homepage = () => {
 	}, [language, t]);
 
 	useEffect(() => {
+		syncMarketingScrollPadding();
+
+		const onResize = () => syncMarketingScrollPadding();
+		window.addEventListener("resize", onResize);
+
+		return () => {
+			window.removeEventListener("resize", onResize);
+		};
+	}, []);
+
+	useEffect(() => {
 		const params = new URLSearchParams(location.search);
 		const section = params.get("section");
 		if (section) {
-			const scroll = () => {
-				const el = document.getElementById(section);
-				if (el) {
-					const offset = 80;
-					const top =
-						el.getBoundingClientRect().top + window.pageYOffset - offset;
-					window.scrollTo({ top, behavior: "smooth" });
-				}
-			};
+			const scroll = () => scrollToMarketingSection(section);
 			setTimeout(scroll, 0);
 			navigate("/", { replace: true });
 		}
 	}, [location.search, navigate]);
 
 	return (
-		<div>
-			<SchemaOrg schema={schemas} />
-			<div id="hero">
-				<Hero />
-			</div>
-			<div className="bg-white dark:bg-slate-900">
-				<div id="download">
-					<DownloadSection />
+		<>
+			<MarketingAmbientBackground />
+			<div className="relative z-[1]">
+				<SchemaOrg schema={schemas} />
+				<div id="hero" className="snap-section-hero flex items-start md:items-center">
+					<Hero />
 				</div>
-				<ValueProposition />
 				<Features />
-				<Architecture />
+				<ClientLogoWall />
+				<HowItWorks />
+				<ClientModes />
 				<FAQSection />
-				<div id="contact">
-					<ContactSection />
-				</div>
 			</div>
-		</div>
+		</>
 	);
 };
 
