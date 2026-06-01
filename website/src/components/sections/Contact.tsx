@@ -18,13 +18,13 @@ const ContactSection = () => {
           </div>
           <p className="mt-4 text-sm md:text-base section-muted">{t('contact.email.desc')}</p>
           <a
-            href="mailto:loocor@gmail.com"
+            href="mailto:mcp@umate.ai"
             className="mt-5 inline-flex items-center justify-center rounded-lg bg-brand-accent px-5 py-2.5 text-sm font-semibold text-brand-accent-fg transition-all hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-offset-2 focus:ring-offset-brand-bg dark:hover:ring-2 dark:hover:ring-white dark:hover:ring-offset-2 dark:hover:ring-offset-brand-bg dark:focus-visible:ring-2 dark:focus-visible:ring-white dark:focus-visible:ring-offset-2 dark:focus-visible:ring-offset-brand-bg"
-            onClick={() => trackMCPMateEvents.externalLinkClick('mailto:loocor@gmail.com')}
+            onClick={() => trackMCPMateEvents.externalLinkClick('mailto:mcp@umate.ai')}
           >
             {t('contact.email.us')}
           </a>
-          <p className="mt-3 text-sm text-brand-muted">loocor@gmail.com</p>
+          <p className="mt-3 text-sm text-brand-muted">mcp@umate.ai</p>
         </div>
       </div>
     </Section>

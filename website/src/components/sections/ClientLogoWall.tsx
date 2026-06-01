@@ -116,24 +116,37 @@ const ClientLogoWall = () => {
 	const [status, setStatus] = useState<"loading" | "ready">("loading");
 	const [failedLogos, setFailedLogos] = useState<Set<string>>(() => new Set());
 
-	useEffect(() => {
+	const loadPresets = () => {
 		let cancelled = false;
 		setStatus("loading");
-		loadWebsiteClientPresets().then(({ clients: items }) => {
-			if (!cancelled) {
+
+		loadWebsiteClientPresets()
+			.then(({ clients: items }) => {
+				if (cancelled) {
+					return;
+				}
 				setClients(items);
 				setStatus("ready");
-			}
-		});
+			});
+
 		return () => {
 			cancelled = true;
+		};
+	};
+
+	useEffect(() => {
+		const cancelLoad = loadPresets();
+		return () => {
+			if (cancelLoad) {
+				cancelLoad();
+			}
 		};
 	}, []);
 
 	const docsPath = useMemo(() => {
-		if (language === "zh") return "/docs/zh/client-apps";
-		if (language === "ja") return "/docs/ja/client-apps";
-		return "/docs/en/client-apps";
+		if (language === "zh") return "/docs/zh/clients";
+		if (language === "ja") return "/docs/ja/clients";
+		return "/docs/en/clients";
 	}, [language]);
 
 	return (

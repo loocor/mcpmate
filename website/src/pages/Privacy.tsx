@@ -162,9 +162,9 @@ const Privacy = () => {
 										您可联系到{" "}
 										<a
 											className="text-blue-600 dark:text-blue-400"
-											href="mailto:loocor@gmail.com"
+											href="mailto:mcp@umate.ai"
 										>
-											loocor@gmail.com
+											mcp@umate.ai
 										</a>{" "}
 										请求删除我们保留的联系记录。
 									</li>
@@ -203,9 +203,9 @@ const Privacy = () => {
 									如有问题或请求，请发送邮件至{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:loocor@gmail.com"
+										href="mailto:mcp@umate.ai"
 									>
-										loocor@gmail.com
+										mcp@umate.ai
 									</a>
 									。
 								</p>
@@ -438,9 +438,9 @@ const Privacy = () => {
 									Questions or requests? Email{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:loocor@gmail.com"
+										href="mailto:mcp@umate.ai"
 									>
-										loocor@gmail.com
+										mcp@umate.ai
 									</a>
 									.
 								</p>

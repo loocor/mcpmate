@@ -13,6 +13,7 @@ export type AmbientBlobTriplet = [AmbientBlobLayout, AmbientBlobLayout, AmbientB
 /** Document order — used for scroll interpolation anchors. */
 export const MARKETING_AMBIENT_TRACK = [
 	"hero",
+	"download",
 	...MARKETING_NAV_ITEMS.map((item) => item.id),
 ] as const;
 
