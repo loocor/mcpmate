@@ -11,6 +11,27 @@ interface NavigatorUserAgentDataLike {
   }>;
 }
 
+interface NavigatorWithOscpu extends Navigator {
+  oscpu?: string;
+}
+
+const X64_HINTS = ['x64', 'x86_64', 'amd64', 'intel', 'i386', 'x86', 'wow64'];
+const ARM_HINTS = ['arm64', 'aarch64', 'armv8'];
+
+function getDesktopHints(): string {
+  if (typeof navigator === 'undefined') {
+    return '';
+  }
+
+  const userAgentData = getNavigatorUserAgentData();
+  const osCpu = ((navigator as NavigatorWithOscpu).oscpu || '').toLowerCase();
+  return `${userAgentData?.platform || ''} ${navigator.platform || ''} ${navigator.userAgent || ''} ${osCpu}`.toLowerCase();
+}
+
+function hasHint(text: string, hints: readonly string[]): boolean {
+  return hints.some((hint) => text.includes(hint));
+}
+
 function getNavigatorUserAgentData(): NavigatorUserAgentDataLike | undefined {
   if (typeof navigator === 'undefined') {
     return undefined;
@@ -29,30 +50,35 @@ export function detectPlatform(): Platform {
 
 export function detectDesktopPlatform(): DesktopPlatform {
   if (typeof navigator === 'undefined') {
-    return 'macos';
+    return 'linux';
   }
 
   const uaDataPlatform = getNavigatorUserAgentData()?.platform ?? '';
-  const platform = `${uaDataPlatform} ${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+  const osCpu = ((navigator as NavigatorWithOscpu).oscpu || '').toLowerCase();
+  const platform = `${uaDataPlatform} ${navigator.platform || ''} ${navigator.userAgent || ''} ${osCpu}`.toLowerCase();
 
   if (platform.includes('mac')) return 'macos';
   if (platform.includes('win')) return 'windows';
   if (platform.includes('linux') || platform.includes('x11')) return 'linux';
 
-  return 'macos';
+  return 'linux';
 }
 
 export function detectDesktopArchitectureSync(): DesktopArchitecture {
   if (typeof navigator === 'undefined') {
-    return 'arm64';
+    return 'x64';
   }
 
-  const platform = `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
-  if (platform.includes('arm') || platform.includes('aarch64')) {
+  const platformHints = getDesktopHints();
+
+  if (hasHint(platformHints, ARM_HINTS)) {
     return 'arm64';
   }
+  if (hasHint(platformHints, X64_HINTS)) {
+    return 'x64';
+  }
 
-  return detectDesktopPlatform() === 'macos' ? 'arm64' : 'x64';
+  return 'x64';
 }
 
 export async function detectDesktopArchitecture(): Promise<DesktopArchitecture> {

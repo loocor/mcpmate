@@ -206,9 +206,9 @@ const Terms = () => {
 									关于本条款的任何问题，请发送邮件至{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:loocor@gmail.com"
+										href="mailto:mcp@umate.ai"
 									>
-										loocor@gmail.com
+										mcp@umate.ai
 									</a>
 									。
 								</p>
@@ -486,9 +486,9 @@ const Terms = () => {
 									Questions about these Terms? Email{" "}
 									<a
 										className="text-blue-600 dark:text-blue-400"
-										href="mailto:loocor@gmail.com"
+										href="mailto:mcp@umate.ai"
 									>
-										loocor@gmail.com
+										mcp@umate.ai
 									</a>
 									.
 								</p>

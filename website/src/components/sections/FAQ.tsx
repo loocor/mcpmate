@@ -5,7 +5,7 @@ import { useLanguage, type Language } from "../LanguageProvider";
 import { buildFAQPage } from "../../utils/schema";
 import { trackMCPMateEvents } from "../../utils/analytics";
 
-const CONTACT_MAILTO = "mailto:loocor@gmail.com";
+const CONTACT_MAILTO = "mailto:mcp@umate.ai";
 
 function getQuickstartPath(language: Language): string {
 	if (language === "zh") return "/docs/zh/quickstart";

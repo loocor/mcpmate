@@ -2,6 +2,7 @@ import { Github, Mail, Monitor, Moon, Sun, Twitter } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import logoImage from "../../assets/images/logo.svg";
 import { BROWSER_EXTENSION_LINKS } from "../../lib/browser-extensions";
+import { getMarketingScrollPadding, syncMarketingScrollPadding } from "../../lib/section-scroll";
 import { trackMCPMateEvents } from "../../utils/analytics";
 import { useLanguage } from "../LanguageProvider";
 import { useTheme } from "../ThemeProvider";
@@ -93,7 +94,8 @@ const Footer = () => {
 			navigate(`/?section=${encodeURIComponent(id)}`);
 			return;
 		}
-		const offset = 80;
+		syncMarketingScrollPadding();
+		const offset = Math.max(getMarketingScrollPadding(), 80);
 		const elementPosition = element.getBoundingClientRect().top;
 		const offsetPosition = elementPosition + window.scrollY - offset;
 		window.scrollTo({ top: offsetPosition, behavior: "smooth" });
@@ -167,7 +169,7 @@ const Footer = () => {
 								<Github size={20} />
 							</a>
 							<a
-								href="mailto:loocor@gmail.com"
+								href="mailto:mcp@umate.ai"
 								className={`p-2 rounded-lg hover:bg-brand-overlay-hover transition-colors ${brandTextClass}`}
 								aria-label="Email"
 							>
