@@ -23,17 +23,17 @@ export default function CodeBlock({
 		}
 	};
 	return (
-		<div className="not-prose relative rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
-			<div className="flex items-center justify-between px-3 py-2 border-b border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300">
+		<div className="not-prose relative rounded-lg border border-brand-border bg-brand-elevated">
+			<div className="flex items-center justify-between border-b border-brand-border px-3 py-2 text-xs text-brand-muted">
 				<span className="font-mono">{filename || lang}</span>
 				<button
 					onClick={onCopy}
-					className="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800"
+					className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-brand-overlay"
 				>
 					<Copy size={14} /> {copied ? "Copied" : "Copy"}
 				</button>
 			</div>
-			<pre className="overflow-x-auto p-3 text-sm">
+			<pre className="overflow-x-auto p-3 text-sm text-brand-foreground">
 				<code className={`language-${lang}`}>{code}</code>
 			</pre>
 		</div>

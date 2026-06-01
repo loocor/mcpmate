@@ -96,8 +96,8 @@ export function SidebarMenuButton({
 			onClick={onClick}
 			onMouseEnter={onMouseEnter}
 			data-active={active ? "true" : undefined}
-			className={`group w-full text-left rounded-md px-2 py-2.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
-				active ? "bg-slate-100 dark:bg-slate-800 font-medium" : ""
+			className={`group w-full text-left rounded-md px-2 py-2.5 transition-colors text-brand-muted hover:bg-brand-overlay hover:text-brand-foreground ${
+				active ? "bg-brand-overlay text-brand-accent font-medium" : ""
 			} ${className}`.trim()}
 		>
 			{children}

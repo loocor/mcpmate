@@ -160,7 +160,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 	return (
 		<div ref={containerRef}>
 			<div
-				className="not-prose rounded-xl border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-900/40 p-3 flex flex-col min-h-0"
+				className="not-prose flex flex-col min-h-0 rounded-xl border border-brand-border bg-brand-surface/90 p-3 shadow-card backdrop-blur-sm"
 				style={{
 					position: "fixed",
 					top: topPx ?? 96,
@@ -174,10 +174,10 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 						value={query}
 						onChange={(e) => setQuery(e.target.value)}
 						placeholder={getLocalizedText(locale, "search")}
-						className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-800/70 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+						className="w-full rounded-md border border-brand-border bg-brand-input px-3 py-2 text-sm text-brand-foreground outline-none placeholder:text-brand-muted-soft focus:ring-2 focus:ring-brand-accent/40"
 					/>
 					{query && (
-						<div className="mt-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 max-h-72 overflow-auto">
+						<div className="mt-2 max-h-72 overflow-auto rounded-md border border-brand-border bg-brand-elevated">
 							{flat
 								.filter((p) =>
 									(
@@ -200,11 +200,11 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 												navigate(p.path);
 											});
 										}}
-										className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700"
+										className="block w-full px-3 py-2 text-left text-sm text-brand-foreground hover:bg-brand-overlay"
 									>
 										<div className="font-medium">{p.title}</div>
 										{p.summary ? (
-											<div className="text-xs text-slate-500 line-clamp-1">
+											<div className="line-clamp-1 text-xs text-brand-muted-soft">
 												{p.summary}
 											</div>
 										) : null}
@@ -215,7 +215,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 									.toLowerCase()
 									.includes(query.toLowerCase()),
 							) && (
-								<div className="px-3 py-2 text-xs text-slate-500">
+								<div className="px-3 py-2 text-xs text-brand-muted-soft">
 									{getLocalizedText(locale, "noResults")}
 								</div>
 							)}
@@ -276,7 +276,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 													setOpenGroup(g.group);
 												}
 											}}
-											className="group w-full text-left rounded-md px-2 py-2.5 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
+											className="group flex w-full items-center justify-between rounded-md px-2 py-2.5 text-left transition-colors hover:bg-brand-overlay text-brand-foreground"
 											aria-expanded={!collapsed}
 										>
 											<span className="inline-flex items-center gap-1">
@@ -291,7 +291,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 										</button>
 										{!collapsed && (
 											<SidebarGroupContent
-												className={`${indent ? "ml-2 pl-2 border-l border-slate-200 dark:border-slate-700" : ""}`}
+												className={`${indent ? "ml-2 border-l border-brand-border pl-2" : ""}`}
 											>
 												<SidebarMenu>
 													{g.pages.map((p) => {
@@ -311,7 +311,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 																			setOpenGroup(g.group);
 																			setOpenSubGroup(opened ? null : key);
 																		}}
-																		className="group w-full text-left rounded-md px-2 py-2 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
+																		className="group flex w-full items-center justify-between rounded-md px-2 py-2 text-left transition-colors hover:bg-brand-overlay text-brand-foreground"
 																		aria-expanded={opened}
 																	>
 																		<span className="inline-flex items-center gap-1">
@@ -325,7 +325,7 @@ export default function Sidebar({ topPx }: { topPx?: number }) {
 																		</span>
 																	</button>
 																	{opened && (
-																		<div className="mt-1 ml-3 pl-2 border-l border-slate-200 dark:border-slate-700">
+																		<div className="mt-1 ml-3 border-l border-brand-border pl-2">
 																			{sg.pages.map((sp) => {
 																				if (!("path" in sp)) {
 																					return null;
