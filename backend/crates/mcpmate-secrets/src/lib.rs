@@ -2,6 +2,13 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
+pub mod root_key;
+pub mod store;
+pub use root_key::{
+    DEVELOPMENT_ROOT_KEY_ENV, DevelopmentRootKeyProvider, OperatingSystemRootKeyProvider, RootKeyProviderMetadata,
+    SecretRootKey, SecretRootKeyError, SecretRootKeyProvider, default_root_key_provider,
+};
+
 const SECRET_PREFIX: &str = "[[secret:";
 const SECRET_SUFFIX: &str = "]]";
 

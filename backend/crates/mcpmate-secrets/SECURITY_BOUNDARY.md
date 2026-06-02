@@ -3,10 +3,16 @@
 ## Scope
 
 `mcpmate-secrets` provides MCPMate's local server-runtime secret boundary.
-It models secret references, resolver/provider contracts, usage references,
-and runtime-only injection semantics for managed MCP server configuration.
+It provides secret references, resolver/provider contracts, OS-backed root-key
+providers, encrypted local secure KV storage, usage references, and
+runtime-only injection semantics for managed MCP server configuration.
 
 This crate is part of MCPMate and is licensed under AGPL-3.0-only by default.
+
+The crate must remain independently useful to callers outside the main backend
+crate. The main backend crate may initialize the store, expose REST handlers,
+and connect the resolver to MCPMate's connection pool, but it must not own the
+cryptographic storage implementation or OS secure-storage provider logic.
 
 ## Security Target
 
@@ -96,9 +102,28 @@ different local or enterprise backends later:
 The first implementation slice should not require a standalone daemon. Process
 separation can be introduced later behind the provider interface.
 
-## Current Desktop UAT Provider
+## Implementation Boundary
 
-The first desktop UAT implementation uses a local encrypted vault provider.
+`mcpmate-secrets` owns the security-sensitive implementation:
+
+- Root-key provider selection and provider metadata.
+- OS-backed root-key custody integrations.
+- Explicit development/test root-key provider.
+- AEAD encryption/decryption of secret values.
+- SQLite schema and operations for secret metadata, ciphertext, and usage refs.
+- Secret resolver behavior and redacted secret value handling.
+
+The main backend crate owns MCPMate application wiring only:
+
+- Choosing MCPMate's data directory for explicit development/test key files.
+- Starting the secure store with the crate-provided default provider.
+- Exposing REST API request/response wrappers.
+- Mapping MCPMate server configuration fields into usage references.
+- Injecting the crate-provided resolver into the MCPMate connection pool.
+
+## Development Provider
+
+The development implementation uses a local encrypted vault provider.
 Secret values are encrypted before they are written to SQLite, while metadata
 and usage references remain queryable for Board and API workflows.
 
@@ -106,16 +131,17 @@ The current root-key boundary is intentionally narrow:
 
 - `MCPMATE_SECRETS_LOCAL_KEY` may provide deterministic root material for tests
   or controlled development runs.
-- Otherwise MCPMate creates a random local root key at
-  `~/.mcpmate/secrets/local-root.key` under the active MCPMate base directory.
+- Otherwise the explicit development provider creates a random local root key
+  at the caller-provided development key path. The MCPMate backend wrapper uses
+  `~/.mcpmate/secrets/local-root.key` under the active MCPMate base directory
+  only for that explicit development/test provider.
 - On Unix platforms the local root-key file is created with `0600`
   permissions.
 
 This provider is not an operating-system keychain provider and does not claim
 OS-backed custody, hardware-backed custody, or managed-vault custody. It is the
-minimum desktop UAT provider behind the replaceable provider boundary. It must
-not remain the default production secure-store custody path once the
-cross-platform OS custody target is implemented.
+minimum development provider behind the replaceable provider boundary. It must
+not be the default production secure-store custody path.
 
 A macOS Keychain, Windows Credential Manager or DPAPI, Linux Secret Service,
 KMS, HSM, or managed-vault provider must be implemented and documented as a
