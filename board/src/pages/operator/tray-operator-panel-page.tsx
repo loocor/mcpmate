@@ -93,7 +93,7 @@ function formatActivityMeta(
 	});
 }
 
-function systemStatusTranslationKey(status: string): string {
+function systemStatusTranslationKey(status: string): string | null {
 	switch (status) {
 		case "running":
 			return "operator:systemStatus.running";
@@ -105,8 +105,10 @@ function systemStatusTranslationKey(status: string): string {
 			return "operator:systemStatus.starting";
 		case "error":
 			return "operator:systemStatus.error";
-		default:
+		case "unknown":
 			return "operator:systemStatus.unknown";
+		default:
+			return null;
 	}
 }
 
@@ -528,9 +530,12 @@ export function TrayOperatorPanelPage() {
 						defaultValue: "Open Full Board to create or activate a profile.",
 					});
 
-			const localizedSystemStatus = rowT(systemStatusTranslationKey(systemStatus), {
-				defaultValue: systemStatus,
-			});
+			const systemStatusKey = systemStatusTranslationKey(systemStatus);
+			const localizedSystemStatus = systemStatusKey
+				? rowT(systemStatusKey, {
+						defaultValue: systemStatus,
+					})
+				: systemStatus;
 
 			const clientsDetailHint =
 				pendingClients > 0
