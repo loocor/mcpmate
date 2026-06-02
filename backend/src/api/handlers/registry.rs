@@ -1020,6 +1020,7 @@ mod tests {
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager,
+            secret_store: None,
         }
     }
 

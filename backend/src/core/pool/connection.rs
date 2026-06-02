@@ -3,6 +3,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{self, Result};
+use mcpmate_secrets::SecretResolver;
 use rmcp::service::{Peer, RoleClient};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -144,6 +145,8 @@ pub struct UpstreamConnectionPool {
     pub failure_states: HashMap<String, types::FailureState>,
     /// Optional shared HTTP client registry for transport reuse
     pub(crate) http_clients: Option<Arc<crate::core::pool::connection::HttpClientRegistry>>,
+    /// Optional runtime secret resolver for managed upstream server startup parameters.
+    pub(crate) secret_resolver: Option<Arc<dyn SecretResolver>>,
 }
 
 impl UpstreamConnectionPool {
@@ -190,7 +193,40 @@ impl UpstreamConnectionPool {
                     None
                 }
             },
+            secret_resolver: None,
         }
+    }
+
+    pub fn with_secret_resolver(
+        mut self,
+        resolver: Arc<dyn SecretResolver>,
+    ) -> Self {
+        self.secret_resolver = Some(resolver);
+        self
+    }
+
+    pub fn set_secret_resolver(
+        &mut self,
+        resolver: Arc<dyn SecretResolver>,
+    ) {
+        self.secret_resolver = Some(resolver);
+    }
+
+    pub(crate) fn runtime_server_config(
+        &self,
+        server_id: &str,
+    ) -> Result<crate::core::models::MCPServerConfig> {
+        let config = self
+            .config
+            .mcp_servers
+            .get(server_id)
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in pool configuration", server_id))?;
+
+        crate::core::secrets::resolve_runtime_server_config_with_optional_resolver(
+            config,
+            self.secret_resolver.as_deref(),
+        )
+        .map_err(|err| anyhow::anyhow!("Failed to resolve runtime secrets for server '{}': {}", server_id, err))
     }
 
     // (moved to module scope) HttpClientRegistry definition
@@ -222,7 +258,6 @@ impl UpstreamConnectionPool {
         self.database = database;
         tracing::info!("Database reference updated for connection pool");
     }
-
 
     /// Idle timeout for standard instances (may become configurable later)
     pub fn standard_instance_idle_timeout() -> Duration {

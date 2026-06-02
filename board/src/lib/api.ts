@@ -72,6 +72,13 @@ import type {
 	ServerListResp,
 	ServerListResponse,
 	ServerMetaInfo,
+	SecretDeleteResp,
+	SecretKind,
+	SecretListResp,
+	SecretMetadata,
+	SecretMetadataResp,
+	SecretUsage,
+	SecretUsageListResp,
 	OAuthCallbackRequest,
 	OAuthConfigRequest,
 	OAuthInitiateResponse,
@@ -800,6 +807,59 @@ async function executeBatchOperation(
 	};
 }
 
+export const secretsApi = {
+	list: async (): Promise<SecretMetadata[]> => {
+		const resp = await fetchApi<SecretListResp>("/api/secrets/list");
+		return resp.data?.secrets ?? [];
+	},
+
+	get: async (alias: string): Promise<SecretMetadata> => {
+		const q = new URLSearchParams({ alias });
+		const resp = await fetchApi<SecretMetadataResp>(`/api/secrets/details?${q}`);
+		return extractApiData(resp as ApiWrapper<SecretMetadata>);
+	},
+
+	listUsages: async (alias: string): Promise<SecretUsage[]> => {
+		const q = new URLSearchParams({ alias });
+		const resp = await fetchApi<SecretUsageListResp>(`/api/secrets/usages?${q}`);
+		return resp.data?.usages ?? [];
+	},
+
+	create: async (payload: {
+		alias: string;
+		kind: SecretKind;
+		value: string;
+		label?: string | null;
+	}): Promise<SecretMetadata> => {
+		const resp = await fetchApi<SecretMetadataResp>("/api/secrets/create", {
+			method: "POST",
+			body: JSON.stringify(payload),
+		});
+		return extractApiData(resp as ApiWrapper<SecretMetadata>);
+	},
+
+	update: async (payload: {
+		alias: string;
+		kind?: SecretKind;
+		value?: string;
+		label?: string | null;
+	}): Promise<SecretMetadata> => {
+		const resp = await fetchApi<SecretMetadataResp>("/api/secrets/update", {
+			method: "POST",
+			body: JSON.stringify(payload),
+		});
+		return extractApiData(resp as ApiWrapper<SecretMetadata>);
+	},
+
+	delete: async (alias: string, force = false): Promise<{ alias: string; deleted: boolean }> => {
+		const resp = await fetchApi<SecretDeleteResp>("/api/secrets/delete", {
+			method: "DELETE",
+			body: JSON.stringify({ alias, force }),
+		});
+		return extractApiData(resp as ApiWrapper<{ alias: string; deleted: boolean }>);
+	},
+};
+
 // Server Management API
 export const serversApi = {
 	getAll: async (): Promise<ServerListResponse> => {
@@ -1092,6 +1152,9 @@ export const serversApi = {
 				base.env = serverConfig.env as Record<string, string>;
 		} else {
 			base.url = sc.url ?? serverConfig.command ?? undefined;
+			if (serverConfig.headers && typeof serverConfig.headers === "object") {
+				base.headers = serverConfig.headers as Record<string, string>;
+			}
 		}
 		if (serverConfig.pending_import !== undefined) {
 			base.pending_import = serverConfig.pending_import;

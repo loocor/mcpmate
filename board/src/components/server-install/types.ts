@@ -48,6 +48,8 @@ export const urlParamSchema = z.object({
 	value: z.string().optional(),
 });
 
+const SECRET_PLACEHOLDER_PATTERN = /\[\[secret:[^\]]+\]\]/;
+
 export const manualServerSchema = z
 	.object({
 		name: z.string().min(1, "manual.errors.nameRequired"),
@@ -55,11 +57,7 @@ export const manualServerSchema = z
 			required_error: "manual.errors.kindRequired",
 		}),
 		command: z.string().optional(),
-		url: z
-			.string()
-			.url("manual.errors.urlInvalid")
-			.optional()
-			.or(z.literal("")),
+		url: z.string().optional().or(z.literal("")),
 		args: z.array(argSchema).optional(),
 		env: z.array(envSchema).optional(),
 		headers: z.array(headerSchema).optional(),
@@ -97,6 +95,17 @@ export const manualServerSchema = z
 				message: "manual.errors.urlRequired",
 				path: ["url"],
 			});
+		}
+		if (kind !== "stdio" && url && !SECRET_PLACEHOLDER_PATTERN.test(url)) {
+			try {
+				new URL(url);
+			} catch {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "manual.errors.urlInvalid",
+					path: ["url"],
+				});
+			}
 		}
 	});
 

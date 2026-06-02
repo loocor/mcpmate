@@ -184,6 +184,16 @@ export const ServerInstallWizard = forwardRef(
 			defaultValues: buildFormValuesFromState(createInitialFormState()),
 		});
 
+		const handleSecretSelect = useCallback(
+			(fieldName: string, placeholder: string) => {
+				setValue(fieldName as keyof ManualServerFormValues, placeholder as never, {
+					shouldDirty: true,
+					shouldValidate: true,
+				});
+			},
+			[setValue],
+		);
+
 		const viewModeRef = useRef(viewMode);
 
 		useEffect(() => {
@@ -1481,6 +1491,7 @@ export const ServerInstallWizard = forwardRef(
 													commandInputRef={commandInputRef}
 													urlInputRef={urlInputRef}
 													viewMode={viewMode}
+													onSecretSelect={handleSecretSelect}
 												/>
 
 												<ServerAuthSection
@@ -1563,6 +1574,7 @@ export const ServerInstallWizard = forwardRef(
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
+													onSecretSelect={handleSecretSelect}
 												/>
 
 												<UrlParams
@@ -1575,6 +1587,7 @@ export const ServerInstallWizard = forwardRef(
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
+													onSecretSelect={handleSecretSelect}
 												/>
 
 												{!isStdio && selectedAuthMode === "oauth" ? (
@@ -1596,6 +1609,7 @@ export const ServerInstallWizard = forwardRef(
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
+													onSecretSelect={handleSecretSelect}
 												/>
 											</>
 										) : (

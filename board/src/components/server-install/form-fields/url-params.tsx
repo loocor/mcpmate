@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Input } from "../../ui/input";
 import { FieldList } from "../field-list";
+import { SecretPickerButton } from "../secret-picker-button";
 
 interface UrlParamsProps {
 	viewMode: "form" | "json";
@@ -12,6 +13,7 @@ interface UrlParamsProps {
 	deleteConfirmStates: Record<string, boolean>;
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
+	onSecretSelect?: (fieldName: string, placeholder: string) => void;
 }
 
 export function UrlParams({
@@ -24,6 +26,7 @@ export function UrlParams({
 	deleteConfirmStates,
 	onDeleteClick,
 	onGhostClick,
+	onSecretSelect,
 }: UrlParamsProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -77,6 +80,13 @@ export function UrlParams({
 							placeholder={t("manual.fields.common.valuePlaceholder", {
 								defaultValue: "Value",
 							})}
+							className="pr-20"
+						/>
+						<SecretPickerButton
+							className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
+							onSelect={(placeholder) =>
+								onSecretSelect?.(`urlParams.${index}.value`, placeholder)
+							}
 						/>
 					</div>
 				);
