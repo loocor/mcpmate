@@ -7,6 +7,24 @@ declare global {
 	}
 }
 
+type TestDashboardLanguage = "en" | "zh-cn" | "ja";
+
+async function installDashboardLanguage(
+	page: Page,
+	language: TestDashboardLanguage,
+): Promise<void> {
+	await page.addInitScript((selectedLanguage) => {
+		window.localStorage.setItem("i18nextLng", selectedLanguage);
+		window.localStorage.setItem(
+			"mcp_dashboard_settings",
+			JSON.stringify({
+				defaultView: "grid",
+				language: selectedLanguage,
+			}),
+		);
+	}, language);
+}
+
 async function installReadyApiMocks(page: Page): Promise<void> {
 	await page.route("**/api/**", async (route) => {
 		const request = route.request();
@@ -584,6 +602,67 @@ test("operator route refreshes incomplete onboarding status while gated", async 
 	await expect(page.getByRole("heading", { name: "Setup required" })).toHaveCount(0);
 	await expect(page.getByTestId("operator-chart-carousel")).toBeVisible();
 	expect(statusRequests).toBeGreaterThan(1);
+});
+
+test("operator route follows dashboard language storage updates", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await installDashboardLanguage(page, "en");
+
+	await page.goto("/operator");
+
+	await expect(page.getByText("Operator Panel")).toBeVisible();
+	await expect(page.getByText("Profiles")).toBeVisible();
+	await expect(page.getByText(/running · .* uptime/)).toBeVisible();
+
+	await page.evaluate(() => {
+		const key = "mcp_dashboard_settings";
+		const oldValue = window.localStorage.getItem(key);
+		const nextValue = JSON.stringify({
+			defaultView: "grid",
+			language: "zh-cn",
+		});
+		window.localStorage.setItem(key, nextValue);
+		window.dispatchEvent(
+			new StorageEvent("storage", {
+				key,
+				oldValue,
+				newValue: nextValue,
+				storageArea: window.localStorage,
+				url: window.location.href,
+			}),
+		);
+	});
+
+	await expect(page.getByText("操作面板")).toBeVisible();
+	await expect(page.getByText("配置集")).toBeVisible();
+	await expect(page.getByText(/运行中 · 已运行/)).toBeVisible();
+	await expect(page.getByText("Profiles")).toHaveCount(0);
+	await expect(page.getByText("Operator Panel")).toHaveCount(0);
+	await expect(page.getByText(/running · .* uptime/)).toHaveCount(0);
+});
+
+test("operator route preserves explicit system error status in core meta", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await page.route("**/api/system/status", (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				status: "error",
+				uptime: 3661,
+				version: "test",
+			}),
+		}),
+	);
+
+	await page.goto("/operator");
+
+	await expect(page.getByText(/error · .* uptime/)).toBeVisible();
+	await expect(page.getByText(/unknown · .* uptime/)).toHaveCount(0);
 });
 
 test("operator route presents query errors instead of empty successful rows", async ({

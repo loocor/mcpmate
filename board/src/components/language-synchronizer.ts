@@ -5,7 +5,12 @@ import {
 	resolveI18nLanguage,
 	SUPPORTED_LANGUAGES,
 } from "../lib/i18n/index";
-import { useAppStore } from "../lib/store";
+import {
+	DASHBOARD_SETTINGS_KEY,
+	type DashboardLanguage,
+	isDashboardLanguage,
+	useAppStore,
+} from "../lib/store";
 
 const FALLBACK_STORE_LANGUAGE = "en";
 
@@ -18,6 +23,23 @@ function mapI18nToStore(code: string): string {
 function mapStoreToI18n(code: string): string {
 	const match = SUPPORTED_LANGUAGES.find((entry) => entry.store === code);
 	return match?.i18n ?? resolveI18nLanguage(code);
+}
+
+function readStoredDashboardLanguage(raw: string | null): DashboardLanguage | null {
+	if (!raw) {
+		return null;
+	}
+
+	try {
+		const parsed = JSON.parse(raw) as { language?: unknown };
+		if (isDashboardLanguage(parsed.language)) {
+			return parsed.language;
+		}
+	} catch {
+		return null;
+	}
+
+	return null;
 }
 
 export function LanguageSynchronizer() {
@@ -42,6 +64,24 @@ export function LanguageSynchronizer() {
 				}
 			})();
 		}
+	}, [dashboardLanguage, setDashboardSetting]);
+
+	useEffect(() => {
+		const handleStorage = (event: StorageEvent) => {
+			if (event.key !== DASHBOARD_SETTINGS_KEY) {
+				return;
+			}
+
+			const nextLanguage = readStoredDashboardLanguage(event.newValue);
+			if (!nextLanguage || nextLanguage === dashboardLanguage) {
+				return;
+			}
+
+			setDashboardSetting("language", nextLanguage);
+		};
+
+		window.addEventListener("storage", handleStorage);
+		return () => window.removeEventListener("storage", handleStorage);
 	}, [dashboardLanguage, setDashboardSetting]);
 
 	useEffect(() => {

@@ -88,7 +88,11 @@ interface AppState {
 	) => void;
 }
 
-const DASHBOARD_SETTINGS_KEY = "mcp_dashboard_settings";
+export const DASHBOARD_SETTINGS_KEY = "mcp_dashboard_settings";
+
+export function isDashboardLanguage(value: unknown): value is DashboardLanguage {
+	return value === "en" || value === "zh-cn" || value === "ja";
+}
 
 const defaultDashboardSettings: DashboardSettings = {
 	defaultView: "grid",
@@ -137,11 +141,7 @@ function normalizeDashboardSettings(
 		next.defaultView = patch.defaultView;
 	}
 
-	if (
-		patch.language === "en" ||
-		patch.language === "zh-cn" ||
-		patch.language === "ja"
-	) {
+	if (isDashboardLanguage(patch.language)) {
 		next.language = patch.language;
 	}
 
