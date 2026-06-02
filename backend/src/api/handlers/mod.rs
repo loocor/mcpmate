@@ -11,6 +11,7 @@ pub mod onboarding;
 pub mod profile;
 pub mod registry;
 pub mod runtime;
+pub mod secrets;
 pub mod server;
 pub mod system;
 use std::fmt;

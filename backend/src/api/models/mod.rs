@@ -10,6 +10,7 @@ pub mod onboarding;
 pub mod profile;
 pub mod resp;
 pub mod runtime;
+pub mod secrets;
 pub mod server;
 pub mod system;
 pub mod token_estimate;

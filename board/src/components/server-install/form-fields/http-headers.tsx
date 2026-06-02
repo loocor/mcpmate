@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Input } from "../../ui/input";
 import { FieldList } from "../field-list";
+import { SecretPickerButton } from "../secret-picker-button";
 
 interface HttpHeadersProps {
 	viewMode: "form" | "json";
@@ -12,6 +13,7 @@ interface HttpHeadersProps {
 	deleteConfirmStates: Record<string, boolean>;
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
+	onSecretSelect?: (fieldName: string, placeholder: string) => void;
 }
 
 export function HttpHeaders({
@@ -24,6 +26,7 @@ export function HttpHeaders({
 	deleteConfirmStates,
 	onDeleteClick,
 	onGhostClick,
+	onSecretSelect,
 }: HttpHeadersProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -75,6 +78,13 @@ export function HttpHeaders({
 							placeholder={t("manual.fields.common.valuePlaceholder", {
 								defaultValue: "Value",
 							})}
+							className="pr-20"
+						/>
+						<SecretPickerButton
+							className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
+							onSelect={(placeholder) =>
+								onSecretSelect?.(`headers.${index}.value`, placeholder)
+							}
 						/>
 					</div>
 				);

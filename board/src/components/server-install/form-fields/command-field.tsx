@@ -3,6 +3,7 @@ import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import type { ManualServerFormValues } from "../types";
 import { useTranslation } from "react-i18next";
+import { SecretPickerButton } from "../secret-picker-button";
 
 interface CommandFieldProps {
 	kind: ManualServerFormValues["kind"];
@@ -13,6 +14,7 @@ interface CommandFieldProps {
 	commandInputRef: React.MutableRefObject<HTMLInputElement | null>;
 	urlInputRef: React.MutableRefObject<HTMLInputElement | null>;
 	viewMode: "form" | "json";
+	onSecretSelect?: (fieldName: string, placeholder: string) => void;
 }
 
 export function CommandField({
@@ -24,6 +26,7 @@ export function CommandField({
 	commandInputRef,
 	urlInputRef,
 	viewMode,
+	onSecretSelect,
 }: CommandFieldProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form") return null;
@@ -40,17 +43,24 @@ export function CommandField({
 					name="command"
 					control={control}
 					render={({ field }) => (
-						<Input
-							id={commandId}
-							{...field}
-							ref={(el) => {
-								field.ref(el);
-								commandInputRef.current = el;
-							}}
-							placeholder={t("manual.fields.command.placeholder", {
-								defaultValue: "e.g., uvx my-mcp",
-							})}
-						/>
+						<div className="relative">
+							<Input
+								id={commandId}
+								{...field}
+								ref={(el) => {
+									field.ref(el);
+									commandInputRef.current = el;
+								}}
+								placeholder={t("manual.fields.command.placeholder", {
+									defaultValue: "e.g., uvx my-mcp",
+								})}
+								className="pr-10"
+							/>
+							<SecretPickerButton
+								className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
+								onSelect={(placeholder) => onSecretSelect?.("command", placeholder)}
+							/>
+						</div>
 					)}
 				/>
 				{errors.command && (
@@ -72,17 +82,24 @@ export function CommandField({
 					name="url"
 					control={control}
 					render={({ field }) => (
-						<Input
-							id={urlId}
-							{...field}
-							ref={(el) => {
-								field.ref(el);
-								urlInputRef.current = el;
-							}}
-							placeholder={t("manual.fields.url.placeholder", {
-								defaultValue: "https://example.com/mcp",
-							})}
-						/>
+						<div className="relative">
+							<Input
+								id={urlId}
+								{...field}
+								ref={(el) => {
+									field.ref(el);
+									urlInputRef.current = el;
+								}}
+								placeholder={t("manual.fields.url.placeholder", {
+									defaultValue: "https://example.com/mcp",
+								})}
+								className="pr-10"
+							/>
+							<SecretPickerButton
+								className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
+								onSelect={(placeholder) => onSecretSelect?.("url", placeholder)}
+							/>
+						</div>
 					)}
 				/>
 				{errors.url && (

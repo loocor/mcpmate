@@ -1579,6 +1579,7 @@ mod tests {
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
+            secret_store: None,
         });
 
         TestContext {

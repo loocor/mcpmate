@@ -407,7 +407,7 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
-        let server_config = self.config.mcp_servers.get(server_id).unwrap();
+        let server_config = self.runtime_server_config(server_id)?;
 
         // Create cancellation token for this connection
         let ct = tokio_util::sync::CancellationToken::new();
@@ -425,7 +425,7 @@ impl UpstreamConnectionPool {
         // Note: connect_server still needs server_name for logging, so we use server_id as name for now
         let (service, tools, capabilities, process_id) = crate::core::transport::unified::connect_server(
             server_id,
-            server_config,
+            &server_config,
             crate::common::server::ServerType::Stdio,
             crate::common::server::TransportType::Stdio,
             Some(ct),
@@ -486,9 +486,11 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
+        let server_config = self.runtime_server_config(server_id)?;
+
         // Prepare optional shared client
         let client_opt = if let Some(reg) = &self.http_clients {
-            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
+            if let Some(url) = server_config.url.as_ref() {
                 if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
                     Some(reg.get_or_create(&origin).await)
                 } else {
@@ -502,7 +504,7 @@ impl UpstreamConnectionPool {
         };
 
         if let Some(client) = &client_opt {
-            if let Some(url) = self.config.mcp_servers.get(server_id).and_then(|c| c.url.as_ref()) {
+            if let Some(url) = server_config.url.as_ref() {
                 if let Some(origin) = crate::core::pool::connection::HttpClientRegistry::origin_key(url) {
                     tracing::debug!(
                         "[HTTP CLIENT][reuse] server_id={} origin={} client={:p}",
@@ -516,7 +518,7 @@ impl UpstreamConnectionPool {
             tracing::debug!("[HTTP CLIENT][no-reuse] server_id={} (HTTP)", server_id);
         }
 
-        self.connect_with_transport(server_id, instance_id, move |label, config| {
+        self.connect_with_transport(server_id, instance_id, server_config, move |label, config| {
             let client_opt = client_opt.clone();
             async move {
                 // If server has default headers, use a per-server client with those headers
@@ -574,6 +576,7 @@ impl UpstreamConnectionPool {
         &mut self,
         server_id: &str,
         instance_id: &str,
+        server_config: crate::core::models::MCPServerConfig,
         connect_fn: F,
     ) -> Result<()>
     where
@@ -586,7 +589,6 @@ impl UpstreamConnectionPool {
             )>,
         >,
     {
-        let server_config = self.config.mcp_servers.get(server_id).unwrap().clone();
         // Build a friendly label for transport-layer logging: "name (id)" or just id
         let label = crate::core::capability::resolver::label_by_id(server_id).await;
         let (service, tools, capabilities) = connect_fn(label, server_config).await?;

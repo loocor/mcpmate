@@ -1,0 +1,10 @@
+[package]
+name = "mcpmate-secrets"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Runtime secret references and provider boundaries for MCPMate"
+authors = ["Loocor <loocor@gmail.com>"]
+
+[dependencies]
+thiserror = "1.0"

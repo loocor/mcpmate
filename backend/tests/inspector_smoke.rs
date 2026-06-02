@@ -82,6 +82,7 @@ fn build_test_state() -> Arc<AppState> {
         inspector_calls,
         inspector_sessions,
         oauth_manager: None,
+        secret_store: None,
     })
 }
 
@@ -127,6 +128,7 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
         oauth_manager: None,
+        secret_store: None,
     })
 }
 

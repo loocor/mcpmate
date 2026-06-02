@@ -3,6 +3,7 @@ import {
   AppWindow,
   Bug,
   FileSearch,
+  KeyRound,
   LayoutDashboard,
   Menu,
   Server,
@@ -160,6 +161,10 @@ export function Sidebar() {
 
         <SidebarLink to="/runtime" icon={<Activity size={20} />}>
           {sidebarOpen && t("nav.runtime", { defaultValue: "Runtime" })}
+        </SidebarLink>
+
+        <SidebarLink to="/secrets" icon={<KeyRound size={20} />}>
+          {sidebarOpen && t("nav.secrets", { defaultValue: "Secrets" })}
         </SidebarLink>
 
         {showApiDocsMenu && (
