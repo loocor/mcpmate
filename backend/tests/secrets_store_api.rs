@@ -74,9 +74,12 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
         path: temp_dir.path().join("mcpmate-test.db"),
     });
     let secret_store = Arc::new(
-        LocalSecretStore::initialize(db_pool.clone())
-            .await
-            .expect("initialize secret store"),
+        LocalSecretStore::initialize_with_development_root_key(
+            db_pool.clone(),
+            temp_dir.path().join("secrets").join("local-root.key"),
+        )
+        .await
+        .expect("initialize secret store"),
     );
     let redb_cache =
         Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
