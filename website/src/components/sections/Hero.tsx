@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { ArrowRight, ChevronDown, Download } from 'lucide-react';
+import { ArrowRight, ChevronDown, Download, ExternalLink } from 'lucide-react';
 
 import { useLatestGitHubRelease } from '../../hooks/useLatestGitHubRelease';
 import { BROWSER_EXTENSION_LINKS } from '../../lib/browser-extensions';
@@ -194,6 +194,7 @@ function Hero(): JSX.Element {
     ? preferredDownloadRow
     : selectedPlatformRows.find((row) => row.asset);
   const primaryDownloadUrl = isDesktopDownload ? (primaryDownloadRow?.asset?.browser_download_url ?? RELEASES_PAGE_URL) : RELEASES_PAGE_URL;
+  const fallbackDownloadUrl = releaseState.status === 'ok' ? releaseState.latest.html_url : RELEASES_PAGE_URL;
   const primaryDownloadLabel = isDesktopDownload && selectedPlatform
     ? t('download.cta_for').replace('{platform}', t(selectedPlatform.labelKey))
     : t('download.desktop_downloads');
@@ -285,7 +286,7 @@ function Hero(): JSX.Element {
                         const url = row.asset?.browser_download_url;
                         const rowLabel = `${t(row.platformI18nKey)} ${t(row.archI18nKey)}`;
 
-                        if (!url) {
+                        if (!url && releaseState.status === 'loading') {
                           return (
                             <span
                               key={row.id}
@@ -297,17 +298,27 @@ function Hero(): JSX.Element {
                           );
                         }
 
+                        const targetUrl = url ?? fallbackDownloadUrl;
+                        const isDirectAsset = Boolean(url);
+
                         return (
                           <a
                             key={row.id}
-                            href={url}
+                            href={targetUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={() => onDownloadClick(row, url)}
-                            className="flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-overlay-hover hover:text-brand-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
+                            onClick={() => onDownloadClick(isDirectAsset ? row : undefined, targetUrl)}
+                            className={`flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-brand-overlay-hover hover:text-brand-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent ${
+                              isDirectAsset ? 'text-brand-foreground' : 'section-muted'
+                            }`}
+                            aria-label={
+                              isDirectAsset
+                                ? `${t('download.btn')} ${rowLabel}`
+                                : `${t('download.all_releases')} ${rowLabel}`
+                            }
                           >
                             <span>{rowLabel}</span>
-                            <Download size={14} aria-hidden />
+                            {isDirectAsset ? <Download size={14} aria-hidden /> : <ExternalLink size={14} aria-hidden />}
                           </a>
                         );
                       })}
