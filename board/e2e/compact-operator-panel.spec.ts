@@ -7,6 +7,24 @@ declare global {
 	}
 }
 
+type TestDashboardLanguage = "en" | "zh-cn" | "ja";
+
+async function installDashboardLanguage(
+	page: Page,
+	language: TestDashboardLanguage,
+): Promise<void> {
+	await page.addInitScript((selectedLanguage) => {
+		window.localStorage.setItem("i18nextLng", selectedLanguage);
+		window.localStorage.setItem(
+			"mcp_dashboard_settings",
+			JSON.stringify({
+				defaultView: "grid",
+				language: selectedLanguage,
+			}),
+		);
+	}, language);
+}
+
 async function installReadyApiMocks(page: Page): Promise<void> {
 	await page.route("**/api/**", async (route) => {
 		const request = route.request();
@@ -554,6 +572,152 @@ test("operator route keeps incomplete onboarding out of the tray surface in web 
 	await expect(page.getByRole("heading", { name: "Setup required" })).toBeVisible();
 	await expect(page.getByText("Open Full Board setup")).toBeVisible();
 	await expect(page.getByText("Runtime requirements")).toHaveCount(0);
+});
+
+test("operator route refreshes incomplete onboarding status while gated", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	let statusRequests = 0;
+	await page.route("**/api/onboarding/status", (route) => {
+		statusRequests += 1;
+		const completed = statusRequests > 1;
+		return route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				success: true,
+				data: {
+					completed,
+					servers_count: completed ? 3 : 0,
+					clients_count: completed ? 2 : 0,
+				},
+			}),
+		});
+	});
+
+	await page.goto("/operator");
+
+	await expect(page.getByRole("heading", { name: "Setup required" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Setup required" })).toHaveCount(0);
+	await expect(page.getByTestId("operator-chart-carousel")).toBeVisible();
+	expect(statusRequests).toBeGreaterThan(1);
+});
+
+test("operator route follows dashboard language storage updates", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await installDashboardLanguage(page, "en");
+
+	await page.goto("/operator");
+
+	await expect(page.getByText("Operator Panel")).toBeVisible();
+	await expect(page.getByText("Profiles")).toBeVisible();
+	await expect(page.getByText(/running · .* uptime/)).toBeVisible();
+
+	await page.evaluate(() => {
+		const key = "mcp_dashboard_settings";
+		const oldValue = window.localStorage.getItem(key);
+		const nextValue = JSON.stringify({
+			defaultView: "list",
+			language: "zh-cn",
+		});
+		window.localStorage.setItem(key, nextValue);
+		window.dispatchEvent(
+			new StorageEvent("storage", {
+				key,
+				oldValue,
+				newValue: nextValue,
+				storageArea: window.localStorage,
+				url: window.location.href,
+			}),
+		);
+	});
+
+	await expect(page.getByText("操作面板")).toBeVisible();
+	await expect(page.getByText("配置集")).toBeVisible();
+	await expect(page.getByText(/运行中 · 已运行/)).toBeVisible();
+	await expect(page.getByText("Profiles")).toHaveCount(0);
+	await expect(page.getByText("Operator Panel")).toHaveCount(0);
+	await expect(page.getByText(/running · .* uptime/)).toHaveCount(0);
+
+	const storedSettings = await page.evaluate(() =>
+		JSON.parse(window.localStorage.getItem("mcp_dashboard_settings") ?? "{}"),
+	);
+	expect(storedSettings).toEqual({
+		defaultView: "list",
+		language: "zh-cn",
+	});
+});
+
+test("operator route places close as the rightmost header control in Tauri shell", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await installTauriPendingFullBoardPathMock(page, null);
+	await installDashboardLanguage(page, "en");
+
+	await page.goto("/operator");
+	await expect(page.getByRole("button", { name: "Pin on top" })).toBeVisible();
+
+	const controlLabels = await page
+		.locator("header [aria-label]")
+		.evaluateAll((elements) =>
+			elements
+				.map((element) => element.getAttribute("aria-label"))
+				.filter((label) =>
+					label === "Pin on top" ||
+					label === "Open Full Board" ||
+					label === "Close",
+				),
+		);
+
+	expect(controlLabels).toEqual(["Pin on top", "Open Full Board", "Close"]);
+});
+
+test("operator route preserves explicit system error status in core meta", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await page.route("**/api/system/status", (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				status: "error",
+				uptime: 3661,
+				version: "test",
+			}),
+		}),
+	);
+
+	await page.goto("/operator");
+
+	await expect(page.getByText(/error · .* uptime/)).toBeVisible();
+	await expect(page.getByText(/unknown · .* uptime/)).toHaveCount(0);
+});
+
+test("operator route preserves unrecognized system status in core meta", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await page.route("**/api/system/status", (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				status: "stopping",
+				uptime: 3661,
+				version: "test",
+			}),
+		}),
+	);
+
+	await page.goto("/operator");
+
+	await expect(page.getByText(/stopping · .* uptime/)).toBeVisible();
+	await expect(page.getByText(/unknown · .* uptime/)).toHaveCount(0);
 });
 
 test("operator route presents query errors instead of empty successful rows", async ({

@@ -12,6 +12,14 @@ export const operatorTranslations = {
 			connections: "Clients & Servers",
 			activity: "Activity",
 		},
+		systemStatus: {
+			running: "running",
+			degraded: "degraded",
+			stopped: "stopped",
+			starting: "starting",
+			error: "error",
+			unknown: "unknown",
+		},
 		charts: {
 			carouselLabel: "Resource and token usage charts",
 			pagination: "Chart pagination",
@@ -247,10 +255,18 @@ export const operatorTranslations = {
 		pin: "置顶",
 		unpin: "取消置顶",
 		groups: {
-			runtime: "Runtime 与 Profiles",
+			runtime: "运行与配置",
 			workspace: "工作区",
-			connections: "Clients 与 Servers",
-			activity: "Activity",
+			connections: "客户端与服务器",
+			activity: "活动",
+		},
+		systemStatus: {
+			running: "运行中",
+			degraded: "降级运行",
+			stopped: "已停止",
+			starting: "启动中",
+			error: "错误",
+			unknown: "未知",
 		},
 		charts: {
 			carouselLabel: "资源与 Token 使用图表",
@@ -297,7 +313,7 @@ export const operatorTranslations = {
 		},
 		rows: {
 			core: {
-				title: "Core",
+				title: "核心",
 				ready: "MCPMate Core 已就绪",
 				notReady: "Core 需要关注",
 				loading: "正在检查 Core 状态",
@@ -305,7 +321,7 @@ export const operatorTranslations = {
 				meta: "{{status}} · 已运行 {{uptime}}",
 			},
 			profiles: {
-				title: "Profiles",
+				title: "配置集",
 				summary_one: "{{active}} 个 Profile 已启用",
 				summary_other: "{{total}} 个 Profile 中 {{active}} 个已启用",
 				noDefault: "未选择默认 Profile",
@@ -313,7 +329,7 @@ export const operatorTranslations = {
 				error: "无法获取 Profiles",
 			},
 			clients: {
-				title: "Clients",
+				title: "客户端",
 				summary_one: "检测到 {{count}} 个客户端",
 				summary_other: "检测到 {{count}} 个客户端",
 				meta: "{{approved}} 已批准 · {{pending}} 待处理",
@@ -327,7 +343,7 @@ export const operatorTranslations = {
 				error: "无法获取 Clients",
 			},
 			servers: {
-				title: "Servers",
+				title: "服务器",
 				summary_one: "已安装 {{count}} 个 Server",
 				summary_other: "已安装 {{count}} 个 Server",
 				meta: "{{active}} 已激活 · {{attention}} 需关注",
@@ -345,7 +361,7 @@ export const operatorTranslations = {
 				error: "无法获取流量指标",
 			},
 			activity: {
-				title: "Activity",
+				title: "活动",
 				lastEvent: "最近：{{action}}",
 				noEvents: "暂无近期活动",
 				loading: "正在加载 Activity",
@@ -489,6 +505,14 @@ export const operatorTranslations = {
 			workspace: "ワークスペース",
 			connections: "Clients と Servers",
 			activity: "Activity",
+		},
+		systemStatus: {
+			running: "実行中",
+			degraded: "縮退中",
+			stopped: "停止中",
+			starting: "起動中",
+			error: "エラー",
+			unknown: "不明",
 		},
 		charts: {
 			carouselLabel: "リソースと Token 使用チャート",

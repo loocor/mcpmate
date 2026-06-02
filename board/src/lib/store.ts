@@ -80,6 +80,7 @@ interface AppState {
 		value: DashboardSettings[K],
 	) => void;
 	updateDashboardSettings: (patch: Partial<DashboardSettings>) => void;
+	syncDashboardSettingsFromStorage: (raw: string) => void;
 	removeFromMarketBlacklist: (serverId: string) => void;
 	addToMarketBlacklist: (entry: MarketBlacklistEntry) => void;
 	pendingServerDeepLinkImport: PendingServerDeepLinkImport | null;
@@ -88,7 +89,11 @@ interface AppState {
 	) => void;
 }
 
-const DASHBOARD_SETTINGS_KEY = "mcp_dashboard_settings";
+export const DASHBOARD_SETTINGS_KEY = "mcp_dashboard_settings";
+
+export function isDashboardLanguage(value: unknown): value is DashboardLanguage {
+	return value === "en" || value === "zh-cn" || value === "ja";
+}
 
 const defaultDashboardSettings: DashboardSettings = {
 	defaultView: "grid",
@@ -137,11 +142,7 @@ function normalizeDashboardSettings(
 		next.defaultView = patch.defaultView;
 	}
 
-	if (
-		patch.language === "en" ||
-		patch.language === "zh-cn" ||
-		patch.language === "ja"
-	) {
+	if (isDashboardLanguage(patch.language)) {
 		next.language = patch.language;
 	}
 
@@ -294,6 +295,18 @@ function readDashboardSettings(): DashboardSettings {
 	}
 }
 
+function parseDashboardSettingsSnapshot(raw: string): DashboardSettings | null {
+	try {
+		const parsed = JSON.parse(raw) as Partial<DashboardSettings> | null;
+		if (!parsed || typeof parsed !== "object") {
+			return null;
+		}
+		return normalizeDashboardSettings(defaultDashboardSettings, parsed);
+	} catch {
+		return null;
+	}
+}
+
 function persistDashboardSettings(settings: DashboardSettings) {
 	try {
 		if (typeof window !== "undefined") {
@@ -393,6 +406,13 @@ export const useAppStore = create<AppState>((set) => ({
 			persistDashboardSettings(next);
 			return { dashboardSettings: next };
 		});
+	},
+	syncDashboardSettingsFromStorage: (raw) => {
+		const next = parseDashboardSettingsSnapshot(raw);
+		if (!next) {
+			return;
+		}
+		set({ dashboardSettings: next });
 	},
 	removeFromMarketBlacklist: (serverId) => {
 		set((state) => {

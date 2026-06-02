@@ -5,7 +5,10 @@ import {
 	resolveI18nLanguage,
 	SUPPORTED_LANGUAGES,
 } from "../lib/i18n/index";
-import { useAppStore } from "../lib/store";
+import {
+	DASHBOARD_SETTINGS_KEY,
+	useAppStore,
+} from "../lib/store";
 
 const FALLBACK_STORE_LANGUAGE = "en";
 
@@ -25,6 +28,9 @@ export function LanguageSynchronizer() {
 		(state) => state.dashboardSettings.language,
 	);
 	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
+	const syncDashboardSettingsFromStorage = useAppStore(
+		(state) => state.syncDashboardSettingsFromStorage,
+	);
 	const { i18n } = useTranslation();
 	const initialisedRef = useRef(false);
 
@@ -43,6 +49,19 @@ export function LanguageSynchronizer() {
 			})();
 		}
 	}, [dashboardLanguage, setDashboardSetting]);
+
+	useEffect(() => {
+		const handleStorage = (event: StorageEvent) => {
+			if (event.key !== DASHBOARD_SETTINGS_KEY || !event.newValue) {
+				return;
+			}
+
+			syncDashboardSettingsFromStorage(event.newValue);
+		};
+
+		window.addEventListener("storage", handleStorage);
+		return () => window.removeEventListener("storage", handleStorage);
+	}, [syncDashboardSettingsFromStorage]);
 
 	useEffect(() => {
 		void (async () => {

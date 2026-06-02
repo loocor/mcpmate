@@ -93,6 +93,25 @@ function formatActivityMeta(
 	});
 }
 
+function systemStatusTranslationKey(status: string): string | null {
+	switch (status) {
+		case "running":
+			return "operator:systemStatus.running";
+		case "degraded":
+			return "operator:systemStatus.degraded";
+		case "stopped":
+			return "operator:systemStatus.stopped";
+		case "starting":
+			return "operator:systemStatus.starting";
+		case "error":
+			return "operator:systemStatus.error";
+		case "unknown":
+			return "operator:systemStatus.unknown";
+		default:
+			return null;
+	}
+}
+
 const ROW_EXPAND_CHEVRON_CLASS =
 	"h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 dark:text-slate-500";
 
@@ -394,6 +413,8 @@ export function TrayOperatorPanelPage() {
 		queryKey: ["onboardingStatus"],
 		queryFn: () => onboardingApi.getStatus(),
 		staleTime: 60_000,
+		refetchInterval: (query) =>
+			query.state.data?.data?.completed === false ? 2_000 : false,
 		retry: false,
 		refetchOnWindowFocus: false,
 	});
@@ -449,6 +470,24 @@ export function TrayOperatorPanelPage() {
 	});
 
 	const onboardingCompleted = onboardingQuery.data?.data?.completed;
+	const { refetch: refetchOnboardingStatus } = onboardingQuery;
+
+	React.useEffect(() => {
+		const refetchOnActivation = () => {
+			if (document.visibilityState === "hidden") {
+				return;
+			}
+			void refetchOnboardingStatus();
+		};
+
+		window.addEventListener("focus", refetchOnActivation);
+		document.addEventListener("visibilitychange", refetchOnActivation);
+		return () => {
+			window.removeEventListener("focus", refetchOnActivation);
+			document.removeEventListener("visibilitychange", refetchOnActivation);
+		};
+	}, [refetchOnboardingStatus]);
+
 	const servers = serversQuery.data?.servers ?? [];
 	const connectedServers = servers.filter(
 		(server) => String(server.status).toLowerCase() === "connected",
@@ -491,6 +530,13 @@ export function TrayOperatorPanelPage() {
 						defaultValue: "Open Full Board to create or activate a profile.",
 					});
 
+			const systemStatusKey = systemStatusTranslationKey(systemStatus);
+			const localizedSystemStatus = systemStatusKey
+				? rowT(systemStatusKey, {
+						defaultValue: systemStatus,
+					})
+				: systemStatus;
+
 			const clientsDetailHint =
 				pendingClients > 0
 					? rowT("operator:detail.clients.pending", {
@@ -527,7 +573,7 @@ export function TrayOperatorPanelPage() {
 									defaultValue: "Core needs attention",
 								}),
 					meta: rowT("operator:rows.core.meta", {
-						status: systemStatus,
+						status: localizedSystemStatus,
 						uptime: formatUptime(systemQuery.data?.uptime ?? 0),
 						defaultValue: "{{status}} · {{uptime}} uptime",
 					}),
@@ -961,42 +1007,26 @@ export function TrayOperatorPanelPage() {
 				controls={
 					<>
 						{isTauriShell ? (
-							<>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon"
-									className="h-8 w-8"
-									aria-pressed={pinned}
-									aria-label={t(pinned ? "operator:unpin" : "operator:pin", {
-										defaultValue: pinned ? "Unpin" : "Pin on top",
-									})}
-									style={operatorNoDragRegionStyle}
-									title={t(pinned ? "operator:unpin" : "operator:pin", {
-										defaultValue: pinned ? "Unpin" : "Pin on top",
-									})}
-									disabled={pinPending}
-									onClick={() => {
-										void togglePinned();
-									}}
-								>
-									{pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-								</Button>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon"
-									className="h-8 w-8 text-slate-600 dark:text-slate-300"
-									aria-label={t("operator:close", { defaultValue: "Close" })}
-									style={operatorNoDragRegionStyle}
-									title={t("operator:close", { defaultValue: "Close" })}
-									onClick={() => {
-										void runDesktopAction(closeOperatorPanel);
-									}}
-								>
-									<X className="h-4 w-4" />
-								</Button>
-							</>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-8 w-8"
+								aria-pressed={pinned}
+								aria-label={t(pinned ? "operator:unpin" : "operator:pin", {
+									defaultValue: pinned ? "Unpin" : "Pin on top",
+								})}
+								style={operatorNoDragRegionStyle}
+								title={t(pinned ? "operator:unpin" : "operator:pin", {
+									defaultValue: pinned ? "Unpin" : "Pin on top",
+								})}
+								disabled={pinPending}
+								onClick={() => {
+									void togglePinned();
+								}}
+							>
+								{pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+							</Button>
 						) : null}
 						<OperatorFullBoardControl
 							className="h-8 w-8 text-slate-600 dark:text-slate-300"
@@ -1005,6 +1035,22 @@ export function TrayOperatorPanelPage() {
 							onDesktopOpen={openFullBoardPath}
 							path="/"
 						/>
+						{isTauriShell ? (
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-8 w-8 text-slate-600 dark:text-slate-300"
+								aria-label={t("operator:close", { defaultValue: "Close" })}
+								style={operatorNoDragRegionStyle}
+								title={t("operator:close", { defaultValue: "Close" })}
+								onClick={() => {
+									void runDesktopAction(closeOperatorPanel);
+								}}
+							>
+								<X className="h-4 w-4" />
+							</Button>
+						) : null}
 					</>
 				}
 			/>
