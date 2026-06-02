@@ -2,6 +2,10 @@ export type Platform = 'mac' | 'windows' | 'linux';
 export type MacVariant = 'arm64' | 'x64';
 export type DesktopPlatform = 'macos' | 'windows' | 'linux';
 export type DesktopArchitecture = 'arm64' | 'x64';
+export type DownloadEnvironment =
+  | { kind: 'desktop'; platform: DesktopPlatform; architecture: DesktopArchitecture }
+  | { kind: 'mobile' }
+  | { kind: 'unknown' };
 
 interface NavigatorUserAgentDataLike {
   platform?: string;
@@ -12,6 +16,7 @@ interface NavigatorUserAgentDataLike {
 }
 
 interface NavigatorWithOscpu extends Navigator {
+  maxTouchPoints?: number;
   oscpu?: string;
 }
 
@@ -30,6 +35,22 @@ function getDesktopHints(): string {
 
 function hasHint(text: string, hints: readonly string[]): boolean {
   return hints.some((hint) => text.includes(hint));
+}
+
+function isMobilePlatformHint(hints: string): boolean {
+  if (hints.includes('iphone') || hints.includes('ipad') || hints.includes('ipod')) {
+    return true;
+  }
+
+  if (hints.includes('android')) {
+    return true;
+  }
+
+  if (hints.includes('mobile') && !hints.includes('windows')) {
+    return true;
+  }
+
+  return hints.includes('mac') && (navigator as NavigatorWithOscpu).maxTouchPoints > 1;
 }
 
 function getNavigatorUserAgentData(): NavigatorUserAgentDataLike | undefined {
@@ -62,6 +83,41 @@ export function detectDesktopPlatform(): DesktopPlatform {
   if (platform.includes('linux') || platform.includes('x11')) return 'linux';
 
   return 'linux';
+}
+
+export function detectDownloadEnvironmentSync(): DownloadEnvironment {
+  if (typeof navigator === 'undefined') {
+    return { kind: 'unknown' };
+  }
+
+  const platformHints = getDesktopHints();
+  if (isMobilePlatformHint(platformHints)) {
+    return { kind: 'mobile' };
+  }
+
+  if (platformHints.includes('mac')) {
+    return { kind: 'desktop', platform: 'macos', architecture: detectDesktopArchitectureSync() };
+  }
+  if (platformHints.includes('win')) {
+    return { kind: 'desktop', platform: 'windows', architecture: detectDesktopArchitectureSync() };
+  }
+  if (platformHints.includes('linux') || platformHints.includes('x11')) {
+    return { kind: 'desktop', platform: 'linux', architecture: detectDesktopArchitectureSync() };
+  }
+
+  return { kind: 'unknown' };
+}
+
+export async function detectDownloadEnvironment(): Promise<DownloadEnvironment> {
+  const environment = detectDownloadEnvironmentSync();
+  if (environment.kind !== 'desktop') {
+    return environment;
+  }
+
+  return {
+    ...environment,
+    architecture: await detectDesktopArchitecture(),
+  };
 }
 
 export function detectDesktopArchitectureSync(): DesktopArchitecture {

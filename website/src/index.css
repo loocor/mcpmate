@@ -258,6 +258,29 @@ html {
 		border-top: 1px solid var(--brand-border-subtle);
 	}
 
+	.features-section .feature-card.is-preview-active .feature-card__media {
+		opacity: 1;
+		clip-path: inset(0 0 0 0);
+	}
+
+	.features-section .feature-card.is-preview-active .feature-card__icon {
+		opacity: 0;
+		transform: translateY(-0.75rem) scale(0.75);
+	}
+
+	.features-section .feature-card.is-preview-active .feature-card__title {
+		transform: translateY(7.25rem);
+	}
+
+	.features-section .feature-card.is-preview-active .feature-card__description {
+		opacity: 0;
+		transform: translateY(3.5rem);
+	}
+
+	.features-section .feature-card.is-preview-active .feature-card__shade {
+		opacity: 1;
+	}
+
 	@media (max-height: 52rem) {
 		.features-section .glass-card-hover {
 			padding: 1rem;

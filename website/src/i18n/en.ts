@@ -141,6 +141,8 @@ const en = {
 	"download.arch_arm64": "arm64",
 	"download.arch_x64": "x64",
 	"download.cta_for": "Download for {platform}",
+	"download.desktop_downloads": "Desktop downloads",
+	"download.desktop_note": "Use a desktop computer",
 	"download.available_for": "Available for macOS, Windows, and Linux",
 	"download.also_available_for": "Also available for {platforms}",
 	"download.getting_started": "Getting Started",

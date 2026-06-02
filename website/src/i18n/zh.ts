@@ -141,6 +141,8 @@ const zh = {
 	"download.arch_arm64": "arm64",
 	"download.arch_x64": "x64",
 	"download.cta_for": "下载 {platform} 版",
+	"download.desktop_downloads": "桌面版下载",
+	"download.desktop_note": "请在桌面端下载",
 	"download.available_for": "支持 macOS、Windows 和 Linux",
 	"download.also_available_for": "也支持 {platforms}",
 	"download.getting_started": "新手引导",

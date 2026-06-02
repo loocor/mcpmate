@@ -141,6 +141,8 @@ const ja = {
 	"download.arch_arm64": "arm64",
 	"download.arch_x64": "x64",
 	"download.cta_for": "{platform} 版をダウンロード",
+	"download.desktop_downloads": "デスクトップ版",
+	"download.desktop_note": "デスクトップで入手",
 	"download.available_for": "macOS、Windows、Linux に対応",
 	"download.also_available_for": "{platforms} にも対応",
 	"download.getting_started": "始めに",
