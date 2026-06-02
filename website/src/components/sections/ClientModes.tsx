@@ -57,10 +57,12 @@ const ClientModes = () => {
 								<p className="mt-1 text-sm font-medium text-brand-accent">{t(mode.taglineKey)}</p>
 							</div>
 						</div>
-						<p className="mb-3 rounded-lg border border-brand-border-subtle bg-brand-overlay/40 px-3 py-2 text-xs font-medium text-brand-foreground">
-							{t(mode.choiceKey)}
+						<p className="flex-1 text-sm leading-relaxed section-muted">
+							<strong className="font-semibold text-brand-foreground underline decoration-brand-accent/50 underline-offset-4">
+								{t(mode.choiceKey)}
+							</strong>{" "}
+							{t(mode.descKey)}
 						</p>
-						<p className="flex-1 text-sm leading-relaxed section-muted">{t(mode.descKey)}</p>
 						<ul className="mt-5 shrink-0 space-y-2">
 							{mode.bulletKeys.map((bulletKey) => (
 								<li key={bulletKey} className="flex items-start gap-2 text-sm section-muted">

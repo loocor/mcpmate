@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import type { GitHubLatestRelease } from "../utils/githubRelease";
-import { LATEST_RELEASE_API_URL, fetchAllPublishedReleases } from "../utils/githubRelease";
+import type { GitHubLatestRelease, PublicDownloadManifest } from "../utils/githubRelease";
+import { DOWNLOADS_MANIFEST_API_URL, releaseFromDownloadManifest } from "../utils/githubRelease";
 
 export type ReleaseFetchState =
 	| { status: "loading" }
@@ -8,14 +8,12 @@ export type ReleaseFetchState =
 	| {
 			status: "ok";
 			latest: GitHubLatestRelease;
-			allReleases: GitHubLatestRelease[] | null;
-			historyError?: string;
 	  };
 
 /**
- * Loads the latest release (install URLs) plus published release history (cumulative download counts).
+ * Loads the public download manifest and maps installer assets to admin redirect URLs.
  */
-export function useLatestGitHubRelease(includeHistory = true): ReleaseFetchState & { refetch: () => void } {
+export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => void } {
 	const [state, setState] = useState<ReleaseFetchState>({ status: "loading" });
 	const [tick, setTick] = useState(0);
 
@@ -25,10 +23,7 @@ export function useLatestGitHubRelease(includeHistory = true): ReleaseFetchState
 
 		void (async () => {
 			try {
-				const latestRes = await fetch(LATEST_RELEASE_API_URL, {
-					signal: ac.signal,
-					headers: { Accept: "application/vnd.github+json" },
-				});
+				const latestRes = await fetch(DOWNLOADS_MANIFEST_API_URL, { signal: ac.signal });
 
 				if (ac.signal.aborted) {
 					return;
@@ -38,34 +33,19 @@ export function useLatestGitHubRelease(includeHistory = true): ReleaseFetchState
 					return;
 				}
 
-				const latest = (await latestRes.json()) as GitHubLatestRelease;
-				if (!latest?.tag_name || !Array.isArray(latest.assets)) {
-					setState({ status: "error", message: "Invalid latest payload" });
+				const manifest = (await latestRes.json()) as PublicDownloadManifest;
+				if (
+					manifest?.schemaVersion !== 1 ||
+					!manifest.tag ||
+					!manifest.releaseUrl ||
+					!manifest.assets ||
+					typeof manifest.assets !== "object"
+				) {
+					setState({ status: "error", message: "Invalid download manifest payload" });
 					return;
 				}
 
-				if (!includeHistory) {
-					setState({ status: "ok", latest, allReleases: null });
-					return;
-				}
-
-				try {
-					const allReleases = await fetchAllPublishedReleases(ac.signal);
-					if (ac.signal.aborted) {
-						return;
-					}
-					setState({ status: "ok", latest, allReleases });
-				} catch (e) {
-					if (ac.signal.aborted) {
-						return;
-					}
-					setState({
-						status: "ok",
-						latest,
-						allReleases: null,
-						historyError: (e as Error).message || "fetch failed",
-					});
-				}
+				setState({ status: "ok", latest: releaseFromDownloadManifest(manifest) });
 			} catch (e) {
 				if (ac.signal.aborted) {
 					return;
@@ -75,7 +55,7 @@ export function useLatestGitHubRelease(includeHistory = true): ReleaseFetchState
 		})();
 
 		return () => ac.abort();
-	}, [includeHistory, tick]);
+	}, [tick]);
 
 	const refetch = useCallback(() => {
 		setTick((n) => n + 1);

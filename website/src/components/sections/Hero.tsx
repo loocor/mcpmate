@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { ArrowRight, ChevronDown, Download, ExternalLink } from 'lucide-react';
+import { ArrowRight, ChevronDown, Download } from 'lucide-react';
 
 import { useLatestGitHubRelease } from '../../hooks/useLatestGitHubRelease';
 import { BROWSER_EXTENSION_LINKS } from '../../lib/browser-extensions';
 import {
   attachAssetsToBuildRows,
   DESKTOP_BUILD_ROWS,
-  RELEASES_PAGE_URL,
   type DesktopBuildRow,
   type GitHubReleaseAsset,
 } from '../../utils/githubRelease';
@@ -83,7 +82,7 @@ function getSlideClass(isActive: boolean): string {
 function Hero(): JSX.Element {
   const { theme } = useTheme();
   const { language, t } = useLanguage();
-  const releaseState = useLatestGitHubRelease(false);
+  const releaseState = useLatestGitHubRelease();
   const containerRef = useRef<HTMLDivElement>(null);
   const [transformStyle, setTransformStyle] = useState<string>(RESTING_SCREEN_TRANSFORM);
   const [downloadEnvironment, setDownloadEnvironment] = useState<DownloadEnvironment>(() => detectDownloadEnvironmentSync());
@@ -193,8 +192,7 @@ function Hero(): JSX.Element {
   const primaryDownloadRow = isDesktopDownload && preferredDownloadRow?.asset
     ? preferredDownloadRow
     : selectedPlatformRows.find((row) => row.asset);
-  const primaryDownloadUrl = isDesktopDownload ? (primaryDownloadRow?.asset?.browser_download_url ?? RELEASES_PAGE_URL) : RELEASES_PAGE_URL;
-  const fallbackDownloadUrl = releaseState.status === 'ok' ? releaseState.latest.html_url : RELEASES_PAGE_URL;
+  const primaryDownloadUrl = isDesktopDownload ? primaryDownloadRow?.asset?.browser_download_url : undefined;
   const primaryDownloadLabel = isDesktopDownload && selectedPlatform
     ? t('download.cta_for').replace('{platform}', t(selectedPlatform.labelKey))
     : t('download.desktop_downloads');
@@ -211,7 +209,7 @@ function Hero(): JSX.Element {
     ? 'pointer-events-none invisible translate-y-1 group-hover/download:pointer-events-auto group-hover/download:visible group-hover/download:translate-y-0 group-focus-within/download:pointer-events-auto group-focus-within/download:visible group-focus-within/download:translate-y-0'
     : downloadMenuStateClass;
   const primaryDownloadButtonClass =
-    'inline-flex w-full items-center justify-center gap-3 rounded-lg bg-brand-accent px-6 py-3 text-base font-semibold text-brand-accent-fg shadow-card shadow-glow-sm transition-all duration-200 hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-offset-2 focus:ring-offset-brand-bg dark:hover:ring-2 dark:hover:ring-white dark:hover:ring-offset-2 dark:hover:ring-offset-brand-bg dark:focus-visible:ring-2 dark:focus-visible:ring-white dark:focus-visible:ring-offset-2 dark:focus-visible:ring-offset-brand-bg sm:w-auto';
+    'inline-flex w-full items-center justify-center gap-3 rounded-lg bg-brand-accent px-6 py-3 text-base font-semibold text-brand-accent-fg shadow-card shadow-glow-sm transition-all duration-200 hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-offset-2 focus:ring-offset-brand-bg disabled:cursor-not-allowed disabled:opacity-60 dark:hover:ring-2 dark:hover:ring-white dark:hover:ring-offset-2 dark:hover:ring-offset-brand-bg dark:focus-visible:ring-2 dark:focus-visible:ring-white dark:focus-visible:ring-offset-2 dark:focus-visible:ring-offset-brand-bg sm:w-auto';
 
   const onDownloadClick = (row: DesktopBuildWithAsset | undefined, url: string) => {
     setDownloadMenuOpen(false);
@@ -247,7 +245,7 @@ function Hero(): JSX.Element {
             <div id="download" className="flex w-full flex-col gap-4 pt-2 sm:flex-row sm:items-start">
               <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:items-center">
                 <div className="group/download relative w-full sm:inline-block">
-                  {isDesktopDownload ? (
+                  {isDesktopDownload && primaryDownloadUrl ? (
                     <a
                       href={primaryDownloadUrl}
                       target="_blank"
@@ -263,6 +261,12 @@ function Hero(): JSX.Element {
                         className="shrink-0 transition-transform duration-200 group-hover/download:translate-y-0.5 group-focus-within/download:translate-y-0.5"
                       />
                     </a>
+                  ) : isDesktopDownload ? (
+                    <button type="button" disabled className={primaryDownloadButtonClass}>
+                      <Download className="h-5 w-5" aria-hidden />
+                      <span>{primaryDownloadLabel}</span>
+                      <ChevronDown size={16} aria-hidden className="shrink-0" />
+                    </button>
                   ) : (
                     <button
                       type="button"
@@ -286,52 +290,34 @@ function Hero(): JSX.Element {
                         const url = row.asset?.browser_download_url;
                         const rowLabel = `${t(row.platformI18nKey)} ${t(row.archI18nKey)}`;
 
-                        if (!url && releaseState.status === 'loading') {
+                        if (!url) {
                           return (
                             <span
                               key={row.id}
                               aria-disabled="true"
                               className="flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium section-muted-soft opacity-60"
                             >
-                              {rowLabel}
+                              <span>{rowLabel}</span>
+                              <span>{releaseState.status === 'loading' ? t('download.loading') : t('download.unavailable')}</span>
                             </span>
                           );
                         }
 
-                        const targetUrl = url ?? fallbackDownloadUrl;
-                        const isDirectAsset = Boolean(url);
-
                         return (
                           <a
                             key={row.id}
-                            href={targetUrl}
+                            href={url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={() => onDownloadClick(isDirectAsset ? row : undefined, targetUrl)}
-                            className={`flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-brand-overlay-hover hover:text-brand-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent ${
-                              isDirectAsset ? 'text-brand-foreground' : 'section-muted'
-                            }`}
-                            aria-label={
-                              isDirectAsset
-                                ? `${t('download.btn')} ${rowLabel}`
-                                : `${t('download.all_releases')} ${rowLabel}`
-                            }
+                            onClick={() => onDownloadClick(row, url)}
+                            className="flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-overlay-hover hover:text-brand-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
+                            aria-label={`${t('download.btn')} ${rowLabel}`}
                           >
                             <span>{rowLabel}</span>
-                            {isDirectAsset ? <Download size={14} aria-hidden /> : <ExternalLink size={14} aria-hidden />}
+                            <Download size={14} aria-hidden />
                           </a>
                         );
                       })}
-                      <a
-                        href={RELEASES_PAGE_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => onDownloadClick(undefined, RELEASES_PAGE_URL)}
-                        className="mt-1 flex items-center justify-between gap-4 border-t border-brand-border-subtle px-3 py-2 text-sm font-medium text-brand-accent transition-colors hover:bg-brand-overlay-hover hover:text-brand-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
-                      >
-                        <span>{t('download.all_releases')}</span>
-                        <ArrowRight size={14} aria-hidden />
-                      </a>
                     </div>
                   </div>
                 </div>
