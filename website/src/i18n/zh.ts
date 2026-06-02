@@ -1,8 +1,8 @@
 const zh = {
 	// 网站
-	"site.title": "MCPMate：你的渐进式 MCP 管理伙伴",
+	"site.title": "MCPMate：渐进式 MCP 管理伙伴",
 	"site.description":
-		"一次导入 MCP。先简单用起来，等工作流变复杂，再逐步加入配置集、按端工具和配置模式。",
+		"从 MCP 导入到配置集、按端工具、配置模式和运行检查，MCPMate 帮你把本地接入准备扩展成可管理的工作空间。",
 
 	// 导航
 	"nav.home": "首页",
@@ -20,9 +20,11 @@ const zh = {
 	"hero.title": "你的渐进式",
 	"hero.subtitle": "MCP 管理伙伴",
 	"hero.description":
-		"一次导入 MCP。先简单用起来，等工作流变复杂，再逐步加入配置集、按端工具和配置模式。",
+		"从 MCP 导入到配置集、按端工具、配置模式和运行检查，MCPMate 帮你把本地接入准备扩展成可管理的工作空间。",
+	"hero.scenario":
+		"如果你同时用 Cursor 写代码、Claude 做研究，还会切换其他 AI 客户端，MCPMate 可以避免 MCP 接入变成多处重复维护。",
 	"hero.strip":
-		"从简单上手到逐步深入，本地 MCP 助手陪你长大，而不只是又一个配置文件整理器。",
+		"不只是又一个 MCP 配置编辑器。MCPMate 帮你准备、运行、检查并扩展本地 MCP 工作空间。",
 	"hero.cta.download": "获取 MCPMate",
 	"hero.cta.learn": "了解工作原理",
 	"hero.stats.configValue": "1 份配置",
@@ -47,28 +49,33 @@ const zh = {
 	// 核心能力（5 支柱）
 	"features.title": "为何使用MCPMate",
 	"features.subtitle":
-		"起步轻、跟得上：无需折腾就能轻松接入，客户端和场景变多时仍是一套配置。从首次导入到日常多用，不必换工具、不必重来。",
-	"features.pillar1.title": "配一次，处处可用",
+		"当每个客户端都各自维护服务器、工具、环境变量和运行状态时，MCP 很快会变乱。MCPMate 把这些工作收拢到本地一处，并让你按需要逐步增加控制。",
+	"features.pillar1.title": "不再反复准备 MCP 接入",
 	"features.pillar1.desc":
-		"服务器、环境变量、连接方式只维护一份。换新客户端不用从头抄 JSON，接上就能用。",
-	"features.pillar2.title": "一键换场景",
+		"服务器、环境变量、启动命令和连接信息统一维护在本地工作空间，不必在每个应用里反复复制 JSON。",
+	"features.pillar1.cta": "查看接入指南",
+	"features.pillar2.title": "让多个客户端保持一致",
 	"features.pillar2.desc":
-		"把开发、写作、调研存成配置集。换任务时整套工具一起切换，不用在每个应用里重配一遍。",
-	"features.pillar3.title": "每个客户端，各看各的",
+		"Claude、Cursor、VS Code、Cherry Studio 等客户端可以复用同一套服务库，而不是各自维护一份。",
+	"features.pillar2.cta": "了解配置集",
+	"features.pillar3.title": "按上下文收敛工具",
 	"features.pillar3.desc":
-		"同一份服务库，Cursor 侧重开发、Claude 侧重写作。按客户端裁剪可见工具，界面更干净，也更省用量。",
-	"features.pillar4.title": "按场景选择配置模式",
+		"只让某个客户端或任务看到需要的工具，减少工具列表膨胀，让上下文更清晰。",
+	"features.pillar3.cta": "查看工具控制",
+	"features.pillar4.title": "按需求选择接入方式",
 	"features.pillar4.desc":
-		"托管与统一模式会让 MCPMate 介入客户端和服务之间；透明模式只写入原生配置，适合需要客户端直连服务时使用。",
-	"features.pillar5.title": "看得见，查得到",
+		"根据是否需要实时控制、轻量发现或原生配置输出，选择 Hosted、Unify 或 Transparent 模式。",
+	"features.pillar4.cta": "比较配置模式",
+	"features.pillar5.title": "看清真实运行状态",
 	"features.pillar5.desc":
-		"服务是否就绪、工具能否调用、代理是否正常，在本地检视器与日志里一次看清，不用在多个目录里翻找。",
+		"在一处查看服务就绪、客户端绑定、工具调用和日志，不再靠猜测判断是哪份配置出了问题。",
+	"features.pillar5.cta": "打开检视器指南",
 	"features.read_more": "了解更多",
 	"features.explore_all": "查看全部功能指南",
 
 	// 工作原理
 	"how.title": "工作原理",
-	"how.subtitle": "MCPMate 在 AI 应用与 MCP 服务器之间，让你只维护一份连接，再把合适的工具投放到每个应用。",
+	"how.subtitle": "MCPMate 把分散的 MCP 接入工作整理成一个分层的本地工作空间：外层是使用入口，中层是可复用配置，核心是 Rust RMCP 运行时。",
 	"how.clients.label": "AI 客户端",
 	"how.clients.hint": "Cursor、Claude Desktop 等",
 	"how.clients.badge": "多端",
@@ -77,9 +84,9 @@ const zh = {
 	"how.clients.label3": "命令行与 SDK",
 	"how.clients.hint3": "终端、Python 等",
 	"how.mcpmate.label": "MCPMate",
-	"how.mcpmate.hint": "本地代理、配置集与策略",
-	"how.flow.proxy": "代理",
-	"how.flow.route": "路由",
+	"how.mcpmate.hint": "本地工作空间、配置集与运行时",
+	"how.flow.proxy": "入口",
+	"how.flow.route": "运行",
 	"how.servers.label": "MCP 服务器",
 	"how.servers.hint": "本机或远程服务",
 	"how.servers.badge": "服务库",
@@ -94,18 +101,21 @@ const zh = {
 	"modes.subtitle": "希望降低 token 消耗，或者希望避免能力滥用，都有适合的应用配置模式来满足",
 	"modes.hosted.title": "托管模式",
 	"modes.hosted.tagline": "长期管控 · 随时切换",
+	"modes.hosted.choice": "日常主力使用时选 Hosted。",
 	"modes.hosted.desc": "客户端连 MCPMate 一个入口。配置集切换、策略控制、实时更新都在中间层完成。",
 	"modes.hosted.b1": "持久记住工作配置",
 	"modes.hosted.b2": "配置集可即时切换",
 	"modes.hosted.b3": "适合日常主力使用",
 	"modes.unify.title": "统一模式",
 	"modes.unify.tagline": "轻量接入 · 按需发现",
+	"modes.unify.choice": "关注 token 与上下文规模时选 Unify。",
 	"modes.unify.desc": "客户端只带少量内置工具进来，会话内按需探索全局 server 能力，token 节约效果媲美 CLI 或 Skills。",
 	"modes.unify.b1": "减少工具列表膨胀",
 	"modes.unify.b2": "会话内动态探索能力",
 	"modes.unify.b3": "适合 token 敏感场景",
 	"modes.transparent.title": "透明模式",
 	"modes.transparent.tagline": "原生兼容 · 直接写入",
+	"modes.transparent.choice": "必须保持客户端原生兼容时选 Transparent。",
 	"modes.transparent.desc": "把选定 server 直接写入客户端原生 MCP 配置文件。兼容优先，MCPMate 侧精细控制会减少。",
 	"modes.transparent.b1": "输出客户端原生配置",
 	"modes.transparent.b2": "适合必须直连上游服务",
@@ -180,7 +190,7 @@ const zh = {
 	"contact.success.message": "感谢您联系我们。我们会尽快回复您。",
 
 	// 页脚
-	"footer.description": "你的渐进式 MCP 管理伙伴，随你承担的工作一起加深。",
+	"footer.description": "你的渐进式 MCP 管理伙伴，随你承担的工作一起成长。",
 	"footer.copyright": "© {year} MCPMate. 保留所有权利",
 	"footer.product": "产品",
 	"footer.resources": "资源",
@@ -195,27 +205,33 @@ const zh = {
 
 	// 常见问题
 	"faq.title": "常见问题",
-	"faq.lead": "需要帮助？可以查看快速开始文档，或直接邮件联系我们。",
+	"faq.lead": "简短来说：MCPMate 在本地运行，帮助你跨客户端准备和管理 MCP，并在需要更强控制时提供 API 与浏览器扩展入口。",
 	"faq.cta.contact": "联系我们",
 	"faq.cta.docs": "查看文档",
 	"faq.functions.title": "MCPMate 具体做什么？",
 	"faq.functions.answer":
-		"MCPMate 完全在本机运行：导入已有配置、连接服务器、决定每个客户端能看到哪些工具，并检查是否正常工作。可以先从添加一台服务器开始，需要时再上配置集与策略。",
-	"faq.usage.title": "MCPMate 适合谁用？",
-	"faq.usage.answer":
-		"刚接触 MCP 或在多款 AI 应用之间切换，都可以从轻量用法开始：扩展抓取、快速导入、菜单栏面板。准备好了再加跨客户端配置集、按端裁剪工具、内置检视器与多种配置模式，不必换工具、也不必一次学全。",
+		"MCPMate 帮你导入或定义 MCP 服务，跨客户端复用它们，决定每个客户端能看到哪些工具，并检查本地运行时是否正常。",
+	"faq.import_tool.title": "MCPMate 只是导入工具吗？",
+	"faq.import_tool.answer":
+		"不是。导入只是起点。之后 MCPMate 会继续管理配置集、客户端预设、配置模式、运行状态、日志和工具可见范围。",
 	"faq.vs_clients.title": "MCPMate 和客户端自带的 MCP 设置有什么区别？",
 	"faq.vs_clients.answer":
-		"多数应用只管理自己的 MCP。MCPMate 在一个地方维护所有客户端的服务器与配置：导入一次、复用配置集、先确认能跑通再切换应用。",
-	"faq.compatible.title": "可以将 MCPMate 与现有的 MCP 工具一起使用吗？",
-	"faq.compatible.answer":
-		"可以。从 Claude Desktop、Cursor、VS Code 等客户端导入配置，也可以通过 JSON、内置市场、浏览器扩展或网页片段添加服务器。",
-	"faq.clients.title": "MCPMate 能同时管理多个 AI 客户端吗？",
-	"faq.clients.answer":
-		"可以。MCPMate 会识别本机多数已安装的 AI 客户端，也可按 MCP 配置规范手动接入更多。配置后，配置集、工具与配置模式在一处同步维护，换场景不必在每个应用里反复改配置。",
+		"客户端自带设置通常只服务一个应用。MCPMate 把 MCP 工作空间放在本地运行环境旁边，让多个客户端共享服务，同时仍可接收不同工具集。",
+	"faq.runtime.title": "为什么 Rust RMCP 运行时重要？",
+	"faq.runtime.answer":
+		"运行时负责 MCP 连接、能力发现和工具暴露。Rust 与 RMCP 为 MCPMate 提供了稳定基础，在服务和工具数量增长时仍能保持响应。",
+	"faq.automation.title": "可以自动化 MCPMate 吗？",
+	"faq.automation.answer":
+		"可以。REST API 面向脚本、内部工具和未来集成，让它们无需每次打开 UI，也能操作同一份本地 MCPMate 状态。",
+	"faq.browser_import.title": "可以从浏览器导入服务吗？",
+	"faq.browser_import.answer":
+		"可以。浏览器扩展可以帮助捕获或导入发现到的 MCP 服务信息，再带入本地 MCPMate 工作流。",
+	"faq.audience.title": "MCPMate 是给个人还是团队使用？",
+	"faq.audience.answer":
+		"目前它首先面向个人使用：本地接入、运行管理、状态检查和跨客户端管理。团队治理可以作为未来方向，但不是当前首页承诺。",
 	"faq.security.title": "安全与隐私如何保障？",
 	"faq.security.answer":
-		"MCPMate 完全在本机运行。你控制每个客户端和每个配置集暴露哪些工具和能力。工具内容不会发送到外部服务器。",
+		"MCPMate 在本地运行，负责管理暴露给客户端的工具和能力；工具内容不会发送到外部 MCPMate 云服务。",
 
 	"notice.construction.ribbon": "建设中",
 	"notice.construction.tooltip": "我们正在持续更新，部分内容可能变动，敬请知悉。",
