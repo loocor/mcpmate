@@ -62,7 +62,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev pkg-config
+          sudo apt-get install -y dbus-x11 gnome-keyring libdbus-1-dev pkg-config
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -74,6 +74,28 @@ jobs:
 
       - name: Test mcpmate-secrets crate
         run: cargo test --manifest-path backend/crates/mcpmate-secrets/Cargo.toml
+
+      - name: Smoke test OS root-key provider
+        if: runner.os != 'Linux'
+        env:
+          MCPMATE_RUN_OS_KEYRING_TESTS: "1"
+        run: >
+          cargo test --manifest-path backend/crates/mcpmate-secrets/Cargo.toml
+          os_root_key_provider_loads_or_creates_root_key_when_enabled
+          -- --test-threads=1
+
+      - name: Smoke test Linux Secret Service root-key provider
+        if: runner.os == 'Linux'
+        env:
+          MCPMATE_RUN_OS_KEYRING_TESTS: "1"
+        run: |
+          dbus-run-session -- bash -lc '
+            set -euo pipefail
+            eval "$(printf "\n" | gnome-keyring-daemon --unlock)"
+            cargo test --manifest-path backend/crates/mcpmate-secrets/Cargo.toml \
+              os_root_key_provider_loads_or_creates_root_key_when_enabled \
+              -- --test-threads=1
+          '
 
       - name: Test secure runtime resolution
         run: cargo test --manifest-path backend/Cargo.toml --test secrets_runtime_config

@@ -63,11 +63,36 @@ pub trait SecretRootKeyProvider: fmt::Debug + Send + Sync {
 }
 
 pub fn default_root_key_provider() -> Arc<dyn SecretRootKeyProvider> {
-    Arc::new(OperatingSystemRootKeyProvider)
+    Arc::new(OperatingSystemRootKeyProvider::new())
 }
 
-#[derive(Debug)]
-pub struct OperatingSystemRootKeyProvider;
+#[derive(Debug, Clone)]
+pub struct OperatingSystemRootKeyProvider {
+    service: String,
+    user: String,
+}
+
+impl OperatingSystemRootKeyProvider {
+    pub fn new() -> Self {
+        Self::with_keyring_entry(OS_KEYRING_SERVICE, OS_KEYRING_USER)
+    }
+
+    pub fn with_keyring_entry(
+        service: impl Into<String>,
+        user: impl Into<String>,
+    ) -> Self {
+        Self {
+            service: service.into(),
+            user: user.into(),
+        }
+    }
+}
+
+impl Default for OperatingSystemRootKeyProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SecretRootKeyProvider for OperatingSystemRootKeyProvider {
     fn metadata(&self) -> RootKeyProviderMetadata {
@@ -75,7 +100,7 @@ impl SecretRootKeyProvider for OperatingSystemRootKeyProvider {
     }
 
     fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
-        load_or_create_os_root_key()
+        load_or_create_os_root_key(&self.service, &self.user)
     }
 }
 
@@ -176,9 +201,12 @@ fn os_provider_id() -> &'static str {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-fn load_or_create_os_root_key() -> Result<SecretRootKey, SecretRootKeyError> {
-    let entry = keyring::Entry::new(OS_KEYRING_SERVICE, OS_KEYRING_USER)
-        .map_err(|err| SecretRootKeyError::ProviderUnavailable(err.to_string()))?;
+fn load_or_create_os_root_key(
+    service: &str,
+    user: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    let entry =
+        keyring::Entry::new(service, user).map_err(|err| SecretRootKeyError::ProviderUnavailable(err.to_string()))?;
     match entry.get_password() {
         Ok(encoded) => decode_root_key(&encoded),
         Err(keyring::Error::NoEntry) => {
@@ -193,7 +221,10 @@ fn load_or_create_os_root_key() -> Result<SecretRootKey, SecretRootKeyError> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
-fn load_or_create_os_root_key() -> Result<SecretRootKey, SecretRootKeyError> {
+fn load_or_create_os_root_key(
+    _service: &str,
+    _user: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
     Err(SecretRootKeyError::ProviderUnavailable(
         "unsupported platform".to_string(),
     ))
@@ -276,5 +307,36 @@ mod tests {
             .expect("create local development root key");
 
         assert!(key_path.exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    fn os_root_key_provider_loads_or_creates_root_key_when_enabled() {
+        if std::env::var("MCPMATE_RUN_OS_KEYRING_TESTS").as_deref() != Ok("1") {
+            return;
+        }
+
+        let unique_id = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time after epoch")
+                .as_nanos()
+        );
+        let service = format!("{OS_KEYRING_SERVICE}.test.{unique_id}");
+        let user = format!("{OS_KEYRING_USER}.test");
+        let entry = keyring::Entry::new(&service, &user).expect("create OS keyring entry");
+        let _ = entry.delete_credential();
+
+        let provider = OperatingSystemRootKeyProvider::with_keyring_entry(&service, &user);
+        let first = provider.load_or_create_root_key().expect("create OS-backed root key");
+        let second = provider.load_or_create_root_key().expect("load OS-backed root key");
+
+        assert!(first.iter().any(|byte| *byte != 0));
+        assert_eq!(first, second);
+
+        let _ = entry.delete_credential();
     }
 }
