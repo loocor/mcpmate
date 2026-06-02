@@ -698,6 +698,28 @@ test("operator route preserves explicit system error status in core meta", async
 	await expect(page.getByText(/unknown · .* uptime/)).toHaveCount(0);
 });
 
+test("operator route preserves unrecognized system status in core meta", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await page.route("**/api/system/status", (route) =>
+		route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				status: "stopping",
+				uptime: 3661,
+				version: "test",
+			}),
+		}),
+	);
+
+	await page.goto("/operator");
+
+	await expect(page.getByText(/stopping · .* uptime/)).toBeVisible();
+	await expect(page.getByText(/unknown · .* uptime/)).toHaveCount(0);
+});
+
 test("operator route presents query errors instead of empty successful rows", async ({
 	page,
 }) => {
