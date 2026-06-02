@@ -394,6 +394,8 @@ export function TrayOperatorPanelPage() {
 		queryKey: ["onboardingStatus"],
 		queryFn: () => onboardingApi.getStatus(),
 		staleTime: 60_000,
+		refetchInterval: (query) =>
+			query.state.data?.data?.completed === false ? 2_000 : false,
 		retry: false,
 		refetchOnWindowFocus: false,
 	});
@@ -449,6 +451,24 @@ export function TrayOperatorPanelPage() {
 	});
 
 	const onboardingCompleted = onboardingQuery.data?.data?.completed;
+	const { refetch: refetchOnboardingStatus } = onboardingQuery;
+
+	React.useEffect(() => {
+		const refetchOnActivation = () => {
+			if (document.visibilityState === "hidden") {
+				return;
+			}
+			void refetchOnboardingStatus();
+		};
+
+		window.addEventListener("focus", refetchOnActivation);
+		document.addEventListener("visibilitychange", refetchOnActivation);
+		return () => {
+			window.removeEventListener("focus", refetchOnActivation);
+			document.removeEventListener("visibilitychange", refetchOnActivation);
+		};
+	}, [refetchOnboardingStatus]);
+
 	const servers = serversQuery.data?.servers ?? [];
 	const connectedServers = servers.filter(
 		(server) => String(server.status).toLowerCase() === "connected",

@@ -556,6 +556,36 @@ test("operator route keeps incomplete onboarding out of the tray surface in web 
 	await expect(page.getByText("Runtime requirements")).toHaveCount(0);
 });
 
+test("operator route refreshes incomplete onboarding status while gated", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	let statusRequests = 0;
+	await page.route("**/api/onboarding/status", (route) => {
+		statusRequests += 1;
+		const completed = statusRequests > 1;
+		return route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({
+				success: true,
+				data: {
+					completed,
+					servers_count: completed ? 3 : 0,
+					clients_count: completed ? 2 : 0,
+				},
+			}),
+		});
+	});
+
+	await page.goto("/operator");
+
+	await expect(page.getByRole("heading", { name: "Setup required" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Setup required" })).toHaveCount(0);
+	await expect(page.getByTestId("operator-chart-carousel")).toBeVisible();
+	expect(statusRequests).toBeGreaterThan(1);
+});
+
 test("operator route presents query errors instead of empty successful rows", async ({
 	page,
 }) => {
