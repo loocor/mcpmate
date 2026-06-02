@@ -643,6 +643,31 @@ test("operator route follows dashboard language storage updates", async ({
 	await expect(page.getByText(/running · .* uptime/)).toHaveCount(0);
 });
 
+test("operator route places close as the rightmost header control in Tauri shell", async ({
+	page,
+}) => {
+	await installReadyApiMocks(page);
+	await installTauriPendingFullBoardPathMock(page, null);
+	await installDashboardLanguage(page, "en");
+
+	await page.goto("/operator");
+	await expect(page.getByRole("button", { name: "Pin on top" })).toBeVisible();
+
+	const controlLabels = await page
+		.locator("header [aria-label]")
+		.evaluateAll((elements) =>
+			elements
+				.map((element) => element.getAttribute("aria-label"))
+				.filter((label) =>
+					label === "Pin on top" ||
+					label === "Open Full Board" ||
+					label === "Close",
+				),
+		);
+
+	expect(controlLabels).toEqual(["Pin on top", "Open Full Board", "Close"]);
+});
+
 test("operator route preserves explicit system error status in core meta", async ({
 	page,
 }) => {

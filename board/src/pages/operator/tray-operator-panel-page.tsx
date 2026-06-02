@@ -1002,42 +1002,26 @@ export function TrayOperatorPanelPage() {
 				controls={
 					<>
 						{isTauriShell ? (
-							<>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon"
-									className="h-8 w-8"
-									aria-pressed={pinned}
-									aria-label={t(pinned ? "operator:unpin" : "operator:pin", {
-										defaultValue: pinned ? "Unpin" : "Pin on top",
-									})}
-									style={operatorNoDragRegionStyle}
-									title={t(pinned ? "operator:unpin" : "operator:pin", {
-										defaultValue: pinned ? "Unpin" : "Pin on top",
-									})}
-									disabled={pinPending}
-									onClick={() => {
-										void togglePinned();
-									}}
-								>
-									{pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-								</Button>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon"
-									className="h-8 w-8 text-slate-600 dark:text-slate-300"
-									aria-label={t("operator:close", { defaultValue: "Close" })}
-									style={operatorNoDragRegionStyle}
-									title={t("operator:close", { defaultValue: "Close" })}
-									onClick={() => {
-										void runDesktopAction(closeOperatorPanel);
-									}}
-								>
-									<X className="h-4 w-4" />
-								</Button>
-							</>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-8 w-8"
+								aria-pressed={pinned}
+								aria-label={t(pinned ? "operator:unpin" : "operator:pin", {
+									defaultValue: pinned ? "Unpin" : "Pin on top",
+								})}
+								style={operatorNoDragRegionStyle}
+								title={t(pinned ? "operator:unpin" : "operator:pin", {
+									defaultValue: pinned ? "Unpin" : "Pin on top",
+								})}
+								disabled={pinPending}
+								onClick={() => {
+									void togglePinned();
+								}}
+							>
+								{pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+							</Button>
 						) : null}
 						<OperatorFullBoardControl
 							className="h-8 w-8 text-slate-600 dark:text-slate-300"
@@ -1046,6 +1030,22 @@ export function TrayOperatorPanelPage() {
 							onDesktopOpen={openFullBoardPath}
 							path="/"
 						/>
+						{isTauriShell ? (
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon"
+								className="h-8 w-8 text-slate-600 dark:text-slate-300"
+								aria-label={t("operator:close", { defaultValue: "Close" })}
+								style={operatorNoDragRegionStyle}
+								title={t("operator:close", { defaultValue: "Close" })}
+								onClick={() => {
+									void runDesktopAction(closeOperatorPanel);
+								}}
+							>
+								<X className="h-4 w-4" />
+							</Button>
+						) : null}
 					</>
 				}
 			/>
