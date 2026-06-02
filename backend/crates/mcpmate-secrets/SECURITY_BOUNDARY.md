@@ -20,6 +20,29 @@ The default target is enterprise-local secret storage:
 - Missing secrets, locked providers, invalid references, or decrypt failures
   must fail explicitly. Runtime code must not silently substitute placeholders,
   empty values, defaults, or plaintext fallbacks.
+- Production/default secret custody must be operating-system backed on every
+  supported desktop platform without requiring paid hosted services.
+- A local root-key file is not an acceptable production/default custody
+  boundary. It may only be used for tests, controlled development, or explicit
+  migration tooling.
+
+## Cross-Platform OS Custody Target
+
+MCPMate's no-extra-cost desktop security target is OS-backed root-key custody:
+
+- macOS: macOS Keychain.
+- Windows: Windows Credential Manager or DPAPI-backed OS credential storage.
+- Linux: OS Secret Service, such as GNOME Keyring or KWallet through a
+  standards-compatible provider.
+
+The OS-backed provider owns the root key used to protect encrypted local secret
+records. SQLite remains the metadata and ciphertext store; it must not become a
+plaintext secret store.
+
+If the required OS secret provider is unavailable, locked, or cannot persist the
+root key, MCPMate must fail closed with an actionable error. It must not
+silently fall back to environment keys, local files, empty values, or plaintext
+server configuration.
 
 ## Runtime Parameter Boundary
 
@@ -90,10 +113,13 @@ The current root-key boundary is intentionally narrow:
 
 This provider is not an operating-system keychain provider and does not claim
 OS-backed custody, hardware-backed custody, or managed-vault custody. It is the
-minimum desktop UAT provider behind the replaceable provider boundary. A future
-macOS Keychain, Windows Credential Manager, Linux Secret Service, KMS, HSM, or
-managed-vault provider must be implemented and documented as a separate
-provider, not inferred from this local encrypted vault.
+minimum desktop UAT provider behind the replaceable provider boundary. It must
+not remain the default production secure-store custody path once the
+cross-platform OS custody target is implemented.
+
+A macOS Keychain, Windows Credential Manager or DPAPI, Linux Secret Service,
+KMS, HSM, or managed-vault provider must be implemented and documented as a
+separate provider, not inferred from this local encrypted vault.
 
 ## Audit Boundary
 
