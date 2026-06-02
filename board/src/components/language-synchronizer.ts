@@ -7,8 +7,6 @@ import {
 } from "../lib/i18n/index";
 import {
 	DASHBOARD_SETTINGS_KEY,
-	type DashboardLanguage,
-	isDashboardLanguage,
 	useAppStore,
 } from "../lib/store";
 
@@ -25,28 +23,14 @@ function mapStoreToI18n(code: string): string {
 	return match?.i18n ?? resolveI18nLanguage(code);
 }
 
-function readStoredDashboardLanguage(raw: string | null): DashboardLanguage | null {
-	if (!raw) {
-		return null;
-	}
-
-	try {
-		const parsed = JSON.parse(raw) as { language?: unknown };
-		if (isDashboardLanguage(parsed.language)) {
-			return parsed.language;
-		}
-	} catch {
-		return null;
-	}
-
-	return null;
-}
-
 export function LanguageSynchronizer() {
 	const dashboardLanguage = useAppStore(
 		(state) => state.dashboardSettings.language,
 	);
 	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
+	const syncDashboardSettingsFromStorage = useAppStore(
+		(state) => state.syncDashboardSettingsFromStorage,
+	);
 	const { i18n } = useTranslation();
 	const initialisedRef = useRef(false);
 
@@ -68,21 +52,16 @@ export function LanguageSynchronizer() {
 
 	useEffect(() => {
 		const handleStorage = (event: StorageEvent) => {
-			if (event.key !== DASHBOARD_SETTINGS_KEY) {
+			if (event.key !== DASHBOARD_SETTINGS_KEY || !event.newValue) {
 				return;
 			}
 
-			const nextLanguage = readStoredDashboardLanguage(event.newValue);
-			if (!nextLanguage || nextLanguage === dashboardLanguage) {
-				return;
-			}
-
-			setDashboardSetting("language", nextLanguage);
+			syncDashboardSettingsFromStorage(event.newValue);
 		};
 
 		window.addEventListener("storage", handleStorage);
 		return () => window.removeEventListener("storage", handleStorage);
-	}, [dashboardLanguage, setDashboardSetting]);
+	}, [syncDashboardSettingsFromStorage]);
 
 	useEffect(() => {
 		void (async () => {

@@ -80,6 +80,7 @@ interface AppState {
 		value: DashboardSettings[K],
 	) => void;
 	updateDashboardSettings: (patch: Partial<DashboardSettings>) => void;
+	syncDashboardSettingsFromStorage: (raw: string) => void;
 	removeFromMarketBlacklist: (serverId: string) => void;
 	addToMarketBlacklist: (entry: MarketBlacklistEntry) => void;
 	pendingServerDeepLinkImport: PendingServerDeepLinkImport | null;
@@ -294,6 +295,18 @@ function readDashboardSettings(): DashboardSettings {
 	}
 }
 
+function parseDashboardSettingsSnapshot(raw: string): DashboardSettings | null {
+	try {
+		const parsed = JSON.parse(raw) as Partial<DashboardSettings> | null;
+		if (!parsed || typeof parsed !== "object") {
+			return null;
+		}
+		return normalizeDashboardSettings(defaultDashboardSettings, parsed);
+	} catch {
+		return null;
+	}
+}
+
 function persistDashboardSettings(settings: DashboardSettings) {
 	try {
 		if (typeof window !== "undefined") {
@@ -393,6 +406,13 @@ export const useAppStore = create<AppState>((set) => ({
 			persistDashboardSettings(next);
 			return { dashboardSettings: next };
 		});
+	},
+	syncDashboardSettingsFromStorage: (raw) => {
+		const next = parseDashboardSettingsSnapshot(raw);
+		if (!next) {
+			return;
+		}
+		set({ dashboardSettings: next });
 	},
 	removeFromMarketBlacklist: (serverId) => {
 		set((state) => {

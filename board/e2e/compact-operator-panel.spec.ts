@@ -620,7 +620,7 @@ test("operator route follows dashboard language storage updates", async ({
 		const key = "mcp_dashboard_settings";
 		const oldValue = window.localStorage.getItem(key);
 		const nextValue = JSON.stringify({
-			defaultView: "grid",
+			defaultView: "list",
 			language: "zh-cn",
 		});
 		window.localStorage.setItem(key, nextValue);
@@ -641,6 +641,14 @@ test("operator route follows dashboard language storage updates", async ({
 	await expect(page.getByText("Profiles")).toHaveCount(0);
 	await expect(page.getByText("Operator Panel")).toHaveCount(0);
 	await expect(page.getByText(/running · .* uptime/)).toHaveCount(0);
+
+	const storedSettings = await page.evaluate(() =>
+		JSON.parse(window.localStorage.getItem("mcp_dashboard_settings") ?? "{}"),
+	);
+	expect(storedSettings).toEqual({
+		defaultView: "list",
+		language: "zh-cn",
+	});
 });
 
 test("operator route places close as the rightmost header control in Tauri shell", async ({
