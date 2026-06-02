@@ -1,0 +1,82 @@
+name: Secure Store
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/secure-store.yml"
+      - "backend/Cargo.lock"
+      - "backend/Cargo.toml"
+      - "backend/crates/mcpmate-secrets/**"
+      - "backend/src/api/handlers/secrets.rs"
+      - "backend/src/api/models/secrets.rs"
+      - "backend/src/api/routes/mod.rs"
+      - "backend/src/core/secrets/**"
+      - "backend/tests/secrets_runtime_config.rs"
+      - "backend/tests/secrets_store_api.rs"
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - ".github/workflows/secure-store.yml"
+      - "backend/Cargo.lock"
+      - "backend/Cargo.toml"
+      - "backend/crates/mcpmate-secrets/**"
+      - "backend/src/api/handlers/secrets.rs"
+      - "backend/src/api/models/secrets.rs"
+      - "backend/src/api/routes/mod.rs"
+      - "backend/src/core/secrets/**"
+      - "backend/tests/secrets_runtime_config.rs"
+      - "backend/tests/secrets_store_api.rs"
+
+concurrency:
+  group: secure-store-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  RUSTC_WRAPPER: ""
+
+jobs:
+  secure-store:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-22.04
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Linux secure storage dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Test mcpmate-secrets crate
+        run: cargo test --manifest-path backend/crates/mcpmate-secrets/Cargo.toml
+
+      - name: Test secure runtime resolution
+        run: cargo test --manifest-path backend/Cargo.toml --test secrets_runtime_config
+
+      - name: Test secure store API
+        run: cargo test --manifest-path backend/Cargo.toml --test secrets_store_api -- --test-threads=1
