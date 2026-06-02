@@ -45,109 +45,39 @@ function HowNodeShell({
 }
 
 const HowItWorks = () => {
-	const { t, language } = useLanguage();
+	const { t } = useLanguage();
 	const [activeNode, setActiveNode] = useState<ActiveNode>("control");
 
-	const labels = {
-		zh: {
-			accessTitle: "桌面端、API 与浏览器扩展入口",
-			accessDesc: "日常使用通过桌面 Web UI，自动化通过 REST API，浏览器扩展负责把发现到的服务带回本地工作空间。",
-			controlTitle: "配置集、客户端预设与 UILib 配置模式",
-			controlDesc: "MCPMate 将服务整理成可复用的配置集和按客户端分发的预设，让复杂 MCP 配置可以被组合、展示和检查，而不是反复手写。",
-			runtimeTitle: "基于 Rust RMCP 的本地运行核心",
-			runtimeDesc: "MCPMate 核心使用 Rust RMCP 运行时管理 MCP 连接、能力发现、工具暴露和运行状态。",
-
-			subAccess: "外层入口",
-			subControl: "配置控制层",
-			subRuntime: "运行核心层",
-			activeHint: "详情见下方",
-			expandHint: "▼ 点击查看特性",
-
-			features: {
-				access: [
-					"桌面 Web：让管理界面贴近本地运行时，同时保留 Web UI 的迭代速度",
-					"REST API：让脚本、工具和未来集成可以操作同一份 MCPMate 状态",
-					"浏览器扩展：缩短从发现服务到导入本地的路径"
-				],
-				control: [
-					"配置集：按开发、写作、调研等任务组织工具集",
-					"客户端预设：不复制服务器配置，也能决定每个 AI 应用收到什么",
-					"UILib 配置模式：把原始 MCP 配置转成可由 UI 管理的结构化选择"
-				],
-				runtime: [
-					"连接处理：通过支持的传输方式连接本地和远程 MCP 服务",
-					"能力发现：先理解可用工具，再把它们暴露给客户端",
-					"运行检查：展示就绪状态、绑定关系、调用记录和日志，方便排查"
-				]
-			},
+	const currentLabels = {
+		accessTitle: t("how.nodes.access.title"),
+		accessDesc: t("how.nodes.access.desc"),
+		controlTitle: t("how.nodes.control.title"),
+		controlDesc: t("how.nodes.control.desc"),
+		runtimeTitle: t("how.nodes.runtime.title"),
+		runtimeDesc: t("how.nodes.runtime.desc"),
+		subAccess: t("how.nodes.access.label"),
+		subControl: t("how.nodes.control.label"),
+		subRuntime: t("how.nodes.runtime.label"),
+		activeHint: t("how.nodes.activeHint"),
+		expandHint: t("how.nodes.expandHint"),
+		features: {
+			access: [
+				t("how.nodes.access.feature1"),
+				t("how.nodes.access.feature2"),
+				t("how.nodes.access.feature3"),
+			],
+			control: [
+				t("how.nodes.control.feature1"),
+				t("how.nodes.control.feature2"),
+				t("how.nodes.control.feature3"),
+			],
+			runtime: [
+				t("how.nodes.runtime.feature1"),
+				t("how.nodes.runtime.feature2"),
+				t("how.nodes.runtime.feature3"),
+			],
 		},
-		en: {
-			accessTitle: "Desktop, API, and extension entry points",
-			accessDesc: "Use the desktop web UI for daily work, the REST API for automation, and the browser extension to bring discovered servers into your local workspace.",
-			controlTitle: "Profiles, client presets, and UILib config mode",
-			controlDesc: "MCPMate normalizes servers into reusable profiles and client-specific presets, so complex MCP configuration can be composed and inspected instead of hand-edited.",
-			runtimeTitle: "Rust RMCP runtime for local MCP control",
-			runtimeDesc: "At the core, MCPMate uses a Rust RMCP-based runtime to manage MCP connections, capability discovery, tool exposure, and runtime state.",
-
-			subAccess: "Access Layer",
-			subControl: "Config Layer",
-			subRuntime: "Runtime Layer",
-
-			features: {
-				access: [
-					"Desktop Web: keeps the management UI close to the local runtime while staying fast to iterate",
-					"REST API: lets scripts, tools, and future integrations operate the same MCPMate state",
-					"Browser Extension: shortens the path from finding a server to importing it locally"
-				],
-				control: [
-					"Profiles: group tool sets by task, such as coding, writing, or research",
-					"Client presets: decide what each AI app receives without duplicating server setup",
-					"UILib config mode: turns raw MCP configuration into structured UI-managed choices"
-				],
-				runtime: [
-					"Connection handling: keeps local and remote MCP servers reachable through supported transports",
-					"Capability discovery: understands available tools before exposing them to clients",
-					"Runtime inspection: surfaces readiness, bindings, calls, and logs for troubleshooting"
-				]
-			},
-			activeHint: "Details below",
-			expandHint: "▼ View details",
-		},
-		ja: {
-			accessTitle: "デスクトップ、API、ブラウザー拡張の入口",
-			accessDesc: "日常作業はデスクトップ Web UI、自動化は REST API、見つけたサーバーの取り込みはブラウザー拡張から行えます。",
-			controlTitle: "プロファイル、クライアントプリセット、UILib 設定モード",
-			controlDesc: "MCPMate はサーバーを再利用できるプロファイルとクライアント別プリセットに整理し、複雑な MCP 設定を手編集ではなく構成・確認できる形にします。",
-			runtimeTitle: "ローカル MCP 制御のための Rust RMCP ランタイム",
-			runtimeDesc: "中心では Rust RMCP ベースのランタイムが MCP 接続、能力発見、ツール公開、ランタイム状態を管理します。",
-
-			subAccess: "入口レイヤー",
-			subControl: "制御レイヤー",
-			subRuntime: "ランタイムレイヤー",
-			activeHint: "下に詳細を表示",
-			expandHint: "▼ 詳細を見る",
-
-			features: {
-				access: [
-					"デスクトップ Web: 管理 UI をローカルランタイムの近くに置きながら素早く改善できます",
-					"REST API: スクリプト、ツール、将来の連携が同じ MCPMate 状態を操作できます",
-					"ブラウザー拡張: サーバー発見からローカルインポートまでの距離を短くします"
-				],
-				control: [
-					"プロファイル: 開発、執筆、調査などのタスクごとにツール群をまとめます",
-					"クライアントプリセット: サーバー設定を複製せず、各 AI アプリへ渡す内容を決めます",
-					"UILib 設定モード: 生の MCP 設定を UI で管理できる構造化された選択肢にします"
-				],
-				runtime: [
-					"接続処理: 対応するトランスポートでローカルとリモートの MCP サーバーに到達します",
-					"能力発見: 利用可能なツールを理解してからクライアントへ公開します",
-					"ランタイム確認: 準備状態、接続、呼び出し、ログを表示して調査を助けます"
-				]
-			},
-		}
 	};
-
-	const currentLabels = labels[language] ?? labels.en;
 
 	return (
 		<Section

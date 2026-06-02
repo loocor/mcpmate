@@ -1,7 +1,7 @@
 const en = {
 	"site.title": "MCPMate: Progressive MCP management partner",
 	"site.description":
-		"From MCP import to profiles, per-client tools, setup modes, and runtime checks, MCPMate grows your local setup into a manageable workspace.",
+		"Import MCP servers once, share them across AI clients, and grow from simple setup to profiles, per-client tools, setup modes, and runtime checks.",
 
 	"nav.home": "Home",
 	"nav.works_with": "Works with",
@@ -17,11 +17,11 @@ const en = {
 	"hero.title": "Your progressive",
 	"hero.subtitle": "MCP management partner",
 	"hero.description":
-		"From MCP import to profiles, per-client tools, setup modes, and runtime checks, MCPMate grows your local setup into a manageable workspace.",
+		"Import MCP servers once, then grow the same local workspace into profiles, per-client tool control, setup modes, and runtime checks.",
 	"hero.scenario":
-		"If you use Cursor for coding, Claude for research, and another client for quick tasks, MCPMate keeps MCP setup from becoming three separate chores.",
+		"When Cursor, Claude, VS Code, and custom tools all need MCP, MCPMate keeps one local source of truth instead of another config file per app.",
 	"hero.strip":
-		"Not just another MCP config editor. MCPMate helps you prepare, run, inspect, and extend your local MCP workspace.",
+		"Not just another MCP config editor. MCPMate helps your MCP setup mature from import to everyday local operations.",
 	"hero.cta.download": "Get MCPMate",
 	"hero.cta.learn": "See How It Works",
 	"hero.stats.configValue": "1 setup",
@@ -45,33 +45,56 @@ const en = {
 
 	"features.title": "Why MCPMate",
 	"features.subtitle":
-		"MCP gets messy when every client owns its own servers, tools, env vars, and runtime state. MCPMate keeps that work in one local place, then lets you add control only when you need it.",
-	"features.pillar1.title": "Stop repeating MCP setup",
+		"Start with import. Keep servers, env vars, client rollout, tool visibility, and runtime proof in one local place as your MCP usage grows.",
+	"features.pillar1.title": "Import once, stop copying config",
 	"features.pillar1.desc":
-		"Keep servers, env vars, commands, and connection details in one local workspace instead of copying JSON across every app.",
+		"Bring servers from the Market, snippets, or existing clients, then manage commands, env vars, and connections in one workspace.",
 	"features.pillar1.cta": "Read setup guide",
-	"features.pillar2.title": "Keep clients consistent",
+	"features.pillar2.title": "Share one library across clients",
 	"features.pillar2.desc":
-		"Use one server library across Claude, Cursor, VS Code, Cherry Studio, and other MCP-compatible clients.",
+		"Claude, Cursor, VS Code, Cherry Studio, and custom clients can reuse the same servers without owning separate copies.",
 	"features.pillar2.cta": "Explore profiles",
-	"features.pillar3.title": "Shape tools by context",
+	"features.pillar3.title": "Give each client the right tools",
 	"features.pillar3.desc":
-		"Expose only the tools a client or task should see. Keep tool lists smaller, clearer, and easier to reason about.",
+		"Use profiles and client presets to trim tools, prompts, and resources by task so context stays readable and token use stays contained.",
 	"features.pillar3.cta": "See tool controls",
-	"features.pillar4.title": "Choose how MCPMate connects",
+	"features.pillar4.title": "Choose the right connection mode",
 	"features.pillar4.desc":
-		"Use Hosted, Unify, or Transparent mode depending on whether you need live control, lighter discovery, or native config output.",
+		"Use Hosted for durable control, Unify for a smaller session surface, or Transparent when native client config matters most.",
 	"features.pillar4.cta": "Compare setup modes",
-	"features.pillar5.title": "Inspect the real runtime",
+	"features.pillar5.title": "Prove what is actually running",
 	"features.pillar5.desc":
-		"Check server readiness, client bindings, tool calls, and logs from one place before guessing which config failed.",
+		"Check readiness, client bindings, capability lists, tool calls, and logs before guessing which config or server failed.",
 	"features.pillar5.cta": "Open inspector guide",
 	"features.read_more": "Learn more",
 	"features.explore_all": "Explore all feature guides",
 
 	"how.title": "How it works",
 	"how.subtitle":
-		"MCPMate turns scattered MCP setup into a layered local workspace: entry points on the outside, reusable configuration in the middle, and a Rust RMCP runtime at the core.",
+		"MCPMate keeps the user-facing entry points, reusable configuration, and Rust RMCP runtime in separate layers so you can start simple and add control without changing products.",
+	"how.nodes.access.title": "Desktop, API, and extension entry points",
+	"how.nodes.access.desc":
+		"Use the desktop UI for daily operations, the REST API for automation, and the browser extension to bring discovered servers into your local workspace.",
+	"how.nodes.control.title": "Profiles, client presets, and setup modes",
+	"how.nodes.control.desc":
+		"MCPMate turns imported servers into reusable profiles and client-specific rollout choices, so configuration becomes manageable instead of hand-copied.",
+	"how.nodes.runtime.title": "Rust RMCP runtime for local MCP control",
+	"how.nodes.runtime.desc":
+		"The runtime manages MCP connections, capability discovery, tool exposure, server state, and inspection data on your machine.",
+	"how.nodes.access.label": "Access Layer",
+	"how.nodes.control.label": "Config Layer",
+	"how.nodes.runtime.label": "Runtime Layer",
+	"how.nodes.activeHint": "Details below",
+	"how.nodes.expandHint": "▼ View details",
+	"how.nodes.access.feature1": "Desktop UI: operate the local proxy from a focused control surface",
+	"how.nodes.access.feature2": "REST API: let scripts and future integrations work with the same MCPMate state",
+	"how.nodes.access.feature3": "Browser extension: shorten the path from discovering a server to importing it locally",
+	"how.nodes.control.feature1": "Profiles: group servers and capabilities by coding, writing, research, or any task",
+	"how.nodes.control.feature2": "Client presets: decide what each AI app receives without duplicating server setup",
+	"how.nodes.control.feature3": "Setup modes: choose Hosted, Unify, or Transparent based on how much control the client should keep",
+	"how.nodes.runtime.feature1": "Connection handling: keep local and remote MCP servers reachable through supported transports",
+	"how.nodes.runtime.feature2": "Capability discovery: read tools, prompts, resources, and templates before exposing them to clients",
+	"how.nodes.runtime.feature3": "Runtime inspection: surface readiness, bindings, calls, and logs when something needs proof",
 	"how.clients.label": "AI clients",
 	"how.clients.hint": "Cursor, Claude Desktop, and more",
 	"how.clients.badge": "Multi",
@@ -95,12 +118,12 @@ const en = {
 
 	"modes.title": "Three setup modes",
 	"modes.subtitle":
-		"Whether you want lower token use or to avoid capability abuse, there is a setup mode that fits.",
+		"Different clients need different levels of MCPMate involvement. Pick the mode that matches the workflow instead of forcing one integration style everywhere.",
 	"modes.hosted.title": "Hosted mode",
 	"modes.hosted.tagline": "Durable control · live switching",
 	"modes.hosted.choice": "Choose Hosted for daily control.",
 	"modes.hosted.desc":
-		"Your client talks to one MCPMate endpoint. Profile switches and policy stay in the middle layer.",
+		"Your client talks to one MCPMate endpoint while profile switching and visibility policy stay in the middle layer.",
 	"modes.hosted.b1": "Remembers working configuration",
 	"modes.hosted.b2": "Switch profiles without restarting",
 	"modes.hosted.b3": "Best for daily driver use",
@@ -108,7 +131,7 @@ const en = {
 	"modes.unify.tagline": "Light entry · on-demand discovery",
 	"modes.unify.choice": "Choose Unify when token and context size matter.",
 	"modes.unify.desc":
-		"Your app starts with a small built-in tool set and discovers full server capabilities on demand during the session—token savings on par with CLI or Skills.",
+		"Your app starts with a small built-in tool surface and discovers broader server capabilities on demand during the session.",
 	"modes.unify.b1": "Keeps tool lists small",
 	"modes.unify.b2": "Session-local exploration",
 	"modes.unify.b3": "Best when tokens matter",
@@ -116,7 +139,7 @@ const en = {
 	"modes.transparent.tagline": "Native compatibility · direct output",
 	"modes.transparent.choice": "Choose Transparent when native client compatibility matters.",
 	"modes.transparent.desc":
-		"Writes selected servers into each app's native MCP config file. Best when the client must see servers directly.",
+		"Writes selected servers into each app's native MCP config file. Best when compatibility matters more than MCPMate-side runtime control.",
 	"modes.transparent.b1": "Native client config output",
 	"modes.transparent.b2": "Direct upstream access",
 	"modes.transparent.b3": "Coexists with other modes",
@@ -190,7 +213,7 @@ const en = {
 	"contact.success.message": "Thank you for contacting us. We'll get back to you as soon as possible.",
 
 	"footer.description":
-		"Your progressive MCP management partner. Built to grow with the work you take on.",
+		"Your progressive MCP management partner. Start with import, then grow into a managed local workspace.",
 	"footer.copyright": "© {year} MCPMate. All rights reserved.",
 	"footer.product": "Product",
 	"footer.resources": "Resources",
@@ -205,15 +228,15 @@ const en = {
 
 	"faq.title": "FAQ",
 	"faq.lead":
-		"The short version: MCPMate runs locally, helps you prepare and manage MCP across clients, and gives advanced users API and extension entry points when they need more control.",
+		"The short version: MCPMate runs locally, helps one MCP setup serve multiple clients, and gives advanced users API and extension entry points when they need more control.",
 	"faq.cta.contact": "Contact us",
 	"faq.cta.docs": "Documentation",
 	"faq.functions.title": "What does MCPMate do?",
 	"faq.functions.answer":
-		"MCPMate helps you import or define MCP servers, reuse them across clients, choose which tools each client sees, and inspect whether the local runtime is working.",
+		"MCPMate helps you import or define MCP servers, reuse them across clients, choose which capabilities each client sees, and inspect whether the local runtime is working.",
 	"faq.import_tool.title": "Is MCPMate only an import tool?",
 	"faq.import_tool.answer":
-		"No. Import is the starting point. After that, MCPMate manages profiles, client presets, setup modes, runtime status, logs, and tool visibility.",
+		"No. Import is the starting point. After that, MCPMate manages profiles, client presets, setup modes, runtime status, logs, and capability visibility.",
 	"faq.vs_clients.title": "How is MCPMate different from the MCP settings built into my client?",
 	"faq.vs_clients.answer":
 		"Client settings usually manage one app. MCPMate keeps the MCP workspace beside your local runtime, so several clients can share servers while still receiving different tool sets.",
