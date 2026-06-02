@@ -6,6 +6,7 @@ const modeCards = [
 	{
 		titleKey: "modes.unify.title",
 		taglineKey: "modes.unify.tagline",
+		choiceKey: "modes.unify.choice",
 		descKey: "modes.unify.desc",
 		bulletKeys: ["modes.unify.b1", "modes.unify.b2", "modes.unify.b3"],
 		accent: "border-brand-indigo/30",
@@ -14,6 +15,7 @@ const modeCards = [
 	{
 		titleKey: "modes.hosted.title",
 		taglineKey: "modes.hosted.tagline",
+		choiceKey: "modes.hosted.choice",
 		descKey: "modes.hosted.desc",
 		bulletKeys: ["modes.hosted.b1", "modes.hosted.b2", "modes.hosted.b3"],
 		accent: "border-brand-accent/30 shadow-glow-sm",
@@ -22,6 +24,7 @@ const modeCards = [
 	{
 		titleKey: "modes.transparent.title",
 		taglineKey: "modes.transparent.tagline",
+		choiceKey: "modes.transparent.choice",
 		descKey: "modes.transparent.desc",
 		bulletKeys: ["modes.transparent.b1", "modes.transparent.b2", "modes.transparent.b3"],
 		accent: "border-brand-border",
@@ -54,6 +57,9 @@ const ClientModes = () => {
 								<p className="mt-1 text-sm font-medium text-brand-accent">{t(mode.taglineKey)}</p>
 							</div>
 						</div>
+						<p className="mb-3 rounded-lg border border-brand-border-subtle bg-brand-overlay/40 px-3 py-2 text-xs font-medium text-brand-foreground">
+							{t(mode.choiceKey)}
+						</p>
 						<p className="flex-1 text-sm leading-relaxed section-muted">{t(mode.descKey)}</p>
 						<ul className="mt-5 shrink-0 space-y-2">
 							{mode.bulletKeys.map((bulletKey) => (

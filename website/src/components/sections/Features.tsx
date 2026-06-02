@@ -145,6 +145,7 @@ const Features = () => {
 		id: string;
 		title: string;
 		description: string;
+		ctaLabel: string;
 		icon: ReactNode;
 		videoSrc: string;
 		docPath?: string;
@@ -154,6 +155,7 @@ const Features = () => {
 			id: "configure",
 			title: t("features.pillar1.title"),
 			description: t("features.pillar1.desc"),
+			ctaLabel: t("features.pillar1.cta"),
 			icon: <Server size={22} aria-hidden />,
 			videoSrc: "/video/features/configure.webm",
 			docPath: `${featureDocsBase}/centralized-config`,
@@ -162,6 +164,7 @@ const Features = () => {
 			id: "scenarios",
 			title: t("features.pillar2.title"),
 			description: t("features.pillar2.desc"),
+			ctaLabel: t("features.pillar2.cta"),
 			icon: <RefreshCcw size={22} aria-hidden />,
 			videoSrc: "/video/features/scenarios.webm",
 			docPath: `${featureDocsBase}/context-switching`,
@@ -170,6 +173,7 @@ const Features = () => {
 			id: "client-tools",
 			title: t("features.pillar3.title"),
 			description: t("features.pillar3.desc"),
+			ctaLabel: t("features.pillar3.cta"),
 			icon: <SlidersHorizontal size={22} aria-hidden />,
 			videoSrc: "/video/features/client-tools.webm",
 			docPath: `${featureDocsBase}/granular-controls`,
@@ -178,6 +182,7 @@ const Features = () => {
 			id: "setup-modes",
 			title: t("features.pillar4.title"),
 			description: t("features.pillar4.desc"),
+			ctaLabel: t("features.pillar4.cta"),
 			icon: <LayoutGrid size={22} aria-hidden />,
 			videoSrc: "/video/features/setup-modes.webm",
 			scrollToId: "modes",
@@ -186,6 +191,7 @@ const Features = () => {
 			id: "verify",
 			title: t("features.pillar5.title"),
 			description: t("features.pillar5.desc"),
+			ctaLabel: t("features.pillar5.cta"),
 			icon: <Eye size={22} aria-hidden />,
 			videoSrc: "/video/features/verify.webm",
 			docPath: `${featureDocsBase}/inspector`,
@@ -214,7 +220,7 @@ const Features = () => {
 			description={pillar.description}
 			icon={pillar.icon}
 			videoSrc={pillar.videoSrc}
-			ctaLabel={t("features.read_more")}
+			ctaLabel={pillar.ctaLabel}
 			onAction={() => handlePillarAction(pillar)}
 			isPreviewActive={previewToggleEnabled && activePillarId === pillar.id}
 			isPreviewToggleEnabled={previewToggleEnabled}
