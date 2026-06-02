@@ -93,6 +93,23 @@ function formatActivityMeta(
 	});
 }
 
+function systemStatusTranslationKey(status: string): string {
+	switch (status) {
+		case "running":
+			return "operator:systemStatus.running";
+		case "degraded":
+			return "operator:systemStatus.degraded";
+		case "stopped":
+			return "operator:systemStatus.stopped";
+		case "starting":
+			return "operator:systemStatus.starting";
+		case "error":
+			return "operator:systemStatus.error";
+		default:
+			return "operator:systemStatus.unknown";
+	}
+}
+
 const ROW_EXPAND_CHEVRON_CLASS =
 	"h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 dark:text-slate-500";
 
@@ -511,6 +528,10 @@ export function TrayOperatorPanelPage() {
 						defaultValue: "Open Full Board to create or activate a profile.",
 					});
 
+			const localizedSystemStatus = rowT(systemStatusTranslationKey(systemStatus), {
+				defaultValue: systemStatus,
+			});
+
 			const clientsDetailHint =
 				pendingClients > 0
 					? rowT("operator:detail.clients.pending", {
@@ -547,7 +568,7 @@ export function TrayOperatorPanelPage() {
 									defaultValue: "Core needs attention",
 								}),
 					meta: rowT("operator:rows.core.meta", {
-						status: systemStatus,
+						status: localizedSystemStatus,
 						uptime: formatUptime(systemQuery.data?.uptime ?? 0),
 						defaultValue: "{{status}} · {{uptime}} uptime",
 					}),
