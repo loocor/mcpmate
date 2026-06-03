@@ -1,11 +1,13 @@
-import { Github, Mail, Monitor, Moon, Sun, Twitter } from "lucide-react";
+import { Github, Mail, Twitter } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import logoImage from "../../assets/images/logo.svg";
 import { BROWSER_EXTENSION_LINKS } from "../../lib/browser-extensions";
-import { getMarketingScrollPadding, syncMarketingScrollPadding } from "../../lib/section-scroll";
+import { scrollToMarketingSection } from "../../lib/section-scroll";
 import { trackMCPMateEvents } from "../../utils/analytics";
 import { useLanguage } from "../LanguageProvider";
 import { useTheme } from "../ThemeProvider";
+import LanguageSwitcher from "./LanguageSwitcher";
+import ThemeSwitcher from "./ThemeSwitcher";
 
 const IconDiscord = ({ size = 20, className = "" }: { size?: number; className?: string }) => (
 	<svg
@@ -62,7 +64,7 @@ function getFooterShellClass(isMarketingHome: boolean, isDocPage: boolean): stri
 }
 
 const Footer = () => {
-	const { mode, setMode, theme } = useTheme();
+	const { theme } = useTheme();
 	const { language, t } = useLanguage();
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -94,11 +96,7 @@ const Footer = () => {
 			navigate(`/?section=${encodeURIComponent(id)}`);
 			return;
 		}
-		syncMarketingScrollPadding();
-		const offset = Math.max(getMarketingScrollPadding(), 80);
-		const elementPosition = element.getBoundingClientRect().top;
-		const offsetPosition = elementPosition + window.scrollY - offset;
-		window.scrollTo({ top: offsetPosition, behavior: "smooth" });
+		scrollToMarketingSection(id);
 	};
 
 	const footerShellClass = getFooterShellClass(isMarketingHome, isDocPage);
@@ -266,26 +264,9 @@ const Footer = () => {
 					<p className={`text-sm ${isMarketingHome ? "section-muted-soft" : "text-slate-500 dark:section-muted"}`}>
 						{t("footer.copyright")}
 					</p>
-					<div className="flex items-center gap-3">
-						<div className="flex items-center gap-1">
-							{(
-								[
-									["light", Sun, "Light theme"],
-									["dark", Moon, "Dark theme"],
-									["system", Monitor, "System theme"],
-								] as const
-							).map(([themeMode, Icon, label]) => (
-								<button
-									key={themeMode}
-									aria-label={label}
-									aria-pressed={mode === themeMode}
-									className={`inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all duration-150 hover:scale-105 ${mode === themeMode ? "opacity-100 text-brand-accent" : "opacity-60 section-muted hover:opacity-90 hover:text-brand-foreground"}`}
-									onClick={() => setMode(themeMode)}
-								>
-									<Icon size={14} />
-								</button>
-							))}
-						</div>
+					<div className="hidden items-center gap-3 sm:flex">
+						<ThemeSwitcher />
+						<LanguageSwitcher variant="footer" menuPlacement="above" />
 					</div>
 				</div>
 			</div>

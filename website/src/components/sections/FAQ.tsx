@@ -1,9 +1,10 @@
 import { BookOpen, ChevronRight, Mail } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import SchemaOrg from "../SchemaOrg";
 import { useLanguage, type Language } from "../LanguageProvider";
 import { buildFAQPage } from "../../utils/schema";
 import { trackMCPMateEvents } from "../../utils/analytics";
+import { MARKETING_FAQ_NAVIGATION_EVENT } from "../../lib/section-scroll";
 
 const CONTACT_MAILTO = "mailto:mcp@umate.ai";
 
@@ -17,16 +18,18 @@ type FAQItem = readonly [string, string];
 
 const faqItems: readonly FAQItem[] = [
 	["faq.functions.title", "faq.functions.answer"],
-	["faq.usage.title", "faq.usage.answer"],
+	["faq.import_tool.title", "faq.import_tool.answer"],
+	["faq.getting_started.title", "faq.getting_started.answer"],
 	["faq.vs_clients.title", "faq.vs_clients.answer"],
-	["faq.compatible.title", "faq.compatible.answer"],
-	["faq.clients.title", "faq.clients.answer"],
-	["faq.security.title", "faq.security.answer"],
+	["faq.progressive_disclosure.title", "faq.progressive_disclosure.answer"],
+	["faq.security_reliability.title", "faq.security_reliability.answer"],
+	["faq.support.title", "faq.support.answer"],
 ];
 
 const FAQSection = () => {
 	const { t, language } = useLanguage();
 	const docsPath = getQuickstartPath(language);
+	const [openItems, setOpenItems] = useState<Set<number>>(() => new Set([0]));
 
 	const schema = useMemo(
 		() =>
@@ -39,9 +42,30 @@ const FAQSection = () => {
 		[t],
 	);
 
+	useEffect(() => {
+		const closeFaqItems = () => setOpenItems(new Set());
+
+		window.addEventListener(MARKETING_FAQ_NAVIGATION_EVENT, closeFaqItems);
+		return () => {
+			window.removeEventListener(MARKETING_FAQ_NAVIGATION_EVENT, closeFaqItems);
+		};
+	}, []);
+
+	const handleToggle = (index: number, isOpen: boolean) => {
+		setOpenItems((current) => {
+			const next = new Set(current);
+			if (isOpen) {
+				next.add(index);
+			} else {
+				next.delete(index);
+			}
+			return next;
+		});
+	};
+
 	return (
 		<section id="faq" className="snap-section relative py-16 md:py-20">
-			<div className="container relative mx-auto px-4 md:px-6">
+			<div className="container relative mx-auto px-4 md:px-6" data-marketing-scroll-content>
 				<SchemaOrg schema={schema} />
 				<div className="mx-auto max-w-3xl">
 					<h2 className="mb-8 text-center text-3xl font-bold text-brand-foreground md:mb-10 md:text-4xl">
@@ -51,7 +75,8 @@ const FAQSection = () => {
 						{faqItems.map(([titleKey, answerKey], index) => (
 							<details
 								key={titleKey}
-								open={index === 0}
+								open={openItems.has(index)}
+								onToggle={(event) => handleToggle(index, event.currentTarget.open)}
 								className="group transition-colors hover:bg-brand-overlay"
 							>
 								<summary className="flex cursor-pointer select-none items-center justify-between px-6 py-4 text-left font-semibold text-brand-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent">

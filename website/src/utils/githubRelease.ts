@@ -1,4 +1,28 @@
-/** GitHub REST: single release payload fields we consume. */
+/** Public download manifest asset fields consumed by the website. */
+export interface PublicDownloadAsset {
+	key: string;
+	platform: "macos" | "windows" | "linux";
+	arch: "arm64" | "x64";
+	name: string;
+	githubUrl: string;
+	redirectUrl: string;
+	githubDownloadCount: number;
+	size: number;
+	contentType: string | null;
+	updatedAt: string | null;
+}
+
+export interface PublicDownloadManifest {
+	schemaVersion: 1;
+	tag: string;
+	releaseName: string | null;
+	releaseUrl: string;
+	publishedAt: string | null;
+	fetchedAt: string;
+	assets: Record<string, PublicDownloadAsset>;
+}
+
+/** Release payload shape normalized from the public download manifest. */
 export interface GitHubReleaseAsset {
 	name: string;
 	browser_download_url: string;
@@ -16,9 +40,7 @@ export interface GitHubLatestRelease {
 export const MCPMATE_GITHUB_OWNER = "loocor";
 export const MCPMATE_GITHUB_REPO = "mcpmate";
 
-export const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${MCPMATE_GITHUB_OWNER}/${MCPMATE_GITHUB_REPO}/releases/latest`;
-
-export const LIST_RELEASES_API_URL = `https://api.github.com/repos/${MCPMATE_GITHUB_OWNER}/${MCPMATE_GITHUB_REPO}/releases`;
+export const DOWNLOADS_MANIFEST_API_URL = "https://public.mcp.umate.ai/downloads/latest";
 
 export const RELEASES_PAGE_URL = `https://github.com/${MCPMATE_GITHUB_OWNER}/${MCPMATE_GITHUB_REPO}/releases`;
 
@@ -90,6 +112,18 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	},
 ] as const;
 
+export function releaseFromDownloadManifest(manifest: PublicDownloadManifest): GitHubLatestRelease {
+	return {
+		tag_name: manifest.tag,
+		html_url: manifest.releaseUrl,
+		assets: Object.values(manifest.assets).map((asset) => ({
+			name: asset.name,
+			browser_download_url: asset.redirectUrl,
+			download_count: asset.githubDownloadCount,
+		})),
+	};
+}
+
 function findAssetForRow(assets: readonly GitHubReleaseAsset[], row: DesktopBuildRow): GitHubReleaseAsset | undefined {
 	for (const suffix of row.assetSuffixes) {
 		const lower = suffix.toLowerCase();
@@ -108,55 +142,4 @@ export function attachAssetsToBuildRows(
 		...row,
 		asset: findAssetForRow(release.assets, row),
 	}));
-}
-
-/** Sum `download_count` for this row’s installer pattern across every published release. */
-export function cumulativeDownloadsForRow(
-	releases: readonly Pick<GitHubLatestRelease, "assets">[],
-	row: DesktopBuildRow,
-): number {
-	let total = 0;
-	for (const rel of releases) {
-		const asset = findAssetForRow(rel.assets, row);
-		if (asset) {
-			total += asset.download_count ?? 0;
-		}
-	}
-	return total;
-}
-
-const RELEASES_PER_PAGE = 100;
-const MAX_RELEASE_PAGES = 50;
-
-/**
- * Paginates `GET /repos/.../releases` (newest first). Skips draft and prerelease entries.
- */
-export async function fetchAllPublishedReleases(signal: AbortSignal): Promise<GitHubLatestRelease[]> {
-	const out: GitHubLatestRelease[] = [];
-	for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
-		const url = `${LIST_RELEASES_API_URL}?per_page=${RELEASES_PER_PAGE}&page=${page}`;
-		const res = await fetch(url, {
-			signal,
-			headers: { Accept: "application/vnd.github+json" },
-		});
-		if (!res.ok) {
-			throw new Error(`releases list HTTP ${res.status}`);
-		}
-		const batch = (await res.json()) as GitHubLatestRelease[];
-		if (!Array.isArray(batch) || batch.length === 0) {
-			break;
-		}
-		for (const r of batch) {
-			if (r?.draft === true || r?.prerelease === true) {
-				continue;
-			}
-			if (r?.tag_name && Array.isArray(r.assets)) {
-				out.push(r);
-			}
-		}
-		if (batch.length < RELEASES_PER_PAGE) {
-			break;
-		}
-	}
-	return out;
 }

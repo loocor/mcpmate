@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { ArrowRight, ChevronDown, Download } from 'lucide-react';
+import { ArrowRight, ChevronDown, Download, ExternalLink } from 'lucide-react';
 
 import { useLatestGitHubRelease } from '../../hooks/useLatestGitHubRelease';
 import { BROWSER_EXTENSION_LINKS } from '../../lib/browser-extensions';
+import { scrollToMarketingSection } from '../../lib/section-scroll';
 import {
   attachAssetsToBuildRows,
   DESKTOP_BUILD_ROWS,
@@ -12,11 +13,11 @@ import {
 } from '../../utils/githubRelease';
 import { trackMCPMateEvents } from '../../utils/analytics';
 import {
-  detectDesktopArchitecture,
-  detectDesktopArchitectureSync,
-  detectDesktopPlatform,
+  detectDownloadEnvironment,
+  detectDownloadEnvironmentSync,
   type DesktopArchitecture,
   type DesktopPlatform,
+  type DownloadEnvironment,
 } from '../../utils/downloads';
 import { useLanguage } from '../LanguageProvider';
 import { useTheme } from '../ThemeProvider';
@@ -83,16 +84,11 @@ function getSlideClass(isActive: boolean): string {
 function Hero(): JSX.Element {
   const { theme } = useTheme();
   const { language, t } = useLanguage();
-  const releaseState = useLatestGitHubRelease(false);
+  const releaseState = useLatestGitHubRelease();
   const containerRef = useRef<HTMLDivElement>(null);
   const [transformStyle, setTransformStyle] = useState<string>(RESTING_SCREEN_TRANSFORM);
-  const [downloadTarget, setDownloadTarget] = useState<{
-    architecture: DesktopArchitecture;
-    platform: DesktopPlatform;
-  }>(() => ({
-    architecture: detectDesktopArchitectureSync(),
-    platform: detectDesktopPlatform(),
-  }));
+  const [downloadEnvironment, setDownloadEnvironment] = useState<DownloadEnvironment>(() => detectDownloadEnvironmentSync());
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
 
   const carouselItems = useMemo<HeroSlide[]>(
     () => [
@@ -137,9 +133,9 @@ function Hero(): JSX.Element {
   useEffect(() => {
     let cancelled = false;
 
-    void detectDesktopArchitecture().then((architecture) => {
+    void detectDownloadEnvironment().then((environment) => {
       if (!cancelled) {
-        setDownloadTarget((current) => ({ ...current, architecture }));
+        setDownloadEnvironment(environment);
       }
     });
 
@@ -157,23 +153,6 @@ function Hero(): JSX.Element {
     setTransformStyle(RESTING_SCREEN_TRANSFORM);
   };
 
-  function scrollToSection(id: string): void {
-    const element = document.getElementById(id);
-
-    if (!element) {
-      return;
-    }
-
-    const offset = 80;
-    const elementPosition = element.getBoundingClientRect().top;
-    const offsetPosition = elementPosition + window.scrollY - offset;
-
-    window.scrollTo({
-      top: offsetPosition,
-      behavior: 'smooth',
-    });
-  }
-
   const active = carouselItems[activeIndex];
   const slideAlt = t(active.titleKey);
   const downloadRows = useMemo<DesktopBuildWithAsset[]>(() => {
@@ -184,35 +163,61 @@ function Hero(): JSX.Element {
     return DESKTOP_BUILD_ROWS.map((row) => ({ ...row }));
   }, [releaseState]);
 
-  const selectedPlatform = PLATFORM_DOWNLOADS.find((platform) => platform.id === downloadTarget.platform) ?? PLATFORM_DOWNLOADS[0];
-  const selectedArchitectureLabelKey = getArchitectureLabelKey(downloadTarget.architecture);
+  const isDesktopDownload = downloadEnvironment.kind === 'desktop';
+  const selectedPlatform = isDesktopDownload
+    ? (PLATFORM_DOWNLOADS.find((platform) => platform.id === downloadEnvironment.platform) ?? PLATFORM_DOWNLOADS[0])
+    : null;
+  const selectedArchitectureLabelKey = isDesktopDownload ? getArchitectureLabelKey(downloadEnvironment.architecture) : null;
   const selectedPlatformRows = useMemo(
-    () => downloadRows.filter((row) => row.platformI18nKey === selectedPlatform.labelKey),
-    [downloadRows, selectedPlatform.labelKey],
+    () => selectedPlatform ? downloadRows.filter((row) => row.platformI18nKey === selectedPlatform.labelKey) : [],
+    [downloadRows, selectedPlatform],
   );
   const preferredDownloadRow =
-    selectedPlatformRows.find((row) => row.archI18nKey === selectedArchitectureLabelKey) ?? selectedPlatformRows[0];
-  const primaryDownloadRow = preferredDownloadRow?.asset
+    selectedArchitectureLabelKey ? (selectedPlatformRows.find((row) => row.archI18nKey === selectedArchitectureLabelKey) ?? selectedPlatformRows[0]) : undefined;
+  const primaryDownloadRow = isDesktopDownload && preferredDownloadRow?.asset
     ? preferredDownloadRow
     : selectedPlatformRows.find((row) => row.asset);
-  const primaryDownloadUrl = primaryDownloadRow?.asset?.browser_download_url ?? RELEASES_PAGE_URL;
-  const primaryDownloadLabel = primaryDownloadRow
-    ? t('download.cta_for').replace('{platform}', t(selectedPlatform.labelKey))
-    : t('download.all_releases');
-  const alternativePlatformsLabel = t('download.also_available_for').replace(
-    '{platforms}',
-    formatAlternativePlatforms(selectedPlatform.id, language, t),
-  );
+  const primaryDownloadUrl = isDesktopDownload ? primaryDownloadRow?.asset?.browser_download_url : undefined;
+  const hasAnyDownloadAsset = downloadRows.some((row) => Boolean(row.asset));
+  const useReleasesFallback =
+    releaseState.status === 'error' ||
+    (releaseState.status === 'ok' && (!hasAnyDownloadAsset || (isDesktopDownload && !primaryDownloadUrl)));
+  const primaryDownloadHref = useReleasesFallback ? RELEASES_PAGE_URL : primaryDownloadUrl;
+  let primaryDownloadLabel = t('download.desktop_downloads');
+  if (useReleasesFallback) {
+    primaryDownloadLabel = t('download.all_releases');
+  } else if (isDesktopDownload && selectedPlatform) {
+    primaryDownloadLabel = t('download.cta_for').replace('{platform}', t(selectedPlatform.labelKey));
+  }
+  const downloadSupportLabel = isDesktopDownload && selectedPlatform
+    ? t('download.also_available_for').replace(
+        '{platforms}',
+        formatAlternativePlatforms(selectedPlatform.id, language, t),
+      )
+    : t('download.desktop_note');
+  const downloadMenuStateClass = downloadMenuOpen
+    ? 'pointer-events-auto visible translate-y-0'
+    : 'pointer-events-none invisible translate-y-1';
+  const downloadMenuClass = isDesktopDownload
+    ? 'pointer-events-none invisible translate-y-1 group-hover/download:pointer-events-auto group-hover/download:visible group-hover/download:translate-y-0 group-focus-within/download:pointer-events-auto group-focus-within/download:visible group-focus-within/download:translate-y-0'
+    : downloadMenuStateClass;
+  const primaryDownloadButtonClass =
+    'inline-flex w-full items-center justify-center gap-3 rounded-lg bg-brand-accent px-6 py-3 text-base font-semibold text-brand-accent-fg shadow-card shadow-glow-sm transition-all duration-200 hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-offset-2 focus:ring-offset-brand-bg disabled:cursor-not-allowed disabled:opacity-60 dark:hover:ring-2 dark:hover:ring-white dark:hover:ring-offset-2 dark:hover:ring-offset-brand-bg dark:focus-visible:ring-2 dark:focus-visible:ring-white dark:focus-visible:ring-offset-2 dark:focus-visible:ring-offset-brand-bg sm:w-auto';
 
   const onDownloadClick = (row: DesktopBuildWithAsset | undefined, url: string) => {
+    setDownloadMenuOpen(false);
     if (row) {
       trackMCPMateEvents.downloadClick(row.id);
     }
     trackMCPMateEvents.externalLinkClick(url);
   };
 
+  const toggleDownloadMenu = () => {
+    setDownloadMenuOpen((open) => !open);
+  };
+
   return (
-    <div className="relative w-full py-20 md:py-16 lg:py-14 [@media(max-height:52rem)]:py-10">
+    <div className="relative w-full pt-[calc(var(--banner-height,0px)+8.5rem)] pb-20 md:py-16 lg:py-14 [@media(max-height:52rem)]:pt-[calc(var(--banner-height,0px)+7.75rem)] [@media(max-height:52rem)]:pb-10">
       <div className="container mx-auto px-4 md:px-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
           <div className="flex flex-col items-start space-y-6">
@@ -229,26 +234,61 @@ function Hero(): JSX.Element {
             <div id="download" className="flex w-full flex-col gap-4 pt-2 sm:flex-row sm:items-start">
               <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:items-center">
                 <div className="group/download relative w-full sm:inline-block">
-                  <a
-                    href={primaryDownloadUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => onDownloadClick(primaryDownloadRow, primaryDownloadUrl)}
-                    className="inline-flex w-full items-center justify-center gap-3 rounded-lg bg-brand-accent px-6 py-3 text-base font-semibold text-brand-accent-fg shadow-card shadow-glow-sm transition-all duration-200 hover:bg-brand-accent-hover focus:outline-none focus:ring-2 focus:ring-brand-accent focus:ring-offset-2 focus:ring-offset-brand-bg dark:hover:ring-2 dark:hover:ring-white dark:hover:ring-offset-2 dark:hover:ring-offset-brand-bg dark:focus-visible:ring-2 dark:focus-visible:ring-white dark:focus-visible:ring-offset-2 dark:focus-visible:ring-offset-brand-bg sm:w-auto"
-                  >
-                    <Download className="h-5 w-5" aria-hidden />
-                    <span>{primaryDownloadLabel}</span>
-                    <ChevronDown
-                      size={16}
-                      aria-hidden
-                      className="shrink-0 transition-transform duration-200 group-hover/download:translate-y-0.5 group-focus-within/download:translate-y-0.5"
-                    />
-                  </a>
+                  {primaryDownloadHref ? (
+                    <a
+                      href={primaryDownloadHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => onDownloadClick(useReleasesFallback ? undefined : primaryDownloadRow, primaryDownloadHref)}
+                      className={primaryDownloadButtonClass}
+                    >
+                      <Download className="h-5 w-5" aria-hidden />
+                      <span>{primaryDownloadLabel}</span>
+                      <ChevronDown
+                        size={16}
+                        aria-hidden
+                        className="shrink-0 transition-transform duration-200 group-hover/download:translate-y-0.5 group-focus-within/download:translate-y-0.5"
+                      />
+                    </a>
+                  ) : isDesktopDownload ? (
+                    <button type="button" disabled className={primaryDownloadButtonClass}>
+                      <Download className="h-5 w-5" aria-hidden />
+                      <span>{primaryDownloadLabel}</span>
+                      <ChevronDown size={16} aria-hidden className="shrink-0" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-expanded={downloadMenuOpen}
+                      onClick={toggleDownloadMenu}
+                      className={primaryDownloadButtonClass}
+                    >
+                      <Download className="h-5 w-5" aria-hidden />
+                      <span>{primaryDownloadLabel}</span>
+                      <ChevronDown
+                        size={16}
+                        aria-hidden
+                        className="shrink-0 transition-transform duration-200 group-hover/download:translate-y-0.5 group-focus-within/download:translate-y-0.5"
+                      />
+                    </button>
+                  )}
 
-                  <div className="pointer-events-none invisible absolute inset-x-0 top-full z-30 w-full translate-y-1 pt-2 transition-[transform,visibility] duration-200 ease-out group-hover/download:pointer-events-auto group-hover/download:visible group-hover/download:translate-y-0 group-focus-within/download:pointer-events-auto group-focus-within/download:visible group-focus-within/download:translate-y-0">
+                  <div className={`absolute inset-x-0 top-full z-30 w-full pt-2 transition-[transform,visibility] duration-200 ease-out ${downloadMenuClass}`}>
                     <div className="overflow-hidden rounded-xl border border-brand-border-subtle bg-brand-elevated/95 p-1 shadow-card backdrop-blur-md">
-                      {selectedPlatformRows.map((row) => {
+                      {useReleasesFallback ? (
+                        <a
+                          href={RELEASES_PAGE_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => onDownloadClick(undefined, RELEASES_PAGE_URL)}
+                          className="flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-overlay-hover hover:text-brand-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
+                        >
+                          <span>{t('download.all_releases')}</span>
+                          <ExternalLink size={14} aria-hidden />
+                        </a>
+                      ) : downloadRows.map((row) => {
                         const url = row.asset?.browser_download_url;
+                        const rowLabel = `${t(row.platformI18nKey)} ${t(row.archI18nKey)}`;
 
                         if (!url) {
                           return (
@@ -257,7 +297,8 @@ function Hero(): JSX.Element {
                               aria-disabled="true"
                               className="flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium section-muted-soft opacity-60"
                             >
-                              {t(row.archI18nKey)}
+                              <span>{rowLabel}</span>
+                              <span>{releaseState.status === 'loading' ? t('download.loading') : t('download.unavailable')}</span>
                             </span>
                           );
                         }
@@ -270,8 +311,9 @@ function Hero(): JSX.Element {
                             rel="noopener noreferrer"
                             onClick={() => onDownloadClick(row, url)}
                             className="flex items-center justify-between gap-4 rounded-lg px-3 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-overlay-hover hover:text-brand-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
+                            aria-label={`${t('download.btn')} ${rowLabel}`}
                           >
-                            <span>{t(row.archI18nKey)}</span>
+                            <span>{rowLabel}</span>
                             <Download size={14} aria-hidden />
                           </a>
                         );
@@ -279,7 +321,7 @@ function Hero(): JSX.Element {
                     </div>
                   </div>
                 </div>
-                <p className="text-center text-xs leading-tight section-muted-soft">{alternativePlatformsLabel}</p>
+                <p className="text-center text-xs leading-tight section-muted-soft">{downloadSupportLabel}</p>
                 <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-center text-xs leading-tight section-muted-soft">
                   <span>{t('browserExtensions.inlineLabel')}</span>
                   {BROWSER_EXTENSION_LINKS.map((link, index) => (
@@ -302,7 +344,7 @@ function Hero(): JSX.Element {
               <Button
                 variant="outline"
                 size="lg"
-                onClick={() => scrollToSection('how-it-works')}
+                onClick={() => scrollToMarketingSection('how-it-works')}
                 className="w-full sm:w-auto"
               >
                 <span>{t('hero.cta.learn')}</span>

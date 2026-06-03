@@ -9,17 +9,33 @@ import { useLanguage } from "../LanguageProvider";
 export const NAV_UTILITY_TRIGGER_CLASS =
 	"relative inline-flex items-center justify-center border-0 bg-transparent p-0 pb-1 text-brand-foreground/85 transition-colors hover:text-brand-accent cursor-pointer";
 
+const FOOTER_UTILITY_TRIGGER_CLASS =
+	"footer-utility-trigger inline-flex h-8 w-8 items-center justify-center rounded-lg border-0 bg-transparent transition-all duration-150 hover:scale-105";
+
 type LanguageSwitcherProps = {
 	className?: string;
+	menuPlacement?: "above" | "below";
+	variant?: "nav" | "footer";
 };
 
-const LanguageSwitcher = ({ className = "" }: LanguageSwitcherProps) => {
+const LanguageSwitcher = ({
+	className = "",
+	menuPlacement = "below",
+	variant = "nav",
+}: LanguageSwitcherProps) => {
 	const { t } = useLanguage();
 	const { language, selectLanguage } = useLanguageNavigation();
 	const [open, setOpen] = useState(false);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const listboxId = useId();
 	const activeOption = getLanguageOption(language);
+	const triggerClass =
+		variant === "footer" ? FOOTER_UTILITY_TRIGGER_CLASS : NAV_UTILITY_TRIGGER_CLASS;
+	const iconClass = variant === "footer" ? "block" : "block translate-y-[3px]";
+	const menuPositionClass =
+		menuPlacement === "above"
+			? "bottom-[calc(100%+0.625rem)]"
+			: "top-[calc(100%+0.625rem)]";
 
 	const close = () => setOpen(false);
 
@@ -57,21 +73,21 @@ const LanguageSwitcher = ({ className = "" }: LanguageSwitcherProps) => {
 		<div ref={rootRef} className={`relative ${className}`}>
 			<button
 				type="button"
-				className={`${NAV_UTILITY_TRIGGER_CLASS} ${open ? "text-brand-accent" : ""}`}
+				className={`${triggerClass} ${open ? "text-brand-accent opacity-100" : ""}`}
 				aria-label={`${t("nav.language")}: ${activeOption.label}`}
 				aria-haspopup="true"
 				aria-expanded={open}
 				aria-controls={listboxId}
 				onClick={() => setOpen((value) => !value)}
 			>
-				<Globe size={18} strokeWidth={1.75} aria-hidden className="block translate-y-[3px]" />
+				<Globe size={18} strokeWidth={1.75} aria-hidden className={iconClass} />
 			</button>
 
 			{open ? (
 				<ul
 					id={listboxId}
 					aria-label={t("nav.language")}
-					className="absolute right-0 top-[calc(100%+0.625rem)] z-[100] min-w-[11rem] overflow-hidden rounded-lg border border-brand-border-subtle bg-brand-bg py-1 shadow-card"
+					className={`absolute right-0 z-[100] min-w-[11rem] overflow-hidden rounded-lg border border-brand-border-subtle bg-brand-bg py-1 shadow-card ${menuPositionClass}`}
 				>
 					{LANGUAGE_OPTIONS.map((option) => {
 						const isActive = option.code === language;

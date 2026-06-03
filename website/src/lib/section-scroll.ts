@@ -13,22 +13,76 @@ export type MarketingNavSectionId = (typeof MARKETING_NAV_ITEMS)[number]["id"];
 
 const FOOTER_SPY_CLEARANCE_PX = 48;
 
-export function getMarketingScrollPadding(): number {
+export const MARKETING_FAQ_NAVIGATION_EVENT = "mcpmate:faq-navigation";
+
+interface MarketingScrollFrame {
+	scrollPadding: number;
+	safeTop: number;
+	safeBottom: number;
+	safeHeight: number;
+}
+
+function collapseFaqForNavigation(): void {
+	document.querySelectorAll<HTMLDetailsElement>("#faq details[open]").forEach((details) => {
+		details.open = false;
+	});
+	window.dispatchEvent(new Event(MARKETING_FAQ_NAVIGATION_EVENT));
+}
+
+function getMarketingScrollTarget(section: HTMLElement): HTMLElement {
+	return section.querySelector<HTMLElement>("[data-marketing-scroll-content]") ?? section;
+}
+
+function getSettledHeaderHeight(header: HTMLElement | null): number {
+	if (!header) {
+		return 72;
+	}
+
+	const rect = header.getBoundingClientRect();
+	const style = getComputedStyle(header);
+	const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+	const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+	const rootFontSize =
+		Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+	const compactVerticalPadding = rootFontSize * 1.5;
+	const compactHeight = rect.height - paddingTop - paddingBottom + compactVerticalPadding;
+
+	return Math.min(rect.height, compactHeight);
+}
+
+function getMarketingScrollFrame(): MarketingScrollFrame {
 	const bannerHeight =
 		Number.parseInt(
 			getComputedStyle(document.documentElement).getPropertyValue("--banner-height"),
 			10,
 		) || 0;
 	const header = document.querySelector("header");
-	const headerHeight = header?.getBoundingClientRect().height ?? 72;
+	const headerHeight = getSettledHeaderHeight(header);
+	const scrollPadding = bannerHeight + headerHeight;
+	const safeTop = scrollPadding + headerHeight;
+	const safeBottom = Math.max(safeTop, window.innerHeight - headerHeight);
 
-	return bannerHeight + headerHeight;
+	return {
+		scrollPadding,
+		safeTop,
+		safeBottom,
+		safeHeight: Math.max(0, safeBottom - safeTop),
+	};
+}
+
+export function getMarketingScrollPadding(): number {
+	return getMarketingScrollFrame().scrollPadding;
 }
 
 export function syncMarketingScrollPadding(): void {
+	const frame = getMarketingScrollFrame();
 	document.documentElement.style.setProperty(
 		"--marketing-scroll-padding",
-		`${getMarketingScrollPadding()}px`,
+		`${frame.scrollPadding}px`,
+	);
+	document.documentElement.style.setProperty(
+		"--marketing-scroll-safe-top",
+		`${frame.safeTop}px`,
 	);
 }
 
@@ -37,9 +91,18 @@ export function getMarketingSectionScrollTop(element: HTMLElement, id: string): 
 		return 0;
 	}
 
-	const scrollPadding = getMarketingScrollPadding();
-	const sectionTop = window.scrollY + element.getBoundingClientRect().top;
-	return Math.max(0, sectionTop - scrollPadding);
+	const frame = getMarketingScrollFrame();
+	const target = getMarketingScrollTarget(element);
+	const targetRect = target.getBoundingClientRect();
+	const targetTop = window.scrollY + targetRect.top;
+	const targetHeight = targetRect.height;
+	let targetViewportTop = frame.safeTop;
+
+	if (frame.safeHeight > 0 && targetHeight <= frame.safeHeight) {
+		targetViewportTop = frame.safeTop + (frame.safeHeight - targetHeight) / 2;
+	}
+
+	return Math.max(0, targetTop - targetViewportTop);
 }
 
 export function scrollToMarketingSection(
@@ -50,6 +113,10 @@ export function scrollToMarketingSection(
 	const element = document.getElementById(id);
 	if (!element) {
 		return;
+	}
+
+	if (id === "faq") {
+		collapseFaqForNavigation();
 	}
 
 	const targetTop = getMarketingSectionScrollTop(element, id);
@@ -67,7 +134,7 @@ export function isInFooterScrollZone(): boolean {
 	return footerTop <= window.innerHeight - FOOTER_SPY_CLEARANCE_PX;
 }
 
-/** Pick the section whose top is closest to the header anchor and still intersects the viewport. */
+/** Pick the section closest to the visual center of the safe area below the header. */
 export function resolveActiveMarketingSection(
 	sectionIds: readonly string[],
 ): string | null {
@@ -75,7 +142,8 @@ export function resolveActiveMarketingSection(
 		return null;
 	}
 
-	const anchor = getMarketingScrollPadding();
+	const frame = getMarketingScrollFrame();
+	const anchor = frame.safeTop + frame.safeHeight * 0.5;
 	let activeId: string | null = null;
 	let closestDistance = Number.POSITIVE_INFINITY;
 
@@ -85,12 +153,13 @@ export function resolveActiveMarketingSection(
 			continue;
 		}
 
-		const rect = element.getBoundingClientRect();
-		if (rect.bottom <= anchor || rect.top >= window.innerHeight) {
+		const rect = getMarketingScrollTarget(element).getBoundingClientRect();
+		if (rect.bottom <= frame.safeTop || rect.top >= frame.safeBottom) {
 			continue;
 		}
 
-		const distance = Math.abs(rect.top - anchor);
+		const sectionCenter = rect.top + rect.height / 2;
+		const distance = Math.abs(sectionCenter - anchor);
 		if (distance < closestDistance) {
 			closestDistance = distance;
 			activeId = id;

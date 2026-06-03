@@ -6,7 +6,7 @@ import Button from "../ui/Button";
 import Section from "../ui/Section";
 import { useLatestGitHubRelease } from "../../hooks/useLatestGitHubRelease";
 import { trackMCPMateEvents } from "../../utils/analytics";
-import { NIGHTLY_RELEASE_PAGE_URL, RELEASES_PAGE_URL, attachAssetsToBuildRows, cumulativeDownloadsForRow } from "../../utils/githubRelease";
+import { NIGHTLY_RELEASE_PAGE_URL, attachAssetsToBuildRows } from "../../utils/githubRelease";
 
 function getNumberLocale(language: string): string {
   if (language === "zh") {
@@ -68,8 +68,7 @@ const QuickStartSection = () => {
     return attachAssetsToBuildRows(releaseState.latest);
   }, [releaseState]);
 
-  const historyUnavailable = releaseState.status === "ok" && releaseState.allReleases === null;
-  const showRetry = releaseState.status === "error" || historyUnavailable;
+  const showRetry = releaseState.status === "error";
 
   const onDownloadClick = useCallback((rowId: string, url: string) => {
     trackMCPMateEvents.downloadClick(rowId);
@@ -142,9 +141,7 @@ const QuickStartSection = () => {
                     const hasAsset = Boolean(row.asset);
                     const loading = releaseState.status === "loading";
                     const isBeta = row.tier === "beta";
-                    const lifetimeDownloads = releaseState.status === "ok" && releaseState.allReleases !== null
-                      ? cumulativeDownloadsForRow(releaseState.allReleases, row)
-                      : null;
+                    const latestDownloads = row.asset?.download_count ?? null;
 
                     return (
                       <tr key={row.id} className="text-brand-foreground/90">
@@ -154,7 +151,7 @@ const QuickStartSection = () => {
                           {getStatusContent(loading, hasAsset, isBeta, t)}
                         </td>
                         <td className="px-2 py-1 text-center tabular-nums section-muted">
-                          {loading || lifetimeDownloads === null ? "-" : numberFmt.format(lifetimeDownloads)}
+                          {loading || latestDownloads === null ? "-" : numberFmt.format(latestDownloads)}
                         </td>
                         <td className="px-1 py-0.5 text-center">
                           {url ? (
@@ -169,16 +166,9 @@ const QuickStartSection = () => {
                               <Download size={16} aria-hidden />
                             </a>
                           ) : !loading ? (
-                            <a
-                              href={RELEASES_PAGE_URL}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex p-1.5 rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                              aria-label={t("download.all_releases")}
-                              onClick={() => trackMCPMateEvents.externalLinkClick(RELEASES_PAGE_URL)}
-                            >
-                              <ExternalLink size={16} aria-hidden />
-                            </a>
+                            <span className="inline-flex w-9 justify-center text-slate-500" title={t("download.unavailable")}>
+                              -
+                            </span>
                           ) : (
                             <span className="inline-block w-9" />
                           )}

@@ -12,6 +12,28 @@ import { checkI18nKeys } from "../utils/i18n-dev-check";
 
 export type Language = "en" | "zh" | "ja";
 
+const VALID_LANGUAGES: readonly Language[] = ["en", "zh", "ja"];
+
+function isValidLanguage(value: string | null): value is Language {
+	return VALID_LANGUAGES.includes(value as Language);
+}
+
+function detectBrowserLanguage(): Language {
+	const browserLanguages = [...(navigator.languages ?? []), navigator.language]
+		.filter(Boolean)
+		.map((lang) => lang.toLowerCase());
+
+	if (browserLanguages.some((lang) => lang.startsWith("zh"))) {
+		return "zh";
+	}
+
+	if (browserLanguages.some((lang) => lang.startsWith("ja"))) {
+		return "ja";
+	}
+
+	return "en";
+}
+
 export interface LanguageContextType {
 	language: Language;
 	setLanguage: (lang: Language) => void;
@@ -30,23 +52,20 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 			try {
 				const params = new URLSearchParams(window.location.search);
 				const urlLang = params.get("lang");
-				const validLanguages: Language[] = ["en", "zh", "ja"];
-				if (urlLang && validLanguages.includes(urlLang as Language)) {
-					const lang = urlLang as Language;
-					localStorage.setItem("language", lang);
-					return lang;
+				if (isValidLanguage(urlLang)) {
+					localStorage.setItem("language", urlLang);
+					return urlLang;
 				}
 			} catch {
 				/* ignore */
 			}
 
-			const savedLanguage = localStorage.getItem("language") as Language | null;
-			if (savedLanguage) return savedLanguage;
+			const savedLanguage = localStorage.getItem("language");
+			if (isValidLanguage(savedLanguage)) {
+				return savedLanguage;
+			}
 
-			const browserLang = navigator.language.toLowerCase();
-			if (browserLang.startsWith("zh")) return "zh";
-			if (browserLang.startsWith("ja")) return "ja";
-			return "en";
+			return detectBrowserLanguage();
 		}
 		return "en";
 	});

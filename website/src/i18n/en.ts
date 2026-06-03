@@ -1,7 +1,7 @@
 const en = {
-	"site.title": "MCPMate: Your progressive MCP management partner",
+	"site.title": "MCPMate: Progressive MCP management partner",
 	"site.description":
-		"Import MCP once. Start simple, then add profiles, per-client tools, and setup modes as your workflow grows.",
+		"Import MCP servers once, share them across AI clients, and grow from simple setup to profiles, per-client tools, setup modes, and runtime checks.",
 
 	"nav.home": "Home",
 	"nav.works_with": "Works with",
@@ -9,17 +9,22 @@ const en = {
 	"nav.contact": "Contact",
 	"nav.preview": "Quick Start",
 	"nav.download": "Get MCPMate",
+	"nav.cta.start": "Start Now",
 	"nav.how": "How It Works",
 	"nav.modes": "Setup Modes",
 	"nav.faq": "FAQ",
 	"nav.language": "Language",
+	"theme.label": "Theme",
+	"theme.light": "Light",
+	"theme.dark": "Dark",
+	"theme.system": "System",
 
 	"hero.title": "Your progressive",
 	"hero.subtitle": "MCP management partner",
 	"hero.description":
-		"Import MCP once. Start simple, then add profiles, per-client tools, and setup modes as your workflow grows.",
+		"Start with one MCP Server and keep every step lightweight. As your usage gradually deepens, MCPMate gives you the right capabilities around efficiency, transparency, control, cost, and security.",
 	"hero.strip":
-		"A local MCP assistant that starts simple and grows with you. Not just another config file editor.",
+		"Not just another MCP config editor. MCPMate helps your MCP setup mature from import to everyday local operations.",
 	"hero.cta.download": "Get MCPMate",
 	"hero.cta.learn": "See How It Works",
 	"hero.stats.configValue": "1 setup",
@@ -35,7 +40,7 @@ const en = {
 
 	"clients.title": "Compatible AI apps",
 	"clients.subtitle":
-		"The list keeps growing. Custom apps work too when they follow the standard MCP config format.",
+		"These are the compatible app presets MCPMate ships with. If an app is not listed, add it yourself by following the form prompts.",
 	"clients.more": "More",
 	"clients.loading": "Loading client list…",
 	"clients.error": "Could not load the client list. Please try again later.",
@@ -43,28 +48,56 @@ const en = {
 
 	"features.title": "Why MCPMate",
 	"features.subtitle":
-		"Easy to begin—one import, low friction. One setup that still fits as MCP grows across clients, servers, and scenarios. No swap, no restart.",
-	"features.pillar1.title": "Configure once, use everywhere",
+		"Start with import, then keep servers, env vars, client rollout, tool visibility, and runtime proof in one local workspace as your MCP setup grows.",
+	"features.pillar1.title": "Import once, stop copying config",
 	"features.pillar1.desc":
-		"Keep servers, environment variables, and connections in one place. New clients pick up the same setup without copying JSON by hand.",
-	"features.pillar2.title": "Switch scenarios instantly",
+		"Bring servers in from the Market, snippets, or existing clients, then keep commands, env vars, and connections organized in one workspace.",
+	"features.pillar1.cta": "Read setup guide",
+	"features.pillar2.title": "Share one library across clients",
 	"features.pillar2.desc":
-		"Save coding, writing, and research as profiles. Swap the whole tool set for a task without redoing each app.",
-	"features.pillar3.title": "Each client sees what it should",
+		"Claude, Cursor, VS Code, Cherry Studio, and custom clients can reuse the same server library instead of drifting into separate copies.",
+	"features.pillar2.cta": "Explore profiles",
+	"features.pillar3.title": "Control capabilities per client",
 	"features.pillar3.desc":
-		"One shared server library, different tools per client. Less clutter, lower token use, clearer boundaries.",
-	"features.pillar4.title": "Choose the right setup mode",
+		"Use profiles and client presets to show each task only the capabilities it needs, so context stays readable and token use stays contained.",
+	"features.pillar3.cta": "See capability controls",
+	"features.pillar4.title": "Pick the right connection mode",
 	"features.pillar4.desc":
-		"Use Hosted or Unify when MCPMate should sit between the app and server. Use Transparent when you only need native config output.",
-	"features.pillar5.title": "See it, verify it",
+		"Use Hosted for durable control, Unify for a smaller session surface, or Transparent when the native client config should stay in charge.",
+	"features.pillar4.cta": "Compare setup modes",
+	"features.pillar5.title": "Prove what is actually running",
 	"features.pillar5.desc":
-		"Check whether services are ready, run test calls, and read logs in one place instead of hunting through folders.",
+		"Check readiness, client bindings, capability lists, tool calls, and logs before guessing where a config or server failed.",
+	"features.pillar5.cta": "Open inspector guide",
 	"features.read_more": "Learn more",
 	"features.explore_all": "Explore all feature guides",
 
 	"how.title": "How it works",
 	"how.subtitle":
-		"MCPMate sits between your AI apps and MCP servers so you manage connections once and send the right tools to each app.",
+		"MCPMate keeps the user-facing entry points, reusable configuration, and Rust RMCP runtime in separate layers so you can start simple and add control without changing products.",
+	"how.nodes.access.title": "Desktop, API, and extension entry points",
+	"how.nodes.access.desc":
+		"Use the desktop UI for daily operations, the REST API for automation, and the browser extension to bring discovered servers into your local workspace.",
+	"how.nodes.control.title": "Profiles, client presets, and setup modes",
+	"how.nodes.control.desc":
+		"MCPMate turns imported servers into reusable profiles and client-specific rollout choices, so configuration becomes manageable instead of hand-copied.",
+	"how.nodes.runtime.title": "Rust RMCP runtime for local MCP control",
+	"how.nodes.runtime.desc":
+		"The runtime manages MCP connections, capability discovery, tool exposure, server state, and inspection data on your machine.",
+	"how.nodes.access.label": "Access Layer",
+	"how.nodes.control.label": "Config Layer",
+	"how.nodes.runtime.label": "Runtime Layer",
+	"how.nodes.activeHint": "Details below",
+	"how.nodes.expandHint": "▼ View details",
+	"how.nodes.access.feature1": "Desktop UI: operate the local proxy from a focused control surface",
+	"how.nodes.access.feature2": "REST API: let scripts and future integrations work with the same MCPMate state",
+	"how.nodes.access.feature3": "Browser extension: shorten the path from discovering a server to importing it locally",
+	"how.nodes.control.feature1": "Profiles: group servers and capabilities by coding, writing, research, or any task",
+	"how.nodes.control.feature2": "Client presets: decide what each AI app receives without duplicating server setup",
+	"how.nodes.control.feature3": "Setup modes: choose Hosted, Unify, or Transparent based on how much control the client should keep",
+	"how.nodes.runtime.feature1": "Connection handling: keep local and remote MCP servers reachable through supported transports",
+	"how.nodes.runtime.feature2": "Capability discovery: read tools, prompts, resources, and templates before exposing them to clients",
+	"how.nodes.runtime.feature3": "Runtime inspection: surface readiness, bindings, calls, and logs when something needs proof",
 	"how.clients.label": "AI clients",
 	"how.clients.hint": "Cursor, Claude Desktop, and more",
 	"how.clients.badge": "Multi",
@@ -73,9 +106,9 @@ const en = {
 	"how.clients.label3": "Command Line",
 	"how.clients.hint3": "Shell, Python, and more",
 	"how.mcpmate.label": "MCPMate",
-	"how.mcpmate.hint": "Local proxy, profiles, and policy",
-	"how.flow.proxy": "Proxy",
-	"how.flow.route": "Route",
+	"how.mcpmate.hint": "Local workspace, profiles, and runtime",
+	"how.flow.proxy": "Access",
+	"how.flow.route": "Runtime",
 	"how.servers.label": "MCP servers",
 	"how.servers.hint": "On your machine or remote",
 	"how.servers.badge": "Hub",
@@ -88,25 +121,28 @@ const en = {
 
 	"modes.title": "Three setup modes",
 	"modes.subtitle":
-		"Whether you want lower token use or to avoid capability abuse, there is a setup mode that fits.",
+		"Different clients need different levels of MCPMate involvement. Pick the mode that matches the workflow instead of forcing one integration style everywhere.",
 	"modes.hosted.title": "Hosted mode",
 	"modes.hosted.tagline": "Durable control · live switching",
+	"modes.hosted.choice": "Choose Hosted for daily control.",
 	"modes.hosted.desc":
-		"Your client talks to one MCPMate endpoint. Profile switches and policy stay in the middle layer.",
+		"Your client talks to one MCPMate endpoint while profile switching and visibility policy stay in the middle layer.",
 	"modes.hosted.b1": "Remembers working configuration",
 	"modes.hosted.b2": "Switch profiles without restarting",
 	"modes.hosted.b3": "Best for daily driver use",
 	"modes.unify.title": "Unify mode",
 	"modes.unify.tagline": "Light entry · on-demand discovery",
+	"modes.unify.choice": "Choose Unify when token and context size matter.",
 	"modes.unify.desc":
-		"Your app starts with a small built-in tool set and discovers full server capabilities on demand during the session—token savings on par with CLI or Skills.",
+		"Your app starts with a small built-in tool surface and discovers broader server capabilities on demand during the session.",
 	"modes.unify.b1": "Keeps tool lists small",
 	"modes.unify.b2": "Session-local exploration",
 	"modes.unify.b3": "Best when tokens matter",
 	"modes.transparent.title": "Transparent mode",
 	"modes.transparent.tagline": "Native compatibility · direct output",
+	"modes.transparent.choice": "Choose Transparent when native client compatibility matters.",
 	"modes.transparent.desc":
-		"Writes selected servers into each app's native MCP config file. Best when the client must see servers directly.",
+		"Writes selected servers into each app's native MCP config file. Best when compatibility matters more than MCPMate-side runtime control.",
 	"modes.transparent.b1": "Native client config output",
 	"modes.transparent.b2": "Direct upstream access",
 	"modes.transparent.b3": "Coexists with other modes",
@@ -129,9 +165,10 @@ const en = {
 	"download.status_beta": "Beta",
 	"download.available": "Available",
 	"download.loading": "Loading…",
-	"download.all_releases": "All releases",
-	"download.load_error": "Release metadata could not be loaded. You can still open the releases page.",
+	"download.unavailable": "Unavailable",
+	"download.load_error": "Release metadata could not be loaded. Please retry.",
 	"download.retry": "Retry",
+	"download.all_releases": "All releases",
 	"download.table_caption": "MCPMate desktop installers linked to the latest GitHub release",
 	"download.nightly.note": "Daily Debug installers are published separately from stable releases:",
 	"download.latest_label": "Latest",
@@ -141,6 +178,8 @@ const en = {
 	"download.arch_arm64": "arm64",
 	"download.arch_x64": "x64",
 	"download.cta_for": "Download for {platform}",
+	"download.desktop_downloads": "Desktop downloads",
+	"download.desktop_note": "Use a desktop computer",
 	"download.available_for": "Available for macOS, Windows, and Linux",
 	"download.also_available_for": "Also available for {platforms}",
 	"download.getting_started": "Getting Started",
@@ -178,7 +217,7 @@ const en = {
 	"contact.success.message": "Thank you for contacting us. We'll get back to you as soon as possible.",
 
 	"footer.description":
-		"Your progressive MCP management partner. Grows with the work you take on.",
+		"Your progressive MCP management partner, growing with your skills, workflows, and responsibilities.",
 	"footer.copyright": "© {year} MCPMate. All rights reserved.",
 	"footer.product": "Product",
 	"footer.resources": "Resources",
@@ -193,28 +232,30 @@ const en = {
 
 	"faq.title": "FAQ",
 	"faq.lead":
-		"Need help? Read the quick start or email us. We usually reply within one business day.",
+		"Still have questions? Check the docs, join the community, or contact us and tell us what you are trying to solve.",
 	"faq.cta.contact": "Contact us",
 	"faq.cta.docs": "Documentation",
-	"faq.functions.title": "What does MCPMate do?",
+	"faq.functions.title": "What is progressive MCP management?",
 	"faq.functions.answer":
-		"MCPMate runs on your computer. Import existing configs, connect servers, choose which tools each client sees, and check that everything works. Start by adding a server; add profiles and policies when you need them.",
-	"faq.usage.title": "Who is MCPMate for?",
-	"faq.usage.answer":
-		"Whether you are trying MCP for the first time or juggling several AI apps, you can start light: import, capture from the browser extension, and use the menu bar panel. When you are ready, add profiles, per-client tool lists, the built-in inspector, and setup modes without changing tools.",
-	"faq.vs_clients.title": "How is MCPMate different from the MCP settings built into my client?",
+		"MCP is important, and it changes quickly. People come to it at different stages: at first, you may only want to connect one Server; later, you may run into repeated setup, multiple AI apps sharing the same capabilities, longer tool lists, token cost, unclear runtime state, and finer permission, security, or usage-control needs. MCP management usually grows with how deeply you use it. MCPMate calls this progressive: you can start at low cost, then turn on stronger management, control, pre-checks, and visibility as your needs become more complex. Simple setups stay simple, while deeper workflows still have room to grow.",
+	"faq.import_tool.title": "Is MCPMate just an MCP configuration manager?",
+	"faq.import_tool.answer":
+		"Importing and maintaining configuration is the first benefit: it reduces copy-paste setup and keeps repeated work out of each app. The larger value comes once everything is managed in one place, where you can reuse servers, shape each client around the work it should do, choose the right control mode, and see the runtime state and usage instead of guessing.",
+	"faq.getting_started.title": "How does MCPMate lower the barrier to getting started?",
+	"faq.getting_started.answer":
+		"MCPMate tries to shorten the path from discovering a Server to actually using it. On first launch, onboarding detects existing MCP clients and MCP Servers on your machine; if there are no usable local resources yet, you can choose directly from the starter list maintained by MCPMate. After that, you can choose from the Server catalog, or drag selected configuration snippets from web pages, chat messages, or documents into the import component. MCPMate will try to clean mixed text and identify importable content. The browser extension is another entry point: it can detect MCP Server configuration or code snippets on a page and offer a floating button that sends them to MCPMate for preview and import. Except for onboarding, Server import actions go through Inspector pre-checks, so you can see which tools a Server exposes and whether they can be called normally before confirming installation.",
+	"faq.vs_clients.title": "How is MCPMate different from the MCP settings built into my AI apps?",
 	"faq.vs_clients.answer":
-		"Most apps only manage their own MCP settings. MCPMate keeps servers and configs for all your clients in one place: import once, reuse profiles, and check that things work before you switch apps.",
-	"faq.compatible.title": "Can I use MCPMate with my existing MCP tools?",
-	"faq.compatible.answer":
-		"Yes. Import from Claude Desktop, Cursor, VS Code, and other clients. Add servers from JSON, the built-in market, the browser extension, or pasted web snippets.",
-	"faq.clients.title": "Can MCPMate manage multiple AI clients?",
-	"faq.clients.answer":
-		"Yes. MCPMate finds most AI clients on your machine and lets you add others that use the usual MCP config layout. Configure once; profiles, tools, and setup modes stay in sync from one hub so changing tasks does not mean editing every app again.",
-	"faq.security.title": "How does MCPMate handle security and privacy?",
-	"faq.security.answer":
-		"MCPMate runs entirely on your machine. You control which tools and capabilities are exposed per client and per profile. No tool content is sent to external servers.",
-
+		"Built-in MCP settings often vary from app to app. MCPMate lets you manage servers through one consistent method, so you spend less time relearning setup flows and more of the add, remove, and switch work feels the same. It also gives AI apps access to higher-level capabilities; for example, an app can receive only the tools needed for the current work instead of seeing every tool all the time.",
+	"faq.progressive_disclosure.title": "How does MCPMate reduce tool list bloat and token use?",
+	"faq.progressive_disclosure.answer":
+		"MCPMate lets you use Profile to configure the tools required for a specific business scenario, so the AI app only sees the selected tools while it is running instead of pushing every MCP Server capability into the AI app's context and spending tokens on tools it does not need. If you do not want to configure tool sets in advance, use Unify Mode. MCPMate layers and isolates all MCP Server tool capability information, such as names, descriptions, and schemas, behind the scenes, and exposes only three standard MCP tools to the AI app: Catalog, Details, and Call. This progressive disclosure follows the same principle as CLI or Skills mechanisms: it reduces context burden while letting the AI app call available tools on demand as much as possible.",
+	"faq.security_reliability.title": "How does MCPMate handle security, privacy, and reliability?",
+	"faq.security_reliability.answer":
+		"MCPMate is local-first: your MCP configuration, runtime state, and tool-call management stay on your machine. The only online interaction today happens during onboarding and client setup, and it is a one-way, read-only Public Discovery lookup used to show preset client configuration and the Server catalog. Secure storage is coming soon: MCPMate will avoid storing sensitive information, such as tokens and keys, as plain text in configuration files. For reliability, MCPMate's runtime core is built in Rust and continuously aligned with MCP official specifications and SDK practices for connection handling, capability discovery, tool exposure, and runtime inspection.",
+	"faq.support.title": "What if I run into problems while using MCPMate?",
+	"faq.support.answer":
+		"MCPMate keeps help, diagnosis, and rollback as local and controllable as possible. In-app guides and context help open the relevant documentation for the current action; you can also get support through Discord, Feishu, GitHub Discussions, the source repository, or email. As a safeguard, MCPMate automatically backs up MCP Server configuration lists before rewriting them. Except for sensitive information, enhanced capability data is stored transparently in the MCPMate folder under your user directory. MCPMate mainly connects at the configuration layer and does not require changing your existing MCP Servers or AI apps; if you need to roll back, restoring a backup or switching back to the original configuration path is usually enough.",
 	"notice.construction.ribbon": "Updating",
 	"notice.construction.tooltip": "We're actively updating; details may change.",
 } as const;

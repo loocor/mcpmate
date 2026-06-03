@@ -35,7 +35,7 @@ const Section = ({
 
   return (
     <section id={id} className={sectionClass}>
-      <div className={contentClass}>
+      <div className={contentClass} data-marketing-scroll-content={id ? '' : undefined}>
         {(title || subtitle) && (
           <div className={headerClass}>
             {title && (
