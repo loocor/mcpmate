@@ -6,7 +6,7 @@ import {
 	Server,
 	SlidersHorizontal,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { scrollToMarketingSection } from "../../lib/section-scroll";
 import { useLanguage } from "../LanguageProvider";
@@ -91,6 +91,19 @@ const PillarCard = ({
 		}
 	};
 
+	const handlePreviewKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+		if (!isPreviewToggleEnabled || event.currentTarget !== event.target) {
+			return;
+		}
+
+		if (event.key !== "Enter" && event.key !== " ") {
+			return;
+		}
+
+		event.preventDefault();
+		onPreviewToggle(id);
+	};
+
 	const ctaContent = (
 		<>
 			{ctaLabel}
@@ -105,7 +118,11 @@ const PillarCard = ({
 	return (
 		<article
 			onClick={handlePreviewClick}
-			className={`feature-card glass-card-hover group/feature relative flex min-h-[17rem] flex-col overflow-hidden rounded-2xl p-5 transition-[border-color,box-shadow,transform] duration-300 ease-out ${activeClass} ${interactiveClass}`}
+			onKeyDown={handlePreviewKeyDown}
+			role={isPreviewToggleEnabled ? "button" : undefined}
+			tabIndex={isPreviewToggleEnabled ? 0 : undefined}
+			aria-pressed={isPreviewToggleEnabled ? isPreviewActive : undefined}
+			className={`feature-card glass-card-hover group/feature relative flex min-h-[17rem] flex-col overflow-hidden rounded-2xl p-5 transition-[border-color,box-shadow,transform] duration-300 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg ${activeClass} ${interactiveClass}`}
 		>
 			<div
 				className="feature-card__media pointer-events-none absolute inset-x-0 top-0 h-[60%] overflow-hidden rounded-t-2xl border-b border-brand-border-subtle bg-brand-overlay opacity-0 shadow-glow-sm [clip-path:inset(0_0_100%_0)] transition-[clip-path,opacity] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/feature:opacity-100 group-hover/feature:[clip-path:inset(0_0_0_0)] group-focus-within/feature:opacity-100 group-focus-within/feature:[clip-path:inset(0_0_0_0)]"
