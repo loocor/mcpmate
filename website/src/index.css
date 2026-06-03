@@ -67,18 +67,24 @@
 :root {
 	--transition-duration: 200ms;
 	--marketing-scroll-padding: 4.5rem;
+	--marketing-scroll-safe-top: 9rem;
 }
 
 html.home-scroll-snap {
 	scroll-snap-type: y proximity;
-	scroll-padding-top: var(--marketing-scroll-padding);
+	scroll-padding-top: var(--marketing-scroll-safe-top);
 }
 
 .snap-section {
+	scroll-snap-align: none;
+	scroll-snap-stop: normal;
+	box-sizing: border-box;
+}
+
+.snap-section [data-marketing-scroll-content] {
 	scroll-snap-align: start;
 	scroll-snap-stop: normal;
-	scroll-margin-top: var(--marketing-scroll-padding);
-	box-sizing: border-box;
+	scroll-margin-top: var(--marketing-scroll-safe-top);
 }
 
 .snap-section-hero {
@@ -355,6 +361,66 @@ html {
 		font-weight: 600;
 	}
 
+	.mobile-nav-preferences {
+		margin-top: auto;
+		display: grid;
+		gap: 0.625rem;
+		border-top: 1px solid var(--brand-border-subtle);
+		padding-top: 1rem;
+	}
+
+	.mobile-nav-preference-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.875rem;
+	}
+
+	.mobile-nav-preference-label {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		line-height: 1rem;
+		color: var(--brand-muted);
+	}
+
+	.mobile-nav-segmented {
+		display: inline-flex;
+		min-height: 2.125rem;
+		overflow: hidden;
+		border: 1px solid var(--brand-border-subtle);
+		border-radius: 0.5rem;
+		background-color: var(--brand-overlay);
+		padding: 0.125rem;
+	}
+
+	.mobile-nav-segmented-button {
+		display: inline-flex;
+		min-width: 2.125rem;
+		align-items: center;
+		justify-content: center;
+		border: 0;
+		border-radius: 0.375rem;
+		background-color: transparent;
+		padding: 0.375rem 0.5rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		line-height: 1rem;
+		color: var(--brand-foreground);
+		cursor: pointer;
+		transition:
+			background-color var(--transition-duration) ease-in-out,
+			color var(--transition-duration) ease-in-out;
+	}
+
+	.mobile-nav-segmented-button:hover {
+		background-color: var(--brand-overlay-hover);
+	}
+
+	.mobile-nav-segmented-button.is-active {
+		background-color: var(--brand-accent);
+		color: var(--brand-accent-fg);
+	}
+
 	.mobile-nav-download {
 		display: block;
 		width: 100%;
@@ -475,6 +541,14 @@ html {
 	}
 
 	/* How-it-works: active card shell + downward pointer (one fill source, no panel caret) */
+	@media (min-width: 768px) {
+		.how-nodes-stage {
+			width: min(calc(100vw - 3rem), 78rem);
+			margin-left: 50%;
+			transform: translateX(-50%);
+		}
+	}
+
 	.how-node-shell {
 		position: relative;
 		overflow: visible;

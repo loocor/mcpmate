@@ -2,7 +2,7 @@ import { Github, Mail, Twitter } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import logoImage from "../../assets/images/logo.svg";
 import { BROWSER_EXTENSION_LINKS } from "../../lib/browser-extensions";
-import { getMarketingScrollPadding, syncMarketingScrollPadding } from "../../lib/section-scroll";
+import { scrollToMarketingSection } from "../../lib/section-scroll";
 import { trackMCPMateEvents } from "../../utils/analytics";
 import { useLanguage } from "../LanguageProvider";
 import { useTheme } from "../ThemeProvider";
@@ -96,11 +96,7 @@ const Footer = () => {
 			navigate(`/?section=${encodeURIComponent(id)}`);
 			return;
 		}
-		syncMarketingScrollPadding();
-		const offset = Math.max(getMarketingScrollPadding(), 80);
-		const elementPosition = element.getBoundingClientRect().top;
-		const offsetPosition = elementPosition + window.scrollY - offset;
-		window.scrollTo({ top: offsetPosition, behavior: "smooth" });
+		scrollToMarketingSection(id);
 	};
 
 	const footerShellClass = getFooterShellClass(isMarketingHome, isDocPage);

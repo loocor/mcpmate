@@ -1,9 +1,11 @@
-import { Menu, X } from "lucide-react";
+import { Menu, Monitor, Moon, Sun, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import logoImage from "../../assets/images/logo.svg";
+import { useLanguageNavigation } from "../../hooks/useLanguageNavigation";
 import { useScrollSpy } from "../../hooks/useScrollSpy";
+import { LANGUAGE_OPTIONS } from "../../lib/languages";
 import {
 	MARKETING_NAV_ITEMS,
 	MARKETING_NAV_SECTIONS,
@@ -11,13 +13,19 @@ import {
 	type MarketingNavSectionId,
 } from "../../lib/section-scroll";
 import { trackMCPMateEvents } from "../../utils/analytics";
-import { useLanguage } from "../LanguageProvider";
+import { useLanguage, type Language } from "../LanguageProvider";
 import { useTheme } from "../ThemeProvider";
 
 const NAV_TEXT_LINK_BASE =
 	"relative inline-flex items-center border-0 bg-transparent p-0 text-[15px] font-medium leading-none transition-colors pb-1 text-brand-foreground/85 hover:text-brand-accent cursor-pointer xl:text-base";
 const NAV_CTA_LINK_CLASS =
 	"-mt-1 inline-flex items-center rounded-md bg-brand-accent px-3 py-1.5 text-[15px] font-semibold leading-none text-brand-accent-fg transition-all duration-200 hover:bg-brand-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg dark:hover:text-white dark:hover:ring-2 dark:hover:ring-white dark:hover:ring-offset-2 dark:hover:ring-offset-brand-bg dark:focus-visible:ring-2 dark:focus-visible:ring-white dark:focus-visible:ring-offset-2 dark:focus-visible:ring-offset-brand-bg xl:text-base";
+
+const MOBILE_THEME_OPTIONS = [
+	{ mode: "light", icon: Sun, labelKey: "theme.light" },
+	{ mode: "dark", icon: Moon, labelKey: "theme.dark" },
+	{ mode: "system", icon: Monitor, labelKey: "theme.system" },
+] as const;
 
 function getNavLinkClass(sectionId: MarketingNavSectionId, activeSection: string | null): string {
 	if (activeSection !== sectionId) {
@@ -55,7 +63,8 @@ function getHeaderClass(isOpen: boolean, scrolled: boolean, isHome: boolean): st
 
 const Navbar = () => {
 	const { t } = useLanguage();
-	const { theme } = useTheme();
+	const { language, selectLanguage } = useLanguageNavigation();
+	const { mode, setMode, theme } = useTheme();
 	const navigate = useNavigate();
 	const location = useLocation();
 	const [isOpen, setIsOpen] = useState(false);
@@ -95,6 +104,11 @@ const Navbar = () => {
 		setIsOpen((open) => !open);
 	};
 
+	const handleLanguageSelect = (newLanguage: Language) => {
+		selectLanguage(newLanguage);
+		setIsOpen(false);
+	};
+
 	const scrollToSection = (id: string) => {
 		trackMCPMateEvents.navClick(id);
 
@@ -110,26 +124,68 @@ const Navbar = () => {
 
 	const mobileMenu = isOpen
 		? createPortal(
-				<div
-					className={`mobile-nav-overlay ${theme} fixed inset-0 z-[80] lg:hidden`}
-					role="dialog"
-					aria-modal="true"
-					aria-label="Navigation menu"
-				>
-					<nav className="mobile-nav-overlay__nav">
-						{MARKETING_NAV_ITEMS.map(({ id, labelKey }) => (
-							<button
-								key={id}
-								type="button"
-								onClick={() => scrollToSection(id)}
-								className={getMobileNavLinkClass(id, activeSection)}
-							>
-								{t(labelKey)}
-							</button>
-						))}
-					</nav>
-				</div>,
-				document.body,
+			<div
+				className={`mobile-nav-overlay ${theme} fixed inset-0 z-[80] lg:hidden`}
+				role="dialog"
+				aria-modal="true"
+				aria-label="Navigation menu"
+			>
+				<nav className="mobile-nav-overlay__nav">
+					{MARKETING_NAV_ITEMS.map(({ id, labelKey }) => (
+						<button
+							key={id}
+							type="button"
+							onClick={() => scrollToSection(id)}
+							className={getMobileNavLinkClass(id, activeSection)}
+						>
+							{t(labelKey)}
+						</button>
+					))}
+					<div className="mobile-nav-preferences">
+						<div className="mobile-nav-preference-row">
+							<span className="mobile-nav-preference-label">{t("theme.label")}</span>
+							<div className="mobile-nav-segmented" role="group" aria-label={t("theme.label")}>
+								{MOBILE_THEME_OPTIONS.map(({ mode: themeMode, icon: Icon, labelKey }) => {
+									const isActive = mode === themeMode;
+									return (
+										<button
+											key={themeMode}
+											type="button"
+											aria-label={t(labelKey)}
+											aria-pressed={isActive}
+											className={`mobile-nav-segmented-button ${isActive ? "is-active" : ""}`}
+											onClick={() => setMode(themeMode)}
+										>
+											<Icon size={15} strokeWidth={1.75} aria-hidden />
+										</button>
+									);
+								})}
+							</div>
+						</div>
+						<div className="mobile-nav-preference-row">
+							<span className="mobile-nav-preference-label">{t("footer.language")}</span>
+							<div className="mobile-nav-segmented" role="group" aria-label={t("footer.language")}>
+								{LANGUAGE_OPTIONS.map((option) => {
+									const isActive = option.code === language;
+									return (
+										<button
+											key={option.code}
+											type="button"
+											aria-label={option.label}
+											aria-pressed={isActive}
+											className={`mobile-nav-segmented-button ${isActive ? "is-active" : ""}`}
+											onClick={() => handleLanguageSelect(option.code)}
+										>
+											{option.badge}
+										</button>
+									);
+								})}
+							</div>
+						</div>
+					</div>
+				</nav>
+			</div>,
+			document.body,
 		)
 		: null;
 

@@ -90,7 +90,7 @@ const HowItWorks = () => {
 			subtitleClassName="section-muted"
 		>
 			<div className="mx-auto max-w-6xl">
-				<div className="relative mb-12 grid grid-cols-1 items-stretch gap-6 md:mb-6 md:grid-cols-[1fr_auto_1.2fr_auto_1fr] md:items-stretch md:gap-6">
+				<div className="how-nodes-stage relative mb-12 grid grid-cols-1 items-stretch gap-6 md:mb-6 md:grid-cols-[1fr_auto_1.2fr_auto_1fr] md:items-stretch md:gap-6">
 					<HowNodeShell active={activeNode === "access"} tone="accent">
 						<button
 							type="button"

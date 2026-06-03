@@ -166,8 +166,8 @@ const QuickStartSection = () => {
                               <Download size={16} aria-hidden />
                             </a>
                           ) : !loading ? (
-                            <span className="inline-flex p-1.5 rounded-md text-slate-500" aria-label={t("download.unavailable")}>
-                              <ExternalLink size={16} aria-hidden />
+                            <span className="inline-flex w-9 justify-center text-slate-500" title={t("download.unavailable")}>
+                              -
                             </span>
                           ) : (
                             <span className="inline-block w-9" />

@@ -10,12 +10,17 @@ export type ReleaseFetchState =
 			latest: GitHubLatestRelease;
 	  };
 
+function isBrowserOffline(): boolean {
+	return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
 /**
  * Loads the public download manifest and maps installer assets to admin redirect URLs.
  */
 export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => void } {
 	const [state, setState] = useState<ReleaseFetchState>({ status: "loading" });
 	const [tick, setTick] = useState(0);
+	const [offline, setOffline] = useState(isBrowserOffline);
 
 	useEffect(() => {
 		const ac = new AbortController();
@@ -23,7 +28,15 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 
 		void (async () => {
 			try {
-				const latestRes = await fetch(DOWNLOADS_MANIFEST_API_URL, { signal: ac.signal });
+				if (offline) {
+					setState({ status: "error", message: "offline" });
+					return;
+				}
+
+				const latestRes = await fetch(DOWNLOADS_MANIFEST_API_URL, {
+					cache: "no-store",
+					signal: ac.signal,
+				});
 
 				if (ac.signal.aborted) {
 					return;
@@ -45,6 +58,11 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 					return;
 				}
 
+				if (isBrowserOffline()) {
+					setState({ status: "error", message: "offline" });
+					return;
+				}
+
 				setState({ status: "ok", latest: releaseFromDownloadManifest(manifest) });
 			} catch (e) {
 				if (ac.signal.aborted) {
@@ -55,7 +73,28 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 		})();
 
 		return () => ac.abort();
-	}, [tick]);
+	}, [offline, tick]);
+
+	useEffect(() => {
+		if (typeof window === "undefined") {
+			return;
+		}
+
+		const handleOffline = () => {
+			setOffline(true);
+		};
+		const handleOnline = () => {
+			setOffline(false);
+			setTick((n) => n + 1);
+		};
+
+		window.addEventListener("offline", handleOffline);
+		window.addEventListener("online", handleOnline);
+		return () => {
+			window.removeEventListener("offline", handleOffline);
+			window.removeEventListener("online", handleOnline);
+		};
+	}, []);
 
 	const refetch = useCallback(() => {
 		setTick((n) => n + 1);

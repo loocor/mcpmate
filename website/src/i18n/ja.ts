@@ -57,10 +57,10 @@ const ja = {
 	"features.pillar2.desc":
 		"Claude、Cursor、VS Code、Cherry Studio、独自クライアントで同じサーバーライブラリを再利用し、アプリごとのコピーが分岐していくのを防ぎます。",
 	"features.pillar2.cta": "プロファイルを見る",
-	"features.pillar3.title": "各クライアントに必要なツールだけを見せる",
+	"features.pillar3.title": "クライアント別に能力を制御",
 	"features.pillar3.desc":
-		"プロファイルとクライアントプリセットで、タスクに必要なツール、プロンプト、リソースだけを見せ、文脈を読みやすく保ちます。",
-	"features.pillar3.cta": "ツール制御を見る",
+		"プロファイルとクライアントプリセットで、タスクに必要な能力だけを見せ、文脈を読みやすく保ちます。",
+	"features.pillar3.cta": "能力制御を見る",
 	"features.pillar4.title": "適切な接続モードを選ぶ",
 	"features.pillar4.desc":
 		"継続的に制御するなら Hosted、会話中のツール面を小さくしたいなら Unify、ネイティブ設定に主導権を残すなら Transparent を選べます。",
@@ -165,6 +165,7 @@ const ja = {
 	"download.unavailable": "利用不可",
 	"download.load_error": "リリース情報を読み込めませんでした。再試行してください。",
 	"download.retry": "再試行",
+	"download.all_releases": "すべてのリリース",
 	"download.table_caption": "GitHub の最新リリースに紐づく MCPMate デスクトップインストーラ",
 	"download.nightly.note": "毎日の Debug インストーラは安定版とは別に公開されます:",
 	"download.latest_label": "最新",

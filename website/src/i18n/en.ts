@@ -57,10 +57,10 @@ const en = {
 	"features.pillar2.desc":
 		"Claude, Cursor, VS Code, Cherry Studio, and custom clients can reuse the same server library instead of drifting into separate copies.",
 	"features.pillar2.cta": "Explore profiles",
-	"features.pillar3.title": "Expose only the tools each client needs",
+	"features.pillar3.title": "Control capabilities per client",
 	"features.pillar3.desc":
-		"Use profiles and client presets to show each task only the tools, prompts, and resources it needs, so context stays readable and token use stays contained.",
-	"features.pillar3.cta": "See tool controls",
+		"Use profiles and client presets to show each task only the capabilities it needs, so context stays readable and token use stays contained.",
+	"features.pillar3.cta": "See capability controls",
 	"features.pillar4.title": "Pick the right connection mode",
 	"features.pillar4.desc":
 		"Use Hosted for durable control, Unify for a smaller session surface, or Transparent when the native client config should stay in charge.",
@@ -168,6 +168,7 @@ const en = {
 	"download.unavailable": "Unavailable",
 	"download.load_error": "Release metadata could not be loaded. Please retry.",
 	"download.retry": "Retry",
+	"download.all_releases": "All releases",
 	"download.table_caption": "MCPMate desktop installers linked to the latest GitHub release",
 	"download.nightly.note": "Daily Debug installers are published separately from stable releases:",
 	"download.latest_label": "Latest",
