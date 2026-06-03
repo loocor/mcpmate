@@ -238,10 +238,6 @@ function Hero(): JSX.Element {
               {t('hero.description')}
             </p>
 
-            <p className="max-w-xl text-sm leading-relaxed section-muted">
-              {t('hero.scenario')}
-            </p>
-
             <div id="download" className="flex w-full flex-col gap-4 pt-2 sm:flex-row sm:items-start">
               <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:items-center">
                 <div className="group/download relative w-full sm:inline-block">

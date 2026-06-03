@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
 	analyzeLogoNeedsDarkInvert,
 	CLIENT_LOGO_DARK_INVERT_CLASS,
+	logoMustNeverDarkInvert,
 	logoNeedsDarkInvertFallback,
 } from "../../lib/client-logo-dark-mode";
 import { loadWebsiteClientPresets, type WebsiteClientPreset } from "../../lib/admin-discovery";
@@ -30,10 +31,13 @@ function ClientTile({
 	const { t } = useLanguage();
 	const showLogo = Boolean(client.logoUrl) && !failedLogos.has(client.identifier);
 	const initial = client.displayName.trim().charAt(0).toUpperCase() || "?";
-	const [invertOnDark, setInvertOnDark] = useState(() => logoNeedsDarkInvertFallback(client.identifier));
+	const neverInvert = logoMustNeverDarkInvert(client.identifier);
+	const [invertOnDark, setInvertOnDark] = useState(() =>
+		neverInvert ? false : logoNeedsDarkInvertFallback(client.identifier),
+	);
 
 	useEffect(() => {
-		if (!client.logoUrl) {
+		if (!client.logoUrl || neverInvert) {
 			return;
 		}
 
@@ -53,7 +57,7 @@ function ClientTile({
 		return () => {
 			cancelled = true;
 		};
-	}, [client.identifier, client.logoUrl]);
+	}, [client.identifier, client.logoUrl, neverInvert]);
 
 	const logoClassName = ["h-8 w-8 rounded-lg object-contain", invertOnDark ? CLIENT_LOGO_DARK_INVERT_CLASS : ""]
 		.filter(Boolean)

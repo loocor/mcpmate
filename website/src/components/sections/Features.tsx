@@ -7,7 +7,7 @@ import {
 	SlidersHorizontal,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { scrollToMarketingSection } from "../../lib/section-scroll";
 import { useLanguage } from "../LanguageProvider";
 import Section from "../ui/Section";
@@ -19,11 +19,26 @@ interface PillarCardProps {
 	icon: ReactNode;
 	videoSrc: string;
 	ctaLabel: string;
-	onAction: () => void;
+	ctaTo?: string;
+	onAction?: () => void;
 	isPreviewActive: boolean;
 	isPreviewToggleEnabled: boolean;
 	onPreviewToggle: (id: string) => void;
 }
+
+interface Pillar {
+	id: string;
+	title: string;
+	description: string;
+	ctaLabel: string;
+	icon: ReactNode;
+	videoSrc: string;
+	docPath?: string;
+	scrollToId?: string;
+}
+
+const featureCtaClassName =
+	"feature-card__cta group/cta relative z-20 mt-5 inline-flex w-fit cursor-pointer items-center gap-1 rounded-sm text-sm font-medium text-brand-accent underline decoration-transparent underline-offset-4 transition-[color,text-decoration-color,transform] duration-200 ease-out hover:translate-x-0.5 hover:text-brand-accent-hover hover:decoration-brand-accent-hover focus:outline-none focus-visible:text-brand-accent-hover focus-visible:decoration-brand-accent-hover focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg";
 
 function getDocsLocale(language: string): "en" | "ja" | "zh" {
 	if (language === "zh" || language === "ja") {
@@ -61,6 +76,7 @@ const PillarCard = ({
 	icon,
 	videoSrc,
 	ctaLabel,
+	ctaTo,
 	onAction,
 	isPreviewActive,
 	isPreviewToggleEnabled,
@@ -74,6 +90,17 @@ const PillarCard = ({
 			onPreviewToggle(id);
 		}
 	};
+
+	const ctaContent = (
+		<>
+			{ctaLabel}
+			<ArrowRight
+				size={14}
+				className="transition-transform duration-200 group-hover/cta:translate-x-0.5 group-focus-visible/cta:translate-x-0.5"
+				aria-hidden
+			/>
+		</>
+	);
 
 	return (
 		<article
@@ -108,17 +135,26 @@ const PillarCard = ({
 					<p className="feature-card__description flex-1 text-sm leading-relaxed section-muted transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/feature:translate-y-14 group-hover/feature:opacity-0 group-focus-within/feature:translate-y-14 group-focus-within/feature:opacity-0">
 						{description}
 					</p>
-					<button
-						type="button"
-						onClick={(event) => {
-							event.stopPropagation();
-							onAction();
-						}}
-						className="feature-card__cta mt-5 inline-flex w-fit items-center gap-1 text-sm font-medium text-brand-accent transition-colors hover:text-brand-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg"
-					>
-						{ctaLabel}
-						<ArrowRight size={14} aria-hidden />
-					</button>
+					{ctaTo ? (
+						<Link
+							to={ctaTo}
+							onClick={(event) => event.stopPropagation()}
+							className={featureCtaClassName}
+						>
+							{ctaContent}
+						</Link>
+					) : (
+						<button
+							type="button"
+							onClick={(event) => {
+								event.stopPropagation();
+								onAction?.();
+							}}
+							className={featureCtaClassName}
+						>
+							{ctaContent}
+						</button>
+					)}
 				</div>
 			</div>
 
@@ -134,23 +170,12 @@ const PillarCard = ({
 
 const Features = () => {
 	const { t, language } = useLanguage();
-	const navigate = useNavigate();
 	const previewToggleEnabled = usePreviewToggleEnabled();
 	const [activePillarId, setActivePillarId] = useState<string | null>(null);
 	const locale = getDocsLocale(language);
 	const featureDocsBase = `/docs/${locale}`;
-	const openDoc = (path: string) => navigate(path);
 
-	const pillars: Array<{
-		id: string;
-		title: string;
-		description: string;
-		ctaLabel: string;
-		icon: ReactNode;
-		videoSrc: string;
-		docPath?: string;
-		scrollToId?: string;
-	}> = [
+	const pillars: Pillar[] = [
 		{
 			id: "configure",
 			title: t("features.pillar1.title"),
@@ -198,35 +223,30 @@ const Features = () => {
 		},
 	];
 
-	const handlePillarAction = (pillar: (typeof pillars)[number]) => {
-		if (pillar.scrollToId) {
-			scrollToMarketingSection(pillar.scrollToId);
-			return;
-		}
-		if (pillar.docPath) {
-			openDoc(pillar.docPath);
-		}
-	};
-
 	const togglePillarPreview = (id: string) => {
 		setActivePillarId((currentId) => (currentId === id ? null : id));
 	};
 
-	const renderPillar = (pillar: (typeof pillars)[number]) => (
-		<PillarCard
-			key={pillar.id}
-			id={pillar.id}
-			title={pillar.title}
-			description={pillar.description}
-			icon={pillar.icon}
-			videoSrc={pillar.videoSrc}
-			ctaLabel={pillar.ctaLabel}
-			onAction={() => handlePillarAction(pillar)}
-			isPreviewActive={previewToggleEnabled && activePillarId === pillar.id}
-			isPreviewToggleEnabled={previewToggleEnabled}
-			onPreviewToggle={togglePillarPreview}
-		/>
-	);
+	const renderPillar = (pillar: Pillar) => {
+		const scrollToId = pillar.scrollToId;
+
+		return (
+			<PillarCard
+				key={pillar.id}
+				id={pillar.id}
+				title={pillar.title}
+				description={pillar.description}
+				icon={pillar.icon}
+				videoSrc={pillar.videoSrc}
+				ctaLabel={pillar.ctaLabel}
+				ctaTo={pillar.docPath}
+				onAction={scrollToId ? () => scrollToMarketingSection(scrollToId) : undefined}
+				isPreviewActive={previewToggleEnabled && activePillarId === pillar.id}
+				isPreviewToggleEnabled={previewToggleEnabled}
+				onPreviewToggle={togglePillarPreview}
+			/>
+		);
+	};
 
 	return (
 		<Section
@@ -249,14 +269,13 @@ const Features = () => {
 			</div>
 
 			<div className="mt-6 text-center md:mt-8">
-				<button
-					type="button"
-					onClick={() => navigate(`${featureDocsBase}/features-overview`)}
+				<Link
+					to={`${featureDocsBase}/features-overview`}
 					className="inline-flex items-center gap-1 text-sm font-medium text-brand-accent transition-colors hover:text-brand-accent-hover"
 				>
 					{t("features.explore_all")}
 					<ArrowRight size={14} aria-hidden />
-				</button>
+				</Link>
 			</div>
 		</Section>
 	);

@@ -18,12 +18,11 @@ type FAQItem = readonly [string, string];
 const faqItems: readonly FAQItem[] = [
 	["faq.functions.title", "faq.functions.answer"],
 	["faq.import_tool.title", "faq.import_tool.answer"],
+	["faq.getting_started.title", "faq.getting_started.answer"],
 	["faq.vs_clients.title", "faq.vs_clients.answer"],
-	["faq.runtime.title", "faq.runtime.answer"],
-	["faq.automation.title", "faq.automation.answer"],
-	["faq.browser_import.title", "faq.browser_import.answer"],
-	["faq.audience.title", "faq.audience.answer"],
-	["faq.security.title", "faq.security.answer"],
+	["faq.progressive_disclosure.title", "faq.progressive_disclosure.answer"],
+	["faq.security_reliability.title", "faq.security_reliability.answer"],
+	["faq.support.title", "faq.support.answer"],
 ];
 
 const FAQSection = () => {

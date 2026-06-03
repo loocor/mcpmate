@@ -13,22 +13,11 @@ import {
 import { trackMCPMateEvents } from "../../utils/analytics";
 import { useLanguage } from "../LanguageProvider";
 import { useTheme } from "../ThemeProvider";
-import LanguageSwitcher from "./LanguageSwitcher";
 
 const NAV_TEXT_LINK_BASE =
 	"relative inline-flex items-center border-0 bg-transparent p-0 text-[15px] font-medium leading-none transition-colors pb-1 text-brand-foreground/85 hover:text-brand-accent cursor-pointer xl:text-base";
-
-function getDocsPath(language: string): string {
-	if (language === "zh") {
-		return "/docs/zh/quickstart";
-	}
-
-	if (language === "ja") {
-		return "/docs/ja/quickstart";
-	}
-
-	return "/docs/en/quickstart";
-}
+const NAV_CTA_LINK_CLASS =
+	"-mt-1 inline-flex items-center rounded-md bg-brand-accent px-3 py-1.5 text-[15px] font-semibold leading-none text-brand-accent-fg transition-all duration-200 hover:bg-brand-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-2 focus-visible:ring-offset-brand-bg dark:hover:text-white dark:hover:ring-2 dark:hover:ring-white dark:hover:ring-offset-2 dark:hover:ring-offset-brand-bg dark:focus-visible:ring-2 dark:focus-visible:ring-white dark:focus-visible:ring-offset-2 dark:focus-visible:ring-offset-brand-bg xl:text-base";
 
 function getNavLinkClass(sectionId: MarketingNavSectionId, activeSection: string | null): string {
 	if (activeSection !== sectionId) {
@@ -65,7 +54,7 @@ function getHeaderClass(isOpen: boolean, scrolled: boolean, isHome: boolean): st
 }
 
 const Navbar = () => {
-	const { language, t } = useLanguage();
+	const { t } = useLanguage();
 	const { theme } = useTheme();
 	const navigate = useNavigate();
 	const location = useLocation();
@@ -119,11 +108,6 @@ const Navbar = () => {
 		setIsOpen(false);
 	};
 
-	const openDocs = () => {
-		navigate(getDocsPath(language));
-		setIsOpen(false);
-	};
-
 	const mobileMenu = isOpen
 		? createPortal(
 				<div
@@ -143,9 +127,6 @@ const Navbar = () => {
 								{t(labelKey)}
 							</button>
 						))}
-						<button type="button" onClick={openDocs} className="mobile-nav-link">
-							{t("nav.documentation")}
-						</button>
 					</nav>
 				</div>,
 				document.body,
@@ -182,16 +163,17 @@ const Navbar = () => {
 									{t(labelKey)}
 								</button>
 							))}
-							<button type="button" onClick={openDocs} className={NAV_TEXT_LINK_BASE}>
-								{t("nav.documentation")}
-							</button>
 						</nav>
-						<div className="h-4 w-px shrink-0 bg-brand-border-subtle" aria-hidden />
-						<LanguageSwitcher />
+						<button
+							type="button"
+							onClick={() => scrollToSection("hero")}
+							className={NAV_CTA_LINK_CLASS}
+						>
+							{t("nav.cta.start")}
+						</button>
 					</div>
 
 					<div className="flex items-center gap-2 lg:hidden">
-						<LanguageSwitcher />
 						<button
 							onClick={toggleMenu}
 							className="p-2 rounded-lg text-brand-foreground hover:bg-brand-overlay-hover transition-colors"

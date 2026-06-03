@@ -258,6 +258,14 @@ html {
 		border-top: 1px solid var(--brand-border-subtle);
 	}
 
+	.footer-utility-trigger {
+		color: color-mix(in srgb, var(--brand-foreground) 40%, transparent);
+	}
+
+	.footer-utility-trigger:hover {
+		color: color-mix(in srgb, var(--brand-foreground) 85%, transparent);
+	}
+
 	.features-section .feature-card.is-preview-active .feature-card__media {
 		opacity: 1;
 		clip-path: inset(0 0 0 0);
@@ -479,6 +487,10 @@ html {
 		box-shadow: none;
 		backdrop-filter: none;
 		-webkit-backdrop-filter: none;
+	}
+
+	.how-node-shell__meta {
+		border-top: 1px solid color-mix(in srgb, var(--brand-border-subtle) 22%, transparent);
 	}
 
 	.how-node-shell--active-accent,

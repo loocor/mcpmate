@@ -121,7 +121,7 @@ const HowItWorks = () => {
 								</p>
 							</div>
 
-							<div className="mt-6 pt-4 border-t border-brand-border-subtle/40 flex items-center justify-between w-full text-[11px] font-medium text-brand-accent">
+							<div className="how-node-shell__meta mt-6 flex w-full items-center justify-between pt-4 text-[11px] font-medium text-brand-accent">
 								<span>{activeNode === "access" ? currentLabels.activeHint : currentLabels.expandHint}</span>
 								<div className="flex gap-1">
 									<span className="w-1.5 h-1.5 rounded-full bg-brand-accent animate-ping" />
@@ -191,7 +191,7 @@ const HowItWorks = () => {
 								</p>
 							</div>
 
-							<div className="mt-6 pt-4 border-t border-brand-border-subtle/40 flex items-center justify-between w-full text-[11px] font-medium text-brand-indigo">
+							<div className="how-node-shell__meta mt-6 flex w-full items-center justify-between pt-4 text-[11px] font-medium text-brand-indigo">
 								<span>{activeNode === "control" ? currentLabels.activeHint : currentLabels.expandHint}</span>
 								<div className="flex gap-1">
 									<span className="w-1.5 h-1.5 rounded-full bg-brand-indigo animate-ping" />
@@ -257,7 +257,7 @@ const HowItWorks = () => {
 								</p>
 							</div>
 
-							<div className="mt-6 pt-4 border-t border-brand-border-subtle/40 flex items-center justify-between w-full text-[11px] font-medium text-brand-accent">
+							<div className="how-node-shell__meta mt-6 flex w-full items-center justify-between pt-4 text-[11px] font-medium text-brand-accent">
 								<span>{activeNode === "runtime" ? currentLabels.activeHint : currentLabels.expandHint}</span>
 								<div className="flex gap-1">
 									<span className="w-1.5 h-1.5 rounded-full bg-brand-accent animate-ping" />
