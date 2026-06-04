@@ -728,7 +728,7 @@ function entryCard(kind, entry) {
 		name: entryName(entry, kind),
 		description: entryDescription(entry, kind),
 		url: entryUrl(entry),
-		source: kind === "clients" ? "" : entrySource(entry),
+		source: entrySource(entry),
 		signal: metaBits.signal,
 		meta: metaBits.meta,
 		iconUrl: iconUrl(entry, ADMIN_ORIGIN),
