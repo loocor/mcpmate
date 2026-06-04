@@ -7,7 +7,7 @@ export default function ServersZH() {
 	return (
 		<DocLayout meta={{ title: "服务器", description: "管理与连接 MCP 服务器" }}>
 			<P>
-				服务器页面集中展示所有 MCP 服务器，包含连接状态、能力统计、启停开关以及导入流程。无需手动编辑配置文件，就能完成安装与维护。
+				服务器页面集中展示所有 MCP 服务器，包含连接状态、能力统计、启停开关以及导入流程。你可以通过向导完成安装、预览与维护。
 			</P>
 
 			<DocScreenshot
@@ -20,6 +20,7 @@ export default function ServersZH() {
 			<Ul>
 				<Li><strong>导入与预览</strong> 说明 Uni-Import、脏输入清洗、能力预览，以及安装前最后一步校验。</Li>
 				<Li>它也会覆盖 Chrome / Edge 扩展这条入口：在网页里捕获兼容 MCP 片段，然后直接唤起 MCPMate 导入。</Li>
+				<Li><strong>Discovery Server 条目</strong> 可以从 Public Discovery 带入目录元数据，并进入同一个安装向导继续确认传输设置和配置集位置。</Li>
 				<Li><strong>详情概览</strong> 对应 <code>/servers/:serverId</code> 的浏览视图，重点解释状态、实例、编辑与删除。</Li>
 				<Li><strong>能力浏览</strong> 对应 browse 模式下的 Tools、Prompts、Resources、Templates 清单。</Li>
 				<Li><strong>Inspector</strong> 对应 debug 模式、proxy / native 通道切换，以及实时调用抽屉。</Li>
@@ -60,6 +61,9 @@ export default function ServersZH() {
 			<H3>Uni-Import 流程</H3>
 			<P>
 				将 <code>.mcpb</code>、<code>.dxt</code>、JSON 片段、URL 或纯文本拖拽到新增按钮上即可触发安装向导。系统会解析内容、标准化传输配置，并在提交前提供预览。
+			</P>
+			<P>
+				Discovery Server 条目也使用这条流程，但起点更加清晰。若目录中已有对应条目，安装向导会带入已知元数据和来源上下文。
 			</P>
 			<P>
 				如果你想看完整链路，请继续阅读 <strong>导入与预览</strong> 子页。那里会重点解释为什么带噪声的粘贴片段也能工作、Preview 真正验证了什么，以及最后的 dry-run 如何保护真实导入。

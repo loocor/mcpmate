@@ -6,16 +6,14 @@ export default function AutoDiscovery() {
 		<DocLayout
 			meta={{
 				title: "自动发现与导入",
-				description: "自动检测并导入现有配置，无需手工编辑",
+				description: "发现本地 MCP 配置，并使用 Discovery 预设加快设置。",
 			}}
 		>
 			<P>
-				MCPMate 可以自动发现系统上现有的 MCP
-				服务器配置，并一键导入。这消除了在新工具中手动重新创建设置的繁琐过程。
-				对于把 MCP 配置保存在标准位置的用户自定义客户端，这套导入流程同样适用。
+				MCPMate 会把本地配置扫描和 Public Discovery 目录结合起来。本地发现用于识别当前机器上已有的 MCP 设置；Discovery 预设则为新的客户端和服务器设置提供经过整理的起点。
 			</P>
 
-			<H2>工作原理</H2>
+			<H2>本地发现</H2>
 			<P>MCPMate 扫描流行 MCP 客户端使用的常见配置位置：</P>
 			<Ul>
 				<Li>Claude Desktop 配置文件</Li>
@@ -24,10 +22,20 @@ export default function AutoDiscovery() {
 				<Li>其他标准 MCP 客户端设置（包括用户自定义客户端）</Li>
 			</Ul>
 
+			<H2>Discovery 预设</H2>
+			<P>
+				Public Discovery 会为首次运行流程、客户端新增/编辑抽屉，以及浏览器扩展提供预设条目。这些条目包含标识符、显示名称、链接、图标和导入元数据，方便 MCPMate 在你确认前先生成更清晰的草稿。
+			</P>
+			<Ul>
+				<Li>客户端预设用于添加已有 MCP 配置目标的 AI 应用。</Li>
+				<Li>服务器条目为服务器安装向导提供可导入的元数据。</Li>
+				<Li>门户条目会连接服务源文档和浏览器扩展的 Portal 标签页。</Li>
+			</Ul>
+
 			<H2>导入流程</H2>
 			<Ul>
-				<Li>MCPMate 自动扫描现有配置。</Li>
-				<Li>在导入界面展示可导入服务器。</Li>
+				<Li>MCPMate 扫描本地已有配置。</Li>
+				<Li>导入界面会展示已发现服务器和 Discovery 支持的草稿。</Li>
 				<Li>选择导入对象及目标配置集。</Li>
 				<Li>导入后自动完成结构归一化并持久化。</Li>
 			</Ul>
@@ -38,7 +46,7 @@ export default function AutoDiscovery() {
 					<strong>快速上手：</strong>立即开始使用 MCPMate
 				</Li>
 				<Li>
-					<strong>无需手动工作：</strong>避免手动复制配置详细信息
+					<strong>引导式设置：</strong>从已检测的本地状态或 Discovery 预设开始
 				</Li>
 				<Li>
 					<strong>保留现有设置：</strong>您的原始配置保持不变

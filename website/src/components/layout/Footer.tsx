@@ -78,6 +78,7 @@ const Footer = () => {
 
 	const changelogPath = getLocalePath("changelog");
 	const roadmapPath = getLocalePath("roadmap");
+	const discoveryPortalsPath = `${getLocalePath("market")}#discovery-portals`;
 
 	const isDocPage = location.pathname.startsWith("/docs/");
 
@@ -224,6 +225,11 @@ const Footer = () => {
 								<li>
 									<button onClick={() => navigate(roadmapPath)} className={linkClass}>
 										{t("footer.roadmap")}
+									</button>
+								</li>
+								<li>
+									<button onClick={() => navigate(discoveryPortalsPath)} className={linkClass}>
+										{t("footer.discoveryPortals")}
 									</button>
 								</li>
 								{BROWSER_EXTENSION_LINKS.map((link) => (

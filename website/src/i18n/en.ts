@@ -227,6 +227,7 @@ const en = {
 	"footer.documentation": "Documentation",
 	"footer.changelog": "Changelog",
 	"footer.roadmap": "Roadmap",
+	"footer.discoveryPortals": "Common portals",
 	"footer.privacy": "Privacy Policy",
 	"footer.terms": "Terms of Service",
 

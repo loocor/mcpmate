@@ -12,7 +12,7 @@ export default function ServerImportPreviewZH() {
 			}}
 		>
 			<P>
-				新增 Server 不只是手填表单。MCPMate 的 Uni-Import 可以接住拖拽、粘贴或文件导入的多种输入，把它们清洗成可编辑草稿，再在真正安装前依次做能力预览和导入校验。
+				新增 Server 流程由安装向导驱动。MCPMate 的 Uni-Import 可以接住拖拽、粘贴或文件导入的多种输入，把它们清洗成可编辑草稿，再在真正安装前依次做能力预览和导入校验。
 			</P>
 
 			<DocScreenshot
@@ -25,17 +25,18 @@ export default function ServerImportPreviewZH() {
 			<Ul>
 				<Li>Servers 页面右上角的新增按钮会打开安装向导。</Li>
 				<Li>这个按钮本身同时也是 Uni-Import 的拖拽目标区域。</Li>
-				<Li>等 Chrome / Edge 扩展审核通过后，网页中的兼容 MCP 配置片段也可以被一键捕获并送回 MCPMate。</Li>
+				<Li>Chrome / Edge 扩展可以从网页一键捕获兼容 MCP 配置片段，并送回 MCPMate。</Li>
+				<Li>Discovery Server 条目也可以从目录元数据进入同一个向导。</Li>
 				<Li>整个向导分成三个步骤：Configuration、Preview、Import &amp; Profile。</Li>
 			</Ul>
 
 			<H2>浏览器扩展入口</H2>
 			<P>
-				MCPMate 的 Chrome / Edge 扩展是这条 Uni-Import 流程的上游入口。它会在网页里识别疑似 MCP 配置代码块，显示 <strong>Add to MCPMate</strong> 操作，并通过 <code>mcpmate://import/server</code> 深链把片段文本、推断格式和来源页面 URL 一起送回桌面端。
+				MCPMate 的 Chrome / Edge 扩展是这条 Uni-Import 流程的上游入口。扩展弹窗提供 Portal、Servers、Clients 三个标签页，并由 Public Discovery 提供目录数据。当网页中存在疑似 MCP 配置代码块时，扩展会显示 <strong>Add to MCPMate</strong> 操作，并通过 <code>mcpmate://import/server</code> 深链把片段文本、推断格式和来源页面 URL 一起送回桌面端。
 			</P>
 
 			<Callout type="info" title="为什么扩展入口很重要">
-				这会再减少一步人工动作。用户不需要先复制代码块、清洗内容、再贴回新增抽屉，而是可以直接从网页把识别到的 MCP 片段送进 MCPMate，然后继续后续的 Uni-Import 流程。
+				它会把网页、目录和桌面端导入向导连在一起。用户可以直接从网页把识别到的 MCP 片段送进 MCPMate，然后继续后续的 Uni-Import 流程。
 			</Callout>
 
 			<H2>Uni-Import 能接什么输入</H2>
@@ -48,16 +49,16 @@ export default function ServerImportPreviewZH() {
 
 			<H2>为什么脏数据也常常能导入</H2>
 			<P>
-				解析器并不要求输入绝对规整。它可以接住 JSON、JSON5 风格负载、TOML 片段以及 MCP bundle，再把它们统一整理成安装向导可审阅的草稿结构。
+				解析器可以接住 JSON、JSON5 风格负载、TOML 片段以及 MCP bundle，再把它们统一整理成安装向导可审阅的草稿结构。
 			</P>
 
 			<Callout type="info" title="这就是拖拽粘贴体验顺手的原因">
-				Uni-Import 的目标不是要求用户先把片段清洗干净，而是在“意图仍然清晰”的前提下，尽量从噪声里恢复出可导入的 server 结构。
+				Uni-Import 面向真实复制粘贴场景设计，会在意图仍然清晰时从噪声里恢复出可导入的 server 结构。
 			</Callout>
 
 			<H2>Preview 在安装前给你什么</H2>
 			<Ul>
-				<Li>它给的不是简单配置回显，而是真正的能力预览。</Li>
+				<Li>它会提供能力预览和配置检查信息。</Li>
 				<Li>每个 server 都会显示 tools、resources、prompts、templates 的摘要。</Li>
 				<Li>你可以展开明细查看具体能力名与描述。</Li>
 				<Li>如果预览阶段发现问题，也会先暴露出来，让你带着信息做判断。</Li>
@@ -65,7 +66,7 @@ export default function ServerImportPreviewZH() {
 
 			<H3>为什么这一步很重要</H3>
 			<P>
-				Preview 让安装前的透明度更高。你不必盲目信任一段配置，而是可以先看它大致会暴露出什么能力，再决定是否真的把它带进工作环境。
+				Preview 让安装前的透明度更高。你可以先看它大致会暴露出什么能力，再决定是否把它带进工作环境。
 			</P>
 
 			<H2>最后一步为什么还有校验</H2>
@@ -75,9 +76,9 @@ export default function ServerImportPreviewZH() {
 
 			<H2>推荐使用方式</H2>
 			<Ul>
-				<Li>扩展上线后，优先从兼容的文档页、仓库说明或服务目录中一键捕获配置片段。</Li>
-				<Li>先拖拽或粘贴，再做手工修正；不要一开始就把 Uni-Import 退化成纯手填。</Li>
-				<Li>看 Preview 时重点看能力形态，而不只是“能不能装”。</Li>
+				<Li>优先从兼容的文档页、仓库说明或服务目录中一键捕获配置片段。</Li>
+				<Li>先拖拽或粘贴，再根据归一化草稿做手工修正。</Li>
+				<Li>看 Preview 时重点看能力形态和安装结果。</Li>
 				<Li>用最后一步的校验去识别重复项和坏条目，避免脏安装。</Li>
 				<Li>导入后如果希望它参与受管暴露，再继续去 Profiles 里分配。</Li>
 			</Ul>

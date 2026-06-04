@@ -92,6 +92,12 @@ export const docsNav: DocNav[] = [
 						component: () => import("./pages/en/AutoDiscovery"),
 					},
 					{
+						id: "browser-extension",
+						path: "/docs/en/browser-extension",
+						title: "Browser Extension",
+						component: () => import("./pages/en/BrowserExtension"),
+					},
+					{
 						id: "uni-import",
 						path: "/docs/en/uni-import",
 						title: "Uni-Import",
@@ -109,6 +115,13 @@ export const docsNav: DocNav[] = [
 						title: "Overview",
 						summary: "Learn how to use MCPMate effectively",
 						component: () => import("./pages/en/GuidesOverview"),
+					},
+					{
+						id: "onboarding",
+						path: "/docs/en/onboarding",
+						title: "Onboarding",
+						summary: "Set up clients, servers, and profiles during first run.",
+						component: () => import("./pages/en/Onboarding"),
 					},
 					{
 						id: "dashboard",
@@ -347,6 +360,12 @@ export const docsNav: DocNav[] = [
 						component: () => import("./pages/zh/AutoDiscovery"),
 					},
 					{
+						id: "browser-extension",
+						path: "/docs/zh/browser-extension",
+						title: "浏览器扩展",
+						component: () => import("./pages/zh/BrowserExtension"),
+					},
+					{
 						id: "uni-import",
 						path: "/docs/zh/uni-import",
 						title: "全能导入",
@@ -363,6 +382,13 @@ export const docsNav: DocNav[] = [
 						title: "概览",
 						summary: "学习如何高效使用 MCPMate",
 						component: () => import("./pages/zh/GuidesOverview"),
+					},
+					{
+						id: "onboarding",
+						path: "/docs/zh/onboarding",
+						title: "引导流程",
+						summary: "在首次运行时完成客户端、服务器和配置集设置。",
+						component: () => import("./pages/zh/Onboarding"),
 					},
 					{
 						id: "dashboard",
@@ -598,6 +624,12 @@ export const docsNav: DocNav[] = [
 						component: () => import("./pages/ja/AutoDiscovery"),
 					},
 					{
+						id: "browser-extension",
+						path: "/docs/ja/browser-extension",
+						title: "ブラウザー拡張機能",
+						component: () => import("./pages/ja/BrowserExtension"),
+					},
+					{
 						id: "uni-import",
 						path: "/docs/ja/uni-import",
 						title: "ユニインポート",
@@ -614,6 +646,13 @@ export const docsNav: DocNav[] = [
 						title: "概要",
 						summary: "MCPMate を効率的に使いこなす",
 						component: () => import("./pages/ja/GuidesOverview"),
+					},
+					{
+						id: "onboarding",
+						path: "/docs/ja/onboarding",
+						title: "オンボーディング",
+						summary: "初回起動でクライアント、サーバー、プロファイルを設定する。",
+						component: () => import("./pages/ja/Onboarding"),
 					},
 					{
 						id: "dashboard",

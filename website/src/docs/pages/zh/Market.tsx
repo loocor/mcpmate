@@ -1,4 +1,5 @@
 import Callout from "../../components/Callout";
+import DiscoveryPortalList from "../../components/DiscoveryPortalList";
 import { H2, H3, Li, P, Ul } from "../../components/Headings";
 import DocLayout from "../../layout/DocLayout";
 import DocScreenshot from "../../components/DocScreenshot";
@@ -30,6 +31,20 @@ export default function MarketZH() {
 					可在设置 → <strong>MCP 市场</strong> 中指定默认服务源、管理隐藏条目，并查看浏览器扩展入口。
 				</Li>
 			</Ul>
+
+			<H2 id="discovery-portals">Discovery 门户</H2>
+			<P>
+				Discovery 门户目录会展示适合搭配 MCPMate 导入流程使用的 MCP 目录与社区入口。下方列表来自浏览器扩展正在使用的同一套 Public Discovery API，因此官网文档、浏览器扩展和桌面端导入流程会共享同一个目录来源。
+			</P>
+			<DiscoveryPortalList
+				copy={{
+					loading: "正在加载 Discovery 门户...",
+					error: "Discovery 门户数据正在更新。浏览器扩展的 Portal 标签页可使用同一套目录流程。",
+					empty: "Discovery 门户数据正在整理。",
+					visit: "打开门户",
+					source: "来源",
+				}}
+			/>
 
 			<H2>安装流程</H2>
 			<H3>预览抽屉</H3>

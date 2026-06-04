@@ -2,6 +2,7 @@ import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
 import DocScreenshot from "../../components/DocScreenshot";
+import DiscoveryPortalList from "../../components/DiscoveryPortalList";
 
 export default function MarketEN() {
 	return (
@@ -41,6 +42,24 @@ export default function MarketEN() {
 					market, manage hidden entries, and review browser extension shortcuts.
 				</Li>
 			</Ul>
+
+			<H2 id="discovery-portals">Discovery portals</H2>
+			<P>
+				The Discovery Portal catalog highlights MCP directories and community
+				entry points that pair well with MCPMate imports. The list below is
+				loaded from the same Public Discovery API used by the browser extension,
+				so the website, extension, and desktop import flow share one catalog
+				source.
+			</P>
+			<DiscoveryPortalList
+				copy={{
+					loading: "Loading Discovery portals...",
+					error: "Discovery portal data is updating. Visit the browser extension portal tab for the same catalog workflow.",
+					empty: "Discovery portal data is being prepared.",
+					visit: "Open portal",
+					source: "Source",
+				}}
+			/>
 
 			<H2>Installing from the market</H2>
 			<H3>Preview drawer</H3>

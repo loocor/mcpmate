@@ -214,6 +214,7 @@ const zh = {
   "footer.documentation": "使用文档",
   "footer.changelog": "更新日志",
   "footer.roadmap": "开发规划",
+  "footer.discoveryPortals": "常用门户",
   "footer.privacy": "隐私政策",
   "footer.terms": "服务条款",
 
