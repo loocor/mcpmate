@@ -17,6 +17,8 @@ pub use reference::{
     SecretError, SecretReference, SecretValue, extract_secret_references, parse_placeholder, resolve_placeholders,
 };
 pub use root_key::{
-    DEVELOPMENT_ROOT_KEY_ENV, DevelopmentRootKeyProvider, OperatingSystemRootKeyProvider, RootKeyProviderMetadata,
-    SecretRootKey, SecretRootKeyError, SecretRootKeyProvider, default_root_key_provider,
+    DEVELOPMENT_ROOT_KEY_ENV, DevelopmentRootKeyProvider, LOCAL_FILE_PROVIDER_ID, LOCAL_FILE_PROVIDER_KIND,
+    LocalFileRootKeyProvider, OperatingSystemRootKeyProvider, PASSPHRASE_PROVIDER_ID, PASSPHRASE_PROVIDER_KIND,
+    PassphraseRootKeyProvider, RootKeyProviderMetadata, RootKeyProviderMode, RootKeySecurityLevel, SecretRootKey,
+    SecretRootKeyError, SecretRootKeyProvider, default_root_key_provider,
 };
