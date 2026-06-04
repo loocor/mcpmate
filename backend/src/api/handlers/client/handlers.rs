@@ -3459,6 +3459,157 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_settings_clear_parse_does_not_revive_legacy_metadata() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("zed-settings.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{
+                "mcpServers": {
+                    "alpha": { "command": "node" }
+                }
+            }"#,
+        )
+        .await
+        .expect("seed strict json config file");
+
+        let Json(initial_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                display_name: Some("Zed".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(json_object_parse("mcpServers")),
+                ..settings_update_req("zed.parse.clear")
+            }),
+        )
+        .await
+        .expect("initial update succeeds");
+        assert!(initial_response.success);
+
+        tokio::fs::write(
+            &config_path,
+            r#"{
+                "mcpServers": {
+                    "alpha": {
+                        "command": "node",
+                    },
+                },
+            }"#,
+        )
+        .await
+        .expect("seed json5-style config file");
+
+        let Json(clear_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                display_name: Some("Zed".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                clear_config_file_parse: true,
+                ..settings_update_req("zed.parse.clear")
+            }),
+        )
+        .await
+        .expect("clear update succeeds");
+        assert!(clear_response.success);
+        let clear_data = clear_response.data.expect("clear response data");
+        assert!(clear_data.config_file_parse_effective.is_none());
+        assert!(clear_data.config_file_parse_override.is_none());
+
+        let cleared_state = context
+            .client_service
+            .fetch_state("zed.parse.clear")
+            .await
+            .expect("fetch cleared state")
+            .expect("state exists");
+        assert_eq!(cleared_state.config_format(), None);
+        assert_eq!(cleared_state.container_type(), None);
+        assert_eq!(
+            cleared_state.container_keys().expect("container keys"),
+            Vec::<String>::new()
+        );
+        assert!(
+            cleared_state
+                .effective_config_file_parse()
+                .expect("config parse")
+                .is_none()
+        );
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                display_name: Some("Zed".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                ..settings_update_req("zed.parse.clear")
+            }),
+        )
+        .await
+        .expect("subsequent update should not validate with stale json parse metadata");
+        assert!(update_response.success);
+    }
+
+    #[tokio::test]
+    async fn update_settings_clear_parse_with_replacement_keeps_replacement_effective() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("zed-replacement.json5");
+        tokio::fs::write(
+            &config_path,
+            r#"{
+                "context_servers": {
+                    "alpha": {
+                        "command": "node",
+                    },
+                },
+            }"#,
+        )
+        .await
+        .expect("seed json5-style config file");
+
+        let replacement_parse = ClientConfigFileParseData {
+            format: "json5".to_string(),
+            container_type: crate::api::models::client::ClientConfigType::Standard,
+            container_keys: vec!["context_servers".to_string()],
+        };
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                display_name: Some("Zed".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(replacement_parse.clone()),
+                clear_config_file_parse: true,
+                ..settings_update_req("zed.parse.replacement")
+            }),
+        )
+        .await
+        .expect("replacement update succeeds");
+        assert!(update_response.success);
+        let update_data = update_response.data.expect("update response data");
+        assert_eq!(update_data.config_file_parse_effective, Some(replacement_parse.clone()));
+        assert!(update_data.config_file_parse_override.is_none());
+
+        let state = context
+            .client_service
+            .fetch_state("zed.parse.replacement")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.config_format(), Some("json5"));
+        assert_eq!(state.container_type(), Some("object"));
+        assert_eq!(
+            state.container_keys().expect("container keys"),
+            vec!["context_servers".to_string()]
+        );
+        assert_eq!(
+            state.effective_config_file_parse().expect("config parse"),
+            Some(parse_rule_from_api_data(&replacement_parse))
+        );
+    }
+
+    #[tokio::test]
     async fn update_settings_infers_manual_when_config_path_is_explicitly_cleared() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("client-manual-empty-string.json");
