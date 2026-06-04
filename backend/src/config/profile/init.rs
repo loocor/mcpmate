@@ -29,6 +29,8 @@ pub async fn initialize_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_profile_resource_template_index(pool).await?;
     create_profile_prompt_table(pool).await?;
     create_profile_prompt_index(pool).await?;
+    create_profile_guidance_table(pool).await?;
+    create_profile_guidance_index(pool).await?;
 
     verify_profile_tables(pool).await?;
 
@@ -659,6 +661,65 @@ async fn create_profile_prompt_index(pool: &Pool<Sqlite>) -> Result<()> {
     Ok(())
 }
 
+/// Create profile_guidance table if it doesn't exist.
+async fn create_profile_guidance_table(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating {} table if it doesn't exist", tables::PROFILE_GUIDANCE);
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS profile_guidance (
+            id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            title TEXT NOT NULL,
+            summary TEXT,
+            scenario TEXT,
+            activation TEXT,
+            capability_refs_json TEXT NOT NULL DEFAULT '[]',
+            validation_notes TEXT,
+            avoid TEXT,
+            content_markdown TEXT NOT NULL,
+            source_uri TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (profile_id) REFERENCES profile (id) ON DELETE CASCADE,
+            UNIQUE(profile_id, slug)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create {} table: {}", tables::PROFILE_GUIDANCE, e);
+        anyhow::anyhow!("Failed to create {} table: {}", tables::PROFILE_GUIDANCE, e)
+    })?;
+
+    tracing::debug!("{} table created or already exists", tables::PROFILE_GUIDANCE);
+    Ok(())
+}
+
+/// Create index on profile_guidance for profile-scoped lookup.
+async fn create_profile_guidance_index(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating index on profile_guidance for profile-scoped lookup");
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_profile_guidance_lookup
+        ON profile_guidance(profile_id, enabled)
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create index on profile_guidance: {}", e);
+        anyhow::anyhow!("Failed to create index on profile_guidance: {}", e)
+    })?;
+
+    tracing::debug!("Index on profile_guidance created or already exists");
+    Ok(())
+}
+
 /// Verify that all profile tables were created successfully
 async fn verify_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
     for table in [
@@ -672,6 +733,7 @@ async fn verify_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
         tables::PROFILE_RESOURCE,
         tables::PROFILE_RESOURCE_TEMPLATE,
         tables::PROFILE_PROMPT,
+        tables::PROFILE_GUIDANCE,
     ] {
         sqlx::query(&format!(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'"

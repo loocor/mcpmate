@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 // Import the unified response macro
+use crate::config::models::ProfileGuidanceCapabilityRef;
 use crate::macros::resp::api_resp;
 
 // ==========================================
@@ -82,6 +83,17 @@ pub struct ProfileComponentListReq {
     pub enabled_only: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Request for listing profile-scoped Skills-style guidance")]
+pub struct ProfileGuidanceListReq {
+    #[schemars(description = "Profile identifier")]
+    pub profile_id: String,
+
+    #[serde(default)]
+    #[schemars(description = "Show only enabled guidance records")]
+    pub enabled_only: Option<bool>,
+}
+
 // Payload Request Models
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Request for profile management operations")]
@@ -108,6 +120,67 @@ pub struct ProfileComponentManageReq {
 
     #[schemars(description = "Management action to perform on component(s)")]
     pub action: ProfileComponentAction,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Request for creating or updating profile-scoped Skills-style guidance")]
+pub struct ProfileGuidanceUpsertReq {
+    #[serde(default)]
+    #[schemars(description = "Existing guidance identifier when updating a known record")]
+    pub id: Option<String>,
+
+    #[schemars(description = "Profile identifier")]
+    pub profile_id: String,
+
+    #[schemars(description = "Profile-local guidance slug used in skill:// resources")]
+    pub slug: String,
+
+    #[schemars(description = "Human-readable guidance title")]
+    pub title: String,
+
+    #[serde(default)]
+    #[schemars(description = "Short activation summary")]
+    pub summary: Option<String>,
+
+    #[serde(default)]
+    #[schemars(description = "Scenario where this guidance should be used")]
+    pub scenario: Option<String>,
+
+    #[serde(default)]
+    #[schemars(description = "Activation instructions or trigger conditions")]
+    pub activation: Option<String>,
+
+    #[serde(default)]
+    #[schemars(description = "Structured capability references used by this guidance")]
+    pub capability_refs: Vec<ProfileGuidanceCapabilityRef>,
+
+    #[serde(default)]
+    #[schemars(description = "Validation notes for applying this guidance")]
+    pub validation_notes: Option<String>,
+
+    #[serde(default)]
+    #[schemars(description = "Things agents should avoid when applying this guidance")]
+    pub avoid: Option<String>,
+
+    #[schemars(description = "SKILL.md-style Markdown body")]
+    pub content_markdown: String,
+
+    #[serde(default)]
+    #[schemars(description = "Optional external source URI for linked skills")]
+    pub source_uri: Option<String>,
+
+    #[schemars(description = "Whether this guidance is exposed for the profile")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Request for deleting profile-scoped Skills-style guidance")]
+pub struct ProfileGuidanceDeleteReq {
+    #[schemars(description = "Profile identifier")]
+    pub profile_id: String,
+
+    #[schemars(description = "Profile-local guidance slug")]
+    pub slug: String,
 }
 
 /// Request for profile deletion
@@ -211,6 +284,38 @@ pub struct ProfileToolsListData {
 
     #[schemars(description = "Total number of tools in profile")]
     pub total: usize,
+}
+
+api_resp!(
+    ProfileGuidanceListResp,
+    ProfileGuidanceListData,
+    "Response for profile guidance list operation"
+);
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Data for profile guidance list operation")]
+pub struct ProfileGuidanceListData {
+    #[schemars(description = "Profile identifier")]
+    pub profile_id: String,
+
+    #[schemars(description = "List of Skills-style guidance records in this profile")]
+    pub guidance: Vec<ProfileGuidanceData>,
+
+    #[schemars(description = "Total number of guidance records in profile")]
+    pub total: usize,
+}
+
+api_resp!(
+    ProfileGuidanceResp,
+    ProfileGuidanceRespData,
+    "Response for profile guidance create or update operation"
+);
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(description = "Data for profile guidance create or update operation")]
+pub struct ProfileGuidanceRespData {
+    #[schemars(description = "Saved profile guidance record")]
+    pub guidance: ProfileGuidanceData,
 }
 
 api_resp!(
@@ -345,6 +450,49 @@ pub struct ProfileData {
     pub is_default: bool,
     /// Allowed operations on this profile
     pub allowed_operations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Profile-scoped Skills-style guidance")]
+pub struct ProfileGuidanceData {
+    #[schemars(description = "Guidance identifier")]
+    pub id: String,
+
+    #[schemars(description = "Profile identifier")]
+    pub profile_id: String,
+
+    #[schemars(description = "Profile-local guidance slug")]
+    pub slug: String,
+
+    #[schemars(description = "Human-readable guidance title")]
+    pub title: String,
+
+    #[schemars(description = "Short activation summary")]
+    pub summary: Option<String>,
+
+    #[schemars(description = "Scenario where this guidance should be used")]
+    pub scenario: Option<String>,
+
+    #[schemars(description = "Activation instructions or trigger conditions")]
+    pub activation: Option<String>,
+
+    #[schemars(description = "Structured capability references used by this guidance")]
+    pub capability_refs: Vec<ProfileGuidanceCapabilityRef>,
+
+    #[schemars(description = "Validation notes for applying this guidance")]
+    pub validation_notes: Option<String>,
+
+    #[schemars(description = "Things agents should avoid when applying this guidance")]
+    pub avoid: Option<String>,
+
+    #[schemars(description = "SKILL.md-style Markdown body")]
+    pub content_markdown: String,
+
+    #[schemars(description = "Optional external source URI for linked skills")]
+    pub source_uri: Option<String>,
+
+    #[schemars(description = "Whether this guidance is exposed for the profile")]
+    pub enabled: bool,
 }
 
 /// Create Profile request

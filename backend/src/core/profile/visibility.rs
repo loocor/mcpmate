@@ -1421,6 +1421,30 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    async fn resolve_snapshot_keeps_selected_profile_without_upstream_servers() {
+        let (_temp_dir, db, service) = create_visibility_service().await;
+
+        let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
+        insert_client_config(
+            &db,
+            "client-profile-resources",
+            CapabilitySource::Profiles,
+            vec![selected_profile_id.clone()],
+            None,
+        )
+        .await;
+
+        let snapshot = service
+            .resolve_snapshot("client-profile-resources", None)
+            .await
+            .expect("resolve snapshot");
+
+        assert_eq!(snapshot.profile_ids, vec![selected_profile_id]);
+        assert!(snapshot.server_ids.is_empty());
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn resolve_snapshot_uses_custom_profile_for_custom_mode() {
         let (_temp_dir, db, service) = create_visibility_service().await;
 

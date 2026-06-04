@@ -124,6 +124,13 @@ pub(super) async fn list_resources(
     }
 
     resources = vis.filter_resources_with_snapshot(&snapshot, resources, Vec::new()).0;
+    if let Some(db) = &server.database {
+        let mut guidance_resources =
+            crate::core::profile::guidance::list_profile_guidance_resources(&db.pool, &snapshot.profile_ids)
+                .await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        resources.append(&mut guidance_resources);
+    }
 
     // Apply pagination
     let page = server.paginator.paginate_resources(&_request, resources)?;
@@ -287,6 +294,39 @@ pub(super) async fn read_resource(
     let client = server.resolve_bound_client_context(&_context).await?;
     let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     tracing::debug!("Reading resource: {}", request.uri);
+
+    if crate::core::profile::guidance::is_profile_guidance_uri(request.uri.as_ref()) {
+        let Some(db) = &server.database else {
+            return Err(McpError::internal_error(
+                "Profile guidance resources require a database-backed profile".to_string(),
+                None,
+            ));
+        };
+        let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
+            server.database.clone(),
+            server.profile_service.clone(),
+        );
+        let snapshot = vis
+            .resolve_snapshot_for_client(&client)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        return crate::core::profile::guidance::read_profile_guidance_resource(
+            &db.pool,
+            &snapshot.profile_ids,
+            request.uri.as_ref(),
+        )
+        .await
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?
+        .ok_or_else(|| {
+            McpError::invalid_params(
+                format!(
+                    "Profile guidance resource '{}' is not available for this client",
+                    request.uri
+                ),
+                None,
+            )
+        });
+    }
 
     let mut lookup_uri = request.uri.clone();
     let mut server_filter: Option<String> = None;

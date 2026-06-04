@@ -2,6 +2,7 @@
 // Contains data models for profile
 
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -163,4 +164,53 @@ pub struct ProfileToolWithDetails {
     pub unique_name: String,
     /// Tool description (from server_tools)
     pub description: Option<String>,
+}
+
+/// Profile capability reference embedded in Skills-style guidance.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ProfileGuidanceCapabilityRef {
+    /// Capability kind: server, tool, prompt, resource, or template.
+    pub kind: String,
+    /// Capability identifier in the current profile context.
+    pub id: String,
+    /// Human-readable capability name when available.
+    pub name: Option<String>,
+    /// Owning server name when available.
+    pub server_name: Option<String>,
+}
+
+/// Profile-scoped Skills-style guidance.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProfileGuidance {
+    /// Unique ID.
+    pub id: String,
+    /// Profile that owns this guidance record.
+    pub profile_id: String,
+    /// Stable profile-local slug used in skill:// URIs.
+    pub slug: String,
+    /// Human-readable guidance title.
+    pub title: String,
+    /// Short activation summary.
+    pub summary: Option<String>,
+    /// Scenario where this guidance should be used.
+    pub scenario: Option<String>,
+    /// Activation instructions or trigger conditions.
+    pub activation: Option<String>,
+    /// Structured capability references used by this guidance.
+    #[sqlx(rename = "capability_refs_json", json)]
+    pub capability_refs: Vec<ProfileGuidanceCapabilityRef>,
+    /// Validation notes for users or agents applying the guidance.
+    pub validation_notes: Option<String>,
+    /// Things agents should avoid when applying the guidance.
+    pub avoid: Option<String>,
+    /// SKILL.md-style instruction body.
+    pub content_markdown: String,
+    /// Optional external source URI for linked skills.
+    pub source_uri: Option<String>,
+    /// Whether this guidance is exposed for the profile.
+    pub enabled: bool,
+    /// When the guidance was created.
+    pub created_at: Option<DateTime<Utc>>,
+    /// When the guidance was last updated.
+    pub updated_at: Option<DateTime<Utc>>,
 }

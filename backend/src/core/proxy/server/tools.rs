@@ -565,15 +565,19 @@ mod tests {
 
         for tool in shared_tools {
             assert!(
-                builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
+                builtin_tool_allowed(Some("hosted"), CapabilitySource::Profiles, tool),
                 "{tool} should be available for Profiles in hosted mode"
             );
             assert!(
-                !builtin_tool_allowed(None, CapabilitySource::Activated, tool),
+                builtin_tool_allowed(None, CapabilitySource::Profiles, tool),
+                "{tool} should be available for Profiles when hosted mode is resolved later"
+            );
+            assert!(
+                !builtin_tool_allowed(Some("hosted"), CapabilitySource::Activated, tool),
                 "{tool} should NOT be available for Activated"
             );
             assert!(
-                !builtin_tool_allowed(None, CapabilitySource::Custom, tool),
+                !builtin_tool_allowed(Some("hosted"), CapabilitySource::Custom, tool),
                 "{tool} should NOT be available for Custom"
             );
         }

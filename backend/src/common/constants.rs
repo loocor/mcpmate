@@ -140,6 +140,7 @@ pub mod database {
     /// Database table name constants
     pub mod tables {
         pub const PROFILE_PROMPT: &str = "profile_prompt";
+        pub const PROFILE_GUIDANCE: &str = "profile_guidance";
         pub const PROFILE_RESOURCE: &str = "profile_resource";
         pub const PROFILE_RESOURCE_TEMPLATE: &str = "profile_resource_template";
         pub const PROFILE_SERVER: &str = "profile_server";

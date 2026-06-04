@@ -5,6 +5,7 @@
 pub use self::{
     capabilities::{component_manage, prompts_list, resource_templates_list, resources_list, tools_list},
     capability_token_ledger::capability_token_ledger,
+    guidance::{guidance_delete, guidance_list, guidance_upsert},
     helpers::{get_profile_or_error, get_tool_or_error, get_tool_with_details_or_error},
     mgmt::{profile_create, profile_delete, profile_details, profile_list, profile_manage, profile_update},
     server::{server_manage, servers_list},
@@ -14,6 +15,7 @@ pub use self::{
 // Submodules
 mod capabilities;
 mod capability_token_ledger;
+mod guidance;
 pub mod helpers;
 mod mgmt;
 mod server;
@@ -40,7 +42,11 @@ pub(crate) mod common {
 
     /// Get database reference from AppState
     pub async fn get_database(state: &Arc<AppState>) -> Result<Arc<crate::config::database::Database>, ApiError> {
-        match state.http_proxy.as_ref().and_then(|p| p.database.clone()) {
+        match state
+            .database
+            .clone()
+            .or_else(|| state.http_proxy.as_ref().and_then(|p| p.database.clone()))
+        {
             Some(db) => Ok(db),
             None => Err(ApiError::InternalError("Database not available".to_string())),
         }

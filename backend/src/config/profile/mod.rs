@@ -3,6 +3,7 @@
 
 pub mod basic;
 pub mod constants;
+pub mod guidance;
 pub mod init;
 pub mod mgmt;
 pub mod prompt;
@@ -19,6 +20,12 @@ pub use basic::{
 
 pub use constants::{
     DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION, is_default_anchor_profile,
+};
+
+// Profile guidance operations
+pub use guidance::{
+    ProfileGuidanceDraft, delete_profile_guidance, get_profile_guidance, list_enabled_profile_guidance,
+    list_profile_guidance, upsert_profile_guidance,
 };
 
 // Management operations

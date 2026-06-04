@@ -12,9 +12,10 @@ use super::AppState;
 use crate::api::handlers::profile;
 use crate::api::models::profile::{
     ProfileComponentListReq, ProfileComponentManageReq, ProfileCreateReq, ProfileDeleteReq, ProfileDetailsReq,
-    ProfileDetailsResp, ProfileListReq, ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp,
-    ProfileResourceTemplatesListResp, ProfileResourcesListResp, ProfileResp, ProfileServerManageResp,
-    ProfileServersListResp, ProfileToolsListResp, ProfileUpdateReq,
+    ProfileDetailsResp, ProfileGuidanceDeleteReq, ProfileGuidanceListReq, ProfileGuidanceListResp, ProfileGuidanceResp,
+    ProfileGuidanceUpsertReq, ProfileListReq, ProfileListResp, ProfileManageReq, ProfileManageResp,
+    ProfilePromptsListResp, ProfileResourceTemplatesListResp, ProfileResourcesListResp, ProfileResp,
+    ProfileServerManageResp, ProfileServersListResp, ProfileToolsListResp, ProfileUpdateReq,
 };
 use crate::api::models::token_estimate::{CapabilityTokenLedgerResponse, TokenEstimateQuery, TokenEstimateResponse};
 use crate::{aide_wrapper_payload, aide_wrapper_query};
@@ -42,6 +43,18 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/profile/manage",
             post_with(profile_manage_aide, profile_manage_docs),
+        )
+        .api_route(
+            "/mcp/profile/guidance/list",
+            get_with(guidance_list_aide, guidance_list_docs),
+        )
+        .api_route(
+            "/mcp/profile/guidance/upsert",
+            post_with(guidance_upsert_aide, guidance_upsert_docs),
+        )
+        .api_route(
+            "/mcp/profile/guidance/delete",
+            delete_with(guidance_delete_aide, guidance_delete_docs),
         )
         .api_route(
             "/mcp/profile/servers/list",
@@ -134,6 +147,27 @@ aide_wrapper_payload!(
     ProfileManageReq,
     ProfileManageResp,
     "Manage profile operations (activate/deactivate)"
+);
+
+aide_wrapper_query!(
+    profile::guidance_list,
+    ProfileGuidanceListReq,
+    ProfileGuidanceListResp,
+    "List Skills-style guidance for a profile"
+);
+
+aide_wrapper_payload!(
+    profile::guidance_upsert,
+    ProfileGuidanceUpsertReq,
+    ProfileGuidanceResp,
+    "Create or update Skills-style guidance for a profile"
+);
+
+aide_wrapper_payload!(
+    profile::guidance_delete,
+    ProfileGuidanceDeleteReq,
+    ProfileManageResp,
+    "Delete Skills-style guidance for a profile"
 );
 
 // Generate aide-compatible wrappers for component list operations

@@ -16,6 +16,7 @@
 //! - Communicates with other modules through event mechanisms
 
 pub mod config;
+pub mod guidance;
 pub mod merge;
 pub mod service;
 pub mod types;
