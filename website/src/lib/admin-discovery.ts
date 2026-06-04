@@ -20,6 +20,17 @@ export interface WebsiteClientPreset {
 	homepageUrl: string;
 }
 
+export interface WebsiteDiscoveryPortal {
+	id: string;
+	title: string;
+	description: string;
+	url: string;
+	source: string;
+	signal: string;
+	meta: string;
+	iconUrl: string;
+}
+
 function recordValue(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
@@ -34,6 +45,10 @@ function firstCompactString(...values: unknown[]): string {
 		if (compact) return compact;
 	}
 	return "";
+}
+
+function stringArrayValue(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 export function parseClientPresetForDisplay(raw: unknown): WebsiteClientPreset | null {
@@ -154,6 +169,55 @@ export async function fetchWebsiteClientPresets(limit = MAX_CLIENT_LIMIT): Promi
 	}
 
 	return normalizeClientList(parsed);
+}
+
+export function parseDiscoveryPortalForDisplay(raw: unknown): WebsiteDiscoveryPortal | null {
+	const portal = recordValue(raw);
+	const metadata = recordValue(portal.metadata);
+	const discovery = recordValue(
+		recordValue(portal._meta)["ai.mcpmate/discovery"] ?? metadata.discovery,
+	);
+	const links = recordValue(portal.links);
+	const icon = recordValue(portal.icon);
+	const id = firstCompactString(portal.id, portal.identifier, portal.slug, portal.title, portal.name);
+	const title = firstCompactString(portal.title, portal.name, metadata.title);
+	const url = firstCompactString(portal.url, links.homepage, links.website, metadata.url);
+
+	if (!id || !title || !url) {
+		return null;
+	}
+
+	const categories = stringArrayValue(portal.categories ?? metadata.categories ?? discovery.categories);
+
+	return {
+		id,
+		title,
+		description: firstCompactString(portal.description, metadata.description),
+		url,
+		source: firstCompactString(portal.source, discovery.source),
+		signal: firstCompactString(portal.signal, recordValue(discovery.quality).status),
+		meta: firstCompactString(portal.meta, discovery.category, metadata.category, categories.slice(0, 2).join(", ")),
+		iconUrl: firstCompactString(icon.url, portal.iconUrl, portal.icon_url, metadata.logo_url),
+	};
+}
+
+export async function fetchWebsiteDiscoveryPortals(): Promise<WebsiteDiscoveryPortal[]> {
+	const url = new URL("/discovery/portals", `${ADMIN_DISCOVERY_BASE_URL}/`);
+	const response = await fetch(url.toString(), { credentials: "omit" });
+	if (!response.ok) {
+		throw new Error(`Admin discovery request failed with HTTP ${response.status}`);
+	}
+
+	const envelope = (await response.json()) as unknown;
+	const portals = recordValue(envelope).portals;
+	if (!Array.isArray(portals)) {
+		throw new Error("Admin discovery response is missing portals array");
+	}
+
+	return portals
+		.map(parseDiscoveryPortalForDisplay)
+		.filter((portal): portal is WebsiteDiscoveryPortal => portal !== null)
+		.sort((left, right) => left.title.localeCompare(right.title));
 }
 
 /** Remote catalog with session cache and built-in fallback for the marketing client wall. */

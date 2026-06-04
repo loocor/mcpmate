@@ -28,17 +28,20 @@ export default function ServerImportPreview() {
 			<Ul>
 				<Li>The Add button on the Servers page opens the install wizard.</Li>
 				<Li>The same button also acts as a drag-and-drop target for Uni-Import.</Li>
-				<Li>After the browser extension is approved, compatible MCP snippets on the web can be captured and sent into MCPMate with one click.</Li>
+				<Li>The browser extension can capture compatible MCP snippets from the web and send them into MCPMate with one click.</Li>
+				<Li>Discovery Server entries can open the same wizard from curated catalog metadata.</Li>
 				<Li>The wizard follows three steps: Configuration, Preview, and Import &amp; Profile.</Li>
 			</Ul>
 
 			<H2>Browser extension capture</H2>
 			<P>
 				MCPMate&apos;s Chrome and Edge extension is designed as an upstream entry into the
-				same Uni-Import flow. It scans web pages for likely MCP configuration blocks,
-				adds an <strong>Add to MCPMate</strong> action, and opens the desktop app
-				through the <code>mcpmate://import/server</code> deep link with the snippet
-				text, inferred format, and source page URL.
+				same Uni-Import flow. Its popup provides Portal, Servers, and Clients
+				tabs backed by Public Discovery. When a page contains a likely MCP
+				configuration block, the extension adds an <strong>Add to MCPMate</strong>
+				action and opens the desktop app through the{" "}
+				<code>mcpmate://import/server</code> deep link with the snippet text,
+				inferred format, and source page URL.
 			</P>
 
 			<Callout type="info" title="Why the extension matters">
@@ -58,15 +61,15 @@ export default function ServerImportPreview() {
 
 			<H2>Why dirty input still works</H2>
 			<P>
-				The normalizer does not rely on one exact syntax. It accepts multiple input
-				shapes such as JSON, JSON5-style payloads, TOML snippets, and MCP bundles,
-				then converts them into a consistent draft the install wizard can review.
+				The normalizer accepts multiple input shapes such as JSON, JSON5-style
+				payloads, TOML snippets, and MCP bundles, then converts them into a
+				consistent draft the install wizard can review.
 			</P>
 
 			<Callout type="info" title="This is why pasted snippets feel forgiving">
-				Uni-Import is designed for real-world copy and paste. The goal is not to make
-				the user pre-clean every snippet, but to salvage importable server structure
-				from noisy text whenever the intent is still recognizable.
+				Uni-Import is designed for real-world copy and paste. When the intent is
+				still recognizable, it can recover importable server structure from noisy
+				text and continue into review.
 			</Callout>
 
 			<H2>What Preview gives you before install</H2>
@@ -94,9 +97,9 @@ export default function ServerImportPreview() {
 
 			<H2>Recommended workflow</H2>
 			<Ul>
-				<Li>When the extension becomes available, prefer one-click capture from compatible documentation pages or registries.</Li>
+				<Li>Use one-click extension capture from compatible documentation pages or registries.</Li>
 				<Li>Drop or paste the snippet first; only switch to manual edits when the normalized draft needs correction.</Li>
-				<Li>Read the Preview step for capability shape, not just install success.</Li>
+				<Li>Read the Preview step for capability shape and install readiness.</Li>
 				<Li>Use the validation step to catch duplicates or broken entries before importing.</Li>
 				<Li>After import, continue to Profiles if the server should participate in managed exposure.</Li>
 			</Ul>

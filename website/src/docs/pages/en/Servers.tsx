@@ -14,8 +14,8 @@ export default function Servers() {
 			<P>
 				The Servers page is the heart of MCPMate: it lists every registered MCP
 				server, shows connection health, and provides install/import flows. Use
-				it to enable or pause capabilities without touching configuration files
-				by hand.
+				it to enable or pause capabilities through the guided configuration
+				workflow.
 			</P>
 
 			<DocScreenshot
@@ -34,6 +34,11 @@ export default function Servers() {
 				<Li>
 					It also covers the Chrome / Edge extension path that can capture compatible
 					MCP snippets from the web and open MCPMate directly for import.
+				</Li>
+				<Li>
+					<strong>Discovery Server entries</strong> from Public Discovery can
+					seed the same install wizard with catalog metadata before you review
+					transport settings and profile placement.
 				</Li>
 				<Li>
 					<strong>Detail Overview</strong> explains the browse view at
@@ -84,8 +89,8 @@ export default function Servers() {
 					Click the card to open <code>/servers/:serverId</code> for deep
 					inspection: overview and instances on the first tab, then nested{" "}
 					<strong>Capabilities</strong> tabs for Tools, Resources, Prompts, and
-					Resource templates (the top-level sidebar no longer lists Tools as its
-					own page).
+					Resource templates. Tools now stay attached to the server that exposes
+					them.
 				</Li>
 				<Li>
 					Instance-specific URLs use{" "}
@@ -116,6 +121,11 @@ export default function Servers() {
 				onto the Add button to trigger the server install wizard. MCPMate parses
 				the payload, normalizes transports, and lets you preview the resulting
 				config before committing it.
+			</P>
+			<P>
+				Discovery Server entries use that same pipeline from a cleaner starting
+				point. When a catalog entry is available, the wizard opens with known
+				metadata and import context already attached.
 			</P>
 			<P>
 				If you want the full workflow, continue to <strong>Import &amp; Preview</strong>.

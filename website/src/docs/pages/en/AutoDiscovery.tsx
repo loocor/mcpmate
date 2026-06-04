@@ -7,18 +7,17 @@ export default function AutoDiscovery() {
 			meta={{
 				title: "Auto Discovery & Import",
 				description:
-					"Automatically detect and import existing configurations - no manual editing required",
+					"Discover local MCP configurations and Discovery presets for faster setup.",
 			}}
 		>
 			<P>
-				MCPMate can automatically discover existing MCP server configurations on
-				your system and import them with a single click. This eliminates the
-				tedious process of manually recreating your setup in a new tool, and the
-				import flow can also be reused for user-defined clients that store MCP
-				configs in standard locations.
+				MCPMate combines local configuration scanning with the Public Discovery
+				catalog. Local discovery finds MCP settings already present on your
+				machine, while Discovery presets provide curated client and server
+				starting points for new setups.
 			</P>
 
-			<H2>How it works</H2>
+			<H2>Local discovery</H2>
 			<P>
 				MCPMate scans common configuration locations used by popular MCP
 				clients:
@@ -30,10 +29,23 @@ export default function AutoDiscovery() {
 				<Li>Other standard MCP client setups, including user-defined clients</Li>
 			</Ul>
 
+			<H2>Discovery presets</H2>
+			<P>
+				Public Discovery powers the preset entries shown during first run, inside
+				client add/edit drawers, and in the browser extension. These entries
+				include identifiers, display names, links, icons, and import metadata so
+				MCPMate can create a cleaner draft before you review it.
+			</P>
+			<Ul>
+				<Li>Client presets help add supported AI apps with known MCP config targets.</Li>
+				<Li>Server entries provide import-ready metadata for the server wizard.</Li>
+				<Li>Portal entries connect Market documentation and the browser extension portal tab.</Li>
+			</Ul>
+
 			<H2>Import process</H2>
 			<Ul>
-				<Li>MCPMate scans for existing configurations automatically.</Li>
-				<Li>The import view lists discovered servers for review.</Li>
+				<Li>MCPMate scans for existing local configurations.</Li>
+				<Li>The import view lists discovered servers and Discovery-backed drafts for review.</Li>
 				<Li>You select what to import and target profile placement.</Li>
 				<Li>Imported entries are normalized and stored in MCPMate.</Li>
 			</Ul>
@@ -44,8 +56,8 @@ export default function AutoDiscovery() {
 					<strong>Quick Onboarding:</strong> Get started with MCPMate immediately
 				</Li>
 				<Li>
-					<strong>No Manual Work:</strong> Avoid copying configuration details by
-					hand
+					<strong>Guided Setup:</strong> Start from detected local state or
+					Discovery-backed presets
 				</Li>
 				<Li>
 					<strong>Preserve Existing Setup:</strong> Your original configurations

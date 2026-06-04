@@ -2,6 +2,7 @@ import DocLayout from "../../layout/DocLayout";
 import { H2, H3, P, Ul, Li } from "../../components/Headings";
 import Callout from "../../components/Callout";
 import DocScreenshot from "../../components/DocScreenshot";
+import DiscoveryPortalList from "../../components/DiscoveryPortalList";
 
 export default function MarketJA() {
 	return (
@@ -33,6 +34,20 @@ export default function MarketJA() {
 					Settings → <strong>MCP マーケット</strong> では、既定マーケットの選択、非表示項目の管理、ブラウザー拡張の入口確認を行えます。
 				</Li>
 			</Ul>
+
+			<H2 id="discovery-portals">Discovery ポータル</H2>
+			<P>
+				Discovery ポータルカタログには、MCPMate のインポートフローと相性のよい MCP ディレクトリやコミュニティ入口が並びます。下の一覧は、ブラウザー拡張機能と同じ Public Discovery API から読み込まれるため、ウェブサイト、拡張機能、デスクトップのインポートフローが同じカタログソースを参照します。
+			</P>
+			<DiscoveryPortalList
+				copy={{
+					loading: "Discovery ポータルを読み込んでいます...",
+					error: "Discovery ポータルデータを更新しています。ブラウザー拡張機能の Portal タブでも同じカタログフローを使えます。",
+					empty: "Discovery ポータルデータを整理しています。",
+					visit: "ポータルを開く",
+					source: "ソース",
+				}}
+			/>
 
 			<H2>マーケットからのインストール</H2>
 			<H3>プレビュードロワー</H3>

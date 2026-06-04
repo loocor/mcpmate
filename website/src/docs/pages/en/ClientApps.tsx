@@ -41,6 +41,28 @@ export default function ClientApps() {
 				</Li>
 			</Ul>
 
+			<H2>Adding clients from Discovery presets</H2>
+			<P>
+				The New / Edit drawer can load supported client entries from Public
+				Discovery. Choose a preset to start with the known identifier, display
+				name, icon, homepage, and MCP configuration target, then review the
+				rollout mode before saving.
+			</P>
+			<Ul>
+				<Li>
+					Use this path during onboarding when MCPMate detects a supported app
+					or when you want to register a supported client before writing config.
+				</Li>
+				<Li>
+					Custom clients can still use the same drawer when the app stores MCP
+					configuration in a standard location.
+				</Li>
+				<Li>
+					After saving, the client appears in the Clients list with the same
+					governance controls as detected desktop apps.
+				</Li>
+			</Ul>
+
 			<H2>Stats & filters</H2>
 			<Ul>
 				<Li>
@@ -73,9 +95,8 @@ export default function ClientApps() {
 			<P>
 				The primary control is now governance-oriented: you can explicitly allow
 				or deny a client. Denying a client keeps it out of MCPMate&apos;s allowed
-				capability circle, but it does not lock the rest of the client editor.
-				You can still adjust rollout mode, capability source, and path metadata
-				before allowing the client again.
+				capability circle while the editor remains available for rollout mode,
+				capability source, and path metadata adjustments.
 			</P>
 
 			<H3>Client details</H3>

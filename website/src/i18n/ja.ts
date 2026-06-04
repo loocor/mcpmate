@@ -223,6 +223,7 @@ const ja = {
 	"footer.documentation": "ドキュメント",
 	"footer.changelog": "変更履歴",
 	"footer.roadmap": "ロードマップ",
+	"footer.discoveryPortals": "よく使うポータル",
 	"footer.privacy": "プライバシーポリシー",
 	"footer.terms": "利用規約",
 

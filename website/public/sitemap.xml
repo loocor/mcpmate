@@ -71,6 +71,12 @@
     <xhtml:link rel="alternate" hreflang="ja" href="https://mcp.umate.ai/docs/ja/auto-discovery"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://mcp.umate.ai/docs/en/auto-discovery"/>
   </url>
+  <url><loc>https://mcp.umate.ai/docs/en/browser-extension</loc><lastmod>2026-06-04</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcp.umate.ai/docs/en/browser-extension"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcp.umate.ai/docs/zh/browser-extension"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcp.umate.ai/docs/ja/browser-extension"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcp.umate.ai/docs/en/browser-extension"/>
+  </url>
   <url><loc>https://mcp.umate.ai/docs/en/uni-import</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
     <xhtml:link rel="alternate" hreflang="en" href="https://mcp.umate.ai/docs/en/uni-import"/>
     <xhtml:link rel="alternate" hreflang="zh" href="https://mcp.umate.ai/docs/zh/uni-import"/>
@@ -82,6 +88,12 @@
     <xhtml:link rel="alternate" hreflang="zh" href="https://mcp.umate.ai/docs/zh/guides-overview"/>
     <xhtml:link rel="alternate" hreflang="ja" href="https://mcp.umate.ai/docs/ja/guides-overview"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://mcp.umate.ai/docs/en/guides-overview"/>
+  </url>
+  <url><loc>https://mcp.umate.ai/docs/en/onboarding</loc><lastmod>2026-06-04</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mcp.umate.ai/docs/en/onboarding"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://mcp.umate.ai/docs/zh/onboarding"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://mcp.umate.ai/docs/ja/onboarding"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mcp.umate.ai/docs/en/onboarding"/>
   </url>
   <url><loc>https://mcp.umate.ai/docs/en/dashboard</loc><lastmod>2026-05-01</lastmod><changefreq>monthly</changefreq><priority>0.6</priority>
     <xhtml:link rel="alternate" hreflang="en" href="https://mcp.umate.ai/docs/en/dashboard"/>
