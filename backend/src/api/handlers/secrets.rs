@@ -10,14 +10,14 @@ use crate::{
         handlers::ApiError,
         models::secrets::{
             SecretCreateReq, SecretDeleteData, SecretDeleteReq, SecretDeleteResp, SecretDetailsReq, SecretKindPayload,
-            SecretListData, SecretListResp, SecretMetadataData, SecretMetadataResp, SecretUpdateReq, SecretUsageData,
-            SecretUsageListData, SecretUsageListResp, SecretUsageLocationData, SecretUsageReq,
+            SecretListData, SecretListResp, SecretMetadataData, SecretMetadataResp, SecretOriginData, SecretUpdateReq,
+            SecretUsageData, SecretUsageListData, SecretUsageListResp, SecretUsageLocationData, SecretUsageReq,
         },
         routes::AppState,
     },
     core::secrets::store::{
-        SecretCreateInput, SecretKindInput, SecretMetadataView, SecretUpdateInput, SecretUsageLocationInput,
-        SecretUsageView,
+        SecretCreateInput, SecretKindInput, SecretMetadataView, SecretOriginInput, SecretUpdateInput,
+        SecretUsageLocationInput, SecretUsageView,
     },
 };
 
@@ -44,6 +44,7 @@ pub async fn create_secret(
             kind: secret_kind_input(payload.kind),
             value: payload.value,
             label: payload.label,
+            origin: payload.origin.map(secret_origin_input),
         })
         .await
         .map_err(map_secret_store_error)?;
@@ -61,6 +62,7 @@ pub async fn update_secret(
             kind: payload.kind.map(secret_kind_input),
             value: payload.value,
             label: payload.label,
+            origin: payload.origin.map(secret_origin_input),
         })
         .await
         .map_err(map_secret_store_error)?;
@@ -148,12 +150,39 @@ fn secret_metadata_data(metadata: SecretMetadataView) -> SecretMetadataData {
         placeholder: metadata.placeholder,
         kind: metadata.kind,
         label: metadata.label,
+        origin: metadata.origin.map(secret_origin_data),
         provider_id: metadata.provider_id,
         provider_kind: metadata.provider_kind,
         version: metadata.version,
         used_by_count: metadata.used_by_count,
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
+    }
+}
+
+fn secret_origin_input(origin: SecretOriginData) -> SecretOriginInput {
+    SecretOriginInput {
+        server_id: origin.server_id,
+        server_name: origin.server_name,
+        server_kind: origin.server_kind,
+        source: origin.source,
+        field_group: origin.field_group,
+        field_key: origin.field_key,
+        field_index: origin.field_index,
+        field_path: origin.field_path,
+    }
+}
+
+fn secret_origin_data(origin: SecretOriginInput) -> SecretOriginData {
+    SecretOriginData {
+        server_id: origin.server_id,
+        server_name: origin.server_name,
+        server_kind: origin.server_kind,
+        source: origin.source,
+        field_group: origin.field_group,
+        field_key: origin.field_key,
+        field_index: origin.field_index,
+        field_path: origin.field_path,
     }
 }
 

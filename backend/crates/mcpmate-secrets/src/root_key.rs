@@ -11,9 +11,8 @@ use ring::rand;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-const DEVELOPMENT_PROVIDER_ID: &str = "local-encrypted-vault";
-const DEVELOPMENT_PROVIDER_KIND: &str = "local_encrypted_vault";
-const OS_PROVIDER_KIND: &str = "operating_system_keychain";
+use crate::constants::{DEVELOPMENT_PROVIDER_ID, DEVELOPMENT_PROVIDER_KIND, OS_PROVIDER_KIND};
+
 const OS_KEYRING_SERVICE: &str = "ai.umate.mcpmate.secure-store";
 const OS_KEYRING_USER: &str = "secure-store-root-key";
 

@@ -125,6 +125,7 @@ async fn local_store_encrypts_values_and_resolves_runtime_placeholders() {
             kind: SecretKindInput::Token,
             value: "ghp_runtime_token".to_string(),
             label: Some("GitHub token".to_string()),
+            origin: None,
         })
         .await
         .expect("create secret");
@@ -232,6 +233,7 @@ async fn usage_refs_report_server_runtime_locations_and_block_default_delete() {
             kind: SecretKindInput::Token,
             value: "ghp_runtime_token".to_string(),
             label: None,
+            origin: None,
         })
         .await
         .expect("create secret");
@@ -271,6 +273,7 @@ async fn usage_sync_detects_placeholders_in_server_runtime_config() {
             kind: SecretKindInput::Token,
             value: "ghp_runtime_token".to_string(),
             label: None,
+            origin: None,
         })
         .await
         .expect("create token secret");
@@ -280,6 +283,7 @@ async fn usage_sync_detects_placeholders_in_server_runtime_config() {
             kind: SecretKindInput::HeaderValue,
             value: "Bearer runtime-token".to_string(),
             label: None,
+            origin: None,
         })
         .await
         .expect("create header secret");

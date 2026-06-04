@@ -22,6 +22,8 @@ pub struct SecretCreateReq {
     pub value: String,
     #[serde(default)]
     pub label: Option<String>,
+    #[serde(default)]
+    pub origin: Option<SecretOriginData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -33,6 +35,8 @@ pub struct SecretUpdateReq {
     pub value: Option<String>,
     #[serde(default)]
     pub label: Option<String>,
+    #[serde(default)]
+    pub origin: Option<SecretOriginData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -52,12 +56,33 @@ pub struct SecretUsageReq {
     pub alias: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SecretOriginData {
+    #[serde(default)]
+    pub server_id: Option<String>,
+    #[serde(default)]
+    pub server_name: Option<String>,
+    #[serde(default)]
+    pub server_kind: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub field_group: Option<String>,
+    #[serde(default)]
+    pub field_key: Option<String>,
+    #[serde(default)]
+    pub field_index: Option<i64>,
+    #[serde(default)]
+    pub field_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct SecretMetadataData {
     pub alias: String,
     pub placeholder: String,
     pub kind: String,
     pub label: Option<String>,
+    pub origin: Option<SecretOriginData>,
     pub provider_id: String,
     pub provider_kind: String,
     pub version: u64,

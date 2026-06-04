@@ -77,6 +77,7 @@ import type {
 	SecretListResp,
 	SecretMetadata,
 	SecretMetadataResp,
+	SecretOrigin,
 	SecretUsage,
 	SecretUsageListResp,
 	OAuthCallbackRequest,
@@ -854,6 +855,7 @@ export const secretsApi = {
 		kind: SecretKind;
 		value: string;
 		label?: string | null;
+		origin?: SecretOrigin | null;
 	}): Promise<SecretMetadata> => {
 		const resp = await fetchApi<SecretMetadataResp>("/api/secrets/create", {
 			method: "POST",
@@ -867,6 +869,7 @@ export const secretsApi = {
 		kind?: SecretKind;
 		value?: string;
 		label?: string | null;
+		origin?: SecretOrigin | null;
 	}): Promise<SecretMetadata> => {
 		const resp = await fetchApi<SecretMetadataResp>("/api/secrets/update", {
 			method: "POST",

@@ -609,12 +609,24 @@ export interface SecretMetadata {
   placeholder: string;
   kind: string;
   label?: string | null;
+  origin?: SecretOrigin | null;
   provider_id: string;
   provider_kind: string;
   version: number;
   used_by_count: number;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface SecretOrigin {
+  server_id?: string | null;
+  server_name?: string | null;
+  server_kind?: string | null;
+  source?: string | null;
+  field_group?: string | null;
+  field_key?: string | null;
+  field_index?: number | null;
+  field_path?: string | null;
 }
 
 export interface SecretUsageLocation {
