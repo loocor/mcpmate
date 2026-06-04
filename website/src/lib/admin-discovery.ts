@@ -5,6 +5,7 @@ const MAX_CLIENT_LIMIT = 50;
 const DISCOVERY_FETCH_TIMEOUT_MS = 10_000;
 const CLIENT_PRESETS_CACHE_KEY = "mcpmate:website-client-presets";
 const CLIENT_PRESETS_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+const SAFE_DATA_IMAGE_URL_PATTERN = /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[a-z0-9+/]+=*$/i;
 
 export const ADMIN_DISCOVERY_BASE_URL = (
 	(typeof import.meta !== "undefined" &&
@@ -51,6 +52,49 @@ function stringArrayValue(value: unknown): string[] {
 	return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function safeHttpUrl(value: unknown): string {
+	const compact = compactString(value);
+	if (!compact) return "";
+
+	try {
+		const url = new URL(compact);
+		return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+	} catch {
+		return "";
+	}
+}
+
+function safeImageUrl(value: unknown): string {
+	const compact = compactString(value);
+	if (!compact) return "";
+
+	const httpUrl = safeHttpUrl(compact);
+	if (httpUrl) {
+		return new URL(httpUrl).protocol === "https:" ? httpUrl : "";
+	}
+
+	return SAFE_DATA_IMAGE_URL_PATTERN.test(compact) ? compact : "";
+}
+
+async function fetchDiscoveryResponse(url: URL): Promise<Response> {
+	const init: RequestInit = { credentials: "omit" };
+	let timeout: ReturnType<typeof window.setTimeout> | undefined;
+
+	if (typeof window !== "undefined") {
+		const controller = new AbortController();
+		timeout = window.setTimeout(() => controller.abort(), DISCOVERY_FETCH_TIMEOUT_MS);
+		init.signal = controller.signal;
+	}
+
+	try {
+		return await fetch(url.toString(), init);
+	} finally {
+		if (timeout !== undefined) {
+			window.clearTimeout(timeout);
+		}
+	}
+}
+
 export function parseClientPresetForDisplay(raw: unknown): WebsiteClientPreset | null {
 	const client = recordValue(raw);
 	const identifier =
@@ -62,8 +106,8 @@ export function parseClientPresetForDisplay(raw: unknown): WebsiteClientPreset |
 		firstCompactString(client.displayName, client.display_name, metadata.display_name) || identifier;
 	const icon = recordValue(client.icon);
 	const links = recordValue(client.links);
-	const logoUrl = firstCompactString(icon.url, client.logoUrl, client.logo_url, metadata.logo_url);
-	const homepageUrl = firstCompactString(links.homepage, client.homepageUrl, client.homepage_url, metadata.homepage_url);
+	const logoUrl = safeImageUrl(firstCompactString(icon.url, client.logoUrl, client.logo_url, metadata.logo_url));
+	const homepageUrl = safeHttpUrl(firstCompactString(links.homepage, client.homepageUrl, client.homepage_url, metadata.homepage_url));
 
 	return {
 		identifier,
@@ -132,24 +176,7 @@ export async function fetchWebsiteClientPresets(limit = MAX_CLIENT_LIMIT): Promi
 	const url = new URL("/discovery/clients", `${ADMIN_DISCOVERY_BASE_URL}/`);
 	url.searchParams.set("limit", String(Math.min(limit, MAX_CLIENT_LIMIT)));
 
-	const init: RequestInit = { credentials: "omit" };
-	let timeout: ReturnType<typeof window.setTimeout> | undefined;
-
-	if (typeof window !== "undefined") {
-		const controller = new AbortController();
-		timeout = window.setTimeout(() => controller.abort(), DISCOVERY_FETCH_TIMEOUT_MS);
-		init.signal = controller.signal;
-	}
-
-	let response: Response;
-	try {
-		response = await fetch(url.toString(), init);
-	} finally {
-		if (timeout !== undefined) {
-			window.clearTimeout(timeout);
-		}
-	}
-
+	const response = await fetchDiscoveryResponse(url);
 	if (!response.ok) {
 		throw new Error(`Admin discovery request failed with HTTP ${response.status}`);
 	}
@@ -181,7 +208,7 @@ export function parseDiscoveryPortalForDisplay(raw: unknown): WebsiteDiscoveryPo
 	const icon = recordValue(portal.icon);
 	const id = firstCompactString(portal.id, portal.identifier, portal.slug, portal.title, portal.name);
 	const title = firstCompactString(portal.title, portal.name, metadata.title);
-	const url = firstCompactString(portal.url, links.homepage, links.website, metadata.url);
+	const url = safeHttpUrl(firstCompactString(portal.url, links.homepage, links.website, metadata.url));
 
 	if (!id || !title || !url) {
 		return null;
@@ -197,13 +224,13 @@ export function parseDiscoveryPortalForDisplay(raw: unknown): WebsiteDiscoveryPo
 		source: firstCompactString(portal.source, discovery.source),
 		signal: firstCompactString(portal.signal, recordValue(discovery.quality).status),
 		meta: firstCompactString(portal.meta, discovery.category, metadata.category, categories.slice(0, 2).join(", ")),
-		iconUrl: firstCompactString(icon.url, portal.iconUrl, portal.icon_url, metadata.logo_url),
+		iconUrl: safeImageUrl(firstCompactString(icon.url, portal.iconUrl, portal.icon_url, metadata.logo_url)),
 	};
 }
 
 export async function fetchWebsiteDiscoveryPortals(): Promise<WebsiteDiscoveryPortal[]> {
 	const url = new URL("/discovery/portals", `${ADMIN_DISCOVERY_BASE_URL}/`);
-	const response = await fetch(url.toString(), { credentials: "omit" });
+	const response = await fetchDiscoveryResponse(url);
 	if (!response.ok) {
 		throw new Error(`Admin discovery request failed with HTTP ${response.status}`);
 	}
