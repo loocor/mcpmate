@@ -1,6 +1,19 @@
 import React from "react";
 import { useDocContext } from "../context/DocContext";
 
+function getNodeText(node: React.ReactNode): string {
+	if (typeof node === "string" || typeof node === "number") {
+		return String(node);
+	}
+	if (Array.isArray(node)) {
+		return node.map(getNodeText).join("");
+	}
+	if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+		return getNodeText(node.props.children);
+	}
+	return "";
+}
+
 function slugify(input: string): string {
 	return input
 		.toLowerCase()
@@ -15,10 +28,7 @@ export const H2: React.FC<React.PropsWithChildren<{ id?: string }>> = ({
 	children,
 }) => {
 	const { registerHeading, unregisterHeading } = useDocContext();
-	const text = React.useMemo(
-		() => (typeof children === "string" ? children : String(children)),
-		[children],
-	) as string;
+	const text = React.useMemo(() => getNodeText(children), [children]);
 	const resolvedId = React.useMemo(() => id || slugify(text), [id, text]);
 	const ref = React.useRef<HTMLHeadingElement>(null);
 
@@ -50,10 +60,7 @@ export const H3: React.FC<React.PropsWithChildren<{ id?: string }>> = ({
 	children,
 }) => {
 	const { registerHeading, unregisterHeading } = useDocContext();
-	const text = React.useMemo(
-		() => (typeof children === "string" ? children : String(children)),
-		[children],
-	) as string;
+	const text = React.useMemo(() => getNodeText(children), [children]);
 	const resolvedId = React.useMemo(() => id || slugify(text), [id, text]);
 	const ref = React.useRef<HTMLHeadingElement>(null);
 

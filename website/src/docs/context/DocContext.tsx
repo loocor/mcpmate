@@ -4,7 +4,6 @@ import {
 	useCallback,
 	useContext,
 	useMemo,
-	useRef,
 	useState,
 } from "react";
 
@@ -23,6 +22,26 @@ type DocContextValue = {
 
 const DocContext = createContext<DocContextValue | undefined>(undefined);
 
+const DOCUMENT_POSITION_PRECEDING = 2;
+const DOCUMENT_POSITION_FOLLOWING = 4;
+
+function sortByDocumentOrder(headings: Heading[]): Heading[] {
+	return [...headings].sort((a, b) => {
+		if (!a.el || !b.el || a.el === b.el) {
+			return 0;
+		}
+
+		const position = a.el.compareDocumentPosition(b.el);
+		if (position & DOCUMENT_POSITION_FOLLOWING) {
+			return -1;
+		}
+		if (position & DOCUMENT_POSITION_PRECEDING) {
+			return 1;
+		}
+		return 0;
+	});
+}
+
 export function useDocContext(): DocContextValue {
 	const ctx = useContext(DocContext);
 	if (!ctx) throw new Error("useDocContext must be used within <DocProvider>");
@@ -31,22 +50,22 @@ export function useDocContext(): DocContextValue {
 
 export function DocProvider({ children }: { children: React.ReactNode }) {
 	const [headings, setHeadings] = useState<Heading[]>([]);
-	const ids = useRef(new Set<string>());
 
 	const registerHeading = useCallback((h: Heading) => {
 		setHeadings((prev) => {
-			if (ids.current.has(h.id)) return prev;
-			ids.current.add(h.id);
-			const next = [...prev, h];
-			return next.sort(
-				(a, b) => a.level - b.level || a.text.localeCompare(b.text),
-			);
+			const index = prev.findIndex((heading) => heading.id === h.id);
+			if (index === -1) {
+				return sortByDocumentOrder([...prev, h]);
+			}
+
+			const next = [...prev];
+			next[index] = h;
+			return sortByDocumentOrder(next);
 		});
 	}, []);
 
 	const unregisterHeading = useCallback((id: string) => {
 		setHeadings((prev) => prev.filter((h) => h.id !== id));
-		ids.current.delete(id);
 	}, []);
 
 	const value = useMemo(
