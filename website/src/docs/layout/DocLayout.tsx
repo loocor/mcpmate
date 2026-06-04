@@ -117,8 +117,11 @@ export default function DocLayout({ meta, children }: Props) {
 
 				{/* Floating ToC on large screens (doesn't reserve layout space) */}
 				<div
-					className="hidden xl:block absolute right-6"
-					style={{ top: topPx }}
+					className="hidden xl:block fixed z-30"
+					style={{
+						top: topPx,
+						right: "max(1.5rem, calc((100vw - 80rem) / 2 + 1.5rem))",
+					}}
 				>
 					<ToC />
 				</div>

@@ -1,5 +1,55 @@
 [
 	{
+		"version": "0.2.2",
+		"date": "2026-06-02",
+		"highlights": [
+			"MCPMate v0.2.2-beta focuses on daily desktop operation. It adds the compact tray operator panel, refreshes browser-extension discovery and catalog loading, upgrades the MCP protocol SDK, and keeps the website and README aligned with the current product direction."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Added a compact tray operator panel so common desktop operations can be reached without opening the full board."
+			},
+			{
+				"type": "feat",
+				"text": "Improved browser-extension discovery with smoother refresh, localized results, and more reliable listing order."
+			},
+			{
+				"type": "feat",
+				"text": "Added more ready-to-use server options to the client setup flow."
+			},
+			{
+				"type": "feat",
+				"text": "Updated MCP compatibility internals and made client setup state clearer in the dashboard."
+			},
+			{
+				"type": "docs",
+				"text": "Refreshed the homepage, design system, and product README so public-facing wording better matches the current app."
+			}
+		]
+	},
+	{
+		"version": "0.2.1",
+		"date": "2026-05-19",
+		"highlights": [
+			"MCPMate v0.2.1-beta is a focused governance and client-flow patch release. It tightens the repository-level operating contract for future agent-assisted work, corrects misplaced workflow guidance, and restores first-contact review for newly detected remote clients."
+		],
+		"changes": [
+			{
+				"type": "fix",
+				"text": "Restored the first-contact review flow for newly detected remote clients that have not yet been approved, suspended, or otherwise managed."
+			},
+			{
+				"type": "fix",
+				"text": "Show newly detected remote clients in the default Clients list so first-contact review entries can be approved from the dashboard."
+			},
+			{
+				"type": "fix",
+				"text": "Keep detected-only local candidates out of the default Clients list unless discovery details are explicitly requested."
+			}
+		]
+	},
+	{
 		"version": "0.2.0",
 		"date": "2026-05-17",
 		"highlights": [
