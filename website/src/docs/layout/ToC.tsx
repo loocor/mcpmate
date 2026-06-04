@@ -2,6 +2,23 @@ import { ListTree } from "lucide-react";
 import React from "react";
 import { useDocContext } from "../context/DocContext";
 
+function getHashId(hash: string): string {
+	const rawId = hash.startsWith("#") ? hash.slice(1) : hash;
+	if (!rawId) {
+		return "";
+	}
+
+	try {
+		return decodeURIComponent(rawId);
+	} catch {
+		return rawId;
+	}
+}
+
+function getHeadingHref(id: string): string {
+	return `#${encodeURIComponent(id)}`;
+}
+
 export default function ToC() {
 	const { headings } = useDocContext();
 	const [active, setActive] = React.useState<string>("");
@@ -15,6 +32,17 @@ export default function ToC() {
 			event: React.MouseEvent<HTMLAnchorElement>,
 			heading: (typeof headings)[number],
 		) => {
+			if (
+				event.defaultPrevented ||
+				event.button !== 0 ||
+				event.metaKey ||
+				event.ctrlKey ||
+				event.shiftKey ||
+				event.altKey
+			) {
+				return;
+			}
+
 			event.preventDefault();
 
 			const target = heading.el ?? document.getElementById(heading.id);
@@ -22,7 +50,7 @@ export default function ToC() {
 				return;
 			}
 
-			window.history.pushState(null, "", `#${heading.id}`);
+			window.history.pushState(null, "", getHeadingHref(heading.id));
 			target.scrollIntoView({ behavior: "smooth", block: "start" });
 			setActive(heading.id);
 		},
@@ -47,7 +75,7 @@ export default function ToC() {
 
 	React.useEffect(() => {
 		const scrollCurrentHash = () => {
-			const id = decodeURIComponent(window.location.hash.slice(1));
+			const id = getHashId(window.location.hash);
 			if (!id) {
 				return;
 			}
@@ -93,7 +121,7 @@ export default function ToC() {
 							{headings.map((h) => (
 								<a
 									key={h.id}
-									href={`#${h.id}`}
+									href={getHeadingHref(h.id)}
 									onClick={(event) => scrollToHeading(event, h)}
 									className={`block truncate transition-colors hover:text-blue-600 dark:hover:text-blue-400 ${
 										active === h.id
