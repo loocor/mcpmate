@@ -1,17 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	AlertTriangle,
+	BookOpenText,
 	Bug,
 	Check,
 	Edit3,
 	Eye,
+	FileText,
+	ListChecks,
 	Play,
+	Plus,
 	RefreshCw,
 	Square,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import remarkGfm from "remark-gfm";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
@@ -47,6 +54,7 @@ import {
 	CardTitle,
 } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -61,13 +69,17 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
+import { Textarea } from "../../components/ui/textarea";
 import { auditApi, configSuitsApi, serversApi, useProfileTokenChartSource } from "../../lib/api";
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type {
+	ConfigSuitGuidance,
+	ConfigSuitGuidanceCapabilityRef,
 	ConfigSuitPrompt,
 	ConfigSuitResource,
+	ConfigSuitResourceTemplate,
 	ConfigSuitServer,
 	ConfigSuitTool,
 } from "../../lib/types";
@@ -90,12 +102,149 @@ const formatProfileTypeLabel = (value?: string | null) =>
 
 const PROFILE_DETAIL_TABS = [
 	"overview",
+	"guidance",
 	"servers",
 	"tools",
 	"prompts",
 	"resources",
 	"templates",
 ];
+
+type ProfileGuidanceFormState = {
+	id?: string;
+	slug: string;
+	title: string;
+	summary: string;
+	scenario: string;
+	activation: string;
+	capabilityRefs: ConfigSuitGuidanceCapabilityRef[];
+	validationNotes: string;
+	avoid: string;
+	contentMarkdown: string;
+	sourceUri: string;
+	enabled: boolean;
+};
+
+type GuidanceCapabilityOption = ConfigSuitGuidanceCapabilityRef & {
+	key: string;
+	enabled: boolean;
+	label: string;
+	detail: string;
+};
+
+const emptyGuidanceForm: ProfileGuidanceFormState = {
+	slug: "",
+	title: "",
+	summary: "",
+	scenario: "",
+	activation: "",
+	capabilityRefs: [],
+	validationNotes: "",
+	avoid: "",
+	contentMarkdown: "",
+	sourceUri: "",
+	enabled: true,
+};
+
+const guidanceToForm = (guidance: ConfigSuitGuidance): ProfileGuidanceFormState => ({
+	id: guidance.id,
+	slug: guidance.slug,
+	title: guidance.title,
+	summary: guidance.summary ?? "",
+	scenario: guidance.scenario ?? "",
+	activation: guidance.activation ?? "",
+	capabilityRefs: guidance.capability_refs ?? [],
+	validationNotes: guidance.validation_notes ?? "",
+	avoid: guidance.avoid ?? "",
+	contentMarkdown: guidance.content_markdown,
+	sourceUri: guidance.source_uri ?? "",
+	enabled: guidance.enabled,
+});
+
+const guidanceCapabilityKey = (capability: Pick<ConfigSuitGuidanceCapabilityRef, "kind" | "id">) =>
+	`${capability.kind}:${capability.id}`;
+
+const emptyStringToNull = (value: string) => {
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+};
+
+const guidanceUpsertPayload = (
+	profileId: string,
+	form: ProfileGuidanceFormState,
+) => ({
+	id: form.id ?? null,
+	profile_id: profileId,
+	slug: form.slug.trim(),
+	title: form.title.trim(),
+	summary: emptyStringToNull(form.summary),
+	scenario: emptyStringToNull(form.scenario),
+	activation: emptyStringToNull(form.activation),
+	capability_refs: form.capabilityRefs,
+	validation_notes: emptyStringToNull(form.validationNotes),
+	avoid: emptyStringToNull(form.avoid),
+	content_markdown: form.contentMarkdown.trim(),
+	source_uri: emptyStringToNull(form.sourceUri),
+	enabled: form.enabled,
+});
+
+const fillGuidanceTemplateField = (
+	currentValue: string,
+	templateValue: string,
+) => currentValue || templateValue;
+
+const buildGuidanceMarkdownPreview = (form: ProfileGuidanceFormState) => {
+	const lines: string[] = [];
+	const title = form.title.trim();
+	if (title) {
+		lines.push(`# ${title}`, "");
+	}
+	const summary = form.summary.trim();
+	if (summary) {
+		lines.push(summary, "");
+	}
+	const sections: Array<[string, string]> = [
+		["Scenario", form.scenario],
+		["Activation", form.activation],
+	];
+	for (const [sectionTitle, value] of sections) {
+		const trimmed = value.trim();
+		if (trimmed) {
+			lines.push(`## ${sectionTitle}`, "", trimmed, "");
+		}
+	}
+	if (form.capabilityRefs.length > 0) {
+		lines.push("## Capabilities", "");
+		for (const capability of form.capabilityRefs) {
+			const name = capability.name ? ` (${capability.name})` : "";
+			const server = capability.server_name ? ` via ${capability.server_name}` : "";
+			lines.push(`- ${capability.kind}: ${capability.id}${name}${server}`);
+		}
+		lines.push("");
+	}
+	const validationNotes = form.validationNotes.trim();
+	if (validationNotes) {
+		lines.push("## Validation", "", validationNotes, "");
+	}
+	const avoid = form.avoid.trim();
+	if (avoid) {
+		lines.push("## Avoid", "", avoid, "");
+	}
+	const sourceUri = form.sourceUri.trim();
+	if (sourceUri) {
+		lines.push(`Source: ${sourceUri}`, "");
+	}
+	const body = form.contentMarkdown.trim();
+	if (body) {
+		lines.push(body);
+	}
+	return lines.join("\n").trim();
+};
+
+const hasGuidanceFormChanged = (
+	current: ProfileGuidanceFormState,
+	original: ProfileGuidanceFormState,
+) => JSON.stringify(current) !== JSON.stringify(original);
 
 export function ProfileDetailPage() {
 	const { t } = useTranslation();
@@ -126,6 +275,16 @@ export function ProfileDetailPage() {
 	});
 
 	const mode = searchParams.get("mode");
+	const guidanceSlugId = useId();
+	const guidanceTitleId = useId();
+	const guidanceSummaryId = useId();
+	const guidanceScenarioId = useId();
+	const guidanceActivationId = useId();
+	const guidanceValidationId = useId();
+	const guidanceAvoidId = useId();
+	const guidanceSourceUriId = useId();
+	const guidanceInstructionsId = useId();
+	const guidanceEnabledId = useId();
 
 	// Developer toggles
 	const enableServerDebug = useAppStore(
@@ -160,6 +319,7 @@ export function ProfileDetailPage() {
 	};
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const [isGuidanceDeleteDialogOpen, setIsGuidanceDeleteDialogOpen] = useState(false);
 	// Filters: servers
 	const [serverQuery, setServerQuery] = useState("");
 	const [serverStatus, setServerStatus] = useState<
@@ -189,6 +349,10 @@ export function ProfileDetailPage() {
 	const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
 	const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
 	const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+	const [selectedGuidanceId, setSelectedGuidanceId] = useState<string | null>(null);
+	const [guidanceForm, setGuidanceForm] =
+		useState<ProfileGuidanceFormState>(emptyGuidanceForm);
+	const [guidancePreviewMode, setGuidancePreviewMode] = useState<"edit" | "preview">("edit");
 	const [logFilter, setLogFilter] = useState("");
 	const [logPageSize, setLogPageSize] = useState<number>(10);
 	const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
@@ -523,6 +687,96 @@ export function ProfileDetailPage() {
 		retry: 1,
 	});
 
+	const {
+		data: guidanceResponse,
+		isLoading: isLoadingGuidance,
+		refetch: refetchGuidance,
+	} = useQuery({
+		queryKey: ["configSuitGuidance", profileId],
+		queryFn: () =>
+			profileId
+				? configSuitsApi.getGuidance(profileId)
+				: Promise.resolve(undefined),
+		enabled: !!profileId,
+		retry: 1,
+	});
+
+	const guidanceSaveMutation = useMutation({
+		mutationFn: () => {
+			if (!profileId) {
+				return Promise.reject(
+					new Error(
+						t("profiles:detail.errors.noSuitId", { defaultValue: "No profile ID" }),
+					),
+				);
+			}
+			return configSuitsApi.upsertGuidance(guidanceUpsertPayload(profileId, guidanceForm));
+		},
+		onSuccess: (guidance) => {
+			setSelectedGuidanceId(guidance.id);
+			setGuidanceForm(guidanceToForm(guidance));
+			void queryClient.invalidateQueries({
+				queryKey: ["configSuitGuidance", profileId],
+			});
+			notifySuccess(
+				t("profiles:detail.guidance.messages.saved", {
+					defaultValue: "Guidance saved",
+				}),
+				t("profiles:detail.guidance.messages.savedDescription", {
+					defaultValue: "Profile guidance has been updated.",
+				}),
+			);
+		},
+		onError: (error) => {
+			notifyError(
+				t("profiles:detail.guidance.messages.saveFailed", {
+					defaultValue: "Guidance save failed",
+				}),
+				error instanceof Error ? error.message : String(error),
+			);
+		},
+	});
+
+	const guidanceDeleteMutation = useMutation({
+		mutationFn: () => {
+			if (!profileId) {
+				return Promise.reject(
+					new Error(
+						t("profiles:detail.errors.noSuitId", { defaultValue: "No profile ID" }),
+					),
+				);
+			}
+			return configSuitsApi.deleteGuidance({
+				profile_id: profileId,
+				slug: guidanceForm.slug.trim(),
+			});
+		},
+		onSuccess: () => {
+			setIsGuidanceDeleteDialogOpen(false);
+			setSelectedGuidanceId(null);
+			setGuidanceForm(emptyGuidanceForm);
+			void queryClient.invalidateQueries({
+				queryKey: ["configSuitGuidance", profileId],
+			});
+			notifySuccess(
+				t("profiles:detail.guidance.messages.deleted", {
+					defaultValue: "Guidance deleted",
+				}),
+				t("profiles:detail.guidance.messages.deletedDescription", {
+					defaultValue: "Profile guidance has been removed.",
+				}),
+			);
+		},
+		onError: (error) => {
+			notifyError(
+				t("profiles:detail.guidance.messages.deleteFailed", {
+					defaultValue: "Guidance delete failed",
+				}),
+				error instanceof Error ? error.message : String(error),
+			);
+		},
+	});
+
 	// Activation/deactivation mutations
 	const activateSuitMutation = useMutation({
 		mutationFn: () => configSuitsApi.activateSuit(profileId!),
@@ -727,6 +981,7 @@ export function ProfileDetailPage() {
 		refetchResources();
 		refetchPrompts();
 		refetchTemplates();
+		refetchGuidance();
 		invalidateProfileCapabilityLedger();
 	};
 	const overviewActionButtonClass =
@@ -736,11 +991,30 @@ export function ProfileDetailPage() {
 		setIsEditDialogOpen(open);
 	};
 
-	const servers = (serversResponse?.servers ?? []) as ConfigSuitServer[];
-	const tools = (toolsResponse?.tools ?? []) as ConfigSuitTool[];
-	const resources = (resourcesResponse?.resources ?? []) as ConfigSuitResource[];
-	const prompts = (promptsResponse?.prompts ?? []) as ConfigSuitPrompt[];
-	const templates = (templatesResponse?.templates ?? []) as any[];
+	const servers = useMemo<ConfigSuitServer[]>(
+		() => serversResponse?.servers ?? [],
+		[serversResponse?.servers],
+	);
+	const tools = useMemo<ConfigSuitTool[]>(
+		() => toolsResponse?.tools ?? [],
+		[toolsResponse?.tools],
+	);
+	const resources = useMemo<ConfigSuitResource[]>(
+		() => resourcesResponse?.resources ?? [],
+		[resourcesResponse?.resources],
+	);
+	const prompts = useMemo<ConfigSuitPrompt[]>(
+		() => promptsResponse?.prompts ?? [],
+		[promptsResponse?.prompts],
+	);
+	const templates = useMemo<ConfigSuitResourceTemplate[]>(
+		() => templatesResponse?.templates ?? [],
+		[templatesResponse?.templates],
+	);
+	const guidanceRecords = useMemo<ConfigSuitGuidance[]>(
+		() => guidanceResponse?.guidance ?? [],
+		[guidanceResponse?.guidance],
+	);
 
 	const enabledServers = servers.filter((s: ConfigSuitServer) => s.enabled);
 	const enabledTools = tools.filter((t: ConfigSuitTool) => t.enabled);
@@ -748,7 +1022,234 @@ export function ProfileDetailPage() {
 		(r: ConfigSuitResource) => r.enabled,
 	);
 	const enabledPrompts = prompts.filter((p: ConfigSuitPrompt) => p.enabled);
-	const enabledTemplates = templates.filter((t: any) => t.enabled);
+	const enabledTemplates = templates.filter((template) => template.enabled);
+	const enabledGuidanceRecords = guidanceRecords.filter((guidance) => guidance.enabled);
+
+	useEffect(() => {
+		if (guidanceRecords.length === 0) {
+			return;
+		}
+		if (
+			selectedGuidanceId &&
+			guidanceRecords.some((guidance) => guidance.id === selectedGuidanceId)
+		) {
+			return;
+		}
+		const firstGuidance = guidanceRecords[0];
+		setSelectedGuidanceId(firstGuidance.id);
+		setGuidanceForm(guidanceToForm(firstGuidance));
+	}, [guidanceRecords, selectedGuidanceId]);
+
+	const updateGuidanceForm = <K extends keyof ProfileGuidanceFormState>(
+		key: K,
+		value: ProfileGuidanceFormState[K],
+	) => {
+		setGuidanceForm((current) => ({ ...current, [key]: value }));
+	};
+
+	const handleSelectGuidance = (guidance: ConfigSuitGuidance) => {
+		setSelectedGuidanceId(guidance.id);
+		setGuidanceForm(guidanceToForm(guidance));
+	};
+
+	const handleNewGuidance = () => {
+		setSelectedGuidanceId(null);
+		setGuidanceForm(emptyGuidanceForm);
+	};
+
+	const guidanceResourceUri =
+		profileId && guidanceForm.slug.trim().length > 0
+			? `skill://profiles/${profileId}/${guidanceForm.slug.trim()}/SKILL.md`
+			: "";
+	const selectedGuidanceRecord = guidanceRecords.find(
+		(guidance) => guidance.id === selectedGuidanceId,
+	);
+	const originalGuidanceForm = selectedGuidanceRecord
+		? guidanceToForm(selectedGuidanceRecord)
+		: emptyGuidanceForm;
+	const guidanceHasChanges = hasGuidanceFormChanged(guidanceForm, originalGuidanceForm);
+	const guidancePreviewMarkdown = buildGuidanceMarkdownPreview(guidanceForm);
+
+	const guidanceCapabilityOptions = useMemo(() => {
+		const options: GuidanceCapabilityOption[] = [
+			...servers.map((server) => ({
+				kind: "server",
+				id: server.id,
+				name: server.name,
+				server_name: server.name,
+				enabled: server.enabled,
+				label: server.name,
+				detail: server.id,
+				key: `server:${server.id}`,
+			})),
+			...tools.map((tool) => ({
+				kind: "tool",
+				id: tool.id,
+				name: tool.tool_name ?? tool.unique_name ?? tool.id,
+				server_name: tool.server_name,
+				enabled: tool.enabled,
+				label: tool.tool_name ?? tool.unique_name ?? tool.id,
+				detail: tool.server_name,
+				key: `tool:${tool.id}`,
+			})),
+			...prompts.map((prompt) => ({
+				kind: "prompt",
+				id: prompt.id,
+				name: prompt.prompt_name,
+				server_name: prompt.server_name,
+				enabled: prompt.enabled,
+				label: prompt.prompt_name,
+				detail: prompt.server_name,
+				key: `prompt:${prompt.id}`,
+			})),
+			...resources.map((resource) => ({
+				kind: "resource",
+				id: resource.id,
+				name: resource.resource_uri,
+				server_name: resource.server_name,
+				enabled: resource.enabled,
+				label: resource.resource_uri,
+				detail: resource.server_name,
+				key: `resource:${resource.id}`,
+			})),
+			...templates.map((template) => ({
+				kind: "template",
+				id: template.id,
+				name: template.uri_template,
+				server_name: template.server_name,
+				enabled: template.enabled,
+				label: template.uri_template,
+				detail: template.server_name,
+				key: `template:${template.id}`,
+			})),
+		];
+		return options.sort((left, right) =>
+			left.kind.localeCompare(right.kind) || left.label.localeCompare(right.label),
+		);
+	}, [servers, tools, prompts, resources, templates]);
+	const guidanceCapabilityOptionByKey = useMemo(
+		() => new Map(guidanceCapabilityOptions.map((option) => [option.key, option])),
+		[guidanceCapabilityOptions],
+	);
+	const selectedGuidanceCapabilityKeys = useMemo(
+		() => new Set(guidanceForm.capabilityRefs.map(guidanceCapabilityKey)),
+		[guidanceForm.capabilityRefs],
+	);
+	const missingGuidanceCapabilities = useMemo(
+		() =>
+			guidanceForm.capabilityRefs.filter((ref) => {
+				const option = guidanceCapabilityOptionByKey.get(guidanceCapabilityKey(ref));
+				return !option || !option.enabled;
+			}),
+		[guidanceCapabilityOptionByKey, guidanceForm.capabilityRefs],
+	);
+	const guidanceValidationIssues = useMemo(() => {
+		const issues: string[] = [];
+		const slug = guidanceForm.slug.trim();
+		if (!slug) {
+			issues.push(
+				t("profiles:detail.guidance.validation.slugRequired", {
+					defaultValue: "Slug is required.",
+				}),
+			);
+		} else if (!/^[A-Za-z0-9_-]+$/.test(slug)) {
+			issues.push(
+				t("profiles:detail.guidance.validation.slugFormat", {
+					defaultValue: "Slug may only contain letters, numbers, hyphen, or underscore.",
+				}),
+			);
+		}
+		if (!guidanceForm.title.trim()) {
+			issues.push(
+				t("profiles:detail.guidance.validation.titleRequired", {
+					defaultValue: "Title is required.",
+				}),
+			);
+		}
+		if (!guidanceForm.contentMarkdown.trim()) {
+			issues.push(
+				t("profiles:detail.guidance.validation.instructionsRequired", {
+					defaultValue: "Instructions are required.",
+				}),
+			);
+		}
+		if (missingGuidanceCapabilities.length > 0) {
+			issues.push(
+				t("profiles:detail.guidance.validation.missingCapabilities", {
+					defaultValue: "{{count}} referenced capability is missing or disabled.",
+					count: missingGuidanceCapabilities.length,
+				}),
+			);
+		}
+		return issues;
+	}, [guidanceForm, missingGuidanceCapabilities.length, t]);
+
+	const toggleGuidanceCapabilityRef = (optionKey: string) => {
+		const option = guidanceCapabilityOptionByKey.get(optionKey);
+		if (!option) return;
+		setGuidanceForm((current) => {
+			const currentKey = guidanceCapabilityKey(option);
+			const exists = current.capabilityRefs.some((ref) => guidanceCapabilityKey(ref) === currentKey);
+			return {
+				...current,
+				capabilityRefs: exists
+					? current.capabilityRefs.filter((ref) => guidanceCapabilityKey(ref) !== currentKey)
+					: [
+						...current.capabilityRefs,
+						{
+							kind: option.kind,
+							id: option.id,
+							name: option.name,
+							server_name: option.server_name,
+						},
+					],
+			};
+		});
+	};
+
+	const applyGuidanceTemplate = () => {
+		setGuidanceForm((current) => ({
+			...current,
+			summary: fillGuidanceTemplateField(
+				current.summary,
+				t("profiles:detail.guidance.template.summary", {
+					defaultValue: "Use this profile when the current task matches the scenario below.",
+				}),
+			),
+			scenario: fillGuidanceTemplateField(
+				current.scenario,
+				t("profiles:detail.guidance.template.scenario", {
+					defaultValue: "Describe the business scenario this profile is designed for.",
+				}),
+			),
+			activation: fillGuidanceTemplateField(
+				current.activation,
+				t("profiles:detail.guidance.template.activation", {
+					defaultValue:
+						"Activate when the user asks for this workflow or when these capabilities are required.",
+				}),
+			),
+			validationNotes: fillGuidanceTemplateField(
+				current.validationNotes,
+				t("profiles:detail.guidance.template.validation", {
+					defaultValue: "Confirm required capabilities are enabled before following this guidance.",
+				}),
+			),
+			avoid: fillGuidanceTemplateField(
+				current.avoid,
+				t("profiles:detail.guidance.template.avoid", {
+					defaultValue: "Do not use capabilities outside this profile unless the user explicitly asks.",
+				}),
+			),
+			contentMarkdown: fillGuidanceTemplateField(
+				current.contentMarkdown,
+				t("profiles:detail.guidance.template.workflow", {
+					defaultValue:
+						"## Workflow\n1. Confirm the user intent.\n2. Use the referenced MCP capabilities in the profile.\n3. Report any missing capability instead of substituting another tool.",
+				}),
+			),
+		}));
+	};
 
 	const enabledByComponentId = useMemo(() => {
 		const m = new Map<string, boolean>();
@@ -764,7 +1265,7 @@ export function ProfileDetailPage() {
 		for (const p of prompts) {
 			m.set(p.id, p.enabled);
 		}
-		for (const tmpl of templates as ReadonlyArray<{ id: string; enabled: boolean }>) {
+		for (const tmpl of templates) {
 			m.set(tmpl.id, tmpl.enabled);
 		}
 		return m;
@@ -790,7 +1291,7 @@ export function ProfileDetailPage() {
 				...tools.map((t: ConfigSuitTool) => t.server_name),
 				...resources.map((r: ConfigSuitResource) => r.server_name),
 				...prompts.map((p: ConfigSuitPrompt) => p.server_name),
-				...templates.map((r: any) => r.server_name),
+				...templates.map((r) => r.server_name),
 			].filter(Boolean),
 		),
 	).sort();
@@ -848,7 +1349,7 @@ export function ProfileDetailPage() {
 	>("all");
 	const [templateServer, setTemplateServer] = useState<string>("all");
 
-	const visibleTemplates = templates.filter((r: any) => {
+	const visibleTemplates = templates.filter((r) => {
 		const text = `${r.uri_template ?? ""} ${r.server_name ?? ""}`.toLowerCase();
 		const queryPass =
 			templateQuery.trim() === "" || text.includes(templateQuery.toLowerCase());
@@ -955,6 +1456,9 @@ export function ProfileDetailPage() {
 					<div className="flex shrink-0 items-center justify-between">
 						<TabsList className="flex items-center gap-2">
 							<TabsTrigger value="overview">{t("profiles:detail.tabs.overview", { defaultValue: "Overview" })}</TabsTrigger>
+							<TabsTrigger value="guidance">
+								{t("profiles:detail.tabs.guidance", { defaultValue: "Guidance" })} ({enabledGuidanceRecords.length}/{guidanceRecords.length})
+							</TabsTrigger>
 							<TabsTrigger value="servers">
 								{t("profiles:detail.tabs.servers", { defaultValue: "Servers" })} ({enabledServers.length}/{servers.length})
 							</TabsTrigger>
@@ -1235,6 +1739,523 @@ export function ProfileDetailPage() {
 								/>
 							) : null}
 						</div>
+					</TabsContent>
+
+					<TabsContent value="guidance" className={DETAIL_TAB_CONTENT_CLASS}>
+						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+							<CardHeader className="shrink-0">
+								<div className="flex items-center justify-between gap-3">
+									<div>
+										<CardTitle>
+											{t("profiles:detail.guidance.title", {
+												defaultValue: "Profile Guidance",
+											})}
+										</CardTitle>
+										<CardDescription>
+											{t("profiles:detail.guidance.description", {
+												defaultValue:
+													"Describe how agents should use this profile's MCP capabilities.",
+											})}
+										</CardDescription>
+									</div>
+									<ButtonGroup className="flex-shrink-0">
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											onClick={applyGuidanceTemplate}
+											disabled={guidanceSaveMutation.isPending}
+											className="gap-2 rounded-none first:rounded-l-md last:rounded-r-md"
+										>
+											<FileText className="h-4 w-4" />
+											{t("profiles:detail.guidance.buttons.template", {
+												defaultValue: "Template",
+											})}
+										</Button>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											onClick={handleNewGuidance}
+											disabled={guidanceSaveMutation.isPending}
+											className="gap-2 rounded-none first:rounded-l-md last:rounded-r-md"
+										>
+											<Plus className="h-4 w-4" />
+											{t("profiles:detail.guidance.buttons.new", {
+												defaultValue: "New Guidance",
+											})}
+										</Button>
+									</ButtonGroup>
+								</div>
+							</CardHeader>
+							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+								<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
+									<div className="min-h-0 overflow-y-auto rounded-md border">
+										{isLoadingGuidance ? (
+											<div className="space-y-3 p-3">
+												{["g1", "g2", "g3"].map((id) => (
+													<div
+														key={`guidance-skel-${id}`}
+														className="h-20 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800"
+													/>
+												))}
+											</div>
+										) : guidanceRecords.length > 0 ? (
+											<div className="divide-y">
+												{guidanceRecords.map((guidance) => {
+													const selected = guidance.id === selectedGuidanceId;
+													return (
+														<button
+															key={guidance.id}
+															type="button"
+															onClick={() => handleSelectGuidance(guidance)}
+															className={`flex w-full items-start gap-3 p-3 text-left transition-colors ${selected
+																? "bg-primary/10"
+																: "hover:bg-muted/60"
+																}`}
+														>
+															<BookOpenText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+															<span className="min-w-0 flex-1">
+																<span className="flex items-center gap-2">
+																	<span className="truncate text-sm font-medium">
+																		{guidance.title}
+																	</span>
+																	<Badge
+																		variant={guidance.enabled ? "default" : "outline"}
+																		className="shrink-0"
+																	>
+																		{guidance.enabled
+																			? t("profiles:detail.status.enabled", {
+																				defaultValue: "Enabled",
+																			})
+																			: t("profiles:detail.status.disabled", {
+																				defaultValue: "Disabled",
+																			})}
+																	</Badge>
+																</span>
+																<span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
+																	{guidance.slug}
+																</span>
+																{guidance.summary ? (
+																	<span className="mt-1 block line-clamp-2 text-xs text-muted-foreground">
+																		{guidance.summary}
+																	</span>
+																) : null}
+															</span>
+														</button>
+													);
+												})}
+											</div>
+										) : (
+											<div className="p-4 text-sm text-muted-foreground">
+												{t("profiles:detail.guidance.empty", {
+													defaultValue: "No guidance has been added yet.",
+												})}
+											</div>
+										)}
+									</div>
+
+									<form
+										className="flex min-h-0 flex-col gap-4 overflow-y-auto rounded-md border p-4"
+										onSubmit={(event) => {
+											event.preventDefault();
+											if (guidanceValidationIssues.length > 0) {
+												notifyError(
+													t("profiles:detail.guidance.messages.validationFailed", {
+														defaultValue: "Guidance is incomplete",
+													}),
+													guidanceValidationIssues.join("\n"),
+												);
+												return;
+											}
+											guidanceSaveMutation.mutate();
+										}}
+									>
+										<div className="grid gap-4 md:grid-cols-2">
+											<div className="space-y-2">
+												<Label htmlFor={guidanceSlugId}>
+													{t("profiles:detail.guidance.fields.slug", {
+														defaultValue: "Slug",
+													})}
+												</Label>
+												<Input
+													id={guidanceSlugId}
+													value={guidanceForm.slug}
+													onChange={(event) =>
+														updateGuidanceForm("slug", event.target.value)
+													}
+													disabled={guidanceSaveMutation.isPending}
+												/>
+											</div>
+											<div className="space-y-2">
+												<Label htmlFor={guidanceTitleId}>
+													{t("profiles:detail.guidance.fields.title", {
+														defaultValue: "Title",
+													})}
+												</Label>
+												<Input
+													id={guidanceTitleId}
+													value={guidanceForm.title}
+													onChange={(event) =>
+														updateGuidanceForm("title", event.target.value)
+													}
+													disabled={guidanceSaveMutation.isPending}
+												/>
+											</div>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor={guidanceSummaryId}>
+												{t("profiles:detail.guidance.fields.summary", {
+													defaultValue: "Summary",
+												})}
+											</Label>
+											<Input
+												id={guidanceSummaryId}
+												value={guidanceForm.summary}
+												onChange={(event) =>
+													updateGuidanceForm("summary", event.target.value)
+												}
+												disabled={guidanceSaveMutation.isPending}
+											/>
+										</div>
+										<div className="grid gap-4 md:grid-cols-2">
+											<div className="space-y-2">
+												<Label htmlFor={guidanceScenarioId}>
+													{t("profiles:detail.guidance.fields.scenario", {
+														defaultValue: "Scenario",
+													})}
+												</Label>
+												<Textarea
+													id={guidanceScenarioId}
+													value={guidanceForm.scenario}
+													onChange={(event) =>
+														updateGuidanceForm("scenario", event.target.value)
+													}
+													disabled={guidanceSaveMutation.isPending}
+													className="min-h-24 text-sm"
+												/>
+											</div>
+											<div className="space-y-2">
+												<Label htmlFor={guidanceActivationId}>
+													{t("profiles:detail.guidance.fields.activation", {
+														defaultValue: "Activation",
+													})}
+												</Label>
+												<Textarea
+													id={guidanceActivationId}
+													value={guidanceForm.activation}
+													onChange={(event) =>
+														updateGuidanceForm("activation", event.target.value)
+													}
+													disabled={guidanceSaveMutation.isPending}
+													className="min-h-24 text-sm"
+												/>
+											</div>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor={guidanceSourceUriId}>
+												{t("profiles:detail.guidance.fields.sourceUri", {
+													defaultValue: "Source URI",
+												})}
+											</Label>
+											<Input
+												id={guidanceSourceUriId}
+												value={guidanceForm.sourceUri}
+												onChange={(event) =>
+													updateGuidanceForm("sourceUri", event.target.value)
+												}
+												disabled={guidanceSaveMutation.isPending}
+											/>
+										</div>
+										<div className="space-y-2">
+											<div className="flex items-center justify-between gap-2">
+												<Label className="flex items-center gap-2">
+													<ListChecks className="h-4 w-4 text-muted-foreground" />
+													{t("profiles:detail.guidance.fields.capabilities", {
+														defaultValue: "Capability References",
+													})}
+												</Label>
+												<Badge variant="outline">
+													{guidanceForm.capabilityRefs.length}
+												</Badge>
+											</div>
+											<div className="max-h-44 overflow-y-auto rounded-md border">
+												{guidanceCapabilityOptions.length > 0 ? (
+													<div className="grid gap-0 divide-y">
+														{guidanceCapabilityOptions.map((option) => {
+															const selected = selectedGuidanceCapabilityKeys.has(option.key);
+															const disabled = !option.enabled;
+															return (
+																<button
+																	key={option.key}
+																	type="button"
+																	onClick={() => toggleGuidanceCapabilityRef(option.key)}
+																	className={`flex items-center justify-between gap-3 p-2 text-left text-sm transition-colors ${selected
+																		? "bg-primary/10"
+																		: "hover:bg-muted/60"
+																		}`}
+																>
+																	<span className="min-w-0">
+																		<span className="flex items-center gap-2">
+																			<span className="font-mono text-xs text-muted-foreground">
+																				{option.kind}
+																			</span>
+																			<span className="truncate font-medium">
+																				{option.label}
+																			</span>
+																		</span>
+																		<span className="mt-0.5 block truncate text-xs text-muted-foreground">
+																			{option.detail}
+																		</span>
+																	</span>
+																	<span className="flex shrink-0 items-center gap-2">
+																		{disabled ? (
+																			<Badge variant="outline">
+																				{t("profiles:detail.status.disabled", {
+																					defaultValue: "Disabled",
+																				})}
+																			</Badge>
+																		) : null}
+																		{selected ? <Check className="h-4 w-4" /> : null}
+																	</span>
+																</button>
+															);
+														})}
+													</div>
+												) : (
+													<div className="p-3 text-sm text-muted-foreground">
+														{t("profiles:detail.guidance.capabilities.empty", {
+															defaultValue: "No profile capabilities are available.",
+														})}
+													</div>
+												)}
+											</div>
+											{missingGuidanceCapabilities.length > 0 ? (
+												<div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+													<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+													<div>
+														<div className="font-medium">
+															{t("profiles:detail.guidance.capabilities.missingTitle", {
+																defaultValue: "Missing or disabled references",
+															})}
+														</div>
+														<div className="mt-1 font-mono text-xs">
+															{missingGuidanceCapabilities
+																.map((capability) => `${capability.kind}:${capability.id}`)
+																.join(", ")}
+														</div>
+													</div>
+												</div>
+											) : null}
+										</div>
+										<div className="space-y-2">
+											<div className="flex items-center justify-between gap-2">
+												<Label htmlFor={guidanceInstructionsId}>
+													{t("profiles:detail.guidance.fields.instructions", {
+														defaultValue: "Instructions",
+													})}
+												</Label>
+												<ButtonGroup>
+													<Button
+														type="button"
+														size="sm"
+														variant={guidancePreviewMode === "edit" ? "default" : "outline"}
+														onClick={() => setGuidancePreviewMode("edit")}
+														className="rounded-none first:rounded-l-md last:rounded-r-md"
+													>
+														{t("profiles:detail.guidance.preview.edit", {
+															defaultValue: "Edit",
+														})}
+													</Button>
+													<Button
+														type="button"
+														size="sm"
+														variant={guidancePreviewMode === "preview" ? "default" : "outline"}
+														onClick={() => setGuidancePreviewMode("preview")}
+														className="rounded-none first:rounded-l-md last:rounded-r-md"
+													>
+														{t("profiles:detail.guidance.preview.preview", {
+															defaultValue: "Preview",
+														})}
+													</Button>
+												</ButtonGroup>
+											</div>
+											{guidancePreviewMode === "edit" ? (
+												<Textarea
+													id={guidanceInstructionsId}
+													value={guidanceForm.contentMarkdown}
+													onChange={(event) =>
+														updateGuidanceForm("contentMarkdown", event.target.value)
+													}
+													disabled={guidanceSaveMutation.isPending}
+													className="min-h-64 font-mono text-sm"
+												/>
+											) : (
+												<div className="min-h-64 overflow-y-auto rounded-md border bg-muted/30 p-4 text-sm">
+													{guidancePreviewMarkdown ? (
+														<ReactMarkdown
+															remarkPlugins={[remarkGfm]}
+															components={{
+																h1: ({ children }) => (
+																	<h1 className="mb-3 text-lg font-semibold">{children}</h1>
+																),
+																h2: ({ children }) => (
+																	<h2 className="mb-2 mt-4 text-sm font-semibold">{children}</h2>
+																),
+																p: ({ children }) => (
+																	<p className="mb-2 leading-6 text-muted-foreground">{children}</p>
+																),
+																ul: ({ children }) => (
+																	<ul className="mb-2 list-disc space-y-1 pl-5">{children}</ul>
+																),
+																ol: ({ children }) => (
+																	<ol className="mb-2 list-decimal space-y-1 pl-5">{children}</ol>
+																),
+																code: ({ children }) => (
+																	<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+																		{children}
+																	</code>
+																),
+															}}
+														>
+															{guidancePreviewMarkdown}
+														</ReactMarkdown>
+													) : (
+														<div className="text-muted-foreground">
+															{t("profiles:detail.guidance.preview.empty", {
+																defaultValue: "No preview content.",
+															})}
+														</div>
+													)}
+												</div>
+											)}
+										</div>
+										<div className="grid gap-4 md:grid-cols-2">
+											<div className="space-y-2">
+												<Label htmlFor={guidanceValidationId}>
+													{t("profiles:detail.guidance.fields.validationNotes", {
+														defaultValue: "Validation Notes",
+													})}
+												</Label>
+												<Textarea
+													id={guidanceValidationId}
+													value={guidanceForm.validationNotes}
+													onChange={(event) =>
+														updateGuidanceForm("validationNotes", event.target.value)
+													}
+													disabled={guidanceSaveMutation.isPending}
+													className="min-h-24 text-sm"
+												/>
+											</div>
+											<div className="space-y-2">
+												<Label htmlFor={guidanceAvoidId}>
+													{t("profiles:detail.guidance.fields.avoid", {
+														defaultValue: "Avoid",
+													})}
+												</Label>
+												<Textarea
+													id={guidanceAvoidId}
+													value={guidanceForm.avoid}
+													onChange={(event) =>
+														updateGuidanceForm("avoid", event.target.value)
+													}
+													disabled={guidanceSaveMutation.isPending}
+													className="min-h-24 text-sm"
+												/>
+											</div>
+										</div>
+										<div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/50 p-3">
+											<div className="min-w-0">
+												<div className="text-sm font-medium">
+													{t("profiles:detail.guidance.resourceUri", {
+														defaultValue: "Resource URI",
+													})}
+												</div>
+												<div className="mt-1 break-all font-mono text-xs text-muted-foreground">
+													{guidanceResourceUri || "skill://profiles/{profile_id}/{slug}/SKILL.md"}
+												</div>
+											</div>
+											<div className="flex items-center gap-2">
+												<Label htmlFor={guidanceEnabledId} className="text-sm">
+													{t("profiles:detail.guidance.fields.enabled", {
+														defaultValue: "Expose",
+													})}
+												</Label>
+												<Switch
+													id={guidanceEnabledId}
+													checked={guidanceForm.enabled}
+													onCheckedChange={(checked) =>
+														updateGuidanceForm("enabled", checked)
+													}
+													disabled={guidanceSaveMutation.isPending}
+												/>
+											</div>
+										</div>
+										{guidanceValidationIssues.length > 0 ? (
+											<div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+												<div className="flex items-center gap-2 font-medium">
+													<AlertTriangle className="h-4 w-4" />
+													{t("profiles:detail.guidance.validation.title", {
+														defaultValue: "Fix before saving",
+													})}
+												</div>
+												<ul className="mt-2 list-disc space-y-1 pl-5">
+													{guidanceValidationIssues.map((issue) => (
+														<li key={issue}>{issue}</li>
+													))}
+												</ul>
+											</div>
+										) : null}
+										<div className="flex flex-wrap items-center justify-between gap-3">
+											<Button
+												type="button"
+												variant="destructive"
+												disabled={
+													!selectedGuidanceRecord ||
+													guidanceDeleteMutation.isPending ||
+													guidanceSaveMutation.isPending
+												}
+												onClick={() => setIsGuidanceDeleteDialogOpen(true)}
+												className="gap-2"
+											>
+												<Trash2 className="h-4 w-4" />
+												{guidanceDeleteMutation.isPending
+													? t("profiles:detail.guidance.buttons.deleting", {
+														defaultValue: "Deleting...",
+													})
+													: t("profiles:detail.guidance.buttons.delete", {
+														defaultValue: "Delete Guidance",
+													})}
+											</Button>
+											<Button
+												type="submit"
+												disabled={
+													guidanceSaveMutation.isPending ||
+													guidanceDeleteMutation.isPending ||
+													guidanceValidationIssues.length > 0
+												}
+												className="gap-2"
+											>
+												{guidanceSaveMutation.isPending
+													? t("profiles:detail.guidance.buttons.saving", {
+														defaultValue: "Saving...",
+													})
+													: t("profiles:detail.guidance.buttons.save", {
+														defaultValue: "Save Guidance",
+													})}
+												{guidanceHasChanges ? null : (
+													<span className="sr-only">
+														{t("profiles:detail.guidance.status.unchanged", {
+															defaultValue: "No changes",
+														})}
+													</span>
+												)}
+											</Button>
+										</div>
+									</form>
+								</div>
+							</CardContent>
+						</Card>
 					</TabsContent>
 
 					<TabsContent value="servers" className={DETAIL_TAB_CONTENT_CLASS}>
@@ -2013,7 +3034,7 @@ export function ProfileDetailPage() {
 												</Select>
 											</div>
 											<ButtonGroup className="hidden md:flex ml-2">
-												<Button variant="outline" size="sm" onClick={() => setSelectedTemplateIds(visibleTemplates.map((p: any) => p.id))}>
+												<Button variant="outline" size="sm" onClick={() => setSelectedTemplateIds(visibleTemplates.map((p) => p.id))}>
 													{t("profiles:detail.buttons.selectAll", { defaultValue: "Select all" })}
 												</Button>
 												<Button variant="outline" size="sm" onClick={() => setSelectedTemplateIds([])}>
@@ -2112,6 +3133,46 @@ export function ProfileDetailPage() {
 							disabled={deleteSuitMutation.isPending}
 						>
 							{deleteSuitMutation.isPending ? t("profiles:detail.buttons.deleting", { defaultValue: "Deleting..." }) : t("profiles:detail.buttons.delete", { defaultValue: "Delete" })}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
+			<AlertDialog
+				open={isGuidanceDeleteDialogOpen}
+				onOpenChange={setIsGuidanceDeleteDialogOpen}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{t("profiles:detail.guidance.dialogs.deleteTitle", {
+								defaultValue: "Delete Guidance",
+							})}
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							{t("profiles:detail.guidance.dialogs.deleteDescription", {
+								defaultValue:
+									'Delete "{{title}}" from this profile? The skill:// resource will no longer be exposed.',
+								title: guidanceForm.title || guidanceForm.slug,
+							})}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>
+							{t("profiles:form.buttons.cancel", { defaultValue: "Cancel" })}
+						</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={() => guidanceDeleteMutation.mutate()}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							disabled={guidanceDeleteMutation.isPending}
+						>
+							{guidanceDeleteMutation.isPending
+								? t("profiles:detail.guidance.buttons.deleting", {
+									defaultValue: "Deleting...",
+								})
+								: t("profiles:detail.guidance.buttons.delete", {
+									defaultValue: "Delete Guidance",
+								})}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

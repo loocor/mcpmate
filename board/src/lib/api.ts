@@ -34,6 +34,8 @@ import type {
 	ConfigPreset,
 	ConfigSuit,
 	ConfigSuitListResponse,
+	ConfigSuitGuidance,
+	ConfigSuitGuidanceResponse,
 	ConfigSuitPrompt,
 	ConfigSuitPromptsResponse,
 	ConfigSuitResource,
@@ -45,6 +47,7 @@ import type {
 	ConfigSuitTool,
 	ConfigSuitToolsResponse,
 	CreateConfigSuitRequest,
+	DeleteConfigSuitGuidanceRequest,
 	InspectorSessionCloseData,
 	InspectorSessionOpenData,
 	InspectorToolCallCancelData,
@@ -84,6 +87,7 @@ import type {
 	CapabilityTokenLedgerResponse,
 	TokenEstimateResponse,
 	ToolDetail,
+	UpsertConfigSuitGuidanceRequest,
 	UpdateConfigSuitRequest,
 } from "./types";
 import { useMemo } from "react";
@@ -2095,6 +2099,61 @@ export const configSuitsApi = {
 			suit_id: data.profile_id,
 			suit_name: data.profile_name,
 			templates: data.templates || [],
+		};
+	},
+
+	getGuidance: async (
+		suitId: string,
+		enabledOnly?: boolean,
+	): Promise<ConfigSuitGuidanceResponse> => {
+		const q = new URLSearchParams({ profile_id: suitId });
+		if (enabledOnly !== undefined) {
+			q.set("enabled_only", String(enabledOnly));
+		}
+		const response = await fetchApi<
+			ApiWrapper<{
+				profile_id: string;
+				guidance: ConfigSuitGuidance[];
+				total: number;
+			}>
+		>(`/api/mcp/profile/guidance/list?${q}`);
+		const data = extractApiData(response);
+		return {
+			profile_id: data.profile_id,
+			guidance: data.guidance || [],
+			total: data.total,
+		};
+	},
+
+	upsertGuidance: async (
+		guidance: UpsertConfigSuitGuidanceRequest,
+	): Promise<ConfigSuitGuidance> => {
+		const response = await fetchApi<
+			ApiWrapper<{
+				guidance: ConfigSuitGuidance;
+			}>
+		>("/api/mcp/profile/guidance/upsert", {
+			method: "POST",
+			body: JSON.stringify(guidance),
+		});
+		return extractApiData(response).guidance;
+	},
+
+	deleteGuidance: async (
+		guidance: DeleteConfigSuitGuidanceRequest,
+	): Promise<ApiResponse<null>> => {
+		const response = await fetchApi<ApiWrapper<unknown>>(
+			"/api/mcp/profile/guidance/delete",
+			{
+				method: "DELETE",
+				body: JSON.stringify(guidance),
+			},
+		);
+		extractApiData(response);
+		return {
+			status: "success",
+			message: "Profile guidance deleted successfully",
+			data: null,
 		};
 	},
 

@@ -726,6 +726,56 @@ export interface ConfigSuitResourceTemplatesResponse {
   templates: ConfigSuitResourceTemplate[];
 }
 
+export interface ConfigSuitGuidance {
+  id: string;
+  profile_id: string;
+  slug: string;
+  title: string;
+  summary?: string | null;
+  scenario?: string | null;
+  activation?: string | null;
+  capability_refs: ConfigSuitGuidanceCapabilityRef[];
+  validation_notes?: string | null;
+  avoid?: string | null;
+  content_markdown: string;
+  source_uri?: string | null;
+  enabled: boolean;
+}
+
+export interface ConfigSuitGuidanceCapabilityRef {
+  kind: string;
+  id: string;
+  name?: string | null;
+  server_name?: string | null;
+}
+
+export interface ConfigSuitGuidanceResponse {
+  profile_id: string;
+  guidance: ConfigSuitGuidance[];
+  total: number;
+}
+
+export interface UpsertConfigSuitGuidanceRequest {
+  id?: string | null;
+  profile_id: string;
+  slug: string;
+  title: string;
+  summary?: string | null;
+  scenario?: string | null;
+  activation?: string | null;
+  capability_refs?: ConfigSuitGuidanceCapabilityRef[];
+  validation_notes?: string | null;
+  avoid?: string | null;
+  content_markdown: string;
+  source_uri?: string | null;
+  enabled?: boolean | null;
+}
+
+export interface DeleteConfigSuitGuidanceRequest {
+  profile_id: string;
+  slug: string;
+}
+
 export interface ConfigSuitPrompt {
   id: string;
   server_id: string;
