@@ -1,13 +1,20 @@
 import { useEffect } from "react";
 import { useLanguage } from "../components/LanguageProvider";
 import Section from "../components/ui/Section";
+import { setDocumentMeta } from "../utils/seo";
 
 const Privacy = () => {
 	const { language } = useLanguage();
 
 	useEffect(() => {
-		document.title =
-			language === "zh" ? "隐私政策 — MCPMate" : "Privacy Policy — MCPMate";
+		setDocumentMeta({
+			title: language === "zh" ? "隐私政策 — MCPMate" : "Privacy Policy — MCPMate",
+			description:
+				language === "zh"
+					? "了解 MCPMate 网站、桌面应用和代理如何处理分析、联系表单、下载事件和本地优先产品数据。"
+					: "Learn how MCPMate handles analytics, contact forms, download events, and local-first product data across the website, desktop app, and proxy.",
+			pathname: "/privacy",
+		});
 	}, [language]);
 
 	// Ensure reading starts at the top whenever opening Privacy or changing language

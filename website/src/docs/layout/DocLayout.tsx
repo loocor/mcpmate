@@ -5,6 +5,7 @@ import ToC from "./ToC";
 import SchemaOrg from "../../components/SchemaOrg";
 import { setDocumentMeta } from "../../utils/seo";
 import { buildBreadcrumbList } from "../../utils/schema";
+import { SITE_URL } from "../../utils/site";
 
 export type DocMeta = {
 	title: string;
@@ -15,8 +16,6 @@ type Props = {
 	meta: DocMeta;
 	children: React.ReactNode;
 };
-
-const SITE_URL = "https://mcpmate.dev";
 
 function deriveBreadcrumbs(pathname: string, title: string) {
 	const segments = pathname.split("/").filter(Boolean);

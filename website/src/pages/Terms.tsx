@@ -1,13 +1,21 @@
 import { useEffect } from "react";
 import { useLanguage } from "../components/LanguageProvider";
 import Section from "../components/ui/Section";
+import { setDocumentMeta } from "../utils/seo";
 
 const Terms = () => {
 	const { language } = useLanguage();
 
 	useEffect(() => {
-		document.title =
-			language === "zh" ? "服务条款 — MCPMate" : "Terms of Service — MCPMate";
+		setDocumentMeta({
+			title:
+				language === "zh" ? "服务条款 — MCPMate" : "Terms of Service — MCPMate",
+			description:
+				language === "zh"
+					? "查看 MCPMate 网站、桌面应用和代理早期访问版本的使用条款、许可范围和责任边界。"
+					: "Review the terms, license scope, and responsibility boundaries for MCPMate website, desktop app, and proxy early-access use.",
+			pathname: "/terms",
+		});
 	}, [language]);
 
 	// Ensure reading starts at the top whenever opening Terms or changing language
