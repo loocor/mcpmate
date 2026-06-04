@@ -92,6 +92,7 @@ pub async fn tool_call(
                 ApiError::NotFound(m) => ("not_found", m.as_str()),
                 ApiError::BadRequest(m) => ("bad_request", m.as_str()),
                 ApiError::InternalError(m) => ("internal_error", m.as_str()),
+                ApiError::ServiceUnavailable(m) => ("service_unavailable", m.as_str()),
                 ApiError::Conflict(m) => ("conflict", m.as_str()),
                 ApiError::Forbidden(m) => ("forbidden", m.as_str()),
                 ApiError::Timeout(m) => ("timeout", m.as_str()),

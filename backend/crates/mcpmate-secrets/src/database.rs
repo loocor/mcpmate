@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use sqlx::{Pool, Row, Sqlite};
 
@@ -8,6 +8,32 @@ use crate::{
     crypto::{EncryptedSecret, EncryptedSecretParts},
     types::{SecretMetadataView, SecretOriginInput, SecretUsageLocationInput, SecretUsageUpsertInput, SecretUsageView},
 };
+
+const SECURE_STORE_SECRETS_TABLE: &str = "secure_store_secrets";
+const REQUIRED_SECRET_COLUMNS: &[&str] = &[
+    "alias",
+    "kind",
+    "label",
+    "origin_server_id",
+    "origin_server_name",
+    "origin_server_kind",
+    "origin_source",
+    "origin_field_group",
+    "origin_field_key",
+    "origin_field_index",
+    "origin_field_path",
+    "provider_id",
+    "provider_kind",
+    "version",
+    "key_nonce",
+    "encrypted_key",
+    "nonce",
+    "encrypted_value",
+    "key_wrap_alg",
+    "encryption_alg",
+    "created_at",
+    "updated_at",
+];
 
 pub(crate) struct SecretInsert<'a> {
     pub alias: &'a str,
@@ -27,6 +53,94 @@ pub(crate) struct SecretUpdate<'a> {
 }
 
 pub(crate) async fn ensure_schema(pool: &Pool<Sqlite>) -> Result<()> {
+    ensure_secure_store_secrets_schema(pool).await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS secure_store_usages (
+            id TEXT PRIMARY KEY,
+            alias TEXT NOT NULL,
+            server_id TEXT NOT NULL,
+            location_kind TEXT NOT NULL,
+            location_name TEXT,
+            location_index INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (alias) REFERENCES secure_store_secrets (alias) ON DELETE CASCADE,
+            UNIQUE(alias, server_id, location_kind, location_name, location_index)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .context("create secure_store_usages table")?;
+
+    Ok(())
+}
+
+async fn ensure_secure_store_secrets_schema(pool: &Pool<Sqlite>) -> Result<()> {
+    if !table_exists(pool, SECURE_STORE_SECRETS_TABLE).await? {
+        create_secure_store_secrets_table(pool).await?;
+        return Ok(());
+    }
+
+    let columns = table_columns(pool, SECURE_STORE_SECRETS_TABLE).await?;
+    let missing_columns = REQUIRED_SECRET_COLUMNS
+        .iter()
+        .filter(|column| !columns.iter().any(|existing| existing == **column))
+        .copied()
+        .collect::<Vec<_>>();
+    if missing_columns.is_empty() {
+        return Ok(());
+    }
+
+    let legacy_record_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secure_store_secrets")
+        .fetch_one(pool)
+        .await
+        .context("count legacy secure store secrets")?;
+
+    if legacy_record_count == 0 {
+        sqlx::query("DROP TABLE secure_store_secrets")
+            .execute(pool)
+            .await
+            .context("drop empty legacy secure_store_secrets table")?;
+        create_secure_store_secrets_table(pool).await?;
+        return Ok(());
+    }
+
+    bail!(
+        "outdated secure_store_secrets schema contains {legacy_record_count} legacy secret record(s); missing column(s): {}; reset the secure store data or run an explicit migration tool before using encrypted secrets",
+        missing_columns.join(", ")
+    );
+}
+
+async fn table_exists(
+    pool: &Pool<Sqlite>,
+    table_name: &str,
+) -> Result<bool> {
+    let exists: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1")
+            .bind(table_name)
+            .fetch_optional(pool)
+            .await
+            .with_context(|| format!("inspect sqlite table '{table_name}'"))?;
+    Ok(exists.is_some())
+}
+
+async fn table_columns(
+    pool: &Pool<Sqlite>,
+    table_name: &str,
+) -> Result<Vec<String>> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table_name})"))
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("inspect sqlite table columns for '{table_name}'"))?;
+    rows.into_iter()
+        .map(|row| row.try_get("name").context("read sqlite table column name"))
+        .collect()
+}
+
+async fn create_secure_store_secrets_table(pool: &Pool<Sqlite>) -> Result<()> {
     let secrets_schema = format!(
         r#"
         CREATE TABLE IF NOT EXISTS secure_store_secrets (
@@ -59,27 +173,6 @@ pub(crate) async fn ensure_schema(pool: &Pool<Sqlite>) -> Result<()> {
         .execute(pool)
         .await
         .context("create secure_store_secrets table")?;
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS secure_store_usages (
-            id TEXT PRIMARY KEY,
-            alias TEXT NOT NULL,
-            server_id TEXT NOT NULL,
-            location_kind TEXT NOT NULL,
-            location_name TEXT,
-            location_index INTEGER,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (alias) REFERENCES secure_store_secrets (alias) ON DELETE CASCADE,
-            UNIQUE(alias, server_id, location_kind, location_name, location_index)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .context("create secure_store_usages table")?;
-
     Ok(())
 }
 
@@ -457,4 +550,88 @@ fn secret_origin_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Option<Secret
         field_path: row.try_get("origin_field_path")?,
     };
     Ok((!origin.is_empty()).then_some(origin))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn ensure_schema_rebuilds_empty_legacy_secret_table() {
+        let pool = sqlite_pool().await;
+        create_legacy_secret_table(&pool).await;
+
+        ensure_schema(&pool).await.expect("ensure schema");
+
+        let columns = table_columns(&pool, "secure_store_secrets")
+            .await
+            .expect("table columns");
+        assert!(columns.iter().any(|column| column == "key_nonce"));
+        assert!(columns.iter().any(|column| column == "encrypted_key"));
+        assert!(columns.iter().any(|column| column == "origin_server_id"));
+    }
+
+    #[tokio::test]
+    async fn ensure_schema_rejects_nonempty_legacy_secret_table() {
+        let pool = sqlite_pool().await;
+        create_legacy_secret_table(&pool).await;
+        sqlx::query(
+            r#"
+            INSERT INTO secure_store_secrets (
+                alias,
+                kind,
+                label,
+                provider_id,
+                provider_kind,
+                version,
+                nonce,
+                encrypted_value
+            )
+            VALUES ('context7-token', 'token', NULL, 'local-encrypted-vault', 'local_encrypted_vault', 1, 'nonce', 'value')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert legacy secret");
+
+        let err = ensure_schema(&pool)
+            .await
+            .expect_err("non-empty legacy schema should fail closed");
+        let message = err.to_string();
+
+        assert!(message.contains("outdated secure_store_secrets schema"));
+        assert!(message.contains("1 legacy secret record"));
+    }
+
+    async fn sqlite_pool() -> Pool<Sqlite> {
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool")
+    }
+
+    async fn create_legacy_secret_table(pool: &Pool<Sqlite>) {
+        sqlx::query(
+            r#"
+            CREATE TABLE secure_store_secrets (
+                alias TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                label TEXT,
+                provider_id TEXT NOT NULL,
+                provider_kind TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                nonce TEXT NOT NULL,
+                encrypted_value TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .expect("create legacy secrets table");
+    }
 }

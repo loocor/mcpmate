@@ -113,7 +113,7 @@ pub async fn list_secret_usages(
 
 fn get_secret_store(state: &Arc<AppState>) -> Result<Arc<crate::core::secrets::store::LocalSecretStore>, ApiError> {
     state.secret_store.clone().ok_or_else(|| {
-        ApiError::InternalError(
+        ApiError::ServiceUnavailable(
             "Secret store is unavailable. Unlock or configure the operating-system secure storage provider."
                 .to_string(),
         )

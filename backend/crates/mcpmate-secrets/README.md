@@ -67,11 +67,10 @@ The default target is enterprise-local secret storage:
 - Missing secrets, locked providers, invalid references, or decrypt failures
   must fail explicitly. Runtime code must not silently substitute placeholders,
   empty values, defaults, or plaintext fallbacks.
-- Production/default secret custody must be operating-system backed on every
-  supported desktop platform without requiring paid hosted services.
-- A local root-key file is not an acceptable production/default custody
-  boundary. It may only be used for tests, controlled development, or explicit
-  migration tooling.
+- The recommended default secret custody path is operating-system backed on
+  every supported desktop platform without requiring paid hosted services.
+- Non-OS custody modes are explicit user choices. They must be surfaced with a
+  lower security level and must not be selected silently when OS custody fails.
 
 ## Cross-Platform OS Custody
 
@@ -91,7 +90,33 @@ store; it must not become a plaintext secret store.
 If the required OS secret provider is unavailable, locked, or cannot persist
 the root key, MCPMate must fail closed with an actionable error. It must not
 silently fall back to environment keys, local files, empty values, or plaintext
-server configuration.
+server configuration. A user may explicitly select a lower security mode from
+the MCPMate security settings surface.
+
+## Root Key Provider Modes
+
+`mcpmate-secrets` classifies root-key providers separately from the secret
+record encryption engine. The current provider modes are:
+
+- `operating_system`: recommended default. The root wrapping key is held by the
+  platform secure-storage provider, such as Keychain, Credential Manager, or
+  Secret Service.
+- `passphrase`: user-managed local mode. MCPMate stores a generated root key
+  wrapped by a key derived from the user's Master Password. This avoids an OS
+  keychain dependency, but losing the Master Password can make stored secrets
+  unrecoverable.
+- `local_file`: basic local protection. MCPMate stores local root material in
+  the MCPMate data area. The crate enforces `0600` permissions on Unix-like
+  systems; Windows deployments must use a private app data directory with
+  appropriate ACLs. This is better than storing plaintext secret values, but it
+  is not equivalent to OS custody if an attacker can read the app data
+  directory.
+- `development`: deterministic or local-file root material for tests and
+  controlled development runs.
+
+Provider metadata records both a stable provider kind and a security level so
+backend APIs and Board can display the correct UX without interpreting provider
+ids by convention.
 
 ## Runtime Parameter Boundary
 
@@ -138,7 +163,9 @@ The crate keeps a replaceable provider interface so MCPMate can support
 different local or enterprise backends later:
 
 - OS-backed local root key providers.
-- Local encrypted vault storage for explicit development/test use.
+- Master Password protected local root-key providers.
+- Basic local-file root key providers for explicit user opt-in.
+- Local development providers for explicit development/test use.
 - Enterprise KMS, HSM, or managed-vault providers.
 - Future commercial provider integrations under a separate license.
 
