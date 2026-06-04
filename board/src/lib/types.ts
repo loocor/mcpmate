@@ -265,8 +265,13 @@ export type AuditAction =
   | "client_config_restore"
   | "client_config_import"
   | "client_capability_update"
+  | "client_delete"
+  | "client_approve"
+  | "client_suspend"
   | "client_backup_delete"
   | "client_backup_policy_update"
+  | "onboarding_policy_update"
+  | "first_contact_behavior_update"
   | "core_source_apply"
   | "local_core_service_start"
   | "local_core_service_restart"
@@ -290,10 +295,8 @@ export type AuditAction =
   | "server_cache_reset"
   | "runtime_install"
   | "runtime_cache_reset"
-  | "client_record_observed"
-  | "client_record_approved"
-  | "client_record_suspended"
-  | "audit_policy_update";
+  | "audit_policy_update"
+  | "inspector_timeout_update";
 
 
 export interface AuditEventRecord {

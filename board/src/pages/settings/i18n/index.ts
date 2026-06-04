@@ -886,6 +886,9 @@ export const settingsTranslations = {
       showDefaultHeadersTitle: "デフォルト HTTP ヘッダーを表示",
       showDefaultHeadersDescription:
         "サーバー詳細でサーバーのデフォルト HTTP ヘッダー（値は編集済み）を表示します。検査専用です。",
+      showRawJsonTitle: "生の能力 JSON を表示",
+      showRawJsonDescription:
+        "能力リスト（サーバー詳細と統合インポートプレビュー）で生の JSON ペイロードを表示します。",
     },
     market: {
       title: "MCP マーケット",
