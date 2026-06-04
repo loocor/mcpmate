@@ -1,20 +1,23 @@
 import { Controller } from "react-hook-form";
+import type { Control, FieldErrors } from "react-hook-form";
 import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import type { ManualServerFormValues } from "../types";
 import { useTranslation } from "react-i18next";
 import { SecretPickerButton } from "../secret-picker-button";
+import type { SecretOrigin } from "../../../lib/types";
 
 interface CommandFieldProps {
 	kind: ManualServerFormValues["kind"];
-	control: any;
-	errors: any;
+	control: Control<ManualServerFormValues>;
+	errors: FieldErrors<ManualServerFormValues>;
 	commandId: string;
 	urlId: string;
 	commandInputRef: React.MutableRefObject<HTMLInputElement | null>;
 	urlInputRef: React.MutableRefObject<HTMLInputElement | null>;
 	viewMode: "form" | "json";
 	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	secretOriginBase?: SecretOrigin;
 }
 
 export function CommandField({
@@ -27,6 +30,7 @@ export function CommandField({
 	urlInputRef,
 	viewMode,
 	onSecretSelect,
+	secretOriginBase,
 }: CommandFieldProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form") return null;
@@ -43,7 +47,7 @@ export function CommandField({
 					name="command"
 					control={control}
 					render={({ field }) => (
-						<div className="relative">
+						<div className="group/secret-field relative">
 							<Input
 								id={commandId}
 								{...field}
@@ -58,7 +62,15 @@ export function CommandField({
 							/>
 							<SecretPickerButton
 								className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
-								onSelect={(placeholder) => onSecretSelect?.("command", placeholder)}
+								origin={{
+									...secretOriginBase,
+									field_group: "stdio",
+									field_key: "command",
+									field_path: "command",
+								}}
+								onSelect={(placeholder) =>
+									onSecretSelect?.("command", placeholder)
+								}
 							/>
 						</div>
 					)}
@@ -82,7 +94,7 @@ export function CommandField({
 					name="url"
 					control={control}
 					render={({ field }) => (
-						<div className="relative">
+						<div className="group/secret-field relative">
 							<Input
 								id={urlId}
 								{...field}
@@ -97,6 +109,12 @@ export function CommandField({
 							/>
 							<SecretPickerButton
 								className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
+								origin={{
+									...secretOriginBase,
+									field_group: "streamable_http",
+									field_key: "url",
+									field_path: "url",
+								}}
 								onSelect={(placeholder) => onSecretSelect?.("url", placeholder)}
 							/>
 						</div>

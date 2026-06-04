@@ -4,7 +4,7 @@ use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 
 pub use mcpmate_secrets::store::{
-    LocalSecretStore, SecretCreateInput, SecretKindInput, SecretMetadataView, SecretUpdateInput,
+    LocalSecretStore, SecretCreateInput, SecretKindInput, SecretMetadataView, SecretOriginInput, SecretUpdateInput,
     SecretUsageLocationInput, SecretUsageUpsertInput, SecretUsageView,
 };
 

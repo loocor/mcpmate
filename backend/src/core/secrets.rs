@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 
-use mcpmate_secrets::{SecretError, SecretReference, SecretResolver, UnavailableSecretResolver, resolve_placeholders};
+use mcpmate_secrets::{
+    SecretError, SecretResolver, UnavailableSecretResolver, extract_secret_references, resolve_placeholders,
+};
 
 use crate::core::models::MCPServerConfig;
 use store::{LocalSecretStore, SecretUsageLocationInput, SecretUsageUpsertInput};
 
 pub mod store;
-
-const SECRET_PREFIX: &str = "[[secret:";
-const SECRET_SUFFIX: &str = "]]";
 
 pub fn resolve_runtime_server_config(
     config: &MCPServerConfig,
@@ -126,29 +125,12 @@ fn push_usages_from_value(
     value: &str,
     location: SecretUsageLocationInput,
 ) -> anyhow::Result<()> {
-    for alias in extract_secret_aliases(value)? {
+    for reference in extract_secret_references(value)? {
         usages.push(SecretUsageUpsertInput {
-            alias,
+            alias: reference.alias().to_string(),
             server_id: server_id.to_string(),
             location: location.clone(),
         });
     }
     Ok(())
-}
-
-fn extract_secret_aliases(value: &str) -> anyhow::Result<Vec<String>> {
-    let mut aliases = Vec::new();
-    let mut rest = value;
-
-    while let Some(start) = rest.find(SECRET_PREFIX) {
-        let after_prefix = &rest[start + SECRET_PREFIX.len()..];
-        let Some(end) = after_prefix.find(SECRET_SUFFIX) else {
-            return Err(anyhow::anyhow!("unterminated secret placeholder"));
-        };
-        let alias = &after_prefix[..end];
-        aliases.push(SecretReference::new(alias)?.alias().to_string());
-        rest = &after_prefix[end + SECRET_SUFFIX.len()..];
-    }
-
-    Ok(aliases)
 }

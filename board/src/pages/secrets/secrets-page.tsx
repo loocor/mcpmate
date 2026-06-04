@@ -1,8 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, KeyRound, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+	Copy,
+	KeyRound,
+	Pencil,
+	Plus,
+	RefreshCw,
+	ShieldCheck,
+	Trash2,
+} from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { PageLayout } from "../../components/page-layout";
+import { useSearchParams } from "react-router-dom";
+import { EntityListItem } from "../../components/entity-list-item";
+import { EmptyState, PageLayout } from "../../components/page-layout";
+import { Pagination } from "../../components/pagination";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -15,21 +26,22 @@ import {
 } from "../../components/ui/alert-dialog";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "../../components/ui/card";
+import { Card, CardContent } from "../../components/ui/card";
 import {
 	Dialog,
 	DialogContent,
 	DialogDescription,
-	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "../../components/ui/dialog";
+import {
+	Drawer,
+	DrawerContent,
+	DrawerDescription,
+	DrawerFooter,
+	DrawerHeader,
+	DrawerTitle,
+} from "../../components/ui/drawer";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import {
@@ -39,21 +51,36 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../../components/ui/select";
+import { PageToolbar } from "../../components/ui/page-toolbar";
+import type {
+	Entity,
+	PageToolbarCallbacks,
+	PageToolbarConfig,
+	PageToolbarState,
+} from "../../components/ui/page-toolbar";
 import { secretsApi } from "../../lib/api";
 import { writeClipboardText } from "../../lib/clipboard";
+import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
-import type { SecretKind, SecretMetadata, SecretUsage } from "../../lib/types";
+import type {
+	SecretKind,
+	SecretMetadata,
+	SecretOrigin,
+	SecretUsage,
+} from "../../lib/types";
 
-const SECRET_KIND_OPTIONS: Array<{ value: SecretKind; label: string }> = [
-	{ value: "generic", label: "Generic" },
-	{ value: "token", label: "Token" },
-	{ value: "api_key", label: "API key" },
-	{ value: "password", label: "Password" },
-	{ value: "oauth_access_token", label: "OAuth access" },
-	{ value: "oauth_refresh_token", label: "OAuth refresh" },
-	{ value: "url_credential", label: "URL credential" },
-	{ value: "header_value", label: "Header value" },
+const SECRET_KIND_VALUES: SecretKind[] = [
+	"generic",
+	"token",
+	"api_key",
+	"password",
+	"oauth_access_token",
+	"oauth_refresh_token",
+	"url_credential",
+	"header_value",
 ];
+
+const DEFAULT_PAGE_SIZE = 10;
 
 interface SecretEditorState {
 	mode: "create" | "edit";
@@ -61,7 +88,16 @@ interface SecretEditorState {
 	kind: SecretKind;
 	label: string;
 	value: string;
+	origin: SecretOrigin | null;
 }
+
+type SecretToolbarEntity = Entity & {
+	alias: string;
+	kind: string;
+	provider_kind: string;
+	used_by_count: number;
+	version: number;
+};
 
 const defaultEditorState = (): SecretEditorState => ({
 	mode: "create",
@@ -69,41 +105,99 @@ const defaultEditorState = (): SecretEditorState => ({
 	kind: "token",
 	label: "",
 	value: "",
+	origin: null,
 });
 
-function kindLabel(kind: string): string {
-	return SECRET_KIND_OPTIONS.find((option) => option.value === kind)?.label ?? kind;
+const ORIGIN_QUERY_KEYS = [
+	"server_id",
+	"server_name",
+	"server_kind",
+	"source",
+	"field_group",
+	"field_key",
+	"field_index",
+	"field_path",
+] as const;
+
+function originFromSearchParams(params: URLSearchParams): SecretOrigin | null {
+	const origin: SecretOrigin = {};
+	for (const key of ORIGIN_QUERY_KEYS) {
+		const value = params.get(`origin_${key}`);
+		if (!value) continue;
+		if (key === "field_index") {
+			const parsed = Number.parseInt(value, 10);
+			if (Number.isFinite(parsed)) {
+				origin.field_index = parsed;
+			}
+			continue;
+		}
+		origin[key] = value;
+	}
+	return Object.keys(origin).length > 0 ? origin : null;
 }
 
-function usageLabel(usage: SecretUsage): string {
+function stripOriginSearchParams(params: URLSearchParams) {
+	for (const key of ORIGIN_QUERY_KEYS) {
+		params.delete(`origin_${key}`);
+	}
+}
+
+function usageLabel(
+	usage: SecretUsage,
+	t: ReturnType<typeof useTranslation>["t"],
+): string {
 	const location = usage.location;
 	if (typeof location === "string") {
 		return location;
 	}
 	if ("stdio_env" in location && typeof location.stdio_env === "object") {
-		return `stdio env ${(location.stdio_env as { name?: string }).name ?? ""}`;
+		return t("usage.location.stdioEnv", {
+			defaultValue: "stdio env {{name}}",
+			name: (location.stdio_env as { name?: string }).name ?? "",
+		});
 	}
-	if ("stdio_argument" in location && typeof location.stdio_argument === "object") {
-		return `stdio arg ${(location.stdio_argument as { index?: number }).index ?? ""}`;
+	if (
+		"stdio_argument" in location &&
+		typeof location.stdio_argument === "object"
+	) {
+		return t("usage.location.stdioArgument", {
+			defaultValue: "stdio arg {{index}}",
+			index: (location.stdio_argument as { index?: number }).index ?? "",
+		});
 	}
 	if (
 		"streamable_http_header" in location &&
 		typeof location.streamable_http_header === "object"
 	) {
-		return `http header ${(location.streamable_http_header as { name?: string }).name ?? ""}`;
+		return t("usage.location.httpHeader", {
+			defaultValue: "http header {{name}}",
+			name: (location.streamable_http_header as { name?: string }).name ?? "",
+		});
 	}
-	if ("stdio_command" in location) return "stdio command";
-	if ("streamable_http_url" in location) return "http url";
-	if ("oauth_token" in location) return "oauth token";
+	if ("stdio_command" in location) {
+		return t("usage.location.stdioCommand", { defaultValue: "stdio command" });
+	}
+	if ("streamable_http_url" in location) {
+		return t("usage.location.httpUrl", { defaultValue: "http url" });
+	}
+	if ("oauth_token" in location) {
+		return t("usage.location.oauthToken", { defaultValue: "oauth token" });
+	}
 	return JSON.stringify(location);
 }
 
 export function SecretsPage() {
-	const { t } = useTranslation();
+	usePageTranslations("secrets");
+	const { t } = useTranslation("secrets");
 	const queryClient = useQueryClient();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const [editor, setEditor] = useState<SecretEditorState | null>(null);
 	const [usageTarget, setUsageTarget] = useState<SecretMetadata | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<SecretMetadata | null>(null);
+	const [expanded, setExpanded] = useState(false);
+	const [sortedSecrets, setSortedSecrets] = useState<SecretToolbarEntity[]>([]);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_PAGE_SIZE);
 
 	const secretsQuery = useQuery({
 		queryKey: ["secrets"],
@@ -115,13 +209,64 @@ export function SecretsPage() {
 		enabled: Boolean(usageTarget?.alias),
 	});
 
-	const sortedSecrets = useMemo(
+	const kindOptions = SECRET_KIND_VALUES.map((value) => ({
+		value,
+		label: t(`kind.${value}`, { defaultValue: value }),
+	}));
+
+	const kindLabel = (kind: string): string =>
+		kindOptions.find((option) => option.value === kind)?.label ?? kind;
+
+	const secretsAsEntities = useMemo<SecretToolbarEntity[]>(() => {
+		const mapped = (secretsQuery.data ?? []).map((secret) => ({
+			id: secret.alias,
+			name: secret.alias,
+			description: secret.label ?? secret.placeholder,
+			alias: secret.alias,
+			kind: secret.kind,
+			provider_kind: secret.provider_kind,
+			used_by_count: secret.used_by_count,
+			version: secret.version,
+		}));
+		mapped.sort((left, right) => left.alias.localeCompare(right.alias));
+		return mapped;
+	}, [secretsQuery.data]);
+
+	const secretsByAlias = useMemo(
 		() =>
-			[...(secretsQuery.data ?? [])].sort((left, right) =>
-				left.alias.localeCompare(right.alias),
+			new Map(
+				(secretsQuery.data ?? []).map((secret) => [secret.alias, secret]),
 			),
 		[secretsQuery.data],
 	);
+
+	const totalPages = Math.max(
+		1,
+		Math.ceil(sortedSecrets.length / itemsPerPage),
+	);
+	const pagedSecrets = useMemo(() => {
+		const start = (currentPage - 1) * itemsPerPage;
+		return sortedSecrets.slice(start, start + itemsPerPage);
+	}, [currentPage, itemsPerPage, sortedSecrets]);
+	const hasNoSecretRecords = (secretsQuery.data?.length ?? 0) === 0;
+
+	useEffect(() => {
+		if (currentPage > totalPages) {
+			setCurrentPage(totalPages);
+		}
+	}, [currentPage, totalPages]);
+
+	useEffect(() => {
+		if (searchParams.get("editor") !== "create") return;
+		setEditor({
+			...defaultEditorState(),
+			origin: originFromSearchParams(searchParams),
+		});
+		const next = new URLSearchParams(searchParams);
+		next.delete("editor");
+		stripOriginSearchParams(next);
+		setSearchParams(next, { replace: true });
+	}, [searchParams, setSearchParams]);
 
 	const saveMutation = useMutation({
 		mutationFn: async (state: SecretEditorState) => {
@@ -131,6 +276,7 @@ export function SecretsPage() {
 					kind: state.kind,
 					label: state.label.trim() || null,
 					value: state.value,
+					origin: state.origin,
 				});
 			}
 			return secretsApi.update({
@@ -138,15 +284,21 @@ export function SecretsPage() {
 				kind: state.kind,
 				label: state.label.trim() || null,
 				value: state.value.length > 0 ? state.value : undefined,
+				origin: state.origin,
 			});
 		},
 		onSuccess: async () => {
 			setEditor(null);
 			await queryClient.invalidateQueries({ queryKey: ["secrets"] });
-			notifySuccess(t("secrets.saveSuccess", { defaultValue: "Secret saved" }));
+			notifySuccess(
+				t("notifications.saveSuccess", { defaultValue: "Secret saved" }),
+			);
 		},
 		onError: (error) => {
-			notifyError(t("secrets.saveError", { defaultValue: "Failed to save secret" }), stringifyError(error));
+			notifyError(
+				t("notifications.saveError", { defaultValue: "Failed to save secret" }),
+				stringifyError(error),
+			);
 		},
 	});
 
@@ -155,10 +307,17 @@ export function SecretsPage() {
 		onSuccess: async () => {
 			setDeleteTarget(null);
 			await queryClient.invalidateQueries({ queryKey: ["secrets"] });
-			notifySuccess(t("secrets.deleteSuccess", { defaultValue: "Secret deleted" }));
+			notifySuccess(
+				t("notifications.deleteSuccess", { defaultValue: "Secret deleted" }),
+			);
 		},
 		onError: (error) => {
-			notifyError(t("secrets.deleteError", { defaultValue: "Failed to delete secret" }), stringifyError(error));
+			notifyError(
+				t("notifications.deleteError", {
+					defaultValue: "Failed to delete secret",
+				}),
+				stringifyError(error),
+			);
 		},
 	});
 
@@ -170,138 +329,301 @@ export function SecretsPage() {
 			kind: (secret.kind as SecretKind) || "generic",
 			label: secret.label ?? "",
 			value: "",
+			origin: secret.origin ?? null,
 		});
+
+	const toolbarConfig: PageToolbarConfig<SecretToolbarEntity> = {
+		data: secretsAsEntities,
+		search: {
+			placeholder: t("toolbar.search.placeholder", {
+				defaultValue: "Search secrets...",
+			}),
+			fields: [
+				{
+					key: "alias",
+					label: t("toolbar.search.fields.alias", { defaultValue: "Alias" }),
+					weight: 10,
+				},
+				{
+					key: "description",
+					label: t("toolbar.search.fields.label", { defaultValue: "Label" }),
+					weight: 8,
+				},
+				{
+					key: "kind",
+					label: t("toolbar.search.fields.kind", { defaultValue: "Kind" }),
+					weight: 5,
+				},
+			],
+			debounceMs: 300,
+		},
+		viewMode: {
+			enabled: false,
+			defaultMode: "list",
+		},
+		sort: {
+			enabled: true,
+			options: [
+				{
+					value: "alias",
+					label: t("toolbar.sort.options.alias", { defaultValue: "Alias" }),
+					defaultDirection: "asc",
+				},
+				{
+					value: "kind",
+					label: t("toolbar.sort.options.kind", { defaultValue: "Kind" }),
+					defaultDirection: "asc",
+				},
+				{
+					value: "used_by_count",
+					label: t("toolbar.sort.options.usage", { defaultValue: "Usage" }),
+					defaultDirection: "desc",
+				},
+			],
+			defaultSort: "alias",
+		},
+		urlPersistence: {
+			enabled: true,
+		},
+	};
+
+	const toolbarState: PageToolbarState = {
+		expanded,
+	};
+
+	const toolbarCallbacks: PageToolbarCallbacks<SecretToolbarEntity> = {
+		onSortedDataChange: (data) => {
+			setSortedSecrets(data);
+			setCurrentPage(1);
+		},
+		onExpandedChange: setExpanded,
+	};
+
+	const loadingSkeleton = Array.from({ length: 3 }, (_, index) => (
+		<div
+			key={`secret-skeleton-${index}`}
+			className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 dark:border-slate-700 dark:bg-slate-900"
+		>
+			<div className="flex min-w-0 items-center gap-3">
+				<div className="h-9 w-9 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800" />
+				<div className="space-y-2">
+					<div className="h-4 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+					<div className="h-3 w-64 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+				</div>
+			</div>
+			<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+		</div>
+	));
+
+	const emptyStateAction = hasNoSecretRecords ? (
+		<Button type="button" size="sm" className="mt-4 h-9" onClick={openCreate}>
+			<Plus className="mr-2 h-4 w-4" />
+			{t("empty.action", { defaultValue: "Add First Secret" })}
+		</Button>
+	) : undefined;
+
+	const emptyState = (
+		<Card>
+			<CardContent className="flex flex-col items-center justify-center p-6">
+				<EmptyState
+					icon={<KeyRound className="h-4 w-4" />}
+					title={
+						hasNoSecretRecords
+							? t("empty.title", { defaultValue: "No secrets stored" })
+							: t("empty.filteredTitle", {
+									defaultValue: "No matching secrets",
+								})
+					}
+					description={
+						hasNoSecretRecords
+							? t("empty.description", {
+									defaultValue:
+										"Store write-only values for server runtime placeholders.",
+								})
+							: t("empty.filteredDescription", {
+									defaultValue:
+										"Adjust the search or sort controls to find a secret.",
+								})
+					}
+					action={emptyStateAction}
+				/>
+			</CardContent>
+		</Card>
+	);
+
+	const actions = (
+		<div className="flex items-center gap-2">
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				className="h-9 w-9 p-0"
+				onClick={() => void secretsQuery.refetch()}
+				disabled={secretsQuery.isRefetching}
+				title={t("toolbar.actions.refresh", { defaultValue: "Refresh" })}
+			>
+				<RefreshCw
+					className={`h-4 w-4 ${secretsQuery.isRefetching ? "animate-spin" : ""}`}
+				/>
+			</Button>
+			<Button
+				type="button"
+				size="sm"
+				className="h-9 w-9 p-0"
+				onClick={openCreate}
+				title={t("toolbar.actions.add", { defaultValue: "Add Secret" })}
+			>
+				<Plus className="h-4 w-4" />
+			</Button>
+		</div>
+	);
+
+	const renderSecretRow = (entity: SecretToolbarEntity) => {
+		const secret = secretsByAlias.get(entity.alias);
+		if (!secret) return null;
+
+		return (
+			<EntityListItem
+				key={secret.alias}
+				id={secret.alias}
+				title={secret.alias}
+				description={
+					<div className="min-w-0">
+						{secret.label ? (
+							<div className="truncate">{secret.label}</div>
+						) : null}
+						<div className="truncate font-mono text-xs text-muted-foreground">
+							{secret.placeholder}
+						</div>
+					</div>
+				}
+				avatar={{
+					fallback: secret.alias.slice(0, 2).toUpperCase(),
+				}}
+				titleBadges={[
+					<Badge key="kind" variant="secondary">
+						{kindLabel(secret.kind)}
+					</Badge>,
+				]}
+				stats={[
+					{
+						label: t("list.stats.provider", { defaultValue: "Provider" }),
+						value: secret.provider_kind,
+					},
+					{
+						label: t("list.stats.usage", { defaultValue: "Usage" }),
+						value: secret.used_by_count,
+					},
+					{
+						label: t("list.stats.version", { defaultValue: "Version" }),
+						value: secret.version,
+					},
+				]}
+				actionButtons={[
+					<Button
+						key="usage"
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="h-9 px-2"
+						onClick={() => setUsageTarget(secret)}
+					>
+						<ShieldCheck className="mr-2 h-4 w-4" />
+						{secret.used_by_count}
+					</Button>,
+					<Button
+						key="copy"
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="h-9 w-9"
+						onClick={() => void writeClipboardText(secret.placeholder)}
+						aria-label={t("list.actions.copy", {
+							defaultValue: "Copy placeholder",
+						})}
+					>
+						<Copy className="h-4 w-4" />
+					</Button>,
+					<Button
+						key="edit"
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="h-9 w-9"
+						onClick={() => openEdit(secret)}
+						aria-label={t("list.actions.edit", { defaultValue: "Edit secret" })}
+					>
+						<Pencil className="h-4 w-4" />
+					</Button>,
+					<Button
+						key="delete"
+						type="button"
+						variant="ghost"
+						size="icon"
+						className="h-9 w-9"
+						onClick={() => setDeleteTarget(secret)}
+						aria-label={t("list.actions.delete", {
+							defaultValue: "Delete secret",
+						})}
+					>
+						<Trash2 className="h-4 w-4 text-destructive" />
+					</Button>,
+				]}
+				onClick={() => openEdit(secret)}
+			/>
+		);
+	};
 
 	return (
 		<PageLayout
-			title={t("secrets.pageDescription", {
-				defaultValue: "Manage runtime secrets used by managed MCP server configuration.",
-			})}
+			title={t("title", { defaultValue: "Secure Store" })}
 			headerActions={
-				<>
-					<Button
-						type="button"
-						variant="outline"
-						size="icon"
-						onClick={() => void secretsQuery.refetch()}
-						aria-label={t("common.refresh", { defaultValue: "Refresh" })}
-					>
-						<RefreshCw className="h-4 w-4" />
-					</Button>
-					<Button type="button" onClick={openCreate}>
-						<Plus className="mr-2 h-4 w-4" />
-						{t("secrets.add", { defaultValue: "Add Secret" })}
-					</Button>
-				</>
+				<PageToolbar<SecretToolbarEntity>
+					config={toolbarConfig}
+					state={toolbarState}
+					callbacks={toolbarCallbacks}
+					actions={actions}
+				/>
 			}
 		>
-			<Card>
-				<CardHeader className="pb-3">
-					<CardTitle className="flex items-center gap-2 text-lg">
-						<ShieldCheck className="h-5 w-5" />
-						{t("secrets.storeTitle", { defaultValue: "Secure Store" })}
-					</CardTitle>
-					<CardDescription>
-						{t("secrets.storeDescription", {
-							defaultValue: "Values are write-only after save. Server configs use placeholders.",
-						})}
-					</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<div className="overflow-x-auto rounded-md border">
-						<table className="w-full text-sm">
-							<thead className="bg-muted/50 text-left">
-								<tr>
-									<th className="px-3 py-2 font-medium">
-										{t("secrets.columns.alias", { defaultValue: "Alias" })}
-									</th>
-									<th className="px-3 py-2 font-medium">
-										{t("secrets.columns.kind", { defaultValue: "Kind" })}
-									</th>
-									<th className="px-3 py-2 font-medium">
-										{t("secrets.columns.provider", { defaultValue: "Provider" })}
-									</th>
-									<th className="px-3 py-2 font-medium">
-										{t("secrets.columns.usage", { defaultValue: "Usage" })}
-									</th>
-									<th className="px-3 py-2 font-medium">
-										{t("secrets.columns.version", { defaultValue: "Version" })}
-									</th>
-									<th className="px-3 py-2 text-right font-medium">
-										{t("secrets.columns.actions", { defaultValue: "Actions" })}
-									</th>
-								</tr>
-							</thead>
-							<tbody>
-								{sortedSecrets.length === 0 ? (
-									<tr>
-										<td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
-											{secretsQuery.isLoading
-												? t("secrets.loading", { defaultValue: "Loading secrets" })
-												: t("secrets.empty", { defaultValue: "No secrets stored" })}
-										</td>
-									</tr>
-								) : (
-									sortedSecrets.map((secret) => (
-										<tr key={secret.alias} className="border-t">
-											<td className="max-w-[320px] px-3 py-3">
-												<div className="truncate font-medium">{secret.alias}</div>
-												<div className="truncate font-mono text-xs text-muted-foreground">
-													{secret.placeholder}
-												</div>
-											</td>
-											<td className="px-3 py-3">
-												<Badge variant="secondary">{kindLabel(secret.kind)}</Badge>
-											</td>
-											<td className="px-3 py-3 text-muted-foreground">{secret.provider_kind}</td>
-											<td className="px-3 py-3">
-												<Button type="button" variant="ghost" size="sm" onClick={() => setUsageTarget(secret)}>
-													{secret.used_by_count}
-												</Button>
-											</td>
-											<td className="px-3 py-3 font-mono text-xs">{secret.version}</td>
-											<td className="px-3 py-3">
-												<div className="flex justify-end gap-1">
-													<Button
-														type="button"
-														variant="ghost"
-														size="icon"
-														onClick={() => void writeClipboardText(secret.placeholder)}
-														aria-label={t("secrets.copyPlaceholder", { defaultValue: "Copy placeholder" })}
-													>
-														<Copy className="h-4 w-4" />
-													</Button>
-													<Button
-														type="button"
-														variant="ghost"
-														size="icon"
-														onClick={() => openEdit(secret)}
-														aria-label={t("secrets.edit", { defaultValue: "Edit secret" })}
-													>
-														<Pencil className="h-4 w-4" />
-													</Button>
-													<Button
-														type="button"
-														variant="ghost"
-														size="icon"
-														onClick={() => setDeleteTarget(secret)}
-														aria-label={t("secrets.delete", { defaultValue: "Delete secret" })}
-													>
-														<Trash2 className="h-4 w-4 text-destructive" />
-													</Button>
-												</div>
-											</td>
-										</tr>
-									))
-								)}
-							</tbody>
-						</table>
-					</div>
-				</CardContent>
-			</Card>
+			<div className="space-y-4">
+				{secretsQuery.isLoading ? (
+					<div className="space-y-4">{loadingSkeleton}</div>
+				) : sortedSecrets.length === 0 ? (
+					emptyState
+				) : (
+					<>
+						<div className="space-y-4">{pagedSecrets.map(renderSecretRow)}</div>
+						<Pagination
+							currentPage={currentPage}
+							hasPreviousPage={currentPage > 1}
+							hasNextPage={currentPage < totalPages}
+							itemsPerPage={itemsPerPage}
+							currentPageItemCount={pagedSecrets.length}
+							totalItemCount={sortedSecrets.length}
+							totalPages={totalPages}
+							onGoToPage={setCurrentPage}
+							onPreviousPage={() =>
+								setCurrentPage((page) => Math.max(1, page - 1))
+							}
+							onFirstPage={() => setCurrentPage(1)}
+							onNextPage={() =>
+								setCurrentPage((page) => Math.min(totalPages, page + 1))
+							}
+							onLastPage={() => setCurrentPage(totalPages)}
+							onItemsPerPageChange={(next) => {
+								setItemsPerPage(next);
+								setCurrentPage(1);
+							}}
+							isLoading={secretsQuery.isRefetching}
+						/>
+					</>
+				)}
+			</div>
 
-			<SecretEditorDialog
+			<SecretEditorDrawer
 				editor={editor}
+				kindOptions={kindOptions}
 				onChange={setEditor}
 				onClose={() => setEditor(null)}
 				onSave={() => editor && saveMutation.mutate(editor)}
@@ -317,103 +639,151 @@ export function SecretsPage() {
 				secret={deleteTarget}
 				isDeleting={deleteMutation.isPending}
 				onClose={() => setDeleteTarget(null)}
-				onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.alias)}
+				onConfirm={() =>
+					deleteTarget && deleteMutation.mutate(deleteTarget.alias)
+				}
 			/>
 		</PageLayout>
 	);
 }
 
-function SecretEditorDialog({
+function SecretEditorDrawer({
 	editor,
+	kindOptions,
 	onChange,
 	onClose,
 	onSave,
 	isSaving,
 }: {
 	editor: SecretEditorState | null;
+	kindOptions: Array<{ value: SecretKind; label: string }>;
 	onChange: (next: SecretEditorState | null) => void;
 	onClose: () => void;
 	onSave: () => void;
 	isSaving: boolean;
 }) {
-	const { t } = useTranslation();
+	const { t } = useTranslation("secrets");
+	const aliasId = useId();
+	const kindId = useId();
+	const labelId = useId();
+	const valueId = useId();
 	if (!editor) return null;
 
 	return (
-		<Dialog open={Boolean(editor)} onOpenChange={(open) => !open && onClose()}>
-			<DialogContent>
-				<DialogHeader>
-					<DialogTitle>
-						{editor.mode === "create"
-							? t("secrets.createTitle", { defaultValue: "Add Secret" })
-							: t("secrets.editTitle", { defaultValue: "Edit Secret" })}
-					</DialogTitle>
-					<DialogDescription>
-						{t("secrets.editorDescription", {
-							defaultValue: "The value is write-only. It will not be shown again after save.",
-						})}
-					</DialogDescription>
-				</DialogHeader>
-				<div className="grid gap-4">
-					<div className="grid gap-2">
-						<Label htmlFor="secret-alias">Alias</Label>
-						<Input
-							id="secret-alias"
-							value={editor.alias}
-							disabled={editor.mode === "edit"}
-							onChange={(event) => onChange({ ...editor, alias: event.target.value })}
-							placeholder="server/github/token"
-						/>
+		<Drawer open={Boolean(editor)} onOpenChange={(open) => !open && onClose()}>
+			<DrawerContent className="h-full flex flex-col">
+				<form
+					className="flex min-h-0 flex-1 flex-col"
+					onSubmit={(event) => {
+						event.preventDefault();
+						onSave();
+					}}
+				>
+					<DrawerHeader>
+						<DrawerTitle>
+							{editor.mode === "create"
+								? t("editor.createTitle", { defaultValue: "Add Secret" })
+								: t("editor.editTitle", { defaultValue: "Edit Secret" })}
+						</DrawerTitle>
+						<DrawerDescription>
+							{t("editor.description", {
+								defaultValue:
+									"The value is write-only. It will not be shown again after save.",
+							})}
+						</DrawerDescription>
+					</DrawerHeader>
+					<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+						<div className="grid gap-4">
+							<div className="grid gap-2">
+								<Label htmlFor={aliasId}>
+									{t("editor.fields.alias", { defaultValue: "Alias" })}
+								</Label>
+								<Input
+									id={aliasId}
+									value={editor.alias}
+									disabled={editor.mode === "edit"}
+									onChange={(event) =>
+										onChange({ ...editor, alias: event.target.value })
+									}
+									placeholder="server/github/token"
+								/>
+							</div>
+							<div className="grid gap-2">
+								<Label htmlFor={kindId}>
+									{t("editor.fields.kind", { defaultValue: "Kind" })}
+								</Label>
+								<Select
+									value={editor.kind}
+									onValueChange={(kind) =>
+										onChange({ ...editor, kind: kind as SecretKind })
+									}
+								>
+									<SelectTrigger id={kindId} className="h-9">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{kindOptions.map((option) => (
+											<SelectItem key={option.value} value={option.value}>
+												{option.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+							<div className="grid gap-2">
+								<Label htmlFor={labelId}>
+									{t("editor.fields.label", { defaultValue: "Label" })}
+								</Label>
+								<Input
+									id={labelId}
+									value={editor.label}
+									onChange={(event) =>
+										onChange({ ...editor, label: event.target.value })
+									}
+									placeholder="GitHub token"
+								/>
+							</div>
+							<div className="grid gap-2">
+								<Label htmlFor={valueId}>
+									{t("editor.fields.value", { defaultValue: "Value" })}
+								</Label>
+								<Input
+									id={valueId}
+									type="password"
+									value={editor.value}
+									onChange={(event) =>
+										onChange({ ...editor, value: event.target.value })
+									}
+									placeholder={
+										editor.mode === "edit"
+											? t("editor.placeholders.keepValue", {
+													defaultValue: "Leave blank to keep existing value",
+												})
+											: t("editor.placeholders.value", {
+													defaultValue: "Secret value",
+												})
+									}
+								/>
+							</div>
+						</div>
 					</div>
-					<div className="grid gap-2">
-						<Label>Kind</Label>
-						<Select
-							value={editor.kind}
-							onValueChange={(kind) => onChange({ ...editor, kind: kind as SecretKind })}
+					<DrawerFooter className="mt-auto border-t bg-background px-6 py-4">
+						<Button
+							type="button"
+							variant="outline"
+							onClick={onClose}
+							disabled={isSaving}
 						>
-							<SelectTrigger>
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{SECRET_KIND_OPTIONS.map((option) => (
-									<SelectItem key={option.value} value={option.value}>
-										{option.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					</div>
-					<div className="grid gap-2">
-						<Label htmlFor="secret-label">Label</Label>
-						<Input
-							id="secret-label"
-							value={editor.label}
-							onChange={(event) => onChange({ ...editor, label: event.target.value })}
-							placeholder="GitHub token"
-						/>
-					</div>
-					<div className="grid gap-2">
-						<Label htmlFor="secret-value">Value</Label>
-						<Input
-							id="secret-value"
-							type="password"
-							value={editor.value}
-							onChange={(event) => onChange({ ...editor, value: event.target.value })}
-							placeholder={editor.mode === "edit" ? "Leave blank to keep existing value" : "Secret value"}
-						/>
-					</div>
-				</div>
-				<DialogFooter>
-					<Button type="button" variant="outline" onClick={onClose}>
-						{t("common.cancel", { defaultValue: "Cancel" })}
-					</Button>
-					<Button type="button" onClick={onSave} disabled={isSaving || !editor.alias.trim()}>
-						<KeyRound className="mr-2 h-4 w-4" />
-						{t("common.save", { defaultValue: "Save" })}
-					</Button>
-				</DialogFooter>
-			</DialogContent>
-		</Dialog>
+							{t("editor.actions.cancel", { defaultValue: "Cancel" })}
+						</Button>
+						<Button type="submit" disabled={isSaving || !editor.alias.trim()}>
+							<KeyRound className="mr-2 h-4 w-4" />
+							{t("editor.actions.save", { defaultValue: "Save" })}
+						</Button>
+					</DrawerFooter>
+				</form>
+			</DrawerContent>
+		</Drawer>
 	);
 }
 
@@ -428,38 +798,46 @@ function SecretUsageDialog({
 	isLoading: boolean;
 	onClose: () => void;
 }) {
-	const { t } = useTranslation();
+	const { t } = useTranslation("secrets");
 	return (
 		<Dialog open={Boolean(secret)} onOpenChange={(open) => !open && onClose()}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>{t("secrets.usageTitle", { defaultValue: "Secret Usage" })}</DialogTitle>
-					<DialogDescription className="font-mono">{secret?.alias}</DialogDescription>
+					<DialogTitle>
+						{t("usage.title", { defaultValue: "Secret Usage" })}
+					</DialogTitle>
+					<DialogDescription className="font-mono">
+						{secret?.alias}
+					</DialogDescription>
 				</DialogHeader>
 				<div className="rounded-md border">
 					{isLoading ? (
 						<div className="p-4 text-sm text-muted-foreground">
-							{t("secrets.loadingUsages", { defaultValue: "Loading usages" })}
+							{t("usage.loading", { defaultValue: "Loading usages" })}
 						</div>
 					) : usages.length === 0 ? (
 						<div className="p-4 text-sm text-muted-foreground">
-							{t("secrets.noUsages", { defaultValue: "No server usage recorded" })}
+							{t("usage.empty", { defaultValue: "No server usage recorded" })}
 						</div>
 					) : (
 						<table className="w-full text-sm">
 							<thead className="bg-muted/50 text-left">
 								<tr>
-									<th className="px-3 py-2 font-medium">Server</th>
 									<th className="px-3 py-2 font-medium">
-										{t("secrets.columns.location", { defaultValue: "Location" })}
+										{t("usage.columns.server", { defaultValue: "Server" })}
+									</th>
+									<th className="px-3 py-2 font-medium">
+										{t("usage.columns.location", { defaultValue: "Location" })}
 									</th>
 								</tr>
 							</thead>
 							<tbody>
 								{usages.map((usage, index) => (
 									<tr key={`${usage.server_id}-${index}`} className="border-t">
-										<td className="px-3 py-2 font-mono text-xs">{usage.server_id}</td>
-										<td className="px-3 py-2">{usageLabel(usage)}</td>
+										<td className="px-3 py-2 font-mono text-xs">
+											{usage.server_id}
+										</td>
+										<td className="px-3 py-2">{usageLabel(usage, t)}</td>
 									</tr>
 								))}
 							</tbody>
@@ -482,16 +860,19 @@ function SecretDeleteDialog({
 	onClose: () => void;
 	onConfirm: () => void;
 }) {
-	const { t } = useTranslation();
+	const { t } = useTranslation("secrets");
 	return (
-		<AlertDialog open={Boolean(secret)} onOpenChange={(open) => !open && onClose()}>
+		<AlertDialog
+			open={Boolean(secret)}
+			onOpenChange={(open) => !open && onClose()}
+		>
 			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle>
-						{t("secrets.deleteTitle", { defaultValue: "Delete secret?" })}
+						{t("delete.title", { defaultValue: "Delete secret?" })}
 					</AlertDialogTitle>
 					<AlertDialogDescription>
-						{t("secrets.deleteDescription", {
+						{t("delete.description", {
 							defaultValue:
 								"This removes the encrypted value only when no server usage is recorded.",
 						})}
@@ -502,14 +883,14 @@ function SecretDeleteDialog({
 				</div>
 				<AlertDialogFooter>
 					<AlertDialogCancel disabled={isDeleting}>
-						{t("common.cancel", { defaultValue: "Cancel" })}
+						{t("delete.actions.cancel", { defaultValue: "Cancel" })}
 					</AlertDialogCancel>
 					<AlertDialogAction
 						disabled={isDeleting}
 						onClick={onConfirm}
 						className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 					>
-						{t("common.delete", { defaultValue: "Delete" })}
+						{t("delete.actions.confirm", { defaultValue: "Delete" })}
 					</AlertDialogAction>
 				</AlertDialogFooter>
 			</AlertDialogContent>

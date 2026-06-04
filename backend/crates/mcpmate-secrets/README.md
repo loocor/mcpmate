@@ -1,18 +1,59 @@
-# MCPMate Secrets Security Boundary
+# mcpmate-secrets
 
-## Scope
-
-`mcpmate-secrets` provides MCPMate's local server-runtime secret boundary.
-It provides secret references, resolver/provider contracts, OS-backed root-key
-providers, encrypted local secure KV storage, usage references, and
-runtime-only injection semantics for managed MCP server configuration.
+`mcpmate-secrets` provides MCPMate's local server-runtime secret layer. It owns
+secret references, runtime placeholder resolution, provider contracts,
+OS-backed root-key custody, encrypted local secret storage, usage metadata, and
+fail-closed behavior when a secret cannot be resolved.
 
 This crate is part of MCPMate and is licensed under AGPL-3.0-only by default.
 
-The crate must remain independently useful to callers outside the main backend
-crate. The main backend crate may initialize the store, expose REST handlers,
-and connect the resolver to MCPMate's connection pool, but it must not own the
-cryptographic storage implementation or OS secure-storage provider logic.
+## Responsibilities
+
+This crate is intended to remain independently useful to callers outside the
+main MCPMate backend crate. It owns the security-sensitive implementation:
+
+- Placeholder and reference models such as `[[secret:<alias>]]`.
+- Resolver and store contracts for runtime-only secret injection.
+- Root-key provider selection and provider metadata.
+- OS-backed root-key custody integrations.
+- Explicit development/test root-key provider.
+- AEAD encryption/decryption of secret values.
+- Per-record data-key generation and root-key wrapping.
+- SQLite schema and operations for secret metadata, ciphertext, and usage refs.
+- Redacted secret value handling and testing helpers.
+
+The main backend crate should only perform application wiring:
+
+- Choose MCPMate's data directory for explicit development/test key files.
+- Start the secure store with the crate-provided default provider.
+- Expose REST API request/response wrappers.
+- Map MCPMate server configuration fields into usage references.
+- Inject the crate-provided resolver into the MCPMate connection pool.
+
+## Module Layout
+
+- `reference.rs`: secret errors, references, values, placeholders, extraction,
+  and runtime placeholder resolution.
+- `model.rs`: domain models for secret metadata, providers, records, usage
+  references, resolver/store traits, and unavailable-provider behavior.
+- `types.rs`: crate-facing DTOs used by the local store and backend API
+  wrapper.
+- `root_key.rs`: root-key providers, OS keyring integration, and explicit
+  development/test key material handling.
+- `crypto.rs`: envelope encryption and AEAD domain separation.
+- `database.rs`: SQLite schema, persistence queries, row mapping, and usage
+  metadata queries.
+- `store.rs`: `LocalSecretStore` orchestration, cache management, and
+  `SecretResolver` implementation.
+- `constants.rs`: crate-private persistence and provider identity constants
+  shared across modules.
+- `testing.rs`: redacted in-memory resolver helper for tests.
+
+Keep constants at the smallest practical scope. Crypto AAD prefixes stay inside
+`crypto.rs`, keyring entry defaults stay inside `root_key.rs`, and enum string
+mapping stays next to the enum implementations. `constants.rs` is reserved for
+cross-module persisted contract values such as encryption algorithm labels and
+provider identity strings.
 
 ## Security Target
 
@@ -32,7 +73,7 @@ The default target is enterprise-local secret storage:
   boundary. It may only be used for tests, controlled development, or explicit
   migration tooling.
 
-## Cross-Platform OS Custody Target
+## Cross-Platform OS Custody
 
 MCPMate's no-extra-cost desktop security target is OS-backed root-key custody:
 
@@ -41,12 +82,14 @@ MCPMate's no-extra-cost desktop security target is OS-backed root-key custody:
 - Linux: OS Secret Service, such as GNOME Keyring or KWallet through a
   standards-compatible provider.
 
-The OS-backed provider owns the root key used to protect encrypted local secret
-records. SQLite remains the metadata and ciphertext store; it must not become a
-plaintext secret store.
+The OS-backed provider owns the root wrapping key used to protect encrypted
+local secret records. Each stored secret receives its own generated data key;
+the data key encrypts the secret value and is itself wrapped by the OS-backed
+root key. SQLite remains the metadata, wrapped-key, nonce, and ciphertext
+store; it must not become a plaintext secret store.
 
-If the required OS secret provider is unavailable, locked, or cannot persist the
-root key, MCPMate must fail closed with an actionable error. It must not
+If the required OS secret provider is unavailable, locked, or cannot persist
+the root key, MCPMate must fail closed with an actionable error. It must not
 silently fall back to environment keys, local files, empty values, or plaintext
 server configuration.
 
@@ -91,41 +134,22 @@ Future FIPS-provider integrations must record:
 
 ## Provider Boundary
 
-The crate must keep a replaceable provider interface so MCPMate can support
+The crate keeps a replaceable provider interface so MCPMate can support
 different local or enterprise backends later:
 
 - OS-backed local root key providers.
-- Local encrypted vault storage.
+- Local encrypted vault storage for explicit development/test use.
 - Enterprise KMS, HSM, or managed-vault providers.
 - Future commercial provider integrations under a separate license.
 
-The first implementation slice should not require a standalone daemon. Process
+The first implementation slice does not require a standalone daemon. Process
 separation can be introduced later behind the provider interface.
-
-## Implementation Boundary
-
-`mcpmate-secrets` owns the security-sensitive implementation:
-
-- Root-key provider selection and provider metadata.
-- OS-backed root-key custody integrations.
-- Explicit development/test root-key provider.
-- AEAD encryption/decryption of secret values.
-- SQLite schema and operations for secret metadata, ciphertext, and usage refs.
-- Secret resolver behavior and redacted secret value handling.
-
-The main backend crate owns MCPMate application wiring only:
-
-- Choosing MCPMate's data directory for explicit development/test key files.
-- Starting the secure store with the crate-provided default provider.
-- Exposing REST API request/response wrappers.
-- Mapping MCPMate server configuration fields into usage references.
-- Injecting the crate-provided resolver into the MCPMate connection pool.
 
 ## Development Provider
 
-The development implementation uses a local encrypted vault provider.
-Secret values are encrypted before they are written to SQLite, while metadata
-and usage references remain queryable for Board and API workflows.
+The development implementation uses a local encrypted vault provider. Secret
+values are encrypted before they are written to SQLite, while metadata, wrapped
+data keys, and usage references remain queryable for Board and API workflows.
 
 The current root-key boundary is intentionally narrow:
 
@@ -142,10 +166,6 @@ This provider is not an operating-system keychain provider and does not claim
 OS-backed custody, hardware-backed custody, or managed-vault custody. It is the
 minimum development provider behind the replaceable provider boundary. It must
 not be the default production secure-store custody path.
-
-A macOS Keychain, Windows Credential Manager or DPAPI, Linux Secret Service,
-KMS, HSM, or managed-vault provider must be implemented and documented as a
-separate provider, not inferred from this local encrypted vault.
 
 ## Audit Boundary
 

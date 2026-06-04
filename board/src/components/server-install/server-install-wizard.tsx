@@ -39,7 +39,7 @@ import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
-import type { MCPServerConfig } from "../../lib/types";
+import type { MCPServerConfig, SecretOrigin } from "../../lib/types";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -565,6 +565,16 @@ export const ServerInstallWizard = forwardRef(
 		const hasBlockingErrors = useMemo(
 			() => Boolean(errors.name || errors.kind || errors.command || errors.url),
 			[errors.name, errors.kind, errors.command, errors.url],
+		);
+
+		const secretOriginBase = useMemo<SecretOrigin>(
+			() => ({
+				server_id: pendingImportServerId,
+				server_name: watchedName?.trim() || null,
+				server_kind: kind,
+				source: isEditMode ? "server_edit" : "server_install",
+			}),
+			[isEditMode, kind, pendingImportServerId, watchedName],
 		);
 
 		useFormSync({
@@ -1492,6 +1502,7 @@ export const ServerInstallWizard = forwardRef(
 													urlInputRef={urlInputRef}
 													viewMode={viewMode}
 													onSecretSelect={handleSecretSelect}
+													secretOriginBase={secretOriginBase}
 												/>
 
 												<ServerAuthSection
@@ -1575,6 +1586,7 @@ export const ServerInstallWizard = forwardRef(
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
 													onSecretSelect={handleSecretSelect}
+													secretOriginBase={secretOriginBase}
 												/>
 
 												<UrlParams
@@ -1588,6 +1600,7 @@ export const ServerInstallWizard = forwardRef(
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
 													onSecretSelect={handleSecretSelect}
+													secretOriginBase={secretOriginBase}
 												/>
 
 												{!isStdio && selectedAuthMode === "oauth" ? (
@@ -1610,6 +1623,7 @@ export const ServerInstallWizard = forwardRef(
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
 													onSecretSelect={handleSecretSelect}
+													secretOriginBase={secretOriginBase}
 												/>
 											</>
 										) : (
