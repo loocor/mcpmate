@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /api/
 
-Sitemap: https://mcpmate.dev/sitemap.xml
+Sitemap: https://mcp.umate.ai/sitemap.xml

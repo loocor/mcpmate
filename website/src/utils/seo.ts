@@ -1,3 +1,10 @@
+import {
+	SITE_NAME,
+	SITE_PREVIEW_IMAGE_ALT,
+	SITE_PREVIEW_IMAGE_URL,
+	buildSiteUrl,
+} from "./site";
+
 type MetaConfig = {
 	title: string;
 	description?: string;
@@ -48,13 +55,45 @@ export function setDocumentMeta({ title, description, pathname }: MetaConfig) {
 		property: "og:title",
 		content: title,
 	});
+	upsertMeta('meta[property="og:site_name"]', {
+		property: "og:site_name",
+		content: SITE_NAME,
+	});
+	upsertMeta('meta[property="og:type"]', {
+		property: "og:type",
+		content: "website",
+	});
+	upsertMeta('meta[property="og:image"]', {
+		property: "og:image",
+		content: SITE_PREVIEW_IMAGE_URL,
+	});
+	upsertMeta('meta[property="og:image:alt"]', {
+		property: "og:image:alt",
+		content: SITE_PREVIEW_IMAGE_ALT,
+	});
+	upsertMeta('meta[name="twitter:card"]', {
+		name: "twitter:card",
+		content: "summary_large_image",
+	});
 	upsertMeta('meta[name="twitter:title"]', {
 		name: "twitter:title",
 		content: title,
 	});
+	upsertMeta('meta[name="twitter:image"]', {
+		name: "twitter:image",
+		content: SITE_PREVIEW_IMAGE_URL,
+	});
+	upsertMeta('meta[name="twitter:image:alt"]', {
+		name: "twitter:image:alt",
+		content: SITE_PREVIEW_IMAGE_ALT,
+	});
 
 	if (typeof window !== "undefined") {
-		const canonicalUrl = new URL(pathname ?? window.location.pathname, window.location.origin).toString();
+		const canonicalUrl = buildSiteUrl(pathname ?? window.location.pathname);
 		upsertCanonical(canonicalUrl);
+		upsertMeta('meta[property="og:url"]', {
+			property: "og:url",
+			content: canonicalUrl,
+		});
 	}
 }

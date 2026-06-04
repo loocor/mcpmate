@@ -3,6 +3,13 @@
  * Produces machine-readable structured data for AI answer engines.
  */
 
+import {
+	SITE_LOGO_URL,
+	SITE_PREVIEW_IMAGE_URL,
+	SITE_URL,
+	buildSiteUrl,
+} from "./site";
+
 export interface FAQItem {
   question: string;
   answer: string;
@@ -33,10 +40,13 @@ export function buildSoftwareApplication(overrides?: {
       url: "https://github.com/loocor",
     },
     license: "https://www.gnu.org/licenses/agpl-3.0.html",
-    url: overrides?.url ?? "https://mcpmate.dev",
+    url: overrides?.url ?? SITE_URL,
+    logo: SITE_LOGO_URL,
+    image: SITE_PREVIEW_IMAGE_URL,
+    screenshot: SITE_PREVIEW_IMAGE_URL,
     softwareHelp: {
       "@type": "CreativeWork",
-      url: "https://mcpmate.dev/docs/en/quickstart",
+      url: buildSiteUrl("/docs/en/quickstart"),
     },
     featureList: [
       "MCP server management",
@@ -54,7 +64,9 @@ export function buildOrganization() {
     "@context": "https://schema.org",
     "@type": "Organization",
     name: "MCPMate",
-    url: "https://mcpmate.dev",
+    url: SITE_URL,
+    logo: SITE_LOGO_URL,
+    image: SITE_PREVIEW_IMAGE_URL,
     sameAs: ["https://github.com/loocor/mcpmate"],
   };
 }
