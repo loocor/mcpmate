@@ -788,11 +788,15 @@ impl ClientConfigService {
                 .transpose()?
         };
 
-        let effective_parse = match existing_state.as_ref() {
-            Some(state) => state
-                .effective_config_file_parse_with(config_file_parse, clear_override)?
-                .or_else(|| config_file_parse.cloned()),
-            None => config_file_parse.cloned(),
+        let effective_parse = if clear_override && config_file_parse.is_none() {
+            None
+        } else {
+            match existing_state.as_ref() {
+                Some(state) => state
+                    .effective_config_file_parse_with(config_file_parse, clear_override)?
+                    .or_else(|| config_file_parse.cloned()),
+                None => config_file_parse.cloned(),
+            }
         };
 
         let config_format = effective_parse.as_ref().map(|value| value.format.as_str().to_string());
