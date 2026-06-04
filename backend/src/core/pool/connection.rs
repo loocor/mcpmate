@@ -223,7 +223,6 @@ impl UpstreamConnectionPool {
         tracing::info!("Database reference updated for connection pool");
     }
 
-
     /// Idle timeout for standard instances (may become configurable later)
     pub fn standard_instance_idle_timeout() -> Duration {
         let env_override = std::env::var("MCPMATE_INSTANCE_IDLE_TIMEOUT_SECS")
@@ -710,7 +709,9 @@ impl UpstreamConnectionPool {
                 Ok(map) if !map.is_empty() => Some(map),
                 _ => None,
             };
-            crate::config::server::get_effective_server_headers(pool, id, manual_headers).await?
+            crate::core::oauth::OAuthManager::new(pool.clone())
+                .get_effective_server_headers(id, manual_headers)
+                .await?
         } else {
             None
         };
