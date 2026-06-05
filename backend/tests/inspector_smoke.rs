@@ -27,8 +27,11 @@ use mcpmate::system::metrics::MetricsCollector;
 
 const CREATE_SERVER_PATH: &str = "/api/mcp/servers/create";
 const TOOL_LIST_PATH: &str = "/api/mcp/inspector/tool/list";
+const TOOL_CALL_PATH: &str = "/api/mcp/inspector/tool/call";
 const RESOURCE_LIST_PATH: &str = "/api/mcp/inspector/resource/list";
 const RESOURCE_READ_PATH: &str = "/api/mcp/inspector/resource/read";
+const SESSION_OPEN_PATH: &str = "/api/mcp/inspector/session/open";
+const SESSION_CLOSE_PATH: &str = "/api/mcp/inspector/session/close";
 
 struct EnvVarGuard {
     key: &'static str,
@@ -216,6 +219,15 @@ async fn read_json_response(response: axum::response::Response) -> Value {
     body
 }
 
+async fn read_json_response_with_status(response: axum::response::Response) -> (axum::http::StatusCode, Value) {
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body");
+    let body: Value = serde_json::from_slice(&bytes).expect("json response");
+    (status, body)
+}
+
 fn json_post_request(
     uri: &str,
     body: Value,
@@ -256,6 +268,118 @@ fn data_u64(
     body.pointer(pointer)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("expected u64 at {pointer}: {body}"))
+}
+
+async fn create_stdio_fixture_server(
+    app: &Router,
+    temp_dir: &TempDir,
+) -> String {
+    let fixture = write_stdio_fixture(temp_dir);
+    let python = which::which("python3").expect("python3 is required for stdio MCP fixture");
+    let create_req = json_post_request(
+        CREATE_SERVER_PATH,
+        json!({
+            "name": "inspector-fixture",
+            "server_type": "stdio",
+            "command": python.to_string_lossy(),
+            "args": [fixture.to_string_lossy()]
+        }),
+    );
+
+    let create_body = read_json_response(app.clone().oneshot(create_req).await.unwrap()).await;
+    assert_api_success(&create_body);
+    data_str(&create_body, "/data/id").to_string()
+}
+
+async fn open_native_session(
+    app: &Router,
+    server_id: &str,
+) -> String {
+    let open_body = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                SESSION_OPEN_PATH,
+                json!({
+                    "server_id": server_id,
+                    "mode": "native"
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_api_success(&open_body);
+    data_str(&open_body, "/data/session_id").to_string()
+}
+
+async fn close_inspector_session(
+    app: &Router,
+    session_id: &str,
+) {
+    let close_body = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                SESSION_CLOSE_PATH,
+                json!({
+                    "session_id": session_id
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_api_success(&close_body);
+    assert_eq!(close_body.pointer("/data/closed").and_then(Value::as_bool), Some(true));
+}
+
+async fn call_native_echo(
+    app: &Router,
+    server_id: &str,
+    session_id: &str,
+    message: &str,
+) {
+    let response = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                TOOL_CALL_PATH,
+                json!({
+                    "tool": "echo",
+                    "server_id": server_id,
+                    "mode": "native",
+                    "session_id": session_id,
+                    "timeout_ms": 5000,
+                    "arguments": { "message": message }
+                }),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_api_success(&response);
+    assert_eq!(
+        data_str(&response, "/data/result/content/0/text"),
+        format!("echo: {message}")
+    );
+}
+
+fn native_validation_session_id(session_id: &str) -> String {
+    format!("inspector_native_session::{session_id}")
+}
+
+async fn validation_session_exists(
+    state: &Arc<AppState>,
+    session_id: &str,
+) -> bool {
+    let pool = state.connection_pool.lock().await;
+    pool.validation_sessions.contains_key(session_id)
+}
+
+async fn temporary_validation_session_count(state: &Arc<AppState>) -> usize {
+    let pool = state.connection_pool.lock().await;
+    pool.validation_sessions
+        .keys()
+        .filter(|session_id| session_id.starts_with("inspnative"))
+        .count()
 }
 
 #[tokio::test]
@@ -317,6 +441,67 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
     assert_eq!(
         data_str(&resource_read_body, "/data/result/contents/0/text"),
         "hello from resource"
+    );
+
+    mcpmate::core::capability::resolver::clear_cache().await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn inspector_native_list_and_call_reuse_explicit_session() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .route(TOOL_CALL_PATH, post(inspector::tool_call))
+        .route(SESSION_OPEN_PATH, post(inspector::session_open))
+        .route(SESSION_CLOSE_PATH, post(inspector::session_close))
+        .with_state(state.clone());
+
+    let server_id = create_stdio_fixture_server(&app, &temp_dir).await;
+    let session_id = open_native_session(&app, &server_id).await;
+    let validation_session = native_validation_session_id(&session_id);
+    assert!(validation_session_exists(&state, &validation_session).await);
+    assert_eq!(temporary_validation_session_count(&state).await, 0);
+
+    let session_list_req = get_request(format!(
+        "{TOOL_LIST_PATH}?server_id={server_id}&mode=native&session_id={session_id}&refresh=true"
+    ));
+    let session_list_body = read_json_response(app.clone().oneshot(session_list_req).await.unwrap()).await;
+    assert_api_success(&session_list_body);
+    assert_eq!(data_u64(&session_list_body, "/data/total"), 1);
+    assert!(validation_session_exists(&state, &validation_session).await);
+    assert_eq!(temporary_validation_session_count(&state).await, 0);
+
+    let stateless_list_req = get_request(format!(
+        "{TOOL_LIST_PATH}?server_id={server_id}&mode=native&refresh=true"
+    ));
+    let stateless_list_body = read_json_response(app.clone().oneshot(stateless_list_req).await.unwrap()).await;
+    assert_api_success(&stateless_list_body);
+    assert_eq!(data_u64(&stateless_list_body, "/data/total"), 1);
+    assert!(validation_session_exists(&state, &validation_session).await);
+    assert_eq!(temporary_validation_session_count(&state).await, 0);
+
+    call_native_echo(&app, &server_id, &session_id, "session-reuse").await;
+
+    close_inspector_session(&app, &session_id).await;
+    assert!(!validation_session_exists(&state, &validation_session).await);
+
+    let closed_session_list_req = get_request(format!(
+        "{TOOL_LIST_PATH}?server_id={server_id}&mode=native&session_id={session_id}&refresh=true"
+    ));
+    let (closed_status, closed_body) =
+        read_json_response_with_status(app.clone().oneshot(closed_session_list_req).await.unwrap()).await;
+    assert_eq!(closed_status, axum::http::StatusCode::NOT_FOUND);
+    assert!(
+        closed_body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("not found or expired"),
+        "expected explicit closed session error: {closed_body}"
     );
 
     mcpmate::core::capability::resolver::clear_cache().await;
