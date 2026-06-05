@@ -31,6 +31,7 @@ async fn build_config_from_servers(
     servers: &[Server],
 ) -> Result<Config> {
     let mut config = empty_config();
+    let oauth_manager = crate::core::oauth::OAuthManager::new(db.pool.clone());
 
     for server in servers {
         let args = if let Some(id) = &server.id {
@@ -60,10 +61,14 @@ async fn build_config_from_servers(
         };
 
         let headers = if let Some(id) = &server.id {
-            match crate::config::server::get_server_headers(&db.pool, id).await {
+            let manual_headers = match crate::config::server::get_server_headers(&db.pool, id).await {
                 Ok(map) if !map.is_empty() => Some(map),
                 _ => None,
-            }
+            };
+            oauth_manager
+                .get_effective_server_headers(id, manual_headers)
+                .await
+                .context("Failed to get effective server headers")?
         } else {
             None
         };
@@ -227,9 +232,18 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::initialization::run_initialization;
+    use crate::config::{
+        initialization::run_initialization,
+        models::{ServerOAuthConfig, ServerOAuthToken},
+        server::{upsert_server_oauth_config, upsert_server_oauth_token},
+    };
+    use chrono::{Duration, Utc};
     use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
     use tempfile::TempDir;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_string_contains, method, path},
+    };
 
     async fn create_test_database() -> (TempDir, Database) {
         let temp_dir = TempDir::new().expect("temp dir");
@@ -269,6 +283,26 @@ mod tests {
         .expect("insert server");
     }
 
+    async fn insert_http_server(
+        pool: &SqlitePool,
+        server_id: &str,
+        name: &str,
+        enabled: bool,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO server_config (id, name, server_type, url, enabled)
+            VALUES (?, ?, 'streamable_http', 'https://example.com/mcp', ?)
+            "#,
+        )
+        .bind(server_id)
+        .bind(name)
+        .bind(enabled)
+        .execute(pool)
+        .await
+        .expect("insert http server");
+    }
+
     #[tokio::test]
     async fn load_pool_base_config_uses_globally_enabled_servers_without_profile_merge() {
         let (_temp_dir, db) = create_test_database().await;
@@ -282,5 +316,71 @@ mod tests {
 
         assert!(pool_config.mcp_servers.contains_key("server-global"));
         assert!(!active_profile_config.mcp_servers.contains_key("server-global"));
+    }
+
+    #[tokio::test]
+    async fn load_pool_base_config_refreshes_expired_oauth_headers() {
+        let (_temp_dir, db) = create_test_database().await;
+        insert_http_server(&db.pool, "server-oauth", "OAuth Server", true).await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .and(body_string_contains("resource=https%3A%2F%2Fexample.com%2Fmcp"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-new",
+                "token_type": "bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        upsert_server_oauth_config(
+            &db.pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: "server-oauth".to_string(),
+                authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                token_endpoint: format!("{}/token", mock_server.uri()),
+                client_id: "client-1".to_string(),
+                client_secret: None,
+                scopes: Some("read write".to_string()),
+                redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("save oauth config");
+        upsert_server_oauth_token(
+            &db.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: "server-oauth".to_string(),
+                access_token: "access-old".to_string(),
+                refresh_token: Some("refresh-123".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("store expired token");
+
+        let config = load_pool_base_config(&db).await.expect("load pool config");
+        let headers = config
+            .mcp_servers
+            .get("server-oauth")
+            .and_then(|server| server.headers.as_ref())
+            .expect("headers");
+
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer access-new")
+        );
     }
 }

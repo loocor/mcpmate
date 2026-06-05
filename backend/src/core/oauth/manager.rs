@@ -53,6 +53,8 @@ struct DynamicClientRegistrationResponse {
     scope: Option<String>,
 }
 
+const OAUTH_TOKEN_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[derive(Clone)]
 pub struct OAuthManager {
     pool: SqlitePool,
@@ -282,53 +284,7 @@ impl OAuthManager {
             form.push(("client_secret", secret.clone()));
         }
 
-        {
-            let endpoint_url = Url::parse(&config.token_endpoint).context("Invalid OAuth token_endpoint URL")?;
-            let is_loopback = matches!(endpoint_url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
-            if endpoint_url.scheme() != "https" && !is_loopback {
-                bail!("OAuth token endpoint must use HTTPS: {}", config.token_endpoint);
-            }
-        }
-
-        let encoded_body = {
-            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
-            for (key, value) in &form {
-                serializer.append_pair(key, value);
-            }
-            serializer.finish()
-        };
-
-        let response = self
-            .http_client
-            .post(&config.token_endpoint)
-            .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .body(encoded_body)
-            .send()
-            .await
-            .context("Failed to call OAuth token endpoint")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let token_endpoint = config.token_endpoint.as_str();
-            let response_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "<failed to read response body>".to_string());
-            let truncated_response_body: String = if response_body.chars().count() > 512 {
-                let prefix: String = response_body.chars().take(512).collect();
-                format!("{prefix}...")
-            } else {
-                response_body
-            };
-            bail!(
-                "OAuth token endpoint returned error status: {status} for {token_endpoint}. Response body: {truncated_response_body}"
-            );
-        }
-
-        let token_response = response
-            .json::<OAuthTokenResponse>()
-            .await
-            .context("Failed to parse OAuth token response")?;
+        let token_response = self.request_token_response(&config.token_endpoint, &form).await?;
 
         let expires_at = token_response
             .expires_in
@@ -351,6 +307,102 @@ impl OAuthManager {
         .await?;
 
         self.get_status(&pending.server_id).await
+    }
+
+    pub async fn get_effective_server_headers(
+        &self,
+        server_id: &str,
+        manual_headers: Option<HashMap<String, String>>,
+    ) -> Result<Option<HashMap<String, String>>> {
+        if server::has_manual_authorization_header(&manual_headers) {
+            return Ok(manual_headers.filter(|headers| !headers.is_empty()));
+        }
+
+        let mut effective = manual_headers.unwrap_or_default();
+        if let Some(token) = server::get_server_oauth_token(&self.pool, server_id).await? {
+            let token = if is_token_expired(&token)
+                && token
+                    .refresh_token
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty())
+            {
+                self.refresh_access_token(server_id).await?
+            } else {
+                token
+            };
+
+            if !is_token_expired(&token) && !token.access_token.trim().is_empty() {
+                effective.insert(
+                    "authorization".to_string(),
+                    format!("Bearer {}", token.access_token.trim()),
+                );
+            }
+        }
+
+        if effective.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(effective))
+        }
+    }
+
+    pub async fn refresh_access_token(
+        &self,
+        server_id: &str,
+    ) -> Result<ServerOAuthToken> {
+        let config = server::get_server_oauth_config(&self.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("OAuth config missing for server '{}'", server_id))?;
+        let token = server::get_server_oauth_token(&self.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("OAuth token missing for server '{}'", server_id))?;
+        let refresh_token = token
+            .refresh_token
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("OAuth token for server '{}' has no refresh token", server_id))?;
+        let server_model = server::get_server_by_id(&self.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
+        if !server_model.server_type.is_http_transport() {
+            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
+        }
+        let resource = oauth_resource_from_server(&server_model)?;
+
+        let mut form = vec![
+            ("grant_type", "refresh_token".to_string()),
+            ("refresh_token", refresh_token.trim().to_string()),
+            ("client_id", config.client_id.clone()),
+            ("resource", resource),
+        ];
+        if let Some(secret) = config.client_secret.as_ref().filter(|value| !value.trim().is_empty()) {
+            form.push(("client_secret", secret.clone()));
+        }
+
+        let token_response = self.request_token_response(&config.token_endpoint, &form).await?;
+        if token_response.access_token.trim().is_empty() {
+            bail!("OAuth refresh response did not include a usable access_token");
+        }
+
+        let refreshed = ServerOAuthToken {
+            id: token.id,
+            server_id: server_id.to_string(),
+            access_token: token_response.access_token,
+            refresh_token: token_response
+                .refresh_token
+                .filter(|value| !value.trim().is_empty())
+                .or(token.refresh_token),
+            token_type: token_response.token_type.unwrap_or(token.token_type),
+            expires_at: token_response
+                .expires_in
+                .map(|seconds| (Utc::now() + Duration::seconds(seconds)).to_rfc3339()),
+            scope: token_response.scope.or(token.scope),
+            created_at: None,
+            updated_at: None,
+        };
+
+        server::upsert_server_oauth_token(&self.pool, &refreshed).await?;
+        Ok(refreshed)
     }
 
     pub async fn get_status(
@@ -514,6 +566,58 @@ impl OAuthManager {
             .json::<DynamicClientRegistrationResponse>()
             .await
             .context("Failed to parse OAuth dynamic client registration response")
+    }
+
+    async fn request_token_response(
+        &self,
+        token_endpoint: &str,
+        form: &[(&str, String)],
+    ) -> Result<OAuthTokenResponse> {
+        let endpoint_url = Url::parse(token_endpoint).context("Invalid OAuth token_endpoint URL")?;
+        let is_loopback = matches!(endpoint_url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+        if endpoint_url.scheme() != "https" && !is_loopback {
+            bail!("OAuth token endpoint must use HTTPS: {}", token_endpoint);
+        }
+
+        let encoded_body = {
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            for (key, value) in form {
+                serializer.append_pair(key, value);
+            }
+            serializer.finish()
+        };
+
+        let response = self
+            .http_client
+            .post(token_endpoint)
+            .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .timeout(OAUTH_TOKEN_REQUEST_TIMEOUT)
+            .body(encoded_body)
+            .send()
+            .await
+            .context("Failed to call OAuth token endpoint")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let response_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read response body>".to_string());
+            let truncated_response_body: String = if response_body.chars().count() > 512 {
+                let prefix: String = response_body.chars().take(512).collect();
+                format!("{prefix}...")
+            } else {
+                response_body
+            };
+            bail!(
+                "OAuth token endpoint returned error status: {status} for {token_endpoint}. Response body: {truncated_response_body}"
+            );
+        }
+
+        response
+            .json::<OAuthTokenResponse>()
+            .await
+            .context("Failed to parse OAuth token response")
     }
 
     async fn fetch_json<T: for<'de> Deserialize<'de>>(
@@ -737,6 +841,194 @@ mod tests {
             .expect("load stored token")
             .expect("stored token exists");
         assert_eq!(stored.access_token, "access-123");
+    }
+
+    #[tokio::test]
+    async fn effective_headers_refresh_expired_oauth_token() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_refresh").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .and(body_string_contains("resource=https%3A%2F%2Fexample.com%2Fmcp"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-new",
+                "token_type": "bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        manager
+            .upsert_config(
+                "serv_refresh",
+                OAuthConfigInput {
+                    authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                    token_endpoint: format!("{}/token", mock_server.uri()),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        server::upsert_server_oauth_token(
+            &manager.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: "serv_refresh".to_string(),
+                access_token: "access-old".to_string(),
+                refresh_token: Some("refresh-123".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("store expired token");
+
+        let headers = manager
+            .get_effective_server_headers("serv_refresh", None)
+            .await
+            .expect("refresh expired token")
+            .expect("headers");
+
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer access-new")
+        );
+        let stored = server::get_server_oauth_token(&manager.pool, "serv_refresh")
+            .await
+            .expect("load refreshed token")
+            .expect("refreshed token exists");
+        assert_eq!(stored.access_token, "access-new");
+        assert_eq!(stored.refresh_token.as_deref(), Some("refresh-123"));
+        assert!(matches!(
+            manager
+                .get_status("serv_refresh")
+                .await
+                .expect("status after refresh")
+                .state,
+            OAuthConnectionState::Connected
+        ));
+    }
+
+    #[tokio::test]
+    async fn refresh_keeps_existing_refresh_token_when_response_is_blank() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_refresh_blank").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-new",
+                "refresh_token": "   ",
+                "token_type": "bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        manager
+            .upsert_config(
+                "serv_refresh_blank",
+                OAuthConfigInput {
+                    authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                    token_endpoint: format!("{}/token", mock_server.uri()),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        server::upsert_server_oauth_token(
+            &manager.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: "serv_refresh_blank".to_string(),
+                access_token: "access-old".to_string(),
+                refresh_token: Some("refresh-123".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("store expired token");
+
+        manager
+            .refresh_access_token("serv_refresh_blank")
+            .await
+            .expect("refresh token");
+
+        let stored = server::get_server_oauth_token(&manager.pool, "serv_refresh_blank")
+            .await
+            .expect("load stored token")
+            .expect("stored token exists");
+        assert_eq!(stored.access_token, "access-new");
+        assert_eq!(stored.refresh_token.as_deref(), Some("refresh-123"));
+    }
+
+    #[tokio::test]
+    async fn effective_headers_keep_manual_authorization_override() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_manual_refresh").await;
+
+        manager
+            .upsert_config(
+                "serv_manual_refresh",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                    token_endpoint: "http://not-loopback.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        server::upsert_server_oauth_token(
+            &manager.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: "serv_manual_refresh".to_string(),
+                access_token: "access-old".to_string(),
+                refresh_token: Some("refresh-123".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("store expired token");
+
+        let manual = HashMap::from([("Authorization".to_string(), "Bearer manual-token".to_string())]);
+        let headers = manager
+            .get_effective_server_headers("serv_manual_refresh", Some(manual))
+            .await
+            .expect("manual header should not trigger refresh")
+            .expect("headers");
+
+        assert_eq!(
+            headers.get("Authorization").map(String::as_str),
+            Some("Bearer manual-token")
+        );
     }
 
     #[tokio::test]

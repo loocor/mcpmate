@@ -1,10 +1,14 @@
+use std::collections::HashMap;
+
 use super::shared::*;
 use crate::api::models::server::{
     ServerCapabilityMeta, ServerPreviewData, ServerPreviewItemData, ServerPreviewItemReq, ServerPreviewReq,
     ServerPreviewResp, ServerPromptsData, ServerResourceTemplatesData, ServerResourcesData, ServerToolsData,
 };
 
-/// Preview capabilities for arbitrary server configs (no DB/REDB/pool side-effects)
+/// Preview capabilities for arbitrary server configs.
+///
+/// Saved-server previews may refresh stored OAuth tokens while resolving effective headers.
 pub async fn preview_servers(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ServerPreviewReq>,
@@ -36,16 +40,12 @@ async fn preview_one(
         }
     };
 
-    // Call preview (no side effects)
     // Build optional HTTP client with default headers if provided
-    let effective_headers = if let (Some(pool), Some(server_id)) = (db_pool, item.server_id.as_deref()) {
-        crate::config::server::oauth::get_effective_server_headers(pool, server_id, item.headers.clone())
-            .await
-            .ok()
-            .flatten()
-    } else {
-        item.headers.clone()
-    };
+    let effective_headers =
+        match resolve_preview_headers(item.headers.clone(), item.server_id.as_deref(), db_pool).await {
+            Ok(headers) => headers,
+            Err(e) => return empty_with_error(item.name, e.to_string()),
+        };
 
     let mut client: Option<reqwest::Client> = None;
     if kind.is_http_transport() {
@@ -97,6 +97,20 @@ async fn preview_one(
         Ok(s) => build_item(item.name, s, include_details),
         Err(e) => empty_with_error(item.name, e.to_string()),
     }
+}
+
+async fn resolve_preview_headers(
+    item_headers: Option<HashMap<String, String>>,
+    server_id: Option<&str>,
+    db_pool: Option<&sqlx::SqlitePool>,
+) -> anyhow::Result<Option<HashMap<String, String>>> {
+    if let (Some(pool), Some(server_id)) = (db_pool, server_id) {
+        return crate::core::oauth::OAuthManager::new(pool.clone())
+            .get_effective_server_headers(server_id, item_headers)
+            .await;
+    }
+
+    Ok(item_headers)
 }
 
 fn build_item(
@@ -236,5 +250,156 @@ fn empty_with_error(
             state: "error".to_string(),
             meta,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        models::{ServerOAuthConfig, ServerOAuthToken},
+        server::{init::initialize_server_tables, upsert_server_oauth_config, upsert_server_oauth_token},
+    };
+    use chrono::{Duration, Utc};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_string_contains, method, path},
+    };
+
+    async fn setup_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        initialize_server_tables(&pool).await.expect("init server tables");
+        pool
+    }
+
+    async fn insert_http_server(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO server_config (id, name, server_type, url, enabled)
+            VALUES (?, ?, 'streamable_http', 'https://example.com/mcp', 1)
+            "#,
+        )
+        .bind(server_id)
+        .bind(format!("server-{server_id}"))
+        .execute(pool)
+        .await
+        .expect("insert http server");
+    }
+
+    async fn store_expired_oauth_token(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        token_endpoint: String,
+    ) {
+        upsert_server_oauth_config(
+            pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: server_id.to_string(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint,
+                client_id: "client-1".to_string(),
+                client_secret: None,
+                scopes: Some("read write".to_string()),
+                redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("save oauth config");
+        upsert_server_oauth_token(
+            pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: server_id.to_string(),
+                access_token: "access-old".to_string(),
+                refresh_token: Some("refresh-123".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("store expired token");
+    }
+
+    #[tokio::test]
+    async fn resolve_preview_headers_refreshes_expired_oauth_token() {
+        let pool = setup_pool().await;
+        insert_http_server(&pool, "serv_preview_refresh").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .and(body_string_contains("resource=https%3A%2F%2Fexample.com%2Fmcp"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-new",
+                "token_type": "bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        store_expired_oauth_token(&pool, "serv_preview_refresh", format!("{}/token", mock_server.uri())).await;
+
+        let headers = resolve_preview_headers(None, Some("serv_preview_refresh"), Some(&pool))
+            .await
+            .expect("resolve headers")
+            .expect("headers");
+
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer access-new")
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_reports_oauth_header_resolution_errors() {
+        let pool = setup_pool().await;
+        insert_http_server(&pool, "serv_preview_error").await;
+
+        store_expired_oauth_token(
+            &pool,
+            "serv_preview_error",
+            "http://not-loopback.example.com/token".to_string(),
+        )
+        .await;
+
+        let item = ServerPreviewItemReq {
+            name: "Preview Error".to_string(),
+            server_id: Some("serv_preview_error".to_string()),
+            kind: "streamable_http".to_string(),
+            command: None,
+            url: Some("https://example.com/mcp".to_string()),
+            args: None,
+            env: None,
+            headers: None,
+        };
+
+        let preview = preview_one(item, Some(std::time::Duration::from_millis(100)), false, Some(&pool)).await;
+
+        assert!(!preview.ok);
+        assert!(
+            preview
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("OAuth token endpoint must use HTTPS"))
+        );
     }
 }
