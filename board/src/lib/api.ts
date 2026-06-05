@@ -391,6 +391,19 @@ export function isApiNotFoundError(error: unknown): boolean {
 	return /\b404\b/.test(error.message);
 }
 
+export function isInspectorSessionUnavailableError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+	const message = error.message.toLowerCase();
+	return (
+		(message.includes("inspector session") ||
+			message.includes("native inspector validation session")) &&
+		(message.includes("not found or expired") ||
+			message.includes("no longer connected"))
+	);
+}
+
 const toTrimmedString = (value: unknown): string | undefined => {
 	if (typeof value !== "string") return undefined;
 	const trimmed = value.trim();
@@ -1293,12 +1306,14 @@ export const inspectorApi = {
 	toolsList: (q: {
 		server_id?: string;
 		server_name?: string;
+		session_id?: string;
 		mode?: "proxy" | "native";
 		refresh?: boolean;
 	}) => {
 		const qs = new URLSearchParams();
 		if (q.server_id) qs.set("server_id", q.server_id);
 		if (q.server_name) qs.set("server_name", q.server_name);
+		if (q.session_id) qs.set("session_id", q.session_id);
 		if (q.mode) qs.set("mode", q.mode);
 		if (q.refresh != null) qs.set("refresh", String(q.refresh));
 		return fetchApi(`/api/mcp/inspector/tool/list?${qs}`);
@@ -1310,6 +1325,7 @@ export const inspectorApi = {
 		arguments?: Record<string, unknown>;
 		mode?: "proxy" | "native";
 		timeout_ms?: number;
+		session_id?: string;
 	}) =>
 		fetchApi(`/api/mcp/inspector/tool/call`, {
 			method: "POST",
@@ -1366,12 +1382,14 @@ export const inspectorApi = {
 	resourcesList: (q: {
 		server_id?: string;
 		server_name?: string;
+		session_id?: string;
 		mode?: "proxy" | "native";
 		refresh?: boolean;
 	}) => {
 		const qs = new URLSearchParams();
 		if (q.server_id) qs.set("server_id", q.server_id);
 		if (q.server_name) qs.set("server_name", q.server_name);
+		if (q.session_id) qs.set("session_id", q.session_id);
 		if (q.mode) qs.set("mode", q.mode);
 		if (q.refresh != null) qs.set("refresh", String(q.refresh));
 		return fetchApi(`/api/mcp/inspector/resource/list?${qs}`);
@@ -1380,23 +1398,27 @@ export const inspectorApi = {
 		uri: string;
 		server_id?: string;
 		server_name?: string;
+		session_id?: string;
 		mode?: "proxy" | "native";
 	}) => {
 		const qs = new URLSearchParams({ uri: q.uri });
 		if (q.server_id) qs.set("server_id", q.server_id);
 		if (q.server_name) qs.set("server_name", q.server_name);
+		if (q.session_id) qs.set("session_id", q.session_id);
 		if (q.mode) qs.set("mode", q.mode);
 		return fetchApi(`/api/mcp/inspector/resource/read?${qs}`);
 	},
 	promptsList: (q: {
 		server_id?: string;
 		server_name?: string;
+		session_id?: string;
 		mode?: "proxy" | "native";
 		refresh?: boolean;
 	}) => {
 		const qs = new URLSearchParams();
 		if (q.server_id) qs.set("server_id", q.server_id);
 		if (q.server_name) qs.set("server_name", q.server_name);
+		if (q.session_id) qs.set("session_id", q.session_id);
 		if (q.mode) qs.set("mode", q.mode);
 		if (q.refresh != null) qs.set("refresh", String(q.refresh));
 		return fetchApi(`/api/mcp/inspector/prompt/list?${qs}`);
@@ -1405,6 +1427,7 @@ export const inspectorApi = {
 		name: string;
 		server_id?: string;
 		server_name?: string;
+		session_id?: string;
 		arguments?: Record<string, unknown>;
 		mode?: "proxy" | "native";
 	}) =>
@@ -1415,12 +1438,14 @@ export const inspectorApi = {
 	templatesList: (q: {
 		server_id?: string;
 		server_name?: string;
+		session_id?: string;
 		mode?: "proxy" | "native";
 		refresh?: boolean;
 	}) => {
 		const qs = new URLSearchParams();
 		if (q.server_id) qs.set("server_id", q.server_id);
 		if (q.server_name) qs.set("server_name", q.server_name);
+		if (q.session_id) qs.set("session_id", q.session_id);
 		if (q.mode) qs.set("mode", q.mode);
 		if (q.refresh != null) qs.set("refresh", String(q.refresh));
 		return fetchApi(`/api/mcp/inspector/template/list?${qs}`);

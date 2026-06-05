@@ -7,12 +7,16 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { inspectorApi, systemApi } from "../lib/api";
+import {
+	inspectorApi,
+	isInspectorSessionUnavailableError,
+	systemApi,
+} from "../lib/api";
 import { writeClipboardText } from "../lib/clipboard";
 import { smartFormat } from "../lib/format";
 import { usePageTranslations } from "../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../lib/notify";
-import type { InspectorSessionOpenData, InspectorSseEvent } from "../lib/types";
+import type { InspectorSseEvent } from "../lib/types";
 import type {
 	CapabilityArgument,
 	CapabilityRecord,
@@ -57,7 +61,12 @@ export interface InspectorDrawerProps {
 	kind: InspectorKind;
 	item: CapabilityRecord | null;
 	mode: "proxy" | "native";
+	sessionId?: string;
+	sessionExpiresAtEpochMs?: number;
+	capabilityOptions?: CapabilityRecord[];
 	onLog?: (entry: InspectorLogEntry) => void;
+	onEnsureSession?: () => Promise<string | undefined>;
+	onSessionUnavailable?: () => void;
 }
 
 type Field = {
@@ -319,7 +328,12 @@ export function InspectorDrawer({
 	kind,
 	item,
 	mode,
+	sessionId,
+	sessionExpiresAtEpochMs,
+	capabilityOptions,
 	onLog,
+	onEnsureSession,
+	onSessionUnavailable,
 }: InspectorDrawerProps) {
 	const { t } = useTranslation("inspector");
 	usePageTranslations("inspector");
@@ -366,18 +380,15 @@ export function InspectorDrawer({
 	const [result, setResult] = useState<unknown>(null);
 	const [events, setEvents] = useState<InspectorEventEntry[]>([]);
 	const eventsEndRef = useRef<HTMLDivElement | null>(null);
-	const [session, setSession] = useState<InspectorSessionOpenData | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
 	const [activeCallId, setActiveCallId] = useState<string | null>(null);
 	const activeCallIdRef = useRef<string | null>(null);
-	const lastSessionParams = useRef<{
-		mode: "proxy" | "native";
-		serverId?: string;
-		serverName?: string;
-	} | null>(null);
 	const [capOptions, setCapOptions] = useState<CapabilityRecord[]>([]);
 	const [capOptionsLoading, setCapOptionsLoading] = useState(false);
 	const [capOptionsError, setCapOptionsError] = useState<string | null>(null);
+	const [ensuredSessionId, setEnsuredSessionId] = useState<string | undefined>(
+		undefined,
+	);
 	const [view, setView] = useState<"response" | "events">("response");
 
 	// combobox open/width is handled in CapabilityCombobox
@@ -448,10 +459,22 @@ export function InspectorDrawer({
 		if (!open) {
 			return;
 		}
+		if (capabilityOptions !== undefined) {
+			setCapOptions(capabilityOptions);
+			setCapOptionsLoading(false);
+			setCapOptionsError(null);
+			return;
+		}
 		// Reset when missing server context
 		if (!serverId && !serverName) {
 			setCapOptions([]);
 			setCapOptionsLoading(false);
+			setCapOptionsError(null);
+			return;
+		}
+		if (mode === "native" && !sessionId) {
+			setCapOptions([]);
+			setCapOptionsLoading(true);
 			setCapOptionsError(null);
 			return;
 		}
@@ -460,13 +483,16 @@ export function InspectorDrawer({
 		setCapOptionsError(null);
 		(async () => {
 			try {
+				const commonPayload = {
+					server_id: serverId,
+					server_name: serverName,
+					mode,
+					session_id: mode === "native" ? sessionId : undefined,
+				};
 				let resp: InspectorResponse<any> | undefined;
 				if (kind === "tool") {
-					resp = (await inspectorApi.toolsList({
-						server_id: serverId,
-						server_name: serverName,
-						mode,
-					})) as InspectorResponse<{ tools?: unknown[] }> | undefined;
+					resp = (await inspectorApi.toolsList(commonPayload)) as
+						InspectorResponse<{ tools?: unknown[] }> | undefined;
 					const rawList = Array.isArray(resp?.data?.tools)
 						? resp?.data?.tools
 						: [];
@@ -475,11 +501,8 @@ export function InspectorDrawer({
 						.filter(Boolean) as CapabilityRecord[];
 					if (!cancelled) setCapOptions(normalized);
 				} else if (kind === "prompt") {
-					resp = (await inspectorApi.promptsList({
-						server_id: serverId,
-						server_name: serverName,
-						mode,
-					})) as InspectorResponse<{ prompts?: unknown[] }> | undefined;
+					resp = (await inspectorApi.promptsList(commonPayload)) as
+						InspectorResponse<{ prompts?: unknown[] }> | undefined;
 					const rawList = Array.isArray(resp?.data?.prompts)
 						? resp?.data?.prompts
 						: [];
@@ -488,11 +511,8 @@ export function InspectorDrawer({
 						.filter(Boolean) as CapabilityRecord[];
 					if (!cancelled) setCapOptions(normalized);
 				} else if (kind === "resource") {
-					resp = (await inspectorApi.resourcesList({
-						server_id: serverId,
-						server_name: serverName,
-						mode,
-					})) as InspectorResponse<{ resources?: unknown[] }> | undefined;
+					resp = (await inspectorApi.resourcesList(commonPayload)) as
+						InspectorResponse<{ resources?: unknown[] }> | undefined;
 					const rawList = Array.isArray(resp?.data?.resources)
 						? resp?.data?.resources
 						: [];
@@ -501,11 +521,8 @@ export function InspectorDrawer({
 						.filter(Boolean) as CapabilityRecord[];
 					if (!cancelled) setCapOptions(normalized);
 				} else {
-					resp = (await inspectorApi.templatesList({
-						server_id: serverId,
-						server_name: serverName,
-						mode,
-					})) as InspectorResponse<{ templates?: unknown[] }> | undefined;
+					resp = (await inspectorApi.templatesList(commonPayload)) as
+						InspectorResponse<{ templates?: unknown[] }> | undefined;
 					const rawList = Array.isArray(resp?.data?.templates)
 						? resp?.data?.templates
 						: [];
@@ -529,93 +546,26 @@ export function InspectorDrawer({
 		return () => {
 			cancelled = true;
 		};
-	}, [open, kind, serverId, serverName, mode, propItemKey]);
+	}, [
+		capabilityOptions,
+		kind,
+		mode,
+		open,
+		propItemKey,
+		serverId,
+		serverName,
+		sessionId,
+	]);
 
 	useEffect(() => {
 		activeCallIdRef.current = activeCallId;
 	}, [activeCallId]);
 
 	useEffect(() => {
-		let cancelled = false;
-
-		const ensureSession = async () => {
-			if (!open || kind !== "tool") {
-				if (session) {
-					try {
-						await inspectorApi.sessionClose({ session_id: session.session_id });
-					} catch (error) {
-						console.warn("Failed to close inspector session", error);
-					}
-					if (!cancelled) {
-						setSession(null);
-					}
-				}
-				lastSessionParams.current = null;
-				return;
-			}
-
-			const params = { mode, serverId, serverName };
-
-			if (
-				session &&
-				lastSessionParams.current &&
-				lastSessionParams.current.mode === mode &&
-				lastSessionParams.current.serverId === serverId &&
-				lastSessionParams.current.serverName === serverName
-			) {
-				return;
-			}
-
-			if (session) {
-				try {
-					await inspectorApi.sessionClose({ session_id: session.session_id });
-				} catch (error) {
-					console.warn("Failed to close inspector session", error);
-				}
-				if (cancelled) return;
-				setSession(null);
-			}
-
-			try {
-				const response = await inspectorApi.sessionOpen({
-					mode,
-					server_id: serverId,
-					server_name: serverName,
-				});
-				if (!cancelled && response?.success && response.data) {
-					setSession(response.data);
-					lastSessionParams.current = params;
-				}
-			} catch (error) {
-				if (!cancelled) {
-					notifyError("Failed to open inspector session", String(error));
-					lastSessionParams.current = null;
-				}
-			}
-		};
-
-		void ensureSession();
-
-		return () => {
-			cancelled = true;
-		};
-	}, [open, kind, mode, serverId, serverName, session]);
-
-	useEffect(() => {
-		return () => {
-			if (wsRef.current) {
-				wsRef.current.close();
-				wsRef.current = null;
-			}
-			if (session) {
-				void inspectorApi
-					.sessionClose({ session_id: session.session_id })
-					.catch((error) =>
-						console.warn("Failed to close inspector session", error),
-					);
-			}
-		};
-	}, [session]);
+		if (mode !== "native" || sessionId) {
+			setEnsuredSessionId(undefined);
+		}
+	}, [mode, sessionId]);
 
 	useEffect(() => {
 		if (!open && wsRef.current) {
@@ -955,15 +905,14 @@ export function InspectorDrawer({
 	const hasFieldInputs = fields.length > 0;
 	const expectsArguments =
 		kind !== "resource" && (hasSchemaInputs || hasFieldInputs);
-	const sessionExpiry = useMemo(() => {
-		if (!session?.expires_at_epoch_ms) return null;
-		const ms = Number(session.expires_at_epoch_ms);
+	const sessionExpiry = (() => {
+		const ms = Number(sessionExpiresAtEpochMs ?? NaN);
 		if (!Number.isFinite(ms)) return null;
 		return new Date(ms).toLocaleTimeString([], {
 			hour: "2-digit",
 			minute: "2-digit",
 		});
-	}, [session]);
+	})();
 
 	const handleInspectorEvent = useCallback(
 		(payload: InspectorSseEvent) => {
@@ -1153,6 +1102,14 @@ export function InspectorDrawer({
 				channel: "inspector" as const,
 				mode,
 			};
+			const effectiveSessionId =
+				mode === "native" ? sessionId ?? (await onEnsureSession?.()) : undefined;
+			if (mode === "native" && !effectiveSessionId) {
+				throw new Error(t("errors.sessionMissing"));
+			}
+			if (mode === "native" && effectiveSessionId && !sessionId) {
+				setEnsuredSessionId(effectiveSessionId);
+			}
 			if (kind === "tool") {
 				const args = expectsArguments
 					? useRaw
@@ -1161,7 +1118,7 @@ export function InspectorDrawer({
 					: undefined;
 				if (expectsArguments && args === undefined) return;
 
-				const effectiveServerId = session?.server_id ?? serverId;
+				const effectiveServerId = serverId;
 				if (!effectiveServerId && !serverName) {
 					throw new Error(t("errors.sessionMissing"));
 				}
@@ -1176,7 +1133,7 @@ export function InspectorDrawer({
 						server_name: serverName,
 						arguments: args,
 						timeout_ms: timeoutMs,
-						session_id: session?.session_id,
+						session_id: effectiveSessionId,
 					},
 				});
 
@@ -1187,7 +1144,7 @@ export function InspectorDrawer({
 					mode,
 					arguments: args,
 					timeout_ms: timeoutMs,
-					session_id: session?.session_id,
+					session_id: effectiveSessionId,
 				});
 
 				const data = response?.data ?? null;
@@ -1217,6 +1174,7 @@ export function InspectorDrawer({
 						server_id: serverId,
 						server_name: serverName,
 						arguments: args,
+						session_id: effectiveSessionId,
 					},
 				});
 				resp = (await inspectorApi.promptGet({
@@ -1225,6 +1183,7 @@ export function InspectorDrawer({
 					server_name: serverName,
 					mode,
 					arguments: args,
+					session_id: effectiveSessionId,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
 					throw new Error(
@@ -1269,12 +1228,14 @@ export function InspectorDrawer({
 						arguments: args,
 						server_id: serverId,
 						server_name: serverName,
+						session_id: effectiveSessionId,
 					},
 				});
 				resp = (await inspectorApi.resourceRead({
 					uri: generatedUri,
 					server_id: serverId,
 					server_name: serverName,
+					session_id: effectiveSessionId,
 					mode,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
@@ -1299,12 +1260,18 @@ export function InspectorDrawer({
 					...baseLog,
 					event: "request",
 					method: "resources/read",
-					payload: { uri, server_id: serverId, server_name: serverName },
+					payload: {
+						uri,
+						server_id: serverId,
+						server_name: serverName,
+						session_id: effectiveSessionId,
+					},
 				});
 				resp = (await inspectorApi.resourceRead({
 					uri,
 					server_id: serverId,
 					server_name: serverName,
+					session_id: effectiveSessionId,
 					mode,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
@@ -1326,6 +1293,10 @@ export function InspectorDrawer({
 				);
 			}
 		} catch (e) {
+			if (mode === "native" && isInspectorSessionUnavailableError(e)) {
+				setEnsuredSessionId(undefined);
+				onSessionUnavailable?.();
+			}
 			onLog?.({
 				id: newLogId(),
 				timestamp: Date.now(),
@@ -1374,7 +1345,8 @@ export function InspectorDrawer({
 		}
 	}, [result, t]);
 
-	const sessionActive = Boolean(session);
+	const displaySessionId = sessionId ?? ensuredSessionId;
+	const sessionActive = Boolean(displaySessionId);
 	const sessionIndicator =
 		kind === "tool" ? (
 			<TooltipProvider delayDuration={150}>
@@ -1402,7 +1374,7 @@ export function InspectorDrawer({
 						{sessionActive ? (
 							<p>
 								{t("session.connected", {
-									serverName: serverName || session?.server_id,
+									serverName: serverName || serverId,
 									expiry: sessionExpiry ?? "soon",
 								})}
 							</p>
