@@ -411,10 +411,14 @@ async fn export_diagnostics_with_dialog(
     app: &tauri::AppHandle,
     managed_state: &DesktopManagedCoreState,
 ) -> Result<Option<DiagnosticsExportResponse>> {
-    let Some(destination_root) = rfd::FileDialog::new()
-        .set_title("Export MCPMate Diagnostics")
-        .pick_folder()
-    else {
+    let destination_root = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Export MCPMate Diagnostics")
+            .pick_folder()
+    })
+    .await
+    .context("diagnostics folder picker task failed")?;
+    let Some(destination_root) = destination_root else {
         info!("Diagnostics export canceled by user");
         return Ok(None);
     };
@@ -1673,7 +1677,16 @@ fn spawn_desktop_managed_core(
     let mut child = command
         .spawn()
         .context("failed to spawn desktop-managed localhost core")?;
-    configure_spawned_desktop_managed_stdio(&mut child, startup_id)?;
+    if let Err(err) = configure_spawned_desktop_managed_stdio(&mut child, startup_id) {
+        if let Err(cleanup_err) = cleanup_untracked_desktop_managed_child(&mut child, startup_id) {
+            warn!(
+                startup_id,
+                error = %cleanup_err,
+                "Failed to clean up desktop-managed core after stdio setup failure"
+            );
+        }
+        return Err(err).context("failed to configure desktop-managed core stdio");
+    }
     info!(
         pid = child.id(),
         startup_id, "Spawned desktop-managed localhost core process"
@@ -1723,6 +1736,32 @@ fn configure_spawned_desktop_managed_stdio(child: &mut Child, startup_id: &str) 
         let _ = startup_id;
     }
 
+    Ok(())
+}
+
+fn cleanup_untracked_desktop_managed_child(child: &mut Child, startup_id: &str) -> Result<()> {
+    match child.try_wait() {
+        Ok(Some(_status)) => return Ok(()),
+        Ok(None) => {}
+        Err(err) => {
+            warn!(
+                startup_id,
+                error = %err,
+                "Failed to query desktop-managed core before cleanup"
+            );
+        }
+    }
+
+    match child.kill() {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::InvalidInput => {}
+        Err(err) => {
+            return Err(err).context("failed to kill untracked desktop-managed core process");
+        }
+    }
+    child
+        .wait()
+        .context("failed to wait for untracked desktop-managed core process exit")?;
     Ok(())
 }
 

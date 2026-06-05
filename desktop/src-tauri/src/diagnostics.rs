@@ -80,7 +80,9 @@ pub(crate) fn record_frontend_diagnostic_event(
         .append(true)
         .open(&path)
         .with_context(|| format!("failed to open frontend diagnostics log {}", path.display()))?;
-    writeln!(file, "{line}").with_context(|| {
+    let mut entry = line.into_bytes();
+    entry.push(b'\n');
+    file.write_all(&entry).with_context(|| {
         format!(
             "failed to append frontend diagnostics log {}",
             path.display()
