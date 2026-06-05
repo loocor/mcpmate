@@ -725,21 +725,26 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 	};
 }
 
+type FetchApiOptions = RequestInit & {
+	logFailure?: boolean;
+};
+
 // Core API request function
-async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
+async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
 	const url = resolveApiUrl(endpoint);
+	const { logFailure = true, ...requestOptions } = options ?? {};
 	const headers =
-		options?.headers instanceof Headers
-			? options.headers
-			: new Headers(options?.headers ?? {});
+		requestOptions.headers instanceof Headers
+			? requestOptions.headers
+			: new Headers(requestOptions.headers ?? {});
 	// Avoid forcing JSON header on GET requests to keep caching friendly.
-	if (!headers.has("content-type") && options?.body) {
+	if (!headers.has("content-type") && requestOptions.body) {
 		headers.set("content-type", "application/json");
 	}
 	try {
 		const requestInit: RequestInit = {
 			credentials: "include",
-			...options,
+			...requestOptions,
 		};
 		requestInit.headers = headers;
 		const response = await fetch(url, requestInit);
@@ -747,11 +752,15 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 		if (!response.ok) {
 			const errorText = await response.text();
 			let parsed: unknown;
+			let errorPayload: unknown = errorText;
 			try {
 				parsed = JSON.parse(errorText);
-				console.error(`API Error (${response.status}):`, parsed);
+				errorPayload = parsed;
 			} catch {
-				console.error(`API Error (${response.status}):`, errorText);
+				/* keep raw response text as the error payload */
+			}
+			if (logFailure) {
+				console.error(`API Error (${response.status}):`, errorPayload);
 			}
 			throw createApiError(response, parsed);
 		}
@@ -766,7 +775,9 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 		}
 		return JSON.parse(text) as T;
 	} catch (error) {
-		console.error(`API request failed for ${endpoint}:`, error);
+		if (logFailure) {
+			console.error("API request failed for endpoint:", endpoint, error);
+		}
 		throw error;
 	}
 }
@@ -1583,7 +1594,7 @@ export const systemApi = {
 			type?: string;
 			status?: string;
 			reason?: string;
-		}>("/api/system/readiness"),
+		}>("/api/system/readiness", { logFailure: false }),
 	getStatus: () => fetchApi<SystemStatus>("/api/system/status"),
 	getMetrics: () => fetchApi<SystemMetrics>("/api/system/metrics"),
 	getSettings: async (): Promise<{

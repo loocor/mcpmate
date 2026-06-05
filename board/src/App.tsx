@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
 	BrowserRouter,
 	Navigate,
@@ -38,6 +38,11 @@ import {
 	setApiBaseUrl,
 	systemApi,
 } from "./lib/api";
+import {
+	backendReadinessStatusKey,
+	shouldReportBackendReadinessAttempt,
+} from "./lib/backend-readiness-diagnostics";
+import { recordDesktopDiagnosticEvent } from "./lib/desktop-diagnostics";
 import { isTauriEnvironmentSync } from "./lib/platform";
 
 const ClientDetailPage = lazy(() =>
@@ -298,6 +303,11 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 	const [backendReady, setBackendReady] = useState(false);
 	const [attempt, setAttempt] = useState(0);
 	const [messageKey, setMessageKey] = useState<BackendReadinessMessageKey>("starting");
+	const [readinessStartedAtMs] = useState(() => Date.now());
+	const lastDiagnosticRef = useRef<{
+		reportedAtMs: number;
+		statusKey: string;
+	} | null>(null);
 
 	useEffect(() => {
 		if (!isTauriEnvironmentSync()) {
@@ -349,21 +359,60 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 			retryTimer = window.setTimeout(() => setAttempt((value) => value + 1), 1_000);
 		}
 
+		function reportReadinessWait(payload: unknown, error: unknown): void {
+			const nowMs = Date.now();
+			const reportAttempt = attempt + 1;
+			const elapsedMs = nowMs - readinessStartedAtMs;
+			const statusKey = backendReadinessStatusKey(
+				isReadinessPayload(payload) ? payload : null,
+				error,
+			);
+			if (
+				!shouldReportBackendReadinessAttempt({
+					attempt: reportAttempt,
+					lastReportedAtMs: lastDiagnosticRef.current?.reportedAtMs ?? null,
+					lastStatusKey: lastDiagnosticRef.current?.statusKey ?? null,
+					nowMs,
+					statusKey,
+				})
+			) {
+				return;
+			}
+
+			lastDiagnosticRef.current = { reportedAtMs: nowMs, statusKey };
+			const data = { attempt: reportAttempt, elapsedMs, statusKey };
+			console.info("[MCPMate] waiting for backend readiness", data);
+			void recordDesktopDiagnosticEvent({
+				level: "info",
+				source: "backend-readiness",
+				message: "waiting for backend readiness",
+				data,
+			}).catch((error) => {
+				if (import.meta.env.DEV) {
+					console.warn("[MCPMate] failed to persist readiness diagnostic", error);
+				}
+			});
+		}
+
 		async function checkReadiness(): Promise<void> {
 			setMessageKey("waitingForBackend");
+			let payload: unknown = null;
+			let readinessError: unknown = null;
 			try {
 				setMessageKey("confirmingReadiness");
-				const payload = await systemApi.getReadiness();
+				payload = await systemApi.getReadiness();
 				if (cancelled) {
 					return;
 				}
-				if (payload.type === "ready" && payload.status === "ok") {
+				if (isReadinessPayload(payload) && payload.type === "ready" && payload.status === "ok") {
 					setBackendReady(true);
 					return;
 				}
-			} catch {
+			} catch (error) {
+				readinessError = error;
 				// Keep retrying until the backend API is reachable.
 			}
+			reportReadinessWait(payload, readinessError);
 			scheduleRetry();
 		}
 
@@ -375,7 +424,12 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 				window.clearTimeout(retryTimer);
 			}
 		};
-	}, [desktopSourceReady, backendReady, attempt]);
+	}, [
+		attempt,
+		backendReady,
+		desktopSourceReady,
+		readinessStartedAtMs,
+	]);
 
 	if (!backendReady) {
 		if (isOperatorSurfacePath()) {
@@ -391,6 +445,14 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 	}
 
 	return <>{children}</>;
+}
+
+function isReadinessPayload(value: unknown): value is {
+	reason?: string;
+	status?: string;
+	type?: string;
+} {
+	return typeof value === "object" && value !== null;
 }
 
 function isOperatorSurfacePath(): boolean {

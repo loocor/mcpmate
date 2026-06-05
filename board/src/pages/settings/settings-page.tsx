@@ -58,11 +58,7 @@ import {
 	type DesktopCoreSourceResponse,
 	useDesktopCoreState,
 } from "../../lib/desktop-core-state";
-import {
-	notifyError,
-	notifySuccess,
-	stringifyError,
-} from "../../lib/notify";
+import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import {
@@ -2168,7 +2164,6 @@ export function SettingsPage() {
 									/>
 								</div>
 
-								{/* Inspector Timeout */}
 								<div className="flex items-center justify-between gap-4">
 									<div>
 										<h3 className="text-base font-medium">
