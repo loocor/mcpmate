@@ -105,9 +105,14 @@ pub struct CachedRegistryIcon {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedRegistryTransport {
-    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variables: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,11 +121,23 @@ pub struct CachedRegistryPackagePayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry_base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub identifier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub transport: Option<CachedRegistryPackageTransport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_variables: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_arguments: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_arguments: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -329,27 +346,22 @@ fn parse_remotes(raw: Option<&str>) -> Option<Vec<CachedRegistryTransport>> {
     let parsed = raw.and_then(|source| serde_json::from_str::<Vec<CachedRegistryRemote>>(source).ok())?;
     let remotes: Vec<CachedRegistryTransport> = parsed
         .into_iter()
-        .filter_map(|remote| {
-            let remote_type = remote
-                .r#type
-                .and_then(|value| {
-                    let trimmed = value.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.to_string())
-                    }
-                })
-                .unwrap_or_else(|| "streamable_http".to_string());
+        .map(|remote| {
+            let remote_type = remote.r#type.and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
 
-            if remote.url.as_deref().is_none_or(str::is_empty) {
-                return None;
-            }
-
-            Some(CachedRegistryTransport {
+            CachedRegistryTransport {
                 r#type: remote_type,
                 url: remote.url,
-            })
+                headers: remote.headers,
+                variables: remote.variables,
+            }
         })
         .collect();
 
@@ -360,13 +372,49 @@ fn parse_packages(raw: Option<&str>) -> Option<Vec<CachedRegistryPackagePayload>
     let parsed = raw.and_then(|source| serde_json::from_str::<Vec<CachedRegistryPackage>>(source).ok())?;
     let packages: Vec<CachedRegistryPackagePayload> = parsed
         .into_iter()
-        .map(|package| CachedRegistryPackagePayload {
-            registry_type: Some("npm".to_string()),
-            identifier: package.name,
-            version: package.version,
-            transport: Some(CachedRegistryPackageTransport {
-                r#type: "stdio".to_string(),
-            }),
+        .map(|package| {
+            let identifier = package.identifier.and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+            let registry_type = package.registry_type.and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+            let transport = package
+                .transport
+                .and_then(|transport| transport.r#type)
+                .and_then(|value| {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(CachedRegistryPackageTransport {
+                            r#type: trimmed.to_string(),
+                        })
+                    }
+                });
+
+            CachedRegistryPackagePayload {
+                registry_type,
+                registry_base_url: package.registry_base_url,
+                identifier,
+                version: package.version,
+                runtime_hint: package.runtime_hint,
+                file_sha256: package.file_sha256,
+                transport,
+                environment_variables: package.environment_variables,
+                package_arguments: package.package_arguments,
+                runtime_arguments: package.runtime_arguments,
+            }
         })
         .collect();
 
@@ -743,9 +791,12 @@ mod tests {
             title: Some("Filesystem".to_string()),
             description: Some("File operations".to_string()),
             packages_json: Some(
-                r#"[{"name":"@modelcontextprotocol/server-filesystem","version":"1.2.3"}]"#.to_string(),
+                r#"[{"registryType":"npm","identifier":"@modelcontextprotocol/server-filesystem","version":"1.2.3","runtimeHint":"node","fileSha256":"abc123","transport":{"type":"stdio"},"environmentVariables":[{"name":"FILESYSTEM_ROOT","isRequired":true}]}]"#.to_string(),
             ),
-            remotes_json: Some(r#"[{"url":"https://example.com/mcp","type":"streamable_http"}]"#.to_string()),
+            remotes_json: Some(
+                r#"[{"url":"https://example.com/{region}/mcp","type":"streamable-http","headers":[{"name":"Authorization","isRequired":true,"isSecret":true}],"variables":{"region":{"isRequired":true,"default":"us-east-1"}}}]"#
+                    .to_string(),
+            ),
             icons_json: None,
             meta_json: Some(r#"{"custom":true}"#.to_string()),
             website_url: Some("https://example.com/filesystem".to_string()),
@@ -758,14 +809,74 @@ mod tests {
 
         let wrapper = cache_entry_to_server_wrapper(entry);
         assert_eq!(wrapper.server.name, "filesystem");
-        assert!(wrapper.server.remotes.is_some());
-        assert!(wrapper.server.packages.is_some());
+        let remotes = wrapper.server.remotes.expect("remote payloads");
+        assert_eq!(
+            remotes[0]
+                .headers
+                .as_ref()
+                .and_then(Value::as_array)
+                .and_then(|headers| headers.first())
+                .and_then(|header| header.get("name"))
+                .and_then(Value::as_str),
+            Some("Authorization")
+        );
+        assert_eq!(
+            remotes[0]
+                .variables
+                .as_ref()
+                .and_then(|variables| variables.get("region"))
+                .and_then(|region| region.get("default"))
+                .and_then(Value::as_str),
+            Some("us-east-1")
+        );
+        let packages = wrapper.server.packages.expect("package payloads");
+        assert_eq!(
+            packages[0].identifier.as_deref(),
+            Some("@modelcontextprotocol/server-filesystem")
+        );
+        assert_eq!(packages[0].registry_type.as_deref(), Some("npm"));
+        assert_eq!(packages[0].runtime_hint.as_deref(), Some("node"));
+        assert_eq!(packages[0].file_sha256.as_deref(), Some("abc123"));
+        assert_eq!(
+            packages[0]
+                .transport
+                .as_ref()
+                .map(|transport| transport.r#type.as_str()),
+            Some("stdio")
+        );
+        assert!(packages[0].environment_variables.is_some());
 
         let meta = wrapper.meta.expect("wrapper metadata");
         let official = meta
             .get("io.modelcontextprotocol.registry/official")
             .expect("official metadata");
         assert_eq!(official.get("serverId").and_then(Value::as_str), Some("filesystem"));
+    }
+
+    #[test]
+    fn test_parse_packages_preserves_entries_without_identifier() {
+        let packages = parse_packages(Some(
+            r#"[
+                {"registryType":"npm","transport":{"type":"stdio"}},
+                {"registryType":"npm","identifier":"@upstash/context7-mcp","transport":{"type":"stdio"}}
+            ]"#,
+        ))
+        .expect("package payloads");
+
+        assert_eq!(packages.len(), 2);
+        assert!(packages[0].identifier.is_none());
+        assert_eq!(packages[1].identifier.as_deref(), Some("@upstash/context7-mcp"));
+    }
+
+    #[test]
+    fn test_parse_packages_preserves_missing_registry_type_and_transport() {
+        let packages =
+            parse_packages(Some(r#"[{"identifier":"@scope/package","version":"1.0.0"}]"#)).expect("package payloads");
+
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].identifier.as_deref(), Some("@scope/package"));
+        assert!(packages[0].registry_type.is_none());
+        assert!(packages[0].transport.is_none());
     }
 
     #[test]
@@ -811,7 +922,10 @@ mod tests {
                 schema_url: Some("https://modelcontextprotocol.io/schema/server.schema.json".to_string()),
                 title: Some("Cached Server".to_string()),
                 description: Some("Cached registry entry".to_string()),
-                packages_json: Some(r#"[{"name":"@scope/cached-server","version":"0.1.0"}]"#.to_string()),
+                packages_json: Some(
+                    r#"[{"registryType":"npm","identifier":"@scope/cached-server","version":"0.1.0","transport":{"type":"stdio"}}]"#
+                        .to_string(),
+                ),
                 remotes_json: Some(r#"[{"url":"https://cached.example/mcp","type":"streamable_http"}]"#.to_string()),
                 icons_json: None,
                 meta_json: None,

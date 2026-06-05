@@ -43,12 +43,36 @@ pub struct RegistryServer {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegistryPackage {
     #[serde(default)]
-    pub name: Option<String>,
+    pub registry_type: Option<String>,
+    #[serde(default)]
+    pub registry_base_url: Option<String>,
+    #[serde(default, alias = "name")]
+    pub identifier: Option<String>,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub runtime_hint: Option<String>,
+    #[serde(default)]
+    pub file_sha256: Option<String>,
+    #[serde(default)]
+    pub transport: Option<RegistryPackageTransport>,
+    #[serde(default)]
+    pub environment_variables: Option<serde_json::Value>,
+    #[serde(default)]
+    pub package_arguments: Option<serde_json::Value>,
+    #[serde(default)]
+    pub runtime_arguments: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryPackageTransport {
+    #[serde(default)]
+    pub r#type: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -57,6 +81,10 @@ pub struct RegistryRemote {
     pub url: Option<String>,
     #[serde(default)]
     pub r#type: Option<String>,
+    #[serde(default)]
+    pub headers: Option<serde_json::Value>,
+    #[serde(default)]
+    pub variables: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -346,7 +374,7 @@ mod tests {
                     "url": "https://github.com/example/test-server",
                     "source": "github"
                 },
-                "packages": [{"name": "test-pkg", "version": "1.0.0"}],
+                "packages": [{"name": "test-pkg", "version": "1.0.0", "runtimeHint": "node", "fileSha256": "abc123"}],
                 "remotes": [{"url": "https://example.com", "type": "http"}],
                 "icons": [{"url": "https://example.com/icon.png"}],
                 "status": "active"
@@ -363,6 +391,9 @@ mod tests {
         assert_eq!(server.server.version, "1.0.0");
         assert_eq!(server.server.title, Some("Test Server".to_string()));
         assert_eq!(server.server.packages.len(), 1);
+        assert_eq!(server.server.packages[0].identifier.as_deref(), Some("test-pkg"));
+        assert_eq!(server.server.packages[0].runtime_hint.as_deref(), Some("node"));
+        assert_eq!(server.server.packages[0].file_sha256.as_deref(), Some("abc123"));
         assert_eq!(server.server.remotes.len(), 1);
         assert_eq!(server.server.icons.len(), 1);
         assert!(server.meta.is_some());
@@ -392,8 +423,15 @@ mod tests {
                     id: None,
                 }),
                 packages: vec![RegistryPackage {
-                    name: Some("test-pkg".to_string()),
+                    registry_type: Some("npm".to_string()),
+                    identifier: Some("test-pkg".to_string()),
                     version: Some("1.0.0".to_string()),
+                    runtime_hint: Some("node".to_string()),
+                    file_sha256: Some("abc123".to_string()),
+                    transport: Some(RegistryPackageTransport {
+                        r#type: Some("stdio".to_string()),
+                    }),
+                    ..RegistryPackage::default()
                 }],
                 remotes: vec![],
                 icons: vec![],

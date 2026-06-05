@@ -744,9 +744,21 @@ fn validate_server_config(
 
 /// Package information extracted from registry cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RegistryPackage {
-    name: Option<String>,
+    registry_type: Option<String>,
+    #[serde(alias = "name")]
+    identifier: Option<String>,
     version: Option<String>,
+    transport: Option<RegistryPackageTransport>,
+    environment_variables: Option<Vec<RegistryNamedInput>>,
+    package_arguments: Option<Vec<RegistryNamedInput>>,
+    runtime_arguments: Option<Vec<RegistryNamedInput>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RegistryPackageTransport {
+    r#type: Option<String>,
 }
 
 /// Remote information extracted from registry cache
@@ -754,6 +766,20 @@ struct RegistryPackage {
 struct RegistryRemote {
     url: Option<String>,
     r#type: Option<String>,
+    headers: Option<serde_json::Value>,
+    variables: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistryNamedInput {
+    name: Option<String>,
+    value: Option<String>,
+    default: Option<String>,
+    #[serde(rename = "type")]
+    argument_type: Option<String>,
+    #[serde(default)]
+    is_required: bool,
 }
 
 /// Result of converting a registry package to import config
@@ -763,6 +789,132 @@ struct PackageImportConfig {
     command: Option<String>,
     args: Option<Vec<String>>,
     url: Option<String>,
+    env: Option<HashMap<String, String>>,
+    headers: Option<HashMap<String, String>>,
+}
+
+fn compact_string(value: Option<&str>) -> Option<&str> {
+    let value = value?.trim();
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn normalize_registry_remote_kind(value: Option<&str>) -> Result<&'static str> {
+    match compact_string(value).map(str::to_ascii_lowercase).as_deref() {
+        Some("sse") => Ok("sse"),
+        Some("streamable-http" | "streamable_http" | "streamablehttp" | "http") => Ok("streamable_http"),
+        Some(other) => Err(anyhow::anyhow!("Unsupported remote transport type '{}'", other)),
+        None => Err(anyhow::anyhow!("Remote transport type is required")),
+    }
+}
+
+fn ensure_registry_package_stdio_transport(value: Option<&str>) -> Result<()> {
+    match compact_string(value).map(str::to_ascii_lowercase).as_deref() {
+        Some("stdio") => Ok(()),
+        Some(other) => Err(anyhow::anyhow!(
+            "Unsupported package transport type '{}' for stdio server",
+            other
+        )),
+        None => Err(anyhow::anyhow!("Package transport type is required for stdio server")),
+    }
+}
+
+fn registry_input_value(input: &RegistryNamedInput) -> Option<String> {
+    compact_string(input.value.as_deref())
+        .or_else(|| compact_string(input.default.as_deref()))
+        .map(str::to_string)
+}
+
+fn registry_named_inputs_to_map(
+    inputs: Option<&[RegistryNamedInput]>,
+    input_kind: &str,
+) -> Result<Option<HashMap<String, String>>> {
+    let Some(inputs) = inputs else {
+        return Ok(None);
+    };
+    let mut values = HashMap::new();
+
+    for input in inputs {
+        let name =
+            compact_string(input.name.as_deref()).ok_or_else(|| anyhow::anyhow!("{} name is required", input_kind))?;
+        if let Some(value) = registry_input_value(input) {
+            values.insert(name.to_string(), value);
+            continue;
+        }
+        if input.is_required {
+            return Err(anyhow::anyhow!("Required {} '{}' is missing a value", input_kind, name));
+        }
+    }
+
+    if values.is_empty() { Ok(None) } else { Ok(Some(values)) }
+}
+
+fn resolve_registry_arguments(
+    arguments: Option<&[RegistryNamedInput]>,
+    argument_kind: &str,
+) -> Result<Vec<String>> {
+    let mut resolved = Vec::new();
+
+    for argument in arguments.unwrap_or_default() {
+        let argument_type = compact_string(argument.argument_type.as_deref())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_else(|| "positional".to_string());
+        let value = registry_input_value(argument);
+
+        if argument.is_required && value.is_none() {
+            return Err(anyhow::anyhow!("Required {} is missing a value", argument_kind));
+        }
+
+        if argument_type == "named" {
+            let name = compact_string(argument.name.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("Named {} requires a name", argument_kind))?;
+            resolved.push(name.to_string());
+            if let Some(value) = value {
+                resolved.push(value);
+            }
+            continue;
+        }
+
+        if let Some(value) = value {
+            resolved.push(value);
+        }
+    }
+
+    Ok(resolved)
+}
+
+fn remote_headers_to_import_headers(raw: Option<&serde_json::Value>) -> Result<Option<HashMap<String, String>>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let inputs: Vec<RegistryNamedInput> =
+        serde_json::from_value(raw.clone()).context("Failed to parse remote headers")?;
+    let mut headers = HashMap::new();
+
+    for input in inputs {
+        let name =
+            compact_string(input.name.as_deref()).ok_or_else(|| anyhow::anyhow!("Remote header name is required"))?;
+        if let Some(value) = registry_input_value(&input) {
+            headers.insert(name.to_string(), value);
+            continue;
+        }
+        if input.is_required {
+            return Err(anyhow::anyhow!("Required remote header '{}' is missing a value", name));
+        }
+    }
+
+    if headers.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(headers))
+    }
+}
+
+fn remote_has_variables(raw: Option<&serde_json::Value>) -> bool {
+    match raw {
+        Some(serde_json::Value::Object(object)) => !object.is_empty(),
+        Some(serde_json::Value::Null) | None => false,
+        Some(_) => true,
+    }
 }
 
 /// Convert npm package to import configuration
@@ -770,28 +922,128 @@ struct PackageImportConfig {
 fn npm_package_to_import_config(
     identifier: &str,
     version: Option<&str>,
+    env: Option<HashMap<String, String>>,
+    runtime_arguments: Vec<String>,
+    package_arguments: Vec<String>,
 ) -> PackageImportConfig {
     let full_identifier = match version {
         Some(v) => format!("{}@{}", identifier, v),
         None => identifier.to_string(),
     };
+    let mut args = vec!["-y".to_string()];
+    args.extend(runtime_arguments);
+    args.push(full_identifier);
+    args.extend(package_arguments);
+
     PackageImportConfig {
         kind: "stdio".to_string(),
         command: Some("npx".to_string()),
-        args: Some(vec!["-y".to_string(), full_identifier]),
+        args: Some(args),
         url: None,
+        env,
+        headers: None,
+    }
+}
+
+/// Convert PyPI package to import configuration
+/// PyPI packages use: uvx <identifier>@<version>
+fn pypi_package_to_import_config(
+    identifier: &str,
+    version: Option<&str>,
+    env: Option<HashMap<String, String>>,
+    runtime_arguments: Vec<String>,
+    package_arguments: Vec<String>,
+) -> PackageImportConfig {
+    let full_identifier = match version {
+        Some(v) => format!("{}@{}", identifier, v),
+        None => identifier.to_string(),
+    };
+    let mut args = runtime_arguments;
+    args.push(full_identifier);
+    args.extend(package_arguments);
+
+    PackageImportConfig {
+        kind: "stdio".to_string(),
+        command: Some("uvx".to_string()),
+        args: Some(args),
+        url: None,
+        env,
+        headers: None,
     }
 }
 
 /// Convert remote URL to import configuration
-/// remotes use streamable_http transport
-fn remote_to_import_config(url: &str) -> PackageImportConfig {
+/// remotes use the transport declared by the registry entry
+fn remote_to_import_config(
+    url: &str,
+    kind: &str,
+    headers: Option<HashMap<String, String>>,
+) -> PackageImportConfig {
     PackageImportConfig {
-        kind: "streamable_http".to_string(),
+        kind: kind.to_string(),
         command: None,
         args: None,
         url: Some(url.to_string()),
+        env: None,
+        headers,
     }
+}
+
+fn registry_package_to_import_config(
+    package: &RegistryPackage,
+    preferred_version: Option<&str>,
+) -> Result<PackageImportConfig> {
+    let registry_type = compact_string(package.registry_type.as_deref())
+        .ok_or_else(|| anyhow::anyhow!("Package registry type is required for stdio server"))?
+        .to_ascii_lowercase();
+    ensure_registry_package_stdio_transport(
+        package
+            .transport
+            .as_ref()
+            .and_then(|transport| transport.r#type.as_deref()),
+    )?;
+    let identifier = package
+        .identifier
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Package identifier is required for stdio server"))?;
+    let version = preferred_version.or(package.version.as_deref());
+    let env = registry_named_inputs_to_map(package.environment_variables.as_deref(), "package environment variable")?;
+    let runtime_arguments = resolve_registry_arguments(package.runtime_arguments.as_deref(), "runtime argument")?;
+    let package_arguments = resolve_registry_arguments(package.package_arguments.as_deref(), "package argument")?;
+
+    match registry_type.as_str() {
+        "npm" => Ok(npm_package_to_import_config(
+            identifier,
+            version,
+            env,
+            runtime_arguments,
+            package_arguments,
+        )),
+        "pypi" => Ok(pypi_package_to_import_config(
+            identifier,
+            version,
+            env,
+            runtime_arguments,
+            package_arguments,
+        )),
+        other => Err(anyhow::anyhow!(
+            "Unsupported package registry type '{}' for stdio server",
+            other
+        )),
+    }
+}
+
+fn registry_remote_to_import_config(remote: &RegistryRemote) -> Result<PackageImportConfig> {
+    let url = compact_string(remote.url.as_deref()).ok_or_else(|| anyhow::anyhow!("Remote URL is required"))?;
+    let kind = normalize_registry_remote_kind(remote.r#type.as_deref())?;
+    if remote_has_variables(remote.variables.as_ref()) {
+        return Err(anyhow::anyhow!(
+            "Remote URL variables are not supported by registry install endpoint"
+        ));
+    }
+    let headers = remote_headers_to_import_headers(remote.headers.as_ref())?;
+    Ok(remote_to_import_config(url, kind, headers))
 }
 
 /// Parse packages_json from registry cache entry
@@ -818,24 +1070,33 @@ fn registry_entry_to_import_config(
 ) -> Result<Option<PackageImportConfig>> {
     // First, check for remotes (HTTP-based servers)
     let remotes = parse_remotes(entry.remotes_json.as_deref())?;
-    if let Some(remote) = remotes.first() {
-        if let Some(url) = &remote.url {
-            return Ok(Some(remote_to_import_config(url)));
+    let mut first_remote_error = None;
+    for remote in &remotes {
+        match registry_remote_to_import_config(remote) {
+            Ok(config) => return Ok(Some(config)),
+            Err(err) => {
+                first_remote_error.get_or_insert(err);
+            }
         }
     }
 
     // Then, check for packages (stdio-based servers)
     let packages = parse_packages(entry.packages_json.as_deref())?;
-    if let Some(package) = packages.first() {
-        let name = package
-            .name
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Package name is required for stdio server"))?;
+    let mut first_package_error = None;
+    for package in &packages {
+        match registry_package_to_import_config(package, preferred_version) {
+            Ok(config) => return Ok(Some(config)),
+            Err(err) => {
+                first_package_error.get_or_insert(err);
+            }
+        }
+    }
 
-        // Use preferred version if provided, otherwise use package version
-        let version = preferred_version.or(package.version.as_deref());
-
-        return Ok(Some(npm_package_to_import_config(name, version)));
+    if let Some(err) = first_package_error {
+        return Err(err);
+    }
+    if let Some(err) = first_remote_error {
+        return Err(err);
     }
 
     // No packages or remotes found
@@ -986,8 +1247,8 @@ pub async fn import_from_registry(
         command: import_config.command,
         args: import_config.args,
         url: import_config.url,
-        env: None,
-        headers: None,
+        env: import_config.env,
+        headers: import_config.headers,
         registry_server_id: Some(name.to_string()),
         meta: Some(build_meta_from_entry(&entry)),
     };
@@ -1020,6 +1281,29 @@ mod tests {
             headers: HashMap::new(),
             url: url.map(str::to_string),
             issue: issue.map(str::to_string),
+        }
+    }
+
+    fn registry_cache_entry(
+        packages_json: Option<&str>,
+        remotes_json: Option<&str>,
+    ) -> RegistryCacheEntry {
+        RegistryCacheEntry {
+            server_name: "test-server".to_string(),
+            version: "1.0.0".to_string(),
+            schema_url: None,
+            title: None,
+            description: None,
+            packages_json: packages_json.map(str::to_string),
+            remotes_json: remotes_json.map(str::to_string),
+            icons_json: None,
+            meta_json: None,
+            website_url: None,
+            repository_json: None,
+            status: "active".to_string(),
+            published_at: None,
+            updated_at: None,
+            synced_at: chrono::Utc::now(),
         }
     }
 
@@ -1061,7 +1345,13 @@ mod tests {
 
     #[test]
     fn test_npm_package_to_import_config_with_version() {
-        let config = npm_package_to_import_config("@modelcontextprotocol/server-filesystem", Some("1.0.0"));
+        let config = npm_package_to_import_config(
+            "@modelcontextprotocol/server-filesystem",
+            Some("1.0.0"),
+            None,
+            Vec::new(),
+            Vec::new(),
+        );
         assert_eq!(config.kind, "stdio");
         assert_eq!(config.command, Some("npx".to_string()));
         assert_eq!(
@@ -1076,7 +1366,13 @@ mod tests {
 
     #[test]
     fn test_npm_package_to_import_config_without_version() {
-        let config = npm_package_to_import_config("@modelcontextprotocol/server-filesystem", None);
+        let config = npm_package_to_import_config(
+            "@modelcontextprotocol/server-filesystem",
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+        );
         assert_eq!(config.kind, "stdio");
         assert_eq!(config.command, Some("npx".to_string()));
         assert_eq!(
@@ -1089,8 +1385,30 @@ mod tests {
     }
 
     #[test]
+    fn test_pypi_package_to_import_config_with_version() {
+        let config = pypi_package_to_import_config(
+            "mcp-server-fetch",
+            Some("1.6.0"),
+            None,
+            vec!["--python".to_string(), "3.12".to_string()],
+            vec!["--debug".to_string()],
+        );
+        assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("uvx".to_string()));
+        assert_eq!(
+            config.args,
+            Some(vec![
+                "--python".to_string(),
+                "3.12".to_string(),
+                "mcp-server-fetch@1.6.0".to_string(),
+                "--debug".to_string()
+            ])
+        );
+    }
+
+    #[test]
     fn test_remote_to_import_config() {
-        let config = remote_to_import_config("https://api.example.com/mcp");
+        let config = remote_to_import_config("https://api.example.com/mcp", "streamable_http", None);
         assert_eq!(config.kind, "streamable_http");
         assert!(config.command.is_none());
         assert!(config.args.is_none());
@@ -1099,11 +1417,20 @@ mod tests {
 
     #[test]
     fn test_parse_packages_valid_json() {
-        let json = r#"[{"name": "@scope/package", "version": "1.0.0"}]"#;
+        let json = r#"[{"registryType": "npm", "identifier": "@scope/package", "version": "1.0.0", "transport": {"type": "stdio"}}]"#;
         let packages = parse_packages(Some(json)).unwrap();
         assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].name, Some("@scope/package".to_string()));
+        assert_eq!(packages[0].identifier, Some("@scope/package".to_string()));
+        assert_eq!(packages[0].registry_type, Some("npm".to_string()));
         assert_eq!(packages[0].version, Some("1.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_packages_accepts_legacy_name_alias() {
+        let json = r#"[{"name": "@scope/package", "version": "1.0.0"}]"#;
+        let packages = parse_packages(Some(json)).unwrap();
+
+        assert_eq!(packages[0].identifier, Some("@scope/package".to_string()));
     }
 
     #[test]
@@ -1128,23 +1455,10 @@ mod tests {
 
     #[test]
     fn test_registry_entry_to_import_config_with_remote() {
-        let entry = RegistryCacheEntry {
-            server_name: "test-server".to_string(),
-            version: "1.0.0".to_string(),
-            schema_url: None,
-            title: None,
-            description: None,
-            packages_json: Some(r#"[{"name": "test-pkg"}]"#.to_string()),
-            remotes_json: Some(r#"[{"url": "https://api.example.com/mcp"}]"#.to_string()),
-            icons_json: None,
-            meta_json: None,
-            website_url: None,
-            repository_json: None,
-            status: "active".to_string(),
-            published_at: None,
-            updated_at: None,
-            synced_at: chrono::Utc::now(),
-        };
+        let entry = registry_cache_entry(
+            Some(r#"[{"name": "test-pkg"}]"#),
+            Some(r#"[{"type":"streamable-http","url":"https://api.example.com/mcp"}]"#),
+        );
 
         let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
         // Remotes take priority
@@ -1153,27 +1467,151 @@ mod tests {
     }
 
     #[test]
+    fn test_registry_entry_to_import_config_with_sse_remote() {
+        let entry = registry_cache_entry(None, Some(r#"[{"type":"sse","url":"https://api.example.com/sse"}]"#));
+
+        let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
+
+        assert_eq!(config.kind, "sse");
+        assert_eq!(config.url, Some("https://api.example.com/sse".to_string()));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_preserves_remote_headers() {
+        let entry = registry_cache_entry(
+            None,
+            Some(
+                r#"[{"type":"streamable-http","url":"https://api.example.com/mcp","headers":[{"name":"X-Region","default":"us-east-1"},{"name":"X-Trace","value":"enabled"}]}]"#,
+            ),
+        );
+
+        let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
+        let headers = config.headers.expect("remote headers");
+
+        assert_eq!(headers.get("X-Region").map(String::as_str), Some("us-east-1"));
+        assert_eq!(headers.get("X-Trace").map(String::as_str), Some("enabled"));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_rejects_remote_variables() {
+        let entry = registry_cache_entry(
+            None,
+            Some(
+                r#"[{"type":"streamable-http","url":"https://api.example.com/{region}/mcp","variables":{"region":{"isRequired":true,"default":"us-east-1"}}}]"#,
+            ),
+        );
+
+        let err = registry_entry_to_import_config(&entry, None).expect_err("remote variables are unsupported");
+
+        assert!(err.to_string().contains("Remote URL variables are not supported"));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_uses_package_when_remote_has_variables() {
+        let entry = registry_cache_entry(
+            Some(
+                r#"[{"registryType": "pypi", "identifier": "mcp-server-fetch", "version": "1.6.0", "transport": {"type": "stdio"}}]"#,
+            ),
+            Some(
+                r#"[{"type":"streamable-http","url":"https://api.example.com/{region}/mcp","variables":{"region":{"isRequired":true}}}]"#,
+            ),
+        );
+
+        let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
+
+        assert_eq!(config.command, Some("uvx".to_string()));
+        assert_eq!(config.args, Some(vec!["mcp-server-fetch@1.6.0".to_string()]));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_rejects_required_remote_header_without_value() {
+        let entry = registry_cache_entry(
+            None,
+            Some(
+                r#"[{"type":"streamable-http","url":"https://api.example.com/mcp","headers":[{"name":"X-API-Key","isRequired":true}]}]"#,
+            ),
+        );
+
+        let err = registry_entry_to_import_config(&entry, None).expect_err("required header value is missing");
+
+        assert!(err.to_string().contains("Required remote header"));
+    }
+
+    #[test]
     fn test_registry_entry_to_import_config_with_npm_package() {
-        let entry = RegistryCacheEntry {
-            server_name: "test-server".to_string(),
-            version: "1.0.0".to_string(),
-            schema_url: None,
-            title: None,
-            description: None,
-            packages_json: Some(r#"[{"name": "@scope/package", "version": "1.0.0"}]"#.to_string()),
-            remotes_json: None,
-            icons_json: None,
-            meta_json: None,
-            website_url: None,
-            repository_json: None,
-            status: "active".to_string(),
-            published_at: None,
-            updated_at: None,
-            synced_at: chrono::Utc::now(),
-        };
+        let entry = registry_cache_entry(
+            Some(
+                r#"[{"registryType": "npm", "identifier": "@scope/package", "version": "1.0.0", "transport": {"type": "stdio"},"environmentVariables":[{"name":"API_KEY","default":"test-key"}],"runtimeArguments":[{"name":"--registry","type":"named","value":"https://registry.npmjs.org"}],"packageArguments":[{"name":"--debug","type":"named"}]}]"#,
+            ),
+            None,
+        );
 
         let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
         assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("npx".to_string()));
+        assert_eq!(
+            config.args,
+            Some(vec![
+                "-y".to_string(),
+                "--registry".to_string(),
+                "https://registry.npmjs.org".to_string(),
+                "@scope/package@1.0.0".to_string(),
+                "--debug".to_string()
+            ])
+        );
+        assert_eq!(
+            config
+                .env
+                .as_ref()
+                .and_then(|env| env.get("API_KEY"))
+                .map(String::as_str),
+            Some("test-key")
+        );
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_rejects_required_package_argument_without_value() {
+        let entry = registry_cache_entry(
+            Some(
+                r#"[{"registryType": "npm", "identifier": "@scope/package", "version": "1.0.0", "transport": {"type": "stdio"},"packageArguments":[{"name":"--api-key","type":"named","isRequired":true}]}]"#,
+            ),
+            None,
+        );
+
+        let err = registry_entry_to_import_config(&entry, None).expect_err("required package argument is missing");
+
+        assert!(err.to_string().contains("Required package argument is missing a value"));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_with_pypi_package() {
+        let entry = registry_cache_entry(
+            Some(
+                r#"[{"registryType": "pypi", "identifier": "mcp-server-fetch", "version": "1.6.0", "transport": {"type": "stdio"}}]"#,
+            ),
+            None,
+        );
+
+        let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
+        assert_eq!(config.kind, "stdio");
+        assert_eq!(config.command, Some("uvx".to_string()));
+        assert_eq!(config.args, Some(vec!["mcp-server-fetch@1.6.0".to_string()]));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_skips_unsupported_package_alternative() {
+        let entry = registry_cache_entry(
+            Some(
+                r#"[
+                    {"registryType": "mcpb", "identifier": "https://example.com/server.mcpb", "transport": {"type": "stdio"}},
+                    {"registryType": "npm", "identifier": "@scope/package", "version": "1.0.0", "transport": {"type": "stdio"}}
+                ]"#,
+            ),
+            None,
+        );
+
+        let config = registry_entry_to_import_config(&entry, None).unwrap().unwrap();
+
         assert_eq!(config.command, Some("npx".to_string()));
         assert_eq!(
             config.args,
@@ -1183,23 +1621,12 @@ mod tests {
 
     #[test]
     fn test_registry_entry_to_import_config_with_preferred_version() {
-        let entry = RegistryCacheEntry {
-            server_name: "test-server".to_string(),
-            version: "1.0.0".to_string(),
-            schema_url: None,
-            title: None,
-            description: None,
-            packages_json: Some(r#"[{"name": "@scope/package", "version": "1.0.0"}]"#.to_string()),
-            remotes_json: None,
-            icons_json: None,
-            meta_json: None,
-            website_url: None,
-            repository_json: None,
-            status: "active".to_string(),
-            published_at: None,
-            updated_at: None,
-            synced_at: chrono::Utc::now(),
-        };
+        let entry = registry_cache_entry(
+            Some(
+                r#"[{"registryType": "npm", "identifier": "@scope/package", "version": "1.0.0", "transport": {"type": "stdio"}}]"#,
+            ),
+            None,
+        );
 
         let config = registry_entry_to_import_config(&entry, Some("2.0.0")).unwrap().unwrap();
         assert_eq!(
@@ -1209,24 +1636,48 @@ mod tests {
     }
 
     #[test]
+    fn test_registry_entry_to_import_config_rejects_unsupported_package_registry_type() {
+        let entry = registry_cache_entry(
+            Some(
+                r#"[{"registryType": "mcpb", "identifier": "https://example.com/server.mcpb", "transport": {"type": "stdio"}}]"#,
+            ),
+            None,
+        );
+
+        let err = registry_entry_to_import_config(&entry, None).expect_err("unsupported registry type");
+
+        assert!(err.to_string().contains("Unsupported package registry type"));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_rejects_missing_package_transport() {
+        let entry = registry_cache_entry(
+            Some(r#"[{"registryType": "npm", "identifier": "@scope/package", "version": "1.0.0"}]"#),
+            None,
+        );
+
+        let err = registry_entry_to_import_config(&entry, None).expect_err("package transport is required");
+
+        assert!(err.to_string().contains("Package transport type is required"));
+    }
+
+    #[test]
+    fn test_registry_entry_to_import_config_rejects_non_stdio_package_transport() {
+        let entry = registry_cache_entry(
+            Some(
+                r#"[{"registryType": "npm", "identifier": "@scope/package", "version": "1.0.0", "transport": {"type": "streamable-http"}}]"#,
+            ),
+            None,
+        );
+
+        let err = registry_entry_to_import_config(&entry, None).expect_err("package transport must be stdio");
+
+        assert!(err.to_string().contains("Unsupported package transport type"));
+    }
+
+    #[test]
     fn test_registry_entry_to_import_config_no_packages_or_remotes() {
-        let entry = RegistryCacheEntry {
-            server_name: "test-server".to_string(),
-            version: "1.0.0".to_string(),
-            schema_url: None,
-            title: None,
-            description: None,
-            packages_json: None,
-            remotes_json: None,
-            icons_json: None,
-            meta_json: None,
-            website_url: None,
-            repository_json: None,
-            status: "active".to_string(),
-            published_at: None,
-            updated_at: None,
-            synced_at: chrono::Utc::now(),
-        };
+        let entry = registry_cache_entry(None, None);
 
         let config = registry_entry_to_import_config(&entry, None).unwrap();
         assert!(config.is_none());
