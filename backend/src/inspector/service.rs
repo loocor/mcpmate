@@ -26,6 +26,8 @@ use crate::core::capability::resolver;
 use crate::core::proxy::server::supports_capability;
 use crate::inspector::calls::{InspectorCallInfo, InspectorCallRegistry, InspectorTerminal, RegisteredCall};
 
+const NATIVE_VALIDATION_SESSION_TTL: Duration = Duration::from_secs(300);
+
 #[derive(Debug, Clone)]
 pub struct ToolCallOutcome {
     pub result: Option<Value>,
@@ -38,7 +40,7 @@ pub struct PreparedCall {
     pub info: InspectorCallInfo,
     pub completion: oneshot::Receiver<InspectorTerminal>,
     pub server_id: String,
-    pub native_validation_session: Option<String>,
+    native_validation_session: Option<NativeValidationSessionGuard>,
 }
 
 static GLOBAL_CALL_REGISTRY: OnceLock<Arc<InspectorCallRegistry>> = OnceLock::new();
@@ -88,6 +90,50 @@ struct CapabilityPayload {
     mode: String,
     items: Vec<Value>,
     meta: Vec<Value>,
+}
+
+struct NativeValidationSessionGuard {
+    connection_pool: Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+    session_id: Option<String>,
+}
+
+impl NativeValidationSessionGuard {
+    fn new(
+        state: &AppState,
+        session_id: String,
+    ) -> Self {
+        Self {
+            connection_pool: state.connection_pool.clone(),
+            session_id: Some(session_id),
+        }
+    }
+
+    fn session_id(&self) -> &str {
+        self.session_id
+            .as_deref()
+            .expect("native validation cleanup guard must own a session")
+    }
+
+    async fn cleanup(mut self) {
+        if let Some(session_id) = self.session_id.clone() {
+            destroy_validation_session(&self.connection_pool, &session_id).await;
+            self.session_id.take();
+        }
+    }
+}
+
+impl Drop for NativeValidationSessionGuard {
+    fn drop(&mut self) {
+        let Some(session_id) = self.session_id.take() else {
+            return;
+        };
+        let connection_pool = self.connection_pool.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                destroy_validation_session(&connection_pool, &session_id).await;
+            });
+        }
+    }
 }
 
 pub async fn list_tools(
@@ -165,25 +211,21 @@ pub async fn prompt_get(
         InspectorMode::Native => {
             ensure_native_allowed()?;
             let server_id = resolve_server(&req.server_id, &req.server_name).await?;
-            let session_id = ensure_native_session(state, &server_id).await?;
-            let server_name = resolver::to_name(&server_id)
+            let (session_id, cleanup) = native_validation_scope(state, &server_id, req.session_id.as_deref()).await?;
+            let res = match clone_native_validation_connection(state, &server_id, &session_id).await {
+                Ok(conn) => crate::core::capability::prompts::get_upstream_prompt_direct(
+                    &conn,
+                    &req.name,
+                    req.arguments.clone(),
+                )
                 .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| server_id.clone());
-            // Clone the connection to reuse capability direct helper
-            let conn = {
-                let pool = state.connection_pool.lock().await;
-                pool.validation_sessions
-                    .get(&session_id)
-                    .and_then(|m| m.get(&server_name))
-                    .cloned()
-                    .ok_or_else(|| ApiError::InternalError("Validation connection not found".into()))?
+                .map_err(map_anyhow),
+                Err(err) => Err(err),
             };
-            let res =
-                crate::core::capability::prompts::get_upstream_prompt_direct(&conn, &req.name, req.arguments.clone())
-                    .await
-                    .map_err(map_anyhow)?;
+            if let Some(cleanup) = cleanup {
+                cleanup.cleanup().await;
+            }
+            let res = res?;
             Ok(json!({
                 "result": res,
                 "server_id": server_id,
@@ -243,23 +285,17 @@ pub async fn resource_read(
         InspectorMode::Native => {
             ensure_native_allowed()?;
             let server_id = resolve_server(&req.server_id, &req.server_name).await?;
-            let session_id = ensure_native_session(state, &server_id).await?;
-            let server_name = resolver::to_name(&server_id)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| server_id.clone());
-            let conn = {
-                let pool = state.connection_pool.lock().await;
-                pool.validation_sessions
-                    .get(&session_id)
-                    .and_then(|m| m.get(&server_name))
-                    .cloned()
-                    .ok_or_else(|| ApiError::InternalError("Validation connection not found".into()))?
+            let (session_id, cleanup) = native_validation_scope(state, &server_id, req.session_id.as_deref()).await?;
+            let res = match clone_native_validation_connection(state, &server_id, &session_id).await {
+                Ok(conn) => crate::core::capability::resources::read_upstream_resource_direct(&conn, &req.uri)
+                    .await
+                    .map_err(map_anyhow),
+                Err(err) => Err(err),
             };
-            let res = crate::core::capability::resources::read_upstream_resource_direct(&conn, &req.uri)
-                .await
-                .map_err(map_anyhow)?;
+            if let Some(cleanup) = cleanup {
+                cleanup.cleanup().await;
+            }
+            let res = res?;
             Ok(json!({
                 "result": res,
                 "server_id": server_id,
@@ -274,16 +310,24 @@ pub async fn call_tool(
     req: &InspectorToolCallReq,
 ) -> Result<ToolCallOutcome, ApiError> {
     let prepared = start_tool_call_internal(state, req).await?;
-    let native_cleanup = prepared.native_validation_session.clone();
-    let server_id = prepared.server_id.clone();
+    let PreparedCall {
+        completion,
+        mut native_validation_session,
+        ..
+    } = prepared;
 
-    let result = prepared
-        .completion
-        .await
-        .map_err(|_| ApiError::InternalError("Inspector call channel dropped".into()))?;
+    let result = match completion.await {
+        Ok(result) => result,
+        Err(_) => {
+            if let Some(cleanup) = native_validation_session.take() {
+                cleanup.cleanup().await;
+            }
+            return Err(ApiError::InternalError("Inspector call channel dropped".into()));
+        }
+    };
 
-    if let Some(session) = native_cleanup {
-        cleanup_native_session(state, &server_id, Some(&session)).await;
+    if let Some(cleanup) = native_validation_session {
+        cleanup.cleanup().await;
     }
 
     match result {
@@ -310,17 +354,18 @@ pub async fn start_tool_call(
 ) -> Result<InspectorCallInfo, ApiError> {
     let prepared = start_tool_call_internal(state, req).await?;
     let info = prepared.info.clone();
-    let state_clone = state.clone();
 
     tokio::spawn(async move {
-        let completion = prepared.completion;
-        let server_id = prepared.server_id.clone();
-        let native_cleanup = prepared.native_validation_session.clone();
+        let PreparedCall {
+            completion,
+            native_validation_session,
+            ..
+        } = prepared;
 
         let _ = completion.await;
 
-        if let Some(session) = native_cleanup {
-            cleanup_native_session(&state_clone, &server_id, Some(&session)).await;
+        if let Some(cleanup) = native_validation_session {
+            cleanup.cleanup().await;
         }
     });
 
@@ -336,21 +381,25 @@ pub async fn open_session(
     }
 
     let server_id = resolve_server(&req.server_id, &req.server_name).await?;
-    let validation_session = if matches!(req.mode, InspectorMode::Native) {
-        Some(ensure_native_session(state, &server_id).await?)
+    let session_id = crate::generate_id!("inspses");
+    let (peer, validation_session) = if matches!(req.mode, InspectorMode::Native) {
+        let validation_session = native_session_id_for_inspector_session(&session_id);
+        ensure_native_session(state, &server_id, &validation_session).await?;
+        acquire_validation_peer(state, &server_id, &validation_session)
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?;
+        (None, Some(validation_session))
     } else {
         {
             let mut pool = state.connection_pool.lock().await;
             pool.ensure_connected(&server_id).await.map_err(map_anyhow)?;
         }
-        None
+        let peer = acquire_peer_for_call(state, &server_id, None)
+            .await
+            .map_err(|e| ApiError::InternalError(e.to_string()))?;
+        (Some(peer), None)
     };
 
-    let peer = acquire_peer_for_call(state, &server_id, validation_session.as_deref())
-        .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
-
-    let session_id = crate::generate_id!("inspses");
     let info = state
         .inspector_sessions
         .open_session(
@@ -462,18 +511,38 @@ async fn start_tool_call_internal(
                 "Inspector session is bound to a different server".into(),
             ));
         }
+        if session.mode != req.mode {
+            return Err(ApiError::BadRequest(
+                "Inspector session is bound to a different mode".into(),
+            ));
+        }
     }
 
     let (peer, native_cleanup_session) = match (req.mode, active_session) {
-        (InspectorMode::Native, Some(session)) => (session.peer, None),
-        (InspectorMode::Native, None) => {
-            let validation_session = ensure_native_session(state, &server_id).await?;
-            let peer = acquire_peer_for_call(state, &server_id, Some(&validation_session))
+        (InspectorMode::Native, Some(session)) => {
+            let validation_session = session.validation_session.as_deref().ok_or_else(|| {
+                ApiError::InternalError("Native Inspector session is missing validation ownership".into())
+            })?;
+            let peer = acquire_validation_peer(state, &server_id, validation_session)
                 .await
                 .map_err(|e| ApiError::InternalError(e.to_string()))?;
-            (peer, Some(validation_session))
+            (peer, None)
         }
-        (_, Some(session)) => (session.peer, None),
+        (InspectorMode::Native, None) => {
+            let validation_session = native_temporary_session_id();
+            ensure_native_session(state, &server_id, &validation_session).await?;
+            let cleanup = NativeValidationSessionGuard::new(state, validation_session);
+            let peer = acquire_validation_peer(state, &server_id, cleanup.session_id())
+                .await
+                .map_err(|e| ApiError::InternalError(e.to_string()))?;
+            (peer, Some(cleanup))
+        }
+        (_, Some(session)) => {
+            let peer = session
+                .peer
+                .ok_or_else(|| ApiError::InternalError("Inspector session peer is not available".into()))?;
+            (peer, None)
+        }
         _ => {
             {
                 let mut pool = state.connection_pool.lock().await;
@@ -494,10 +563,16 @@ async fn start_tool_call_internal(
     options.timeout = Some(timeout);
 
     let call_id = crate::generate_id!("inspcall");
-    let handle = peer
-        .send_cancellable_request(request, options)
-        .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    let mut native_cleanup_session = native_cleanup_session;
+    let handle = match peer.send_cancellable_request(request, options).await {
+        Ok(handle) => handle,
+        Err(err) => {
+            if let Some(cleanup) = native_cleanup_session.take() {
+                cleanup.cleanup().await;
+            }
+            return Err(ApiError::InternalError(err.to_string()));
+        }
+    };
 
     let RegisteredCall { info, completion } = state
         .inspector_calls
@@ -672,15 +747,19 @@ async fn list_capability_payload(
         InspectorMode::Native => {
             ensure_native_allowed()?;
             let server_id = resolve_server(&query.server_id, &query.server_name).await?;
-            let session_id = ensure_native_session(state, &server_id).await?;
+            let (session_id, cleanup) = native_validation_scope(state, &server_id, query.session_id.as_deref()).await?;
             let redb = state.redb_cache.clone();
             let pool = state.connection_pool.clone();
-            let database = state
-                .database
-                .as_ref()
-                .ok_or(ApiError::InternalError("Database not available".into()))?
-                .clone();
-            let (extracted, meta) = list_capability_via_components(
+            let database = match state.database.as_ref() {
+                Some(database) => database.clone(),
+                None => {
+                    if let Some(cleanup) = cleanup {
+                        cleanup.cleanup().await;
+                    }
+                    return Err(ApiError::InternalError("Database not available".into()));
+                }
+            };
+            let result = list_capability_via_components(
                 redb,
                 pool,
                 database,
@@ -690,7 +769,11 @@ async fn list_capability_payload(
                 Some(session_id),
                 extractor,
             )
-            .await?;
+            .await;
+            if let Some(cleanup) = cleanup {
+                cleanup.cleanup().await;
+            }
+            let (extracted, meta) = result?;
             items = extracted;
             meta_entries.push(meta);
         }
@@ -733,18 +816,20 @@ async fn list_capability_via_components(
 
 async fn cleanup_native_session(
     state: &AppState,
-    server_id: &str,
+    _server_id: &str,
     session_id: Option<&str>,
 ) {
     if let Some(session) = session_id {
-        let server_name = resolver::to_name(server_id)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| server_id.to_string());
-        let mut pool = state.connection_pool.lock().await;
-        let _ = pool.destroy_validation_instance(&server_name, session).await;
+        destroy_validation_session(&state.connection_pool, session).await;
     }
+}
+
+async fn destroy_validation_session(
+    connection_pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+    session_id: &str,
+) {
+    let mut pool = connection_pool.lock().await;
+    let _ = pool.destroy_validation_session(session_id).await;
 }
 
 fn map_anyhow(e: anyhow::Error) -> ApiError {
@@ -799,8 +884,8 @@ fn ensure_native_allowed() -> Result<(), ApiError> {
 async fn ensure_native_session(
     state: &AppState,
     server_id: &str,
+    session_id: &str,
 ) -> Result<String, ApiError> {
-    let session_id = format!("inspector_native::{}", server_id);
     let server_name = resolver::to_name(server_id)
         .await
         .ok()
@@ -810,13 +895,144 @@ async fn ensure_native_session(
     {
         let mut pool = state.connection_pool.lock().await;
         pool.cleanup_expired_sessions();
-        pool.upsert_validation_session(&session_id, Duration::from_secs(300));
-        pool.get_or_create_validation_instance(&server_name, &session_id, Duration::from_secs(300))
+        pool.upsert_validation_session(session_id, NATIVE_VALIDATION_SESSION_TTL);
+        if let Err(err) = pool
+            .get_or_create_validation_instance(&server_name, session_id, NATIVE_VALIDATION_SESSION_TTL)
             .await
-            .map_err(map_anyhow)?;
+        {
+            let _ = pool.destroy_validation_session(session_id).await;
+            return Err(map_anyhow(err));
+        }
     }
 
-    Ok(session_id)
+    Ok(session_id.to_string())
+}
+
+fn native_session_id_for_inspector_session(session_id: &str) -> String {
+    format!("inspector_native_session::{session_id}")
+}
+
+fn native_temporary_session_id() -> String {
+    crate::generate_id!("inspnative")
+}
+
+async fn native_validation_session_for_request(
+    state: &AppState,
+    server_id: &str,
+    inspector_session_id: &str,
+) -> Result<String, ApiError> {
+    let session = state
+        .inspector_sessions
+        .get_session(inspector_session_id)
+        .await
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "Inspector session '{}' not found or expired",
+                inspector_session_id
+            ))
+        })?;
+
+    if session.mode != InspectorMode::Native {
+        return Err(ApiError::BadRequest(
+            "Inspector session is bound to a different mode".into(),
+        ));
+    }
+    if session.server_id != server_id {
+        return Err(ApiError::BadRequest(
+            "Inspector session is bound to a different server".into(),
+        ));
+    }
+
+    let validation_session = session
+        .validation_session
+        .ok_or_else(|| ApiError::InternalError("Native Inspector session is missing validation ownership".into()))?;
+
+    // Native Inspector reuse is intentionally scoped to the explicit inspector
+    // session id. Do not reuse a live validation instance by server id alone:
+    // service deployments can have different users or organizations inspecting
+    // the same server concurrently, and MCP sessions can carry state. When
+    // auth/RBAC lands, extend this ownership boundary with actor/org scope.
+    let mut pool = state.connection_pool.lock().await;
+    if pool.refresh_validation_session(&validation_session, NATIVE_VALIDATION_SESSION_TTL) {
+        Ok(validation_session)
+    } else {
+        Err(ApiError::NotFound(format!(
+            "Native Inspector validation session '{}' not found or expired",
+            inspector_session_id
+        )))
+    }
+}
+
+async fn native_validation_scope(
+    state: &AppState,
+    server_id: &str,
+    inspector_session_id: Option<&str>,
+) -> Result<(String, Option<NativeValidationSessionGuard>), ApiError> {
+    if let Some(inspector_session_id) = inspector_session_id {
+        let validation_session = native_validation_session_for_request(state, server_id, inspector_session_id).await?;
+        return Ok((validation_session, None));
+    }
+
+    let validation_session = native_temporary_session_id();
+    ensure_native_session(state, server_id, &validation_session).await?;
+    let cleanup = NativeValidationSessionGuard::new(state, validation_session);
+    Ok((cleanup.session_id().to_string(), Some(cleanup)))
+}
+
+async fn acquire_validation_peer(
+    state: &AppState,
+    server_id: &str,
+    session_id: &str,
+) -> Result<Peer<RoleClient>, anyhow::Error> {
+    let server_name = resolver::to_name(server_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| server_id.to_string());
+
+    let mut pool_guard = state.connection_pool.lock().await;
+    let peer = pool_guard
+        .validation_sessions
+        .get(session_id)
+        .and_then(|session_servers| session_servers.get(&server_name))
+        .and_then(|conn| conn.service.as_ref())
+        .map(|service| service.peer().clone());
+
+    if let Some(peer) = peer {
+        if pool_guard.refresh_validation_session(session_id, NATIVE_VALIDATION_SESSION_TTL) {
+            return Ok(peer);
+        }
+    }
+
+    Err(anyhow!(
+        "Native Inspector session '{}' is no longer connected for server '{}'",
+        session_id,
+        server_id
+    ))
+}
+
+async fn clone_native_validation_connection(
+    state: &AppState,
+    server_id: &str,
+    session_id: &str,
+) -> Result<crate::core::pool::UpstreamConnection, ApiError> {
+    let server_name = resolver::to_name(server_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| server_id.to_string());
+    let mut pool = state.connection_pool.lock().await;
+    if !pool.refresh_validation_session(session_id, NATIVE_VALIDATION_SESSION_TTL) {
+        return Err(ApiError::NotFound(format!(
+            "Native Inspector validation session '{}' not found or expired",
+            session_id
+        )));
+    }
+    pool.validation_sessions
+        .get(session_id)
+        .and_then(|session| session.get(&server_name))
+        .cloned()
+        .ok_or_else(|| ApiError::InternalError("Validation connection not found".into()))
 }
 
 async fn acquire_peer_for_call(

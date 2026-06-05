@@ -24,7 +24,7 @@ struct SessionEntry {
     session_id: String,
     server_id: String,
     mode: InspectorMode,
-    peer: Peer<RoleClient>,
+    peer: Option<Peer<RoleClient>>,
     validation_session: Option<String>,
     expires_at: Instant,
 }
@@ -39,7 +39,8 @@ pub struct ActiveSession {
     pub session_id: String,
     pub server_id: String,
     pub mode: InspectorMode,
-    pub peer: Peer<RoleClient>,
+    pub peer: Option<Peer<RoleClient>>,
+    pub validation_session: Option<String>,
 }
 
 impl InspectorSessionManager {
@@ -52,7 +53,7 @@ impl InspectorSessionManager {
         session_id: String,
         server_id: String,
         mode: InspectorMode,
-        peer: Peer<RoleClient>,
+        peer: Option<Peer<RoleClient>>,
         validation_session: Option<String>,
     ) -> InspectorSessionInfo {
         let now = Instant::now();
@@ -96,6 +97,7 @@ impl InspectorSessionManager {
                         server_id: entry.server_id.clone(),
                         mode: entry.mode,
                         peer: entry.peer.clone(),
+                        validation_session: entry.validation_session.clone(),
                     })
                 }
             } else {

@@ -57,7 +57,13 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { auditApi, configSuitsApi, inspectorApi, serversApi } from "../../lib/api";
+import {
+	auditApi,
+	configSuitsApi,
+	inspectorApi,
+	isInspectorSessionUnavailableError,
+	serversApi,
+} from "../../lib/api";
 import { smartFormat } from "../../lib/format";
 import { writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
@@ -66,6 +72,7 @@ import { maskHeaderValue, sanitizeRecord } from "../../lib/security";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import type {
+	InspectorSessionOpenData,
 	ServerCapabilitySummary,
 	ServerDetail,
 } from "../../lib/types";
@@ -105,6 +112,7 @@ interface InspectorListResponse {
 		tools?: CapabilityRecord[];
 		resources?: CapabilityRecord[];
 		prompts?: CapabilityRecord[];
+		templates?: CapabilityRecord[];
 		items?: CapabilityRecord[];
 		meta?: unknown;
 		state?: string;
@@ -115,6 +123,7 @@ interface InspectorListResponse {
 interface InspectorListParams {
 	server_id: string;
 	server_name?: string;
+	session_id?: string;
 	mode: InspectorChannel;
 	refresh: boolean;
 }
@@ -129,6 +138,7 @@ const VIEW_MODES = {
 	browse: "browse" as const,
 	debug: "debug" as const,
 };
+const INSPECT_SESSION_GRACE_MS = 30_000;
 
 type InspectorChannel = "proxy" | "native";
 type DebugKind = "tools" | "resources" | "prompts";
@@ -215,6 +225,13 @@ export function ServerDetailPage() {
 		prompts: createDebugState(),
 		templates: createDebugState(),
 	});
+	const [inspectSession, setInspectSession] =
+		useState<InspectorSessionOpenData | null>(null);
+	const inspectSessionRef = useRef<InspectorSessionOpenData | null>(null);
+	const inspectSessionCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+	const mountedRef = useRef(true);
 
 	const {
 		data: server,
@@ -545,6 +562,140 @@ export function ServerDetailPage() {
 		});
 	}, []);
 
+	useEffect(() => {
+		inspectSessionRef.current = inspectSession;
+	}, [inspectSession]);
+
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
+
+	const clearInspectSessionCloseTimer = useCallback(() => {
+		if (inspectSessionCloseTimer.current) {
+			clearTimeout(inspectSessionCloseTimer.current);
+			inspectSessionCloseTimer.current = null;
+		}
+	}, []);
+
+	const closeInspectSession = useCallback(
+		async (session: InspectorSessionOpenData) => {
+			try {
+				await inspectorApi.sessionClose({ session_id: session.session_id });
+			} catch (error) {
+				console.warn("Failed to close inspector session", error);
+			}
+			if (
+				mountedRef.current &&
+				inspectSessionRef.current?.session_id === session.session_id
+			) {
+				setInspectSession(null);
+				inspectSessionRef.current = null;
+			}
+		},
+		[],
+	);
+
+	const invalidateInspectSession = useCallback(() => {
+		clearInspectSessionCloseTimer();
+		const current = inspectSessionRef.current;
+		inspectSessionRef.current = null;
+		if (mountedRef.current) {
+			setInspectSession(null);
+		}
+		if (current) {
+			void closeInspectSession(current);
+		}
+	}, [clearInspectSessionCloseTimer, closeInspectSession]);
+
+	const scheduleInspectSessionClose = useCallback(
+		(session: InspectorSessionOpenData) => {
+			clearInspectSessionCloseTimer();
+			inspectSessionCloseTimer.current = setTimeout(() => {
+				void closeInspectSession(session);
+			}, INSPECT_SESSION_GRACE_MS);
+		},
+		[clearInspectSessionCloseTimer, closeInspectSession],
+	);
+
+	const ensureInspectSession = useCallback(async (): Promise<
+		string | undefined
+	> => {
+		if (viewMode !== VIEW_MODES.debug || channel !== "native" || !serverId) {
+			return undefined;
+		}
+		clearInspectSessionCloseTimer();
+
+		const current = inspectSessionRef.current;
+		if (current?.mode === "native" && current.server_id === serverId) {
+			return current.session_id;
+		}
+
+		if (current) {
+			await closeInspectSession(current);
+		}
+
+		const response = await inspectorApi.sessionOpen({
+			mode: "native",
+			server_id: serverId,
+			server_name: server?.name,
+		});
+		if (!response?.success || !response.data) {
+			throw new Error(
+				response?.error ? String(response.error) : "Failed to open inspector session",
+			);
+		}
+
+		if (mountedRef.current) {
+			setInspectSession(response.data);
+		}
+		inspectSessionRef.current = response.data;
+		return response.data.session_id;
+	}, [
+		channel,
+		clearInspectSessionCloseTimer,
+		closeInspectSession,
+		server?.name,
+		serverId,
+		viewMode,
+	]);
+
+	useEffect(() => {
+		const current = inspectSessionRef.current;
+		if (!current) {
+			return;
+		}
+
+		const shouldKeepInspectSession =
+			viewMode === VIEW_MODES.debug &&
+			channel === "native" &&
+			current.server_id === serverId;
+
+		if (shouldKeepInspectSession) {
+			clearInspectSessionCloseTimer();
+			return;
+		}
+
+		scheduleInspectSessionClose(current);
+	}, [
+		channel,
+		clearInspectSessionCloseTimer,
+		scheduleInspectSessionClose,
+		serverId,
+		viewMode,
+	]);
+
+	useEffect(() => {
+		return () => {
+			const current = inspectSessionRef.current;
+			if (current) {
+				scheduleInspectSessionClose(current);
+			}
+		};
+	}, [scheduleInspectSessionClose]);
+
 	const clearLogsByPrefix = useCallback((prefix: string) => {
 		setLogs((prev) => prev.filter((entry) => !entry.method.startsWith(prefix)));
 	}, []);
@@ -582,45 +733,48 @@ export function ServerDetailPage() {
 						: kind === "prompts"
 							? "prompts/list"
 							: "templates/list";
-			const requestPayload: InspectorListParams = {
-				server_id: serverId,
-				mode: channel,
-				refresh: true,
+
+			const buildRequestPayload = (
+				nextSessionId?: string,
+			): InspectorListParams => {
+				const payload: InspectorListParams = {
+					server_id: serverId,
+					mode: channel,
+					refresh: true,
+				};
+				if (server?.name) payload.server_name = server.name;
+				if (nextSessionId) payload.session_id = nextSessionId;
+				return payload;
 			};
-			if (server?.name) requestPayload.server_name = server.name;
 
-			updateDebugState(kind, { loading: true, error: null });
-			pushLog({
-				id: makeLogId(),
-				timestamp: Date.now(),
-				channel: "inspector",
-				event: "request",
-				method,
-				mode: channel,
-				payload: requestPayload,
-			});
-
-			try {
+			const requestList = async (
+				payload: InspectorListParams,
+			): Promise<CapabilityRecord[]> => {
 				let resp: InspectorListResponse | undefined;
 				if (kind === "tools") {
-					resp = (await inspectorApi.toolsList(
-						requestPayload,
-					)) as InspectorListResponse;
+					resp = (await inspectorApi.toolsList(payload)) as InspectorListResponse;
 				} else if (kind === "resources") {
 					resp = (await inspectorApi.resourcesList(
-						requestPayload,
+						payload,
 					)) as InspectorListResponse;
 				} else if (kind === "prompts") {
 					resp = (await inspectorApi.promptsList(
-						requestPayload,
+						payload,
 					)) as InspectorListResponse;
 				} else {
 					resp = (await inspectorApi.templatesList(
-						requestPayload,
+						payload,
 					)) as InspectorListResponse;
 				}
-				const data = resp?.data ?? {};
-				const list: CapabilityRecord[] = Array.isArray(data.items)
+
+				if (!resp?.success) {
+					throw new Error(
+						resp?.error ? String(resp.error) : "Inspector list failed",
+					);
+				}
+
+				const data = resp.data ?? {};
+				return Array.isArray(data.items)
 					? data.items
 					: Array.isArray(data.tools)
 						? data.tools
@@ -628,9 +782,24 @@ export function ServerDetailPage() {
 							? data.resources
 							: Array.isArray(data.prompts)
 								? data.prompts
-								: Array.isArray((data as any).templates)
-									? (data as any).templates
+								: Array.isArray(data.templates)
+									? data.templates
 									: [];
+			};
+
+			const pushRequestLog = (payload: InspectorListParams) => {
+				pushLog({
+					id: makeLogId(),
+					timestamp: Date.now(),
+					channel: "inspector",
+					event: "request",
+					method,
+					mode: channel,
+					payload,
+				});
+			};
+
+			const commitSuccess = (list: CapabilityRecord[]) => {
 				updateDebugState(kind, {
 					loading: false,
 					error: null,
@@ -647,7 +816,9 @@ export function ServerDetailPage() {
 					mode: channel,
 					payload: { count: list.length },
 				});
-			} catch (error) {
+			};
+
+			const commitError = (error: unknown) => {
 				const message = error instanceof Error ? error.message : String(error);
 				updateDebugState(kind, { loading: false, error: message });
 				pushLog({
@@ -660,16 +831,56 @@ export function ServerDetailPage() {
 					message,
 					payload: error,
 				});
+			};
+
+			updateDebugState(kind, { loading: true, error: null });
+
+			let sessionId: string | undefined;
+			if (channel === "native") {
+				try {
+					sessionId = await ensureInspectSession();
+				} catch (error) {
+					commitError(error);
+					return;
+				}
+			}
+			let requestPayload = buildRequestPayload(sessionId);
+
+			pushRequestLog(requestPayload);
+
+			try {
+				commitSuccess(await requestList(requestPayload));
+			} catch (error) {
+				if (
+					channel === "native" &&
+					sessionId &&
+					isInspectorSessionUnavailableError(error)
+				) {
+					invalidateInspectSession();
+					try {
+						sessionId = await ensureInspectSession();
+						requestPayload = buildRequestPayload(sessionId);
+						pushRequestLog(requestPayload);
+						commitSuccess(await requestList(requestPayload));
+						return;
+					} catch (retryError) {
+						commitError(retryError);
+						return;
+					}
+				}
+				commitError(error);
 			}
 		},
 		[
 			channel,
+			ensureInspectSession,
+			invalidateInspectSession,
 			proxyAvailable,
 			pushLog,
 			server?.name,
 			serverId,
-			updateDebugState,
 			t,
+			updateDebugState,
 		],
 	);
 
@@ -679,6 +890,23 @@ export function ServerDetailPage() {
 		},
 		[],
 	);
+
+	const inspectorCapabilityOptions = useMemo<CapabilityRecord[] | undefined>(() => {
+		if (!inspector || viewMode !== VIEW_MODES.debug) {
+			return undefined;
+		}
+		if (inspector.kind === "tool") {
+			return debugData.tools.fetched ? debugData.tools.items : undefined;
+		}
+		if (inspector.kind === "resource") {
+			return debugData.resources.fetched ? debugData.resources.items : undefined;
+		}
+		if (inspector.kind === "prompt") {
+			return debugData.prompts.fetched ? debugData.prompts.items : undefined;
+		}
+		return debugData.templates.fetched ? debugData.templates.items : undefined;
+	}, [debugData, inspector, viewMode]);
+
 	const handleServerLogsNextPage = () => {
 		if (!serverLogsQuery.data?.next_cursor) return;
 		const nextCursor = serverLogsQuery.data.next_cursor;
@@ -1462,7 +1690,14 @@ export function ServerDetailPage() {
 				kind={inspector?.kind ?? "tool"}
 				item={inspector?.item ?? null}
 				mode={channel}
+				sessionId={channel === "native" ? inspectSession?.session_id : undefined}
+				sessionExpiresAtEpochMs={
+					channel === "native" ? inspectSession?.expires_at_epoch_ms : undefined
+				}
+				capabilityOptions={inspectorCapabilityOptions}
 				onLog={pushLog}
+				onEnsureSession={ensureInspectSession}
+				onSessionUnavailable={invalidateInspectSession}
 			/>
 		</div>
 	);

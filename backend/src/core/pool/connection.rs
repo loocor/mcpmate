@@ -365,6 +365,30 @@ impl UpstreamConnectionPool {
             .insert(session_id.to_string(), Instant::now() + ttl);
     }
 
+    /// Refresh an existing validation session without creating a new owner.
+    pub fn refresh_validation_session(
+        &mut self,
+        session_id: &str,
+        ttl: Duration,
+    ) -> bool {
+        use std::time::Instant;
+        let now = Instant::now();
+        let is_active = self.validation_sessions.contains_key(session_id)
+            && self
+                .validation_expirations
+                .get(session_id)
+                .is_some_and(|expires_at| *expires_at > now);
+        if !is_active {
+            self.validation_sessions.remove(session_id);
+            self.validation_expirations.remove(session_id);
+            return false;
+        }
+
+        self.validation_expirations
+            .insert(session_id.to_string(), now + ttl);
+        true
+    }
+
     /// Cleanup expired exploration/validation sessions
     pub fn cleanup_expired_sessions(&mut self) {
         use std::time::Instant;
@@ -749,6 +773,31 @@ impl UpstreamConnectionPool {
                 tracing::info!("Destroyed validation instance for server '{}'", server_name);
             }
         }
+
+        Ok(())
+    }
+
+    /// Destroy a full validation session and all server instances it owns.
+    pub async fn destroy_validation_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<(), anyhow::Error> {
+        if let Some(session_servers) = self.validation_sessions.remove(session_id) {
+            for (server_name, mut connection) in session_servers {
+                if let Some(service) = connection.service.as_ref() {
+                    service.cancellation_token().cancel();
+                }
+                if connection.is_connected() {
+                    connection.update_disconnected();
+                }
+                tracing::info!(
+                    "Destroyed validation instance for server '{}' in session '{}'",
+                    server_name,
+                    session_id
+                );
+            }
+        }
+        self.validation_expirations.remove(session_id);
 
         Ok(())
     }

@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Operating mode for Inspector endpoints.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum InspectorMode {
     /// Aggregate/managed view: unique naming, profile-aware (recommended)
@@ -16,6 +16,7 @@ pub enum InspectorMode {
 pub struct InspectorListQuery {
     pub server_id: Option<String>,
     pub server_name: Option<String>,
+    pub session_id: Option<String>,
     #[serde(default)]
     pub mode: InspectorMode,
     #[serde(default)]
@@ -40,6 +41,8 @@ pub struct InspectorPromptGetReq {
     pub name: String,
     pub server_id: Option<String>,
     pub server_name: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub mode: InspectorMode,
@@ -50,6 +53,8 @@ pub struct InspectorResourceReadQuery {
     pub uri: String,
     pub server_id: Option<String>,
     pub server_name: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub mode: InspectorMode,
 }

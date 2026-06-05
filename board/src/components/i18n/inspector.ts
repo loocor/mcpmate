@@ -66,9 +66,9 @@ export const inspectorTranslations = {
 			active: "Inspector session active",
 			pending: "Inspector session pending",
 			connected:
-				"Connected to {{serverName}}. Follow-up tools reuse this session required for chaining actions. Expires {{expiry}}.",
+				"Connected to {{serverName}}. Follow-up calls reuse this Inspect session for chaining actions. Expires {{expiry}}.",
 			notConnected:
-				"No inspector session yet. We create one automatically on the next run and keep it alive until you close the drawer.",
+				"No inspector session yet. List or Run creates one, then reuses it while you stay in Inspect mode. Leaving Inspect keeps it briefly before closing.",
 		},
 		notifications: {
 			executed: "Inspector executed",
@@ -166,9 +166,9 @@ export const inspectorTranslations = {
 			active: "检视器会话已激活",
 			pending: "检视器会话待激活",
 			connected:
-				"已连接到 {{serverName}}。后续工具将复用此会话以支持链式操作。过期时间：{{expiry}}。",
+				"已连接到 {{serverName}}。后续调用将复用此检视会话以支持链式操作。过期时间：{{expiry}}。",
 			notConnected:
-				"暂无检视器会话。我们将在下次运行时自动创建并保持活跃状态直到关闭抽屉。",
+				"暂无检视器会话。List 或 Run 会创建会话，并在 Inspect 模式内复用；离开 Inspect 后会短暂保留再关闭。",
 		},
 		notifications: {
 			executed: "检视器已执行",
@@ -268,9 +268,9 @@ export const inspectorTranslations = {
 			active: "インスペクターセッションがアクティブ",
 			pending: "インスペクターセッション待機中",
 			connected:
-				"{{serverName}} に接続済み。後続のツールはこのセッションを再利用してチェーン操作をサポートします。有効期限：{{expiry}}。",
+				"{{serverName}} に接続済み。後続の呼び出しはこの Inspect セッションを再利用してチェーン操作をサポートします。有効期限：{{expiry}}。",
 			notConnected:
-				"インスペクターセッションはまだありません。次回実行時に自動的に作成し、ドロワーを閉じるまで維持されます。",
+				"インスペクターセッションはまだありません。List または Run で作成し、Inspect モード中は再利用します。Inspect を離れると短時間保持してから閉じます。",
 		},
 		notifications: {
 			executed: "インスペクターが実行されました",
