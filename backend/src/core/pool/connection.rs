@@ -371,13 +371,21 @@ impl UpstreamConnectionPool {
         session_id: &str,
         ttl: Duration,
     ) -> bool {
-        if !self.validation_sessions.contains_key(session_id) {
+        use std::time::Instant;
+        let now = Instant::now();
+        let is_active = self.validation_sessions.contains_key(session_id)
+            && self
+                .validation_expirations
+                .get(session_id)
+                .is_some_and(|expires_at| *expires_at > now);
+        if !is_active {
+            self.validation_sessions.remove(session_id);
+            self.validation_expirations.remove(session_id);
             return false;
         }
 
-        use std::time::Instant;
         self.validation_expirations
-            .insert(session_id.to_string(), Instant::now() + ttl);
+            .insert(session_id.to_string(), now + ttl);
         true
     }
 

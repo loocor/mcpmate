@@ -32,6 +32,7 @@ const RESOURCE_LIST_PATH: &str = "/api/mcp/inspector/resource/list";
 const RESOURCE_READ_PATH: &str = "/api/mcp/inspector/resource/read";
 const SESSION_OPEN_PATH: &str = "/api/mcp/inspector/session/open";
 const SESSION_CLOSE_PATH: &str = "/api/mcp/inspector/session/close";
+const TEMPORARY_NATIVE_VALIDATION_SESSION_PREFIX: &str = "INSPNATIVE";
 
 struct EnvVarGuard {
     key: &'static str,
@@ -378,7 +379,9 @@ async fn temporary_validation_session_count(state: &Arc<AppState>) -> usize {
     let pool = state.connection_pool.lock().await;
     pool.validation_sessions
         .keys()
-        .filter(|session_id| session_id.starts_with("inspnative"))
+        .filter(|session_id| {
+            session_id.starts_with(TEMPORARY_NATIVE_VALIDATION_SESSION_PREFIX)
+        })
         .count()
 }
 
