@@ -53,6 +53,8 @@ struct DynamicClientRegistrationResponse {
     scope: Option<String>,
 }
 
+const OAUTH_TOKEN_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[derive(Clone)]
 pub struct OAuthManager {
     pool: SqlitePool,
@@ -386,7 +388,10 @@ impl OAuthManager {
             id: token.id,
             server_id: server_id.to_string(),
             access_token: token_response.access_token,
-            refresh_token: token_response.refresh_token.or(token.refresh_token),
+            refresh_token: token_response
+                .refresh_token
+                .filter(|value| !value.trim().is_empty())
+                .or(token.refresh_token),
             token_type: token_response.token_type.unwrap_or(token.token_type),
             expires_at: token_response
                 .expires_in
@@ -586,6 +591,7 @@ impl OAuthManager {
             .http_client
             .post(token_endpoint)
             .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .timeout(OAUTH_TOKEN_REQUEST_TIMEOUT)
             .body(encoded_body)
             .send()
             .await
@@ -911,6 +917,69 @@ mod tests {
                 .state,
             OAuthConnectionState::Connected
         ));
+    }
+
+    #[tokio::test]
+    async fn refresh_keeps_existing_refresh_token_when_response_is_blank() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_refresh_blank").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-new",
+                "refresh_token": "   ",
+                "token_type": "bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        manager
+            .upsert_config(
+                "serv_refresh_blank",
+                OAuthConfigInput {
+                    authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                    token_endpoint: format!("{}/token", mock_server.uri()),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        server::upsert_server_oauth_token(
+            &manager.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: "serv_refresh_blank".to_string(),
+                access_token: "access-old".to_string(),
+                refresh_token: Some("refresh-123".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("store expired token");
+
+        manager
+            .refresh_access_token("serv_refresh_blank")
+            .await
+            .expect("refresh token");
+
+        let stored = server::get_server_oauth_token(&manager.pool, "serv_refresh_blank")
+            .await
+            .expect("load stored token")
+            .expect("stored token exists");
+        assert_eq!(stored.access_token, "access-new");
+        assert_eq!(stored.refresh_token.as_deref(), Some("refresh-123"));
     }
 
     #[tokio::test]
