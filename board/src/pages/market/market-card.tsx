@@ -19,6 +19,7 @@ import type { MarketCardProps } from "./types";
 import {
 	formatServerName,
 	getRemoteTypeLabel,
+	hasUnsupportedRegistryPackageOption,
 	hasPreviewableOption,
 } from "./utils";
 
@@ -56,6 +57,11 @@ export function MarketCard({
 	const displayName = formatServerName(server.name);
 
 	const supportsPreview = useMemo(() => hasPreviewableOption(server), [server]);
+	const hasUnsupportedPackageOption = useMemo(
+		() => hasUnsupportedRegistryPackageOption(server),
+		[server],
+	);
+	const installDisabled = isInstalled || !supportsPreview;
 
 	const handleCardClick = () => {
 		if (!supportsPreview) {
@@ -185,8 +191,8 @@ export function MarketCard({
 							"h-7 px-2 text-xs",
 							isInstalled && "bg-green-50 text-green-700 hover:bg-green-50 hover:text-green-700 border-transparent dark:bg-green-950/30 dark:text-green-400 dark:hover:bg-green-950/30 cursor-default opacity-100"
 						)}
-						onClick={isInstalled ? (e) => { e.stopPropagation(); e.preventDefault(); } : handleInstall}
-						disabled={isInstalled}
+						onClick={installDisabled ? (e) => { e.stopPropagation(); e.preventDefault(); } : handleInstall}
+						disabled={installDisabled}
 					>
 						{isInstalled ? (
 							<ShieldCheck className="h-3 w-3 mr-1" />
@@ -195,7 +201,9 @@ export function MarketCard({
 						)}
 						{isInstalled 
 							? t("buttons.installed", { defaultValue: "Installed" })
-							: t("buttons.install", { defaultValue: "Install" })}
+							: !supportsPreview && hasUnsupportedPackageOption
+								? t("buttons.unsupported", { defaultValue: "Unsupported" })
+								: t("buttons.install", { defaultValue: "Install" })}
 					</Button>
 					<button
 						type="button"

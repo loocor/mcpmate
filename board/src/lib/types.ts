@@ -99,23 +99,32 @@ export interface ServerDetail extends ServerSummary {
   instances: InstanceSummary[];
 }
 
-export interface RegistryTransportHeader {
-  name: string;
+export interface RegistryInput {
   description?: string;
   isRequired?: boolean;
   isSecret?: boolean;
+  value?: string;
+  default?: string;
+  placeholder?: string;
+  choices?: string[];
+}
+
+export interface RegistryTransportHeader extends RegistryInput {
+  name: string;
 }
 
 export interface RegistryTransport {
-  type: string;
+  type?: string;
   url?: string;
   headers?: RegistryTransportHeader[] | null;
+  variables?: Record<string, RegistryInput> | null;
 }
 
 export interface RegistryPackageArgument {
-  name: string;
+  name?: string;
   description?: string;
   type?: string;
+  value?: string;
   isRequired?: boolean;
   default?: string;
   valueHint?: string;
@@ -126,6 +135,8 @@ export interface RegistryPackage {
   registryBaseUrl?: string;
   identifier?: string;
   version?: string;
+  runtimeHint?: string;
+  fileSha256?: string;
   transport?: { type: string };
   environmentVariables?: RegistryTransportHeader[] | null;
   packageArguments?: RegistryPackageArgument[] | null;

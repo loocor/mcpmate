@@ -9,6 +9,7 @@ export const marketTranslations = {
 			installed: "Installed",
 			manage: "Manage",
 			reinstall: "Reinstall",
+			unsupported: "Unsupported",
 		},
 		search: {
 			placeholder: "Search by server name",
@@ -97,6 +98,7 @@ export const marketTranslations = {
 			installed: "已安装",
 			manage: "管理",
 			reinstall: "重新安装",
+			unsupported: "暂不支持",
 		},
 		search: {
 			placeholder: "按服务器名称搜索",
@@ -184,6 +186,7 @@ export const marketTranslations = {
 			installed: "インストール済み",
 			manage: "管理",
 			reinstall: "再インストール",
+			unsupported: "未対応",
 		},
 		search: {
 			placeholder: "サーバー名で検索",

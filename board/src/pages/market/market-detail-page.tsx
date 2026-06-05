@@ -34,6 +34,10 @@ import {
 	buildDraftFromRemoteOption,
 	formatServerName,
 	getRemoteTypeLabel,
+	hasUnsupportedRegistryPackageOption,
+	hasRegistryVariables,
+	hasUnresolvedRequiredRegistryArguments,
+	isSupportedRegistryPackageType,
 	normalizeRemoteKind,
 	slugifyForConfig,
 } from "./utils";
@@ -44,6 +48,7 @@ function buildRemoteOptions(server: RegistryServerEntry): RemoteOption[] {
 	(server.remotes ?? []).forEach((remote, idx) => {
 		const kind = normalizeRemoteKind(remote.type);
 		if (!kind || !remote?.url) return;
+		if (hasRegistryVariables(remote.variables)) return;
 		options.push({
 			id: `${server.name}-remote-${idx}`,
 			label: `${getRemoteTypeLabel(kind)} • ${remote.url}`,
@@ -59,8 +64,16 @@ function buildRemoteOptions(server: RegistryServerEntry): RemoteOption[] {
 
 	(server.packages ?? []).forEach((pkg, idx) => {
 		const kind = normalizeRemoteKind(pkg.transport?.type);
-		if (!kind) return;
-		const identifier = pkg.identifier ?? pkg.registryType ?? `package-${idx + 1}`;
+		if (kind !== "stdio") return;
+		if (!isSupportedRegistryPackageType(pkg.registryType)) return;
+		if (
+			hasUnresolvedRequiredRegistryArguments(pkg.runtimeArguments) ||
+			hasUnresolvedRequiredRegistryArguments(pkg.packageArguments)
+		) {
+			return;
+		}
+		const identifier = pkg.identifier?.trim();
+		if (!identifier) return;
 		options.push({
 			id: `${server.name}-package-${idx}`,
 			label: `${getRemoteTypeLabel(kind)} • ${identifier}`,
@@ -239,6 +252,10 @@ export function MarketDetailPage() {
 	});
 
 	const remoteOptions = useMemo(() => (server ? buildRemoteOptions(server) : []), [server]);
+	const hasUnsupportedPackageOption = useMemo(
+		() => hasUnsupportedRegistryPackageOption(server),
+		[server],
+	);
 	const selectedRemote = useMemo(
 		() => remoteOptions.find((option) => option.id === selectedTransportId) ?? remoteOptions[0] ?? null,
 		[selectedTransportId, remoteOptions],
@@ -420,6 +437,7 @@ export function MarketDetailPage() {
 								</>
 							) : (
 								<Button
+									disabled={remoteOptions.length === 0}
 									onClick={() => {
 										if (remoteOptions.length > 0) {
 											setSelectedTransportId(remoteOptions[0].id);
@@ -428,7 +446,9 @@ export function MarketDetailPage() {
 									}}
 								>
 									<Download className="mr-2 h-4 w-4" />
-									{t("market:buttons.install", { defaultValue: "Install" })}
+									{remoteOptions.length === 0 && hasUnsupportedPackageOption
+										? t("market:buttons.unsupported", { defaultValue: "Unsupported" })
+										: t("market:buttons.install", { defaultValue: "Install" })}
 								</Button>
 							)}
 						</div>

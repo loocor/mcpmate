@@ -53,6 +53,9 @@ export function buildMcpServersImportBodyFromDrafts(
 		if (item.env && Object.keys(item.env).length) {
 			entry.env = item.env;
 		}
+		if (item.kind !== "stdio" && item.headers && Object.keys(item.headers).length) {
+			entry.headers = item.headers;
+		}
 		if (item.registryServerId) {
 			entry.registry_server_id = item.registryServerId;
 		}
