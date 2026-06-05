@@ -43,6 +43,30 @@ impl LocalCoreServiceStatusView {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalhostCoreProbeFailure {
+    pub status_code: Option<u16>,
+    pub error: Option<String>,
+}
+
+impl LocalhostCoreProbeFailure {
+    pub fn summary(&self) -> String {
+        if let Some(status_code) = self.status_code {
+            return format!("http_status={status_code}");
+        }
+        if let Some(error) = self.error.as_deref() {
+            return format!("error={error}");
+        }
+        "unknown".to_string()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalhostCoreProbe {
+    pub ready: bool,
+    pub failure: Option<LocalhostCoreProbeFailure>,
+}
+
 pub fn resolve_service_level() -> ServiceLevel {
     #[cfg(target_os = "windows")]
     {
@@ -257,31 +281,70 @@ fn service_install_ctx(
 }
 
 pub async fn probe_localhost_core(api_port: u16) -> bool {
+    probe_localhost_core_detail(api_port).await.ready
+}
+
+pub async fn probe_localhost_core_detail(api_port: u16) -> LocalhostCoreProbe {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(500))
         .build();
 
     let Ok(client) = client else {
-        return false;
+        return LocalhostCoreProbe {
+            ready: false,
+            failure: Some(LocalhostCoreProbeFailure {
+                status_code: None,
+                error: Some("failed to build readiness HTTP client".to_string()),
+            }),
+        };
     };
 
     let url = format!("{}/api/system/status", api_url_from_port(api_port));
     match client.get(url).send().await {
-        Ok(response) => response.status().is_success(),
-        Err(_) => false,
+        Ok(response) => {
+            let status = response.status();
+            LocalhostCoreProbe {
+                ready: status.is_success(),
+                failure: (!status.is_success()).then_some(LocalhostCoreProbeFailure {
+                    status_code: Some(status.as_u16()),
+                    error: None,
+                }),
+            }
+        }
+        Err(err) => LocalhostCoreProbe {
+            ready: false,
+            failure: Some(LocalhostCoreProbeFailure {
+                status_code: None,
+                error: Some(err.to_string()),
+            }),
+        },
     }
 }
 
 pub async fn wait_for_localhost_core(api_port: u16) -> Result<()> {
-    for _ in 0..20 {
-        if probe_localhost_core(api_port).await {
-            info!(api_port, "Local MCPMate core health check succeeded");
+    let mut last_failure: Option<LocalhostCoreProbeFailure> = None;
+    for attempt in 1..=20 {
+        let probe = probe_localhost_core_detail(api_port).await;
+        if probe.ready {
+            info!(
+                api_port,
+                attempt, "Local MCPMate core health check succeeded"
+            );
             return Ok(());
         }
+        last_failure = probe.failure;
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
-    warn!(api_port, "Local MCPMate core health check timed out");
+    warn!(
+        api_port,
+        attempts = 20,
+        last_failure = last_failure
+            .as_ref()
+            .map(LocalhostCoreProbeFailure::summary)
+            .unwrap_or_else(|| "unknown".to_string()),
+        "Local MCPMate core health check timed out"
+    );
     anyhow::bail!("localhost core service did not become ready in time")
 }
 
@@ -476,5 +539,30 @@ pub async fn sync_local_service_definition(
         start_local_service(app, config).await
     } else {
         read_local_service_status(config).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalhostCoreProbeFailure;
+
+    #[test]
+    fn probe_failure_summary_prefers_status_code() {
+        let failure = LocalhostCoreProbeFailure {
+            status_code: Some(503),
+            error: Some("connection reset".to_string()),
+        };
+
+        assert_eq!(failure.summary(), "http_status=503");
+    }
+
+    #[test]
+    fn probe_failure_summary_uses_error_when_status_is_missing() {
+        let failure = LocalhostCoreProbeFailure {
+            status_code: None,
+            error: Some("connection refused".to_string()),
+        };
+
+        assert_eq!(failure.summary(), "error=connection refused");
     }
 }

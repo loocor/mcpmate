@@ -63,6 +63,7 @@ pub const MENU_OPEN_SETTINGS: &str = "mcpmate.tray.open_settings";
 pub const MENU_SHOW_ABOUT: &str = "mcpmate.tray.show_about";
 pub const MENU_QUIT: &str = "mcpmate.tray.quit";
 pub const APP_MENU_CHECK_UPDATES: &str = "menu.help.check_for_updates";
+pub const APP_MENU_EXPORT_DIAGNOSTICS: &str = "menu.help.export_diagnostics";
 pub const APP_MENU_ABOUT: &str = "menu.help.about";
 
 pub const EVENT_OPEN_SETTINGS: &str = "mcpmate://open-settings";
@@ -637,14 +638,22 @@ pub fn initialize_app_menu(app: &mut tauri::App) -> Result<()> {
         true,
         None::<&str>,
     )?;
+    let export_diagnostics_item = MenuItem::with_id(
+        app,
+        APP_MENU_EXPORT_DIAGNOSTICS,
+        "Export Diagnostics…",
+        true,
+        None::<&str>,
+    )?;
 
     if let Some(MenuItemKind::Submenu(help_menu)) = menu.get(&HELP_SUBMENU_ID.to_string()) {
         let existing_items = help_menu.items()?.len();
         help_menu.insert(&check_updates_item, 0)?;
+        help_menu.insert(&export_diagnostics_item, 0)?;
         help_menu.insert(&about_item, 0)?;
         if existing_items > 0 {
             let separator = PredefinedMenuItem::separator(app)?;
-            help_menu.insert(&separator, 2)?;
+            help_menu.insert(&separator, 3)?;
         }
     } else {
         let help_menu = Submenu::with_id_and_items(
@@ -652,7 +661,7 @@ pub fn initialize_app_menu(app: &mut tauri::App) -> Result<()> {
             HELP_SUBMENU_ID,
             "Help",
             true,
-            &[&about_item, &check_updates_item],
+            &[&about_item, &export_diagnostics_item, &check_updates_item],
         )?;
         menu.append(&help_menu)?;
     }

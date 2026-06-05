@@ -1,6 +1,10 @@
 use std::{
+    fs::{File, OpenOptions},
+    io::{Read, Write},
     process::{Child, Command, Stdio},
-    sync::Arc,
+    sync::{Arc, Mutex},
+    thread,
+    time::Instant,
 };
 
 #[cfg(target_os = "windows")]
@@ -21,6 +25,7 @@ mod audit;
 mod config;
 mod core_service;
 mod deeplink;
+mod diagnostics;
 mod environment;
 mod oauth;
 mod operator_window;
@@ -33,6 +38,7 @@ use core_service::{
     sync_local_service_definition, uninstall_local_service,
 };
 use deeplink::DeepLinkState;
+use diagnostics::{DiagnosticEventPayload, DiagnosticsExportResponse};
 use mcpmate::system::config::api_url_from_port;
 use mcpmate::system::settings::{
     apply_settings_with_effects_for_paths, get_settings_sync_for_paths,
@@ -42,6 +48,7 @@ use shell::{ShellPreferences, ShellState};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_updater::Builder as UpdaterPluginBuilder;
 use tauri_plugin_updater::UpdaterExt;
+use tokio::net::TcpStream;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
@@ -213,6 +220,224 @@ async fn read_core_state_view(
     Ok(DesktopCoreSourceView::from_config(config, local_service))
 }
 
+async fn diagnostics_runtime_metadata(
+    app: &tauri::AppHandle,
+    managed_state: &DesktopManagedCoreState,
+) -> serde_json::Value {
+    fn path_result_json<E: std::fmt::Display>(
+        result: std::result::Result<std::path::PathBuf, E>,
+    ) -> serde_json::Value {
+        match result {
+            Ok(path) => json!({ "status": "ok", "path": path.display().to_string() }),
+            Err(err) => json!({ "status": "error", "error": err.to_string() }),
+        }
+    }
+
+    let config = DesktopCoreSourceConfig::load(global_paths());
+    let core_source = diagnostics_core_source_view(config.as_ref(), managed_state).await;
+
+    json!({
+        "desktopPlatform": desktop_platform(),
+        "appIdentifier": app.config().identifier,
+        "currentExe": path_result_json(std::env::current_exe()),
+        "resourceDir": path_result_json(app.path().resource_dir()),
+        "dataDir": global_paths().base_dir().display().to_string(),
+        "logsDir": global_paths().logs_dir().display().to_string(),
+        "coreSource": core_source,
+    })
+}
+
+async fn diagnostics_snapshot(
+    app: &tauri::AppHandle,
+    managed_state: &DesktopManagedCoreState,
+) -> serde_json::Value {
+    let config = DesktopCoreSourceConfig::load(global_paths());
+    let core_source = diagnostics_core_source_view(config.as_ref(), managed_state).await;
+    let localhost_probe = match &config {
+        Ok(config) => json!({
+            "apiPort": probe_tcp_port("127.0.0.1", config.localhost.api_port).await,
+            "mcpPort": probe_tcp_port("127.0.0.1", config.localhost.mcp_port).await,
+        }),
+        Err(err) => json!({
+            "status": "error",
+            "error": err.to_string(),
+        }),
+    };
+    let api_base_url = config
+        .as_ref()
+        .map(|config| match config.selected_source {
+            DesktopCoreSourceKind::Localhost => api_url_from_port(config.localhost.api_port),
+            DesktopCoreSourceKind::Remote => config.remote.base_url.trim().to_string(),
+        })
+        .ok();
+    let backend = match api_base_url {
+        Some(api_base_url) => json!({
+            "apiBaseUrl": api_base_url,
+            "readiness": probe_backend_endpoint(&api_base_url, "/api/system/readiness").await,
+            "status": probe_backend_endpoint(&api_base_url, "/api/system/status").await,
+        }),
+        None => json!({
+            "status": "error",
+            "error": "desktop core source config unavailable",
+        }),
+    };
+
+    json!({
+        "generatedAtUnixMs": unix_millis_snapshot(),
+        "desktop": {
+            "appIdentifier": app.config().identifier,
+            "appVersion": app.package_info().version.to_string(),
+            "crateVersion": env!("CARGO_PKG_VERSION"),
+            "platform": desktop_platform(),
+            "buildProfile": if cfg!(debug_assertions) { "debug" } else { "release" },
+        },
+        "coreSource": core_source,
+        "localhost": localhost_probe,
+        "backend": backend,
+    })
+}
+
+async fn diagnostics_core_source_view(
+    config: std::result::Result<&DesktopCoreSourceConfig, &Error>,
+    managed_state: &DesktopManagedCoreState,
+) -> serde_json::Value {
+    match config {
+        Ok(config) => match read_core_state_view(config, managed_state).await {
+            Ok(view) => json!({
+                "status": "ok",
+                "view": view,
+            }),
+            Err(err) => json!({
+                "status": "error",
+                "error": err.to_string(),
+                "selectedSource": config.selected_source,
+                "localhostRuntimeMode": config.localhost_runtime_mode,
+                "localhostApiPort": config.localhost.api_port,
+                "localhostMcpPort": config.localhost.mcp_port,
+            }),
+        },
+        Err(err) => json!({
+            "status": "error",
+            "error": err.to_string(),
+        }),
+    }
+}
+
+async fn probe_tcp_port(host: &str, port: u16) -> serde_json::Value {
+    let address = format!("{host}:{port}");
+    let started_at = Instant::now();
+    match tokio::time::timeout(Duration::from_millis(500), TcpStream::connect(&address)).await {
+        Ok(Ok(_stream)) => json!({
+            "status": "open",
+            "host": host,
+            "port": port,
+            "durationMs": started_at.elapsed().as_millis(),
+        }),
+        Ok(Err(err)) => json!({
+            "status": "closed",
+            "host": host,
+            "port": port,
+            "durationMs": started_at.elapsed().as_millis(),
+            "error": err.to_string(),
+        }),
+        Err(_elapsed) => json!({
+            "status": "timeout",
+            "host": host,
+            "port": port,
+            "durationMs": started_at.elapsed().as_millis(),
+        }),
+    }
+}
+
+async fn probe_backend_endpoint(api_base_url: &str, path: &str) -> serde_json::Value {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(800))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            return json!({
+                "status": "error",
+                "error": err.to_string(),
+            });
+        }
+    };
+    let url = format!("{}{}", api_base_url.trim_end_matches('/'), path);
+    let started_at = Instant::now();
+    match client.get(&url).send().await {
+        Ok(response) => {
+            let http_status = response.status().as_u16();
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+            let body = match response.json::<serde_json::Value>().await {
+                Ok(value) => json!({
+                    "type": "json",
+                    "value": value,
+                }),
+                Err(err) => json!({
+                    "type": "unavailable",
+                    "error": err.to_string(),
+                }),
+            };
+            json!({
+                "status": "ok",
+                "url": url,
+                "httpStatus": http_status,
+                "durationMs": started_at.elapsed().as_millis(),
+                "contentType": content_type,
+                "body": body,
+            })
+        }
+        Err(err) => json!({
+            "status": "error",
+            "url": url,
+            "durationMs": started_at.elapsed().as_millis(),
+            "error": err.to_string(),
+        }),
+    }
+}
+
+fn unix_millis_snapshot() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
+async fn export_diagnostics_with_dialog(
+    app: &tauri::AppHandle,
+    managed_state: &DesktopManagedCoreState,
+) -> Result<Option<DiagnosticsExportResponse>> {
+    let destination_root = tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new()
+            .set_title("Export MCPMate Diagnostics")
+            .pick_folder()
+    })
+    .await
+    .context("diagnostics folder picker task failed")?;
+    let Some(destination_root) = destination_root else {
+        info!("Diagnostics export canceled by user");
+        return Ok(None);
+    };
+
+    let runtime_metadata = diagnostics_runtime_metadata(app, managed_state).await;
+    let snapshot = diagnostics_snapshot(app, managed_state).await;
+    let response = diagnostics::export_diagnostics_bundle(
+        global_paths(),
+        &destination_root,
+        runtime_metadata,
+        snapshot,
+    )?;
+    info!(
+        file_count = response.file_count,
+        "Diagnostics export completed"
+    );
+    Ok(Some(response))
+}
+
 async fn sync_and_emit_core_state(
     app: &tauri::AppHandle,
     shell_state: &ShellState,
@@ -289,7 +514,8 @@ pub fn run() -> Result<()> {
     builder = builder.manage(deep_link_state);
     builder = builder.manage(desktop_managed_core_state.clone());
 
-    builder = builder.on_menu_event(|app_handle, event| {
+    let managed_state_for_app_menu = desktop_managed_core_state.clone();
+    builder = builder.on_menu_event(move |app_handle, event| {
         if event.id.as_ref() == shell::APP_MENU_CHECK_UPDATES {
             let handle = app_handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -375,6 +601,33 @@ pub fn run() -> Result<()> {
                             .dialog()
                             .message(format!("Unable to check for updates: {}", err))
                             .title("Update Check Failed")
+                            .buttons(MessageDialogButtons::Ok)
+                            .show(|_| {});
+                    }
+                }
+            });
+        } else if event.id.as_ref() == shell::APP_MENU_EXPORT_DIAGNOSTICS {
+            let handle = app_handle.clone();
+            let managed_state = managed_state_for_app_menu.clone();
+            tauri::async_runtime::spawn(async move {
+                match export_diagnostics_with_dialog(&handle, &managed_state).await {
+                    Ok(Some(response)) => {
+                        handle
+                            .dialog()
+                            .message(format!(
+                                "Diagnostics exported to:\n{}",
+                                response.export_path
+                            ))
+                            .title("Diagnostics Exported")
+                            .buttons(MessageDialogButtons::Ok)
+                            .show(|_| {});
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        handle
+                            .dialog()
+                            .message(format!("Unable to export diagnostics: {}", err))
+                            .title("Diagnostics Export Failed")
                             .buttons(MessageDialogButtons::Ok)
                             .show(|_| {});
                     }
@@ -865,6 +1118,7 @@ pub fn run() -> Result<()> {
         mcp_shell_show_operator_intro_once,
         mcp_shell_close_operator_panel,
         mcp_shell_set_operator_panel_pinned,
+        mcp_shell_record_diagnostic_event,
         deeplink::mcp_deep_link_take_pending_server_import,
         deeplink::mcp_deep_link_log_frontend_import,
         account::mcp_account_start_github_login,
@@ -1021,6 +1275,13 @@ async fn mcp_shell_set_operator_panel_pinned(
     pinned: bool,
 ) -> Result<(), String> {
     shell::set_operator_window_pinned(&app, pinned).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn mcp_shell_record_diagnostic_event(payload: DiagnosticEventPayload) -> Result<(), String> {
+    diagnostics::record_frontend_diagnostic_event(global_paths(), &payload)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -1373,6 +1634,7 @@ async fn initialize_selected_core_source(
 fn spawn_desktop_managed_core(
     app: &tauri::AppHandle,
     config: &DesktopCoreSourceConfig,
+    startup_id: &str,
 ) -> Result<Child> {
     let binary = resolve_local_core_binary(app)?;
     let base_dir = global_paths().base_dir().to_path_buf();
@@ -1386,6 +1648,7 @@ fn spawn_desktop_managed_core(
         working_directory = %base_dir.display(),
         api_port = config.localhost.api_port,
         mcp_port = config.localhost.mcp_port,
+        startup_id,
         "Spawning desktop-managed localhost core"
     );
     let mut command = Command::new(&binary);
@@ -1404,32 +1667,205 @@ fn spawn_desktop_managed_core(
         .current_dir(&base_dir)
         .env("MCPMATE_DATA_DIR", &base_dir)
         .env("MCPMATE_API_PORT", config.localhost.api_port.to_string())
-        .env("MCPMATE_MCP_PORT", config.localhost.mcp_port.to_string());
-    configure_desktop_managed_stdio(&mut command);
+        .env("MCPMATE_MCP_PORT", config.localhost.mcp_port.to_string())
+        .env("MCPMATE_STARTUP_ID", startup_id);
+    configure_desktop_managed_stdio(&mut command, startup_id)?;
 
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    let child = command
+    let mut child = command
         .spawn()
         .context("failed to spawn desktop-managed localhost core")?;
+    if let Err(err) = configure_spawned_desktop_managed_stdio(&mut child, startup_id) {
+        if let Err(cleanup_err) = cleanup_untracked_desktop_managed_child(&mut child, startup_id) {
+            warn!(
+                startup_id,
+                error = %cleanup_err,
+                "Failed to clean up desktop-managed core after stdio setup failure"
+            );
+        }
+        return Err(err).context("failed to configure desktop-managed core stdio");
+    }
     info!(
         pid = child.id(),
-        "Spawned desktop-managed localhost core process"
+        startup_id, "Spawned desktop-managed localhost core process"
     );
     Ok(child)
 }
 
-fn configure_desktop_managed_stdio(command: &mut Command) {
+fn configure_desktop_managed_stdio(command: &mut Command, startup_id: &str) -> Result<()> {
     #[cfg(debug_assertions)]
     {
-        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        tracing::debug!(
+            startup_id,
+            "Desktop-managed core stdio tee configured for debug shell"
+        );
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
 
     #[cfg(not(debug_assertions))]
     {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let stdout = open_desktop_managed_core_stdio_log(startup_id)?;
+        let stderr = stdout
+            .try_clone()
+            .context("failed to clone desktop-managed core stdio log handle")?;
+        command
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
     }
+
+    Ok(())
+}
+
+fn configure_spawned_desktop_managed_stdio(child: &mut Child, startup_id: &str) -> Result<()> {
+    #[cfg(debug_assertions)]
+    {
+        let log = Arc::new(Mutex::new(open_desktop_managed_core_stdio_log(startup_id)?));
+        if let Some(stdout) = child.stdout.take() {
+            spawn_desktop_managed_core_stdio_tee(stdout, Arc::clone(&log), startup_id, false)?;
+        }
+        if let Some(stderr) = child.stderr.take() {
+            spawn_desktop_managed_core_stdio_tee(stderr, log, startup_id, true)?;
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = child;
+        let _ = startup_id;
+    }
+
+    Ok(())
+}
+
+fn cleanup_untracked_desktop_managed_child(child: &mut Child, startup_id: &str) -> Result<()> {
+    match child.try_wait() {
+        Ok(Some(_status)) => return Ok(()),
+        Ok(None) => {}
+        Err(err) => {
+            warn!(
+                startup_id,
+                error = %err,
+                "Failed to query desktop-managed core before cleanup"
+            );
+        }
+    }
+
+    match child.kill() {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::InvalidInput => {}
+        Err(err) => {
+            return Err(err).context("failed to kill untracked desktop-managed core process");
+        }
+    }
+    child
+        .wait()
+        .context("failed to wait for untracked desktop-managed core process exit")?;
+    Ok(())
+}
+
+fn desktop_managed_core_log_file_name(startup_id: &str) -> String {
+    format!("desktop-core.{startup_id}.log")
+}
+
+fn open_desktop_managed_core_stdio_log(startup_id: &str) -> Result<File> {
+    let logs_dir = global_paths().logs_dir().to_path_buf();
+    std::fs::create_dir_all(&logs_dir)
+        .with_context(|| format!("failed to create desktop logs dir {}", logs_dir.display()))?;
+    let log_path = logs_dir.join(desktop_managed_core_log_file_name(startup_id));
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| {
+            format!(
+                "failed to open desktop-managed core stdio log {}",
+                log_path.display()
+            )
+        })?;
+    info!(
+        startup_id,
+        log_path = %log_path.display(),
+        "Desktop-managed core stdio log configured"
+    );
+    Ok(file)
+}
+
+#[cfg(debug_assertions)]
+fn spawn_desktop_managed_core_stdio_tee<R>(
+    reader: R,
+    log: Arc<Mutex<File>>,
+    startup_id: &str,
+    stderr: bool,
+) -> Result<()>
+where
+    R: Read + Send + 'static,
+{
+    let startup_id = startup_id.to_string();
+    thread::Builder::new()
+        .name(format!(
+            "mcpmate-core-{}-stdio-tee",
+            if stderr { "stderr" } else { "stdout" }
+        ))
+        .spawn(move || {
+            if let Err(err) = tee_desktop_managed_core_stdio(reader, log, stderr) {
+                warn!(
+                    startup_id,
+                    error = %err,
+                    "Desktop-managed core stdio tee stopped with error"
+                );
+            }
+        })
+        .context("failed to spawn desktop-managed core stdio tee thread")?;
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn tee_desktop_managed_core_stdio<R>(
+    mut reader: R,
+    log: Arc<Mutex<File>>,
+    stderr: bool,
+) -> Result<()>
+where
+    R: Read,
+{
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .context("failed to read desktop-managed core stdio")?;
+        if read == 0 {
+            break;
+        }
+        {
+            let mut log = log
+                .lock()
+                .map_err(|_| Error::msg("desktop-managed core stdio log lock poisoned"))?;
+            log.write_all(&buffer[..read])
+                .context("failed to write desktop-managed core stdio log")?;
+            log.flush()
+                .context("failed to flush desktop-managed core stdio log")?;
+        }
+        if stderr {
+            let mut output = std::io::stderr().lock();
+            output
+                .write_all(&buffer[..read])
+                .context("failed to write desktop-managed core stderr")?;
+            output
+                .flush()
+                .context("failed to flush desktop-managed core stderr")?;
+        } else {
+            let mut output = std::io::stdout().lock();
+            output
+                .write_all(&buffer[..read])
+                .context("failed to write desktop-managed core stdout")?;
+            output
+                .flush()
+                .context("failed to flush desktop-managed core stdout")?;
+        }
+    }
+    Ok(())
 }
 
 async fn read_desktop_managed_status(
@@ -1468,11 +1904,15 @@ async fn start_desktop_managed_core(
     if core_service::probe_localhost_core(config.localhost.api_port).await {
         return read_desktop_managed_status(state, config).await;
     }
-    let child = spawn_desktop_managed_core(app, config)?;
-    info!("Desktop-managed localhost core spawn returned successfully");
+    let startup_id = uuid::Uuid::new_v4().to_string();
+    let child = spawn_desktop_managed_core(app, config, &startup_id)?;
+    info!(
+        startup_id,
+        "Desktop-managed localhost core spawn returned successfully"
+    );
     state.replace(child).await;
 
-    spawn_core_ready_notification(app.clone(), state.clone(), config.clone());
+    spawn_core_ready_notification(app.clone(), state.clone(), config.clone(), startup_id);
 
     read_desktop_managed_status(state, config).await
 }
@@ -1481,10 +1921,16 @@ fn spawn_core_ready_notification(
     app: tauri::AppHandle,
     state: DesktopManagedCoreState,
     config: DesktopCoreSourceConfig,
+    startup_id: String,
 ) {
     tauri::async_runtime::spawn(async move {
         if let Err(err) = core_service::wait_for_localhost_core(config.localhost.api_port).await {
-            warn!(error = %err, api_port = config.localhost.api_port, "Desktop-managed localhost core did not become ready in time");
+            warn!(
+                error = %err,
+                api_port = config.localhost.api_port,
+                startup_id,
+                "Desktop-managed localhost core did not become ready in time"
+            );
             return;
         }
 
@@ -1556,10 +2002,17 @@ fn try_use_default_paths() -> Result<MCPMatePaths> {
 
 #[cfg(test)]
 mod tests {
-    use super::desktop_platform;
+    use super::{desktop_managed_core_log_file_name, desktop_platform};
 
     #[test]
     fn desktop_platform_matches_admin_discovery_values() {
         assert!(matches!(desktop_platform(), "macos" | "windows" | "linux"));
+    }
+
+    #[test]
+    fn desktop_managed_core_log_file_name_includes_startup_id() {
+        let file_name = desktop_managed_core_log_file_name("startup-123");
+
+        assert_eq!(file_name, "desktop-core.startup-123.log");
     }
 }
