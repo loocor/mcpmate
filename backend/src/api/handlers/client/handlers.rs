@@ -283,7 +283,7 @@ pub async fn config_details(
             Err(err) => {
                 warnings.push(format!("Persisted config parse metadata is invalid: {err}"));
                 degraded_reasons.push("config_file_parse_invalid".to_string());
-                Value::Null
+                parse_config_fallback(content.as_deref(), None, state.config_path())
             }
         });
 
@@ -591,15 +591,17 @@ async fn apply_client_config_request(
     };
     let preview = match state.as_ref() {
         Some(state) => {
-            let parse_rule = state.effective_config_file_parse().map_err(|err| {
-                tracing::error!(
-                    client = %request.identifier,
-                    operation,
-                    error = %err,
-                    "Invalid persisted config_file_parse while building apply preview"
-                );
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+            let parse_rule = match state.effective_config_file_parse() {
+                Ok(rule) => rule,
+                Err(err) => {
+                    tracing::warn!(
+                        client = %request.identifier,
+                        error = %err,
+                        "Invalid persisted config_file_parse while building apply preview; degrading to autodetect"
+                    );
+                    None
+                }
+            };
             parse_config_fallback(
                 Some(preview_content),
                 parse_rule.as_ref(),
