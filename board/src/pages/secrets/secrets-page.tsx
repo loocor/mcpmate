@@ -148,7 +148,14 @@ function usageLabel(
 ): string {
 	const location = usage.location;
 	if (typeof location === "string") {
-		return location;
+		const keyMap: Record<string, string> = {
+			stdio_command: "stdioCommand",
+			streamable_http_url: "httpUrl",
+			oauth_token: "oauthToken",
+		};
+		return t(`usage.location.${keyMap[location] ?? location}`, {
+			defaultValue: location,
+		});
 	}
 	if ("stdio_env" in location && typeof location.stdio_env === "object") {
 		return t("usage.location.stdioEnv", {
@@ -589,6 +596,18 @@ export function SecretsPage() {
 			<div className="space-y-4">
 				{secretsQuery.isLoading ? (
 					<div className="space-y-4">{loadingSkeleton}</div>
+				) : secretsQuery.isError ? (
+					<div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+						<p className="text-sm text-destructive">
+							{t("list.error", {
+								defaultValue: "Failed to load secrets. The secure store may be unavailable.",
+							})}
+						</p>
+						<Button variant="outline" size="sm" onClick={() => secretsQuery.refetch()}>
+							<RefreshCw className="mr-2 h-4 w-4" />
+							{t("list.retry", { defaultValue: "Retry" })}
+						</Button>
+					</div>
 				) : sortedSecrets.length === 0 ? (
 					emptyState
 				) : (

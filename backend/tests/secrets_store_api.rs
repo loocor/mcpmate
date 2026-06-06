@@ -432,3 +432,56 @@ async fn usage_sync_detects_placeholders_in_server_runtime_config() {
                 }
     }));
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn usage_sync_deduplicates_same_placeholder_twice_in_one_value() {
+    let _key = EnvVarGuard::set(
+        "MCPMATE_SECRETS_LOCAL_KEY",
+        "MCPMate test key material for local store 444444",
+    );
+    let (_temp_dir, _state, store) = build_test_context().await;
+    store
+        .create_secret(SecretCreateInput {
+            alias: "server/http/auth".to_string(),
+            kind: SecretKindInput::HeaderValue,
+            value: "Bearer runtime-token".to_string(),
+            label: None,
+            origin: None,
+        })
+        .await
+        .expect("create header secret");
+
+    // The same placeholder appears twice in one URL. Before the dedup fix,
+    // this would produce duplicate usage entries that violate the UNIQUE
+    // constraint on (alias, server_id, location_kind, location_name, location_index).
+    let config = MCPServerConfig {
+        kind: ServerType::StreamableHttp,
+        command: None,
+        args: None,
+        url: Some(
+            "https://example.test/mcp?auth=[[secret:server/http/auth]]&token=[[secret:server/http/auth]]".to_string(),
+        ),
+        env: None,
+        headers: None,
+    };
+
+    sync_server_secret_usages(store.as_ref(), "dup-server", &config)
+        .await
+        .expect("sync must succeed even with duplicate placeholders in one value");
+
+    let usages = store
+        .list_usages("server/http/auth")
+        .await
+        .expect("list usages");
+
+    // Only one usage record should exist despite the placeholder appearing twice.
+    assert_eq!(
+        usages.len(),
+        1,
+        "duplicate placeholder in one value must produce exactly one usage, got {}",
+        usages.len()
+    );
+    assert_eq!(usages[0].server_id, "dup-server");
+    assert_eq!(usages[0].location, SecretUsageLocationInput::StreamableHttpUrl);
+}

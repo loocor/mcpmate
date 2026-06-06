@@ -405,11 +405,16 @@ pub(crate) async fn delete_secret(
     pool: &Pool<Sqlite>,
     alias: &str,
 ) -> Result<()> {
-    sqlx::query("DELETE FROM secure_store_secrets WHERE alias = ?1")
+    let result = sqlx::query("DELETE FROM secure_store_secrets WHERE alias = ?1")
         .bind(alias)
         .execute(pool)
         .await
         .with_context(|| format!("delete secret '{alias}'"))?;
+
+    if result.rows_affected() == 0 {
+        bail!("Secret '{alias}' was not found");
+    }
+
     Ok(())
 }
 

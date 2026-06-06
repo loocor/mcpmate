@@ -177,9 +177,29 @@ impl LocalSecretStore {
     pub async fn replace_server_usages(
         &self,
         server_id: &str,
-        usages: Vec<SecretUsageUpsertInput>,
+        mut usages: Vec<SecretUsageUpsertInput>,
     ) -> Result<()> {
         database::replace_server_usages(&self.pool, server_id).await?;
+
+        // Deduplicate: when the same placeholder appears twice in one runtime
+        // location (e.g. a URL containing [[secret:x]] twice), the caller will
+        // push identical (alias, server_id, location) entries.  SQLite UNIQUE
+        // constraints treat NULLs as distinct, so the second upsert would hit a
+        // primary-key collision.  Sorting + dedup_by on the composite key
+        // removes exact duplicates before the upsert loop.
+        usages.sort_by(|a, b| {
+            a.alias
+                .cmp(&b.alias)
+                .then_with(|| a.server_id.cmp(&b.server_id))
+                .then_with(|| a.location.parts().0.cmp(&b.location.parts().0))
+                .then_with(|| a.location.parts().1.cmp(&b.location.parts().1))
+                .then_with(|| a.location.parts().2.cmp(&b.location.parts().2))
+        });
+        usages.dedup_by(|a, b| {
+            a.alias == b.alias
+                && a.server_id == b.server_id
+                && a.location == b.location
+        });
 
         for usage in usages {
             self.upsert_usage(usage).await?;

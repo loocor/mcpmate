@@ -51,7 +51,7 @@ export const urlParamSchema = z.object({
 	value: z.string().optional(),
 });
 
-const SECRET_PLACEHOLDER_PATTERN = /\[\[secret:[^\]]+\]\]/;
+const SECRET_PLACEHOLDER_PATTERN = /\[\[secret:[^\]]+\]\]/g;
 
 export const manualServerSchema = z
 	.object({
@@ -99,9 +99,10 @@ export const manualServerSchema = z
 				path: ["url"],
 			});
 		}
-		if (kind !== "stdio" && url && !SECRET_PLACEHOLDER_PATTERN.test(url)) {
+		if (kind !== "stdio" && url) {
+			const sanitizedUrl = url.replace(SECRET_PLACEHOLDER_PATTERN, "placeholder");
 			try {
-				new URL(url);
+				new URL(sanitizedUrl);
 			} catch {
 				ctx.addIssue({
 					code: z.ZodIssueCode.custom,

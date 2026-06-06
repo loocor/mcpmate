@@ -33,6 +33,8 @@ export const secretsTranslations = {
 			header_value: "Header value",
 		},
 		list: {
+			error: "Failed to load secrets. The secure store may be unavailable.",
+			retry: "Retry",
 			stats: {
 				provider: "Provider",
 				usage: "Usage",
@@ -139,6 +141,8 @@ export const secretsTranslations = {
 			header_value: "Header 值",
 		},
 		list: {
+			error: "加载密钥失败，安全存储可能不可用。",
+			retry: "重试",
 			stats: {
 				provider: "Provider",
 				usage: "使用",
@@ -242,6 +246,8 @@ export const secretsTranslations = {
 			header_value: "Header 値",
 		},
 		list: {
+			error: "シークレットの読み込みに失敗しました。セキュアストアが利用できない可能性があります。",
+			retry: "再試行",
 			stats: {
 				provider: "Provider",
 				usage: "使用",
