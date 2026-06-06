@@ -55,7 +55,7 @@ export function SecretPickerButton({
 					variant="ghost"
 					size="icon"
 					className={cn(
-						"opacity-0 transition-opacity group-hover/secret-field:opacity-100 group-focus-within/secret-field:opacity-100 data-[state=open]:opacity-100",
+						"opacity-0 transition-opacity group-focus-within/secret-field:opacity-100 data-[state=open]:opacity-100",
 						className,
 					)}
 					aria-label={t("manual.secrets.pick", { defaultValue: "Use secret" })}

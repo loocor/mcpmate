@@ -4,12 +4,13 @@ import { Input } from "../../ui/input";
 import { FieldList } from "../field-list";
 import { SecretPickerButton } from "../secret-picker-button";
 import type { SecretOrigin } from "../../../lib/types";
+import { GHOST_INPUT_CLASS } from "../types";
 import type { ManualServerFormValues } from "../types";
 
 interface UrlParamsProps {
 	viewMode: "form" | "json";
 	isStdio: boolean;
-	urlParamFields: Array<{ id: string; [key: string]: unknown }>;
+	urlParamFields: Array<{ id: string;[key: string]: unknown }>;
 	removeUrlParam: (index: number) => void;
 	appendUrlParam: (value: { key: string; value: string }) => void;
 	register: UseFormRegister<ManualServerFormValues>;
@@ -56,7 +57,7 @@ export function UrlParams({
 								onClick={() =>
 									onGhostClick(() => appendUrlParam({ key: "", value: "" }))
 								}
-								className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+								className={GHOST_INPUT_CLASS}
 								readOnly
 							/>
 							<Input
@@ -66,7 +67,7 @@ export function UrlParams({
 								onClick={() =>
 									onGhostClick(() => appendUrlParam({ key: "", value: "" }))
 								}
-								className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+								className={GHOST_INPUT_CLASS}
 								readOnly
 							/>
 						</div>
@@ -80,29 +81,27 @@ export function UrlParams({
 								defaultValue: "Parameter",
 							})}
 						/>
-						<div className="relative">
-							<Input
-								{...register(`urlParams.${index}.value` as const)}
-								placeholder={t("manual.fields.common.valuePlaceholder", {
-									defaultValue: "Value",
-								})}
-								className="pr-20"
-							/>
-							<SecretPickerButton
-								className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
-								origin={{
-									...secretOriginBase,
-									field_group: "url_params",
-									field_key:
-										typeof field.key === "string" ? field.key : undefined,
-									field_index: index,
-									field_path: `urlParams.${index}.value`,
-								}}
-								onSelect={(placeholder) =>
-									onSecretSelect?.(`urlParams.${index}.value`, placeholder)
-								}
-							/>
-						</div>
+						<Input
+							{...register(`urlParams.${index}.value` as const)}
+							placeholder={t("manual.fields.common.valuePlaceholder", {
+								defaultValue: "Value",
+							})}
+							className="pr-20"
+						/>
+						<SecretPickerButton
+							className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
+							origin={{
+								...secretOriginBase,
+								field_group: "url_params",
+								field_key:
+									typeof field.key === "string" ? field.key : undefined,
+								field_index: index,
+								field_path: `urlParams.${index}.value`,
+							}}
+							onSelect={(placeholder) =>
+								onSecretSelect?.(`urlParams.${index}.value`, placeholder)
+							}
+						/>
 					</div>
 				);
 			}}

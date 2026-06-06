@@ -4,13 +4,14 @@ import { Input } from "../../ui/input";
 import { FieldList } from "../field-list";
 import { SecretPickerButton } from "../secret-picker-button";
 import type { SecretOrigin } from "../../../lib/types";
+import { GHOST_INPUT_CLASS } from "../types";
 import type { ManualServerFormValues } from "../types";
 
 interface StdioAdvancedProps {
 	viewMode: "form" | "json";
 	isStdio: boolean;
-	argFields: Array<{ id: string; [key: string]: unknown }>;
-	envFields: Array<{ id: string; [key: string]: unknown }>;
+	argFields: Array<{ id: string;[key: string]: unknown }>;
+	envFields: Array<{ id: string;[key: string]: unknown }>;
 	removeArg: (index: number) => void;
 	removeEnv: (index: number) => void;
 	appendArg: (value: { value: string }) => void;
@@ -58,7 +59,7 @@ export function StdioAdvanced({
 									defaultValue: "Add a new argument",
 								})}
 								onClick={() => onGhostClick(() => appendArg({ value: "" }))}
-								className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+								className={GHOST_INPUT_CLASS}
 								readOnly
 							/>
 						);
@@ -108,7 +109,7 @@ export function StdioAdvanced({
 									onClick={() =>
 										onGhostClick(() => appendEnv({ key: "", value: "" }))
 									}
-									className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+									className={GHOST_INPUT_CLASS}
 									readOnly
 								/>
 								<Input
@@ -118,7 +119,7 @@ export function StdioAdvanced({
 									onClick={() =>
 										onGhostClick(() => appendEnv({ key: "", value: "" }))
 									}
-									className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+									className={GHOST_INPUT_CLASS}
 									readOnly
 								/>
 							</div>
@@ -132,29 +133,27 @@ export function StdioAdvanced({
 									defaultValue: "KEY",
 								})}
 							/>
-							<div className="relative">
-								<Input
-									{...register(`env.${index}.value` as const)}
-									placeholder={t("manual.fields.common.valuePlaceholder", {
-										defaultValue: "Value",
-									})}
-									className="pr-20"
-								/>
-								<SecretPickerButton
-									className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
-									origin={{
-										...secretOriginBase,
-										field_group: "env",
-										field_key:
-											typeof field.key === "string" ? field.key : undefined,
-										field_index: index,
-										field_path: `env.${index}.value`,
-									}}
-									onSelect={(placeholder) =>
-										onSecretSelect?.(`env.${index}.value`, placeholder)
-									}
-								/>
-							</div>
+							<Input
+								{...register(`env.${index}.value` as const)}
+								placeholder={t("manual.fields.common.valuePlaceholder", {
+									defaultValue: "Value",
+								})}
+								className="pr-20"
+							/>
+							<SecretPickerButton
+								className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
+								origin={{
+									...secretOriginBase,
+									field_group: "env",
+									field_key:
+										typeof field.key === "string" ? field.key : undefined,
+									field_index: index,
+									field_path: `env.${index}.value`,
+								}}
+								onSelect={(placeholder) =>
+									onSecretSelect?.(`env.${index}.value`, placeholder)
+								}
+							/>
 						</div>
 					);
 				}}

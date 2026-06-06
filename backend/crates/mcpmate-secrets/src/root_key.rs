@@ -266,13 +266,13 @@ impl SecretRootKeyProvider for LocalFileRootKeyProvider {
 
 #[derive(Debug, Clone)]
 pub struct DevelopmentRootKeyProvider {
-    local_key_path: PathBuf,
+    fallback: LocalFileRootKeyProvider,
 }
 
 impl DevelopmentRootKeyProvider {
     pub fn new(local_key_path: impl Into<PathBuf>) -> Self {
         Self {
-            local_key_path: local_key_path.into(),
+            fallback: LocalFileRootKeyProvider::new(local_key_path),
         }
     }
 }
@@ -294,7 +294,7 @@ impl SecretRootKeyProvider for DevelopmentRootKeyProvider {
             }
         }
 
-        load_or_create_local_file_root_key(&self.local_key_path).map_err(|err| match err {
+        self.fallback.load_or_create_root_key().map_err(|err| match err {
             SecretRootKeyError::LocalStorage(message) => SecretRootKeyError::DevelopmentStorage(message),
             other => other,
         })

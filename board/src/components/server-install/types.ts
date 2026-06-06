@@ -7,6 +7,9 @@ import type { SegmentOption } from "../ui/segment";
 export const DEFAULT_INGEST_MESSAGE =
 	"Drop JSON/TOML/Text or MCP bundles (WIP) to begin";
 
+export const GHOST_INPUT_CLASS =
+	"border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer";
+
 // Server type options for Segment component
 export const SERVER_TYPE_OPTIONS: SegmentOption[] = [
 	{ value: "stdio", label: "Stdio" },
