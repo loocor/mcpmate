@@ -286,6 +286,8 @@ impl FileTemplateSource {
         Ok(entries)
     }
 
+    /// Parse repo-authored client template files. These stay strict by extension and do not use
+    /// `document::parse_config`, which applies the read-tolerant JSON policy for user configs.
     async fn parse_template_file(
         &self,
         path: &Path,

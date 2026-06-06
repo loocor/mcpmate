@@ -1,7 +1,5 @@
-use crate::clients::document::parse_config_to_json_value;
-use crate::clients::models::{
-    CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat,
-};
+use crate::clients::document::parse_config_lenient;
+use crate::clients::models::{CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ContainerType, FormatRule};
 use crate::clients::utils::get_nested_value;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -157,19 +155,7 @@ pub(crate) fn inspect_config_content(
     parse_rule: &ClientConfigFileParse,
     transports: Option<&HashMap<String, FormatRule>>,
 ) -> ConfigInspectionReport {
-    let document = if content.is_empty() {
-        Value::Null
-    } else {
-        parse_config_to_json_value(content, Some(parse_rule.format.as_str()))
-            .or_else(|| {
-                if matches!(parse_rule.format, TemplateFormat::Json) {
-                    parse_config_to_json_value(content, Some("json5"))
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(Value::Null)
-    };
+    let document = parse_config_lenient(content, parse_rule);
     let inspection = inspect_config_value(&document, parse_rule, transports);
     let analysis = config_analysis_from_inspection(&inspection);
 

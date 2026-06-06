@@ -52,9 +52,6 @@ pub enum ConfigError {
     #[error("Configuration storage adapter not registered: {0}")]
     StorageAdapterMissing(String),
 
-    #[error("Renderer not registered: {0}")]
-    RendererMissing(String),
-
     #[error("Template conflict: {identifier}")]
     TemplateConflict { identifier: String },
 

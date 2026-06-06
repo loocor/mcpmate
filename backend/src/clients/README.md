@@ -129,6 +129,31 @@ The file storage adapter also exposes `PathService::atomic_write_with_backup(ide
 
 Policy changes are surfaced through `/api/client/backups/policy` and drive retention for both automated renders and manual restores.
 
+## Client Config File I/O Contract
+
+All user-managed client configuration file parsing, serialization, persistence, and value-level mutations must go through `src/clients/document.rs` and `src/clients/mutate.rs`.
+
+| Operation          | Entry point               | Used by                                       |
+| ------------------ | ------------------------- | --------------------------------------------- |
+| Read raw text      | `read_config_file`        | Parse-rule inspection, import path overrides  |
+| Parse (strict)     | `parse_config`            | Detach, apply probe                           |
+| Parse (lenient)    | `parse_config_lenient`    | Inspection                                    |
+| Parse (fallback)   | `parse_config_fallback`   | Config details when inspect is unavailable    |
+| Parse (merge base) | `parse_config_for_merge`  | Attach/apply merge                            |
+| Parse (autodetect) | `parse_config_autodetect` | Parse Rules wizard                            |
+| Serialize          | `serialize_config`        | Low-level value serialization                 |
+| Serialize document | `serialize_document`      | Attach/apply dry-run, detach preview          |
+| Persist document   | `persist_config_document` | Attach/apply, detach                          |
+| Merge fragment     | `merge_config_document`   | Attach/apply (`engine.render_config`)         |
+| Remove managed     | `remove_managed_entries`  | Detach (`ClientConfigService::detach_client`) |
+
+Intentionally excluded from this contract:
+
+- Repo-authored template catalogs in `source.rs` (strict parsing by file extension).
+- Backup restore in `storage.rs` (raw snapshot copy without re-serialization).
+
+Declared `json` configs use read-tolerant / write-strict semantics: rule-bound and path-hinted reads use `JsonReadPolicy::Tolerant` inside `parse_config_for_format`, while autodetect format guessing uses `JsonReadPolicy::Strict` so JSON5-only files are not misclassified as JSON. Writes always emit strict JSON for declared `json`.
+
 ## Supporting Types
 
 All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
@@ -145,7 +170,7 @@ All enums/structs are defined in `src/clients/models.rs`.  Key type mappings:
 3. Provide platform paths under `config.file.paths.{macos,windows,linux}`.
 4. Provide `config.file.format` and `config.file.container.{type,keys}`.
 5. Register supported render rules under `config.transports`.
-6. Add mapper/service tests in `clients::admin_discovery` or focused service modules when the Admin contract changes.
+6. Add mapper/service tests in `clients::discovery` or focused service modules when the Admin contract changes.
 
 ## Runtime Flow
 
@@ -188,7 +213,7 @@ When `ClientConfigService::list_clients()` detects an installed application with
 - **`POST /api/client/manage/approve`**
   - Sets `approval_status = 'approved'`
   - Enables configuration operations for the client
-  
+
 - **`POST /api/client/manage/suspend`**
   - Sets `approval_status = 'suspended'`
   - Disables management without deleting the record
