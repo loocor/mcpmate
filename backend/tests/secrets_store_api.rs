@@ -105,9 +105,39 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
         oauth_manager: None,
         secret_store: Some(secret_store.clone()),
+        secret_store_readiness: mcpmate::core::secrets::store::SecretStoreReadiness::ready(
+            secret_store.provider_metadata(),
+        ),
     });
 
     (temp_dir, state, secret_store)
+}
+
+fn build_unavailable_secret_store_state(temp_dir: &TempDir) -> Arc<AppState> {
+    let redb_cache =
+        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
+
+    Arc::new(AppState {
+        connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
+            Arc::new(Config::default()),
+            None,
+        ))),
+        metrics_collector: Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1))),
+        http_proxy: None,
+        profile_merge_service: None,
+        database: None,
+        audit_database: None,
+        audit_service: None,
+        config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+        redb_cache,
+        unified_query: None,
+        client_service: None,
+        inspector_calls: Arc::new(InspectorCallRegistry::new()),
+        inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        oauth_manager: None,
+        secret_store: None,
+        secret_store_readiness: mcpmate::api::routes::unavailable_secret_store_readiness("database_unavailable"),
+    })
 }
 
 #[tokio::test]
@@ -163,6 +193,60 @@ async fn local_store_encrypts_values_and_resolves_runtime_placeholders() {
             .map(String::as_str),
         Some("ghp_runtime_token")
     );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn secret_store_status_reports_ready_provider() {
+    let _key = EnvVarGuard::set(
+        "MCPMATE_SECRETS_LOCAL_KEY",
+        "MCPMate test key material for local store status ready",
+    );
+    let (_temp_dir, state, _store) = build_test_context().await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/secrets/status")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("status response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json_response(response).await;
+    assert_eq!(body["data"]["status"], "ready");
+    assert_eq!(body["data"]["provider"]["provider_mode"], "development");
+    assert_eq!(body["data"]["provider"]["security_level"], "development");
+    assert!(body["data"].get("issue").is_none());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn secret_store_status_reports_unavailable_without_failing() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_unavailable_secret_store_state(&temp_dir);
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/secrets/status")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("status response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json_response(response).await;
+    assert_eq!(body["data"]["status"], "unavailable");
+    assert_eq!(body["data"]["issue"]["reason_code"], "database_unavailable");
+    assert!(body["data"].get("provider").is_none());
 }
 
 #[tokio::test]

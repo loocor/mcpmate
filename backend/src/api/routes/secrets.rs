@@ -12,13 +12,17 @@ use crate::{
         handlers::secrets,
         models::secrets::{
             SecretCreateReq, SecretDeleteReq, SecretDeleteResp, SecretDetailsReq, SecretListResp, SecretMetadataResp,
-            SecretUpdateReq, SecretUsageListResp, SecretUsageReq,
+            SecretStoreStatusResp, SecretUpdateReq, SecretUsageListResp, SecretUsageReq,
         },
     },
 };
 
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
+        .api_route(
+            "/secrets/status",
+            get_with(get_secret_store_status_aide, get_secret_store_status_docs),
+        )
         .api_route("/secrets/list", get_with(list_secrets_aide, list_secrets_docs))
         .api_route(
             "/secrets/details",
@@ -38,6 +42,12 @@ aide_wrapper!(
     secrets::list_secrets,
     SecretListResp,
     "List secure-store secret metadata"
+);
+
+aide_wrapper!(
+    secrets::get_secret_store_status,
+    SecretStoreStatusResp,
+    "Get secure-store readiness status"
 );
 
 aide_wrapper_query!(

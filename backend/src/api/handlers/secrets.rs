@@ -10,16 +10,26 @@ use crate::{
         handlers::ApiError,
         models::secrets::{
             SecretCreateReq, SecretDeleteData, SecretDeleteReq, SecretDeleteResp, SecretDetailsReq, SecretKindPayload,
-            SecretListData, SecretListResp, SecretMetadataData, SecretMetadataResp, SecretOriginData, SecretUpdateReq,
-            SecretUsageData, SecretUsageListData, SecretUsageListResp, SecretUsageLocationData, SecretUsageReq,
+            SecretListData, SecretListResp, SecretMetadataData, SecretMetadataResp, SecretOriginData,
+            SecretStoreIssueData, SecretStoreProviderData, SecretStoreStatusData, SecretStoreStatusResp,
+            SecretUpdateReq, SecretUsageData, SecretUsageListData, SecretUsageListResp, SecretUsageLocationData,
+            SecretUsageReq,
         },
         routes::AppState,
     },
     core::secrets::store::{
-        SecretCreateInput, SecretKindInput, SecretMetadataView, SecretOriginInput, SecretUpdateInput,
-        SecretUsageLocationInput, SecretUsageView,
+        SecretCreateInput, SecretKindInput, SecretMetadataView, SecretOriginInput, SecretStoreReadiness,
+        SecretUpdateInput, SecretUsageLocationInput, SecretUsageView,
     },
 };
+
+pub async fn get_secret_store_status(
+    State(state): State<Arc<AppState>>
+) -> Result<Json<SecretStoreStatusResp>, ApiError> {
+    Ok(Json(SecretStoreStatusResp::success(secret_store_status_data(
+        &state.secret_store_readiness,
+    ))))
+}
 
 pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<SecretListResp>, ApiError> {
     let store = get_secret_store(&state)?;
@@ -191,6 +201,34 @@ fn secret_usage_data(usage: SecretUsageView) -> SecretUsageData {
         alias: usage.alias,
         server_id: usage.server_id,
         location: secret_usage_location_data(usage.location),
+    }
+}
+
+fn secret_store_status_data(readiness: &SecretStoreReadiness) -> SecretStoreStatusData {
+    match readiness {
+        SecretStoreReadiness::Ready {
+            provider_id,
+            provider_kind,
+            provider_mode,
+            security_level,
+        } => SecretStoreStatusData {
+            status: "ready".to_string(),
+            provider: Some(SecretStoreProviderData {
+                provider_id: provider_id.clone(),
+                provider_kind: provider_kind.clone(),
+                provider_mode: provider_mode.clone(),
+                security_level: security_level.clone(),
+            }),
+            issue: None,
+        },
+        SecretStoreReadiness::Unavailable { reason_code, message } => SecretStoreStatusData {
+            status: "unavailable".to_string(),
+            provider: None,
+            issue: Some(SecretStoreIssueData {
+                reason_code: reason_code.clone(),
+                message: message.clone(),
+            }),
+        },
     }
 }
 

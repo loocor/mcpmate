@@ -110,6 +110,29 @@ pub struct SecretUsageData {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SecretStoreProviderData {
+    pub provider_id: String,
+    pub provider_kind: String,
+    pub provider_mode: String,
+    pub security_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SecretStoreIssueData {
+    pub reason_code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SecretStoreStatusData {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<SecretStoreProviderData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue: Option<SecretStoreIssueData>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct SecretListData {
     pub secrets: Vec<SecretMetadataData>,
 }
@@ -129,3 +152,8 @@ api_resp!(SecretMetadataResp, SecretMetadataData, "Secret metadata response");
 api_resp!(SecretListResp, SecretListData, "Secret list response");
 api_resp!(SecretUsageListResp, SecretUsageListData, "Secret usage list response");
 api_resp!(SecretDeleteResp, SecretDeleteData, "Secret delete response");
+api_resp!(
+    SecretStoreStatusResp,
+    SecretStoreStatusData,
+    "Secret store readiness response"
+);

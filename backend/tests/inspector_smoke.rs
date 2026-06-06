@@ -83,6 +83,7 @@ fn build_test_state() -> Arc<AppState> {
         inspector_sessions,
         oauth_manager: None,
         secret_store: None,
+        secret_store_readiness: mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
     })
 }
 
@@ -129,6 +130,7 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
         oauth_manager: None,
         secret_store: None,
+        secret_store_readiness: mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
     })
 }
 
@@ -381,9 +383,7 @@ async fn temporary_validation_session_count(state: &Arc<AppState>) -> usize {
     let pool = state.connection_pool.lock().await;
     pool.validation_sessions
         .keys()
-        .filter(|session_id| {
-            session_id.starts_with(TEMPORARY_NATIVE_VALIDATION_SESSION_PREFIX)
-        })
+        .filter(|session_id| session_id.starts_with(TEMPORARY_NATIVE_VALIDATION_SESSION_PREFIX))
         .count()
 }
 

@@ -1275,6 +1275,7 @@ mod tests {
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
             secret_store: None,
+            secret_store_readiness: crate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
         });
 
         TestContext {

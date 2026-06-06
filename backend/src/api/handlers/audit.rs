@@ -278,6 +278,7 @@ mod tests {
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager: None,
             secret_store: None,
+            secret_store_readiness: crate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
         })
     }
 
