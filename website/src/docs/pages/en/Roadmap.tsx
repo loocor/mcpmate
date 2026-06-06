@@ -2,6 +2,11 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
+		title: "Usability improvements after hardening",
+		description:
+			"With the 0.2.3 stability pass in place, the next release work is reducing setup friction across onboarding, client setup, Market installs, and support feedback loops.",
+	},
+	{
 		title: "Desktop release pipeline",
 		description:
 			"We are tightening the GitHub Releases-first delivery path, including updater behavior, prerelease handling, and packaging consistency across macOS, Windows, and Linux.",
@@ -12,19 +17,14 @@ const inProgress = [
 			"macOS, Windows, and Linux desktop builds are all treated as Beta while we keep tightening installer behavior, runtime detection, and desktop polish across platforms.",
 	},
 	{
-		title: "Container and split deployment",
+		title: "Client governance and credential safety",
 		description:
-			"We are strengthening container-friendly core delivery and the separated core-server/UI story for remote or multi-machine operation.",
-	},
-	{
-		title: "Client governance polish",
-		description:
-			"Detected-client rollout, writable target validation, and apply or cleanup flows are being refined so managed client changes are easier to trust.",
+			"Detected-client rollout, writable target validation, apply or cleanup flows, and sensitive token handling are being refined so managed client changes are easier to trust.",
 	},
 	{
 		title: "Docs and onboarding alignment",
 		description:
-			"The website, Quick Start, and dashboard wording are being kept in sync with shipped behavior so setup paths stay clear while release workflows evolve.",
+			"The website, Quick Start, extension install paths, and dashboard wording are being kept in sync with shipped behavior so setup paths stay clear while release workflows evolve.",
 	},
 ];
 
@@ -38,6 +38,11 @@ const exploringNext = [
 		title: "Profile sharing",
 		description:
 			"We want teams to be able to package and reuse proven profile bundles instead of rebuilding the same capability sets repeatedly.",
+	},
+	{
+		title: "Container and split deployment polish",
+		description:
+			"Core Server and UI can already run separately; future work is making remote, container, and multi-machine operation easier to package and explain.",
 	},
 	{
 		title: "Lightweight account layer",
@@ -67,8 +72,9 @@ const Roadmap = () => {
 			<div className="space-y-6">
 				<h2>In Progress</h2>
 				<p>
-					This is the work closest to users right now: release delivery,
-					platform maturity, client rollout safety, and clearer onboarding.
+					After the 0.2.3 stability pass, the work closest to users is
+					usability polish, release delivery, platform maturity, client rollout
+					safety, and clearer onboarding.
 				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
@@ -79,20 +85,26 @@ const Roadmap = () => {
 				<h2>Recently Delivered</h2>
 				<ul className="space-y-2">
 					<li>
-						OAuth upstream support now works for Streamable HTTP MCP servers,
-						including metadata discovery, authorization flow, and token refresh.
+						Onboarding and new-client setup now use backend-maintained
+						compatibility standards so users can receive fresher matching
+						client configuration.
 					</li>
 					<li>
-						Audit Logs is live with filtering and cursor pagination, and core
-						server plus UI can now run separately for split deployments.
+						Automatic refresh foundations were strengthened, including OAuth
+						token refresh for authorized Streamable HTTP servers.
 					</li>
 					<li>
-						Market and import flows now carry richer registry metadata, better
-						preview detail, and browser-assisted snippet capture.
+						Desktop diagnostics export gives users a cleaner way to share local
+						feedback when support investigation is needed.
 					</li>
 					<li>
-						Desktop distribution now has a GitHub Releases-driven path with
-						consolidated packaging and container publishing coverage.
+						Inspector lifecycle management and Registry install handling were
+						hardened to reduce repeated work, confusing status, and broken
+						install drafts.
+					</li>
+					<li>
+						Browser extension, onboarding, and website documentation were
+						refreshed so install and upgrade paths are easier to follow.
 					</li>
 				</ul>
 

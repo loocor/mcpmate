@@ -1,5 +1,42 @@
 [
 	{
+		"version": "0.2.3",
+		"date": "2026-06-06",
+		"highlights": [
+			"MCPMate v0.2.3-beta is a stability and hardening release. This update strengthens dynamic compatibility data for onboarding and client setup, improves automatic refresh foundations including OAuth token refresh, adds desktop diagnostics for feedback, and fixes known Inspector, Registry install, extension, and documentation issues as groundwork for the next round of usability improvements."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Onboarding and new-client setup now use MCPMate's updated compatibility data so users can receive the latest matching client configuration instead of depending on stale local assumptions."
+			},
+			{
+				"type": "feat",
+				"text": "Added desktop diagnostics export so users can share cleaner local feedback when something needs support investigation."
+			},
+			{
+				"type": "fix",
+				"text": "Automatic refresh behavior was strengthened, including OAuth token refresh for Streamable HTTP servers so authorized connections can keep working after access tokens expire."
+			},
+			{
+				"type": "fix",
+				"text": "Improved the Inspector lifecycle so inspection work is faster, session state is clearer, and availability hints are less disruptive."
+			},
+			{
+				"type": "fix",
+				"text": "Fixed Registry install edge cases that could create incomplete or incorrect Market install drafts from inconsistent Registry data."
+			},
+			{
+				"type": "fix",
+				"text": "Fixed smaller client state and dashboard copy issues discovered during the stabilization pass."
+			},
+			{
+				"type": "docs",
+				"text": "Updated extension, onboarding, and website documentation so installation and upgrade paths are easier to follow."
+			}
+		]
+	},
+	{
 		"version": "0.2.2",
 		"date": "2026-06-02",
 		"highlights": [
