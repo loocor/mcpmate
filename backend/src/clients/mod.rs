@@ -7,7 +7,6 @@ pub mod document;
 pub mod engine;
 pub mod error;
 pub mod models;
-pub mod renderer;
 pub mod service;
 pub mod source;
 pub mod storage;
