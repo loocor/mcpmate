@@ -21,11 +21,15 @@ export interface RemoteOption {
 		name: string;
 		isRequired?: boolean;
 		description?: string;
+		value?: string;
+		default?: string;
 	}> | null;
 	envVars: Array<{
 		name: string;
 		isRequired?: boolean;
 		description?: string;
+		value?: string;
+		default?: string;
 	}> | null;
 	packageIdentifier: string | null;
 	packageMeta: unknown;
