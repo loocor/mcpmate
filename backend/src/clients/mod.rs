@@ -1,6 +1,7 @@
 pub mod adapters;
-pub mod admin_discovery;
+pub mod discovery;
 pub mod analyzer;
+pub mod mutate;
 pub mod detector;
 pub mod document;
 pub mod engine;

@@ -1,3 +1,5 @@
+//! Admin public discovery catalog fetch and v2 client template mapping.
+
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     ClientConfigFileParse, ClientTemplate, ConfigMapping, ContainerType, DetectionMethod, DetectionRule, FormatRule,

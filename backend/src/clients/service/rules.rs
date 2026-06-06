@@ -1,6 +1,6 @@
 use super::ClientConfigService;
 use crate::clients::analyzer::{ConfigInspectionReport, inspect_config_content, inspect_config_value};
-use crate::clients::document::{infer_format_from_path, parse_config_to_json_value};
+use crate::clients::document::{read_config_file, ClientConfigDocument, infer_format_from_path, parse_config_autodetect};
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat};
 use crate::clients::service::core::ClientStateRow;
@@ -29,12 +29,6 @@ pub struct ConfigRuleInspection {
 }
 
 #[derive(Debug, Clone)]
-struct ParsedConfigDocument {
-    format: TemplateFormat,
-    value: Value,
-}
-
-#[derive(Debug, Clone)]
 struct CandidateRule {
     path: String,
     container_type: ContainerType,
@@ -51,9 +45,7 @@ impl ClientConfigService {
         let normalized_path = get_path_service()
             .resolve_user_path(raw_path)
             .map_err(|err| ConfigError::PathResolutionError(err.to_string()))?;
-        let raw = tokio::fs::read_to_string(&normalized_path)
-            .await
-            .map_err(ConfigError::IoError)?;
+        let raw = read_config_file(normalized_path.to_string_lossy().as_ref()).await?;
         self.inspect_config_content_for_import(state, &raw, draft)
     }
 
@@ -200,22 +192,20 @@ async fn resolve_config_path(
 async fn load_document_from_raw_path(
     raw_path: &str,
     policy: ConfigPathPolicy,
-) -> ConfigResult<(String, ParsedConfigDocument)> {
+) -> ConfigResult<(String, ClientConfigDocument)> {
     let normalized_path = resolve_config_path(raw_path, policy).await?;
     let parsed = load_document_from_resolved_path(&normalized_path).await?;
     Ok((normalized_path, parsed))
 }
 
-async fn load_document_from_resolved_path(normalized_path: &str) -> ConfigResult<ParsedConfigDocument> {
-    let content = tokio::fs::read_to_string(normalized_path)
-        .await
-        .map_err(ConfigError::IoError)?;
-    parse_document(&content, Some(normalized_path))
+async fn load_document_from_resolved_path(normalized_path: &str) -> ConfigResult<ClientConfigDocument> {
+    let content = read_config_file(normalized_path).await?;
+    parse_config_autodetect(&content, Some(normalized_path))
 }
 
 fn build_rule_inspection(
     normalized_path: &str,
-    parsed: &ParsedConfigDocument,
+    parsed: &ClientConfigDocument,
     draft: Option<&ClientConfigFileParse>,
 ) -> ConfigRuleInspection {
     let inferred_parse = infer_rule_from_document(&parsed.value, parsed.format);
@@ -255,44 +245,6 @@ fn ensure_format_matches(
     }
 
     Ok(validation)
-}
-
-fn parse_document(
-    content: &str,
-    path_hint: Option<&str>,
-) -> ConfigResult<ParsedConfigDocument> {
-    let hinted = infer_format_from_path(path_hint);
-    let try_order = build_parse_order(hinted);
-
-    for format in try_order {
-        if let Some(value) = parse_config_to_json_value(content, Some(format.as_str())) {
-            return Ok(ParsedConfigDocument { format, value });
-        }
-    }
-
-    Err(ConfigError::DataAccessError(
-        "Unable to parse the selected configuration file as json, json5, toml, or yaml.".to_string(),
-    ))
-}
-
-fn build_parse_order(hinted: Option<TemplateFormat>) -> Vec<TemplateFormat> {
-    let mut order = Vec::new();
-    if let Some(format) = hinted {
-        order.push(format);
-    }
-
-    for format in [
-        TemplateFormat::Json,
-        TemplateFormat::Json5,
-        TemplateFormat::Toml,
-        TemplateFormat::Yaml,
-    ] {
-        if !order.contains(&format) {
-            order.push(format);
-        }
-    }
-
-    order
 }
 
 fn validate_rule_against_document(

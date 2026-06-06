@@ -1,6 +1,7 @@
 use crate::clients::TemplateEngine;
-use crate::clients::admin_discovery::{admin_discovery_base_url, fetch_admin_discovery_client_templates};
 use crate::clients::detector::{ClientDetector, DetectedClient};
+use crate::clients::discovery::{admin_discovery_base_url, fetch_admin_discovery_client_templates};
+use crate::clients::document::{map_config_file_error, parse_config, persist_config_document};
 use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
@@ -9,11 +10,10 @@ use crate::clients::models::{
     ClientRenderDefinition, ClientTemplate, ConfigMapping, ConfigMode, FormatRule, ManagedEndpointConfig,
     MergeStrategy, ServerTemplateInput, StorageConfig, StorageKind, TemplateFormat,
 };
+use crate::clients::mutate::remove_managed_entries;
 #[cfg(test)]
 use crate::clients::source::FileTemplateSource;
 use crate::clients::source::{ClientConfigSource, DbTemplateSource};
-use crate::clients::utils::get_nested_value_mut;
-use crate::common::constants::{client_headers, profile_keys};
 use crate::system::paths::{PathService, get_path_service};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -710,43 +710,6 @@ impl ClientConfigService {
         storage.read(config_path).await
     }
 
-    fn parse_detach_config(
-        raw_content: &str,
-        format: &str,
-    ) -> ConfigResult<serde_json::Value> {
-        match format {
-            "json5" => json5::from_str(raw_content)
-                .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}"))),
-            "yaml" => serde_yaml::from_str(raw_content)
-                .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}"))),
-            "toml" => {
-                let value: toml::Value = toml::from_str(raw_content)
-                    .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}")))?;
-                serde_json::to_value(value)
-                    .map_err(|err| ConfigError::DataAccessError(format!("Failed to convert TOML for detach: {err}")))
-            }
-            _ => serde_json::from_str(raw_content)
-                .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse config for detach: {err}"))),
-        }
-    }
-
-    fn serialize_detach_config(
-        value: &serde_json::Value,
-        format: &str,
-    ) -> ConfigResult<String> {
-        match format {
-            "json5" => json5::to_string(value)
-                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
-            "yaml" => serde_yaml::to_string(value)
-                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
-            "toml" => toml::to_string(value)
-                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
-            _ => serde_json::to_string_pretty(value)
-                .map(|content| content.replace("\\/", "/"))
-                .map_err(|err| ConfigError::DataAccessError(format!("Failed to serialize detached config: {err}"))),
-        }
-    }
-
     /// Detach MCPMate from a client's external configuration while preserving MCPMate-side settings.
     pub async fn detach_client(
         &self,
@@ -775,20 +738,21 @@ impl ClientConfigService {
                 client_id
             ))
         })?;
-        let format = parse_rule.format.as_str();
-        let parsed = Self::parse_detach_config(&raw_content, format)?;
-        let (filtered, changed) = filter_mcp_mate_entries(
-            parsed,
-            &parse_rule.container_keys,
-            matches!(parse_rule.container_type, crate::clients::models::ContainerType::Array),
-        );
+        let document = parse_config(&raw_content, &parse_rule)
+            .map_err(|err| map_config_file_error("Failed to parse config for detach", err))?;
+        let (updated, changed) = remove_managed_entries(document, &parse_rule);
 
         if changed {
-            let output = Self::serialize_detach_config(&filtered, format)?;
             let storage = self.template_engine.storage_for_client(&state)?;
-            storage
-                .write_atomic(client_id, config_path, &output, &BackupPolicySetting::default())
-                .await?;
+            persist_config_document(
+                &storage,
+                client_id,
+                config_path,
+                &updated,
+                &BackupPolicySetting::default(),
+            )
+            .await
+            .map_err(|err| map_config_file_error("Failed to persist detached config", err))?;
         }
 
         self.mark_client_detached(client_id).await?;
@@ -1153,58 +1117,6 @@ impl ClientConfigService {
     }
 }
 
-fn filter_mcp_mate_entries(
-    mut value: serde_json::Value,
-    container_keys: &[String],
-    is_array: bool,
-) -> (serde_json::Value, bool) {
-    let mut changed = false;
-    for key in container_keys {
-        if let Some(container) = get_nested_value_mut(&mut value, key) {
-            if is_array {
-                if let Some(entries) = container.as_array_mut() {
-                    let before_len = entries.len();
-                    entries.retain(|entry| !is_attached_server_entry(entry));
-                    changed |= entries.len() != before_len;
-                }
-            } else if let Some(entries) = container.as_object_mut() {
-                let before_len = entries.len();
-                entries.retain(|name, entry| !is_attached_server_name(name) && !is_attached_server_entry(entry));
-                changed |= entries.len() != before_len;
-            }
-        }
-    }
-    (value, changed)
-}
-
-fn is_attached_server_name(name: &str) -> bool {
-    name.eq_ignore_ascii_case(profile_keys::MCPMATE)
-}
-
-fn is_attached_server_entry(entry: &serde_json::Value) -> bool {
-    let Some(object) = entry.as_object() else {
-        return false;
-    };
-
-    if object
-        .get("name")
-        .and_then(|name| name.as_str())
-        .map(is_attached_server_name)
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    object
-        .get("headers")
-        .and_then(|headers| headers.as_object())
-        .map(|headers| {
-            headers.contains_key(client_headers::MCPMATE_CLIENT_ID)
-                || headers.contains_key(client_headers::MCPMATE_PROFILE_ID)
-        })
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod render_definition_tests {
     use super::*;
@@ -1321,45 +1233,95 @@ mod render_definition_tests {
         assert!(error.to_string().contains("missing persisted transports"));
     }
 
-    #[test]
-    fn filter_mcp_mate_entries_removes_attached_object_entry_from_recorded_container() {
-        let config = serde_json::json!({
-            "servers": {
-                "MCPMate": {
-                    "type": "streamable_http",
-                    "url": "http://127.0.0.1:8000/mcp?client_id=client"
+    #[tokio::test]
+    async fn detach_client_rewrites_json5_style_declared_json_config() {
+        use crate::clients::models::AttachmentState;
+        use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
+        use crate::config::client::init::initialize_client_table;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let config_path = temp_dir.path().join("zed-settings.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{
+                "context_servers": {
+                    "MCPMate": {
+                        "command": "bridge",
+                    },
+                    "other": {
+                        "command": "node",
+                    },
                 },
-                "other": {
-                    "type": "stdio",
-                    "command": "other"
-                }
-            }
-        });
+            }"#,
+        )
+        .await
+        .expect("write json5-style config");
 
-        let (filtered, changed) = filter_mcp_mate_entries(config, &["servers".to_string()], false);
+        let pool = Arc::new(
+            SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .expect("sqlite pool"),
+        );
+        initialize_client_table(pool.as_ref()).await.expect("init client table");
 
+        let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
+        let source = Arc::new(
+            FileTemplateSource::bootstrap(template_root)
+                .await
+                .expect("template source"),
+        );
+        ClientConfigService::seed_runtime_template_snapshots(pool.as_ref(), source.as_ref())
+            .await
+            .expect("seed runtime templates");
+
+        let client_id = "zed.detach.integration";
+        let generated_id = crate::generate_id!("clnt");
+        sqlx::query(
+            r#"
+            INSERT INTO client (
+                id, name, display_name, identifier, config_path, backup_policy, backup_limit,
+                approval_status, governance_kind, connection_mode, attachment_state,
+                config_format, container_type, container_keys, storage_kind, storage_path_strategy
+            )
+            VALUES (?, 'Zed', 'Zed', ?, ?, 'keep_n', 5, 'approved', 'passive', 'local_config_detected', 'attached',
+                    'json', 'object', ?, 'file', 'config_path')
+            "#,
+        )
+        .bind(&generated_id)
+        .bind(client_id)
+        .bind(config_path.to_string_lossy().to_string())
+        .bind(r#"["context_servers"]"#)
+        .execute(pool.as_ref())
+        .await
+        .expect("insert client row");
+
+        let runtime_source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(pool.clone()).expect("runtime source"));
+        let service = ClientConfigService::with_source(pool, runtime_source)
+            .await
+            .expect("client config service");
+
+        let changed = service.detach_client(client_id).await.expect("detach client");
         assert!(changed);
-        assert!(filtered["servers"].get("MCPMate").is_none());
-        assert!(filtered["servers"].get("other").is_some());
-    }
 
-    #[test]
-    fn filter_mcp_mate_entries_removes_attached_array_entry_from_recorded_nested_container() {
-        let config = serde_json::json!({
-            "mcp": {
-                "servers": [
-                    { "name": "MCPMate", "type": "stdio" },
-                    { "name": "other", "type": "stdio" }
-                ]
-            }
-        });
+        let written = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read detached config");
+        let parsed: serde_json::Value = serde_json::from_str(&written).expect("detached file should be strict JSON");
+        assert!(parsed["context_servers"].get("MCPMate").is_none());
+        assert_eq!(parsed["context_servers"]["other"]["command"], "node");
 
-        let (filtered, changed) = filter_mcp_mate_entries(config, &["mcp.servers".to_string()], true);
-
-        assert!(changed);
-        let servers = filtered["mcp"]["servers"].as_array().expect("servers array");
-        assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0]["name"], "other");
+        let state = service
+            .fetch_state(client_id)
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert_eq!(state.attachment_state(), AttachmentState::Detached);
     }
 
     #[tokio::test]
@@ -1511,22 +1473,19 @@ mod render_definition_tests {
         ClientConfigService::seed_runtime_template_snapshots_from_templates(&pool, &[cached_template])
             .await
             .expect("seed cached runtime template");
-        let previous = std::env::var(crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV).ok();
+        let previous = std::env::var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV).ok();
         unsafe {
-            std::env::set_var(
-                crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV,
-                server.uri(),
-            );
+            std::env::set_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV, server.uri());
         }
 
         let result = ClientConfigService::bootstrap(Arc::new(pool.clone())).await;
 
         match previous {
             Some(value) => unsafe {
-                std::env::set_var(crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV, value);
+                std::env::set_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV, value);
             },
             None => unsafe {
-                std::env::remove_var(crate::clients::admin_discovery::ADMIN_DISCOVERY_BASE_URL_ENV);
+                std::env::remove_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV);
             },
         }
         let service = result.expect("bootstrap should continue without Admin discovery data");

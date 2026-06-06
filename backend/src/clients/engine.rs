@@ -1,9 +1,10 @@
+use crate::clients::document::{map_config_file_error, persist_config_document, serialize_document};
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
     BackupPolicySetting, CONFIG_TRANSPORT_PRIORITY, ClientRenderDefinition, ConfigMode, ContainerType,
-    ServerTemplateInput, StorageKind, TemplateFormat,
+    ServerTemplateInput, StorageKind,
 };
-use crate::clients::renderer::{ConfigDiff, DynConfigRenderer};
+use crate::clients::mutate::{ConfigDiff, config_content_diff, merge_config_document};
 use crate::clients::source::ClientConfigSource;
 use crate::clients::storage::{DynConfigStorage, FileConfigStorage};
 use crate::common::constants::{client_headers, profile_keys};
@@ -45,11 +46,10 @@ pub struct RenderRequest<'a> {
     pub preferred_transport: Option<String>,
 }
 
-/// Template engine, responsible for coordinating template, renderer and storage adapter
+/// Template engine, responsible for coordinating template rendering, config mutation, and storage.
 pub struct TemplateEngine {
     handlebars: Handlebars<'static>,
     config_source: Arc<dyn ClientConfigSource>,
-    renderers: HashMap<TemplateFormat, DynConfigRenderer>,
     storages: HashMap<StorageKind, DynConfigStorage>,
 }
 
@@ -62,27 +62,15 @@ impl TemplateEngine {
         Self {
             handlebars,
             config_source,
-            renderers: HashMap::new(),
             storages: HashMap::new(),
         }
     }
 
-    /// Build a template engine with default renderer and file storage
+    /// Build a template engine with default file storage.
     pub fn with_defaults(config_source: Arc<dyn ClientConfigSource>) -> Self {
         let mut engine = Self::new(config_source.clone());
-        engine.register_renderer(crate::clients::renderer::StructuredRenderer::new(TemplateFormat::Json));
-        engine.register_renderer(crate::clients::renderer::StructuredRenderer::new(TemplateFormat::Json5));
-        engine.register_renderer(crate::clients::renderer::StructuredRenderer::new(TemplateFormat::Toml));
-        engine.register_renderer(crate::clients::renderer::StructuredRenderer::new(TemplateFormat::Yaml));
         engine.register_storage(Arc::new(FileConfigStorage::new()));
         engine
-    }
-
-    pub fn register_renderer(
-        &mut self,
-        renderer: DynConfigRenderer,
-    ) {
-        self.renderers.insert(renderer.format(), renderer);
     }
 
     pub fn register_storage(
@@ -102,16 +90,6 @@ impl TemplateEngine {
 
     pub fn config_source(&self) -> &Arc<dyn ClientConfigSource> {
         &self.config_source
-    }
-
-    fn resolve_renderer(
-        &self,
-        definition: &ClientRenderDefinition,
-    ) -> ConfigResult<DynConfigRenderer> {
-        self.renderers
-            .get(&definition.format)
-            .cloned()
-            .ok_or_else(|| ConfigError::RendererMissing(definition.format.as_str().to_string()))
     }
 
     fn resolve_storage(
@@ -170,7 +148,6 @@ impl TemplateEngine {
         request: RenderRequest<'_>,
     ) -> ConfigResult<TemplateExecutionResult> {
         let definition = request.definition;
-        let renderer = self.resolve_renderer(definition)?;
         let storage = self.resolve_storage(definition)?;
 
         let fragment = match request.mode {
@@ -184,19 +161,26 @@ impl TemplateEngine {
         };
 
         let existing = storage.read(request.config_path).await?.unwrap_or_default();
-        let merged = renderer.merge(&existing, &fragment, definition)?;
+        let document = merge_config_document(&existing, &fragment, definition)
+            .map_err(|err| map_config_file_error("Failed to parse config for apply", err))?;
 
         if request.dry_run {
-            let diff = renderer.diff(&existing, &merged)?;
-            Ok(TemplateExecutionResult::DryRun { diff, content: merged })
+            let content = serialize_document(&document)
+                .map_err(|err| map_config_file_error("Failed to serialize config for apply", err))?;
+            let diff = config_content_diff(&existing, &content, definition.format)
+                .map_err(|err| map_config_file_error("Failed to diff config for apply", err))?;
+            Ok(TemplateExecutionResult::DryRun { diff, content })
         } else {
-            let backup_path = storage
-                .write_atomic(request.client_id, request.config_path, &merged, request.backup_policy)
-                .await?;
-            Ok(TemplateExecutionResult::Applied {
-                backup_path,
-                content: merged,
-            })
+            let (backup_path, content) = persist_config_document(
+                &storage,
+                request.client_id,
+                request.config_path,
+                &document,
+                request.backup_policy,
+            )
+            .await
+            .map_err(|err| map_config_file_error("Failed to persist config for apply", err))?;
+            Ok(TemplateExecutionResult::Applied { backup_path, content })
         }
     }
 
@@ -609,7 +593,7 @@ mod tests {
 
     use crate::clients::models::{
         ClientTemplate, ConfigMapping, ContainerType, FormatRule, ManagedEndpointConfig, MergeStrategy, StorageConfig,
-        StorageKind,
+        StorageKind, TemplateFormat,
     };
 
     struct MemorySource {
@@ -1036,5 +1020,90 @@ mod tests {
                 .to_string()
                 .contains("missing format rule for transport streamable_http")
         );
+    }
+
+    #[tokio::test]
+    async fn render_config_maps_existing_config_parse_error_to_config_file_context() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let config_path = temp_dir.path().join("settings.json");
+        tokio::fs::write(&config_path, "{").await.expect("write invalid config");
+        let config_path = config_path.to_string_lossy().to_string();
+
+        let mut format_rules = HashMap::new();
+        format_rules.insert(
+            "stdio".to_string(),
+            FormatRule {
+                template: json!({
+                    "type": "stdio",
+                    "command": "{{command}}",
+                    "args": "{{{json args}}}"
+                }),
+                include_type: false,
+                ..Default::default()
+            },
+        );
+        let template = ClientTemplate {
+            identifier: "test-client".to_string(),
+            format: TemplateFormat::Json,
+            storage: StorageConfig {
+                kind: StorageKind::File,
+                path_strategy: Some("config_path".to_string()),
+                adapter: None,
+            },
+            config_mapping: ConfigMapping {
+                container_keys: vec!["mcpServers".to_string()],
+                container_type: ContainerType::ObjectMap,
+                merge_strategy: MergeStrategy::Replace,
+                keep_original_config: false,
+                format_rules,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let source = MemorySource {
+            template,
+            config_path: config_path.clone(),
+        };
+        let definition = ClientRenderDefinition {
+            identifier: source.template.identifier.clone(),
+            format: source.template.format,
+            storage: source.template.storage.clone(),
+            config_mapping: source.template.config_mapping.clone(),
+        };
+        let engine = TemplateEngine::with_defaults(Arc::new(source));
+        let servers = vec![ServerTemplateInput {
+            name: "server_a".to_string(),
+            display_name: Some("Server A".to_string()),
+            transport: "stdio".to_string(),
+            command: Some("uvx".to_string()),
+            args: vec!["run".to_string()],
+            env: HashMap::new(),
+            url: None,
+            headers: HashMap::new(),
+            metadata: HashMap::new(),
+        }];
+        let policy = BackupPolicySetting::default();
+        let mut warnings = Vec::new();
+        let request = RenderRequest {
+            client_id: "test-client",
+            servers: &servers,
+            mode: ConfigMode::Native,
+            definition: &definition,
+            config_path: &config_path,
+            profile_id: None,
+            dry_run: true,
+            backup_policy: &policy,
+            warnings: &mut warnings,
+            preferred_transport: None,
+        };
+
+        let error = engine
+            .render_config(request)
+            .await
+            .expect_err("invalid user config should fail");
+
+        assert!(matches!(error, ConfigError::DataAccessError(_)));
+        assert!(error.to_string().contains("Failed to parse config for apply"));
+        assert!(!error.to_string().contains("Client template file parsing error"));
     }
 }

@@ -19,7 +19,7 @@ use crate::api::models::client::{
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
-use crate::clients::document::{get_config_last_modified, infer_format_from_path, parse_config_to_json_value};
+use crate::clients::document::{get_config_last_modified, infer_format_from_path, parse_config_fallback};
 use crate::clients::models::{AttachmentState, CapabilitySource, ClientCapabilityConfigState, ClientGovernanceKind};
 use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
 use crate::clients::service::settings::ActiveClientSettingsUpdate;
@@ -78,32 +78,6 @@ fn parse_inspect_existing_error(err: ConfigError) -> (StatusCode, Json<ClientCon
         _ => ClientConfigFileParseInspectExistingResp::error_simple("client_config_parse_invalid", &err.to_string()),
     };
     (status, Json(response))
-}
-
-fn fallback_parsed_config_content(
-    raw_content: Option<&str>,
-    configured_format: Option<&str>,
-    config_path: Option<&str>,
-) -> Value {
-    let Some(raw_content) = raw_content else {
-        return Value::Null;
-    };
-
-    let trimmed = raw_content.trim();
-    if trimmed.is_empty() {
-        return Value::Null;
-    }
-
-    if let Some(format) = configured_format {
-        return parse_config_to_json_value(trimmed, Some(format)).unwrap_or(Value::Null);
-    }
-
-    if let Some(format) = infer_format_from_path(config_path) {
-        return parse_config_to_json_value(trimmed, Some(format.as_str()))
-            .unwrap_or_else(|| Value::String(raw_content.to_string()));
-    }
-
-    Value::String(raw_content.to_string())
 }
 
 fn should_include_default_client(descriptor: &ClientDescriptor) -> bool {
@@ -300,8 +274,17 @@ pub async fn config_details(
     let parsed_content = inspected_config
         .as_ref()
         .map(|inspected| inspected.document.clone())
-        .unwrap_or_else(|| {
-            fallback_parsed_config_content(content.as_deref(), state.config_format(), config_path.as_deref())
+        .unwrap_or_else(|| match state.effective_config_file_parse() {
+            Ok(parse_rule) => parse_config_fallback(
+                content.as_deref(),
+                parse_rule.as_ref(),
+                state.config_path(),
+            ),
+            Err(err) => {
+                warnings.push(format!("Persisted config parse metadata is invalid: {err}"));
+                degraded_reasons.push("config_file_parse_invalid".to_string());
+                Value::Null
+            }
         });
 
     let (configured_servers_analysis, mut configured_server_entries) = inspected_config
@@ -589,7 +572,7 @@ async fn apply_client_config_request(
     })?;
 
     let synthetic = TemplateExecutionResult::DryRun {
-        diff: crate::clients::renderer::ConfigDiff {
+        diff: crate::clients::mutate::ConfigDiff {
             format: outcome.preview.format,
             before: outcome.preview.before.clone(),
             after: outcome.preview.after.clone(),
@@ -602,13 +585,29 @@ async fn apply_client_config_request(
         tracing::error!(client = %request.identifier, operation, error = %err, "Failed to load client state for preview");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let config_format = state.as_ref().and_then(|state| state.config_format());
-    let config_path = state.as_ref().and_then(|state| state.config_path());
     let preview_content = match &synthetic {
         TemplateExecutionResult::Applied { content, .. } => content.as_str(),
         TemplateExecutionResult::DryRun { content, .. } => content.as_str(),
     };
-    let preview = fallback_parsed_config_content(Some(preview_content), config_format, config_path);
+    let preview = match state.as_ref() {
+        Some(state) => {
+            let parse_rule = state.effective_config_file_parse().map_err(|err| {
+                tracing::error!(
+                    client = %request.identifier,
+                    operation,
+                    error = %err,
+                    "Invalid persisted config_file_parse while building apply preview"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            parse_config_fallback(
+                Some(preview_content),
+                parse_rule.as_ref(),
+                state.config_path(),
+            )
+        }
+        None => Value::String(preview_content.to_string()),
+    };
     let mut warnings = outcome.warnings.clone();
     warnings.extend(outcome.preview.summary.clone());
     let applied = outcome.applied && !request.preview;

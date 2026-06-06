@@ -1,5 +1,6 @@
 use super::core::{ApplyOutcome, ClientConfigService, ClientRenderOptions, ClientRenderResult, PreviewOutcome};
 use crate::clients::TemplateExecutionResult;
+use crate::clients::document::parse_config;
 use crate::clients::engine::RenderRequest;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
@@ -216,21 +217,40 @@ impl ClientConfigService {
         client_id: &str,
         rendered_config: &str,
     ) {
-        let parse_rule = self
-            .fetch_state(client_id)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|state| state.effective_config_file_parse().ok().flatten());
+        let parse_rule = self.fetch_state(client_id).await.ok().flatten().and_then(|state| {
+            match state.effective_config_file_parse() {
+                Ok(rule) => rule,
+                Err(err) => {
+                    tracing::debug!(
+                        target: "mcpmate::client::apply_probe",
+                        client = %client_id,
+                        error = %err,
+                        "write-probe: invalid persisted config_file_parse"
+                    );
+                    None
+                }
+            }
+        });
 
         let Some(summary) = parse_rule
             .as_ref()
-            .and_then(|rule| Self::summarize_servers_for_probe(rendered_config, rule))
+            .and_then(|rule| match Self::summarize_servers_for_probe(rendered_config, rule) {
+                Ok(result) => result,
+                Err(err) => {
+                    tracing::debug!(
+                        target: "mcpmate::client::apply_probe",
+                        client = %client_id,
+                        error = %err,
+                        "write-probe: failed to parse rendered config for summary"
+                    );
+                    None
+                }
+            })
         else {
             tracing::debug!(
                 target: "mcpmate::client::apply_probe",
                 client = %client_id,
-                "write-probe: unable to summarize servers (parse skipped)"
+                "write-probe: unable to summarize servers"
             );
             return;
         };
@@ -250,31 +270,20 @@ impl ClientConfigService {
         }
     }
 
-    fn parse_by_format(
-        format: TemplateFormat,
-        raw: &str,
-    ) -> Option<serde_json::Value> {
-        match format {
-            TemplateFormat::Json => serde_json::from_str(raw).ok(),
-            TemplateFormat::Json5 => json5::from_str(raw).ok(),
-            TemplateFormat::Toml => toml::from_str::<toml::Value>(raw)
-                .ok()
-                .and_then(|v| serde_json::to_value(v).ok()),
-            TemplateFormat::Yaml => serde_yaml::from_str(raw).ok(),
-        }
-    }
-
     fn summarize_servers_for_probe(
         raw: &str,
         parse_rule: &ClientConfigFileParse,
-    ) -> Option<Vec<ProbeEntry>> {
+    ) -> ConfigResult<Option<Vec<ProbeEntry>>> {
         use serde_json::Value;
-        let doc = Self::parse_by_format(parse_rule.format, raw)?;
-        let container = parse_rule
+        let doc = parse_config(raw, parse_rule)?.value;
+        let Some(container) = parse_rule
             .container_keys
             .iter()
-            .find_map(|key| crate::clients::utils::get_nested_value(&doc, key))?
-            .clone();
+            .find_map(|key| crate::clients::utils::get_nested_value(&doc, key))
+        else {
+            return Ok(None);
+        };
+        let container = container.clone();
 
         let mut out: Vec<ProbeEntry> = Vec::new();
         match (parse_rule.container_type, container) {
@@ -296,7 +305,7 @@ impl ClientConfigService {
             _ => {}
         }
 
-        if out.is_empty() { None } else { Some(out) }
+        if out.is_empty() { Ok(None) } else { Ok(Some(out)) }
     }
 
     fn probe_entry(
@@ -340,8 +349,8 @@ struct ProbeEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::{available_managed_transports, selected_managed_transport};
-    use crate::clients::models::FormatRule;
+    use super::{ClientConfigService, available_managed_transports, selected_managed_transport};
+    use crate::clients::models::{ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat};
     use std::collections::HashMap;
 
     #[test]
@@ -375,5 +384,32 @@ mod tests {
         );
 
         assert_eq!(selected_managed_transport(Some(&transports)), Some("streamable_http"));
+    }
+
+    #[test]
+    fn probe_summary_declared_json_accepts_json5_style_config() {
+        let parse_rule = ClientConfigFileParse {
+            format: TemplateFormat::Json,
+            container_type: ContainerType::ObjectMap,
+            container_keys: vec!["context_servers".to_string()],
+        };
+        let entries = ClientConfigService::summarize_servers_for_probe(
+            r#"{
+                "context_servers": {
+                    "MCPMate": {
+                        "type": "stdio",
+                        "command": "bridge",
+                    },
+                },
+            }"#,
+            &parse_rule,
+        )
+        .expect("probe summary should read JSON5-style declared JSON")
+        .expect("probe summary should contain entries");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "MCPMate");
+        assert_eq!(entries[0].transport, "stdio");
+        assert!(entries[0].has_command);
     }
 }
