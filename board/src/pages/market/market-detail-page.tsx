@@ -28,7 +28,7 @@ import {
 	matchesInstalledRegistryServer,
 } from "../../lib/registry";
 import type { RegistryServerEntry } from "../../lib/types";
-import { formatLocalDateTime } from "../../lib/utils";
+import { cn, formatLocalDateTime } from "../../lib/utils";
 import type { RemoteOption } from "./types";
 import {
 	buildDraftFromRemoteOption,
@@ -182,22 +182,6 @@ async function fetchRepositoryReadmeMarkdown(repositoryUrl: string, subfolder?: 
 	}
 
 	return decodeBase64Utf8(payload.content);
-}
-
-function getReadmeErrorMessage(
-	error: unknown,
-	t: ReturnType<typeof useTranslation>["t"],
-): string {
-	const errorMessage = String(error);
-	if (errorMessage.includes("unsupported-repository")) {
-		return t("market:detail.readmeUnsupported", {
-			defaultValue: "README preview currently supports GitHub repositories only.",
-		});
-	}
-
-	return t("market:detail.readmeFetchFailed", {
-		defaultValue: "Failed to load README content.",
-	});
 }
 
 const MARKET_DETAIL_SPLIT_STORAGE_KEY = "marketDetail.registryReadmeSplitPct";
@@ -386,12 +370,13 @@ export function MarketDetailPage() {
 			icon: Code,
 		});
 	}
-	const splitGridStyle = isLgLayout
+	const readmeMarkdown = readmeQuery.data?.trim() ? readmeQuery.data : "";
+	const showReadmePanel = Boolean(readmeMarkdown);
+	const splitGridStyle = isLgLayout && showReadmePanel
 		? {
 				gridTemplateColumns: `minmax(0,${leftSplitPct}fr) 8px minmax(0,${100 - leftSplitPct}fr)`,
 			}
 		: undefined;
-	const readmeErrorText = getReadmeErrorMessage(readmeQuery.error, t);
 
 	return (
 		<>
@@ -503,10 +488,18 @@ export function MarketDetailPage() {
 
 				<div
 					ref={splitContainerRef}
-					className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-none lg:items-stretch lg:gap-0"
+					className={cn(
+						"grid grid-cols-1 items-stretch gap-6",
+						showReadmePanel && "lg:grid-cols-none lg:items-stretch lg:gap-0",
+					)}
 					style={splitGridStyle}
 				>
-					<Card className="min-w-0 rounded-xl lg:h-full lg:min-h-0 lg:rounded-none lg:rounded-l-xl">
+					<Card
+						className={cn(
+							"min-w-0 rounded-xl lg:h-full lg:min-h-0",
+							showReadmePanel && "lg:rounded-none lg:rounded-l-xl",
+						)}
+					>
 						<CardHeader>
 							<CardTitle>{t("market:detail.repositoryRegistrySection", { defaultValue: "Repository & Registry" })}</CardTitle>
 						</CardHeader>
@@ -573,66 +566,52 @@ export function MarketDetailPage() {
 						</CardContent>
 					</Card>
 
-					<div
-						className="hidden h-full min-h-0 w-2 shrink-0 cursor-col-resize touch-none self-stretch bg-transparent lg:block"
-						role="separator"
-						aria-orientation="vertical"
-						aria-valuemin={22}
-						aria-valuemax={78}
-						aria-valuenow={Math.round(leftSplitPct)}
-						aria-label={t("market:detail.splitResize", { defaultValue: "Resize registry and README panels" })}
-						onPointerDown={onSplitPointerDown}
-					/>
+					{showReadmePanel ? (
+						<>
+							<div
+								className="hidden h-full min-h-0 w-2 shrink-0 cursor-col-resize touch-none self-stretch bg-transparent lg:block"
+								role="separator"
+								aria-orientation="vertical"
+								aria-valuemin={22}
+								aria-valuemax={78}
+								aria-valuenow={Math.round(leftSplitPct)}
+								aria-label={t("market:detail.splitResize", { defaultValue: "Resize registry and README panels" })}
+								onPointerDown={onSplitPointerDown}
+							/>
 
-					<Card className="min-w-0 rounded-xl lg:h-full lg:min-h-0 lg:rounded-none lg:rounded-r-xl">
-						<CardHeader>
-							<CardTitle>{t("market:detail.readme", { defaultValue: "README" })}</CardTitle>
-						</CardHeader>
-						<CardContent className="p-4">
-							{!repositoryUrl ? (
-								<p className="text-sm text-muted-foreground">
-									{t("market:detail.readmeUnavailable", { defaultValue: "README is unavailable because repository URL is missing." })}
-								</p>
-							) : readmeQuery.isLoading ? (
-								<p className="text-sm text-muted-foreground">
-									{t("market:detail.readmeLoading", { defaultValue: "Loading README..." })}
-								</p>
-							) : readmeQuery.isError ? (
-								<p className="text-sm text-muted-foreground">
-									{readmeErrorText}
-								</p>
-							) : readmeQuery.data ? (
-								<ReactMarkdown
-									remarkPlugins={[remarkGfm]}
-									components={{
-										a: ({ href, children }) => {
-											const url = href ?? "";
-											return (
-												<a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline dark:text-blue-400">
-													{children}
-												</a>
-											);
-										},
-										p: ({ children }) => <p className="mb-3 text-sm leading-6 text-slate-700 dark:text-slate-300">{children}</p>,
-										h1: ({ children }) => <h1 className="mb-3 text-xl font-semibold">{children}</h1>,
-										h2: ({ children }) => <h2 className="mb-3 text-lg font-semibold">{children}</h2>,
-										h3: ({ children }) => <h3 className="mb-2 text-base font-semibold">{children}</h3>,
-										ul: ({ children }) => <ul className="mb-3 list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">{children}</ul>,
-										ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">{children}</ol>,
-										code: ({ children }) => <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">{children}</code>,
-										pre: ({ children }) => <pre className="mb-3 overflow-x-auto rounded-lg bg-slate-100 p-3 text-xs dark:bg-slate-900">{children}</pre>,
-										blockquote: ({ children }) => <blockquote className="mb-3 border-l-2 border-slate-300 pl-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">{children}</blockquote>,
-									}}
-								>
-									{readmeQuery.data}
-								</ReactMarkdown>
-							) : (
-								<p className="text-sm text-muted-foreground">
-									{t("market:detail.readmeEmpty", { defaultValue: "README content is empty." })}
-								</p>
-							)}
-						</CardContent>
-					</Card>
+							<Card className="flex max-h-[70vh] min-w-0 flex-col overflow-hidden rounded-xl lg:h-[calc(100vh-18rem)] lg:max-h-none lg:min-h-0 lg:rounded-none lg:rounded-r-xl">
+								<CardHeader className="shrink-0">
+									<CardTitle>{t("market:detail.readme", { defaultValue: "README" })}</CardTitle>
+								</CardHeader>
+								<CardContent className="min-h-0 flex-1 overflow-y-auto p-4">
+									<ReactMarkdown
+										remarkPlugins={[remarkGfm]}
+										components={{
+											a: ({ href, children }) => {
+												const url = href ?? "";
+												return (
+													<a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline dark:text-blue-400">
+														{children}
+													</a>
+												);
+											},
+											p: ({ children }) => <p className="mb-3 text-sm leading-6 text-slate-700 dark:text-slate-300">{children}</p>,
+											h1: ({ children }) => <h1 className="mb-3 text-xl font-semibold">{children}</h1>,
+											h2: ({ children }) => <h2 className="mb-3 text-lg font-semibold">{children}</h2>,
+											h3: ({ children }) => <h3 className="mb-2 text-base font-semibold">{children}</h3>,
+											ul: ({ children }) => <ul className="mb-3 list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">{children}</ul>,
+											ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">{children}</ol>,
+											code: ({ children }) => <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">{children}</code>,
+											pre: ({ children }) => <pre className="mb-3 overflow-x-auto rounded-lg bg-slate-100 p-3 text-xs dark:bg-slate-900">{children}</pre>,
+											blockquote: ({ children }) => <blockquote className="mb-3 border-l-2 border-slate-300 pl-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-400">{children}</blockquote>,
+										}}
+									>
+										{readmeMarkdown}
+									</ReactMarkdown>
+								</CardContent>
+							</Card>
+						</>
+					) : null}
 				</div>
 
 				<div className="border-t border-slate-200 dark:border-slate-800" />
