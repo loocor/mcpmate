@@ -50,14 +50,41 @@ pub async fn get_secret_store_status(
 
 pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<SecretListResp>, ApiError> {
     let store = get_secret_store(&state)?;
+    let db = crate::api::handlers::server::common::get_database_from_state(&state)?;
+    let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
+
     let secrets = store
         .list_secret_metadata()
         .await
-        .map_err(|err| ApiError::InternalError(err.to_string()))?
-        .into_iter()
-        .map(secret_metadata_data)
-        .collect();
-    Ok(Json(SecretListResp::success(SecretListData { secrets })))
+        .map_err(|err| ApiError::InternalError(err.to_string()))?;
+
+    // Pre-load all usages once and group by alias for active-count computation.
+    let all_usages = store
+        .list_all_usages()
+        .await
+        .map_err(|err| ApiError::InternalError(err.to_string()))?;
+    let mut usages_by_alias: HashMap<String, Vec<SecretUsageView>> = HashMap::new();
+    for usage in all_usages {
+        usages_by_alias.entry(usage.alias.clone()).or_default().push(usage);
+    }
+
+    let mut enriched = Vec::with_capacity(secrets.len());
+    for metadata in secrets {
+        let mut active_count: u64 = 0;
+        if let Some(usages) = usages_by_alias.get(&metadata.alias) {
+            for usage in usages {
+                let status =
+                    resolve_secret_usage_status(&db.pool, usage, &mut server_config_cache).await?;
+                if status == "active" {
+                    active_count += 1;
+                }
+            }
+        }
+        let mut data = secret_metadata_data(metadata);
+        data.used_by_count = active_count;
+        enriched.push(data);
+    }
+    Ok(Json(SecretListResp::success(SecretListData { secrets: enriched })))
 }
 
 pub async fn create_secret(
@@ -113,8 +140,30 @@ pub async fn delete_secret(
     Json(payload): Json<SecretDeleteReq>,
 ) -> Result<Json<SecretDeleteResp>, ApiError> {
     let store = get_secret_store(&state)?;
+
+    // When not force-deleting, check if any usages are still active
+    // (i.e. the server still exists and its config still references the secret).
+    // Stale usages (server removed or config changed) should not block deletion.
+    if !payload.force {
+        let db = crate::api::handlers::server::common::get_database_from_state(&state)?;
+        let usages = store
+            .list_usages(&payload.alias)
+            .await
+            .map_err(map_secret_store_error)?;
+        let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
+        for usage in &usages {
+            let status =
+                resolve_secret_usage_status(&db.pool, usage, &mut server_config_cache).await?;
+            if status == "active" {
+                return Err(ApiError::Conflict(format!(
+                    "Secret '{}' is actively used by server '{}' and cannot be deleted",
+                    payload.alias, usage.server_id
+                )));
+            }
+        }
+    }
     store
-        .delete_secret(&payload.alias, payload.force)
+        .delete_secret(&payload.alias, true)
         .await
         .map_err(map_secret_store_error)?;
     Ok(Json(SecretDeleteResp::success(SecretDeleteData {
@@ -465,6 +514,10 @@ pub async fn rotate_passphrase(
             other => ApiError::InternalError(format!("Failed to load root key: {other}")),
         })?;
 
+    // Backup the old passphrase file before overwriting.
+    let backup_path = passphrase_path.with_extension("json.rotate-bak");
+    let has_backup = std::fs::copy(&passphrase_path, &backup_path).is_ok();
+
     crate::core::secrets::store::PassphraseRootKeyProvider::new(
         passphrase_path.clone(),
         payload.new_passphrase.clone(),
@@ -478,18 +531,38 @@ pub async fn rotate_passphrase(
         .ok_or_else(|| ApiError::ServiceUnavailable("No database configured".to_string()))?
         .pool
         .clone();
-    let bootstrap = crate::core::secrets::store::initialize_secret_store_with_passphrase(
+    let bootstrap = match crate::core::secrets::store::initialize_secret_store_with_passphrase(
         pool,
         &data_dir,
         &payload.new_passphrase,
     )
     .await
-    .map_err(|err| ApiError::InternalError(format!("Failed to reinitialize secret store: {err}")))?;
+    {
+        Ok(bootstrap) => bootstrap,
+        Err(err) => {
+            // Rollback: restore old passphrase file from backup.
+            if has_backup {
+                let _ = std::fs::rename(&backup_path, &passphrase_path);
+            }
+            return Err(ApiError::InternalError(format!(
+                "Failed to reinitialize secret store; passphrase rolled back: {err}"
+            )));
+        }
+    };
 
     if bootstrap.store.is_none() {
+        // Rollback: restore old passphrase file from backup.
+        if has_backup {
+            let _ = std::fs::rename(&backup_path, &passphrase_path);
+        }
         return Err(ApiError::InternalError(
-            "Secret store failed to initialize after passphrase rotation".to_string(),
+            "Secret store failed to initialize after passphrase rotation; passphrase rolled back".to_string(),
         ));
+    }
+
+    // Clean up backup on success.
+    if has_backup {
+        let _ = std::fs::remove_file(&backup_path);
     }
 
     let readiness = apply_secret_store_bootstrap(&state, bootstrap).await?;
@@ -524,7 +597,8 @@ pub async fn switch_provider(
     let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
     let local_file_path = secrets_dir.join("local-root.key");
 
-    // Check current mode.
+    // Check current mode. Fall back to persisted provider mode from the database
+    // when the in-memory store is unavailable (e.g. passphrase_unlock_required).
     let current_mode = {
         let store_guard = state.secret_store.try_read().map_err(|_| {
             ApiError::ServiceUnavailable("Store lock contention".to_string())
@@ -532,6 +606,30 @@ pub async fn switch_provider(
         store_guard
             .as_ref()
             .map(|s| s.provider_metadata().mode())
+    };
+
+    let current_mode = match current_mode {
+        Some(mode) => mode,
+        None => {
+            // Store not initialized — read persisted mode from the database.
+            let pool = &db.pool;
+            mcpmate_secrets::database::get_provider_config(pool)
+                .await
+                .map_err(|err| {
+                    ApiError::InternalError(format!("Failed to read provider config: {err}"))
+                })?
+                .map(|cfg| {
+                    crate::core::secrets::store::parse_persisted_provider_mode(&cfg.provider_mode)
+                        .map_err(|err| ApiError::BadRequest(err))
+                })
+                .transpose()?
+                .ok_or_else(|| {
+                    ApiError::BadRequest(
+                        "Secret store is not configured. Set up encryption before switching providers."
+                            .to_string(),
+                    )
+                })?
+        }
     };
 
     // Determine new mode.
@@ -542,7 +640,7 @@ pub async fn switch_provider(
     };
 
     // Already on this mode — return current status.
-    if current_mode == Some(new_mode) {
+    if current_mode == new_mode {
         let readiness = state.secret_store_readiness.try_read()
             .map(|guard| secret_store_status_data(&guard))
             .unwrap_or_else(|_| SecretStoreStatusData {
@@ -566,7 +664,7 @@ pub async fn switch_provider(
     }
 
     let switching_from_passphrase =
-        current_mode == Some(crate::core::secrets::store::RootKeyProviderMode::Passphrase);
+        current_mode == crate::core::secrets::store::RootKeyProviderMode::Passphrase;
     if switching_from_passphrase && current_passphrase.is_none() {
         return Err(ApiError::BadRequest(
             "Current passphrase is required to switch from passphrase mode".to_string(),
@@ -579,16 +677,16 @@ pub async fn switch_provider(
     // Load root key from the old provider.
     let root_key = {
         let old_provider: Box<dyn crate::core::secrets::store::SecretRootKeyProvider> = match current_mode {
-            Some(crate::core::secrets::store::RootKeyProviderMode::OperatingSystem) => {
+            crate::core::secrets::store::RootKeyProviderMode::OperatingSystem => {
                 Box::new(crate::core::secrets::store::OperatingSystemRootKeyProvider::new())
             }
-            Some(crate::core::secrets::store::RootKeyProviderMode::Passphrase) => {
+            crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
                 Box::new(crate::core::secrets::store::PassphraseRootKeyProvider::new(
                     passphrase_path.clone(),
                     load_passphrase.clone(),
                 ))
             }
-            Some(crate::core::secrets::store::RootKeyProviderMode::LocalFile) => {
+            crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
                 Box::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(
                     local_file_path.clone(),
                 ))
@@ -605,6 +703,19 @@ pub async fn switch_provider(
             }
             other => ApiError::InternalError(format!("Failed to load root key: {other}")),
         })?
+    };
+
+    // Backup old provider key file (for passphrase/local_file modes).
+    let backup_path = passphrase_path.with_extension("json.rollback-bak");
+    let local_backup_path = local_file_path.with_extension("key.rollback-bak");
+    let has_backup = match current_mode {
+        crate::core::secrets::store::RootKeyProviderMode::Passphrase if passphrase_path.exists() => {
+            std::fs::copy(&passphrase_path, &backup_path).is_ok()
+        }
+        crate::core::secrets::store::RootKeyProviderMode::LocalFile if local_file_path.exists() => {
+            std::fs::copy(&local_file_path, &local_backup_path).is_ok()
+        }
+        _ => false,
     };
 
     // Store the root key in the new provider.
@@ -641,22 +752,89 @@ pub async fn switch_provider(
         }
         crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
             Arc::new(crate::core::secrets::store::PassphraseRootKeyProvider::new(
-                passphrase_path,
-                store_passphrase,
+                passphrase_path.clone(),
+                store_passphrase.clone(),
             ))
         }
         crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
-            Arc::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path))
+            Arc::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone()))
         }
         _ => unreachable!(),
     };
 
-    let new_store = crate::core::secrets::store::LocalSecretStore::initialize_with_root_key_provider(
+    let new_store = match crate::core::secrets::store::LocalSecretStore::initialize_with_root_key_provider(
         db.pool.clone(),
         new_provider,
     )
     .await
-    .map_err(|err| ApiError::InternalError(format!("Failed to initialize store: {err}")))?;
+    {
+        Ok(store) => store,
+        Err(err) => {
+            // Rollback: restore old provider key.
+            let _ = match current_mode {
+                crate::core::secrets::store::RootKeyProviderMode::OperatingSystem => {
+                    crate::core::secrets::store::OperatingSystemRootKeyProvider::new()
+                        .set_root_key(&root_key)
+                }
+                crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
+                    if has_backup {
+                        let _ = std::fs::rename(&backup_path, &passphrase_path);
+                    }
+                    crate::core::secrets::store::PassphraseRootKeyProvider::new(
+                        passphrase_path.clone(),
+                        load_passphrase.clone(),
+                    )
+                    .set_root_key(&root_key)
+                }
+                crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
+                    if has_backup {
+                        let _ = std::fs::rename(&local_backup_path, &local_file_path);
+                    }
+                    crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone())
+                        .set_root_key(&root_key)
+                }
+                _ => Ok(()),
+            };
+            // Re-initialize the store with the old provider mode (not always passphrase).
+            let _ = match current_mode {
+                crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
+                    crate::core::secrets::store::initialize_secret_store_with_passphrase(
+                        db.pool.clone(),
+                        data_dir,
+                        &load_passphrase,
+                    )
+                    .await
+                    .map(|_| ())
+                }
+                crate::core::secrets::store::RootKeyProviderMode::OperatingSystem => {
+                    crate::core::secrets::store::LocalSecretStore::initialize_with_root_key_provider(
+                        db.pool.clone(),
+                        Arc::new(crate::core::secrets::store::OperatingSystemRootKeyProvider::new()),
+                    )
+                    .await
+                    .map(|_| ())
+                }
+                crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
+                    crate::core::secrets::store::LocalSecretStore::initialize_with_root_key_provider(
+                        db.pool.clone(),
+                        Arc::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone())),
+                    )
+                    .await
+                    .map(|_| ())
+                }
+                _ => Ok(()),
+            };
+            return Err(ApiError::InternalError(format!(
+                "Failed to initialize store with new provider; rolled back to previous state: {err}"
+            )));
+        }
+    };
+
+    // Clean up backup files on success.
+    if has_backup {
+        let _ = std::fs::remove_file(&backup_path);
+        let _ = std::fs::remove_file(&local_backup_path);
+    }
 
     persist_provider_mode(&state, new_mode).await?;
 

@@ -215,6 +215,10 @@ impl LocalSecretStore {
         database::list_usages(&self.pool, alias).await
     }
 
+    pub async fn list_all_usages(&self) -> Result<Vec<SecretUsageView>> {
+        database::list_all_usages(&self.pool).await
+    }
+
     async fn reload_cache(&self) -> Result<()> {
         let rows = database::load_encrypted_secrets(&self.pool).await?;
         let mut cache = self

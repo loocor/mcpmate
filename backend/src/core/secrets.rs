@@ -129,14 +129,37 @@ pub fn collect_secret_usages(
 
 pub fn is_usage_active_in_config(
     alias: &str,
-    server_id: &str,
+    _server_id: &str,
     location: &SecretUsageLocationInput,
     config: &MCPServerConfig,
 ) -> anyhow::Result<bool> {
-    let usages = collect_secret_usages(server_id, config)?;
-    Ok(usages
-        .iter()
-        .any(|usage| usage.alias == alias && usage.server_id == server_id && usage.location == *location))
+    // Check only the specific config field for this location, O(1) per usage.
+    let value = match location {
+        SecretUsageLocationInput::StdioCommand => config.command.as_deref(),
+        SecretUsageLocationInput::StdioArgument { index } => {
+            config.args.as_ref().and_then(|args| args.get(*index).map(|s| s.as_str()))
+        }
+        SecretUsageLocationInput::StdioEnv { name } => {
+            config.env.as_ref().and_then(|env| env.get(name.as_str()).map(|s| s.as_str()))
+        }
+        SecretUsageLocationInput::StreamableHttpUrl => config.url.as_deref(),
+        SecretUsageLocationInput::StreamableHttpHeader { name } => {
+            config.headers.as_ref().and_then(|h| h.get(name.as_str()).map(|s| s.as_str()))
+        }
+        SecretUsageLocationInput::OAuthToken => return Ok(false),
+    };
+
+    let Some(value) = value else {
+        return Ok(false);
+    };
+
+    // Check if the value still contains a reference to this secret alias.
+    for reference in extract_secret_references(value)? {
+        if reference.alias() == alias {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn push_usages_from_value(

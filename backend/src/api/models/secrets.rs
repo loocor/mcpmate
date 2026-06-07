@@ -249,6 +249,7 @@ pub struct PasswordClearReq {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PasswordScopeUpdateReq {
     pub scope: Vec<String>,
+    pub current_password: String,
 }
 
 api_resp!(PasswordStatusResp, PasswordStatusData, "Password status response");

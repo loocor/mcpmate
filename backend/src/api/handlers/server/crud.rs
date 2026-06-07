@@ -829,9 +829,14 @@ async fn delete_server_records(
 ) -> Result<(), ApiError> {
     let mut tx = db.pool.begin().await.map_err(map_database_error)?;
 
-    // Option 1: Use CASCADE DELETE (recommended)
-    // Since all tables have proper ON DELETE CASCADE constraints,
-    // we can simply delete from server_config and let the database handle the rest
+    // Purge secret usages for this server first (no CASCADE FK to server_config).
+    sqlx::query("DELETE FROM secure_store_usages WHERE server_id = ?")
+        .bind(server_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+
+    // Use CASCADE DELETE for server_config and its FK-linked tables.
     sqlx::query("DELETE FROM server_config WHERE id = ?")
         .bind(server_id)
         .execute(&mut *tx)

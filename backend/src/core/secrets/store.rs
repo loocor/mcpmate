@@ -118,13 +118,13 @@ pub fn secret_store_paths(data_dir: &Path) -> (PathBuf, PathBuf) {
     )
 }
 
-fn parse_persisted_provider_mode(mode: &str) -> RootKeyProviderMode {
+pub fn parse_persisted_provider_mode(mode: &str) -> Result<RootKeyProviderMode, String> {
     match mode {
-        "passphrase" => RootKeyProviderMode::Passphrase,
-        "local_file" => RootKeyProviderMode::LocalFile,
-        "operating_system" => RootKeyProviderMode::OperatingSystem,
-        other if other == RootKeyProviderMode::Development.as_str() => RootKeyProviderMode::Development,
-        _ => RootKeyProviderMode::OperatingSystem,
+        "passphrase" => Ok(RootKeyProviderMode::Passphrase),
+        "local_file" => Ok(RootKeyProviderMode::LocalFile),
+        "operating_system" => Ok(RootKeyProviderMode::OperatingSystem),
+        other if other == RootKeyProviderMode::Development.as_str() => Ok(RootKeyProviderMode::Development),
+        other => Err(format!("Unknown provider mode '{other}'")),
     }
 }
 
@@ -145,7 +145,15 @@ pub async fn bootstrap_secret_store(
 
     let (passphrase_path, local_file_path) = secret_store_paths(data_dir);
     let persisted_mode = match mcpmate_secrets::database::get_provider_config(&pool).await {
-        Ok(Some(config)) => parse_persisted_provider_mode(&config.provider_mode),
+        Ok(Some(config)) => match parse_persisted_provider_mode(&config.provider_mode) {
+            Ok(mode) => mode,
+            Err(err) => {
+                return SecretStoreBootstrap {
+                    store: None,
+                    readiness: SecretStoreReadiness::unavailable("provider_config_invalid", err),
+                };
+            }
+        },
         Ok(None) => RootKeyProviderMode::OperatingSystem,
         Err(err) => {
             return SecretStoreBootstrap {
@@ -158,16 +166,8 @@ pub async fn bootstrap_secret_store(
     match persisted_mode {
         RootKeyProviderMode::Passphrase => {
             let metadata = PassphraseRootKeyProvider::new(passphrase_path.clone(), "bootstrap-metadata-only").metadata();
-            if !passphrase_path.exists() {
-                return SecretStoreBootstrap {
-                    store: None,
-                    readiness: SecretStoreReadiness::unavailable_with_provider(
-                        "passphrase_unlock_required",
-                        "Enter your encryption password to unlock the secure store.",
-                        metadata,
-                    ),
-                };
-            }
+            // Passphrase mode always requires unlock — the wrapped key file is
+            // never loaded automatically at bootstrap time.
             SecretStoreBootstrap {
                 store: None,
                 readiness: SecretStoreReadiness::unavailable_with_provider(

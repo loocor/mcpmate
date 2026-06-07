@@ -535,6 +535,34 @@ pub(crate) async fn list_usages(
         .collect()
 }
 
+pub(crate) async fn list_all_usages(pool: &Pool<Sqlite>) -> Result<Vec<SecretUsageView>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT alias, server_id, location_kind, location_name, location_index
+        FROM secure_store_usages
+        ORDER BY alias ASC, server_id ASC, location_kind ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("list all secret usages")?;
+
+    rows.iter()
+        .map(|row| {
+            let alias: String = row.try_get("alias")?;
+            let server_id: String = row.try_get("server_id")?;
+            let location_kind: String = row.try_get("location_kind")?;
+            let location_name: Option<String> = row.try_get("location_name")?;
+            let location_index: Option<i64> = row.try_get("location_index")?;
+            Ok(SecretUsageView {
+                alias,
+                server_id,
+                location: SecretUsageLocationInput::from_parts(&location_kind, location_name, location_index)?,
+            })
+        })
+        .collect()
+}
+
 pub(crate) async fn load_encrypted_secrets(pool: &Pool<Sqlite>) -> Result<Vec<EncryptedSecret>> {
     let rows = sqlx::query("SELECT alias, key_nonce, encrypted_key, nonce, encrypted_value FROM secure_store_secrets")
         .fetch_all(pool)
