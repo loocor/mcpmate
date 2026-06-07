@@ -594,6 +594,75 @@ export interface MCPServerConfig {
   meta?: ServerMetaInfo;
 }
 
+export type SecretKind =
+  | "generic"
+  | "token"
+  | "api_key"
+  | "password"
+  | "oauth_access_token"
+  | "oauth_refresh_token"
+  | "url_credential"
+  | "header_value";
+
+export interface SecretMetadata {
+  alias: string;
+  placeholder: string;
+  kind: string;
+  label?: string | null;
+  origin?: SecretOrigin | null;
+  provider_id: string;
+  provider_kind: string;
+  version: number;
+  used_by_count: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface SecretOrigin {
+  server_id?: string | null;
+  server_name?: string | null;
+  server_kind?: string | null;
+  source?: string | null;
+  field_group?: string | null;
+  field_key?: string | null;
+  field_index?: number | null;
+  field_path?: string | null;
+}
+
+export interface SecretUsageLocation {
+  [key: string]: unknown;
+}
+
+export interface SecretUsage {
+  alias: string;
+  server_id: string;
+  location: SecretUsageLocation | string;
+}
+
+export interface SecretListResp {
+  success: boolean;
+  data?: { secrets: SecretMetadata[] } | null;
+  error?: unknown;
+}
+
+export interface SecretMetadataResp {
+  success: boolean;
+  data?: SecretMetadata | null;
+  error?: unknown;
+}
+
+export interface SecretUsageListResp {
+  success: boolean;
+  data?: { usages: SecretUsage[] } | null;
+  error?: unknown;
+}
+
+export interface SecretDeleteResp {
+  success: boolean;
+  data?: { alias: string; deleted: boolean } | null;
+  error?: unknown;
+}
+
 export interface MCPToolConfig {
   name: string;
   server_name: string;

@@ -1,17 +1,24 @@
 import { useTranslation } from "react-i18next";
+import type { UseFormRegister } from "react-hook-form";
 import { Input } from "../../ui/input";
 import { FieldList } from "../field-list";
+import { SecretPickerButton } from "../secret-picker-button";
+import type { SecretOrigin } from "../../../lib/types";
+import { GHOST_INPUT_CLASS } from "../types";
+import type { ManualServerFormValues } from "../types";
 
 interface UrlParamsProps {
 	viewMode: "form" | "json";
 	isStdio: boolean;
-	urlParamFields: Array<{ id: string; [key: string]: unknown }>;
+	urlParamFields: Array<{ id: string;[key: string]: unknown }>;
 	removeUrlParam: (index: number) => void;
 	appendUrlParam: (value: { key: string; value: string }) => void;
-	register: any;
+	register: UseFormRegister<ManualServerFormValues>;
 	deleteConfirmStates: Record<string, boolean>;
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
+	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	secretOriginBase?: SecretOrigin;
 }
 
 export function UrlParams({
@@ -24,6 +31,8 @@ export function UrlParams({
 	deleteConfirmStates,
 	onDeleteClick,
 	onGhostClick,
+	onSecretSelect,
+	secretOriginBase,
 }: UrlParamsProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -48,7 +57,7 @@ export function UrlParams({
 								onClick={() =>
 									onGhostClick(() => appendUrlParam({ key: "", value: "" }))
 								}
-								className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+								className={GHOST_INPUT_CLASS}
 								readOnly
 							/>
 							<Input
@@ -58,14 +67,14 @@ export function UrlParams({
 								onClick={() =>
 									onGhostClick(() => appendUrlParam({ key: "", value: "" }))
 								}
-								className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+								className={GHOST_INPUT_CLASS}
 								readOnly
 							/>
 						</div>
 					);
 				}
 				return (
-					<div className="grid grid-cols-2 gap-2">
+					<div className="group/secret-field grid grid-cols-2 gap-2">
 						<Input
 							{...register(`urlParams.${index}.key` as const)}
 							placeholder={t("manual.fields.urlParams.keyPlaceholder", {
@@ -77,6 +86,21 @@ export function UrlParams({
 							placeholder={t("manual.fields.common.valuePlaceholder", {
 								defaultValue: "Value",
 							})}
+							className="pr-20"
+						/>
+						<SecretPickerButton
+							className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
+							origin={{
+								...secretOriginBase,
+								field_group: "url_params",
+								field_key:
+									typeof field.key === "string" ? field.key : undefined,
+								field_index: index,
+								field_path: `urlParams.${index}.value`,
+							}}
+							onSelect={(placeholder) =>
+								onSecretSelect?.(`urlParams.${index}.value`, placeholder)
+							}
 						/>
 					</div>
 				);

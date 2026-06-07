@@ -11,6 +11,7 @@ pub mod openapi;
 pub mod profile;
 pub mod registry;
 pub mod runtime;
+pub mod secrets;
 pub mod server;
 pub mod system;
 
@@ -30,6 +31,10 @@ use crate::{
     inspector::{calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager},
     system::metrics::MetricsCollector,
 };
+
+pub fn unavailable_secret_store_readiness(reason_code: &str) -> crate::core::secrets::store::SecretStoreReadiness {
+    crate::core::secrets::store::SecretStoreReadiness::unavailable(reason_code, "Secret store is unavailable")
+}
 
 /// Application state shared across all routes
 #[derive(Clone)]
@@ -59,6 +64,8 @@ pub struct AppState {
     /// Inspector session manager
     pub inspector_sessions: Arc<InspectorSessionManager>,
     pub oauth_manager: Option<Arc<crate::core::oauth::OAuthManager>>,
+    pub secret_store: Option<Arc<crate::core::secrets::store::LocalSecretStore>>,
+    pub secret_store_readiness: crate::core::secrets::store::SecretStoreReadiness,
 }
 
 /// Create the API router with all routes
@@ -153,6 +160,11 @@ async fn create_router_internal(
             inspector_calls: inspector_calls.clone(),
             inspector_sessions: inspector_sessions.clone(),
             oauth_manager: None,
+            secret_store: None,
+            secret_store_readiness: crate::core::secrets::store::SecretStoreReadiness::unavailable(
+                "not_initialized",
+                "Secret store initialization has not run yet",
+            ),
         })
     } else {
         None
@@ -183,6 +195,34 @@ async fn create_router_internal(
         .as_ref()
         .map(|db| Arc::new(crate::core::oauth::OAuthManager::new(db.pool.clone())));
 
+    let (secret_store, secret_store_readiness) = if let Some(db) = database.as_ref() {
+        match crate::core::secrets::store::LocalSecretStore::initialize(db.pool.clone()).await {
+            Ok(store) => {
+                let readiness = crate::core::secrets::store::SecretStoreReadiness::ready(store.provider_metadata());
+                (Some(Arc::new(store)), readiness)
+            }
+            Err(err) => {
+                tracing::error!("Failed to initialize secure store: {}", err);
+                (
+                    None,
+                    crate::core::secrets::store::SecretStoreReadiness::from_initialization_error(&err),
+                )
+            }
+        }
+    } else {
+        (
+            None,
+            crate::core::secrets::store::SecretStoreReadiness::unavailable(
+                "database_unavailable",
+                "Secret store cannot initialize without a database",
+            ),
+        )
+    };
+
+    if let Some(secret_store) = secret_store.clone() {
+        connection_pool.lock().await.set_secret_resolver(secret_store);
+    }
+
     let state = Arc::new(AppState {
         connection_pool,
         metrics_collector,
@@ -198,6 +238,8 @@ async fn create_router_internal(
         inspector_calls,
         inspector_sessions,
         oauth_manager,
+        secret_store,
+        secret_store_readiness,
     });
 
     // Create OpenAPI specification
@@ -211,6 +253,7 @@ async fn create_router_internal(
         .merge(onboarding::routes(state.clone()))
         .merge(profile::routes(state.clone()))
         .merge(runtime::routes(state.clone()))
+        .merge(secrets::routes(state.clone()))
         .merge(inspector::routes(state.clone()))
         .merge(client::routes(state.clone()))
         .merge(registry::routes(state.clone()));

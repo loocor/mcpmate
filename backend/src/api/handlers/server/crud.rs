@@ -20,6 +20,7 @@ use crate::{
         profile,
         server::{self},
     },
+    core::{models::MCPServerConfig, secrets::sync_server_secret_usages},
 };
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
@@ -154,6 +155,43 @@ async fn upsert_meta_payload(
         .map(|_| ())
 }
 
+async fn sync_secret_usages_for_server(
+    state: &Arc<AppState>,
+    db: &Database,
+    server_id: &str,
+    server: &Server,
+) -> Result<(), ApiError> {
+    let Some(secret_store) = state.secret_store.as_ref() else {
+        return Ok(());
+    };
+
+    let args = crate::config::server::get_server_args(&db.pool, server_id)
+        .await
+        .map_err(map_anyhow_error)?
+        .into_iter()
+        .map(|arg| arg.arg_value)
+        .collect::<Vec<_>>();
+    let env = crate::config::server::get_server_env(&db.pool, server_id)
+        .await
+        .map_err(map_anyhow_error)?;
+    let headers = crate::config::server::get_server_headers(&db.pool, server_id)
+        .await
+        .map_err(map_anyhow_error)?;
+
+    let config = MCPServerConfig {
+        kind: server.server_type,
+        command: server.command.clone(),
+        args: if args.is_empty() { None } else { Some(args) },
+        url: server.url.clone(),
+        env: if env.is_empty() { None } else { Some(env) },
+        headers: if headers.is_empty() { None } else { Some(headers) },
+    };
+
+    sync_server_secret_usages(secret_store.as_ref(), server_id, &config)
+        .await
+        .map_err(map_anyhow_error)
+}
+
 /// Create a new MCP server configuration
 ///
 /// This endpoint creates a new MCP server configuration. Server types must strictly use the following standard formats:
@@ -277,6 +315,8 @@ pub async fn create_server(
             .await
             .map_err(map_anyhow_error)?;
     }
+
+    sync_secret_usages_for_server(&state, &db, &server_id, &server).await?;
 
     // Apply optional metadata payload
     if let Some(meta_payload) = payload.meta.as_ref() {
@@ -519,6 +559,8 @@ pub async fn update_server(
             .await
             .map_err(map_anyhow_error)?;
     }
+
+    sync_secret_usages_for_server(&state, &db, &server_id, &updated_server).await?;
 
     if let Some(meta_payload) = payload.meta.as_ref() {
         upsert_meta_payload(&db, &server_id, meta_payload).await?;

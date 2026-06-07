@@ -7,6 +7,9 @@ import type { SegmentOption } from "../ui/segment";
 export const DEFAULT_INGEST_MESSAGE =
 	"Drop JSON/TOML/Text or MCP bundles (WIP) to begin";
 
+export const GHOST_INPUT_CLASS =
+	"border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer";
+
 // Server type options for Segment component
 export const SERVER_TYPE_OPTIONS: SegmentOption[] = [
 	{ value: "stdio", label: "Stdio" },
@@ -48,6 +51,8 @@ export const urlParamSchema = z.object({
 	value: z.string().optional(),
 });
 
+const SECRET_PLACEHOLDER_PATTERN = /\[\[secret:[^\]]+\]\]/g;
+
 export const manualServerSchema = z
 	.object({
 		name: z.string().min(1, "manual.errors.nameRequired"),
@@ -55,11 +60,7 @@ export const manualServerSchema = z
 			required_error: "manual.errors.kindRequired",
 		}),
 		command: z.string().optional(),
-		url: z
-			.string()
-			.url("manual.errors.urlInvalid")
-			.optional()
-			.or(z.literal("")),
+		url: z.string().optional().or(z.literal("")),
 		args: z.array(argSchema).optional(),
 		env: z.array(envSchema).optional(),
 		headers: z.array(headerSchema).optional(),
@@ -97,6 +98,18 @@ export const manualServerSchema = z
 				message: "manual.errors.urlRequired",
 				path: ["url"],
 			});
+		}
+		if (kind !== "stdio" && url) {
+			const sanitizedUrl = url.replace(SECRET_PLACEHOLDER_PATTERN, "placeholder");
+			try {
+				new URL(sanitizedUrl);
+			} catch {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					message: "manual.errors.urlInvalid",
+					path: ["url"],
+				});
+			}
 		}
 	});
 

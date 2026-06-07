@@ -1,20 +1,27 @@
 import { useTranslation } from "react-i18next";
+import type { UseFormRegister } from "react-hook-form";
 import { Input } from "../../ui/input";
 import { FieldList } from "../field-list";
+import { SecretPickerButton } from "../secret-picker-button";
+import type { SecretOrigin } from "../../../lib/types";
+import { GHOST_INPUT_CLASS } from "../types";
+import type { ManualServerFormValues } from "../types";
 
 interface StdioAdvancedProps {
 	viewMode: "form" | "json";
 	isStdio: boolean;
-	argFields: Array<{ id: string; [key: string]: unknown }>;
-	envFields: Array<{ id: string; [key: string]: unknown }>;
+	argFields: Array<{ id: string;[key: string]: unknown }>;
+	envFields: Array<{ id: string;[key: string]: unknown }>;
 	removeArg: (index: number) => void;
 	removeEnv: (index: number) => void;
 	appendArg: (value: { value: string }) => void;
 	appendEnv: (value: { key: string; value: string }) => void;
-	register: any;
+	register: UseFormRegister<ManualServerFormValues>;
 	deleteConfirmStates: Record<string, boolean>;
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
+	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	secretOriginBase?: SecretOrigin;
 }
 
 export function StdioAdvanced({
@@ -30,6 +37,8 @@ export function StdioAdvanced({
 	deleteConfirmStates,
 	onDeleteClick,
 	onGhostClick,
+	onSecretSelect,
+	secretOriginBase,
 }: StdioAdvancedProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || !isStdio) return null;
@@ -50,20 +59,34 @@ export function StdioAdvanced({
 									defaultValue: "Add a new argument",
 								})}
 								onClick={() => onGhostClick(() => appendArg({ value: "" }))}
-								className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+								className={GHOST_INPUT_CLASS}
 								readOnly
 							/>
 						);
 					}
 					return (
-						<Input
-							{...register(`args.${index}.value` as const)}
-							placeholder={t("manual.fields.args.placeholder", {
-								defaultValue: `Argument ${index + 1}`,
-								count: index + 1,
-							})}
-							className="pr-8"
-						/>
+						<div className="group/secret-field relative">
+							<Input
+								{...register(`args.${index}.value` as const)}
+								placeholder={t("manual.fields.args.placeholder", {
+									defaultValue: `Argument ${index + 1}`,
+									count: index + 1,
+								})}
+								className="pr-20"
+							/>
+							<SecretPickerButton
+								className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
+								origin={{
+									...secretOriginBase,
+									field_group: "args",
+									field_index: index,
+									field_path: `args.${index}.value`,
+								}}
+								onSelect={(placeholder) =>
+									onSecretSelect?.(`args.${index}.value`, placeholder)
+								}
+							/>
+						</div>
 					);
 				}}
 			/>
@@ -86,7 +109,7 @@ export function StdioAdvanced({
 									onClick={() =>
 										onGhostClick(() => appendEnv({ key: "", value: "" }))
 									}
-									className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+									className={GHOST_INPUT_CLASS}
 									readOnly
 								/>
 								<Input
@@ -96,14 +119,14 @@ export function StdioAdvanced({
 									onClick={() =>
 										onGhostClick(() => appendEnv({ key: "", value: "" }))
 									}
-									className="border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer"
+									className={GHOST_INPUT_CLASS}
 									readOnly
 								/>
 							</div>
 						);
 					}
 					return (
-						<div className="grid grid-cols-2 gap-2">
+						<div className="group/secret-field grid grid-cols-2 gap-2">
 							<Input
 								{...register(`env.${index}.key` as const)}
 								placeholder={t("manual.fields.env.keyPlaceholder", {
@@ -115,6 +138,21 @@ export function StdioAdvanced({
 								placeholder={t("manual.fields.common.valuePlaceholder", {
 									defaultValue: "Value",
 								})}
+								className="pr-20"
+							/>
+							<SecretPickerButton
+								className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
+								origin={{
+									...secretOriginBase,
+									field_group: "env",
+									field_key:
+										typeof field.key === "string" ? field.key : undefined,
+									field_index: index,
+									field_path: `env.${index}.value`,
+								}}
+								onSelect={(placeholder) =>
+									onSecretSelect?.(`env.${index}.value`, placeholder)
+								}
 							/>
 						</div>
 					);

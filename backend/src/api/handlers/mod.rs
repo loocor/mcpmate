@@ -11,6 +11,7 @@ pub mod onboarding;
 pub mod profile;
 pub mod registry;
 pub mod runtime;
+pub mod secrets;
 pub mod server;
 pub mod system;
 use std::fmt;
@@ -31,6 +32,8 @@ pub enum ApiError {
     BadRequest(String),
     /// Internal server error
     InternalError(String),
+    /// Service unavailable error
+    ServiceUnavailable(String),
     /// Conflict error
     Conflict(String),
     /// Forbidden error
@@ -48,6 +51,7 @@ impl fmt::Display for ApiError {
             ApiError::NotFound(msg) => write!(f, "Not found: {msg}"),
             ApiError::BadRequest(msg) => write!(f, "Bad request: {msg}"),
             ApiError::InternalError(msg) => write!(f, "Internal error: {msg}"),
+            ApiError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {msg}"),
             ApiError::Conflict(msg) => write!(f, "Conflict: {msg}"),
             ApiError::Forbidden(msg) => write!(f, "Forbidden: {msg}"),
             ApiError::Timeout(msg) => write!(f, "Timeout: {msg}"),
@@ -61,6 +65,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             ApiError::Timeout(msg) => (StatusCode::REQUEST_TIMEOUT, msg),
@@ -81,5 +86,17 @@ impl IntoResponse for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
         ApiError::InternalError(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_unavailable_errors_return_503() {
+        let response = ApiError::ServiceUnavailable("secure store unavailable".to_string()).into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

@@ -658,6 +658,15 @@ export const serversTranslations = {
 				oauthDraftServerFailed: "Failed to create OAuth draft server",
 				oauthServerIdRequired: "Server ID is required to initiate OAuth",
 			},
+			secrets: {
+				pick: "Use secret",
+				title: "Use Secure Store",
+				description: "Insert a write-only placeholder into this runtime field.",
+				search: "Search secrets...",
+				loading: "Loading secrets",
+				empty: "No secrets stored",
+				createInline: "New secret",
+			},
 		},
 		wizard: {
 			steps: {
@@ -1438,6 +1447,15 @@ export const serversTranslations = {
 				oauthDraftServerFailed: "创建 OAuth 草稿服务器失败",
 				oauthServerIdRequired: "启动 OAuth 需要服务器 ID",
 			},
+			secrets: {
+				pick: "使用密钥",
+				title: "使用安全存储",
+				description: "在此运行时字段中插入一个只写占位符。",
+				search: "搜索密钥...",
+				loading: "加载密钥中",
+				empty: "暂无存储密钥",
+				createInline: "新建密钥",
+			},
 		},
 		wizard: {
 			steps: {
@@ -2213,6 +2231,15 @@ export const serversTranslations = {
 				invalidJsonTitle: "JSON が無効です",
 				oauthDraftServerFailed: "OAuth 用の下書きサーバーの作成に失敗しました",
 				oauthServerIdRequired: "OAuth を開始するにはサーバー ID が必要です",
+			},
+			secrets: {
+				pick: "シークレットを使用",
+				title: "セキュアストアを使用",
+				description: "このランタイムフィールドにライトオンリーのプレースホルダーを挿入します。",
+				search: "シークレットを検索...",
+				loading: "シークレットを読み込み中",
+				empty: "保存されたシークレットはありません",
+				createInline: "新しいシークレット",
 			},
 		},
 		wizard: {

@@ -139,6 +139,16 @@ export const ServerInstallManualForm = forwardRef<
 			} as ManualServerFormValues,
 		});
 
+		const handleSecretSelect = useCallback(
+			(fieldName: string, placeholder: string) => {
+				setValue(fieldName as keyof ManualServerFormValues, placeholder as never, {
+					shouldDirty: true,
+					shouldValidate: true,
+				});
+			},
+			[setValue],
+		);
+
 		// Field arrays
 		const {
 			fields: argFields,
@@ -1102,6 +1112,7 @@ export const ServerInstallManualForm = forwardRef<
 												commandInputRef={commandInputRef}
 												urlInputRef={urlInputRef}
 												viewMode={viewMode}
+												onSecretSelect={handleSecretSelect}
 											/>
 
 									{serverId && onInitiateOAuth ? (
@@ -1127,6 +1138,7 @@ export const ServerInstallManualForm = forwardRef<
 												deleteConfirmStates={deleteConfirmStates}
 												onDeleteClick={handleDeleteClick}
 												onGhostClick={handleGhostClick}
+												onSecretSelect={handleSecretSelect}
 											/>
 
 											<UrlParams
@@ -1139,6 +1151,7 @@ export const ServerInstallManualForm = forwardRef<
 												deleteConfirmStates={deleteConfirmStates}
 												onDeleteClick={handleDeleteClick}
 												onGhostClick={handleGhostClick}
+												onSecretSelect={handleSecretSelect}
 											/>
 
 											<HttpHeaders
@@ -1151,6 +1164,7 @@ export const ServerInstallManualForm = forwardRef<
 												deleteConfirmStates={deleteConfirmStates}
 												onDeleteClick={handleDeleteClick}
 												onGhostClick={handleGhostClick}
+												onSecretSelect={handleSecretSelect}
 											/>
 
 										</>

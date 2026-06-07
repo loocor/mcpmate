@@ -25,6 +25,7 @@ import { ProfileDetailPage } from "./pages/profile/profile-detail-page";
 import { ProfilePage } from "./pages/profile/profile-page";
 import { ProfilePresetPage } from "./pages/profile/profile-preset-page";
 import { RuntimePage } from "./pages/runtime/runtime-page";
+import { SecretsPage } from "./pages/secrets/secrets-page";
 import { InstanceDetailPage } from "./pages/servers/instance-detail-page";
 import { ServerDetailPage } from "./pages/servers/server-detail-page";
 import { OAuthCallbackPage } from "./pages/servers/oauth-callback-page";
@@ -143,6 +144,7 @@ function App() {
 									}
 								/>
 								<Route path="runtime" element={<RuntimePage />} />
+								<Route path="secrets" element={<SecretsPage />} />
 								<Route path="audit" element={<AuditPage />} />
 								<Route path="api-docs" element={<ApiDocsPage />} />
 								<Route path="account" element={<Navigate to="/" replace />} />

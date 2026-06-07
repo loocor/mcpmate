@@ -10,6 +10,7 @@ import { marketTranslations } from "../../pages/market/i18n";
 import { profilesTranslations } from "../../pages/profiles/i18n";
 import { runtimeTranslations } from "../../pages/runtime/i18n";
 import { serversTranslations } from "../../pages/servers/i18n";
+import { secretsTranslations } from "../../pages/secrets/i18n";
 import { onboardingTranslations } from "../../pages/onboarding/i18n";
 import { operatorTranslations } from "../../pages/operator/i18n";
 import { settingsTranslations } from "../../pages/settings/i18n";
@@ -80,6 +81,9 @@ export const loadPageTranslations = {
 	},
 	servers: () => {
 		loadTranslations("servers", serversTranslations);
+	},
+	secrets: () => {
+		loadTranslations("secrets", secretsTranslations);
 	},
 	inspector: () => {
 		loadTranslations("inspector", inspectorTranslations);
