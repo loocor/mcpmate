@@ -1002,10 +1002,11 @@ export const secretsApi = {
 
 	updatePasswordScope: async (
 		scope: string[],
+		currentPassword: string,
 	): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
 		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/scope", {
 			method: "POST",
-			body: JSON.stringify({ scope }),
+			body: JSON.stringify({ scope, current_password: currentPassword }),
 		});
 		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[]; has_password: boolean }>);
 	},

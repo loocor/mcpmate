@@ -70,6 +70,36 @@ fn iterations_from_i64(n: i64) -> NonZeroU32 {
 
 // ── Handlers ─────────────────────────────────────────────────
 
+/// Load password config and verify the supplied password against it.
+/// Returns `Ok(true)` if verified, `Ok(false)` if no password is set or verification fails,
+/// or `Err` on internal errors (corrupt stored data).
+async fn load_and_verify_password(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    password: &str,
+) -> Result<bool, ApiError> {
+    let config = mcpmate_secrets::database::get_password_config(pool)
+        .await
+        .map_err(|err| ApiError::InternalError(format!("Failed to load password config: {err}")))?;
+
+    let Some(cfg) = config else {
+        return Ok(false);
+    };
+
+    let stored_hash = STANDARD
+        .decode(&cfg.password_hash)
+        .map_err(|_| ApiError::InternalError("Invalid stored hash".to_string()))?;
+    let salt = STANDARD
+        .decode(&cfg.hash_salt)
+        .map_err(|_| ApiError::InternalError("Invalid stored salt".to_string()))?;
+
+    Ok(verify_password_hash(
+        password.as_bytes(),
+        &salt,
+        iterations_from_i64(cfg.hash_iterations),
+        &stored_hash,
+    ))
+}
+
 pub async fn get_password_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<PasswordStatusResp>, ApiError> {
@@ -109,6 +139,18 @@ pub async fn set_password(
     }
 
     let pool = get_pool(&state)?;
+
+    // Guard: if a password is already set, reject the overwrite.
+    // Use the change_password endpoint to modify an existing password.
+    let existing = mcpmate_secrets::database::get_password_config(&pool)
+        .await
+        .map_err(|err| ApiError::InternalError(format!("Failed to load password config: {err}")))?;
+    if existing.is_some() {
+        return Err(ApiError::Conflict(
+            "A password is already set. Use the change-password endpoint to modify it.".to_string(),
+        ));
+    }
+
     let scope = payload.scope.unwrap_or_else(default_scope);
     let salt = generate_salt();
     let hash = derive_password_hash(payload.password.as_bytes(), &salt, PASSWORD_HASH_ITERATIONS);
@@ -134,28 +176,7 @@ pub async fn verify_password_endpoint(
     Json(payload): Json<PasswordVerifyReq>,
 ) -> Result<Json<PasswordVerifyResp>, ApiError> {
     let pool = get_pool(&state)?;
-    let config = mcpmate_secrets::database::get_password_config(&pool)
-        .await
-        .map_err(|err| ApiError::InternalError(format!("Failed to load password config: {err}")))?;
-
-    let Some(cfg) = config else {
-        return Ok(Json(PasswordVerifyResp::success(PasswordVerifyData { valid: false })));
-    };
-
-    let stored_hash = STANDARD
-        .decode(&cfg.password_hash)
-        .map_err(|_| ApiError::InternalError("Invalid stored hash".to_string()))?;
-    let salt = STANDARD
-        .decode(&cfg.hash_salt)
-        .map_err(|_| ApiError::InternalError("Invalid stored salt".to_string()))?;
-
-    let valid = verify_password_hash(
-        payload.password.as_bytes(),
-        &salt,
-        iterations_from_i64(cfg.hash_iterations),
-        &stored_hash,
-    );
-
+    let valid = load_and_verify_password(&pool, &payload.password).await?;
     Ok(Json(PasswordVerifyResp::success(PasswordVerifyData { valid })))
 }
 
@@ -182,19 +203,7 @@ pub async fn change_password(
         .ok_or_else(|| ApiError::BadRequest("No password is set".to_string()))?;
 
     // Verify old password.
-    let stored_hash = STANDARD
-        .decode(&config.password_hash)
-        .map_err(|_| ApiError::InternalError("Invalid stored hash".to_string()))?;
-    let old_salt = STANDARD
-        .decode(&config.hash_salt)
-        .map_err(|_| ApiError::InternalError("Invalid stored salt".to_string()))?;
-
-    if !verify_password_hash(
-        payload.old_password.as_bytes(),
-        &old_salt,
-        iterations_from_i64(config.hash_iterations),
-        &stored_hash,
-    ) {
+    if !load_and_verify_password(&pool, &payload.old_password).await? {
         return Err(ApiError::BadRequest("Current password is incorrect".to_string()));
     }
 
@@ -225,25 +234,18 @@ pub async fn clear_password(
     Json(payload): Json<PasswordClearReq>,
 ) -> Result<Json<PasswordStatusResp>, ApiError> {
     let pool = get_pool(&state)?;
-    let config = mcpmate_secrets::database::get_password_config(&pool)
+
+    // Guard: no password is set.
+    let has_config = mcpmate_secrets::database::get_password_config(&pool)
         .await
         .map_err(|err| ApiError::InternalError(format!("Failed to load password config: {err}")))?
-        .ok_or_else(|| ApiError::BadRequest("No password is set".to_string()))?;
+        .is_some();
+    if !has_config {
+        return Err(ApiError::BadRequest("No password is set".to_string()));
+    }
 
     // Verify password before clearing.
-    let stored_hash = STANDARD
-        .decode(&config.password_hash)
-        .map_err(|_| ApiError::InternalError("Invalid stored hash".to_string()))?;
-    let salt = STANDARD
-        .decode(&config.hash_salt)
-        .map_err(|_| ApiError::InternalError("Invalid stored salt".to_string()))?;
-
-    if !verify_password_hash(
-        payload.password.as_bytes(),
-        &salt,
-        iterations_from_i64(config.hash_iterations),
-        &stored_hash,
-    ) {
+    if !load_and_verify_password(&pool, &payload.password).await? {
         return Err(ApiError::BadRequest("Password is incorrect".to_string()));
     }
 
@@ -278,6 +280,11 @@ pub async fn update_password_scope(
         .await
         .map_err(|err| ApiError::InternalError(format!("Failed to load password config: {err}")))?
         .ok_or_else(|| ApiError::BadRequest("No password is set".to_string()))?;
+
+    // Verify current password before allowing scope change.
+    if !load_and_verify_password(&pool, &payload.current_password).await? {
+        return Err(ApiError::BadRequest("Current password is incorrect".to_string()));
+    }
 
     mcpmate_secrets::database::upsert_password_config(
         &pool,

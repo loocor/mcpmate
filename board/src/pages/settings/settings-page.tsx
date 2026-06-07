@@ -746,8 +746,8 @@ export function SettingsPage() {
 	);
 
 	const updatePasswordScopeMutation = useMutation({
-		mutationFn: (level: Exclude<ProtectionLevel, "off">) =>
-			secretsApi.updatePasswordScope(protectionScopeForLevel(level)),
+		mutationFn: ({ level, currentPassword }: { level: Exclude<ProtectionLevel, "off">; currentPassword: string }) =>
+			secretsApi.updatePasswordScope(protectionScopeForLevel(level), currentPassword),
 		onSuccess: async () => {
 			await queryClient.invalidateQueries({ queryKey: ["password", "status"] });
 			setSelectedProtectionLevel("");
@@ -810,7 +810,8 @@ export function SettingsPage() {
 			}
 
 			if (level !== currentProtectionLevel) {
-				updatePasswordScopeMutation.mutate(level);
+				// Verify current password before changing scope.
+				openProtectionPasswordDialog("verify");
 			}
 		},
 		[
@@ -826,10 +827,17 @@ export function SettingsPage() {
 		setPendingProtectionScope(["startup"]);
 	}, []);
 
-	const handleProtectionPasswordDialogSuccess = useCallback(() => {
-		setSelectedProtectionLevel("");
-		setPendingProtectionScope(["startup"]);
-	}, []);
+	const handleProtectionPasswordDialogSuccess = useCallback(
+		(verifiedPassword?: string) => {
+			if (protectionPasswordDialogMode === "verify" && verifiedPassword) {
+				const level = selectedProtectionLevel as Exclude<ProtectionLevel, "off">;
+				updatePasswordScopeMutation.mutate({ level, currentPassword: verifiedPassword });
+			}
+			setSelectedProtectionLevel("");
+			setPendingProtectionScope(["startup"]);
+		},
+		[protectionPasswordDialogMode, selectedProtectionLevel, updatePasswordScopeMutation],
+	);
 
 	const handleSettingsPasswordUnlock = useCallback((_password: string) => {
 		sessionStorage.setItem("mcp_password_settings_verified", "true");

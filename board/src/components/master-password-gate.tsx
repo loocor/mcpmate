@@ -35,6 +35,25 @@ export function MasterPasswordGate({ children }: MasterPasswordGateProps) {
 		return null;
 	}
 
+	if (statusQuery.isError) {
+		return (
+			<div className="flex h-screen items-center justify-center">
+				<div className="text-center space-y-2">
+					<p className="text-sm text-muted-foreground">
+						Unable to verify password status. Please check that the backend is running.
+					</p>
+					<button
+						type="button"
+						className="text-sm text-primary underline"
+						onClick={() => statusQuery.refetch()}
+					>
+						Retry
+					</button>
+				</div>
+			</div>
+		);
+	}
+
 	if (!requiresStartupPasswordGate(statusQuery.data)) {
 		return <>{children}</>;
 	}
