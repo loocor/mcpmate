@@ -910,3 +910,98 @@ async fn provider_mode_persists_across_restart_simulation() {
         other => panic!("expected locked passphrase bootstrap, got {other:?}"),
     }
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn password_set_rejects_overwrite_when_already_configured() {
+    let _key = EnvVarGuard::set(
+        "MCPMATE_SECRETS_LOCAL_KEY",
+        "MCPMate test key material for local store pwd001",
+    );
+    let (_temp_dir, state, _store) = build_test_context().await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    // First set succeeds.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/password/set")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "password": "test1234", "confirm": "test1234" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Second set should be rejected (409 Conflict).
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/password/set")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "password": "other5678", "confirm": "other5678" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn delete_secret_blocks_on_active_usage_but_allows_stale() {
+    let _key = EnvVarGuard::set(
+        "MCPMATE_SECRETS_LOCAL_KEY",
+        "MCPMate test key material for local store del001",
+    );
+    let (_temp_dir, state, store) = build_test_context().await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state.clone()));
+
+    // Create a secret and record a usage for a non-existent server (stale).
+    store
+        .create_secret(SecretCreateInput {
+            alias: "server/ghost/token".to_string(),
+            kind: SecretKindInput::Token,
+            value: "secret-value".to_string(),
+            label: None,
+            origin: None,
+        })
+        .await
+        .expect("create secret");
+    store
+        .upsert_usage(SecretUsageUpsertInput {
+            alias: "server/ghost/token".to_string(),
+            server_id: "nonexistent-server".to_string(),
+            location: SecretUsageLocationInput::StdioEnv {
+                name: "TOKEN".to_string(),
+            },
+        })
+        .await
+        .expect("record stale usage");
+
+    // Delete should succeed because the usage is stale (server doesn't exist).
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/secrets/delete")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "alias": "server/ghost/token", "force": false }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(resp.status(), StatusCode::OK);
+}
