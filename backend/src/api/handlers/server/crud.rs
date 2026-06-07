@@ -161,7 +161,7 @@ async fn sync_secret_usages_for_server(
     server_id: &str,
     server: &Server,
 ) -> Result<(), ApiError> {
-    let Some(secret_store) = state.secret_store.as_ref() else {
+    let Some(secret_store) = state.secret_store.try_read().ok().and_then(|guard| guard.clone()) else {
         return Ok(());
     };
 

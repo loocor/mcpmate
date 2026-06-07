@@ -75,6 +75,37 @@ pub(crate) async fn ensure_schema(pool: &Pool<Sqlite>) -> Result<()> {
     .await
     .context("create secure_store_usages table")?;
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS secure_store_password_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            password_hash TEXT NOT NULL,
+            hash_salt TEXT NOT NULL,
+            hash_iterations INTEGER NOT NULL DEFAULT 600000,
+            protection_scope TEXT NOT NULL DEFAULT '["startup"]',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .context("create secure_store_password_config table")?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS secure_store_provider_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            provider_mode TEXT NOT NULL DEFAULT 'operating_system',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .context("create secure_store_provider_config table")?;
+
     Ok(())
 }
 
@@ -522,6 +553,109 @@ pub(crate) async fn load_encrypted_secrets(pool: &Pool<Sqlite>) -> Result<Vec<En
             })
         })
         .collect()
+}
+
+// ── Password Config ──────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct PasswordConfigRow {
+    pub password_hash: String,
+    pub hash_salt: String,
+    pub hash_iterations: i64,
+    pub protection_scope: String,
+}
+
+pub async fn get_password_config(pool: &Pool<Sqlite>) -> Result<Option<PasswordConfigRow>> {
+    let row = sqlx::query(
+        "SELECT password_hash, hash_salt, hash_iterations, protection_scope FROM secure_store_password_config WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .context("load password config")?;
+
+    Ok(row.map(|r| PasswordConfigRow {
+        password_hash: r.try_get("password_hash").unwrap_or_default(),
+        hash_salt: r.try_get("hash_salt").unwrap_or_default(),
+        hash_iterations: r.try_get("hash_iterations").unwrap_or(600_000),
+        protection_scope: r.try_get("protection_scope").unwrap_or_else(|_| "[]".to_string()),
+    }))
+}
+
+pub async fn upsert_password_config(
+    pool: &Pool<Sqlite>,
+    password_hash: &str,
+    hash_salt: &str,
+    hash_iterations: i64,
+    protection_scope: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO secure_store_password_config (id, password_hash, hash_salt, hash_iterations, protection_scope, updated_at)
+        VALUES (1, ?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            password_hash = ?1,
+            hash_salt = ?2,
+            hash_iterations = ?3,
+            protection_scope = ?4,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(password_hash)
+    .bind(hash_salt)
+    .bind(hash_iterations)
+    .bind(protection_scope)
+    .execute(pool)
+    .await
+    .context("upsert password config")?;
+
+    Ok(())
+}
+
+pub async fn delete_password_config(pool: &Pool<Sqlite>) -> Result<()> {
+    sqlx::query("DELETE FROM secure_store_password_config WHERE id = 1")
+        .execute(pool)
+        .await
+        .context("delete password config")?;
+    Ok(())
+}
+
+// ── Provider Config ────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderConfigRow {
+    pub provider_mode: String,
+}
+
+pub async fn get_provider_config(pool: &Pool<Sqlite>) -> Result<Option<ProviderConfigRow>> {
+    let row = sqlx::query("SELECT provider_mode FROM secure_store_provider_config WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .context("load provider config")?;
+
+    Ok(row.map(|r| ProviderConfigRow {
+        provider_mode: r.try_get("provider_mode").unwrap_or_else(|_| "operating_system".to_string()),
+    }))
+}
+
+pub async fn upsert_provider_config(
+    pool: &Pool<Sqlite>,
+    provider_mode: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO secure_store_provider_config (id, provider_mode, updated_at)
+        VALUES (1, ?1, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            provider_mode = ?1,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(provider_mode)
+    .execute(pool)
+    .await
+    .context("upsert provider config")?;
+
+    Ok(())
 }
 
 fn secret_metadata_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<SecretMetadataView> {

@@ -1,5 +1,5 @@
 import { isProfileTokenEstimateMethod } from "../../lib/profile-token-estimate-method";
-import type { AuditRetentionPolicy } from "../../lib/types";
+import type { AuditPolicyData, AuditRetentionPolicy } from "../../lib/types";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
 	Activity,
@@ -14,15 +14,17 @@ import {
 	Palette,
 	RotateCcw,
 	Server,
+	ShieldCheck,
 	Sliders,
 	Store,
 	Sun,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { Button } from "../../components/ui/button";
+import { LockScreen } from "../../components/lock-screen";
 import {
 	Card,
 	CardContent,
@@ -34,6 +36,10 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Segment, type SegmentOption } from "../../components/ui/segment";
 import {
+	ProtectionPasswordDialog,
+	type ProtectionPasswordDialogMode,
+} from "../../components/protection-password-dialog";
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -41,6 +47,17 @@ import {
 	SelectValue,
 } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
+import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
 import {
 	Tabs,
 	TabsContent,
@@ -50,6 +67,7 @@ import {
 import {
 	auditApi,
 	notificationsService,
+	secretsApi,
 	setApiBaseUrl,
 	syncApiBaseUrlForRuntimePort,
 	systemApi,
@@ -59,6 +77,12 @@ import {
 	useDesktopCoreState,
 } from "../../lib/desktop-core-state";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
+import {
+	type ProtectionLevel,
+	protectionScopeForLevel,
+	requiresSettingsPasswordGate,
+	resolveProtectionLevel,
+} from "../../lib/protection-password";
 import { SUPPORTED_LANGUAGES } from "../../lib/i18n/index";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import {
@@ -230,6 +254,83 @@ function getServiceInstallLabel(params: {
 	});
 }
 
+type AuditPolicyFormState = {
+	policyType: string;
+	policyDays: number;
+	policyCount: number;
+};
+
+function auditFormFromPolicyData(data: AuditPolicyData): AuditPolicyFormState & { sweepInterval: number } {
+	const p = data.policy;
+	if (p === "off") {
+		return {
+			policyType: "off",
+			policyDays: 30,
+			policyCount: 100_000,
+			sweepInterval: data.sweep_interval_secs,
+		};
+	}
+	if (typeof p === "object" && "keep_days" in p) {
+		return {
+			policyType: "keep_days",
+			policyDays: p.keep_days.days,
+			policyCount: 100_000,
+			sweepInterval: data.sweep_interval_secs,
+		};
+	}
+	if (typeof p === "object" && "keep_count" in p) {
+		return {
+			policyType: "keep_count",
+			policyDays: 30,
+			policyCount: p.keep_count.count,
+			sweepInterval: data.sweep_interval_secs,
+		};
+	}
+	if (typeof p === "object" && "combined" in p) {
+		return {
+			policyType: "combined",
+			policyDays: p.combined.days,
+			policyCount: p.combined.count,
+			sweepInterval: data.sweep_interval_secs,
+		};
+	}
+	return {
+		policyType: "combined",
+		policyDays: 30,
+		policyCount: 100_000,
+		sweepInterval: data.sweep_interval_secs,
+	};
+}
+
+function buildAuditPolicy(type: string, days: number, count: number): AuditRetentionPolicy {
+	switch (type) {
+		case "off":
+			return "off";
+		case "keep_days":
+			return { keep_days: { days } };
+		case "keep_count":
+			return { keep_count: { count } };
+		default:
+			return { combined: { days, count } };
+	}
+}
+
+function auditFormMatchesSaved(form: AuditPolicyFormState, saved: AuditPolicyFormState): boolean {
+	if (form.policyType !== saved.policyType) {
+		return false;
+	}
+	switch (form.policyType) {
+		case "off":
+			return true;
+		case "keep_days":
+			return form.policyDays === saved.policyDays;
+		case "keep_count":
+			return form.policyCount === saved.policyCount;
+		default:
+			return form.policyDays === saved.policyDays && form.policyCount === saved.policyCount;
+	}
+}
+
 export function SettingsPage() {
 	usePageTranslations("settings");
 	const queryClient = useQueryClient();
@@ -301,7 +402,6 @@ export function SettingsPage() {
 	const [policyType, setPolicyType] = useState<string>("combined");
 	const [policyDays, setPolicyDays] = useState<number>(30);
 	const [policyCount, setPolicyCount] = useState<number>(100000);
-	const [sweepInterval, setSweepInterval] = useState<number>(3600);
 
 	const policyQuery = useQuery({
 		queryKey: ["audit", "policy"],
@@ -327,6 +427,414 @@ export function SettingsPage() {
 		queryKey: ["system", "settings"],
 		queryFn: () => systemApi.getSettings(),
 	});
+	const storeStatusQuery = useQuery({
+		queryKey: ["secrets", "status"],
+		queryFn: secretsApi.status,
+	});
+	const [selectedMode, setSelectedMode] = useState<string>("");
+	const [passphraseInput, setPassphraseInput] = useState("");
+	const [passphraseConfirmInput, setPassphraseConfirmInput] = useState("");
+	const [passphraseSetupError, setPassphraseSetupError] = useState<string | null>(null);
+	const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
+	const [showPassphraseSetupDialog, setShowPassphraseSetupDialog] = useState(false);
+	const [showCurrentPassphraseDialog, setShowCurrentPassphraseDialog] = useState(false);
+	const [currentPassphraseInput, setCurrentPassphraseInput] = useState("");
+	const [currentPassphraseError, setCurrentPassphraseError] = useState<string | null>(null);
+	const [passphraseAction, setPassphraseAction] = useState<"switch" | "rotate" | null>(null);
+	const passphraseSetupPasswordRef = useRef<HTMLInputElement>(null);
+	const currentPassphraseInputRef = useRef<HTMLInputElement>(null);
+
+	type ProviderSwitchMode = "operating_system" | "passphrase" | "local_file";
+	type PendingProviderSwitch = {
+		mode: ProviderSwitchMode;
+		passphrase?: string;
+		currentPassphrase?: string;
+	};
+	const pendingProviderSwitchRef = useRef<PendingProviderSwitch | null>(null);
+
+	const resetPendingProviderSwitch = useCallback(() => {
+		pendingProviderSwitchRef.current = null;
+		setSelectedMode("");
+		setPassphraseInput("");
+		setPassphraseConfirmInput("");
+		setPassphraseSetupError(null);
+		setCurrentPassphraseInput("");
+		setCurrentPassphraseError(null);
+	}, []);
+
+	const currentProviderMode =
+		storeStatusQuery.data?.provider?.provider_mode ?? "operating_system";
+	const isPassphraseModeConfigured =
+		currentProviderMode === "passphrase" && storeStatusQuery.data?.status === "ready";
+	const isPendingPassphraseSwitch =
+		selectedMode === "passphrase" && currentProviderMode !== "passphrase";
+	const effectiveEncryptionMode = selectedMode || currentProviderMode;
+
+	const rotatePassphraseMutation = useMutation({
+		mutationFn: () =>
+			secretsApi.rotatePassphrase(
+				currentPassphraseInput,
+				passphraseInput,
+				passphraseConfirmInput,
+			),
+		onSuccess: async () => {
+			await queryClient.invalidateQueries({ queryKey: ["secrets", "status"] });
+			resetPendingProviderSwitch();
+			setShowPassphraseSetupDialog(false);
+			setShowCurrentPassphraseDialog(false);
+			setPassphraseAction(null);
+			notifySuccess(
+				t("settings:security.encryptionPasswordRotated", {
+					defaultValue: "Encryption password updated successfully",
+				}),
+			);
+		},
+		onError: (error: unknown) => {
+			resetPendingProviderSwitch();
+			setShowPassphraseSetupDialog(false);
+			setPassphraseAction(null);
+			notifyError(
+				t("settings:security.encryptionPasswordRotateError", {
+					defaultValue: "Failed to update encryption password",
+				}),
+				stringifyError(error),
+			);
+		},
+	});
+
+	const switchProviderMutation = useMutation({
+		mutationFn: (pending: PendingProviderSwitch) =>
+			secretsApi.switchProvider(pending.mode, {
+				passphrase: pending.passphrase,
+				currentPassphrase: pending.currentPassphrase,
+			}),
+		onSuccess: async () => {
+			await queryClient.invalidateQueries({ queryKey: ["secrets", "status"] });
+			resetPendingProviderSwitch();
+			setShowPassphraseSetupDialog(false);
+			setShowSwitchConfirm(false);
+			notifySuccess(
+				t("settings:security.switchSuccess", {
+					defaultValue: "Security mode updated successfully",
+				}),
+			);
+		},
+		onError: (error: unknown) => {
+			resetPendingProviderSwitch();
+			setShowSwitchConfirm(false);
+			notifyError(
+				t("settings:security.switchError", {
+					defaultValue: "Failed to switch security mode",
+				}),
+				stringifyError(error),
+			);
+		},
+	});
+
+	const promptSecurityModeSwitchIfPending = useCallback(
+		(modeOverride?: string) => {
+			const mode = modeOverride ?? selectedMode;
+			if (!mode) {
+				return;
+			}
+			const isPassphraseRotation =
+				mode === "passphrase" &&
+				mode === currentProviderMode &&
+				passphraseInput.trim().length > 0;
+			if (mode === currentProviderMode && !isPassphraseRotation) {
+				return;
+			}
+			if (mode === "passphrase" && !passphraseInput.trim()) {
+				return;
+			}
+			if (switchProviderMutation.isPending || showSwitchConfirm) {
+				return;
+			}
+			pendingProviderSwitchRef.current = {
+				mode: mode as ProviderSwitchMode,
+				passphrase: mode === "passphrase" ? passphraseInput : undefined,
+			};
+			setShowSwitchConfirm(true);
+		},
+		[
+			selectedMode,
+			passphraseInput,
+			currentProviderMode,
+			switchProviderMutation.isPending,
+			showSwitchConfirm,
+		],
+	);
+
+	const handleEncryptionModeChange = useCallback(
+		(value: string) => {
+			setSelectedMode(value);
+			if (value === currentProviderMode) {
+				return;
+			}
+			if (value === "passphrase") {
+				setPassphraseInput("");
+				setPassphraseConfirmInput("");
+				setPassphraseSetupError(null);
+				setShowPassphraseSetupDialog(true);
+				return;
+			}
+			if (currentProviderMode === "passphrase") {
+				setCurrentPassphraseInput("");
+				setCurrentPassphraseError(null);
+				setShowCurrentPassphraseDialog(true);
+				return;
+			}
+			queueMicrotask(() => {
+				promptSecurityModeSwitchIfPending(value);
+			});
+		},
+		[currentProviderMode, promptSecurityModeSwitchIfPending],
+	);
+
+	const handlePassphraseSetupOpenChange = useCallback(
+		(open: boolean) => {
+			setShowPassphraseSetupDialog(open);
+			if (!open) {
+				setPassphraseInput("");
+				setPassphraseConfirmInput("");
+				setPassphraseSetupError(null);
+				if (!showSwitchConfirm && !switchProviderMutation.isPending) {
+					setSelectedMode("");
+				}
+			}
+		},
+		[showSwitchConfirm, switchProviderMutation.isPending],
+	);
+
+	const handlePassphraseSetupContinue = useCallback(() => {
+		if (!passphraseInput.trim()) {
+			setPassphraseSetupError(
+				t("settings:security.passphraseRequired", {
+					defaultValue: "Enter a master password to continue.",
+				}),
+			);
+			return;
+		}
+		if (passphraseInput !== passphraseConfirmInput) {
+			setPassphraseSetupError(
+				t("settings:security.passphraseMismatch", {
+					defaultValue: "Passwords do not match.",
+				}),
+			);
+			return;
+		}
+		setPassphraseSetupError(null);
+		setPassphraseConfirmInput("");
+		setShowPassphraseSetupDialog(false);
+		if (passphraseAction === "rotate") {
+			rotatePassphraseMutation.mutate();
+			return;
+		}
+		if (currentProviderMode === "passphrase") {
+			setCurrentPassphraseInput("");
+			setCurrentPassphraseError(null);
+			setShowCurrentPassphraseDialog(true);
+			return;
+		}
+		queueMicrotask(() => {
+			promptSecurityModeSwitchIfPending("passphrase");
+		});
+	}, [
+		passphraseInput,
+		passphraseConfirmInput,
+		currentProviderMode,
+		passphraseAction,
+		rotatePassphraseMutation,
+		promptSecurityModeSwitchIfPending,
+		t,
+	]);
+
+	const handleCurrentPassphraseOpenChange = useCallback(
+		(open: boolean) => {
+			setShowCurrentPassphraseDialog(open);
+			if (!open && !switchProviderMutation.isPending) {
+				setCurrentPassphraseInput("");
+				setCurrentPassphraseError(null);
+				if (!showSwitchConfirm) {
+					resetPendingProviderSwitch();
+				}
+			}
+		},
+		[switchProviderMutation.isPending, showSwitchConfirm, resetPendingProviderSwitch],
+	);
+
+	const handleCurrentPassphraseContinue = useCallback(() => {
+		if (!currentPassphraseInput.trim()) {
+			setCurrentPassphraseError(
+				t("settings:security.currentPassphraseRequired", {
+					defaultValue: "Enter your current master password to continue.",
+				}),
+			);
+			return;
+		}
+		setCurrentPassphraseError(null);
+		if (passphraseAction === "rotate") {
+			setShowCurrentPassphraseDialog(false);
+			setShowPassphraseSetupDialog(true);
+			return;
+		}
+		const mode = (selectedMode || currentProviderMode) as ProviderSwitchMode;
+		pendingProviderSwitchRef.current = {
+			mode,
+			passphrase: mode === "passphrase" ? passphraseInput : undefined,
+			currentPassphrase: currentPassphraseInput,
+		};
+		setShowCurrentPassphraseDialog(false);
+		setShowSwitchConfirm(true);
+	}, [
+		currentPassphraseInput,
+		selectedMode,
+		currentProviderMode,
+		passphraseInput,
+		passphraseAction,
+		t,
+	]);
+
+	const handleSwitchConfirmOpenChange = useCallback(
+		(open: boolean) => {
+			setShowSwitchConfirm(open);
+			if (!open && !switchProviderMutation.isPending) {
+				resetPendingProviderSwitch();
+			}
+		},
+		[switchProviderMutation.isPending, resetPendingProviderSwitch],
+	);
+
+	const handleConfirmProviderSwitch = useCallback(() => {
+		const pending = pendingProviderSwitchRef.current;
+		if (!pending?.mode) {
+			notifyError(
+				t("settings:security.switchError", {
+					defaultValue: "Failed to switch security mode",
+				}),
+				t("settings:security.switchMissingMode", {
+					defaultValue: "No encryption mode selected for switching.",
+				}),
+			);
+			setShowSwitchConfirm(false);
+			resetPendingProviderSwitch();
+			return;
+		}
+		switchProviderMutation.mutate(pending);
+	}, [switchProviderMutation, resetPendingProviderSwitch, t]);
+
+	// Password protection state
+	const passwordQuery = useQuery({
+		queryKey: ["password", "status"],
+		queryFn: secretsApi.passwordStatus,
+	});
+	const [selectedProtectionLevel, setSelectedProtectionLevel] = useState<ProtectionLevel | "">("");
+	const [pendingProtectionScope, setPendingProtectionScope] = useState<string[]>(["startup"]);
+	const [settingsPasswordVerified, setSettingsPasswordVerified] = useState(
+		() => sessionStorage.getItem("mcp_password_settings_verified") === "true",
+	);
+	const [protectionPasswordDialogOpen, setProtectionPasswordDialogOpen] = useState(false);
+	const [protectionPasswordDialogMode, setProtectionPasswordDialogMode] =
+		useState<ProtectionPasswordDialogMode>("set");
+
+	const currentProtectionLevel = resolveProtectionLevel(passwordQuery.data);
+	const effectiveProtectionLevel = selectedProtectionLevel || currentProtectionLevel;
+
+	const needsSettingsPassword = useMemo(
+		() => requiresSettingsPasswordGate(passwordQuery.data),
+		[passwordQuery.data, settingsPasswordVerified],
+	);
+
+	const updatePasswordScopeMutation = useMutation({
+		mutationFn: (level: Exclude<ProtectionLevel, "off">) =>
+			secretsApi.updatePasswordScope(protectionScopeForLevel(level)),
+		onSuccess: async () => {
+			await queryClient.invalidateQueries({ queryKey: ["password", "status"] });
+			setSelectedProtectionLevel("");
+			notifySuccess(
+				t("settings:security.protectionScopeUpdated", {
+					defaultValue: "Protection mode updated",
+				}),
+			);
+		},
+		onError: (error: unknown) => {
+			setSelectedProtectionLevel("");
+			notifyError(
+				t("settings:security.protectionScopeUpdateError", {
+					defaultValue: "Failed to update protection mode",
+				}),
+				stringifyError(error),
+			);
+		},
+	});
+
+	const openProtectionPasswordDialog = useCallback((mode: ProtectionPasswordDialogMode) => {
+		setProtectionPasswordDialogMode(mode);
+		setProtectionPasswordDialogOpen(true);
+	}, []);
+
+	const openMasterPasswordDialog = useCallback(() => {
+		setPassphraseInput("");
+		setPassphraseConfirmInput("");
+		setPassphraseSetupError(null);
+		setCurrentPassphraseInput("");
+		setCurrentPassphraseError(null);
+		setSelectedMode("passphrase");
+		if (isPassphraseModeConfigured) {
+			setPassphraseAction("rotate");
+			setShowCurrentPassphraseDialog(true);
+			return;
+		}
+		setPassphraseAction("switch");
+		setShowPassphraseSetupDialog(true);
+	}, [isPassphraseModeConfigured]);
+
+	const handleProtectionLevelChange = useCallback(
+		(value: string) => {
+			const level = value as ProtectionLevel;
+			setSelectedProtectionLevel(level);
+
+			if (level === "off") {
+				if (passwordQuery.data?.has_password) {
+					openProtectionPasswordDialog("clear");
+				} else {
+					setSelectedProtectionLevel("");
+				}
+				return;
+			}
+
+			if (!passwordQuery.data?.has_password) {
+				setPendingProtectionScope(protectionScopeForLevel(level));
+				openProtectionPasswordDialog("set");
+				return;
+			}
+
+			if (level !== currentProtectionLevel) {
+				updatePasswordScopeMutation.mutate(level);
+			}
+		},
+		[
+			passwordQuery.data?.has_password,
+			currentProtectionLevel,
+			openProtectionPasswordDialog,
+			updatePasswordScopeMutation,
+		],
+	);
+
+	const handleProtectionPasswordDialogCancel = useCallback(() => {
+		setSelectedProtectionLevel("");
+		setPendingProtectionScope(["startup"]);
+	}, []);
+
+	const handleProtectionPasswordDialogSuccess = useCallback(() => {
+		setSelectedProtectionLevel("");
+		setPendingProtectionScope(["startup"]);
+	}, []);
+
+	const handleSettingsPasswordUnlock = useCallback((_password: string) => {
+		sessionStorage.setItem("mcp_password_settings_verified", "true");
+		setSettingsPasswordVerified(true);
+	}, []);
 
 	const inspectorTimeoutMutation = useMutation({
 		mutationFn: (timeout_ms: number) =>
@@ -361,9 +869,21 @@ export function SettingsPage() {
 		setInspectorTimeoutInput(clamped);
 	};
 
-	const handleInspectorTimeoutSave = () => {
-		inspectorTimeoutMutation.mutate(inspectorTimeoutInput);
-	};
+	const handleInspectorTimeoutBlur = useCallback(() => {
+		const saved = systemSettingsQuery.data?.inspector_timeout_ms ?? 8000;
+		const clamped = Math.max(1000, Math.min(300000, inspectorTimeoutInput));
+		if (clamped !== inspectorTimeoutInput) {
+			setInspectorTimeoutInput(clamped);
+		}
+		if (clamped === saved || inspectorTimeoutMutation.isPending) {
+			return;
+		}
+		inspectorTimeoutMutation.mutate(clamped);
+	}, [
+		inspectorTimeoutInput,
+		inspectorTimeoutMutation,
+		systemSettingsQuery.data?.inspector_timeout_ms,
+	]);
 
 	useEffect(() => {
 		if (policyQuery.data) {
@@ -381,7 +901,6 @@ export function SettingsPage() {
 				setPolicyDays(p.combined.days);
 				setPolicyCount(p.combined.count);
 			}
-			setSweepInterval(policyQuery.data.sweep_interval_secs);
 		}
 	}, [policyQuery.data]);
 
@@ -479,24 +998,70 @@ export function SettingsPage() {
 		},
 	});
 
-	const handleSavePolicy = useCallback(() => {
-		let policy: AuditRetentionPolicy;
-		switch (policyType) {
-			case "off":
-				policy = "off";
-				break;
-			case "keep_days":
-				policy = { keep_days: { days: policyDays } };
-				break;
-			case "keep_count":
-				policy = { keep_count: { count: policyCount } };
-				break;
-			case "combined":
-			default:
-				policy = { combined: { days: policyDays, count: policyCount } };
+	const persistAuditPolicyIfChanged = useCallback(
+		(next: AuditPolicyFormState) => {
+			if (!policyQuery.data || policyMutation.isPending) {
+				return;
+			}
+
+			const saved = auditFormFromPolicyData(policyQuery.data);
+			const days = Math.max(
+				1,
+				Number.isFinite(next.policyDays) ? next.policyDays : saved.policyDays,
+			);
+			const count = Math.max(
+				1,
+				Number.isFinite(next.policyCount) ? next.policyCount : saved.policyCount,
+			);
+			const normalized: AuditPolicyFormState = {
+				policyType: next.policyType,
+				policyDays: days,
+				policyCount: count,
+			};
+
+			if (auditFormMatchesSaved(normalized, saved)) {
+				return;
+			}
+
+			policyMutation.mutate({
+				policy: buildAuditPolicy(normalized.policyType, normalized.policyDays, normalized.policyCount),
+				sweep_interval_secs: saved.sweepInterval,
+			});
+		},
+		[policyQuery.data, policyMutation],
+	);
+
+	const handlePolicyTypeChange = useCallback(
+		(value: string) => {
+			setPolicyType(value);
+			persistAuditPolicyIfChanged({ policyType: value, policyDays, policyCount });
+		},
+		[policyDays, policyCount, persistAuditPolicyIfChanged],
+	);
+
+	const handlePolicyDaysBlur = useCallback(() => {
+		const saved = policyQuery.data ? auditFormFromPolicyData(policyQuery.data) : null;
+		const clamped = Math.max(
+			1,
+			Number.isFinite(policyDays) ? policyDays : (saved?.policyDays ?? 30),
+		);
+		if (clamped !== policyDays) {
+			setPolicyDays(clamped);
 		}
-		policyMutation.mutate({ policy, sweep_interval_secs: sweepInterval });
-	}, [policyType, policyDays, policyCount, sweepInterval, policyMutation]);
+		persistAuditPolicyIfChanged({ policyType, policyDays: clamped, policyCount });
+	}, [policyType, policyDays, policyCount, policyQuery.data, persistAuditPolicyIfChanged]);
+
+	const handlePolicyCountBlur = useCallback(() => {
+		const saved = policyQuery.data ? auditFormFromPolicyData(policyQuery.data) : null;
+		const clamped = Math.max(
+			1,
+			Number.isFinite(policyCount) ? policyCount : (saved?.policyCount ?? 100_000),
+		);
+		if (clamped !== policyCount) {
+			setPolicyCount(clamped);
+		}
+		persistAuditPolicyIfChanged({ policyType, policyDays, policyCount: clamped });
+	}, [policyType, policyDays, policyCount, policyQuery.data, persistAuditPolicyIfChanged]);
 
 	const applyCoreSourceView = useCallback(
 		(response: DesktopCoreSourceResponse) => {
@@ -971,8 +1536,9 @@ export function SettingsPage() {
 					"clients",
 					"profile",
 					"market",
-					"develop",
 					"audit",
+					"develop",
+					"security",
 					"system",
 					"about",
 				]
@@ -983,8 +1549,9 @@ export function SettingsPage() {
 					"clients",
 					"profile",
 					"market",
-					"develop",
 					"audit",
+					"develop",
+					"security",
 					"system",
 				],
 		[showLicenseTab],
@@ -994,6 +1561,10 @@ export function SettingsPage() {
 		defaultTab: "general",
 		validTabs: settingsTabs,
 	});
+
+	if (needsSettingsPassword) {
+		return <LockScreen variant="login" onSuccess={handleSettingsPasswordUnlock} />;
+	}
 
 	return (
 		<div className="space-y-4">
@@ -1050,16 +1621,22 @@ export function SettingsPage() {
 							{t("settings:tabs.market", { defaultValue: "Market" })}
 						</span>
 					</TabsTrigger>
+					<TabsTrigger value="audit" className={tabTriggerClass}>
+						<FileSearch className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.audit", { defaultValue: "Logs" })}
+						</span>
+					</TabsTrigger>
 					<TabsTrigger value="develop" className={tabTriggerClass}>
 						<Bug className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.developer", { defaultValue: "Developer" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="audit" className={tabTriggerClass}>
-						<FileSearch className="h-4 w-4 shrink-0" />
+					<TabsTrigger value="security" className={tabTriggerClass}>
+						<ShieldCheck className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
-							{t("settings:tabs.audit", { defaultValue: "Logs" })}
+							{t("settings:tabs.security", { defaultValue: "Security" })}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="system" className={tabTriggerClass}>
@@ -1579,6 +2156,443 @@ export function SettingsPage() {
 						</Card>
 					</TabsContent>
 
+					<TabsContent value="security" className="mt-0 h-full">
+						<Card className="h-full">
+							<CardHeader>
+								<CardTitle>
+									{t("settings:security.title", { defaultValue: "Security" })}
+								</CardTitle>
+								<CardDescription>
+									{t("settings:security.description", {
+										defaultValue:
+											"Login password and root key encryption settings.",
+									})}
+								</CardDescription>
+							</CardHeader>
+							<CardContent className="space-y-6">
+								{storeStatusQuery.isLoading ? (
+									<p className="text-sm text-muted-foreground">
+										{t("settings:security.loading", { defaultValue: "Checking store status..." })}
+									</p>
+								) : storeStatusQuery.isError ? (
+									<Alert variant="destructive">
+										<ShieldCheck className="h-4 w-4" />
+										<AlertTitle>
+											{t("settings:security.error.title", { defaultValue: "Status check failed" })}
+										</AlertTitle>
+										<AlertDescription>
+											{storeStatusQuery.error instanceof Error
+												? storeStatusQuery.error.message
+												: t("settings:security.error.description", { defaultValue: "Could not retrieve store status." })}
+										</AlertDescription>
+									</Alert>
+								) : storeStatusQuery.data ? (
+									<>
+										<div className="space-y-3">
+											{/* Password Protection */}
+											<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+												<div className="space-y-1.5">
+													<div className="flex items-center gap-1.5">
+														<h3 className="text-base font-medium">
+															{t("settings:security.passwordProtection", { defaultValue: "Password Protection" })}
+														</h3>
+														<span
+															className="inline-flex shrink-0"
+															aria-label={
+																effectiveProtectionLevel === "off"
+																	? t("settings:security.protectionDisabled", {
+																		defaultValue: "Protection disabled",
+																	})
+																	: t("settings:security.protectionEnabled", {
+																		defaultValue: "Protection enabled",
+																	})
+															}
+														>
+															<ShieldCheck
+																className={`h-4 w-4 ${effectiveProtectionLevel === "off"
+																	? "text-red-500"
+																	: "text-emerald-600"
+																	}`}
+															/>
+														</span>
+													</div>
+													<p className="text-sm text-muted-foreground">
+														{t("settings:security.passwordProtectionDescription", {
+															defaultValue: "Require a login password before accessing MCPMate or Settings.",
+														})}
+													</p>
+												</div>
+												<div className="flex sm:justify-end">
+													<Segment
+														options={[
+															{
+																value: "startup",
+																label: t("settings:security.protectionLevel.startup", {
+																	defaultValue: "On entry",
+																}),
+															},
+															{
+																value: "settings",
+																label: t("settings:security.protectionLevel.settings", {
+																	defaultValue: "In Settings",
+																}),
+															},
+															{
+																value: "off",
+																label: t("settings:security.protectionLevel.off", {
+																	defaultValue: "None",
+																}),
+															},
+														]}
+														value={effectiveProtectionLevel}
+														onValueChange={handleProtectionLevelChange}
+														showDots={false}
+														disabled={updatePasswordScopeMutation.isPending}
+													/>
+												</div>
+											</div>
+											{effectiveProtectionLevel !== "off" ? (
+												<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+													<div className="space-y-1.5">
+														<h3 className="text-base font-medium">
+															{t("settings:security.loginPasswordRow", { defaultValue: "Password" })}
+														</h3>
+														<p className="text-sm text-muted-foreground">
+															{t("settings:security.loginPasswordRowDescription", {
+																defaultValue: "Login password used when protection is enabled.",
+															})}
+														</p>
+													</div>
+													<div className="flex sm:justify-end">
+														<Button
+															variant="outline"
+															size="sm"
+															onClick={() =>
+																openProtectionPasswordDialog(
+																	passwordQuery.data?.has_password ? "change" : "set",
+																)
+															}
+														>
+															{passwordQuery.data?.has_password
+																? t("settings:security.changePassword", {
+																	defaultValue: "Change Password",
+																})
+																: t("settings:security.setPassword", {
+																	defaultValue: "Set Password",
+																})}
+														</Button>
+													</div>
+												</div>
+											) : null}
+										</div>
+
+										<div className="space-y-3 border-t pt-6">
+											{/* Encryption Mode */}
+											<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+												<div className="space-y-1.5">
+													<div className="flex items-center gap-1.5">
+														<h3 className="text-base font-medium">
+															{t("settings:security.encryptionMode", { defaultValue: "Encryption Mode" })}
+														</h3>
+														<span
+															className="inline-flex shrink-0"
+															aria-label={t("settings:security.encryptionModeStatus", {
+																defaultValue: "Encryption mode security level",
+															})}
+														>
+															<ShieldCheck
+																className={`h-4 w-4 ${effectiveEncryptionMode === "passphrase"
+																	? "text-orange-500"
+																	: effectiveEncryptionMode === "local_file"
+																		? "text-yellow-500"
+																		: "text-emerald-600"
+																	}`}
+															/>
+														</span>
+													</div>
+													<p className="text-sm text-muted-foreground">
+														{t("settings:security.encryptionModeDescription", {
+															defaultValue: "How the root encryption key is stored and protected.",
+														})}
+													</p>
+												</div>
+												<div className="flex sm:justify-end">
+													<Segment
+														options={[
+															{ value: "operating_system", label: t("settings:security.mode.os", { defaultValue: "OS Keychain" }) },
+															{ value: "passphrase", label: t("settings:security.mode.passphrase", { defaultValue: "Password" }) },
+															{ value: "local_file", label: t("settings:security.mode.local", { defaultValue: "Local File" }) },
+														]}
+														value={selectedMode || currentProviderMode}
+														onValueChange={handleEncryptionModeChange}
+														showDots={false}
+													/>
+												</div>
+											</div>
+											{effectiveEncryptionMode === "passphrase" ? (
+												<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+													<div className="space-y-1.5">
+														<h3 className="text-base font-medium">
+															{t("settings:security.encryptionPasswordRow", {
+																defaultValue: "Password",
+															})}
+														</h3>
+														<p className="text-sm text-muted-foreground">
+															{t("settings:security.encryptionPasswordRowDescription", {
+																defaultValue:
+																	"Master password that wraps the root encryption key.",
+															})}
+														</p>
+													</div>
+													<div className="flex sm:justify-end">
+														<Button
+															variant="outline"
+															size="sm"
+															onClick={openMasterPasswordDialog}
+														>
+															{isPassphraseModeConfigured && !isPendingPassphraseSwitch
+																? t("settings:security.changePassword", {
+																	defaultValue: "Change Password",
+																})
+																: t("settings:security.setPassword", {
+																	defaultValue: "Set Password",
+																})}
+														</Button>
+													</div>
+												</div>
+											) : null}
+
+											{storeStatusQuery.data.issue ? (
+												<Alert variant="destructive">
+													<ShieldCheck className="h-4 w-4" />
+													<AlertTitle>
+														{t("settings:security.issue.title", { defaultValue: "Store Issue" })}
+													</AlertTitle>
+													<AlertDescription>
+														<strong>{storeStatusQuery.data.issue.reason_code}</strong>
+														{" — "}
+														{storeStatusQuery.data.issue.message}
+													</AlertDescription>
+												</Alert>
+											) : null}
+
+											{/* Mode description */}
+											{effectiveEncryptionMode === "operating_system" && (
+												<p className="text-xs text-muted-foreground">
+													{t("settings:security.mode.osDetail", {
+														defaultValue:
+															"Root key stored in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Best protection — no password needed.",
+													})}
+												</p>
+											)}
+											{effectiveEncryptionMode === "passphrase" && (
+												<p className="text-xs text-muted-foreground">
+													{t("settings:security.mode.passphraseDetail", {
+														defaultValue:
+															"Protect secrets with a password you set. Losing the password makes stored secrets unrecoverable.",
+													})}
+												</p>
+											)}
+											{effectiveEncryptionMode === "local_file" && (
+												<p className="text-xs text-muted-foreground">
+													{t("settings:security.mode.localDetail", {
+														defaultValue:
+															"Root key stored as a file in the app data directory. Protected by file permissions only — not recommended for sensitive environments.",
+													})}
+												</p>
+											)}
+										</div>
+
+									</>
+								) : null}
+							</CardContent>
+						</Card>
+
+						<ProtectionPasswordDialog
+							open={protectionPasswordDialogOpen}
+							onOpenChange={setProtectionPasswordDialogOpen}
+							mode={protectionPasswordDialogMode}
+							scope={pendingProtectionScope}
+							onSuccess={handleProtectionPasswordDialogSuccess}
+							onCancel={handleProtectionPasswordDialogCancel}
+						/>
+
+						<AlertDialog open={showPassphraseSetupDialog} onOpenChange={handlePassphraseSetupOpenChange}>
+							<AlertDialogContent
+								onOpenAutoFocus={(event) => {
+									event.preventDefault();
+									passphraseSetupPasswordRef.current?.focus();
+								}}
+							>
+								<AlertDialogHeader>
+									<AlertDialogTitle>
+										{t("settings:security.passphraseSetupTitle", {
+											defaultValue: "Set Master Password",
+										})}
+									</AlertDialogTitle>
+									<AlertDialogDescription>
+										{t("settings:security.passphraseSetupDescription", {
+											defaultValue:
+												"This password wraps your root encryption key. It is not stored in plaintext. You will need it again only when switching away from Password encryption mode.",
+										})}
+									</AlertDialogDescription>
+								</AlertDialogHeader>
+								<div className="space-y-3">
+									<div className="space-y-2">
+										<Label htmlFor="passphrase-setup-password">
+											{t("settings:security.passphraseLabel", { defaultValue: "Master Password" })}
+										</Label>
+										<Input
+											ref={passphraseSetupPasswordRef}
+											id="passphrase-setup-password"
+											type="password"
+											value={passphraseInput}
+											onChange={(e) => {
+												setPassphraseInput(e.target.value);
+												setPassphraseSetupError(null);
+											}}
+											placeholder={t("settings:security.passphrasePlaceholder", {
+												defaultValue: "Enter password...",
+											})}
+											className="h-9"
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="passphrase-setup-confirm">
+											{t("settings:security.confirmPassword", { defaultValue: "Confirm Password" })}
+										</Label>
+										<Input
+											id="passphrase-setup-confirm"
+											type="password"
+											value={passphraseConfirmInput}
+											onChange={(e) => {
+												setPassphraseConfirmInput(e.target.value);
+												setPassphraseSetupError(null);
+											}}
+											placeholder={t("settings:security.passphraseConfirmPlaceholder", {
+												defaultValue: "Re-enter password...",
+											})}
+											className="h-9"
+										/>
+									</div>
+									{passphraseSetupError ? (
+										<p className="text-sm text-destructive">{passphraseSetupError}</p>
+									) : null}
+								</div>
+								<AlertDialogFooter>
+									<AlertDialogCancel>
+										{t("settings:security.confirmCancel", { defaultValue: "Cancel" })}
+									</AlertDialogCancel>
+									<AlertDialogAction
+										onClick={(event) => {
+											event.preventDefault();
+											handlePassphraseSetupContinue();
+										}}
+									>
+										{t("settings:security.passphraseSetupContinue", { defaultValue: "Continue" })}
+									</AlertDialogAction>
+								</AlertDialogFooter>
+							</AlertDialogContent>
+						</AlertDialog>
+
+						<AlertDialog
+							open={showCurrentPassphraseDialog}
+							onOpenChange={handleCurrentPassphraseOpenChange}
+						>
+							<AlertDialogContent
+								onOpenAutoFocus={(event) => {
+									event.preventDefault();
+									currentPassphraseInputRef.current?.focus();
+								}}
+							>
+								<AlertDialogHeader>
+									<AlertDialogTitle>
+										{t("settings:security.currentPassphraseTitle", {
+											defaultValue: "Enter Current Master Password",
+										})}
+									</AlertDialogTitle>
+									<AlertDialogDescription>
+										{t("settings:security.currentPassphraseDescription", {
+											defaultValue:
+												"Your root key is wrapped with your current master password. Enter it to unlock the key before switching encryption mode.",
+										})}
+									</AlertDialogDescription>
+								</AlertDialogHeader>
+								<div className="space-y-3">
+									<div className="space-y-2">
+										<Label htmlFor="current-passphrase-input">
+											{t("settings:security.passphraseLabel", { defaultValue: "Master Password" })}
+										</Label>
+										<Input
+											ref={currentPassphraseInputRef}
+											id="current-passphrase-input"
+											type="password"
+											value={currentPassphraseInput}
+											onChange={(e) => {
+												setCurrentPassphraseInput(e.target.value);
+												setCurrentPassphraseError(null);
+											}}
+											placeholder={t("settings:security.passphrasePlaceholder", {
+												defaultValue: "Enter password...",
+											})}
+											className="h-9"
+										/>
+									</div>
+									{currentPassphraseError ? (
+										<p className="text-sm text-destructive">{currentPassphraseError}</p>
+									) : null}
+								</div>
+								<AlertDialogFooter>
+									<AlertDialogCancel>
+										{t("settings:security.confirmCancel", { defaultValue: "Cancel" })}
+									</AlertDialogCancel>
+									<AlertDialogAction
+										onClick={(event) => {
+											event.preventDefault();
+											handleCurrentPassphraseContinue();
+										}}
+									>
+										{t("settings:security.passphraseSetupContinue", { defaultValue: "Continue" })}
+									</AlertDialogAction>
+								</AlertDialogFooter>
+							</AlertDialogContent>
+						</AlertDialog>
+
+						<AlertDialog open={showSwitchConfirm} onOpenChange={handleSwitchConfirmOpenChange}>
+							<AlertDialogContent>
+								<AlertDialogHeader>
+									<AlertDialogTitle>
+										{t("settings:security.confirmTitle", {
+											defaultValue: "Switch Security Mode?",
+										})}
+									</AlertDialogTitle>
+									<AlertDialogDescription>
+										{t("settings:security.confirmDescription", {
+											defaultValue:
+												"This will migrate your root key to a new storage provider. Your encrypted secrets remain unchanged — only the key custody location changes. This operation is safe and reversible.",
+										})}
+									</AlertDialogDescription>
+								</AlertDialogHeader>
+								<AlertDialogFooter>
+									<AlertDialogCancel>
+										{t("settings:security.confirmCancel", { defaultValue: "Cancel" })}
+									</AlertDialogCancel>
+									<AlertDialogAction
+										onClick={(event) => {
+											event.preventDefault();
+											handleConfirmProviderSwitch();
+										}}
+										disabled={switchProviderMutation.isPending}
+									>
+										{switchProviderMutation.isPending
+											? t("settings:security.switching", { defaultValue: "Switching..." })
+											: t("settings:security.confirmAction", { defaultValue: "Switch Mode" })}
+									</AlertDialogAction>
+								</AlertDialogFooter>
+							</AlertDialogContent>
+						</AlertDialog>
+					</TabsContent>
+
 					<TabsContent value="profile" className="mt-0 h-full">
 						<Card className="h-full">
 							<CardHeader>
@@ -1685,8 +2699,11 @@ export function SettingsPage() {
 										</p>
 									</div>
 									<div className="flex sm:justify-end">
-										<Select value={policyType} onValueChange={setPolicyType}>
-											<SelectTrigger className="w-full sm:w-64">
+										<Select value={policyType} onValueChange={handlePolicyTypeChange}>
+											<SelectTrigger
+												className="w-full sm:w-64"
+												disabled={policyMutation.isPending}
+											>
 												<SelectValue />
 											</SelectTrigger>
 											<SelectContent>
@@ -1717,6 +2734,8 @@ export function SettingsPage() {
 												min={1}
 												value={policyDays}
 												onChange={(e) => setPolicyDays(Number(e.target.value))}
+												onBlur={handlePolicyDaysBlur}
+												disabled={policyMutation.isPending}
 												className="w-full sm:w-64"
 											/>
 										</div>
@@ -1741,23 +2760,14 @@ export function SettingsPage() {
 												min={1}
 												value={policyCount}
 												onChange={(e) => setPolicyCount(Number(e.target.value))}
+												onBlur={handlePolicyCountBlur}
+												disabled={policyMutation.isPending}
 												className="w-full sm:w-64"
 											/>
 										</div>
 									</div>
 								)}
 
-								<div className="mt-4 flex justify-end gap-2">
-									<Button
-										variant="default"
-										disabled={policyMutation.isPending}
-										onClick={handleSavePolicy}
-									>
-										{policyMutation.isPending
-											? t("settings:audit.saving", { defaultValue: "Saving..." })
-											: t("settings:audit.save", { defaultValue: "Save Policy" })}
-									</Button>
-								</div>
 							</CardContent>
 						</Card>
 					</TabsContent>
@@ -2185,31 +3195,15 @@ export function SettingsPage() {
 											max={300000}
 											step={500}
 											value={inspectorTimeoutInput}
+											disabled={inspectorTimeoutMutation.isPending}
 											onChange={(e) =>
 												handleInspectorTimeoutChange(
 													parseInt(e.target.value, 10) || 8000,
 												)
 											}
+											onBlur={handleInspectorTimeoutBlur}
 											className="w-32"
 										/>
-										<Button
-											size="sm"
-											variant="outline"
-											onClick={handleInspectorTimeoutSave}
-											disabled={
-												inspectorTimeoutMutation.isPending ||
-												inspectorTimeoutInput ===
-												(systemSettingsQuery.data?.inspector_timeout_ms ?? 8000)
-											}
-										>
-											{inspectorTimeoutMutation.isPending
-												? t("settings:developer.saving", {
-													defaultValue: "Saving...",
-												})
-												: t("settings:developer.save", {
-													defaultValue: "Save",
-												})}
-										</Button>
 									</div>
 								</div>
 							</CardContent>

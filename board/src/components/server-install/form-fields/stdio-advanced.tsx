@@ -21,7 +21,9 @@ interface StdioAdvancedProps {
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
 	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
+	getEnvRowKeyAt?: (index: number) => string | undefined;
 }
 
 export function StdioAdvanced({
@@ -38,7 +40,9 @@ export function StdioAdvanced({
 	onDeleteClick,
 	onGhostClick,
 	onSecretSelect,
+	onCreateSecret,
 	secretOriginBase,
+	getEnvRowKeyAt,
 }: StdioAdvancedProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || !isStdio) return null;
@@ -82,6 +86,12 @@ export function StdioAdvanced({
 									field_index: index,
 									field_path: `args.${index}.value`,
 								}}
+								onCreateNew={
+									onCreateSecret
+										? (origin) =>
+												onCreateSecret(`args.${index}.value`, origin)
+										: undefined
+								}
 								onSelect={(placeholder) =>
 									onSecretSelect?.(`args.${index}.value`, placeholder)
 								}
@@ -146,10 +156,16 @@ export function StdioAdvanced({
 									...secretOriginBase,
 									field_group: "env",
 									field_key:
-										typeof field.key === "string" ? field.key : undefined,
+										getEnvRowKeyAt?.(index) ??
+										(typeof field.key === "string" ? field.key : undefined),
 									field_index: index,
 									field_path: `env.${index}.value`,
 								}}
+								onCreateNew={
+									onCreateSecret
+										? (origin) => onCreateSecret(`env.${index}.value`, origin)
+										: undefined
+								}
 								onSelect={(placeholder) =>
 									onSecretSelect?.(`env.${index}.value`, placeholder)
 								}

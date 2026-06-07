@@ -73,6 +73,14 @@ pub async fn sync_server_secret_usages(
     server_id: &str,
     config: &MCPServerConfig,
 ) -> anyhow::Result<()> {
+    let usages = collect_secret_usages(server_id, config)?;
+    store.replace_server_usages(server_id, usages).await
+}
+
+pub fn collect_secret_usages(
+    server_id: &str,
+    config: &MCPServerConfig,
+) -> anyhow::Result<Vec<SecretUsageUpsertInput>> {
     let mut usages = Vec::new();
 
     if let Some(command) = config.command.as_ref() {
@@ -116,7 +124,19 @@ pub async fn sync_server_secret_usages(
         }
     }
 
-    store.replace_server_usages(server_id, usages).await
+    Ok(usages)
+}
+
+pub fn is_usage_active_in_config(
+    alias: &str,
+    server_id: &str,
+    location: &SecretUsageLocationInput,
+    config: &MCPServerConfig,
+) -> anyhow::Result<bool> {
+    let usages = collect_secret_usages(server_id, config)?;
+    Ok(usages
+        .iter()
+        .any(|usage| usage.alias == alias && usage.server_id == server_id && usage.location == *location))
 }
 
 fn push_usages_from_value(

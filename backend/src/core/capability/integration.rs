@@ -65,21 +65,20 @@ impl UnifiedQueryIntegration {
     }
 
     /// Create unified query adapter
-    pub fn create_adapter(app_state: &AppState) -> Option<Arc<UnifiedQueryAdapter>> {
-        if !Self::is_ready(app_state) {
+    pub fn create_adapter(app_state: Arc<AppState>) -> Option<Arc<UnifiedQueryAdapter>> {
+        if !Self::is_ready(&app_state) {
             return None;
         }
 
         let cache = app_state.redb_cache.clone();
         let pool = app_state.connection_pool.clone();
         let database = app_state.database.clone()?;
-        let app_state_arc = Arc::new(app_state.clone());
 
         Some(Arc::new(UnifiedQueryAdapter::from_components(
             cache,
             pool,
             database,
-            app_state_arc,
+            app_state,
         )))
     }
 }

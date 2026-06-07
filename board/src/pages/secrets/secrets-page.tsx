@@ -1,19 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	Copy,
 	KeyRound,
-	Pencil,
 	Plus,
 	RefreshCw,
 	ShieldAlert,
 	ShieldCheck,
-	Trash2,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
+import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
+import { ListGridContainer } from "../../components/list-grid-container";
 import { EmptyState, PageLayout } from "../../components/page-layout";
+import { StatsCards } from "../../components/stats-cards";
+import type { StatCardData } from "../../components/stats-cards";
 import { Pagination } from "../../components/pagination";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import {
@@ -29,30 +30,6 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogHeader,
-	DialogTitle,
-} from "../../components/ui/dialog";
-import {
-	Drawer,
-	DrawerContent,
-	DrawerDescription,
-	DrawerFooter,
-	DrawerHeader,
-	DrawerTitle,
-} from "../../components/ui/drawer";
-import { Input } from "../../components/ui/input";
-import { Label } from "../../components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../../components/ui/select";
 import { PageToolbar } from "../../components/ui/page-toolbar";
 import type {
 	Entity,
@@ -60,38 +37,29 @@ import type {
 	PageToolbarConfig,
 	PageToolbarState,
 } from "../../components/ui/page-toolbar";
-import { secretsApi } from "../../lib/api";
-import { writeClipboardText } from "../../lib/clipboard";
+import { LockScreen } from "../../components/lock-screen";
+import {
+	SecretEditorDrawer,
+	buildCreateEditorStateFromOrigin,
+	defaultSecretEditorState,
+	originFromSearchParams,
+	SECRET_KIND_VALUES,
+	stripOriginSearchParams,
+	useSecretEditorKindOptions,
+	type SecretEditorState,
+} from "../../components/secrets";
+import { secretsApi, serversApi } from "../../lib/api";
+import { requiresEncryptionUnlock } from "../../lib/protection-password";
+import { useUrlView } from "../../lib/hooks/use-url-state";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
+import { useAppStore } from "../../lib/store";
 import type {
 	SecretKind,
 	SecretMetadata,
-	SecretOrigin,
-	SecretUsage,
 } from "../../lib/types";
 
-const SECRET_KIND_VALUES: SecretKind[] = [
-	"generic",
-	"token",
-	"api_key",
-	"password",
-	"oauth_access_token",
-	"oauth_refresh_token",
-	"url_credential",
-	"header_value",
-];
-
 const DEFAULT_PAGE_SIZE = 10;
-
-interface SecretEditorState {
-	mode: "create" | "edit";
-	alias: string;
-	kind: SecretKind;
-	label: string;
-	value: string;
-	origin: SecretOrigin | null;
-}
 
 type SecretToolbarEntity = Entity & {
 	alias: string;
@@ -101,99 +69,7 @@ type SecretToolbarEntity = Entity & {
 	version: number;
 };
 
-const defaultEditorState = (): SecretEditorState => ({
-	mode: "create",
-	alias: "",
-	kind: "token",
-	label: "",
-	value: "",
-	origin: null,
-});
-
-const ORIGIN_QUERY_KEYS = [
-	"server_id",
-	"server_name",
-	"server_kind",
-	"source",
-	"field_group",
-	"field_key",
-	"field_index",
-	"field_path",
-] as const;
-
-function originFromSearchParams(params: URLSearchParams): SecretOrigin | null {
-	const origin: SecretOrigin = {};
-	for (const key of ORIGIN_QUERY_KEYS) {
-		const value = params.get(`origin_${key}`);
-		if (!value) continue;
-		if (key === "field_index") {
-			const parsed = Number.parseInt(value, 10);
-			if (Number.isFinite(parsed)) {
-				origin.field_index = parsed;
-			}
-			continue;
-		}
-		origin[key] = value;
-	}
-	return Object.keys(origin).length > 0 ? origin : null;
-}
-
-function stripOriginSearchParams(params: URLSearchParams) {
-	for (const key of ORIGIN_QUERY_KEYS) {
-		params.delete(`origin_${key}`);
-	}
-}
-
-function usageLabel(
-	usage: SecretUsage,
-	t: ReturnType<typeof useTranslation>["t"],
-): string {
-	const location = usage.location;
-	if (typeof location === "string") {
-		const keyMap: Record<string, string> = {
-			stdio_command: "stdioCommand",
-			streamable_http_url: "httpUrl",
-			oauth_token: "oauthToken",
-		};
-		return t(`usage.location.${keyMap[location] ?? location}`, {
-			defaultValue: location,
-		});
-	}
-	if ("stdio_env" in location && typeof location.stdio_env === "object") {
-		return t("usage.location.stdioEnv", {
-			defaultValue: "stdio env {{name}}",
-			name: (location.stdio_env as { name?: string }).name ?? "",
-		});
-	}
-	if (
-		"stdio_argument" in location &&
-		typeof location.stdio_argument === "object"
-	) {
-		return t("usage.location.stdioArgument", {
-			defaultValue: "stdio arg {{index}}",
-			index: (location.stdio_argument as { index?: number }).index ?? "",
-		});
-	}
-	if (
-		"streamable_http_header" in location &&
-		typeof location.streamable_http_header === "object"
-	) {
-		return t("usage.location.httpHeader", {
-			defaultValue: "http header {{name}}",
-			name: (location.streamable_http_header as { name?: string }).name ?? "",
-		});
-	}
-	if ("stdio_command" in location) {
-		return t("usage.location.stdioCommand", { defaultValue: "stdio command" });
-	}
-	if ("streamable_http_url" in location) {
-		return t("usage.location.httpUrl", { defaultValue: "http url" });
-	}
-	if ("oauth_token" in location) {
-		return t("usage.location.oauthToken", { defaultValue: "oauth token" });
-	}
-	return JSON.stringify(location);
-}
+const defaultEditorState = defaultSecretEditorState;
 
 export function SecretsPage() {
 	usePageTranslations("secrets");
@@ -201,35 +77,71 @@ export function SecretsPage() {
 	const queryClient = useQueryClient();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [editor, setEditor] = useState<SecretEditorState | null>(null);
-	const [usageTarget, setUsageTarget] = useState<SecretMetadata | null>(null);
+	const [editorInitialTab, setEditorInitialTab] = useState<"general" | "usage">("general");
 	const [deleteTarget, setDeleteTarget] = useState<SecretMetadata | null>(null);
 	const [expanded, setExpanded] = useState(false);
 	const [sortedSecrets, setSortedSecrets] = useState<SecretToolbarEntity[]>([]);
 	const [currentPage, setCurrentPage] = useState(1);
 	const [itemsPerPage, setItemsPerPage] = useState(DEFAULT_PAGE_SIZE);
 
+	const storedDefaultView = useAppStore(
+		(state) => state.dashboardSettings.defaultView,
+	);
+	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
+	const { view } = useUrlView({
+		paramName: "view",
+		defaultView: storedDefaultView,
+		validViews: ["grid", "list"],
+	});
+	const viewMode = view;
+
 	const secretsQuery = useQuery({
 		queryKey: ["secrets"],
 		queryFn: secretsApi.list,
 	});
+	const serversQuery = useQuery({
+		queryKey: ["servers"],
+		queryFn: serversApi.getAll,
+		staleTime: 30_000,
+	});
+	const serverNameById = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const server of serversQuery.data?.servers ?? []) {
+			const name = server.name?.trim();
+			map.set(server.id, name && name.length > 0 ? name : server.id);
+		}
+		return map;
+	}, [serversQuery.data]);
+	const editorAlias = editor?.mode === "edit" ? editor.alias : null;
 	const usagesQuery = useQuery({
-		queryKey: ["secrets", "usages", usageTarget?.alias],
-		queryFn: () => secretsApi.listUsages(usageTarget?.alias ?? ""),
-		enabled: Boolean(usageTarget?.alias),
+		queryKey: ["secrets", "usages", editorAlias],
+		queryFn: () => secretsApi.listUsages(editorAlias ?? ""),
+		enabled: Boolean(editorAlias),
 	});
 	const storeStatusQuery = useQuery({
 		queryKey: ["secrets", "status"],
 		queryFn: secretsApi.status,
 	});
 	const storeReady = storeStatusQuery.data?.status === "ready";
+	const needsEncryptionUnlock = requiresEncryptionUnlock(storeStatusQuery.data);
+
+	const handleEncryptionUnlock = async () => {
+		await queryClient.invalidateQueries({ queryKey: ["secrets", "status"] });
+		await queryClient.invalidateQueries({ queryKey: ["secrets"] });
+	};
 
 	const kindOptions = SECRET_KIND_VALUES.map((value) => ({
 		value,
 		label: t(`kind.${value}`, { defaultValue: value }),
 	}));
 
+	const editorKindOptions = useSecretEditorKindOptions(editor);
+
 	const kindLabel = (kind: string): string =>
 		kindOptions.find((option) => option.value === kind)?.label ?? kind;
+
+	const providerLabel = (providerKind: string): string =>
+		t(`provider.${providerKind}`, { defaultValue: providerKind });
 
 	const secretsAsEntities = useMemo<SecretToolbarEntity[]>(() => {
 		const mapped = (secretsQuery.data ?? []).map((secret) => ({
@@ -272,18 +184,39 @@ export function SecretsPage() {
 
 	useEffect(() => {
 		if (searchParams.get("editor") !== "create") return;
-		setEditor({
-			...defaultEditorState(),
-			origin: originFromSearchParams(searchParams),
-		});
+		const origin = originFromSearchParams(searchParams);
+		const suggestedFromUrl = searchParams.get("suggested_alias")?.trim() ?? "";
+		const existingAliases = (secretsQuery.data ?? []).map((secret) => secret.alias);
+
+		if (origin) {
+			const nextEditor = buildCreateEditorStateFromOrigin(
+				origin,
+				existingAliases,
+				(key, defaultValue) => t(key, { defaultValue }),
+			);
+			if (suggestedFromUrl) {
+				nextEditor.alias = suggestedFromUrl;
+			}
+			setEditor(nextEditor);
+		} else {
+			setEditor({
+				...defaultEditorState(),
+				alias: suggestedFromUrl,
+			});
+		}
+
 		const next = new URLSearchParams(searchParams);
 		next.delete("editor");
+		next.delete("suggested_alias");
 		stripOriginSearchParams(next);
 		setSearchParams(next, { replace: true });
-	}, [searchParams, setSearchParams]);
+	}, [searchParams, secretsQuery.data, setSearchParams, t]);
 
 	const saveMutation = useMutation({
 		mutationFn: async (state: SecretEditorState) => {
+			if (!storeReady) {
+				throw new Error("Secret store is not available");
+			}
 			if (state.mode === "create") {
 				return secretsApi.create({
 					alias: state.alias.trim(),
@@ -317,7 +250,12 @@ export function SecretsPage() {
 	});
 
 	const deleteMutation = useMutation({
-		mutationFn: (alias: string) => secretsApi.delete(alias),
+		mutationFn: (alias: string) => {
+			if (!storeReady) {
+				throw new Error("Secret store is not available");
+			}
+			return secretsApi.delete(alias);
+		},
 		onSuccess: async () => {
 			setDeleteTarget(null);
 			await queryClient.invalidateQueries({ queryKey: ["secrets"] });
@@ -335,8 +273,12 @@ export function SecretsPage() {
 		},
 	});
 
-	const openCreate = () => setEditor(defaultEditorState());
-	const openEdit = (secret: SecretMetadata) =>
+	const openCreate = () => {
+		setEditorInitialTab("general");
+		setEditor(defaultEditorState());
+	};
+	const openEdit = (secret: SecretMetadata, tab: "general" | "usage" = "general") => {
+		setEditorInitialTab(tab);
 		setEditor({
 			mode: "edit",
 			alias: secret.alias,
@@ -345,6 +287,89 @@ export function SecretsPage() {
 			value: "",
 			origin: secret.origin ?? null,
 		});
+	};
+	const closeEditor = () => {
+		setEditor(null);
+		setEditorInitialTab("general");
+	};
+
+	const editorPlaceholder = useMemo(() => {
+		if (!editor || editor.mode !== "edit") {
+			return undefined;
+		}
+		return secretsByAlias.get(editor.alias)?.placeholder;
+	}, [editor, secretsByAlias]);
+
+	const editorUsedByCount = useMemo(() => {
+		if (!editor || editor.mode !== "edit") {
+			return undefined;
+		}
+		return secretsByAlias.get(editor.alias)?.used_by_count;
+	}, [editor, secretsByAlias]);
+
+	const statsCards = useMemo((): StatCardData[] => {
+		const secrets = secretsQuery.data ?? [];
+		const inUseCount = secrets.filter((secret) => secret.used_by_count > 0).length;
+		const usageRefs = secrets.reduce((sum, secret) => sum + secret.used_by_count, 0);
+		const storeStatus = storeStatusQuery.data;
+
+		let storeValue: string | number = "—";
+		let storeDescription = t("stats.store.checking", {
+			defaultValue: "checking status",
+		});
+		if (storeStatus) {
+			if (storeStatus.status === "ready") {
+				storeValue = t("stats.store.ready", { defaultValue: "Ready" });
+				storeDescription = t("stats.store.readyDescription", {
+					defaultValue: "available for use",
+				});
+			} else if (storeStatus.issue?.reason_code === "passphrase_unlock_required") {
+				storeValue = t("stats.store.locked", { defaultValue: "Locked" });
+				storeDescription = t("stats.store.lockedDescription", {
+					defaultValue: "unlock required",
+				});
+			} else {
+				storeValue = t("stats.store.issue", { defaultValue: "Issue" });
+				storeDescription = t("stats.store.issueDescription", {
+					defaultValue: "needs attention",
+				});
+			}
+		}
+
+		return [
+			{
+				title: t("stats.stored.title", { defaultValue: "Stored Secrets" }),
+				value: secretsQuery.isLoading ? "—" : secrets.length,
+				description: t("stats.stored.description", {
+					defaultValue: "in secure store",
+				}),
+			},
+			{
+				title: t("stats.inUse.title", { defaultValue: "In Use" }),
+				value: secretsQuery.isLoading ? "—" : inUseCount,
+				description: t("stats.inUse.description", {
+					defaultValue: "linked to servers",
+				}),
+			},
+			{
+				title: t("stats.usageRefs.title", { defaultValue: "Usage References" }),
+				value: secretsQuery.isLoading ? "—" : usageRefs,
+				description: t("stats.usageRefs.description", {
+					defaultValue: "runtime bindings",
+				}),
+			},
+			{
+				title: t("stats.store.title", { defaultValue: "Secure Store" }),
+				value: storeValue,
+				description: storeDescription,
+			},
+		];
+	}, [
+		secretsQuery.data,
+		secretsQuery.isLoading,
+		storeStatusQuery.data,
+		t,
+	]);
 
 	const toolbarConfig: PageToolbarConfig<SecretToolbarEntity> = {
 		data: secretsAsEntities,
@@ -372,8 +397,8 @@ export function SecretsPage() {
 			debounceMs: 300,
 		},
 		viewMode: {
-			enabled: false,
-			defaultMode: "list",
+			enabled: true,
+			defaultMode: storedDefaultView as "grid" | "list",
 		},
 		sort: {
 			enabled: true,
@@ -406,6 +431,9 @@ export function SecretsPage() {
 	};
 
 	const toolbarCallbacks: PageToolbarCallbacks<SecretToolbarEntity> = {
+		onViewModeChange: (mode: "grid" | "list") => {
+			setDashboardSetting("defaultView", mode);
+		},
 		onSortedDataChange: (data) => {
 			setSortedSecrets(data);
 			setCurrentPage(1);
@@ -413,24 +441,40 @@ export function SecretsPage() {
 		onExpandedChange: setExpanded,
 	};
 
-	const loadingSkeleton = Array.from({ length: 3 }, (_, index) => (
-		<div
-			key={`secret-skeleton-${index}`}
-			className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 dark:border-slate-700 dark:bg-slate-900"
-		>
-			<div className="flex min-w-0 items-center gap-3">
-				<div className="h-9 w-9 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800" />
-				<div className="space-y-2">
-					<div className="h-4 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-					<div className="h-3 w-64 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+	const loadingSkeleton =
+		viewMode === "grid"
+			? Array.from({ length: 6 }, (_, index) => (
+				<Card key={`secret-grid-skeleton-${index}`} className="overflow-hidden">
+					<CardContent className="space-y-3 p-4">
+						<div className="flex items-center gap-3">
+							<div className="h-12 w-12 animate-pulse rounded-[10px] bg-slate-200 dark:bg-slate-800" />
+							<div className="flex-1 space-y-2">
+								<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+								<div className="h-4 w-48 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+							</div>
+						</div>
+						<div className="h-8 w-full animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+					</CardContent>
+				</Card>
+			))
+			: Array.from({ length: 3 }, (_, index) => (
+				<div
+					key={`secret-list-skeleton-${index}`}
+					className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-4 dark:border-slate-700 dark:bg-slate-900"
+				>
+					<div className="flex min-w-0 items-center gap-3">
+						<div className="h-9 w-9 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800" />
+						<div className="space-y-2">
+							<div className="h-4 w-40 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+							<div className="h-3 w-64 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+						</div>
+					</div>
+					<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
 				</div>
-			</div>
-			<div className="h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-		</div>
-	));
+			));
 
 	const emptyStateAction = hasNoSecretRecords ? (
-		<Button type="button" size="sm" className="mt-4 h-9" onClick={openCreate}>
+		<Button type="button" size="sm" className="mt-4 h-9" onClick={openCreate} disabled={!storeReady}>
 			<Plus className="mr-2 h-4 w-4" />
 			{t("empty.action", { defaultValue: "Add First Secret" })}
 		</Button>
@@ -445,19 +489,19 @@ export function SecretsPage() {
 						hasNoSecretRecords
 							? t("empty.title", { defaultValue: "No secrets stored" })
 							: t("empty.filteredTitle", {
-									defaultValue: "No matching secrets",
-								})
+								defaultValue: "No matching secrets",
+							})
 					}
 					description={
 						hasNoSecretRecords
 							? t("empty.description", {
-									defaultValue:
-										"Store write-only values for server runtime placeholders.",
-								})
+								defaultValue:
+									"Store write-only values for server runtime placeholders.",
+							})
 							: t("empty.filteredDescription", {
-									defaultValue:
-										"Adjust the search or sort controls to find a secret.",
-								})
+								defaultValue:
+									"Adjust the search or sort controls to find a secret.",
+							})
 					}
 					action={emptyStateAction}
 				/>
@@ -523,7 +567,8 @@ export function SecretsPage() {
 				stats={[
 					{
 						label: t("list.stats.provider", { defaultValue: "Provider" }),
-						value: secret.provider_kind,
+						value: providerLabel(secret.provider_kind),
+						valueTitle: secret.provider_kind,
 					},
 					{
 						label: t("list.stats.usage", { defaultValue: "Usage" }),
@@ -541,53 +586,69 @@ export function SecretsPage() {
 						variant="ghost"
 						size="sm"
 						className="h-9 px-2"
-						onClick={() => setUsageTarget(secret)}
+						onClick={() => openEdit(secret, "usage")}
+						aria-label={t("list.actions.viewUsage", {
+							defaultValue: "View usage",
+						})}
 					>
 						<ShieldCheck className="mr-2 h-4 w-4" />
 						{secret.used_by_count}
-					</Button>,
-					<Button
-						key="copy"
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="h-9 w-9"
-						onClick={() => void writeClipboardText(secret.placeholder)}
-						aria-label={t("list.actions.copy", {
-							defaultValue: "Copy placeholder",
-						})}
-					>
-						<Copy className="h-4 w-4" />
-					</Button>,
-					<Button
-						key="edit"
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="h-9 w-9"
-						onClick={() => openEdit(secret)}
-						aria-label={t("list.actions.edit", { defaultValue: "Edit secret" })}
-					>
-						<Pencil className="h-4 w-4" />
-					</Button>,
-					<Button
-						key="delete"
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="h-9 w-9"
-						onClick={() => setDeleteTarget(secret)}
-						aria-label={t("list.actions.delete", {
-							defaultValue: "Delete secret",
-						})}
-					>
-						<Trash2 className="h-4 w-4 text-destructive" />
 					</Button>,
 				]}
 				onClick={() => openEdit(secret)}
 			/>
 		);
 	};
+
+	const renderSecretCard = (entity: SecretToolbarEntity) => {
+		const secret = secretsByAlias.get(entity.alias);
+		if (!secret) return null;
+
+		return (
+			<EntityCard
+				key={secret.alias}
+				id={secret.alias}
+				title={secret.alias}
+				description={
+					<div className="min-w-0">
+						{secret.label ? (
+							<div className="truncate">{secret.label}</div>
+						) : null}
+						<div className="truncate font-mono text-xs text-muted-foreground">
+							{secret.placeholder}
+						</div>
+					</div>
+				}
+				avatar={{
+					fallback: secret.alias.slice(0, 2).toUpperCase(),
+				}}
+				avatarShape="rounded"
+				topRightBadge={
+					<Badge variant="secondary">{kindLabel(secret.kind)}</Badge>
+				}
+				stats={[
+					{
+						label: t("list.stats.provider", { defaultValue: "Provider" }),
+						value: providerLabel(secret.provider_kind),
+						valueTitle: secret.provider_kind,
+					},
+					{
+						label: t("list.stats.usage", { defaultValue: "Usage" }),
+						value: String(secret.used_by_count),
+					},
+					{
+						label: t("list.stats.version", { defaultValue: "Version" }),
+						value: String(secret.version),
+					},
+				]}
+				onClick={() => openEdit(secret)}
+			/>
+		);
+	};
+
+	if (storeStatusQuery.isSuccess && needsEncryptionUnlock) {
+		return <LockScreen variant="encryption" onSuccess={handleEncryptionUnlock} />;
+	}
 
 	return (
 		<PageLayout
@@ -600,8 +661,27 @@ export function SecretsPage() {
 					actions={actions}
 				/>
 			}
+			statsCards={<StatsCards cards={statsCards} />}
 		>
 			<div className="space-y-4">
+				{storeStatusQuery.isError && (
+					<Alert variant="destructive">
+						<ShieldAlert className="h-4 w-4" />
+						<AlertTitle>
+							{t("status.error.title", {
+								defaultValue: "Store status check failed",
+							})}
+						</AlertTitle>
+						<AlertDescription>
+							{storeStatusQuery.error instanceof Error
+								? storeStatusQuery.error.message
+								: t("status.error.description", {
+									defaultValue:
+										"Could not determine store status. Operations are disabled.",
+								})}
+						</AlertDescription>
+					</Alert>
+				)}
 				{storeStatusQuery.isSuccess && !storeReady && (
 					<Alert variant="destructive">
 						<ShieldAlert className="h-4 w-4" />
@@ -619,9 +699,7 @@ export function SecretsPage() {
 						</AlertDescription>
 					</Alert>
 				)}
-				{secretsQuery.isLoading ? (
-					<div className="space-y-4">{loadingSkeleton}</div>
-				) : secretsQuery.isError ? (
+				{secretsQuery.isError ? (
 					<div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
 						<p className="text-sm text-destructive">
 							{t("list.error", {
@@ -633,51 +711,59 @@ export function SecretsPage() {
 							{t("list.retry", { defaultValue: "Retry" })}
 						</Button>
 					</div>
-				) : sortedSecrets.length === 0 ? (
-					emptyState
 				) : (
 					<>
-						<div className="space-y-4">{pagedSecrets.map(renderSecretRow)}</div>
-						<Pagination
-							currentPage={currentPage}
-							hasPreviousPage={currentPage > 1}
-							hasNextPage={currentPage < totalPages}
-							itemsPerPage={itemsPerPage}
-							currentPageItemCount={pagedSecrets.length}
-							totalItemCount={sortedSecrets.length}
-							totalPages={totalPages}
-							onGoToPage={setCurrentPage}
-							onPreviousPage={() =>
-								setCurrentPage((page) => Math.max(1, page - 1))
-							}
-							onFirstPage={() => setCurrentPage(1)}
-							onNextPage={() =>
-								setCurrentPage((page) => Math.min(totalPages, page + 1))
-							}
-							onLastPage={() => setCurrentPage(totalPages)}
-							onItemsPerPageChange={(next) => {
-								setItemsPerPage(next);
-								setCurrentPage(1);
-							}}
-							isLoading={secretsQuery.isRefetching}
-						/>
+						<ListGridContainer
+							loading={secretsQuery.isLoading}
+							loadingSkeleton={loadingSkeleton}
+							emptyState={sortedSecrets.length === 0 ? emptyState : undefined}
+						>
+							{viewMode === "grid"
+								? pagedSecrets.map(renderSecretCard)
+								: pagedSecrets.map(renderSecretRow)}
+						</ListGridContainer>
+						{sortedSecrets.length > 0 ? (
+							<Pagination
+								currentPage={currentPage}
+								hasPreviousPage={currentPage > 1}
+								hasNextPage={currentPage < totalPages}
+								itemsPerPage={itemsPerPage}
+								currentPageItemCount={pagedSecrets.length}
+								totalItemCount={sortedSecrets.length}
+								totalPages={totalPages}
+								onGoToPage={setCurrentPage}
+								onPreviousPage={() =>
+									setCurrentPage((page) => Math.max(1, page - 1))
+								}
+								onFirstPage={() => setCurrentPage(1)}
+								onNextPage={() =>
+									setCurrentPage((page) => Math.min(totalPages, page + 1))
+								}
+								onLastPage={() => setCurrentPage(totalPages)}
+								onItemsPerPageChange={(next) => {
+									setItemsPerPage(next);
+									setCurrentPage(1);
+								}}
+								isLoading={secretsQuery.isRefetching}
+							/>
+						) : null}
 					</>
 				)}
 			</div>
 
 			<SecretEditorDrawer
 				editor={editor}
-				kindOptions={kindOptions}
+				kindOptions={editorKindOptions}
 				onChange={setEditor}
-				onClose={() => setEditor(null)}
+				onClose={closeEditor}
 				onSave={() => editor && saveMutation.mutate(editor)}
 				isSaving={saveMutation.isPending}
-			/>
-			<SecretUsageDialog
-				secret={usageTarget}
+				placeholder={editorPlaceholder}
 				usages={usagesQuery.data ?? []}
-				isLoading={usagesQuery.isLoading}
-				onClose={() => setUsageTarget(null)}
+				usagesLoading={Boolean(editorAlias) && usagesQuery.isLoading}
+				usedByCount={editorUsedByCount}
+				serverNameById={serverNameById}
+				initialTab={editorInitialTab}
 			/>
 			<SecretDeleteDialog
 				secret={deleteTarget}
@@ -688,208 +774,6 @@ export function SecretsPage() {
 				}
 			/>
 		</PageLayout>
-	);
-}
-
-function SecretEditorDrawer({
-	editor,
-	kindOptions,
-	onChange,
-	onClose,
-	onSave,
-	isSaving,
-}: {
-	editor: SecretEditorState | null;
-	kindOptions: Array<{ value: SecretKind; label: string }>;
-	onChange: (next: SecretEditorState | null) => void;
-	onClose: () => void;
-	onSave: () => void;
-	isSaving: boolean;
-}) {
-	const { t } = useTranslation("secrets");
-	const aliasId = useId();
-	const kindId = useId();
-	const labelId = useId();
-	const valueId = useId();
-	if (!editor) return null;
-
-	return (
-		<Drawer open={Boolean(editor)} onOpenChange={(open) => !open && onClose()}>
-			<DrawerContent className="h-full flex flex-col">
-				<form
-					className="flex min-h-0 flex-1 flex-col"
-					onSubmit={(event) => {
-						event.preventDefault();
-						onSave();
-					}}
-				>
-					<DrawerHeader>
-						<DrawerTitle>
-							{editor.mode === "create"
-								? t("editor.createTitle", { defaultValue: "Add Secret" })
-								: t("editor.editTitle", { defaultValue: "Edit Secret" })}
-						</DrawerTitle>
-						<DrawerDescription>
-							{t("editor.description", {
-								defaultValue:
-									"The value is write-only. It will not be shown again after save.",
-							})}
-						</DrawerDescription>
-					</DrawerHeader>
-					<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-						<div className="grid gap-4">
-							<div className="grid gap-2">
-								<Label htmlFor={aliasId}>
-									{t("editor.fields.alias", { defaultValue: "Alias" })}
-								</Label>
-								<Input
-									id={aliasId}
-									value={editor.alias}
-									disabled={editor.mode === "edit"}
-									onChange={(event) =>
-										onChange({ ...editor, alias: event.target.value })
-									}
-									placeholder="server/github/token"
-								/>
-							</div>
-							<div className="grid gap-2">
-								<Label htmlFor={kindId}>
-									{t("editor.fields.kind", { defaultValue: "Kind" })}
-								</Label>
-								<Select
-									value={editor.kind}
-									onValueChange={(kind) =>
-										onChange({ ...editor, kind: kind as SecretKind })
-									}
-								>
-									<SelectTrigger id={kindId} className="h-9">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{kindOptions.map((option) => (
-											<SelectItem key={option.value} value={option.value}>
-												{option.label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-							<div className="grid gap-2">
-								<Label htmlFor={labelId}>
-									{t("editor.fields.label", { defaultValue: "Label" })}
-								</Label>
-								<Input
-									id={labelId}
-									value={editor.label}
-									onChange={(event) =>
-										onChange({ ...editor, label: event.target.value })
-									}
-									placeholder="GitHub token"
-								/>
-							</div>
-							<div className="grid gap-2">
-								<Label htmlFor={valueId}>
-									{t("editor.fields.value", { defaultValue: "Value" })}
-								</Label>
-								<Input
-									id={valueId}
-									type="password"
-									value={editor.value}
-									onChange={(event) =>
-										onChange({ ...editor, value: event.target.value })
-									}
-									placeholder={
-										editor.mode === "edit"
-											? t("editor.placeholders.keepValue", {
-													defaultValue: "Leave blank to keep existing value",
-												})
-											: t("editor.placeholders.value", {
-													defaultValue: "Secret value",
-												})
-									}
-								/>
-							</div>
-						</div>
-					</div>
-					<DrawerFooter className="mt-auto border-t bg-background px-6 py-4">
-						<Button
-							type="button"
-							variant="outline"
-							onClick={onClose}
-							disabled={isSaving}
-						>
-							{t("editor.actions.cancel", { defaultValue: "Cancel" })}
-						</Button>
-						<Button type="submit" disabled={isSaving || !editor.alias.trim()}>
-							<KeyRound className="mr-2 h-4 w-4" />
-							{t("editor.actions.save", { defaultValue: "Save" })}
-						</Button>
-					</DrawerFooter>
-				</form>
-			</DrawerContent>
-		</Drawer>
-	);
-}
-
-function SecretUsageDialog({
-	secret,
-	usages,
-	isLoading,
-	onClose,
-}: {
-	secret: SecretMetadata | null;
-	usages: SecretUsage[];
-	isLoading: boolean;
-	onClose: () => void;
-}) {
-	const { t } = useTranslation("secrets");
-	return (
-		<Dialog open={Boolean(secret)} onOpenChange={(open) => !open && onClose()}>
-			<DialogContent>
-				<DialogHeader>
-					<DialogTitle>
-						{t("usage.title", { defaultValue: "Secret Usage" })}
-					</DialogTitle>
-					<DialogDescription className="font-mono">
-						{secret?.alias}
-					</DialogDescription>
-				</DialogHeader>
-				<div className="rounded-md border">
-					{isLoading ? (
-						<div className="p-4 text-sm text-muted-foreground">
-							{t("usage.loading", { defaultValue: "Loading usages" })}
-						</div>
-					) : usages.length === 0 ? (
-						<div className="p-4 text-sm text-muted-foreground">
-							{t("usage.empty", { defaultValue: "No server usage recorded" })}
-						</div>
-					) : (
-						<table className="w-full text-sm">
-							<thead className="bg-muted/50 text-left">
-								<tr>
-									<th className="px-3 py-2 font-medium">
-										{t("usage.columns.server", { defaultValue: "Server" })}
-									</th>
-									<th className="px-3 py-2 font-medium">
-										{t("usage.columns.location", { defaultValue: "Location" })}
-									</th>
-								</tr>
-							</thead>
-							<tbody>
-								{usages.map((usage, index) => (
-									<tr key={`${usage.server_id}-${index}`} className="border-t">
-										<td className="px-3 py-2 font-mono text-xs">
-											{usage.server_id}
-										</td>
-										<td className="px-3 py-2">{usageLabel(usage, t)}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					)}
-				</div>
-			</DialogContent>
-		</Dialog>
 	);
 }
 

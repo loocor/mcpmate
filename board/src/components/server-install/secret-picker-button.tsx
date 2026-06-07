@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { secretsApi } from "../../lib/api";
+import { suggestSecretAliasFromOrigin } from "../../lib/secret-alias";
 import type { SecretOrigin } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -12,12 +13,14 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
 interface SecretPickerButtonProps {
 	onSelect: (placeholder: string) => void;
+	onCreateNew?: (origin: SecretOrigin) => void;
 	className?: string;
 	origin?: SecretOrigin;
 }
 
 export function SecretPickerButton({
 	onSelect,
+	onCreateNew,
 	className,
 	origin,
 }: SecretPickerButtonProps) {
@@ -140,6 +143,10 @@ export function SecretPickerButton({
 							className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							onClick={() => {
 								setOpen(false);
+								if (origin && onCreateNew) {
+									onCreateNew(origin);
+									return;
+								}
 								const params = new URLSearchParams({ editor: "create" });
 								if (origin) {
 									for (const [key, value] of Object.entries(origin)) {
@@ -147,6 +154,13 @@ export function SecretPickerButton({
 											continue;
 										}
 										params.set(`origin_${key}`, String(value));
+									}
+									const suggestedAlias = suggestSecretAliasFromOrigin(
+										origin,
+										(secretsQuery.data ?? []).map((secret) => secret.alias),
+									);
+									if (suggestedAlias) {
+										params.set("suggested_alias", suggestedAlias);
 									}
 								}
 								navigate(`/secrets?${params.toString()}`);

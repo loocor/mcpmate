@@ -22,6 +22,11 @@ import { readClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { parseJsonDrafts } from "../../lib/install-normalizer";
 import { isTauriEnvironmentSync } from "../../lib/platform";
+import type { SecretOrigin } from "../../lib/types";
+import {
+	InlineSecretCreate,
+	useInlineSecretCreateField,
+} from "../secrets";
 import { Button } from "../ui/button";
 import {
 	Drawer,
@@ -149,6 +154,9 @@ export const ServerInstallManualForm = forwardRef<
 			[setValue],
 		);
 
+		const { onCreateSecret, controller } =
+			useInlineSecretCreateField(handleSecretSelect);
+
 		// Field arrays
 		const {
 			fields: argFields,
@@ -216,6 +224,17 @@ export const ServerInstallManualForm = forwardRef<
 		const watchedArgs = useWatch({ control, name: "args" });
 		const watchedEnv = useWatch({ control, name: "env" });
 		const watchedHeaders = useWatch({ control, name: "headers" });
+		const watchedUrlParams = useWatch({ control, name: "urlParams" });
+
+		const secretOriginBase = useMemo<SecretOrigin>(
+			() => ({
+				server_id: serverId ?? null,
+				server_name: watchedName?.trim() || null,
+				server_kind: kind,
+				source: isEditMode ? "server_edit" : "server_install",
+			}),
+			[isEditMode, kind, serverId, watchedName],
+		);
 
 		const ingestMessages = useMemo(
 			() => ({
@@ -871,6 +890,7 @@ export const ServerInstallManualForm = forwardRef<
 		};
 
 		return (
+			<>
 			<Drawer
 				open={isOpen}
 				onOpenChange={(value) => (!value ? onClose() : undefined)}
@@ -1113,6 +1133,8 @@ export const ServerInstallManualForm = forwardRef<
 												urlInputRef={urlInputRef}
 												viewMode={viewMode}
 												onSecretSelect={handleSecretSelect}
+												onCreateSecret={onCreateSecret}
+												secretOriginBase={secretOriginBase}
 											/>
 
 									{serverId && onInitiateOAuth ? (
@@ -1139,6 +1161,11 @@ export const ServerInstallManualForm = forwardRef<
 												onDeleteClick={handleDeleteClick}
 												onGhostClick={handleGhostClick}
 												onSecretSelect={handleSecretSelect}
+												onCreateSecret={onCreateSecret}
+												secretOriginBase={secretOriginBase}
+												getEnvRowKeyAt={(index) =>
+													watchedEnv?.[index]?.key?.trim() || undefined
+												}
 											/>
 
 											<UrlParams
@@ -1152,6 +1179,11 @@ export const ServerInstallManualForm = forwardRef<
 												onDeleteClick={handleDeleteClick}
 												onGhostClick={handleGhostClick}
 												onSecretSelect={handleSecretSelect}
+												onCreateSecret={onCreateSecret}
+												secretOriginBase={secretOriginBase}
+												getRowKeyAt={(index) =>
+													watchedUrlParams?.[index]?.key?.trim() || undefined
+												}
 											/>
 
 											<HttpHeaders
@@ -1165,6 +1197,11 @@ export const ServerInstallManualForm = forwardRef<
 												onDeleteClick={handleDeleteClick}
 												onGhostClick={handleGhostClick}
 												onSecretSelect={handleSecretSelect}
+												onCreateSecret={onCreateSecret}
+												secretOriginBase={secretOriginBase}
+												getRowKeyAt={(index) =>
+													watchedHeaders?.[index]?.key?.trim() || undefined
+												}
 											/>
 
 										</>
@@ -1305,6 +1342,8 @@ export const ServerInstallManualForm = forwardRef<
 					</form>
 				</DrawerContent>
 			</Drawer>
+			<InlineSecretCreate controller={controller} nested />
+			</>
 		);
 	},
 );

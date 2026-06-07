@@ -18,7 +18,9 @@ interface UrlParamsProps {
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
 	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
+	getRowKeyAt?: (index: number) => string | undefined;
 }
 
 export function UrlParams({
@@ -32,7 +34,9 @@ export function UrlParams({
 	onDeleteClick,
 	onGhostClick,
 	onSecretSelect,
+	onCreateSecret,
 	secretOriginBase,
+	getRowKeyAt,
 }: UrlParamsProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -94,10 +98,17 @@ export function UrlParams({
 								...secretOriginBase,
 								field_group: "url_params",
 								field_key:
-									typeof field.key === "string" ? field.key : undefined,
+									getRowKeyAt?.(index) ??
+									(typeof field.key === "string" ? field.key : undefined),
 								field_index: index,
 								field_path: `urlParams.${index}.value`,
 							}}
+							onCreateNew={
+								onCreateSecret
+									? (origin) =>
+											onCreateSecret(`urlParams.${index}.value`, origin)
+									: undefined
+							}
 							onSelect={(placeholder) =>
 								onSecretSelect?.(`urlParams.${index}.value`, placeholder)
 							}

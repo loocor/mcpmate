@@ -77,6 +77,23 @@ export const commonTranslations = {
 			ofTotal: "of {{total}}",
 			goToPage: "Go to page",
 		},
+		lock: {
+			title: "MCPMate",
+			unlock: "Unlock",
+			verifying: "Verifying...",
+			login: {
+				description: "Enter your login password to continue.",
+				passwordPlaceholder: "Login password",
+				wrongPassword: "Incorrect login password. Please try again.",
+				verifyError: "Could not verify login password. Please try again.",
+			},
+			encryption: {
+				description: "Enter your encryption password to unlock the secure store.",
+				passwordPlaceholder: "Encryption password",
+				unlockError:
+					"Could not unlock the secure store. Check your encryption password and try again.",
+			},
+		},
 	},
 	"zh-CN": {
 		wip: "开发中",
@@ -156,6 +173,22 @@ export const commonTranslations = {
 			ofTotal: "，共 {{total}} 页",
 			goToPage: "跳转到页码",
 		},
+		lock: {
+			title: "MCPMate",
+			unlock: "解锁",
+			verifying: "验证中...",
+			login: {
+				description: "请输入登录密码以继续。",
+				passwordPlaceholder: "登录密码",
+				wrongPassword: "登录密码不正确，请重试。",
+				verifyError: "无法验证登录密码，请重试。",
+			},
+			encryption: {
+				description: "请输入加密密码以解锁安全存储。",
+				passwordPlaceholder: "加密密码",
+				unlockError: "无法解锁安全存储，请检查加密密码后重试。",
+			},
+		},
 	},
 	"ja-JP": {
 		wip: "開発中",
@@ -234,6 +267,26 @@ export const commonTranslations = {
 			pageSuffix: "",
 			ofTotal: "/ {{total}} ページ",
 			goToPage: "ページへ移動",
+		},
+		lock: {
+			title: "MCPMate",
+			unlock: "ロック解除",
+			verifying: "確認中...",
+			login: {
+				description: "続行するにはログインパスワードを入力してください。",
+				passwordPlaceholder: "ログインパスワード",
+				wrongPassword:
+					"ログインパスワードが正しくありません。もう一度お試しください。",
+				verifyError:
+					"ログインパスワードを確認できませんでした。もう一度お試しください。",
+			},
+			encryption: {
+				description:
+					"セキュアストアのロックを解除するには暗号化パスワードを入力してください。",
+				passwordPlaceholder: "暗号化パスワード",
+				unlockError:
+					"セキュアストアのロック解除に失敗しました。暗号化パスワードを確認して再試行してください。",
+			},
 		},
 	},
 } as const;

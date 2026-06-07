@@ -1,4 +1,5 @@
 use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::SecretResolver;
 
@@ -84,6 +85,20 @@ impl std::fmt::Debug for SecretValue {
             .finish()
     }
 }
+
+impl Zeroize for SecretValue {
+    fn zeroize(&mut self) {
+        self.value.zeroize();
+    }
+}
+
+impl Drop for SecretValue {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for SecretValue {}
 
 pub fn parse_placeholder(input: &str) -> Result<Option<SecretReference>, SecretError> {
     let Some(alias) = input

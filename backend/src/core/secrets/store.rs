@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::Path, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use mcpmate_secrets::{RootKeyProviderMetadata, SecretRootKeyError};
@@ -8,6 +8,18 @@ pub use mcpmate_secrets::store::{
     LocalSecretStore, SecretCreateInput, SecretKindInput, SecretMetadataView, SecretOriginInput, SecretUpdateInput,
     SecretUsageLocationInput, SecretUsageUpsertInput, SecretUsageView,
 };
+pub use mcpmate_secrets::{
+    LocalFileRootKeyProvider, OperatingSystemRootKeyProvider, PassphraseRootKeyProvider,
+    RootKeyProviderMode, SecretRootKeyProvider, default_root_key_provider,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretStoreProviderSnapshot {
+    pub provider_id: String,
+    pub provider_kind: String,
+    pub provider_mode: String,
+    pub security_level: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecretStoreReadiness {
@@ -20,7 +32,14 @@ pub enum SecretStoreReadiness {
     Unavailable {
         reason_code: String,
         message: String,
+        provider: Option<SecretStoreProviderSnapshot>,
     },
+}
+
+#[derive(Debug)]
+pub struct SecretStoreBootstrap {
+    pub store: Option<LocalSecretStore>,
+    pub readiness: SecretStoreReadiness,
 }
 
 impl SecretStoreReadiness {
@@ -40,6 +59,19 @@ impl SecretStoreReadiness {
         Self::Unavailable {
             reason_code: reason_code.into(),
             message: message.into(),
+            provider: None,
+        }
+    }
+
+    pub fn unavailable_with_provider(
+        reason_code: impl Into<String>,
+        message: impl Into<String>,
+        metadata: RootKeyProviderMetadata,
+    ) -> Self {
+        Self::Unavailable {
+            reason_code: reason_code.into(),
+            message: message.into(),
+            provider: Some(provider_snapshot(metadata)),
         }
     }
 
@@ -66,6 +98,138 @@ impl SecretStoreReadiness {
         }
 
         Self::unavailable("initialization_failed", message)
+    }
+}
+
+pub fn provider_snapshot(metadata: RootKeyProviderMetadata) -> SecretStoreProviderSnapshot {
+    SecretStoreProviderSnapshot {
+        provider_id: metadata.provider_id().to_string(),
+        provider_kind: metadata.provider_kind().to_string(),
+        provider_mode: metadata.mode().as_str().to_string(),
+        security_level: metadata.security_level().as_str().to_string(),
+    }
+}
+
+pub fn secret_store_paths(data_dir: &Path) -> (PathBuf, PathBuf) {
+    let secrets_dir = data_dir.join("secrets");
+    (
+        secrets_dir.join("passphrase-wrapped-key.json"),
+        secrets_dir.join("local-root.key"),
+    )
+}
+
+fn parse_persisted_provider_mode(mode: &str) -> RootKeyProviderMode {
+    match mode {
+        "passphrase" => RootKeyProviderMode::Passphrase,
+        "local_file" => RootKeyProviderMode::LocalFile,
+        "operating_system" => RootKeyProviderMode::OperatingSystem,
+        other if other == RootKeyProviderMode::Development.as_str() => RootKeyProviderMode::Development,
+        _ => RootKeyProviderMode::OperatingSystem,
+    }
+}
+
+pub fn provider_mode_to_persisted(mode: RootKeyProviderMode) -> &'static str {
+    mode.as_str()
+}
+
+pub async fn bootstrap_secret_store(
+    pool: Pool<Sqlite>,
+    data_dir: &Path,
+) -> SecretStoreBootstrap {
+    if let Err(err) = LocalSecretStore::ensure_schema(&pool).await {
+        return SecretStoreBootstrap {
+            store: None,
+            readiness: SecretStoreReadiness::from_initialization_error(&err),
+        };
+    }
+
+    let (passphrase_path, local_file_path) = secret_store_paths(data_dir);
+    let persisted_mode = match mcpmate_secrets::database::get_provider_config(&pool).await {
+        Ok(Some(config)) => parse_persisted_provider_mode(&config.provider_mode),
+        Ok(None) => RootKeyProviderMode::OperatingSystem,
+        Err(err) => {
+            return SecretStoreBootstrap {
+                store: None,
+                readiness: SecretStoreReadiness::unavailable("provider_config_error", err.to_string()),
+            };
+        }
+    };
+
+    match persisted_mode {
+        RootKeyProviderMode::Passphrase => {
+            let metadata = PassphraseRootKeyProvider::new(passphrase_path.clone(), "bootstrap-metadata-only").metadata();
+            if !passphrase_path.exists() {
+                return SecretStoreBootstrap {
+                    store: None,
+                    readiness: SecretStoreReadiness::unavailable_with_provider(
+                        "passphrase_unlock_required",
+                        "Enter your encryption password to unlock the secure store.",
+                        metadata,
+                    ),
+                };
+            }
+            SecretStoreBootstrap {
+                store: None,
+                readiness: SecretStoreReadiness::unavailable_with_provider(
+                    "passphrase_unlock_required",
+                    "Enter your encryption password to unlock the secure store.",
+                    metadata,
+                ),
+            }
+        }
+        RootKeyProviderMode::LocalFile => {
+            initialize_with_root_key_provider(
+                pool,
+                Arc::new(LocalFileRootKeyProvider::new(local_file_path)),
+            )
+            .await
+        }
+        RootKeyProviderMode::OperatingSystem => {
+            initialize_with_root_key_provider(pool, Arc::new(OperatingSystemRootKeyProvider::new())).await
+        }
+        RootKeyProviderMode::Development | RootKeyProviderMode::Custom => {
+            initialize_with_root_key_provider(pool, default_root_key_provider()).await
+        }
+    }
+}
+
+pub async fn initialize_secret_store_with_passphrase(
+    pool: Pool<Sqlite>,
+    data_dir: &Path,
+    passphrase: &str,
+) -> Result<SecretStoreBootstrap> {
+    let (passphrase_path, _) = secret_store_paths(data_dir);
+    if !passphrase_path.exists() {
+        return Ok(SecretStoreBootstrap {
+            store: None,
+            readiness: SecretStoreReadiness::unavailable_with_provider(
+                "passphrase_setup_required",
+                "Passphrase encryption is configured but no wrapped root key file was found.",
+                PassphraseRootKeyProvider::new(passphrase_path, passphrase).metadata(),
+            ),
+        });
+    }
+
+    let provider = Arc::new(PassphraseRootKeyProvider::new(passphrase_path, passphrase));
+    Ok(initialize_with_root_key_provider(pool, provider).await)
+}
+
+async fn initialize_with_root_key_provider(
+    pool: Pool<Sqlite>,
+    provider: Arc<dyn SecretRootKeyProvider>,
+) -> SecretStoreBootstrap {
+    match LocalSecretStore::initialize_with_root_key_provider(pool, provider).await {
+        Ok(store) => {
+            let readiness = SecretStoreReadiness::ready(store.provider_metadata());
+            SecretStoreBootstrap {
+                store: Some(store),
+                readiness,
+            }
+        }
+        Err(err) => SecretStoreBootstrap {
+            store: None,
+            readiness: SecretStoreReadiness::from_initialization_error(&err),
+        },
     }
 }
 

@@ -1,6 +1,6 @@
 mod constants;
 mod crypto;
-mod database;
+pub mod database;
 mod model;
 mod reference;
 pub mod root_key;

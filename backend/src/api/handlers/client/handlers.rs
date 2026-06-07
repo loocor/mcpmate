@@ -1483,7 +1483,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
-    use tokio::sync::Mutex;
+    use tokio::sync::{Mutex, RwLock};
 
     struct TestContext {
         _temp_dir: TempDir,
@@ -1617,8 +1617,8 @@ mod tests {
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
-            secret_store: None,
-            secret_store_readiness: crate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
+            secret_store: RwLock::new(None),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
         });
 
         TestContext {

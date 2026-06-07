@@ -17,6 +17,7 @@ interface CommandFieldProps {
 	urlInputRef: React.MutableRefObject<HTMLInputElement | null>;
 	viewMode: "form" | "json";
 	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
 }
 
@@ -30,6 +31,7 @@ export function CommandField({
 	urlInputRef,
 	viewMode,
 	onSecretSelect,
+	onCreateSecret,
 	secretOriginBase,
 }: CommandFieldProps) {
 	const { t } = useTranslation("servers");
@@ -68,6 +70,11 @@ export function CommandField({
 									field_key: "command",
 									field_path: "command",
 								}}
+								onCreateNew={
+									onCreateSecret
+										? (origin) => onCreateSecret("command", origin)
+										: undefined
+								}
 								onSelect={(placeholder) =>
 									onSecretSelect?.("command", placeholder)
 								}
@@ -115,6 +122,11 @@ export function CommandField({
 									field_key: "url",
 									field_path: "url",
 								}}
+								onCreateNew={
+									onCreateSecret
+										? (origin) => onCreateSecret("url", origin)
+										: undefined
+								}
 								onSelect={(placeholder) => onSecretSelect?.("url", placeholder)}
 							/>
 						</div>

@@ -14,7 +14,8 @@ use mcpmate::{
         secrets::{
             resolve_runtime_server_config,
             store::{
-                LocalSecretStore, SecretCreateInput, SecretKindInput, SecretUsageLocationInput, SecretUsageUpsertInput,
+                LocalFileRootKeyProvider, LocalSecretStore, PassphraseRootKeyProvider, RootKeyProviderMode,
+                SecretCreateInput, SecretKindInput, SecretUsageLocationInput, SecretUsageUpsertInput,
             },
             sync_server_secret_usages,
         },
@@ -22,10 +23,12 @@ use mcpmate::{
     inspector::{calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager},
     system::metrics::MetricsCollector,
 };
+use mcpmate_secrets::SecretRootKeyProvider;
 use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tower::ServiceExt;
 
 struct EnvVarGuard {
@@ -104,10 +107,78 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
         oauth_manager: None,
-        secret_store: Some(secret_store.clone()),
-        secret_store_readiness: mcpmate::core::secrets::store::SecretStoreReadiness::ready(
+        secret_store: RwLock::new(Some(secret_store.clone())),
+        secret_store_readiness: RwLock::new(mcpmate::core::secrets::store::SecretStoreReadiness::ready(
             secret_store.provider_metadata(),
-        ),
+        )),
+    });
+
+    (temp_dir, state, secret_store)
+}
+
+async fn build_passphrase_test_context(
+    master_password: &str,
+) -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>) {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("sqlite pool");
+
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&db_pool)
+        .await
+        .expect("enable foreign keys");
+    run_initialization(&db_pool).await.expect("initialize schema");
+
+    let database = Arc::new(Database {
+        pool: db_pool.clone(),
+        path: temp_dir.path().join("mcpmate-test.db"),
+    });
+    let secrets_dir = temp_dir.path().join("secrets");
+    let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
+    let root_key_provider = Arc::new(PassphraseRootKeyProvider::new(
+        passphrase_path,
+        master_password,
+    ));
+    let secret_store = Arc::new(
+        LocalSecretStore::initialize_with_root_key_provider(db_pool.clone(), root_key_provider)
+            .await
+            .expect("initialize passphrase secret store"),
+    );
+    assert_eq!(
+        secret_store.provider_metadata().mode(),
+        RootKeyProviderMode::Passphrase
+    );
+
+    let redb_cache =
+        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+
+    let pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()))
+        .with_secret_resolver(secret_store.clone());
+
+    let state = Arc::new(AppState {
+        connection_pool: Arc::new(Mutex::new(pool)),
+        metrics_collector: Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1))),
+        http_proxy: None,
+        profile_merge_service: None,
+        database: Some(database),
+        audit_database: None,
+        audit_service: None,
+        config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+        redb_cache,
+        unified_query: None,
+        client_service: None,
+        inspector_calls,
+        inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        oauth_manager: None,
+        secret_store: RwLock::new(Some(secret_store.clone())),
+        secret_store_readiness: RwLock::new(mcpmate::core::secrets::store::SecretStoreReadiness::ready(
+            secret_store.provider_metadata(),
+        )),
     });
 
     (temp_dir, state, secret_store)
@@ -135,8 +206,8 @@ fn build_unavailable_secret_store_state(temp_dir: &TempDir) -> Arc<AppState> {
         inspector_calls: Arc::new(InspectorCallRegistry::new()),
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
         oauth_manager: None,
-        secret_store: None,
-        secret_store_readiness: mcpmate::api::routes::unavailable_secret_store_readiness("database_unavailable"),
+        secret_store: RwLock::new(None),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness("database_unavailable")),
     })
 }
 
@@ -484,4 +555,358 @@ async fn usage_sync_deduplicates_same_placeholder_twice_in_one_value() {
     );
     assert_eq!(usages[0].server_id, "dup-server");
     assert_eq!(usages[0].location, SecretUsageLocationInput::StreamableHttpUrl);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn provider_switch_from_passphrase_requires_current_passphrase() {
+    let (_temp_dir, state, _store) = build_passphrase_test_context("correct horse battery staple").await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/provider/switch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "mode": "local_file"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("switch response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = read_json_response(response).await;
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Current passphrase is required")
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn provider_switch_from_passphrase_rejects_wrong_current_passphrase() {
+    let (_temp_dir, state, _store) = build_passphrase_test_context("correct horse battery staple").await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/provider/switch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "mode": "local_file",
+                        "current_passphrase": "wrong password"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("switch response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = read_json_response(response).await;
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Invalid current passphrase")
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn provider_switch_from_passphrase_to_local_file_succeeds_with_current_passphrase() {
+    let (_temp_dir, state, _store) = build_passphrase_test_context("correct horse battery staple").await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/provider/switch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "mode": "local_file",
+                        "current_passphrase": "correct horse battery staple"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("switch response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json_response(response).await;
+    assert_eq!(body["data"]["new_status"]["status"], "ready");
+    assert_eq!(body["data"]["new_status"]["provider"]["provider_mode"], "local_file");
+}
+
+async fn build_locked_passphrase_context(
+    master_password: &str,
+) -> (TempDir, Arc<AppState>) {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("sqlite pool");
+
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&db_pool)
+        .await
+        .expect("enable foreign keys");
+    run_initialization(&db_pool).await.expect("initialize schema");
+
+    let database = Arc::new(Database {
+        pool: db_pool.clone(),
+        path: temp_dir.path().join("mcpmate-test.db"),
+    });
+    let data_dir = temp_dir.path();
+    let secrets_dir = data_dir.join("secrets");
+    let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
+    LocalSecretStore::ensure_schema(&db_pool)
+        .await
+        .expect("ensure secure store schema");
+    PassphraseRootKeyProvider::new(passphrase_path, master_password)
+        .load_or_create_root_key()
+        .expect("seed passphrase root key");
+
+    mcpmate_secrets::database::upsert_provider_config(&db_pool, "passphrase")
+        .await
+        .expect("persist provider mode");
+
+    let bootstrap =
+        mcpmate::core::secrets::store::bootstrap_secret_store(db_pool.clone(), data_dir).await;
+    let bootstrap_readiness = bootstrap.readiness.clone();
+    match &bootstrap_readiness {
+        mcpmate::core::secrets::store::SecretStoreReadiness::Unavailable { reason_code, .. } => {
+            assert_eq!(reason_code, "passphrase_unlock_required");
+        }
+        other => panic!("expected locked passphrase bootstrap, got {other:?}"),
+    }
+
+    let redb_cache =
+        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+
+    let pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()));
+
+    let state = Arc::new(AppState {
+        connection_pool: Arc::new(Mutex::new(pool)),
+        metrics_collector: Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1))),
+        http_proxy: None,
+        profile_merge_service: None,
+        database: Some(database),
+        audit_database: None,
+        audit_service: None,
+        config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+        redb_cache,
+        unified_query: None,
+        client_service: None,
+        inspector_calls,
+        inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        oauth_manager: None,
+        secret_store: RwLock::new(bootstrap.store.map(Arc::new)),
+        secret_store_readiness: RwLock::new(bootstrap_readiness),
+    });
+
+    (temp_dir, state)
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn unlock_endpoint_initializes_passphrase_store_after_cold_start() {
+    let (_temp_dir, state) = build_locked_passphrase_context("correct horse battery staple").await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/unlock")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "passphrase": "correct horse battery staple" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("unlock response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json_response(response).await;
+    assert_eq!(body["data"]["status"], "ready");
+    assert_eq!(body["data"]["provider"]["provider_mode"], "passphrase");
+
+    let list_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/secrets/list")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("list response");
+    assert_eq!(list_response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn unlock_endpoint_rejects_wrong_passphrase() {
+    let (_temp_dir, state) = build_locked_passphrase_context("correct horse battery staple").await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/unlock")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "passphrase": "wrong password" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("unlock response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn rotate_passphrase_rewraps_root_key_in_passphrase_mode() {
+    let (_temp_dir, state, _store) = build_passphrase_test_context("old passphrase value").await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/passphrase/rotate")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "current_passphrase": "old passphrase value",
+                        "new_passphrase": "new passphrase value",
+                        "confirm": "new passphrase value"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("rotate response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json_response(response).await;
+    assert_eq!(body["data"]["status"], "ready");
+    assert_eq!(body["data"]["provider"]["provider_mode"], "passphrase");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn provider_mode_persists_across_restart_simulation() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let db_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("sqlite pool");
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&db_pool)
+        .await
+        .expect("enable foreign keys");
+    run_initialization(&db_pool).await.expect("initialize schema");
+
+    let database = Arc::new(Database {
+        pool: db_pool.clone(),
+        path: temp_dir.path().join("mcpmate-test.db"),
+    });
+    let local_key_path = temp_dir.path().join("secrets").join("local-root.key");
+    let secret_store = Arc::new(
+        LocalSecretStore::initialize_with_root_key_provider(
+            db_pool.clone(),
+            Arc::new(LocalFileRootKeyProvider::new(local_key_path)),
+        )
+        .await
+        .expect("initialize secret store"),
+    );
+    let store_readiness =
+        mcpmate::core::secrets::store::SecretStoreReadiness::ready(secret_store.provider_metadata());
+    let redb_cache =
+        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+    let pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()))
+        .with_secret_resolver(secret_store.clone());
+    let state = Arc::new(AppState {
+        connection_pool: Arc::new(Mutex::new(pool)),
+        metrics_collector: Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1))),
+        http_proxy: None,
+        profile_merge_service: None,
+        database: Some(database),
+        audit_database: None,
+        audit_service: None,
+        config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+        redb_cache,
+        unified_query: None,
+        client_service: None,
+        inspector_calls,
+        inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        oauth_manager: None,
+        secret_store: RwLock::new(Some(secret_store)),
+        secret_store_readiness: RwLock::new(store_readiness),
+    });
+
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state.clone()));
+    let switch_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/provider/switch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "mode": "passphrase",
+                        "passphrase": "switch passphrase"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("switch response");
+    assert_eq!(switch_response.status(), StatusCode::OK);
+
+    let persisted = mcpmate_secrets::database::get_provider_config(&db_pool)
+        .await
+        .expect("load provider config")
+        .expect("provider config row");
+    assert_eq!(persisted.provider_mode, "passphrase");
+
+    let restart_bootstrap =
+        mcpmate::core::secrets::store::bootstrap_secret_store(db_pool, temp_dir.path()).await;
+    match restart_bootstrap.readiness {
+        mcpmate::core::secrets::store::SecretStoreReadiness::Unavailable { reason_code, .. } => {
+            assert_eq!(reason_code, "passphrase_unlock_required");
+        }
+        other => panic!("expected locked passphrase bootstrap, got {other:?}"),
+    }
 }

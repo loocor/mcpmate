@@ -20,6 +20,7 @@ sqlx = { version = "0.8.1", features = [
   "runtime-tokio-rustls",
 ] }
 thiserror = "1.0"
+zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 serial_test = "2.0"

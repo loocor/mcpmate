@@ -18,7 +18,9 @@ interface HttpHeadersProps {
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
 	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
+	getRowKeyAt?: (index: number) => string | undefined;
 }
 
 export function HttpHeaders({
@@ -32,7 +34,9 @@ export function HttpHeaders({
 	onDeleteClick,
 	onGhostClick,
 	onSecretSelect,
+	onCreateSecret,
 	secretOriginBase,
+	getRowKeyAt,
 }: HttpHeadersProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -92,10 +96,17 @@ export function HttpHeaders({
 								...secretOriginBase,
 								field_group: "headers",
 								field_key:
-									typeof field.key === "string" ? field.key : undefined,
+									getRowKeyAt?.(index) ??
+									(typeof field.key === "string" ? field.key : undefined),
 								field_index: index,
 								field_path: `headers.${index}.value`,
 							}}
+							onCreateNew={
+								onCreateSecret
+									? (origin) =>
+											onCreateSecret(`headers.${index}.value`, origin)
+									: undefined
+							}
 							onSelect={(placeholder) =>
 								onSecretSelect?.(`headers.${index}.value`, placeholder)
 							}

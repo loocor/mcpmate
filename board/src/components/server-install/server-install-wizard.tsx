@@ -40,6 +40,10 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { MCPServerConfig, SecretOrigin } from "../../lib/types";
+import {
+	InlineSecretCreate,
+	useInlineSecretCreateField,
+} from "../secrets";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -193,6 +197,9 @@ export const ServerInstallWizard = forwardRef(
 			},
 			[setValue],
 		);
+
+		const { onCreateSecret, controller } =
+			useInlineSecretCreateField(handleSecretSelect);
 
 		const viewModeRef = useRef(viewMode);
 
@@ -353,6 +360,7 @@ export const ServerInstallWizard = forwardRef(
 		const watchedArgs = watch("args");
 		const watchedEnv = watch("env");
 		const watchedHeaders = watch("headers");
+		const watchedUrlParams = watch("urlParams");
 		const ingestMessages = useMemo(
 			() => ({
 				defaultMessage: t("manual.ingest.default", {
@@ -1502,6 +1510,7 @@ export const ServerInstallWizard = forwardRef(
 													urlInputRef={urlInputRef}
 													viewMode={viewMode}
 													onSecretSelect={handleSecretSelect}
+													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
 												/>
 
@@ -1586,7 +1595,11 @@ export const ServerInstallWizard = forwardRef(
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
 													onSecretSelect={handleSecretSelect}
+													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
+													getEnvRowKeyAt={(index) =>
+														watchedEnv?.[index]?.key?.trim() || undefined
+													}
 												/>
 
 												<UrlParams
@@ -1600,7 +1613,11 @@ export const ServerInstallWizard = forwardRef(
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
 													onSecretSelect={handleSecretSelect}
+													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
+													getRowKeyAt={(index) =>
+														watchedUrlParams?.[index]?.key?.trim() || undefined
+													}
 												/>
 
 												{!isStdio && selectedAuthMode === "oauth" ? (
@@ -1623,7 +1640,11 @@ export const ServerInstallWizard = forwardRef(
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
 													onSecretSelect={handleSecretSelect}
+													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
+													getRowKeyAt={(index) =>
+														watchedHeaders?.[index]?.key?.trim() || undefined
+													}
 												/>
 											</>
 										) : (
@@ -2421,6 +2442,7 @@ export const ServerInstallWizard = forwardRef(
 		};
 
 		return (
+			<>
 			<Drawer
 				open={isOpen}
 				onOpenChange={(open) => !open && handleOverlayClose()}
@@ -2632,6 +2654,8 @@ export const ServerInstallWizard = forwardRef(
 					</DrawerFooter>
 				</DrawerContent>
 			</Drawer>
+			<InlineSecretCreate controller={controller} nested />
+			</>
 		);
 	},
 );

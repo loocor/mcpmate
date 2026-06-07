@@ -38,6 +38,9 @@ import {
 	SelectValue,
 } from "./select";
 
+export const toolbarSearchInputClassName =
+	"h-9 w-full rounded-md border border-slate-200 bg-white px-4 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-offset-0 focus:ring-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-offset-0 focus-visible:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-400 dark:focus:ring-slate-600 dark:focus-visible:ring-slate-600";
+
 // 工具栏配置
 export interface PageToolbarConfig<T extends Entity = Entity> {
 	// 数据源
@@ -299,13 +302,13 @@ export function PageToolbar<T extends Entity = Entity>({
 						</Button>
 					)}
 
-					<div className="relative flex-1">
+					<div className="relative flex-1 overflow-visible">
 						<Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
 						<Input
 							value={search}
 							onChange={(e) => handleSearchChange(e.target.value)}
 							placeholder={searchConfig.placeholder || "Search..."}
-							className="h-9 w-full rounded-md border border-slate-200 bg-white px-4 py-2 pl-10 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-400 dark:focus:ring-slate-600"
+							className={cn(toolbarSearchInputClassName, "pl-10")}
 						/>
 					</div>
 				</div>
@@ -397,7 +400,7 @@ export function PageToolbar<T extends Entity = Entity>({
 	};
 
 	return (
-		<div className={cn("flex items-center gap-2", className)}>
+		<div className={cn("flex items-center gap-2 overflow-visible py-1", className)}>
 			{renderSearch()}
 
 			<div className="flex items-center gap-2">

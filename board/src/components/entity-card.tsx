@@ -23,7 +23,7 @@ export interface EntityCardProps {
 	topRightBadge?: ReactNode;
 
 	// 统计信息 (4x2 网格)
-	stats?: Array<{ label: string; value: string | number }>;
+	stats?: Array<{ label: string; value: string | number; valueTitle?: string }>;
 
 	// 底部左侧内容
 	bottomLeft?: ReactNode;
@@ -121,23 +121,31 @@ export function EntityCard({
 				<CardContent className="flex flex-1 flex-col gap-2 px-4 pb-4 pt-2">
 					<div className="flex items-start gap-3">
 						<div className="w-12"></div>
-						<div className="flex-1 grid grid-cols-4 gap-x-6 gap-y-1">
-							{stats.map((item) => (
-								<span
-									key={`label-${id}-${item.label}`}
-									className="text-[9px] uppercase tracking-wide text-muted-foreground/80"
-								>
-									{item.label}
-								</span>
-							))}
-							{stats.map((item) => (
-								<span
-									key={`value-${id}-${item.label}`}
-									className="text-[9px] tracking-wide text-muted-foreground/80"
-								>
-									{item.value}
-								</span>
-							))}
+						<div
+							className="grid min-w-0 flex-1 gap-x-6 gap-y-1"
+							style={{
+								gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))`,
+							}}
+						>
+							{stats.map((item) => {
+								const valueText = String(item.value);
+								return (
+									<div
+										key={`stat-${id}-${item.label}`}
+										className="min-w-0 space-y-0.5"
+									>
+										<div className="text-[9px] uppercase tracking-wide text-muted-foreground/80">
+											{item.label}
+										</div>
+										<div
+											className="truncate text-[9px] tracking-wide text-muted-foreground/80"
+											title={item.valueTitle ?? valueText}
+										>
+											{item.value}
+										</div>
+									</div>
+								);
+							})}
 						</div>
 					</div>
 				</CardContent>

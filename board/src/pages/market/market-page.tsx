@@ -97,8 +97,8 @@ export function MarketPage() {
 
 	return (
 		<div className="min-w-0 space-y-4">
-			<div className="sticky top-0 z-10 rounded-b-xl backdrop-blur">
-				<div className="flex items-center gap-2 min-w-0">
+			<div className="sticky top-0 z-10 overflow-visible rounded-b-xl py-1 backdrop-blur">
+				<div className="flex items-center gap-2 min-w-0 overflow-visible">
 					<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
 						{t("market:title", { defaultValue: "Market" })}
 					</p>

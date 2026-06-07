@@ -12,6 +12,7 @@ use ring::{aead, pbkdf2, rand};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use zeroize::Zeroize;
 
 use crate::constants::{DEVELOPMENT_PROVIDER_ID, DEVELOPMENT_PROVIDER_KIND, OS_PROVIDER_KIND};
 
@@ -23,7 +24,7 @@ pub const LOCAL_FILE_PROVIDER_ID: &str = "local-file-root-key";
 pub const LOCAL_FILE_PROVIDER_KIND: &str = "local_file_root_key";
 const PASSPHRASE_FILE_VERSION: u32 = 1;
 const PASSPHRASE_KDF_NAME: &str = "pbkdf2-hmac-sha256";
-const PASSPHRASE_KDF_ITERATIONS: u32 = 210_000;
+const PASSPHRASE_KDF_ITERATIONS: u32 = 600_000;
 const PASSPHRASE_ROOT_KEY_AAD: &[u8] = b"mcpmate-secrets:v1:passphrase-root-key";
 const PASSPHRASE_SALT_LEN: usize = 16;
 const AES_256_GCM_NONCE_LEN: usize = 12;
@@ -167,6 +168,17 @@ impl OperatingSystemRootKeyProvider {
             user: user.into(),
         }
     }
+
+    /// Store an existing root key in the OS keyring.
+    /// Used during provider migration.
+    pub fn set_root_key(&self, root_key: &SecretRootKey) -> Result<(), SecretRootKeyError> {
+        let entry = keyring::Entry::new(&self.service, &self.user)
+            .map_err(|err| SecretRootKeyError::ProviderUnavailable(format!("keyring entry: {err}")))?;
+        entry
+            .set_password(&STANDARD.encode(root_key))
+            .map_err(|err| SecretRootKeyError::ProviderUnavailable(format!("keyring set: {err}")))?;
+        Ok(())
+    }
 }
 
 impl Default for OperatingSystemRootKeyProvider {
@@ -219,6 +231,40 @@ impl PassphraseRootKeyProvider {
             passphrase: passphrase.into(),
         }
     }
+
+    /// Store an existing root key wrapped with this provider's passphrase.
+    /// Used during provider migration — writes the wrapped key file.
+    pub fn set_root_key(&self, root_key: &SecretRootKey) -> Result<(), SecretRootKeyError> {
+        if self.passphrase.is_empty() {
+            return Err(SecretRootKeyError::InvalidMaterial(
+                "passphrase cannot be empty".to_string(),
+            ));
+        }
+        if let Some(parent) = self.wrapped_key_path.parent() {
+            fs::create_dir_all(parent).map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+        }
+        let salt = generate_random_bytes(PASSPHRASE_SALT_LEN)?;
+        let nonce = generate_random_bytes(AES_256_GCM_NONCE_LEN)?;
+        let wrapping_key = derive_passphrase_wrapping_key(&self.passphrase, &salt, PASSPHRASE_KDF_ITERATIONS)?;
+        let encrypted_root_key = encrypt_root_material(root_key, &wrapping_key, &nonce)?;
+        let serialized = serde_json::to_vec_pretty(&PassphraseRootKeyFile {
+            version: PASSPHRASE_FILE_VERSION,
+            kdf: PASSPHRASE_KDF_NAME.to_string(),
+            iterations: PASSPHRASE_KDF_ITERATIONS,
+            salt: STANDARD.encode(salt),
+            nonce: STANDARD.encode(nonce),
+            encrypted_root_key: STANDARD.encode(encrypted_root_key),
+        })
+        .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+        write_secret_file_replace(&self.wrapped_key_path, &serialized)?;
+        Ok(())
+    }
+}
+
+impl Drop for PassphraseRootKeyProvider {
+    fn drop(&mut self) {
+        self.passphrase.zeroize();
+    }
 }
 
 impl SecretRootKeyProvider for PassphraseRootKeyProvider {
@@ -246,6 +292,16 @@ impl LocalFileRootKeyProvider {
         Self {
             local_key_path: local_key_path.into(),
         }
+    }
+
+    /// Store an existing root key as a local file.
+    /// Used during provider migration.
+    pub fn set_root_key(&self, root_key: &SecretRootKey) -> Result<(), SecretRootKeyError> {
+        if let Some(parent) = self.local_key_path.parent() {
+            fs::create_dir_all(parent).map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+        }
+        write_secret_file_replace(&self.local_key_path, STANDARD.encode(root_key).as_bytes())?;
+        Ok(())
     }
 }
 
@@ -509,6 +565,30 @@ fn write_secret_file(
         .write(true)
         .open(path)
         .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    write_secret_file_contents(&mut file, bytes)
+}
+
+/// Overwrite an existing secret file during provider migration.
+fn write_secret_file_replace(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), SecretRootKeyError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    write_secret_file_contents(&mut file, bytes)
+}
+
+fn write_secret_file_contents(
+    file: &mut std::fs::File,
+    bytes: &[u8],
+) -> Result<(), SecretRootKeyError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -738,6 +818,27 @@ mod tests {
 
         assert_eq!(first, second);
         assert!(key_path.exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn passphrase_set_root_key_replaces_existing_wrapped_file() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let key_path = temp_dir.path().join("secrets").join("passphrase-root-key.json");
+        PassphraseRootKeyProvider::new(&key_path, "old password")
+            .load_or_create_root_key()
+            .expect("create initial passphrase root key");
+
+        let replacement = generate_root_key().expect("replacement root key");
+        PassphraseRootKeyProvider::new(&key_path, "new password")
+            .set_root_key(&replacement)
+            .expect("replace wrapped root key");
+
+        let loaded = PassphraseRootKeyProvider::new(&key_path, "new password")
+            .load_or_create_root_key()
+            .expect("load replaced root key");
+
+        assert_eq!(loaded, derive_key(&replacement));
     }
 
     #[test]

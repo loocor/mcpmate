@@ -191,7 +191,7 @@ impl LocalSecretStore {
             a.alias
                 .cmp(&b.alias)
                 .then_with(|| a.server_id.cmp(&b.server_id))
-                .then_with(|| a.location.parts().0.cmp(&b.location.parts().0))
+                .then_with(|| a.location.parts().0.cmp(b.location.parts().0))
                 .then_with(|| a.location.parts().1.cmp(&b.location.parts().1))
                 .then_with(|| a.location.parts().2.cmp(&b.location.parts().2))
         });
@@ -246,6 +246,57 @@ impl LocalSecretStore {
                     encrypted_value: encrypted.encrypted_value,
                 },
             );
+        Ok(())
+    }
+
+    /// Rotate the root key: re-wrap every record's data key under a new root key.
+    ///
+    /// Only the outer key-wrapping layer is re-encrypted. The encrypted secret
+    /// values (encrypted under each record's data key) remain unchanged.
+    /// The operation is atomic — if any record fails, the entire rotation is
+    /// rolled back via a single SQLite transaction.
+    pub async fn rotate_root_key(
+        &mut self,
+        new_provider: Arc<dyn SecretRootKeyProvider>,
+    ) -> Result<()> {
+        let new_metadata = new_provider.metadata();
+        let new_root_key = new_provider
+            .load_or_create_root_key()
+            .with_context(|| format!("load new root key from provider '{}'", new_metadata.provider_id()))?;
+        let new_crypto = EnvelopeCrypto::new(new_root_key);
+
+        let encrypted_secrets = database::load_encrypted_secrets(&self.pool).await?;
+
+        // Use a transaction so rotation is all-or-nothing.
+        let mut tx = self.pool.begin().await.context("begin rotation transaction")?;
+
+        for encrypted in &encrypted_secrets {
+            // Unwrap data key with the OLD crypto (self.crypto).
+            let data_key = self.crypto.unwrap_data_key(encrypted)?;
+
+            // Re-wrap data key with the NEW crypto.
+            let (key_nonce, encrypted_key) = new_crypto
+                .wrap_data_key(&encrypted.alias, &data_key)
+                .map_err(|err| anyhow::anyhow!("re-wrap data key for '{}': {err}", encrypted.alias))?;
+
+            sqlx::query(
+                "UPDATE secure_store_secrets SET key_nonce = ?2, encrypted_key = ?3, updated_at = CURRENT_TIMESTAMP WHERE alias = ?1",
+            )
+            .bind(&encrypted.alias)
+            .bind(&key_nonce)
+            .bind(&encrypted_key)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("update rewrapped key for '{}'", encrypted.alias))?;
+        }
+
+        tx.commit().await.context("commit rotation transaction")?;
+
+        // Swap in the new crypto and provider metadata.
+        self.crypto = new_crypto;
+        self.provider_metadata = new_metadata;
+        self.reload_cache().await?;
+
         Ok(())
     }
 }
@@ -434,5 +485,97 @@ mod tests {
         assert_ne!(first_key, second_key);
         assert_ne!(first_key_nonce, second_key_nonce);
         assert_ne!(first_value, second_value);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn rotate_root_key_re_wraps_data_keys_and_preserves_values() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        // Create store with provider A.
+        let mut store = LocalSecretStore::initialize_with_root_key_provider(
+            db_pool.clone(),
+            Arc::new(DevelopmentRootKeyProvider::new(
+                temp_dir.path().join("secrets-a").join("local-root.key"),
+            )),
+        )
+        .await
+        .expect("initialize store with provider A");
+
+        // Create two secrets.
+        store
+            .create_secret(SecretCreateInput {
+                alias: "rotate/alpha".to_string(),
+                kind: SecretKindInput::Token,
+                value: "alpha-value".to_string(),
+                label: None,
+                origin: None,
+            })
+            .await
+            .expect("create alpha");
+
+        store
+            .create_secret(SecretCreateInput {
+                alias: "rotate/beta".to_string(),
+                kind: SecretKindInput::ApiKey,
+                value: "beta-value".to_string(),
+                label: None,
+                origin: None,
+            })
+            .await
+            .expect("create beta");
+
+        // Capture key material BEFORE rotation.
+        let before_rows = sqlx::query("SELECT alias, key_nonce, encrypted_key, encrypted_value FROM secure_store_secrets ORDER BY alias")
+            .fetch_all(&db_pool)
+            .await
+            .expect("load before rotation");
+
+        // Rotate to provider B.
+        let provider_b = Arc::new(DevelopmentRootKeyProvider::new(
+            temp_dir.path().join("secrets-b").join("local-root.key"),
+        ));
+        store.rotate_root_key(provider_b).await.expect("rotate root key");
+
+        // Capture key material AFTER rotation.
+        let after_rows = sqlx::query("SELECT alias, key_nonce, encrypted_key, encrypted_value FROM secure_store_secrets ORDER BY alias")
+            .fetch_all(&db_pool)
+            .await
+            .expect("load after rotation");
+
+        assert_eq!(before_rows.len(), after_rows.len());
+
+        for (before, after) in before_rows.iter().zip(after_rows.iter()) {
+            let alias: String = before.try_get("alias").unwrap();
+            let before_key_nonce: String = before.try_get("key_nonce").unwrap();
+            let after_key_nonce: String = after.try_get("key_nonce").unwrap();
+            let before_encrypted_key: String = before.try_get("encrypted_key").unwrap();
+            let after_encrypted_key: String = after.try_get("encrypted_key").unwrap();
+            let before_value: String = before.try_get("encrypted_value").unwrap();
+            let after_value: String = after.try_get("encrypted_value").unwrap();
+
+            // Key wrapping changed.
+            assert_ne!(before_key_nonce, after_key_nonce, "{alias}: key_nonce should change");
+            assert_ne!(before_encrypted_key, after_encrypted_key, "{alias}: encrypted_key should change");
+            // Encrypted value is unchanged (same data key, same plaintext).
+            assert_eq!(before_value, after_value, "{alias}: encrypted_value should not change");
+        }
+
+        // Secrets are still decryptable with the new root key.
+        let alpha_ref = SecretReference::new("rotate/alpha".to_string()).unwrap();
+        let resolved = store.resolve_secret(&alpha_ref).expect("resolve alpha after rotation");
+        assert_eq!(resolved.expose(), "alpha-value");
+
+        let beta_ref = SecretReference::new("rotate/beta".to_string()).unwrap();
+        let resolved = store.resolve_secret(&beta_ref).expect("resolve beta after rotation");
+        assert_eq!(resolved.expose(), "beta-value");
+
+        // Provider metadata updated (both use development provider).
+        assert_eq!(store.provider_metadata().provider_id(), "local-encrypted-vault");
     }
 }

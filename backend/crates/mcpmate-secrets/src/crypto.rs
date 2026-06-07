@@ -1,6 +1,7 @@
 use anyhow::Result;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ring::{aead, rand};
+use zeroize::Zeroize;
 
 use crate::{SecretError, SecretRootKey, SecretValue};
 
@@ -26,6 +27,12 @@ pub(crate) struct EncryptedSecretParts {
 #[derive(Clone)]
 pub(crate) struct EnvelopeCrypto {
     root_key: SecretRootKey,
+}
+
+impl Drop for EnvelopeCrypto {
+    fn drop(&mut self) {
+        self.root_key.zeroize();
+    }
 }
 
 impl EnvelopeCrypto {
@@ -77,7 +84,7 @@ impl EnvelopeCrypto {
         Ok(SecretValue::new(value.to_string()))
     }
 
-    fn unwrap_data_key(
+    pub(crate) fn unwrap_data_key(
         &self,
         encrypted: &EncryptedSecret,
     ) -> Result<SecretRootKey, SecretError> {
@@ -101,6 +108,14 @@ impl EnvelopeCrypto {
         data_key
             .try_into()
             .map_err(|_| SecretError::InvalidMetadata("invalid secret data key length".to_string()))
+    }
+
+    pub(crate) fn wrap_data_key(
+        &self,
+        alias: &str,
+        data_key: &SecretRootKey,
+    ) -> Result<(String, String)> {
+        encrypt_with_key(&self.root_key, &key_aad(alias), data_key)
     }
 }
 

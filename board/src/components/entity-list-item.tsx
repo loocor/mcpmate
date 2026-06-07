@@ -18,6 +18,7 @@ export interface EntityListItemProps {
 	stats?: Array<{
 		label: string;
 		value: string | number;
+		valueTitle?: string;
 	}>;
 	bottomTags?: ReactNode[];
 
@@ -113,7 +114,10 @@ export function EntityListItem({
 					{stats.length > 0 && (
 						<div className="flex flex-wrap gap-4 text-xs text-slate-400">
 							{stats.map((stat, index) => (
-								<span key={`stat-${id}-${index}`}>
+								<span
+									key={`stat-${id}-${index}`}
+									title={stat.valueTitle}
+								>
 									{stat.label}: {stat.value}
 								</span>
 							))}

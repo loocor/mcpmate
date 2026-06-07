@@ -69,37 +69,68 @@ async function writeToNavigatorClipboard(text: string): Promise<void> {
 	await navigator.clipboard.writeText(text);
 }
 
-export async function readClipboardText(): Promise<string | null> {
-    const module = await loadTauriClipboardModule();
-    if (module?.readText) {
-        try {
-            const text = await module.readText();
-            if (text != null && text !== "") {
-                return text;
-            }
-        } catch (error) {
-            console.warn("[clipboard] Tauri readText failed, trying navigator API", error);
-        }
-    }
-    // Fallback to low-level invoke when the ESM wrapper is unavailable in production build.
-    if (isTauriEnvironmentSync()) {
-        const text = await readFromTauriInvoke();
-        if (text != null && text !== "") return text;
-    }
-    return readFromNavigatorClipboard();
+function writeWithExecCommand(text: string): void {
+	const textarea = document.createElement("textarea");
+	textarea.value = text;
+	textarea.setAttribute("readonly", "");
+	textarea.style.position = "fixed";
+	textarea.style.left = "-9999px";
+	document.body.appendChild(textarea);
+	textarea.select();
+	try {
+		const copied = document.execCommand("copy");
+		if (!copied) {
+			throw new Error("execCommand copy failed");
+		}
+	} finally {
+		document.body.removeChild(textarea);
+	}
 }
 
-export async function writeClipboardText(text: string): Promise<void> {
+async function writeClipboardTextWithFallback(text: string): Promise<void> {
+	try {
+		await writeToNavigatorClipboard(text);
+	} catch (error) {
+		console.warn("[clipboard] navigator.clipboard.writeText failed, trying execCommand", error);
+		writeWithExecCommand(text);
+	}
+}
+
+export function writeClipboardText(text: string): Promise<void> {
+	// Keep the first clipboard write on the click call stack for browser user-gesture rules.
+	if (!isTauriEnvironmentSync()) {
+		return writeClipboardTextWithFallback(text);
+	}
+
+	return loadTauriClipboardModule().then((module) => {
+		if (module?.writeText) {
+			return module.writeText(text).catch((error) => {
+				console.warn("[clipboard] Tauri writeText failed, trying navigator API", error);
+				return writeClipboardTextWithFallback(text);
+			});
+		}
+		return writeClipboardTextWithFallback(text);
+	});
+}
+
+export async function readClipboardText(): Promise<string | null> {
 	const module = await loadTauriClipboardModule();
-	if (module?.writeText) {
+	if (module?.readText) {
 		try {
-			await module.writeText(text);
-			return;
+			const text = await module.readText();
+			if (text != null && text !== "") {
+				return text;
+			}
 		} catch (error) {
-			console.warn("[clipboard] Tauri writeText failed, trying navigator API", error);
+			console.warn("[clipboard] Tauri readText failed, trying navigator API", error);
 		}
 	}
-	await writeToNavigatorClipboard(text);
+	// Fallback to low-level invoke when the ESM wrapper is unavailable in production build.
+	if (isTauriEnvironmentSync()) {
+		const text = await readFromTauriInvoke();
+		if (text != null && text !== "") return text;
+	}
+	return readFromNavigatorClipboard();
 }
 
 export async function clearClipboard(): Promise<void> {

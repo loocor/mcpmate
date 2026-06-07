@@ -21,7 +21,7 @@ use aide::{axum::ApiRouter, openapi::OpenApi};
 use axum::http::{Request, Response};
 use axum::{Router, routing::get};
 use std::time::Duration as StdDuration;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::trace::TraceLayer;
 use tracing::Level;
 
@@ -37,7 +37,6 @@ pub fn unavailable_secret_store_readiness(reason_code: &str) -> crate::core::sec
 }
 
 /// Application state shared across all routes
-#[derive(Clone)]
 pub struct AppState {
     /// Connection pool for upstream servers
     pub connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
@@ -64,8 +63,8 @@ pub struct AppState {
     /// Inspector session manager
     pub inspector_sessions: Arc<InspectorSessionManager>,
     pub oauth_manager: Option<Arc<crate::core::oauth::OAuthManager>>,
-    pub secret_store: Option<Arc<crate::core::secrets::store::LocalSecretStore>>,
-    pub secret_store_readiness: crate::core::secrets::store::SecretStoreReadiness,
+    pub secret_store: RwLock<Option<Arc<crate::core::secrets::store::LocalSecretStore>>>,
+    pub secret_store_readiness: RwLock<crate::core::secrets::store::SecretStoreReadiness>,
 }
 
 /// Create the API router with all routes
@@ -145,7 +144,7 @@ async fn create_router_internal(
 
     // Create unified query adapter (optional, for incremental migration)
     let unified_query = if database.is_some() {
-        crate::core::capability::UnifiedQueryIntegration::create_adapter(&AppState {
+        crate::core::capability::UnifiedQueryIntegration::create_adapter(Arc::new(AppState {
             connection_pool: connection_pool.clone(),
             metrics_collector: metrics_collector.clone(),
             http_proxy: http_proxy.clone(),
@@ -160,12 +159,12 @@ async fn create_router_internal(
             inspector_calls: inspector_calls.clone(),
             inspector_sessions: inspector_sessions.clone(),
             oauth_manager: None,
-            secret_store: None,
-            secret_store_readiness: crate::core::secrets::store::SecretStoreReadiness::unavailable(
+            secret_store: RwLock::new(None),
+            secret_store_readiness: RwLock::new(crate::core::secrets::store::SecretStoreReadiness::unavailable(
                 "not_initialized",
                 "Secret store initialization has not run yet",
-            ),
-        })
+            )),
+        }))
     } else {
         None
     };
@@ -196,19 +195,20 @@ async fn create_router_internal(
         .map(|db| Arc::new(crate::core::oauth::OAuthManager::new(db.pool.clone())));
 
     let (secret_store, secret_store_readiness) = if let Some(db) = database.as_ref() {
-        match crate::core::secrets::store::LocalSecretStore::initialize(db.pool.clone()).await {
-            Ok(store) => {
-                let readiness = crate::core::secrets::store::SecretStoreReadiness::ready(store.provider_metadata());
-                (Some(Arc::new(store)), readiness)
-            }
-            Err(err) => {
-                tracing::error!("Failed to initialize secure store: {}", err);
-                (
-                    None,
-                    crate::core::secrets::store::SecretStoreReadiness::from_initialization_error(&err),
-                )
+        let data_dir = db.path.parent().unwrap_or(std::path::Path::new("."));
+        let bootstrap =
+            crate::core::secrets::store::bootstrap_secret_store(db.pool.clone(), data_dir).await;
+        if bootstrap.store.is_none() {
+            if let crate::core::secrets::store::SecretStoreReadiness::Unavailable { reason_code, message, .. } =
+                &bootstrap.readiness
+            {
+                tracing::info!("Secure store not ready on startup: {reason_code} — {message}");
             }
         }
+        (
+            bootstrap.store.map(Arc::new),
+            bootstrap.readiness,
+        )
     } else {
         (
             None,
@@ -238,8 +238,8 @@ async fn create_router_internal(
         inspector_calls,
         inspector_sessions,
         oauth_manager,
-        secret_store,
-        secret_store_readiness,
+        secret_store: RwLock::new(secret_store),
+        secret_store_readiness: RwLock::new(secret_store_readiness),
     });
 
     // Create OpenAPI specification

@@ -30,13 +30,17 @@ export function NotificationCenter() {
 	function icon(level: string) {
 		switch (level) {
 			case "success":
-				return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+				return (
+					<CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+				);
 			case "warning":
-				return <AlertTriangle className="h-4 w-4 text-amber-600" />;
+				return (
+					<AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+				);
 			case "error":
-				return <XCircle className="h-4 w-4 text-red-600" />;
+				return <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />;
 			default:
-				return <Info className="h-4 w-4 text-blue-600" />;
+				return <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />;
 		}
 	}
 
@@ -74,7 +78,7 @@ export function NotificationCenter() {
 				align="end"
 				className="w-[360px] max-h-[60vh] overflow-auto p-0"
 			>
-				<div className="px-3 py-2 flex items-center justify-between sticky top-0 bg-popover z-10 border-b border-slate-200 dark:border-slate-700">
+				<div className="px-3 py-2 flex items-center justify-between sticky top-0 bg-popover z-10 border-b border-border">
 					<DropdownMenuLabel className="p-0">
 						{t("notifications.title")}
 					</DropdownMenuLabel>
@@ -98,7 +102,7 @@ export function NotificationCenter() {
 					</div>
 				</div>
 				{items.length === 0 ? (
-					<div className="p-4 text-sm text-slate-500">
+					<div className="p-4 text-sm text-muted-foreground">
 						{t("notifications.noNotifications")}
 					</div>
 				) : (
@@ -123,18 +127,18 @@ export function NotificationCenter() {
 								<div className="flex w-full items-start gap-2">
 									{icon(n.level)}
 									<div className="flex-1 min-w-0">
-										<div className="flex items-center justify-between">
+										<div className="flex items-center justify-between gap-2">
 											<div
-												className={`text-sm font-medium ${n.read ? "text-slate-600" : "text-slate-900"}`}
+												className={`text-sm font-medium ${n.read ? "text-muted-foreground" : "text-foreground"}`}
 											>
 												{n.title}
 											</div>
-											<div className="ml-2 text-[10px] text-slate-400 whitespace-nowrap">
+											<div className="ml-2 text-[10px] text-muted-foreground whitespace-nowrap">
 												{new Date(n.createdAt).toLocaleTimeString()}
 											</div>
 										</div>
 										{n.description ? (
-											<div className="mt-0.5 text-xs text-slate-500 line-clamp-3">
+											<div className="mt-0.5 text-xs text-muted-foreground line-clamp-3">
 												{n.description}
 											</div>
 										) : null}
