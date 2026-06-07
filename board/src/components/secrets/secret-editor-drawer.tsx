@@ -1,4 +1,4 @@
-import { Copy, KeyRound } from "lucide-react";
+import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { SecretKind, SecretUsage } from "../../lib/types";
@@ -62,6 +62,7 @@ interface SecretEditorDrawerProps {
 	onChange: (next: SecretEditorState | null) => void;
 	onClose: () => void;
 	onSave: () => void;
+	onDelete?: () => void;
 	isSaving: boolean;
 	placeholder?: string;
 	usages?: SecretUsage[];
@@ -78,6 +79,7 @@ export function SecretEditorDrawer({
 	onChange,
 	onClose,
 	onSave,
+	onDelete,
 	isSaving,
 	placeholder,
 	usages = [],
@@ -163,6 +165,7 @@ export function SecretEditorDrawer({
 
 	const activeEditor = editor ?? displayEditor;
 	if (!activeEditor && !open) return null;
+	const canDelete = activeEditor?.mode === "edit" && onDelete;
 
 	const requestClose = () => setOpen(false);
 
@@ -292,14 +295,35 @@ export function SecretEditorDrawer({
 					</div>
 					<DrawerFooter className="mt-auto border-t px-6 py-4">
 						<div className="flex w-full items-center justify-between gap-3">
-							<Button
-								type="button"
-								variant="outline"
-								onClick={requestClose}
-								disabled={isSaving}
-							>
-								{t("editor.actions.cancel", { defaultValue: "Cancel" })}
-							</Button>
+							<div className="flex items-center gap-2">
+								<Button
+									type="button"
+									variant="outline"
+									onClick={requestClose}
+									disabled={isSaving}
+								>
+									{t("editor.actions.cancel", { defaultValue: "Cancel" })}
+								</Button>
+								{canDelete ? (
+									<Button
+										type="button"
+										variant="destructive"
+										disabled={isSaving || (usedByCount != null && usedByCount > 0)}
+										title={
+											usedByCount != null && usedByCount > 0
+												? t("editor.actions.deleteDisabledTooltip", {
+														defaultValue: "Cannot delete: secret is actively used by {{count}} location(s)",
+														count: usedByCount,
+													})
+												: undefined
+										}
+										onClick={onDelete}
+									>
+										<Trash2 className="mr-2 h-4 w-4" />
+										{t("editor.actions.delete", { defaultValue: "Delete" })}
+									</Button>
+								) : null}
+							</div>
 							<div className="flex items-center gap-3">
 								{placeholder ? (
 									<Button

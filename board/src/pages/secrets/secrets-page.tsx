@@ -757,6 +757,14 @@ export function SecretsPage() {
 				onChange={setEditor}
 				onClose={closeEditor}
 				onSave={() => editor && saveMutation.mutate(editor)}
+				onDelete={
+					editorAlias
+						? () => {
+								const secret = (secretsQuery.data ?? []).find((s) => s.alias === editorAlias);
+								if (secret) setDeleteTarget(secret);
+							}
+						: undefined
+				}
 				isSaving={saveMutation.isPending}
 				placeholder={editorPlaceholder}
 				usages={usagesQuery.data ?? []}
