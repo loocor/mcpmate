@@ -78,6 +78,8 @@ import type {
 	SecretMetadata,
 	SecretMetadataResp,
 	SecretOrigin,
+	SecretStoreStatusData,
+	SecretStoreStatusResp,
 	SecretUsage,
 	SecretUsageListResp,
 	OAuthCallbackRequest,
@@ -833,6 +835,11 @@ async function executeBatchOperation(
 }
 
 export const secretsApi = {
+	status: async (): Promise<SecretStoreStatusData> => {
+		const resp = await fetchApi<SecretStoreStatusResp>("/api/secrets/status");
+		return extractApiData(resp as ApiWrapper<SecretStoreStatusData>);
+	},
+
 	list: async (): Promise<SecretMetadata[]> => {
 		const resp = await fetchApi<SecretListResp>("/api/secrets/list");
 		return resp.data?.secrets ?? [];

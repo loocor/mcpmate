@@ -32,6 +32,12 @@ export function SecretPickerButton({
 		enabled: open,
 	});
 
+	const storeStatusQuery = useQuery({
+		queryKey: ["secrets", "status"],
+		queryFn: secretsApi.status,
+	});
+	const storeReady = storeStatusQuery.data?.status === "ready";
+
 	const secrets = useMemo(() => {
 		const normalizedQuery = query.trim().toLowerCase();
 		return [...(secretsQuery.data ?? [])]
@@ -46,6 +52,8 @@ export function SecretPickerButton({
 				);
 			});
 	}, [query, secretsQuery.data]);
+
+	if (!storeReady) return null;
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>

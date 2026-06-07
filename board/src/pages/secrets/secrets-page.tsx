@@ -5,6 +5,7 @@ import {
 	Pencil,
 	Plus,
 	RefreshCw,
+	ShieldAlert,
 	ShieldCheck,
 	Trash2,
 } from "lucide-react";
@@ -14,6 +15,7 @@ import { useSearchParams } from "react-router-dom";
 import { EntityListItem } from "../../components/entity-list-item";
 import { EmptyState, PageLayout } from "../../components/page-layout";
 import { Pagination } from "../../components/pagination";
+import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -215,6 +217,11 @@ export function SecretsPage() {
 		queryFn: () => secretsApi.listUsages(usageTarget?.alias ?? ""),
 		enabled: Boolean(usageTarget?.alias),
 	});
+	const storeStatusQuery = useQuery({
+		queryKey: ["secrets", "status"],
+		queryFn: secretsApi.status,
+	});
+	const storeReady = storeStatusQuery.data?.status === "ready";
 
 	const kindOptions = SECRET_KIND_VALUES.map((value) => ({
 		value,
@@ -478,6 +485,7 @@ export function SecretsPage() {
 				size="sm"
 				className="h-9 w-9 p-0"
 				onClick={openCreate}
+				disabled={!storeReady}
 				title={t("toolbar.actions.add", { defaultValue: "Add Secret" })}
 			>
 				<Plus className="h-4 w-4" />
@@ -594,6 +602,23 @@ export function SecretsPage() {
 			}
 		>
 			<div className="space-y-4">
+				{storeStatusQuery.isSuccess && !storeReady && (
+					<Alert variant="destructive">
+						<ShieldAlert className="h-4 w-4" />
+						<AlertTitle>
+							{t("status.unavailable.title", {
+								defaultValue: "Secure store unavailable",
+							})}
+						</AlertTitle>
+						<AlertDescription>
+							{storeStatusQuery.data?.issue?.message ??
+								t("status.unavailable.description", {
+									defaultValue:
+										"The secret store is not ready. Create and update operations are disabled until the issue is resolved.",
+								})}
+						</AlertDescription>
+					</Alert>
+				)}
 				{secretsQuery.isLoading ? (
 					<div className="space-y-4">{loadingSkeleton}</div>
 				) : secretsQuery.isError ? (

@@ -663,6 +663,30 @@ export interface SecretDeleteResp {
   error?: unknown;
 }
 
+export interface SecretStoreProviderData {
+  provider_id: string;
+  provider_kind: string;
+  provider_mode: string;
+  security_level: string;
+}
+
+export interface SecretStoreIssueData {
+  reason_code: string;
+  message: string;
+}
+
+export interface SecretStoreStatusData {
+  status: string;
+  provider?: SecretStoreProviderData | null;
+  issue?: SecretStoreIssueData | null;
+}
+
+export interface SecretStoreStatusResp {
+  success: boolean;
+  data?: SecretStoreStatusData | null;
+  error?: unknown;
+}
+
 export interface MCPToolConfig {
   name: string;
   server_name: string;
