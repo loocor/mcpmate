@@ -165,13 +165,9 @@ impl LocalSecretStore {
         &self,
         input: SecretUsageUpsertInput,
     ) -> Result<SecretUsageView> {
-        let reference = SecretReference::new(input.alias.clone()).context("invalid secret alias")?;
+        SecretReference::new(input.alias.clone()).context("invalid secret alias")?;
         database::upsert_usage(&self.pool, &input).await?;
-        Ok(SecretUsageView {
-            alias: reference.alias().to_string(),
-            server_id: input.server_id,
-            location: input.location,
-        })
+        Ok(input.into())
     }
 
     pub async fn replace_server_usages(

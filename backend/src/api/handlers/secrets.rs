@@ -18,24 +18,27 @@ use crate::{
         },
         routes::AppState,
     },
-    config::server::{get_server_args, get_server_by_id, get_server_env, get_server_headers},
-    core::{
-        models::MCPServerConfig,
-        secrets::{is_usage_active_in_config},
-    },
     core::secrets::store::{
         SecretCreateInput, SecretKindInput, SecretMetadataView, SecretOriginInput, SecretStoreReadiness,
         SecretUpdateInput, SecretUsageLocationInput, SecretUsageView,
     },
+    core::{
+        models::MCPServerConfig,
+        secrets::{
+            discover_config_usages, discover_config_usages_for_alias, is_usage_active_in_config, load_mcp_server_config,
+        },
+    },
 };
 use mcpmate_secrets::SecretRootKeyProvider;
 use sqlx::SqlitePool;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub async fn get_secret_store_status(
     State(state): State<Arc<AppState>>
 ) -> Result<Json<SecretStoreStatusResp>, ApiError> {
-    let readiness = state.secret_store_readiness.try_read()
+    let readiness = state
+        .secret_store_readiness
+        .try_read()
         .map(|guard| secret_store_status_data(&guard))
         .unwrap_or_else(|_| SecretStoreStatusData {
             status: "unavailable".to_string(),
@@ -51,37 +54,25 @@ pub async fn get_secret_store_status(
 pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<SecretListResp>, ApiError> {
     let store = get_secret_store(&state)?;
     let db = crate::api::handlers::server::common::get_database_from_state(&state)?;
-    let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
 
     let secrets = store
         .list_secret_metadata()
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
-    // Pre-load all usages once and group by alias for active-count computation.
-    let all_usages = store
-        .list_all_usages()
+    // Count active bindings from persisted server configs (source of truth).
+    let discovered = discover_config_usages(&db.pool)
         .await
-        .map_err(|err| ApiError::InternalError(err.to_string()))?;
-    let mut usages_by_alias: HashMap<String, Vec<SecretUsageView>> = HashMap::new();
-    for usage in all_usages {
-        usages_by_alias.entry(usage.alias.clone()).or_default().push(usage);
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
+    let mut active_count_by_alias: HashMap<String, u64> = HashMap::new();
+    for usage in discovered {
+        *active_count_by_alias.entry(usage.alias).or_insert(0) += 1;
     }
 
     let mut enriched = Vec::with_capacity(secrets.len());
     for metadata in secrets {
-        let mut active_count: u64 = 0;
-        if let Some(usages) = usages_by_alias.get(&metadata.alias) {
-            for usage in usages {
-                let status =
-                    resolve_secret_usage_status(&db.pool, usage, &mut server_config_cache).await?;
-                if status == "active" {
-                    active_count += 1;
-                }
-            }
-        }
         let mut data = secret_metadata_data(metadata);
-        data.used_by_count = active_count;
+        data.used_by_count = active_count_by_alias.remove(&data.alias).unwrap_or(0);
         enriched.push(data);
     }
     Ok(Json(SecretListResp::success(SecretListData { secrets: enriched })))
@@ -146,20 +137,14 @@ pub async fn delete_secret(
     // Stale usages (server removed or config changed) should not block deletion.
     if !payload.force {
         let db = crate::api::handlers::server::common::get_database_from_state(&state)?;
-        let usages = store
-            .list_usages(&payload.alias)
+        let active_usages = discover_config_usages_for_alias(&db.pool, &payload.alias)
             .await
-            .map_err(map_secret_store_error)?;
-        let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
-        for usage in &usages {
-            let status =
-                resolve_secret_usage_status(&db.pool, usage, &mut server_config_cache).await?;
-            if status == "active" {
-                return Err(ApiError::Conflict(format!(
-                    "Secret '{}' is actively used by server '{}' and cannot be deleted",
-                    payload.alias, usage.server_id
-                )));
-            }
+            .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
+        if let Some(usage) = active_usages.first() {
+            return Err(ApiError::Conflict(format!(
+                "Secret '{}' is actively used by server '{}' and cannot be deleted",
+                payload.alias, usage.server_id
+            )));
         }
     }
     store
@@ -178,22 +163,40 @@ pub async fn list_secret_usages(
 ) -> Result<Json<SecretUsageListResp>, ApiError> {
     let store = get_secret_store(&state)?;
     let db = crate::api::handlers::server::common::get_database_from_state(&state)?;
-    let usages = store
-        .list_usages(&query.alias)
+
+    let discovered = discover_config_usages_for_alias(&db.pool, &query.alias)
         .await
-        .map_err(map_secret_store_error)?;
-    let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
-    let mut enriched = Vec::with_capacity(usages.len());
-    for usage in usages {
-        let status = resolve_secret_usage_status(&db.pool, &usage, &mut server_config_cache).await?;
-        enriched.push(secret_usage_data(usage, status));
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
+    let mut active_binding_keys: HashSet<String> = HashSet::with_capacity(discovered.len());
+    let mut enriched = Vec::with_capacity(discovered.len());
+    for usage in discovered {
+        active_binding_keys.insert(usage.location.binding_key(&usage.server_id));
+        enriched.push(secret_usage_data(usage, "active".to_string()));
     }
-    Ok(Json(SecretUsageListResp::success(SecretUsageListData { usages: enriched })))
+
+    let indexed = store.list_usages(&query.alias).await.map_err(map_secret_store_error)?;
+    let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
+    for usage in indexed {
+        let key = usage.location.binding_key(&usage.server_id);
+        if active_binding_keys.contains(&key) {
+            continue;
+        }
+        let status = resolve_secret_usage_status(&db.pool, &usage, &mut server_config_cache).await?;
+        if status == "stale" {
+            enriched.push(secret_usage_data(usage, status));
+        }
+    }
+
+    Ok(Json(SecretUsageListResp::success(SecretUsageListData {
+        usages: enriched,
+    })))
 }
 
 fn get_secret_store(state: &Arc<AppState>) -> Result<Arc<crate::core::secrets::store::LocalSecretStore>, ApiError> {
     // Try read-lock first (non-blocking). If poisoned or empty, return error.
-    state.secret_store.try_read()
+    state
+        .secret_store
+        .try_read()
         .ok()
         .and_then(|guard| guard.clone())
         .ok_or_else(|| {
@@ -270,7 +273,10 @@ fn secret_origin_data(origin: SecretOriginInput) -> SecretOriginData {
     }
 }
 
-fn secret_usage_data(usage: SecretUsageView, status: String) -> SecretUsageData {
+fn secret_usage_data(
+    usage: SecretUsageView,
+    status: String,
+) -> SecretUsageData {
     SecretUsageData {
         alias: usage.alias,
         server_id: usage.server_id,
@@ -303,33 +309,9 @@ async fn resolve_secret_usage_status(
     Ok(if active { "active" } else { "stale" }.to_string())
 }
 
-async fn load_mcp_server_config(
-    pool: &SqlitePool,
-    server_id: &str,
-) -> anyhow::Result<Option<MCPServerConfig>> {
-    let Some(server) = get_server_by_id(pool, server_id).await? else {
-        return Ok(None);
-    };
-
-    let args = get_server_args(pool, server_id)
-        .await?
-        .into_iter()
-        .map(|arg| arg.arg_value)
-        .collect::<Vec<_>>();
-    let env = get_server_env(pool, server_id).await?;
-    let headers = get_server_headers(pool, server_id).await?;
-
-    Ok(Some(MCPServerConfig {
-        kind: server.server_type,
-        command: server.command.clone(),
-        args: if args.is_empty() { None } else { Some(args) },
-        url: server.url.clone(),
-        env: if env.is_empty() { None } else { Some(env) },
-        headers: if headers.is_empty() { None } else { Some(headers) },
-    }))
-}
-
-fn secret_store_provider_data(snapshot: &crate::core::secrets::store::SecretStoreProviderSnapshot) -> SecretStoreProviderData {
+fn secret_store_provider_data(
+    snapshot: &crate::core::secrets::store::SecretStoreProviderSnapshot
+) -> SecretStoreProviderData {
     SecretStoreProviderData {
         provider_id: snapshot.provider_id.clone(),
         provider_kind: snapshot.provider_kind.clone(),
@@ -429,13 +411,12 @@ pub async fn unlock_secret_store(
     }
 
     let needs_unlock = {
-        let readiness = state.secret_store_readiness.try_read().map_err(|_| {
-            ApiError::ServiceUnavailable("Store lock contention".to_string())
-        })?;
+        let readiness = state
+            .secret_store_readiness
+            .try_read()
+            .map_err(|_| ApiError::ServiceUnavailable("Store lock contention".to_string()))?;
         match &*readiness {
-            SecretStoreReadiness::Unavailable { reason_code, .. } => {
-                reason_code == "passphrase_unlock_required"
-            }
+            SecretStoreReadiness::Unavailable { reason_code, .. } => reason_code == "passphrase_unlock_required",
             _ => false,
         }
     };
@@ -453,13 +434,10 @@ pub async fn unlock_secret_store(
         .pool
         .clone();
 
-    let bootstrap = crate::core::secrets::store::initialize_secret_store_with_passphrase(
-        pool,
-        &data_dir,
-        &payload.passphrase,
-    )
-    .await
-    .map_err(|err| ApiError::InternalError(format!("Failed to unlock secret store: {err}")))?;
+    let bootstrap =
+        crate::core::secrets::store::initialize_secret_store_with_passphrase(pool, &data_dir, &payload.passphrase)
+            .await
+            .map_err(|err| ApiError::InternalError(format!("Failed to unlock secret store: {err}")))?;
 
     if bootstrap.store.is_none() {
         let message = match &bootstrap.readiness {
@@ -505,14 +483,12 @@ pub async fn rotate_passphrase(
         passphrase_path.clone(),
         payload.current_passphrase.clone(),
     );
-    let root_key = current_provider
-        .load_or_create_root_key()
-        .map_err(|err| match err {
-            mcpmate_secrets::SecretRootKeyError::InvalidMaterial(message) => {
-                ApiError::BadRequest(format!("Invalid current passphrase: {message}"))
-            }
-            other => ApiError::InternalError(format!("Failed to load root key: {other}")),
-        })?;
+    let root_key = current_provider.load_or_create_root_key().map_err(|err| match err {
+        mcpmate_secrets::SecretRootKeyError::InvalidMaterial(message) => {
+            ApiError::BadRequest(format!("Invalid current passphrase: {message}"))
+        }
+        other => ApiError::InternalError(format!("Failed to load root key: {other}")),
+    })?;
 
     // Backup the old passphrase file before overwriting.
     let backup_path = passphrase_path.with_extension("json.rotate-bak");
@@ -589,9 +565,10 @@ pub async fn switch_provider(
     Json(payload): Json<ProviderSwitchReq>,
 ) -> Result<Json<ProviderSwitchResp>, ApiError> {
     // Determine data directory from database path.
-    let db = state.database.as_ref().ok_or_else(|| {
-        ApiError::ServiceUnavailable("No database configured".to_string())
-    })?;
+    let db = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("No database configured".to_string()))?;
     let data_dir = db.path.parent().unwrap_or(std::path::Path::new("."));
     let secrets_dir = data_dir.join("secrets");
     let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
@@ -600,12 +577,11 @@ pub async fn switch_provider(
     // Check current mode. Fall back to persisted provider mode from the database
     // when the in-memory store is unavailable (e.g. passphrase_unlock_required).
     let current_mode = {
-        let store_guard = state.secret_store.try_read().map_err(|_| {
-            ApiError::ServiceUnavailable("Store lock contention".to_string())
-        })?;
-        store_guard
-            .as_ref()
-            .map(|s| s.provider_metadata().mode())
+        let store_guard = state
+            .secret_store
+            .try_read()
+            .map_err(|_| ApiError::ServiceUnavailable("Store lock contention".to_string()))?;
+        store_guard.as_ref().map(|s| s.provider_metadata().mode())
     };
 
     let current_mode = match current_mode {
@@ -615,18 +591,15 @@ pub async fn switch_provider(
             let pool = &db.pool;
             mcpmate_secrets::database::get_provider_config(pool)
                 .await
-                .map_err(|err| {
-                    ApiError::InternalError(format!("Failed to read provider config: {err}"))
-                })?
+                .map_err(|err| ApiError::InternalError(format!("Failed to read provider config: {err}")))?
                 .map(|cfg| {
                     crate::core::secrets::store::parse_persisted_provider_mode(&cfg.provider_mode)
-                        .map_err(|err| ApiError::BadRequest(err))
+                        .map_err(ApiError::BadRequest)
                 })
                 .transpose()?
                 .ok_or_else(|| {
                     ApiError::BadRequest(
-                        "Secret store is not configured. Set up encryption before switching providers."
-                            .to_string(),
+                        "Secret store is not configured. Set up encryption before switching providers.".to_string(),
                     )
                 })?
         }
@@ -641,7 +614,9 @@ pub async fn switch_provider(
 
     // Already on this mode — return current status.
     if current_mode == new_mode {
-        let readiness = state.secret_store_readiness.try_read()
+        let readiness = state
+            .secret_store_readiness
+            .try_read()
             .map(|guard| secret_store_status_data(&guard))
             .unwrap_or_else(|_| SecretStoreStatusData {
                 status: "ready".to_string(),
@@ -663,8 +638,7 @@ pub async fn switch_provider(
         ));
     }
 
-    let switching_from_passphrase =
-        current_mode == crate::core::secrets::store::RootKeyProviderMode::Passphrase;
+    let switching_from_passphrase = current_mode == crate::core::secrets::store::RootKeyProviderMode::Passphrase;
     if switching_from_passphrase && current_passphrase.is_none() {
         return Err(ApiError::BadRequest(
             "Current passphrase is required to switch from passphrase mode".to_string(),
@@ -686,11 +660,9 @@ pub async fn switch_provider(
                     load_passphrase.clone(),
                 ))
             }
-            crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
-                Box::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(
-                    local_file_path.clone(),
-                ))
-            }
+            crate::core::secrets::store::RootKeyProviderMode::LocalFile => Box::new(
+                crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone()),
+            ),
             _ => {
                 return Err(ApiError::BadRequest(
                     "Current provider mode does not support switching".to_string(),
@@ -756,9 +728,9 @@ pub async fn switch_provider(
                 store_passphrase.clone(),
             ))
         }
-        crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
-            Arc::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone()))
-        }
+        crate::core::secrets::store::RootKeyProviderMode::LocalFile => Arc::new(
+            crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone()),
+        ),
         _ => unreachable!(),
     };
 
@@ -771,10 +743,9 @@ pub async fn switch_provider(
         Ok(store) => store,
         Err(err) => {
             // Rollback: restore old provider key.
-            let _ = match current_mode {
+            if let Err(rollback_err) = match current_mode {
                 crate::core::secrets::store::RootKeyProviderMode::OperatingSystem => {
-                    crate::core::secrets::store::OperatingSystemRootKeyProvider::new()
-                        .set_root_key(&root_key)
+                    crate::core::secrets::store::OperatingSystemRootKeyProvider::new().set_root_key(&root_key)
                 }
                 crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
                     if has_backup {
@@ -794,9 +765,11 @@ pub async fn switch_provider(
                         .set_root_key(&root_key)
                 }
                 _ => Ok(()),
-            };
-            // Re-initialize the store with the old provider mode (not always passphrase).
-            let _ = match current_mode {
+            } {
+                tracing::error!("Provider switch rollback: failed to restore old key: {rollback_err}");
+            }
+            // Re-initialize the store with the old provider mode.
+            if let Err(rollback_err) = match current_mode {
                 crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
                     crate::core::secrets::store::initialize_secret_store_with_passphrase(
                         db.pool.clone(),
@@ -817,13 +790,17 @@ pub async fn switch_provider(
                 crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
                     crate::core::secrets::store::LocalSecretStore::initialize_with_root_key_provider(
                         db.pool.clone(),
-                        Arc::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone())),
+                        Arc::new(crate::core::secrets::store::LocalFileRootKeyProvider::new(
+                            local_file_path.clone(),
+                        )),
                     )
                     .await
                     .map(|_| ())
                 }
                 _ => Ok(()),
-            };
+            } {
+                tracing::error!("Provider switch rollback: failed to re-initialize old store: {rollback_err}");
+            }
             return Err(ApiError::InternalError(format!(
                 "Failed to initialize store with new provider; rolled back to previous state: {err}"
             )));
@@ -857,7 +834,5 @@ pub async fn switch_provider(
     }
 
     let new_status = secret_store_status_data(&new_readiness);
-    Ok(Json(ProviderSwitchResp::success(ProviderSwitchData {
-        new_status,
-    })))
+    Ok(Json(ProviderSwitchResp::success(ProviderSwitchData { new_status })))
 }

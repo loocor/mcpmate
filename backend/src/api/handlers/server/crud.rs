@@ -21,7 +21,7 @@ use crate::{
         profile,
         server::{self},
     },
-    core::{models::MCPServerConfig, secrets::sync_server_secret_usages},
+    core::secrets::{mcp_config_from_server, sync_server_secret_usages},
 };
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
@@ -162,31 +162,13 @@ async fn sync_secret_usages_for_server(
     server_id: &str,
     server: &Server,
 ) -> Result<(), ApiError> {
-    let Some(secret_store) = state.secret_store.try_read().ok().and_then(|guard| guard.clone()) else {
+    let Some(secret_store) = state.secret_store.read().await.clone() else {
         return Ok(());
     };
 
-    let args = crate::config::server::get_server_args(&db.pool, server_id)
-        .await
-        .map_err(map_anyhow_error)?
-        .into_iter()
-        .map(|arg| arg.arg_value)
-        .collect::<Vec<_>>();
-    let env = crate::config::server::get_server_env(&db.pool, server_id)
+    let config = mcp_config_from_server(&db.pool, server_id, server)
         .await
         .map_err(map_anyhow_error)?;
-    let headers = crate::config::server::get_server_headers(&db.pool, server_id)
-        .await
-        .map_err(map_anyhow_error)?;
-
-    let config = MCPServerConfig {
-        kind: server.server_type,
-        command: server.command.clone(),
-        args: if args.is_empty() { None } else { Some(args) },
-        url: server.url.clone(),
-        env: if env.is_empty() { None } else { Some(env) },
-        headers: if headers.is_empty() { None } else { Some(headers) },
-    };
 
     sync_server_secret_usages(secret_store.as_ref(), server_id, &config)
         .await

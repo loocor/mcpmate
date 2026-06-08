@@ -101,7 +101,7 @@ impl SecretOriginInput {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecretUsageLocationInput {
     StdioCommand,
@@ -113,6 +113,20 @@ pub enum SecretUsageLocationInput {
 }
 
 impl SecretUsageLocationInput {
+    pub fn binding_key(
+        &self,
+        server_id: &str,
+    ) -> String {
+        let (location_kind, location_name, location_index) = self.parts();
+        format!(
+            "{}|{}|{}|{}",
+            server_id,
+            location_kind,
+            location_name.unwrap_or_default(),
+            location_index.unwrap_or_default()
+        )
+    }
+
     pub(crate) fn parts(&self) -> (&'static str, Option<&str>, Option<i64>) {
         match self {
             Self::StdioCommand => ("stdio_command", None, None),
@@ -152,6 +166,16 @@ pub struct SecretUsageUpsertInput {
     pub alias: String,
     pub server_id: String,
     pub location: SecretUsageLocationInput,
+}
+
+impl From<SecretUsageUpsertInput> for SecretUsageView {
+    fn from(input: SecretUsageUpsertInput) -> Self {
+        Self {
+            alias: input.alias,
+            server_id: input.server_id,
+            location: input.location,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
