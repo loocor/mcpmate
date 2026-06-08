@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
@@ -12,6 +13,7 @@ interface SecretUsageListProps {
 	usages: SecretUsage[];
 	isLoading?: boolean;
 	serverNameById?: ReadonlyMap<string, string>;
+	onNavigateToServer?: (serverId: string) => void;
 }
 
 function resolveServerDisplayName(
@@ -30,25 +32,43 @@ function normalizeUsageStatus(usage: SecretUsage): SecretUsageStatus {
 function SecretUsageRow({
 	usage,
 	serverNameById,
+	onNavigateToServer,
 }: {
 	usage: SecretUsage;
 	serverNameById?: ReadonlyMap<string, string>;
+	onNavigateToServer?: (serverId: string) => void;
 }) {
 	const { t } = useTranslation("secrets");
 	const server = resolveServerDisplayName(usage.server_id, serverNameById);
 	const status = normalizeUsageStatus(usage);
 	const isStale = status === "stale";
+	const canNavigate =
+		!isStale &&
+		Boolean(onNavigateToServer) &&
+		Boolean(serverNameById?.has(usage.server_id));
+	const serverTitleClassName = `truncate text-sm font-medium ${isStale ? "text-muted-foreground" : ""
+		}`;
 
 	return (
 		<CapsuleStripeListItem className="items-start py-3">
 			<div className="min-w-0 flex-1">
 				<div className="flex items-start justify-between gap-3">
 					<div className="min-w-0 flex-1">
-						<p
-							className={`truncate text-sm font-medium ${isStale ? "text-muted-foreground" : ""}`}
-						>
-							{server.title}
-						</p>
+						{canNavigate ? (
+							<Link
+								to={`/servers/${encodeURIComponent(usage.server_id)}`}
+								onClick={() => onNavigateToServer?.(usage.server_id)}
+								className={`${serverTitleClassName} text-primary underline-offset-4 hover:underline`}
+								aria-label={t("usage.actions.openServer", {
+									defaultValue: "Open server {{name}}",
+									name: server.title,
+								})}
+							>
+								{server.title}
+							</Link>
+						) : (
+							<p className={serverTitleClassName}>{server.title}</p>
+						)}
 						{server.showId ? (
 							<p
 								className="mt-0.5 truncate font-mono text-xs text-muted-foreground"
@@ -80,11 +100,13 @@ function SecretUsageSection({
 	description,
 	usages,
 	serverNameById,
+	onNavigateToServer,
 }: {
 	title: string;
 	description?: string;
 	usages: SecretUsage[];
 	serverNameById?: ReadonlyMap<string, string>;
+	onNavigateToServer?: (serverId: string) => void;
 }) {
 	if (usages.length === 0) {
 		return null;
@@ -104,6 +126,7 @@ function SecretUsageSection({
 						key={`${usage.server_id}-${usage.status ?? "active"}-${index}`}
 						usage={usage}
 						serverNameById={serverNameById}
+						onNavigateToServer={onNavigateToServer}
 					/>
 				))}
 			</CapsuleStripeList>
@@ -115,6 +138,7 @@ export function SecretUsageList({
 	usages,
 	isLoading = false,
 	serverNameById,
+	onNavigateToServer,
 }: SecretUsageListProps) {
 	const { t } = useTranslation("secrets");
 
@@ -158,6 +182,7 @@ export function SecretUsageList({
 				})}
 				usages={activeUsages}
 				serverNameById={serverNameById}
+				onNavigateToServer={onNavigateToServer}
 			/>
 			<SecretUsageSection
 				title={t("usage.sections.stale", {

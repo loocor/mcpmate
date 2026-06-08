@@ -1,10 +1,9 @@
 import { Controller } from "react-hook-form";
 import type { Control, FieldErrors } from "react-hook-form";
-import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import type { ManualServerFormValues } from "../types";
 import { useTranslation } from "react-i18next";
-import { SecretPickerButton } from "../secret-picker-button";
+import { SecureStringField } from "../secure-string-field";
 import type { SecretOrigin } from "../../../lib/types";
 
 interface CommandFieldProps {
@@ -13,10 +12,7 @@ interface CommandFieldProps {
 	errors: FieldErrors<ManualServerFormValues>;
 	commandId: string;
 	urlId: string;
-	commandInputRef: React.MutableRefObject<HTMLInputElement | null>;
-	urlInputRef: React.MutableRefObject<HTMLInputElement | null>;
 	viewMode: "form" | "json";
-	onSecretSelect?: (fieldName: string, placeholder: string) => void;
 	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
 }
@@ -27,10 +23,7 @@ export function CommandField({
 	errors,
 	commandId,
 	urlId,
-	commandInputRef,
-	urlInputRef,
 	viewMode,
-	onSecretSelect,
 	onCreateSecret,
 	secretOriginBase,
 }: CommandFieldProps) {
@@ -49,37 +42,27 @@ export function CommandField({
 					name="command"
 					control={control}
 					render={({ field }) => (
-						<div className="group/secret-field relative">
-							<Input
-								id={commandId}
-								{...field}
-								ref={(el) => {
-									field.ref(el);
-									commandInputRef.current = el;
-								}}
-								placeholder={t("manual.fields.command.placeholder", {
-									defaultValue: "e.g., uvx my-mcp",
-								})}
-								className="pr-10"
-							/>
-							<SecretPickerButton
-								className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
-								origin={{
-									...secretOriginBase,
-									field_group: "stdio",
-									field_key: "command",
-									field_path: "command",
-								}}
-								onCreateNew={
-									onCreateSecret
-										? (origin) => onCreateSecret("command", origin)
-										: undefined
-								}
-								onSelect={(placeholder) =>
-									onSecretSelect?.("command", placeholder)
-								}
-							/>
-						</div>
+						<SecureStringField
+							id={commandId}
+							value={field.value ?? ""}
+							onChange={field.onChange}
+							onBlur={field.onBlur}
+							name={field.name}
+							placeholder={t("manual.fields.command.placeholder", {
+								defaultValue: "e.g., uvx my-mcp",
+							})}
+							origin={{
+								...secretOriginBase,
+								field_group: "stdio",
+								field_key: "command",
+								field_path: "command",
+							}}
+							onCreateSecret={
+								onCreateSecret
+									? (origin) => onCreateSecret("command", origin)
+									: undefined
+							}
+						/>
 					)}
 				/>
 				{errors.command && (
@@ -101,35 +84,27 @@ export function CommandField({
 					name="url"
 					control={control}
 					render={({ field }) => (
-						<div className="group/secret-field relative">
-							<Input
-								id={urlId}
-								{...field}
-								ref={(el) => {
-									field.ref(el);
-									urlInputRef.current = el;
-								}}
-								placeholder={t("manual.fields.url.placeholder", {
-									defaultValue: "https://example.com/mcp",
-								})}
-								className="pr-10"
-							/>
-							<SecretPickerButton
-								className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
-								origin={{
-									...secretOriginBase,
-									field_group: "streamable_http",
-									field_key: "url",
-									field_path: "url",
-								}}
-								onCreateNew={
-									onCreateSecret
-										? (origin) => onCreateSecret("url", origin)
-										: undefined
-								}
-								onSelect={(placeholder) => onSecretSelect?.("url", placeholder)}
-							/>
-						</div>
+						<SecureStringField
+							id={urlId}
+							value={field.value ?? ""}
+							onChange={field.onChange}
+							onBlur={field.onBlur}
+							name={field.name}
+							placeholder={t("manual.fields.url.placeholder", {
+								defaultValue: "https://example.com/mcp",
+							})}
+							origin={{
+								...secretOriginBase,
+								field_group: "streamable_http",
+								field_key: "url",
+								field_path: "url",
+							}}
+							onCreateSecret={
+								onCreateSecret
+									? (origin) => onCreateSecret("url", origin)
+									: undefined
+							}
+						/>
 					)}
 				/>
 				{errors.url && (

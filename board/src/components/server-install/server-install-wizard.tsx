@@ -38,6 +38,10 @@ import {
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
+import {
+	compactKeyValueFields,
+	shouldAppendKeyValueRow,
+} from "../../lib/key-value-fields";
 import { useAppStore } from "../../lib/store";
 import type { MCPServerConfig, SecretOrigin } from "../../lib/types";
 import {
@@ -68,7 +72,7 @@ import {
 	UrlParams,
 } from "./form-fields";
 import { ServerAuthSection } from "./server-auth-section";
-import { useFormState, useFormSync, useIngest } from "./hooks";
+import { useFormState, useFormSync, useIngest, useSecretFieldInsert } from "./hooks";
 import {
 	breathingAnimation,
 	DEFAULT_INGEST_MESSAGE,
@@ -188,15 +192,7 @@ export const ServerInstallWizard = forwardRef(
 			defaultValues: buildFormValuesFromState(createInitialFormState()),
 		});
 
-		const handleSecretSelect = useCallback(
-			(fieldName: string, placeholder: string) => {
-				setValue(fieldName as keyof ManualServerFormValues, placeholder as never, {
-					shouldDirty: true,
-					shouldValidate: true,
-				});
-			},
-			[setValue],
-		);
+		const handleSecretSelect = useSecretFieldInsert(getValues, setValue);
 
 		const { onCreateSecret, controller } =
 			useInlineSecretCreateField(handleSecretSelect);
@@ -241,43 +237,67 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		const appendEnv = useCallback(() => {
+			const current = getValues("env") ?? [];
+			if (!shouldAppendKeyValueRow(current)) return;
 			envFields.append({ key: "", value: "" });
-		}, [envFields]);
+		}, [envFields, getValues]);
 
 		const removeEnv = useCallback(
 			(index: number) => {
 				envFields.remove(index);
+				queueMicrotask(() => {
+					const current = getValues("env") ?? [];
+					const compacted = compactKeyValueFields(current);
+					if (compacted.length !== current.length) {
+						envFields.replace(compacted);
+					}
+				});
 			},
-			[envFields],
+			[envFields, getValues],
 		);
 
 		const appendHeader = useCallback(() => {
+			const current = getValues("headers") ?? [];
+			if (!shouldAppendKeyValueRow(current)) return;
 			headerFields.append({ key: "", value: "" });
-		}, [headerFields]);
+		}, [headerFields, getValues]);
 
 		const removeHeader = useCallback(
 			(index: number) => {
 				headerFields.remove(index);
+				queueMicrotask(() => {
+					const current = getValues("headers") ?? [];
+					const compacted = compactKeyValueFields(current);
+					if (compacted.length !== current.length) {
+						headerFields.replace(compacted);
+					}
+				});
 			},
-			[headerFields],
+			[headerFields, getValues],
 		);
 
 		const appendUrlParam = useCallback(() => {
+			const current = getValues("urlParams") ?? [];
+			if (!shouldAppendKeyValueRow(current)) return;
 			paramFields.append({ key: "", value: "" });
-		}, [paramFields]);
+		}, [paramFields, getValues]);
 
 		const removeUrlParam = useCallback(
 			(index: number) => {
 				paramFields.remove(index);
+				queueMicrotask(() => {
+					const current = getValues("urlParams") ?? [];
+					const compacted = compactKeyValueFields(current);
+					if (compacted.length !== current.length) {
+						paramFields.replace(compacted);
+					}
+				});
 			},
-			[paramFields],
+			[paramFields, getValues],
 		);
 
 		// Form refs
 		const dropZoneRef = useRef<HTMLButtonElement | null>(null);
-		const commandInputRef = useRef<HTMLInputElement>(null);
-		const urlInputRef = useRef<HTMLInputElement>(null);
-
 		// Form field IDs
 		const nameId = useId();
 		const kindId = useId();
@@ -1506,10 +1526,7 @@ export const ServerInstallWizard = forwardRef(
 													errors={errors}
 													commandId={commandId}
 													urlId={urlId}
-													commandInputRef={commandInputRef}
-													urlInputRef={urlInputRef}
 													viewMode={viewMode}
-													onSecretSelect={handleSecretSelect}
 													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
 												/>
@@ -1591,10 +1608,10 @@ export const ServerInstallWizard = forwardRef(
 													appendArg={appendArg}
 													appendEnv={appendEnv}
 													register={register}
+													control={control}
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
-													onSecretSelect={handleSecretSelect}
 													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
 													getEnvRowKeyAt={(index) =>
@@ -1609,10 +1626,10 @@ export const ServerInstallWizard = forwardRef(
 													removeUrlParam={removeUrlParam}
 													appendUrlParam={appendUrlParam}
 													register={register}
+													control={control}
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
-													onSecretSelect={handleSecretSelect}
 													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
 													getRowKeyAt={(index) =>
@@ -1636,10 +1653,10 @@ export const ServerInstallWizard = forwardRef(
 													removeHeader={removeHeader}
 													appendHeader={appendHeader}
 													register={register}
+													control={control}
 													deleteConfirmStates={deleteConfirmStates}
 													onDeleteClick={handleDeleteClick}
 													onGhostClick={handleGhostClick}
-													onSecretSelect={handleSecretSelect}
 													onCreateSecret={onCreateSecret}
 													secretOriginBase={secretOriginBase}
 													getRowKeyAt={(index) =>
@@ -2443,218 +2460,218 @@ export const ServerInstallWizard = forwardRef(
 
 		return (
 			<>
-			<Drawer
-				open={isOpen}
-				onOpenChange={(open) => !open && handleOverlayClose()}
-			>
-				<DrawerContent className="h-full flex flex-col">
-					<DrawerHeader>
-						<DrawerTitle className="flex items-center gap-2">
-							{isEditMode
-								? t("wizard.header.editTitle", { defaultValue: "Edit Server" })
-								: t("wizard.header.addTitle", {
-									defaultValue: "Add MCP Server",
-								})}
-						</DrawerTitle>
-						<DrawerDescription>
-							{isEditMode
-								? t("wizard.header.editDescription", {
-									defaultValue: "Update server configuration",
-								})
-								: t("wizard.header.addDescription", {
-									defaultValue: "Configure and install a new MCP server",
-								})}
-						</DrawerDescription>
-					</DrawerHeader>
+				<Drawer
+					open={isOpen}
+					onOpenChange={(open) => !open && handleOverlayClose()}
+				>
+					<DrawerContent className="h-full flex flex-col">
+						<DrawerHeader>
+							<DrawerTitle className="flex items-center gap-2">
+								{isEditMode
+									? t("wizard.header.editTitle", { defaultValue: "Edit Server" })
+									: t("wizard.header.addTitle", {
+										defaultValue: "Add MCP Server",
+									})}
+							</DrawerTitle>
+							<DrawerDescription>
+								{isEditMode
+									? t("wizard.header.editDescription", {
+										defaultValue: "Update server configuration",
+									})
+									: t("wizard.header.addDescription", {
+										defaultValue: "Configure and install a new MCP server",
+									})}
+							</DrawerDescription>
+						</DrawerHeader>
 
-					{/* Step Navigation */}
-					<div className="relative z-10 p-4 pb-0 bg-background">
-						<div className="flex items-center justify-between gap-2">
-							<div className="flex items-center gap-2">
-								{steps.map((step, index) => {
-									const isActive = currentStep === step.id;
-									const canNavigate = canNavigateToStep(step.id);
+						{/* Step Navigation */}
+						<div className="relative z-10 p-4 pb-0 bg-background">
+							<div className="flex items-center justify-between gap-2">
+								<div className="flex items-center gap-2">
+									{steps.map((step, index) => {
+										const isActive = currentStep === step.id;
+										const canNavigate = canNavigateToStep(step.id);
 
-									return (
-										<div key={step.id} className="flex items-center gap-2">
-											<button
-												type="button"
-												onClick={() => handleStepChange(step.id)}
-												disabled={!canNavigate || isSubmitting}
-												className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${isActive
-													? "bg-primary text-primary-foreground"
-													: canNavigate
-														? "bg-slate-200 text-slate-600 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 cursor-pointer"
-														: "bg-slate-100 text-slate-400 dark:bg-slate-900 dark:text-slate-500 cursor-not-allowed"
-													}`}
-											>
-												{index + 1}
-											</button>
-											<button
-												type="button"
-												onClick={() => handleStepChange(step.id)}
-												disabled={!canNavigate || isSubmitting}
-												className="flex flex-col text-left transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-											>
-												<span
-													className={`text-sm font-medium ${isActive
-														? "text-primary"
+										return (
+											<div key={step.id} className="flex items-center gap-2">
+												<button
+													type="button"
+													onClick={() => handleStepChange(step.id)}
+													disabled={!canNavigate || isSubmitting}
+													className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${isActive
+														? "bg-primary text-primary-foreground"
 														: canNavigate
-															? "text-slate-600 dark:text-slate-300"
-															: "text-slate-400 dark:text-slate-500"
+															? "bg-slate-200 text-slate-600 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 cursor-pointer"
+															: "bg-slate-100 text-slate-400 dark:bg-slate-900 dark:text-slate-500 cursor-not-allowed"
 														}`}
 												>
-													{step.label}
-												</span>
-												<span className="text-xs text-muted-foreground">
-													{step.hint}
-												</span>
-											</button>
-											{index < steps.length - 1 && (
-												<span className="hidden h-px w-10 bg-slate-200 md:block dark:bg-slate-800" />
-											)}
-										</div>
-									);
-								})}
+													{index + 1}
+												</button>
+												<button
+													type="button"
+													onClick={() => handleStepChange(step.id)}
+													disabled={!canNavigate || isSubmitting}
+													className="flex flex-col text-left transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+												>
+													<span
+														className={`text-sm font-medium ${isActive
+															? "text-primary"
+															: canNavigate
+																? "text-slate-600 dark:text-slate-300"
+																: "text-slate-400 dark:text-slate-500"
+															}`}
+													>
+														{step.label}
+													</span>
+													<span className="text-xs text-muted-foreground">
+														{step.hint}
+													</span>
+												</button>
+												{index < steps.length - 1 && (
+													<span className="hidden h-px w-10 bg-slate-200 md:block dark:bg-slate-800" />
+												)}
+											</div>
+										);
+									})}
+								</div>
+								{/* Refresh button for preview step - visible during and after preview */}
+								{currentStep === "preview" &&
+									(installPipeline.state.previewState !== null || installPipeline.state.isPreviewLoading) && (
+										<Button
+											variant="ghost"
+											className="h-9 w-9 p-0"
+											aria-label={
+												installPipeline.state.isPreviewLoading
+													? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
+													: t("wizard.preview.retry", { defaultValue: "Retry preview" })
+											}
+											title={
+												installPipeline.state.isPreviewLoading
+													? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
+													: t("wizard.preview.retry", { defaultValue: "Retry preview" })
+											}
+											disabled={installPipeline.state.isImporting || installPipeline.state.isPreviewLoading}
+											onClick={() => {
+												installPipeline.setPreviewState(null);
+												void handlePreview({
+													skipValidation: true,
+													shouldFocus: false,
+												});
+											}}
+										>
+											<RefreshCw className={`h-4 w-4 ${installPipeline.state.isPreviewLoading ? "animate-spin" : ""}`} />
+										</Button>
+									)}
 							</div>
-							{/* Refresh button for preview step - visible during and after preview */}
-							{currentStep === "preview" &&
-								(installPipeline.state.previewState !== null || installPipeline.state.isPreviewLoading) && (
-									<Button
-										variant="ghost"
-										className="h-9 w-9 p-0"
-										aria-label={
-											installPipeline.state.isPreviewLoading
-												? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
-												: t("wizard.preview.retry", { defaultValue: "Retry preview" })
-										}
-										title={
-											installPipeline.state.isPreviewLoading
-												? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
-												: t("wizard.preview.retry", { defaultValue: "Retry preview" })
-										}
-										disabled={installPipeline.state.isImporting || installPipeline.state.isPreviewLoading}
-										onClick={() => {
-											installPipeline.setPreviewState(null);
-											void handlePreview({
-												skipValidation: true,
-												shouldFocus: false,
-											});
-										}}
-									>
-										<RefreshCw className={`h-4 w-4 ${installPipeline.state.isPreviewLoading ? "animate-spin" : ""}`} />
-									</Button>
-								)}
 						</div>
-					</div>
 
-					{/* Step Content - with spacing and bottom padding to avoid footer overlap */}
-					<div className="flex-1 min-h-0 overflow-y-auto py-2 pb-20">
-						{renderStepContent()}
-					</div>
+						{/* Step Content - with spacing and bottom padding to avoid footer overlap */}
+						<div className="flex-1 min-h-0 overflow-y-auto py-2 pb-20">
+							{renderStepContent()}
+						</div>
 
-					{/* Footer - fixed at bottom with subtle shadow for separation */}
-					<DrawerFooter className="absolute bottom-0 left-0 right-0 z-10 border-t p-4 bg-background">
-						<div className="flex w-full items-center justify-between gap-3">
-							{currentStep === "result" &&
-								installPipeline.state.importResult ? (
-								<div />
-							) : (
-								<Button
-									type="button"
-									variant="outline"
-									onClick={
-										currentStep === "preview"
-											? () => handleStepChange("form")
-											: currentStep === "result"
-												? () => handleStepChange("preview")
-												: handleCancelClose
-									}
-									disabled={
-										isSubmitting ||
-										(currentStep === "result" &&
-											installPipeline.state.isImporting)
-									}
-								>
-									{currentStep === "preview" || currentStep === "result"
-										? t("wizard.buttons.back", { defaultValue: "Back" })
-										: t("wizard.buttons.cancel", { defaultValue: "Cancel" })}
-								</Button>
-							)}
-							<div className="flex gap-2">
-								{currentStep === "form" && (
-									<Button
-										type="button"
-										onClick={() => handlePreview()}
-										disabled={isSubmitting || !canNavigateToStep("preview")}
-									>
-										{isSubmitting ? (
-											<>
-												<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-												{t("wizard.buttons.previewing", {
-													defaultValue: "Previewing...",
-												})}
-											</>
-										) : (
-											t("wizard.buttons.preview", { defaultValue: "Preview" })
-										)}
-									</Button>
-								)}
-								{currentStep === "preview" && (
-									<Button
-										type="button"
-										onClick={() => handleStepChange("result")}
-										disabled={isSubmitting || !canNavigateToStep("result")}
-									>
-										{t("wizard.buttons.next", { defaultValue: "Next" })}
-									</Button>
-								)}
+						{/* Footer - fixed at bottom with subtle shadow for separation */}
+						<DrawerFooter className="absolute bottom-0 left-0 right-0 z-10 border-t p-4 bg-background">
+							<div className="flex w-full items-center justify-between gap-3">
 								{currentStep === "result" &&
-									!installPipeline.state.importResult && (
+									installPipeline.state.importResult ? (
+									<div />
+								) : (
+									<Button
+										type="button"
+										variant="outline"
+										onClick={
+											currentStep === "preview"
+												? () => handleStepChange("form")
+												: currentStep === "result"
+													? () => handleStepChange("preview")
+													: handleCancelClose
+										}
+										disabled={
+											isSubmitting ||
+											(currentStep === "result" &&
+												installPipeline.state.isImporting)
+										}
+									>
+										{currentStep === "preview" || currentStep === "result"
+											? t("wizard.buttons.back", { defaultValue: "Back" })
+											: t("wizard.buttons.cancel", { defaultValue: "Cancel" })}
+									</Button>
+								)}
+								<div className="flex gap-2">
+									{currentStep === "form" && (
 										<Button
 											type="button"
-											onClick={handleImport}
-											disabled={
-												installPipeline.state.isImporting ||
-												installPipeline.state.isDryRunLoading ||
-												!!installPipeline.state.dryRunError ||
-												!(hiddenPreviewReady || (
-													installPipeline.state.dryRunStats &&
-													installPipeline.state.dryRunStats.importedCount > 0
-												))
-											}
+											onClick={() => handlePreview()}
+											disabled={isSubmitting || !canNavigateToStep("preview")}
 										>
-											{installPipeline.state.isImporting ? (
+											{isSubmitting ? (
 												<>
 													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-													{t("wizard.buttons.importing", {
-														defaultValue: "Importing...",
-													})}
-												</>
-											) : installPipeline.state.isDryRunLoading ? (
-												<>
-													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-													{t("wizard.buttons.validating", {
-														defaultValue: "Validating...",
+													{t("wizard.buttons.previewing", {
+														defaultValue: "Previewing...",
 													})}
 												</>
 											) : (
-												t("wizard.buttons.import", { defaultValue: "Import" })
+												t("wizard.buttons.preview", { defaultValue: "Preview" })
 											)}
 										</Button>
 									)}
-								{currentStep === "result" &&
-									installPipeline.state.importResult && (
-										<Button type="button" onClick={handleOverlayClose}>
-											{t("wizard.buttons.done", { defaultValue: "Done" })}
+									{currentStep === "preview" && (
+										<Button
+											type="button"
+											onClick={() => handleStepChange("result")}
+											disabled={isSubmitting || !canNavigateToStep("result")}
+										>
+											{t("wizard.buttons.next", { defaultValue: "Next" })}
 										</Button>
 									)}
+									{currentStep === "result" &&
+										!installPipeline.state.importResult && (
+											<Button
+												type="button"
+												onClick={handleImport}
+												disabled={
+													installPipeline.state.isImporting ||
+													installPipeline.state.isDryRunLoading ||
+													!!installPipeline.state.dryRunError ||
+													!(hiddenPreviewReady || (
+														installPipeline.state.dryRunStats &&
+														installPipeline.state.dryRunStats.importedCount > 0
+													))
+												}
+											>
+												{installPipeline.state.isImporting ? (
+													<>
+														<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+														{t("wizard.buttons.importing", {
+															defaultValue: "Importing...",
+														})}
+													</>
+												) : installPipeline.state.isDryRunLoading ? (
+													<>
+														<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+														{t("wizard.buttons.validating", {
+															defaultValue: "Validating...",
+														})}
+													</>
+												) : (
+													t("wizard.buttons.import", { defaultValue: "Import" })
+												)}
+											</Button>
+										)}
+									{currentStep === "result" &&
+										installPipeline.state.importResult && (
+											<Button type="button" onClick={handleOverlayClose}>
+												{t("wizard.buttons.done", { defaultValue: "Done" })}
+											</Button>
+										)}
+								</div>
 							</div>
-						</div>
-					</DrawerFooter>
-				</DrawerContent>
-			</Drawer>
-			<InlineSecretCreate controller={controller} nested />
+						</DrawerFooter>
+					</DrawerContent>
+				</Drawer>
+				<InlineSecretCreate controller={controller} nested />
 			</>
 		);
 	},

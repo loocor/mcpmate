@@ -2,6 +2,9 @@ import { useCallback } from "react";
 import type { ServerInstallDraft } from "../../../hooks/use-server-install-pipeline";
 import { parseJsonDrafts } from "../../../lib/install-normalizer";
 import { notifyError } from "../../../lib/notify";
+import {
+	isRedactedMask,
+} from "../../../lib/secure-field";
 import type { ManualServerFormValues } from "../types";
 
 interface UseFormSubmissionProps {
@@ -59,14 +62,21 @@ export function useFormSubmission({
 				return next.length > 0 ? next : undefined;
 			};
 
+			const trimSensitive = (value?: string | null) => {
+				const next = trim(value);
+				if (!next) return undefined;
+				if (!isEditMode && isRedactedMask(next)) return undefined;
+				return next;
+			};
+
 			const args = (values.args ?? [])
-				.map((item) => trim(item.value))
+				.map((item) => trimSensitive(item.value))
 				.filter((value): value is string => Boolean(value));
 
 			const envEntries = (values.env ?? [])
 				.map((entry) => {
 					const key = trim(entry.key);
-					const value = trim(entry.value);
+					const value = trimSensitive(entry.value);
 					return key ? { key, value: value ?? "" } : null;
 				})
 				.filter((entry): entry is { key: string; value: string } =>
@@ -75,7 +85,9 @@ export function useFormSubmission({
 
 			const env = envEntries.length
 				? envEntries.reduce<Record<string, string>>((acc, entry) => {
-						acc[entry.key] = entry.value;
+						if (entry.value) {
+							acc[entry.key] = entry.value;
+						}
 						return acc;
 					}, {})
 				: undefined;
@@ -83,7 +95,7 @@ export function useFormSubmission({
 			const headerEntries = (values.headers ?? [])
 				.map((entry) => {
 					const key = trim(entry.key);
-					const value = trim(entry.value);
+					const value = trimSensitive(entry.value);
 					return key ? { key, value: value ?? "" } : null;
 				})
 				.filter((entry): entry is { key: string; value: string } =>
@@ -92,7 +104,9 @@ export function useFormSubmission({
 
 			const headers = headerEntries.length
 				? headerEntries.reduce<Record<string, string>>((acc, entry) => {
-						acc[entry.key] = entry.value;
+						if (entry.value) {
+							acc[entry.key] = entry.value;
+						}
 						return acc;
 					}, {})
 				: undefined;
@@ -101,7 +115,7 @@ export function useFormSubmission({
 			const urlParamEntries = (values.urlParams ?? [])
 				.map((entry) => {
 					const key = trim(entry.key);
-					const value = trim(entry.value);
+					const value = trimSensitive(entry.value);
 					return key ? { key, value: value ?? "" } : null;
 				})
 				.filter((entry): entry is { key: string; value: string } =>
@@ -110,7 +124,9 @@ export function useFormSubmission({
 
 			const urlParams = urlParamEntries.length
 				? urlParamEntries.reduce<Record<string, string>>((acc, entry) => {
-						acc[entry.key] = entry.value;
+						if (entry.value) {
+							acc[entry.key] = entry.value;
+						}
 						return acc;
 					}, {})
 				: undefined;
@@ -139,11 +155,16 @@ export function useFormSubmission({
 
 			const envForDraft = values.kind === "stdio" ? env : headers;
 
+			const command =
+				values.kind === "stdio" ? trimSensitive(values.command) : undefined;
+			const url =
+				values.kind === "stdio" ? undefined : trimSensitive(values.url);
+
 			return {
 				name: values.name.trim(),
 				kind: values.kind,
-				command: values.kind === "stdio" ? trim(values.command) : undefined,
-				url: values.kind === "stdio" ? undefined : trim(values.url),
+				command,
+				url,
 				args: values.kind === "stdio" && args.length ? args : undefined,
 				env: envForDraft,
 				headers: values.kind !== "stdio" ? headers : undefined,
@@ -151,7 +172,7 @@ export function useFormSubmission({
 				meta: Object.keys(meta).length ? meta : undefined,
 			};
 		},
-		[],
+		[isEditMode],
 	);
 
 	const submitForm = useCallback(
@@ -177,7 +198,7 @@ export function useFormSubmission({
 			onClose();
 			reset();
 		},
-		[buildDraftFromValues, onSubmit, onClose, reset],
+		[buildDraftFromValues, isEditMode, onSubmit, onClose, reset],
 	);
 
 	const submitJson = useCallback(async () => {

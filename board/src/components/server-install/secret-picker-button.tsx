@@ -16,6 +16,8 @@ interface SecretPickerButtonProps {
 	onCreateNew?: (origin: SecretOrigin) => void;
 	className?: string;
 	origin?: SecretOrigin;
+	/** Keep visible for read-only redacted fields. */
+	forceVisible?: boolean;
 }
 
 export function SecretPickerButton({
@@ -23,6 +25,7 @@ export function SecretPickerButton({
 	onCreateNew,
 	className,
 	origin,
+	forceVisible = false,
 }: SecretPickerButtonProps) {
 	const { t } = useTranslation("servers");
 	const navigate = useNavigate();
@@ -66,7 +69,9 @@ export function SecretPickerButton({
 					variant="ghost"
 					size="icon"
 					className={cn(
-						"opacity-0 transition-opacity group-focus-within/secret-field:opacity-100 data-[state=open]:opacity-100",
+						forceVisible
+							? "opacity-100"
+							: "opacity-0 transition-opacity group-focus-within/secret-field:opacity-100 data-[state=open]:opacity-100",
 						className,
 					)}
 					aria-label={t("manual.secrets.pick", { defaultValue: "Use secret" })}
