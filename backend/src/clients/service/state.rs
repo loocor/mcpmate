@@ -231,6 +231,7 @@ impl ClientConfigService {
             .await?;
 
         if row.approval_status() == "approved" {
+            self.ensure_local_config_target_metadata(identifier).await?;
             return Ok(row.approval_status().to_string());
         }
 
@@ -246,7 +247,79 @@ impl ClientConfigService {
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
+        self.ensure_local_config_target_metadata(identifier).await?;
+
         Ok("approved".to_string())
+    }
+
+    /// Load client state and repair local-config metadata drift when needed.
+    pub async fn fetch_state_repairing_local_target(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<Option<ClientStateRow>> {
+        let Some(state) = self.fetch_state(identifier).await? else {
+            return Ok(None);
+        };
+        if self
+            .ensure_local_config_target_metadata_for_state(identifier, &state)
+            .await?
+        {
+            self.fetch_state(identifier).await
+        } else {
+            Ok(Some(state))
+        }
+    }
+
+    /// Align `connection_mode` with a persisted config path so attach/detach lifecycle metadata matches file clients.
+    pub async fn ensure_local_config_target_metadata(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<bool> {
+        let Some(state) = self.fetch_state(identifier).await? else {
+            return Ok(false);
+        };
+        self.ensure_local_config_target_metadata_for_state(identifier, &state)
+            .await
+    }
+
+    async fn ensure_local_config_target_metadata_for_state(
+        &self,
+        identifier: &str,
+        state: &ClientStateRow,
+    ) -> ConfigResult<bool> {
+        if state.has_local_config_target() {
+            return Ok(false);
+        }
+        let Some(config_path) = state.config_path() else {
+            return Ok(false);
+        };
+        if state.effective_config_file_parse()?.is_none() {
+            return Ok(false);
+        }
+
+        self.update_runtime_target(
+            identifier,
+            Some(config_path),
+            Some(ClientConnectionMode::LocalConfigDetected.as_str()),
+            false,
+        )
+        .await?;
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET attachment_state = 'detached'
+            WHERE identifier = ?
+              AND (attachment_state IS NULL OR attachment_state = 'not_applicable')
+            "#,
+        )
+        .bind(identifier)
+        .execute(&*self.db_pool)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        tracing::info!(client = %identifier, "Repaired local config target metadata");
+        Ok(true)
     }
 
     pub async fn suspend_client(
@@ -336,7 +409,7 @@ impl ClientConfigService {
         name: &str,
         config_path: Option<&str>,
     ) -> ConfigResult<ClientStateRow> {
-        if let Some(existing) = self.fetch_state(identifier).await? {
+        if let Some(existing) = self.fetch_state_repairing_local_target(identifier).await? {
             return self.refresh_existing_state_name(identifier, name, existing).await;
         }
         let first_contact_behavior = self.get_first_contact_behavior().await?;
@@ -1112,5 +1185,41 @@ mod tests {
             .await
             .expect("deleted client can be recreated passively");
         assert_eq!(recreated.identifier, "test.client");
+    }
+
+    #[tokio::test]
+    async fn ensure_local_config_target_metadata_repairs_connection_mode_drift() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO client (
+                id, name, identifier, config_path, connection_mode, attachment_state,
+                config_format, container_type, container_keys, config_file_parse
+            )
+            VALUES (
+                'clnt_drift', 'Cursor Drift', 'cursor.drift', '/tmp/cursor-drift.json',
+                'manual', 'not_applicable', 'json', 'object', '["mcpServers"]',
+                '{"format":"json","container_type":"object_map","container_keys":["mcpServers"]}'
+            )
+            "#,
+        )
+        .execute(service.db_pool.as_ref())
+        .await
+        .expect("insert drifted client row");
+
+        let repaired = service
+            .ensure_local_config_target_metadata("cursor.drift")
+            .await
+            .expect("repair metadata");
+        assert!(repaired);
+
+        let state = service
+            .fetch_state("cursor.drift")
+            .await
+            .expect("fetch state")
+            .expect("state exists");
+        assert!(state.has_local_config_target());
+        assert_eq!(state.attachment_state().as_str(), "detached");
     }
 }

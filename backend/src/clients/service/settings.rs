@@ -694,7 +694,7 @@ impl ClientConfigService {
         Ok(())
     }
 
-    async fn update_runtime_target(
+    pub(super) async fn update_runtime_target(
         &self,
         identifier: &str,
         config_path: Option<&str>,
