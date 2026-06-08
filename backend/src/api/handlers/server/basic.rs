@@ -25,11 +25,13 @@ macro_rules! get_db_pool {
     };
 }
 
-/// Whether API should include default HTTP headers in responses (redacted)
+/// Whether API should include default HTTP headers in responses (redacted).
+/// Defaults to true — redaction-safe round-trip is ensured by frontend
+/// resolveRecordUpdatePayload + backend merge_headers_for_update.
 fn should_expose_headers() -> bool {
     matches!(
         std::env::var("MCPMATE_API_EXPOSE_HEADERS")
-            .unwrap_or_else(|_| "false".to_string())
+            .unwrap_or_else(|_| "true".to_string())
             .to_ascii_lowercase()
             .as_str(),
         "1" | "true" | "on" | "yes"
