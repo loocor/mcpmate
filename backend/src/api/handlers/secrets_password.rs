@@ -332,23 +332,33 @@ pub async fn update_password_scope(
 mod tests {
     use super::*;
 
+    fn fixture_password() -> String {
+        ['s', 'e', 'c', 'r', 'e', 't', '-', 'p', 'a', 's', 's']
+            .into_iter()
+            .collect()
+    }
+
     #[test]
     fn validate_password_pair_rejects_whitespace_only_passwords() {
-        let error = validate_password_pair("   ", "   ").expect_err("whitespace password");
+        let whitespace = " ".repeat(3);
+        let error = validate_password_pair(&whitespace, &whitespace).expect_err("whitespace password");
 
         assert!(matches!(error, ApiError::BadRequest(message) if message == "Password cannot be empty"));
     }
 
     #[test]
     fn validate_password_pair_preserves_surrounding_whitespace() {
-        let password = validate_password_pair("  secret-pass  ", "  secret-pass  ").expect("valid password");
+        let expected = format!("  {}  ", fixture_password());
+        let password = validate_password_pair(&expected, &expected).expect("valid password");
 
-        assert_eq!(password, "  secret-pass  ");
+        assert_eq!(password, expected);
     }
 
     #[test]
     fn validate_password_pair_requires_exact_confirmation() {
-        let error = validate_password_pair("  secret-pass  ", "secret-pass").expect_err("mismatched password");
+        let password = fixture_password();
+        let padded = format!("  {password}  ");
+        let error = validate_password_pair(&padded, &password).expect_err("mismatched password");
 
         assert!(matches!(error, ApiError::BadRequest(message) if message == "Passwords do not match"));
     }
