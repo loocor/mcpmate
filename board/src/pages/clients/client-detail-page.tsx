@@ -718,8 +718,9 @@ export function ClientDetailPage() {
     configDetails?.approval_status,
   );
   const isAttachmentApplicable =
-    configDetails?.attachment_state === "attached" ||
-    configDetails?.attachment_state === "detached";
+    canWriteClientConfig &&
+    (configDetails?.attachment_state === "attached" ||
+      configDetails?.attachment_state === "detached");
   const isAttachedClient =
     isAttachmentApplicable && configDetails?.attachment_state === "attached";
   const showLocalConfigMetadata =
@@ -2143,6 +2144,7 @@ export function ClientDetailPage() {
                               )
                             }
                             disabled={
+                              !canWriteClientConfig ||
                               detachMutation.isPending ||
                               attachMutation.isPending
                             }
