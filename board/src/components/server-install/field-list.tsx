@@ -77,10 +77,12 @@ export function PairGhostRow({
 	valuePlaceholder,
 	onAdd,
 }: PairGhostRowProps) {
+	const { t } = useTranslation("servers");
 	return (
 		<div
 			role="button"
 			tabIndex={0}
+			aria-label={t("manual.fields.common.addRow", { defaultValue: "Add row" })}
 			className="col-span-2 grid min-w-0 cursor-pointer grid-cols-subgrid items-center"
 			onClick={onAdd}
 			onKeyDown={(event) => {

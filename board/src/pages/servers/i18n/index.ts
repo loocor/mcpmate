@@ -519,6 +519,7 @@ export const serversTranslations = {
 					keyPlaceholder: "Parameter",
 				},
 				common: {
+					addRow: "Add row",
 					ghostValue: "Add a new value",
 					valuePlaceholder: "Value",
 					removeRow: "Remove row",
@@ -1321,6 +1322,7 @@ export const serversTranslations = {
 					keyPlaceholder: "参数",
 				},
 				common: {
+					addRow: "添加行",
 					ghostValue: "添加值",
 					valuePlaceholder: "值",
 					removeRow: "删除行",
@@ -2110,6 +2112,7 @@ export const serversTranslations = {
 					keyPlaceholder: "パラメータ",
 				},
 				common: {
+					addRow: "行を追加",
 					ghostValue: "値を追加",
 					valuePlaceholder: "値",
 					removeRow: "行を削除",

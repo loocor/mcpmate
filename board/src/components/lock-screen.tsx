@@ -110,6 +110,15 @@ export function LockScreen({ variant = "login", onSuccess }: LockScreenProps) {
 							type="password"
 							value={password}
 							onChange={(e) => setPassword(e.target.value)}
+							aria-label={
+								isEncryption
+									? t("lock.encryption.passwordPlaceholder", {
+										defaultValue: "Encryption password",
+									})
+									: t("lock.login.passwordPlaceholder", {
+										defaultValue: "Login password",
+									})
+							}
 							placeholder={
 								focused
 									? ""
