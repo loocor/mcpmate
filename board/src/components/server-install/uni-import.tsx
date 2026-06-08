@@ -1,5 +1,9 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+	compactKeyValueFields,
+	shouldAppendKeyValueRow,
+} from "../../lib/key-value-fields";
+import {
 	ClipboardPaste,
 	Loader2,
 	RotateCcw,
@@ -22,6 +26,11 @@ import { readClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { parseJsonDrafts } from "../../lib/install-normalizer";
 import { isTauriEnvironmentSync } from "../../lib/platform";
+import type { SecretOrigin } from "../../lib/types";
+import {
+	InlineSecretCreate,
+	useInlineSecretCreateField,
+} from "../secrets";
 import { Button } from "../ui/button";
 import {
 	Drawer,
@@ -49,6 +58,7 @@ import {
 	useFormSubmission,
 	useFormSync,
 	useIngest,
+	useSecretFieldInsert,
 } from "./hooks";
 import {
 	breathingAnimation,
@@ -84,8 +94,8 @@ export const ServerInstallManualForm = forwardRef<
 		}: ServerInstallManualFormProps,
 		ref,
 	) => {
-	usePageTranslations("servers");
-	const { t } = useTranslation("servers");
+		usePageTranslations("servers");
+		const { t } = useTranslation("servers");
 		const isEditMode = mode === "edit";
 		const isMarketMode = mode === "market";
 		const jsonEditingEnabled = allowJsonEditing ?? !isEditMode;
@@ -139,15 +149,10 @@ export const ServerInstallManualForm = forwardRef<
 			} as ManualServerFormValues,
 		});
 
-		const handleSecretSelect = useCallback(
-			(fieldName: string, placeholder: string) => {
-				setValue(fieldName as keyof ManualServerFormValues, placeholder as never, {
-					shouldDirty: true,
-					shouldValidate: true,
-				});
-			},
-			[setValue],
-		);
+		const handleSecretSelect = useSecretFieldInsert(getValues, setValue);
+
+		const { onCreateSecret, controller } =
+			useInlineSecretCreateField(handleSecretSelect);
 
 		// Field arrays
 		const {
@@ -158,21 +163,93 @@ export const ServerInstallManualForm = forwardRef<
 
 		const {
 			fields: envFields,
-			append: appendEnv,
-			remove: removeEnv,
+			append: appendEnvRaw,
+			remove: removeEnvRaw,
+			replace: replaceEnv,
 		} = useFieldArray({ control, name: "env" });
 
 		const {
 			fields: headerFields,
-			append: appendHeader,
-			remove: removeHeader,
+			append: appendHeaderRaw,
+			remove: removeHeaderRaw,
+			replace: replaceHeaders,
 		} = useFieldArray({ control, name: "headers" });
 
 		const {
 			fields: urlParamFields,
-			append: appendUrlParam,
-			remove: removeUrlParam,
+			append: appendUrlParamRaw,
+			remove: removeUrlParamRaw,
+			replace: replaceUrlParams,
 		} = useFieldArray({ control, name: "urlParams" });
+
+		const appendEnv = useCallback(
+			(value: { key: string; value: string }) => {
+				const current = getValues("env") ?? [];
+				if (!shouldAppendKeyValueRow(current)) return;
+				appendEnvRaw(value);
+			},
+			[appendEnvRaw, getValues],
+		);
+
+		const removeEnv = useCallback(
+			(index: number) => {
+				removeEnvRaw(index);
+				queueMicrotask(() => {
+					const current = getValues("env") ?? [];
+					const compacted = compactKeyValueFields(current);
+					if (compacted.length !== current.length) {
+						replaceEnv(compacted);
+					}
+				});
+			},
+			[getValues, removeEnvRaw, replaceEnv],
+		);
+
+		const appendHeader = useCallback(
+			(value: { key: string; value: string }) => {
+				const current = getValues("headers") ?? [];
+				if (!shouldAppendKeyValueRow(current)) return;
+				appendHeaderRaw(value);
+			},
+			[appendHeaderRaw, getValues],
+		);
+
+		const removeHeader = useCallback(
+			(index: number) => {
+				removeHeaderRaw(index);
+				queueMicrotask(() => {
+					const current = getValues("headers") ?? [];
+					const compacted = compactKeyValueFields(current);
+					if (compacted.length !== current.length) {
+						replaceHeaders(compacted);
+					}
+				});
+			},
+			[getValues, removeHeaderRaw, replaceHeaders],
+		);
+
+		const appendUrlParam = useCallback(
+			(value: { key: string; value: string }) => {
+				const current = getValues("urlParams") ?? [];
+				if (!shouldAppendKeyValueRow(current)) return;
+				appendUrlParamRaw(value);
+			},
+			[appendUrlParamRaw, getValues],
+		);
+
+		const removeUrlParam = useCallback(
+			(index: number) => {
+				removeUrlParamRaw(index);
+				queueMicrotask(() => {
+					const current = getValues("urlParams") ?? [];
+					const compacted = compactKeyValueFields(current);
+					if (compacted.length !== current.length) {
+						replaceUrlParams(compacted);
+					}
+				});
+			},
+			[getValues, removeUrlParamRaw, replaceUrlParams],
+		);
 
 		// Watched values
 		const kind = watch("kind");
@@ -216,6 +293,17 @@ export const ServerInstallManualForm = forwardRef<
 		const watchedArgs = useWatch({ control, name: "args" });
 		const watchedEnv = useWatch({ control, name: "env" });
 		const watchedHeaders = useWatch({ control, name: "headers" });
+		const watchedUrlParams = useWatch({ control, name: "urlParams" });
+
+		const secretOriginBase = useMemo<SecretOrigin>(
+			() => ({
+				server_id: serverId ?? null,
+				server_name: watchedName?.trim() || null,
+				server_kind: kind,
+				source: isEditMode ? "server_edit" : "server_install",
+			}),
+			[isEditMode, kind, serverId, watchedName],
+		);
 
 		const ingestMessages = useMemo(
 			() => ({
@@ -392,21 +480,21 @@ export const ServerInstallManualForm = forwardRef<
 			: isMarketMode
 				? t("manual.header.title.import", { defaultValue: "Import Server" })
 				: t("manual.header.title.create", {
-						defaultValue: "Server Uni-Import",
-					});
+					defaultValue: "Server Uni-Import",
+				});
 		const headerDescription = isEditMode
 			? t("manual.header.description.edit", {
-					defaultValue:
-						"Review and update the existing server settings. JSON preview remains read-only in this mode.",
-				})
+				defaultValue:
+					"Review and update the existing server settings. JSON preview remains read-only in this mode.",
+			})
 			: isMarketMode
 				? t("manual.header.description.import", {
-						defaultValue: "Configure and import this server from the registry.",
-					})
+					defaultValue: "Configure and import this server from the registry.",
+				})
 				: t("manual.header.description.create", {
-						defaultValue:
-							"You can directly drag and drop the configuration information, or enter it manually.",
-					});
+					defaultValue:
+						"You can directly drag and drop the configuration information, or enter it manually.",
+				});
 		const resetLabel = t("manual.buttons.reset", {
 			defaultValue: "Reset form",
 		});
@@ -438,9 +526,6 @@ export const ServerInstallManualForm = forwardRef<
 
 		// Refs
 		const dropZoneRef = useRef<HTMLButtonElement | null>(null);
-		const commandInputRef = useRef<HTMLInputElement | null>(null);
-		const urlInputRef = useRef<HTMLInputElement | null>(null);
-
 		// Generate unique IDs for form elements
 		const nameId = useId();
 		const kindId = useId();
@@ -454,18 +539,6 @@ export const ServerInstallManualForm = forwardRef<
 		const metaRepositorySubfolderId = useId();
 		const metaRepositoryId = useId();
 		const manualJsonId = useId();
-
-		// Focus management
-		useEffect(() => {
-			const frame = requestAnimationFrame(() => {
-				const el = isStdio ? commandInputRef.current : urlInputRef.current;
-				if (el) {
-					el.focus();
-					el.blur();
-				}
-			});
-			return () => cancelAnimationFrame(frame);
-		}, [isStdio]);
 
 		// Reset form when closed
 		useEffect(() => {
@@ -871,440 +944,446 @@ export const ServerInstallManualForm = forwardRef<
 		};
 
 		return (
-			<Drawer
-				open={isOpen}
-				onOpenChange={(value) => (!value ? onClose() : undefined)}
-			>
-				<DrawerContent>
-					<form onSubmit={onFormSubmit} className="flex h-full flex-col">
-						<DrawerHeader className="pb-2">
-							<div className="flex items-start justify-between gap-2">
-								<div>
-									<DrawerTitle>{headerTitle}</DrawerTitle>
-									<DrawerDescription className="mt-1 text-sm text-muted-foreground">
-										{headerDescription}
-									</DrawerDescription>
+			<>
+				<Drawer
+					open={isOpen}
+					onOpenChange={(value) => (!value ? onClose() : undefined)}
+				>
+					<DrawerContent>
+						<form onSubmit={onFormSubmit} className="flex h-full flex-col">
+							<DrawerHeader className="pb-2">
+								<div className="flex items-start justify-between gap-2">
+									<div>
+										<DrawerTitle>{headerTitle}</DrawerTitle>
+										<DrawerDescription className="mt-1 text-sm text-muted-foreground">
+											{headerDescription}
+										</DrawerDescription>
+									</div>
+									{ingestEnabled ? (
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											onClick={handleResetAll}
+											aria-label={resetLabel}
+											title={resetLabel}
+										>
+											<RotateCcw className="h-4 w-4" />
+										</Button>
+									) : null}
+									{ingestEnabled ? (
+										<Button
+											type="button"
+											variant="secondary"
+											size="sm"
+											onClick={() => void ingestClipboardPayload(null)}
+											className="ml-1"
+											aria-label="Paste from clipboard"
+											title="Paste from clipboard"
+										>
+											<ClipboardPaste className="mr-1 h-4 w-4" /> Paste
+										</Button>
+									) : null}
 								</div>
-								{ingestEnabled ? (
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon"
-										onClick={handleResetAll}
-										aria-label={resetLabel}
-										title={resetLabel}
-									>
-										<RotateCcw className="h-4 w-4" />
-									</Button>
-								) : null}
-								{ingestEnabled ? (
-									<Button
-										type="button"
-										variant="secondary"
-										size="sm"
-										onClick={() => void ingestClipboardPayload(null)}
-										className="ml-1"
-										aria-label="Paste from clipboard"
-										title="Paste from clipboard"
-									>
-										<ClipboardPaste className="mr-1 h-4 w-4" /> Paste
-									</Button>
-								) : null}
-							</div>
-						</DrawerHeader>
+							</DrawerHeader>
 
-						{/* Uni-Import Drop Zone */}
-						{ingestEnabled ? (
-							<button
-								ref={dropZoneRef}
-								type="button"
-								onDrop={onDrop}
-								onDragOver={(event) => event.preventDefault()}
-								onDragEnter={onDragEnter}
-								onDragLeave={onDragLeave}
-								onPaste={onPaste}
-								onClick={handleDropZoneClick}
-								className={`px-4 mb-4 w-full cursor-pointer focus:outline-none ${
-									isDropZoneCollapsed ? "h-10" : "h-[18vh]"
-								}`}
-								style={{ border: "none" }}
-							>
-								<div
-									className={`w-full h-full flex items-center justify-center gap-4 rounded-lg border border-dashed transition-all duration-300 ${
-										isDropZoneCollapsed
+							{/* Uni-Import Drop Zone */}
+							{ingestEnabled ? (
+								<button
+									ref={dropZoneRef}
+									type="button"
+									onDrop={onDrop}
+									onDragOver={(event) => event.preventDefault()}
+									onDragEnter={onDragEnter}
+									onDragLeave={onDragLeave}
+									onPaste={onPaste}
+									onClick={handleDropZoneClick}
+									className={`px-4 mb-4 w-full cursor-pointer focus:outline-none ${isDropZoneCollapsed ? "h-10" : "h-[18vh]"
+										}`}
+									style={{ border: "none" }}
+								>
+									<div
+										className={`w-full h-full flex items-center justify-center gap-4 rounded-lg border border-dashed transition-all duration-300 ${isDropZoneCollapsed
 											? "flex-row px-4 py-2 border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
 											: "flex-col py-8 border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
-									} ${
-										ingestError
-											? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
-											: isIngestSuccess
-												? "border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-900/20"
-												: isDragOver
-													? "border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/20"
-													: ""
-									}`}
-								>
-									{isIngesting ? (
-										<Loader2
-											className={`animate-spin ${
-												isDropZoneCollapsed ? "h-4 w-4" : "h-6 w-6"
+											} ${ingestError
+												? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
+												: isIngestSuccess
+													? "border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-900/20"
+													: isDragOver
+														? "border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/20"
+														: ""
 											}`}
-										/>
-									) : (
-										<Target
-											className={`transition-all duration-300 ${
-												isDropZoneCollapsed ? "h-4 w-4" : "h-12 w-12"
-											} ${
-												isDragOver || isIngesting
-													? "animate-pulse"
-													: "scale-100"
-											} ${isDragOver ? "text-blue-500" : "text-slate-500"}`}
-											style={{
-												animation:
-													ingestError || isDragOver || isIngesting
-														? "breathing 1.5s ease-in-out infinite"
-														: undefined,
-											}}
-										/>
-									)}
-
-									<div
-										className={`text-center ${
-											isDropZoneCollapsed ? "flex-1 text-left" : ""
-										}`}
 									>
-										<p
-											className={`leading-relaxed transition-all duration-300 ${
-												isDropZoneCollapsed
+										{isIngesting ? (
+											<Loader2
+												className={`animate-spin ${isDropZoneCollapsed ? "h-4 w-4" : "h-6 w-6"
+													}`}
+											/>
+										) : (
+											<Target
+												className={`transition-all duration-300 ${isDropZoneCollapsed ? "h-4 w-4" : "h-12 w-12"
+													} ${isDragOver || isIngesting
+														? "animate-pulse"
+														: "scale-100"
+													} ${isDragOver ? "text-blue-500" : "text-slate-500"}`}
+												style={{
+													animation:
+														ingestError || isDragOver || isIngesting
+															? "breathing 1.5s ease-in-out infinite"
+															: undefined,
+												}}
+											/>
+										)}
+
+										<div
+											className={`text-center ${isDropZoneCollapsed ? "flex-1 text-left" : ""
+												}`}
+										>
+											<p
+												className={`leading-relaxed transition-all duration-300 ${isDropZoneCollapsed
 													? "text-sm max-w-none"
 													: "max-w-none px-4 text-sm"
-											} ${
-												ingestError
-													? "text-red-600 dark:text-red-400"
-													: isIngestSuccess
-														? "text-green-600 dark:text-green-400"
-														: isDragOver
-															? "text-blue-600 dark:text-blue-400"
-															: "text-slate-600 dark:text-slate-300"
-											} ${isIngesting || isDragOver ? "animate-pulse" : ""}`}
-										>
-											{ingestError || ingestMessage}
-										</p>
-										{!isDropZoneCollapsed && !ingestError && (
-											<p className="text-xs text-slate-400 mt-2">
-												{pasteTipPrefix}{" "}
-												<kbd className="rounded bg-slate-200 px-1 text-[10px]">
-													{pasteShortcut}
-												</kbd>{" "}
-												{pasteTipSuffix}
+													} ${ingestError
+														? "text-red-600 dark:text-red-400"
+														: isIngestSuccess
+															? "text-green-600 dark:text-green-400"
+															: isDragOver
+																? "text-blue-600 dark:text-blue-400"
+																: "text-slate-600 dark:text-slate-300"
+													} ${isIngesting || isDragOver ? "animate-pulse" : ""}`}
+											>
+												{ingestError || ingestMessage}
 											</p>
-										)}
-									</div>
-								</div>
-							</button>
-						) : null}
-
-						{/* Main Content Area */}
-						<div
-							className={`flex-1 overflow-y-auto px-4 pb-4 ${
-								ingestEnabled ? "pt-0" : "pt-4"
-							}`}
-						>
-							<Tabs
-								value={activeTab}
-								onValueChange={setActiveTab}
-								className="space-y-4"
-							>
-								<TabsList className={`grid w-full ${extraTab ? "grid-cols-3" : "grid-cols-2"}`}>
-									<TabsTrigger value="core">{tabsCoreLabel}</TabsTrigger>
-									{extraTab && (
-										<TabsTrigger value={extraTab.value}>{extraTab.label}</TabsTrigger>
-									)}
-									<TabsTrigger value="meta">
-										{tabsMetaLabel} <sup>({tabsMetaWip})</sup>
-									</TabsTrigger>
-								</TabsList>
-
-								<TabsContent
-									value="core"
-									className={`space-y-4 ${
-										viewMode === "json" ? "flex flex-col h-full" : ""
-									}`}
-									onClick={handleFormInteraction}
-								>
-									<div className="flex items-center justify-end pt-2">
-										<FormViewModeToggle
-											mode={viewMode}
-											onChange={handleModeChange}
-										/>
-									</div>
-
-									{viewMode === "form" ? (
-										<>
-											<div className="space-y-4">
-												<div className="flex items-center gap-4">
-													<Label htmlFor={nameId} className="w-20 text-right">
-														{nameLabel}
-													</Label>
-													<div className="flex-1">
-														<Input
-															id={nameId}
-															{...register("name")}
-															placeholder={namePlaceholder}
-															readOnly={isEditMode}
-															aria-readonly={isEditMode}
-															title={isEditMode ? nameReadOnlyTitle : undefined}
-															className={
-																isEditMode
-																	? "cursor-not-allowed bg-muted text-muted-foreground"
-																	: undefined
-															}
-														/>
-														{errors.name && (
-															<p className="text-xs text-red-500">
-																{t(errors.name.message ?? "", {
-																	defaultValue: errors.name.message,
-																})}
-															</p>
-														)}
-													</div>
-												</div>
-												<div className="flex items-center gap-4">
-													<Label htmlFor={kindId} className="w-20 text-right">
-														{typeLabel}
-													</Label>
-													<div className="flex-1">
-														<Segment
-															options={serverTypeOptions}
-															value={kind}
-															onValueChange={(value) => {
-																const newKind =
-																	value as ManualServerFormValues["kind"];
-																if (newKind === kind) {
-																	return;
-																}
-																saveTypeSnapshot(kind);
-																setValue("kind", newKind, {
-																	shouldDirty: true,
-																	shouldTouch: true,
-																});
-																restoreTypeSnapshot(newKind);
-															}}
-															showDots={true}
-														/>
-														{errors.kind && (
-															<p className="text-xs text-red-500">
-																{t(errors.kind.message ?? "", {
-																	defaultValue: errors.kind.message,
-																})}
-															</p>
-														)}
-													</div>
-												</div>
-											</div>
-
-											<CommandField
-												kind={kind}
-												control={control}
-												errors={errors}
-												commandId={commandId}
-												urlId={urlId}
-												commandInputRef={commandInputRef}
-												urlInputRef={urlInputRef}
-												viewMode={viewMode}
-												onSecretSelect={handleSecretSelect}
-											/>
-
-									{serverId && onInitiateOAuth ? (
-										<ServerAuthSection
-											serverId={serverId}
-											isStdio={isStdio}
-											viewMode={viewMode}
-											isNewServer={false}
-											onInitiateOAuth={onInitiateOAuth}
-										/>
-									) : null}
-
-											<StdioAdvanced
-												viewMode={viewMode}
-												isStdio={isStdio}
-												argFields={argFields}
-												envFields={envFields}
-												removeArg={removeArg}
-												removeEnv={removeEnv}
-												appendArg={appendArg}
-												appendEnv={appendEnv}
-												register={register}
-												deleteConfirmStates={deleteConfirmStates}
-												onDeleteClick={handleDeleteClick}
-												onGhostClick={handleGhostClick}
-												onSecretSelect={handleSecretSelect}
-											/>
-
-											<UrlParams
-												viewMode={viewMode}
-												isStdio={isStdio}
-												urlParamFields={urlParamFields}
-												removeUrlParam={removeUrlParam}
-												appendUrlParam={appendUrlParam}
-												register={register}
-												deleteConfirmStates={deleteConfirmStates}
-												onDeleteClick={handleDeleteClick}
-												onGhostClick={handleGhostClick}
-												onSecretSelect={handleSecretSelect}
-											/>
-
-											<HttpHeaders
-												viewMode={viewMode}
-												isStdio={isStdio}
-												headerFields={headerFields}
-												removeHeader={removeHeader}
-												appendHeader={appendHeader}
-												register={register}
-												deleteConfirmStates={deleteConfirmStates}
-												onDeleteClick={handleDeleteClick}
-												onGhostClick={handleGhostClick}
-												onSecretSelect={handleSecretSelect}
-											/>
-
-										</>
-									) : (
-										<div className="flex flex-col h-full">
-											<div className="flex items-start gap-4 flex-1">
-												<Label
-													htmlFor={manualJsonId}
-													className="w-20 text-right pt-3 flex-shrink-0"
-												>
-													{jsonLabel}
-												</Label>
-												<div className="flex-1 flex flex-col">
-													<div className="flex-1 min-h-[400px] border border-input rounded-md flex flex-col">
-														<Textarea
-															id={manualJsonId}
-															value={jsonText}
-															onChange={
-																jsonEditingEnabled
-																	? (event) => setJsonText(event.target.value)
-																	: undefined
-															}
-															readOnly={!jsonEditingEnabled}
-															aria-readonly={!jsonEditingEnabled}
-															className="font-mono text-sm flex-1 border-0 focus:ring-0 focus:outline-none"
-															style={{
-																background: "transparent",
-																caretColor: jsonEditingEnabled
-																	? "currentColor"
-																	: "transparent",
-																minHeight: "400px",
-																userSelect: "text",
-																WebkitUserSelect: "text",
-																MozUserSelect: "text",
-																msUserSelect: "text",
-															}}
-														/>
-													</div>
-													{jsonError ? (
-														<p className="text-xs text-red-500 mt-2">
-															{jsonError}
-														</p>
-													) : null}
-												</div>
-											</div>
+											{!isDropZoneCollapsed && !ingestError && (
+												<p className="text-xs text-slate-400 mt-2">
+													{pasteTipPrefix}{" "}
+													<kbd className="rounded bg-slate-200 px-1 text-[10px]">
+														{pasteShortcut}
+													</kbd>{" "}
+													{pasteTipSuffix}
+												</p>
+											)}
 										</div>
-									)}
-								</TabsContent>
+									</div>
+								</button>
+							) : null}
 
-								
-								{extraTab && (
+							{/* Main Content Area */}
+							<div
+								className={`flex-1 overflow-y-auto px-4 pb-4 ${ingestEnabled ? "pt-0" : "pt-4"
+									}`}
+							>
+								<Tabs
+									value={activeTab}
+									onValueChange={setActiveTab}
+									className="space-y-4"
+								>
+									<TabsList className={`grid w-full ${extraTab ? "grid-cols-3" : "grid-cols-2"}`}>
+										<TabsTrigger value="core">{tabsCoreLabel}</TabsTrigger>
+										{extraTab && (
+											<TabsTrigger value={extraTab.value}>{extraTab.label}</TabsTrigger>
+										)}
+										<TabsTrigger value="meta">
+											{tabsMetaLabel} <sup>({tabsMetaWip})</sup>
+										</TabsTrigger>
+									</TabsList>
+
 									<TabsContent
-										value={extraTab.value}
+										value="core"
+										className={`space-y-4 ${viewMode === "json" ? "flex flex-col h-full" : ""
+											}`}
+										onClick={handleFormInteraction}
+									>
+										<div className="flex items-center justify-end pt-2">
+											<FormViewModeToggle
+												mode={viewMode}
+												onChange={handleModeChange}
+											/>
+										</div>
+
+										{viewMode === "form" ? (
+											<>
+												<div className="space-y-4">
+													<div className="flex items-center gap-4">
+														<Label htmlFor={nameId} className="w-20 text-right">
+															{nameLabel}
+														</Label>
+														<div className="flex-1">
+															<Input
+																id={nameId}
+																{...register("name")}
+																placeholder={namePlaceholder}
+																readOnly={isEditMode}
+																aria-readonly={isEditMode}
+																title={isEditMode ? nameReadOnlyTitle : undefined}
+																className={
+																	isEditMode
+																		? "cursor-not-allowed bg-muted text-muted-foreground"
+																		: undefined
+																}
+															/>
+															{errors.name && (
+																<p className="text-xs text-red-500">
+																	{t(errors.name.message ?? "", {
+																		defaultValue: errors.name.message,
+																	})}
+																</p>
+															)}
+														</div>
+													</div>
+													<div className="flex items-center gap-4">
+														<Label htmlFor={kindId} className="w-20 text-right">
+															{typeLabel}
+														</Label>
+														<div className="flex-1">
+															<Segment
+																options={serverTypeOptions}
+																value={kind}
+																onValueChange={(value) => {
+																	const newKind =
+																		value as ManualServerFormValues["kind"];
+																	if (newKind === kind) {
+																		return;
+																	}
+																	saveTypeSnapshot(kind);
+																	setValue("kind", newKind, {
+																		shouldDirty: true,
+																		shouldTouch: true,
+																	});
+																	restoreTypeSnapshot(newKind);
+																}}
+																showDots={true}
+															/>
+															{errors.kind && (
+																<p className="text-xs text-red-500">
+																	{t(errors.kind.message ?? "", {
+																		defaultValue: errors.kind.message,
+																	})}
+																</p>
+															)}
+														</div>
+													</div>
+												</div>
+
+												<CommandField
+													kind={kind}
+													control={control}
+													errors={errors}
+													commandId={commandId}
+													urlId={urlId}
+													viewMode={viewMode}
+													onCreateSecret={onCreateSecret}
+													secretOriginBase={secretOriginBase}
+												/>
+
+												{serverId && onInitiateOAuth ? (
+													<ServerAuthSection
+														serverId={serverId}
+														isStdio={isStdio}
+														viewMode={viewMode}
+														isNewServer={false}
+														onInitiateOAuth={onInitiateOAuth}
+													/>
+												) : null}
+
+												<StdioAdvanced
+													viewMode={viewMode}
+													isStdio={isStdio}
+													argFields={argFields}
+													envFields={envFields}
+													removeArg={removeArg}
+													removeEnv={removeEnv}
+													appendArg={appendArg}
+													appendEnv={appendEnv}
+													register={register}
+													control={control}
+													deleteConfirmStates={deleteConfirmStates}
+													onDeleteClick={handleDeleteClick}
+													onGhostClick={handleGhostClick}
+													onCreateSecret={onCreateSecret}
+													secretOriginBase={secretOriginBase}
+													getEnvRowKeyAt={(index) =>
+														watchedEnv?.[index]?.key?.trim() || undefined
+													}
+												/>
+
+												<UrlParams
+													viewMode={viewMode}
+													isStdio={isStdio}
+													urlParamFields={urlParamFields}
+													removeUrlParam={removeUrlParam}
+													appendUrlParam={appendUrlParam}
+													register={register}
+													control={control}
+													deleteConfirmStates={deleteConfirmStates}
+													onDeleteClick={handleDeleteClick}
+													onGhostClick={handleGhostClick}
+													onCreateSecret={onCreateSecret}
+													secretOriginBase={secretOriginBase}
+													getRowKeyAt={(index) =>
+														watchedUrlParams?.[index]?.key?.trim() || undefined
+													}
+												/>
+
+												<HttpHeaders
+													viewMode={viewMode}
+													isStdio={isStdio}
+													headerFields={headerFields}
+													removeHeader={removeHeader}
+													appendHeader={appendHeader}
+													register={register}
+													control={control}
+													deleteConfirmStates={deleteConfirmStates}
+													onDeleteClick={handleDeleteClick}
+													onGhostClick={handleGhostClick}
+													onCreateSecret={onCreateSecret}
+													secretOriginBase={secretOriginBase}
+													getRowKeyAt={(index) =>
+														watchedHeaders?.[index]?.key?.trim() || undefined
+													}
+												/>
+
+											</>
+										) : (
+											<div className="flex flex-col h-full">
+												<div className="flex items-start gap-4 flex-1">
+													<Label
+														htmlFor={manualJsonId}
+														className="w-20 text-right pt-3 flex-shrink-0"
+													>
+														{jsonLabel}
+													</Label>
+													<div className="flex-1 flex flex-col">
+														<div className="flex-1 min-h-[400px] border border-input rounded-md flex flex-col">
+															<Textarea
+																id={manualJsonId}
+																value={jsonText}
+																onChange={
+																	jsonEditingEnabled
+																		? (event) => setJsonText(event.target.value)
+																		: undefined
+																}
+																readOnly={!jsonEditingEnabled}
+																aria-readonly={!jsonEditingEnabled}
+																className="font-mono text-sm flex-1 border-0 focus:ring-0 focus:outline-none"
+																style={{
+																	background: "transparent",
+																	caretColor: jsonEditingEnabled
+																		? "currentColor"
+																		: "transparent",
+																	minHeight: "400px",
+																	userSelect: "text",
+																	WebkitUserSelect: "text",
+																	MozUserSelect: "text",
+																	msUserSelect: "text",
+																}}
+															/>
+														</div>
+														{jsonError ? (
+															<p className="text-xs text-red-500 mt-2">
+																{jsonError}
+															</p>
+														) : null}
+													</div>
+												</div>
+											</div>
+										)}
+									</TabsContent>
+
+
+									{extraTab && (
+										<TabsContent
+											value={extraTab.value}
+											className="space-y-4 pt-4"
+											onClick={handleFormInteraction}
+										>
+											{extraTab.content}
+										</TabsContent>
+									)}
+									<TabsContent
+										value="meta"
+
 										className="space-y-4 pt-4"
 										onClick={handleFormInteraction}
 									>
-										{extraTab.content}
+										<MetaFields
+											formStateRef={formStateRef}
+											register={register}
+											errors={errors}
+											metaDescriptionId={metaDescriptionId}
+											metaVersionId={metaVersionId}
+											metaWebsiteUrlId={metaWebsiteUrlId}
+											metaRepositoryUrlId={metaRepositoryUrlId}
+											metaRepositorySourceId={metaRepositorySourceId}
+											metaRepositorySubfolderId={metaRepositorySubfolderId}
+											metaRepositoryId={metaRepositoryId}
+										/>
 									</TabsContent>
-								)}
-								<TabsContent
-									value="meta"
-
-									className="space-y-4 pt-4"
-									onClick={handleFormInteraction}
-								>
-									<MetaFields
-										formStateRef={formStateRef}
-										register={register}
-										errors={errors}
-										metaDescriptionId={metaDescriptionId}
-										metaVersionId={metaVersionId}
-										metaWebsiteUrlId={metaWebsiteUrlId}
-										metaRepositoryUrlId={metaRepositoryUrlId}
-										metaRepositorySourceId={metaRepositorySourceId}
-										metaRepositorySubfolderId={metaRepositorySubfolderId}
-										metaRepositoryId={metaRepositoryId}
-									/>
-								</TabsContent>
-							</Tabs>
-						</div>
-
-						<DrawerFooter className="mt-auto border-t px-6 py-4">
-							<div className="flex w-full items-center justify-between gap-3">
-								<Button
-									type="button"
-									variant="outline"
-									onClick={onClose}
-									disabled={isSubmitting}
-								>
-									{cancelLabel}
-								</Button>
-								<div className="flex items-center gap-3">
-									{onRefreshFromRegistry && activeTab === "meta" && (
-										<Button
-											type="button"
-											variant="outline"
-											onClick={onRefreshFromRegistry}
-											disabled={isSubmitting || isRefreshingRegistry}
-										>
-											{isRefreshingRegistry ? (
-												<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-											) : (
-												<RefreshCw className="mr-2 h-4 w-4" />
-											)}
-											{t("manual.refreshFromRegistry", { defaultValue: "Refresh from Registry" })}
-										</Button>
-									)}
-									{isMarketMode ? (
-										<Button
-											type="button"
-											onClick={onPreview}
-											disabled={isSubmitting}
-										>
-											{isSubmitting ? (
-												<>
-													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-													{previewingLabel}
-												</>
-											) : (
-												previewLabel
-											)}
-										</Button>
-									) : (
-										<Button type="submit" disabled={isSubmitting}>
-											{isSubmitting ? (
-												<>
-													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-													{pendingButtonLabel}
-												</>
-											) : (
-												submitButtonLabel
-											)}
-										</Button>
-									)}
-								</div>
+								</Tabs>
 							</div>
-						</DrawerFooter>
-					</form>
-				</DrawerContent>
-			</Drawer>
+
+							<DrawerFooter className="mt-auto border-t px-6 py-4">
+								<div className="flex w-full items-center justify-between gap-3">
+									<Button
+										type="button"
+										variant="outline"
+										onClick={onClose}
+										disabled={isSubmitting}
+									>
+										{cancelLabel}
+									</Button>
+									<div className="flex items-center gap-3">
+										{onRefreshFromRegistry && activeTab === "meta" && (
+											<Button
+												type="button"
+												variant="outline"
+												onClick={onRefreshFromRegistry}
+												disabled={isSubmitting || isRefreshingRegistry}
+											>
+												{isRefreshingRegistry ? (
+													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+												) : (
+													<RefreshCw className="mr-2 h-4 w-4" />
+												)}
+												{t("manual.refreshFromRegistry", { defaultValue: "Refresh from Registry" })}
+											</Button>
+										)}
+										{isMarketMode ? (
+											<Button
+												type="button"
+												onClick={onPreview}
+												disabled={isSubmitting}
+											>
+												{isSubmitting ? (
+													<>
+														<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+														{previewingLabel}
+													</>
+												) : (
+													previewLabel
+												)}
+											</Button>
+										) : (
+											<Button type="submit" disabled={isSubmitting}>
+												{isSubmitting ? (
+													<>
+														<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+														{pendingButtonLabel}
+													</>
+												) : (
+													submitButtonLabel
+												)}
+											</Button>
+										)}
+									</div>
+								</div>
+							</DrawerFooter>
+						</form>
+					</DrawerContent>
+				</Drawer>
+				<InlineSecretCreate controller={controller} nested />
+			</>
 		);
 	},
 );

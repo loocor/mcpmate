@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
@@ -82,8 +82,8 @@ fn build_test_state() -> Arc<AppState> {
         inspector_calls,
         inspector_sessions,
         oauth_manager: None,
-        secret_store: None,
-        secret_store_readiness: mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
+        secret_store: RwLock::new(None),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
     })
 }
 
@@ -129,8 +129,8 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
         oauth_manager: None,
-        secret_store: None,
-        secret_store_readiness: mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
+        secret_store: RwLock::new(None),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
     })
 }
 

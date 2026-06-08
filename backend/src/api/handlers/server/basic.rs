@@ -25,11 +25,13 @@ macro_rules! get_db_pool {
     };
 }
 
-/// Whether API should include default HTTP headers in responses (redacted)
+/// Whether API should include default HTTP headers in responses (redacted).
+/// Defaults to true — redaction-safe round-trip is ensured by frontend
+/// resolveRecordUpdatePayload + backend merge_headers_for_update.
 fn should_expose_headers() -> bool {
     matches!(
         std::env::var("MCPMATE_API_EXPOSE_HEADERS")
-            .unwrap_or_else(|_| "false".to_string())
+            .unwrap_or_else(|_| "true".to_string())
             .to_ascii_lowercase()
             .as_str(),
         "1" | "true" | "on" | "yes"
@@ -879,7 +881,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
-    use tokio::{sync::Mutex, time::Instant};
+    use tokio::{sync::{Mutex, RwLock}, time::Instant};
 
     struct TestContext {
         _temp_dir: TempDir,
@@ -1274,8 +1276,8 @@ mod tests {
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
-            secret_store: None,
-            secret_store_readiness: crate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
+            secret_store: RwLock::new(None),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
         });
 
         TestContext {

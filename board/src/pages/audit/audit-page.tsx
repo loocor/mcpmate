@@ -7,6 +7,7 @@ import { Pagination } from "../../components/pagination";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
+import { toolbarSearchInputClassName } from "../../components/ui/page-toolbar";
 import {
 	Select,
 	SelectContent,
@@ -18,7 +19,7 @@ import { auditApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
 import type { AuditCategory, AuditEventRecord, AuditStatus } from "../../lib/types";
-import { formatLocalDateTime } from "../../lib/utils";
+import { cn, formatLocalDateTime } from "../../lib/utils";
 import { AuditEventDetailDrawer } from "./components/audit-event-detail-drawer";
 import { AuditEventDetails } from "./components/audit-event-details";
 
@@ -469,8 +470,8 @@ export function AuditPage() {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-			<div className="sticky top-0 z-10 -mx-1 rounded-b-xl px-1 backdrop-blur">
-				<div className="flex items-center gap-2 min-w-0">
+			<div className="sticky top-0 z-10 -mx-1 overflow-visible rounded-b-xl px-1 py-1 backdrop-blur">
+				<div className="flex items-center gap-2 min-w-0 overflow-visible">
 					<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
 						{t("audit:description", {
 							defaultValue:
@@ -478,14 +479,14 @@ export function AuditPage() {
 						})}
 					</p>
 					<div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-						<div className="relative min-w-0 w-full sm:w-56 sm:shrink-0">
+						<div className="relative min-w-0 w-full overflow-visible sm:w-56 sm:shrink-0">
 							<Input
 								value={search}
 								onChange={(event) => setSearch(event.target.value)}
 								placeholder={t("audit:filters.search", {
 									defaultValue: "Search target, route, server, profile, or client",
 								})}
-								className="h-9 w-full pr-10"
+								className={cn(toolbarSearchInputClassName, "pr-10")}
 							/>
 							{search.trim().length > 0 ? (
 								<button

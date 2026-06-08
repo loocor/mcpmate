@@ -18,7 +18,10 @@ pub mod tools;
 pub use args::{get_server_args, upsert_server_args};
 pub use crud::{delete_server, get_all_servers, get_server, get_server_by_id, upsert_server, upsert_server_tx};
 pub use env::{get_server_env, upsert_server_env};
-pub use headers::{get_server_headers, replace_server_headers, upsert_server_headers};
+pub use headers::{
+    get_server_headers, merge_env_for_update, merge_headers_for_update, replace_server_headers,
+    upsert_server_headers,
+};
 pub use meta::{get_server_meta, upsert_server_meta};
 pub use oauth::{
     delete_server_oauth_config, delete_server_oauth_token, get_effective_server_headers, get_server_oauth_config,

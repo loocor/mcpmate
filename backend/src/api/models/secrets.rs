@@ -107,6 +107,7 @@ pub struct SecretUsageData {
     pub alias: String,
     pub server_id: String,
     pub location: SecretUsageLocationData,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -157,3 +158,100 @@ api_resp!(
     SecretStoreStatusData,
     "Secret store readiness response"
 );
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderModePayload {
+    OperatingSystem,
+    Passphrase,
+    LocalFile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProviderSwitchReq {
+    pub mode: ProviderModePayload,
+    /// New passphrase when switching to passphrase mode.
+    #[serde(default)]
+    pub passphrase: Option<String>,
+    /// Current passphrase when switching away from passphrase mode.
+    #[serde(default)]
+    pub current_passphrase: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProviderSwitchData {
+    pub new_status: SecretStoreStatusData,
+}
+
+api_resp!(
+    ProviderSwitchResp,
+    ProviderSwitchData,
+    "Provider switch response"
+);
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SecretStoreUnlockReq {
+    pub passphrase: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PassphraseRotateReq {
+    pub current_passphrase: String,
+    pub new_passphrase: String,
+    pub confirm: String,
+}
+
+// ── Password Protection ──────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PasswordStatusData {
+    pub enabled: bool,
+    pub scope: Vec<String>,
+    pub has_password: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PasswordSetReq {
+    pub password: String,
+    pub confirm: String,
+    #[serde(default)]
+    pub scope: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PasswordSetData {
+    pub enabled: bool,
+    pub scope: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PasswordVerifyReq {
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PasswordVerifyData {
+    pub valid: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PasswordChangeReq {
+    pub old_password: String,
+    pub new_password: String,
+    pub confirm: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PasswordClearReq {
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PasswordScopeUpdateReq {
+    pub scope: Vec<String>,
+    pub current_password: String,
+}
+
+api_resp!(PasswordStatusResp, PasswordStatusData, "Password status response");
+api_resp!(PasswordSetResp, PasswordSetData, "Password set response");
+api_resp!(PasswordVerifyResp, PasswordVerifyData, "Password verify response");

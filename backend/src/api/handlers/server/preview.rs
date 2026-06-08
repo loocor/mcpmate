@@ -1,10 +1,15 @@
 use std::collections::HashMap;
 
+use mcpmate_secrets::SecretResolver;
+
 use super::shared::*;
 use crate::api::models::server::{
     ServerCapabilityMeta, ServerPreviewData, ServerPreviewItemData, ServerPreviewItemReq, ServerPreviewReq,
     ServerPreviewResp, ServerPromptsData, ServerResourceTemplatesData, ServerResourcesData, ServerToolsData,
 };
+use crate::core::models::MCPServerConfig;
+use crate::core::secrets::resolve_runtime_server_config_with_optional_resolver;
+use crate::core::secrets::store::LocalSecretStore;
 
 /// Preview capabilities for arbitrary server configs.
 ///
@@ -16,11 +21,21 @@ pub async fn preview_servers(
     let timeout = req.timeout_ms.map(std::time::Duration::from_millis);
     let include_details = req.include_details.unwrap_or(true);
     let db_pool = state.database.as_ref().map(|db| db.pool.clone());
+    let secret_store = state.secret_store.read().await.clone();
 
     // Process sequentially to avoid uncontrolled concurrency; can add a small semaphore later
     let mut items_out: Vec<ServerPreviewItemData> = Vec::with_capacity(req.servers.len());
     for item in req.servers {
-        items_out.push(preview_one(item, timeout, include_details, db_pool.as_ref()).await);
+        items_out.push(
+            preview_one(
+                item,
+                timeout,
+                include_details,
+                db_pool.as_ref(),
+                secret_store.as_deref(),
+            )
+            .await,
+        );
     }
 
     Ok(Json(ServerPreviewResp::success(ServerPreviewData { items: items_out })))
@@ -31,6 +46,7 @@ async fn preview_one(
     timeout: Option<std::time::Duration>,
     include_details: bool,
     db_pool: Option<&sqlx::SqlitePool>,
+    secret_store: Option<&LocalSecretStore>,
 ) -> ServerPreviewItemData {
     // Map kind -> ServerType
     let kind = match crate::common::server::ServerType::from_client_format(item.kind.as_str()) {
@@ -40,16 +56,30 @@ async fn preview_one(
         }
     };
 
-    // Build optional HTTP client with default headers if provided
     let effective_headers =
         match resolve_preview_headers(item.headers.clone(), item.server_id.as_deref(), db_pool).await {
             Ok(headers) => headers,
             Err(e) => return empty_with_error(item.name, e.to_string()),
         };
 
+    let raw_cfg = MCPServerConfig {
+        kind,
+        command: item.command.clone(),
+        url: item.url.clone(),
+        args: item.args.clone(),
+        env: item.env.clone(),
+        headers: effective_headers,
+    };
+
+    let secret_resolver = secret_store.map(|store| store as &dyn SecretResolver);
+    let cfg = match resolve_runtime_server_config_with_optional_resolver(&raw_cfg, secret_resolver) {
+        Ok(resolved) => resolved,
+        Err(err) => return empty_with_error(item.name, err.to_string()),
+    };
+
     let mut client: Option<reqwest::Client> = None;
     if kind.is_http_transport() {
-        if let Some(headers) = effective_headers.as_ref() {
+        if let Some(headers) = cfg.headers.as_ref() {
             let mut header_map = reqwest::header::HeaderMap::new();
             for (k, v) in headers.iter() {
                 if let Ok(name) = reqwest::header::HeaderName::from_bytes(k.as_bytes()) {
@@ -73,15 +103,6 @@ async fn preview_one(
         let conn = std::cmp::min(std::time::Duration::from_secs(10), t);
         (conn, t, t)
     });
-
-    let cfg = crate::core::models::MCPServerConfig {
-        kind,
-        command: item.command.clone(),
-        url: item.url.clone(),
-        args: item.args.clone(),
-        env: item.env.clone(),
-        headers: effective_headers,
-    };
 
     let snap = crate::config::server::capabilities::discover_from_config_preview(
         &item.name,
@@ -369,6 +390,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_runtime_server_config_replaces_http_url_and_header_placeholders() {
+        use mcpmate_secrets::testing::InMemorySecretResolver;
+
+        let resolver = InMemorySecretResolver::from_pairs([
+            ("mcp_id", "67db41067bb48c3e0fe32177"),
+            ("http_token", "runtime-bearer-token"),
+        ]);
+        let raw = MCPServerConfig {
+            kind: crate::common::server::ServerType::StreamableHttp,
+            command: None,
+            args: None,
+            url: Some("https://mcpstore.co/mcp/[[secret:mcp_id]]".to_string()),
+            env: None,
+            headers: Some(HashMap::from([(
+                "Authorization".to_string(),
+                "Bearer [[secret:http_token]]".to_string(),
+            )])),
+        };
+
+        let resolved = crate::core::secrets::resolve_runtime_server_config_with_optional_resolver(&raw, Some(&resolver)).expect("resolve preview config");
+
+        assert_eq!(
+            resolved.url.as_deref(),
+            Some("https://mcpstore.co/mcp/67db41067bb48c3e0fe32177")
+        );
+        let headers = resolved.headers.expect("resolved headers");
+        assert_eq!(
+            headers.get("Authorization").map(String::as_str),
+            Some("Bearer runtime-bearer-token")
+        );
+    }
+
     #[tokio::test]
     async fn preview_reports_oauth_header_resolution_errors() {
         let pool = setup_pool().await;
@@ -392,7 +446,14 @@ mod tests {
             headers: None,
         };
 
-        let preview = preview_one(item, Some(std::time::Duration::from_millis(100)), false, Some(&pool)).await;
+        let preview = preview_one(
+            item,
+            Some(std::time::Duration::from_millis(100)),
+            false,
+            Some(&pool),
+            None,
+        )
+        .await;
 
         assert!(!preview.ok);
         assert!(

@@ -14,13 +14,14 @@ use crate::{
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
     config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
+    config::server::{get_server_headers, merge_env_for_update, merge_headers_for_update},
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
         profile,
         server::{self},
     },
-    core::{models::MCPServerConfig, secrets::sync_server_secret_usages},
+    core::secrets::{mcp_config_from_server, sync_server_secret_usages},
 };
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
@@ -161,31 +162,13 @@ async fn sync_secret_usages_for_server(
     server_id: &str,
     server: &Server,
 ) -> Result<(), ApiError> {
-    let Some(secret_store) = state.secret_store.as_ref() else {
+    let Some(secret_store) = state.secret_store.read().await.clone() else {
         return Ok(());
     };
 
-    let args = crate::config::server::get_server_args(&db.pool, server_id)
-        .await
-        .map_err(map_anyhow_error)?
-        .into_iter()
-        .map(|arg| arg.arg_value)
-        .collect::<Vec<_>>();
-    let env = crate::config::server::get_server_env(&db.pool, server_id)
+    let config = mcp_config_from_server(&db.pool, server_id, server)
         .await
         .map_err(map_anyhow_error)?;
-    let headers = crate::config::server::get_server_headers(&db.pool, server_id)
-        .await
-        .map_err(map_anyhow_error)?;
-
-    let config = MCPServerConfig {
-        kind: server.server_type,
-        command: server.command.clone(),
-        args: if args.is_empty() { None } else { Some(args) },
-        url: server.url.clone(),
-        env: if env.is_empty() { None } else { Some(env) },
-        headers: if headers.is_empty() { None } else { Some(headers) },
-    };
 
     sync_server_secret_usages(secret_store.as_ref(), server_id, &config)
         .await
@@ -541,7 +524,11 @@ pub async fn update_server(
 
     // Replace default headers if provided
     if let Some(headers) = &payload.headers {
-        replace_server_headers(&db.pool, &server_id, headers)
+        let existing_headers = get_server_headers(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+        let merged_headers = merge_headers_for_update(headers, &existing_headers);
+        replace_server_headers(&db.pool, &server_id, &merged_headers)
             .await
             .map_err(map_anyhow_error)?;
     }
@@ -555,7 +542,11 @@ pub async fn update_server(
 
     // Update server environment variables if provided
     if let Some(env) = &payload.env {
-        crate::config::server::upsert_server_env(&db.pool, &server_id, env)
+        let existing_env = crate::config::server::get_server_env(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+        let merged_env = merge_env_for_update(env, &existing_env);
+        crate::config::server::upsert_server_env(&db.pool, &server_id, &merged_env)
             .await
             .map_err(map_anyhow_error)?;
     }
@@ -829,9 +820,14 @@ async fn delete_server_records(
 ) -> Result<(), ApiError> {
     let mut tx = db.pool.begin().await.map_err(map_database_error)?;
 
-    // Option 1: Use CASCADE DELETE (recommended)
-    // Since all tables have proper ON DELETE CASCADE constraints,
-    // we can simply delete from server_config and let the database handle the rest
+    // Purge secret usages for this server first (no CASCADE FK to server_config).
+    sqlx::query("DELETE FROM secure_store_usages WHERE server_id = ?")
+        .bind(server_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_database_error)?;
+
+    // Use CASCADE DELETE for server_config and its FK-linked tables.
     sqlx::query("DELETE FROM server_config WHERE id = ?")
         .bind(server_id)
         .execute(&mut *tx)

@@ -159,12 +159,12 @@ export function Sidebar() {
           {sidebarOpen && t("nav.audit", { defaultValue: "Logs" })}
         </SidebarLink>
 
-        <SidebarLink to="/runtime" icon={<Activity size={20} />}>
-          {sidebarOpen && t("nav.runtime", { defaultValue: "Runtime" })}
+        <SidebarLink to="/secrets" icon={<KeyRound size={20} />}>
+          {sidebarOpen && t("nav.secrets", { defaultValue: "Secure Store" })}
         </SidebarLink>
 
-        <SidebarLink to="/secrets" icon={<KeyRound size={20} />}>
-          {sidebarOpen && t("nav.secrets", { defaultValue: "Secrets" })}
+        <SidebarLink to="/runtime" icon={<Activity size={20} />}>
+          {sidebarOpen && t("nav.runtime", { defaultValue: "Runtime" })}
         </SidebarLink>
 
         {showApiDocsMenu && (

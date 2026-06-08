@@ -12,6 +12,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Layout } from "./components/layout/layout";
 import { LanguageSynchronizer } from "./components/language-synchronizer.ts";
+import { MasterPasswordGate } from "./components/master-password-gate";
 import { ThemeSynchronizer } from "./components/theme-synchronizer";
 import { ApiDocsPage } from "./pages/api-docs/api-docs-page";
 import { AuditPage } from "./pages/audit/audit-page";
@@ -84,7 +85,8 @@ function App() {
 			<LanguageSynchronizer />
 			<ThemeSynchronizer />
 			<BackendReadinessGate>
-				<BrowserRouter
+				<MasterPasswordGate>
+					<BrowserRouter
 					future={{
 						v7_startTransition: true,
 						v7_relativeSplatPath: true,
@@ -156,6 +158,7 @@ function App() {
 						</Routes>
 					</DesktopFullBoardPathBridge>
 				</BrowserRouter>
+				</MasterPasswordGate>
 			</BackendReadinessGate>
 		</QueryClientProvider>
 	);

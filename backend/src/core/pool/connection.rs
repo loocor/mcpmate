@@ -679,6 +679,13 @@ impl UpstreamConnectionPool {
         // Convert database Server to MCPServerConfig (reusing existing conversion logic)
         let server_config = self.convert_server_to_config(&server, &db.pool).await?;
 
+        // Resolve secret placeholders before connecting.
+        let server_config = crate::core::secrets::resolve_runtime_server_config_with_optional_resolver(
+            &server_config,
+            self.secret_resolver.as_deref(),
+        )
+        .map_err(|err| anyhow::anyhow!("Failed to resolve secrets for validation of '{}': {}", server_name, err))?;
+
         // Create temporary connection instance with validation prefix (unified helper)
         let instance_id = crate::core::pool::helpers::format_validation_instance_id(server_name, session_id);
         let mut connection = types::UpstreamConnection::new(server_name.to_string());

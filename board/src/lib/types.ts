@@ -633,10 +633,13 @@ export interface SecretUsageLocation {
   [key: string]: unknown;
 }
 
+export type SecretUsageStatus = "active" | "stale";
+
 export interface SecretUsage {
   alias: string;
   server_id: string;
   location: SecretUsageLocation | string;
+  status?: SecretUsageStatus;
 }
 
 export interface SecretListResp {
@@ -660,6 +663,60 @@ export interface SecretUsageListResp {
 export interface SecretDeleteResp {
   success: boolean;
   data?: { alias: string; deleted: boolean } | null;
+  error?: unknown;
+}
+
+export interface SecretStoreProviderData {
+  provider_id: string;
+  provider_kind: string;
+  provider_mode: string;
+  security_level: string;
+}
+
+export interface SecretStoreIssueData {
+  reason_code: string;
+  message: string;
+}
+
+export interface SecretStoreStatusData {
+  status: string;
+  provider?: SecretStoreProviderData | null;
+  issue?: SecretStoreIssueData | null;
+}
+
+export interface SecretStoreStatusResp {
+  success: boolean;
+  data?: SecretStoreStatusData | null;
+  error?: unknown;
+}
+
+export interface ProviderSwitchResp {
+  success: boolean;
+  data?: { new_status: SecretStoreStatusData } | null;
+  error?: unknown;
+}
+
+export interface PasswordStatusData {
+  enabled: boolean;
+  scope: string[];
+  has_password: boolean;
+}
+
+export interface PasswordStatusResp {
+  success: boolean;
+  data?: PasswordStatusData | null;
+  error?: unknown;
+}
+
+export interface PasswordSetResp {
+  success: boolean;
+  data?: { enabled: boolean; scope: string[] } | null;
+  error?: unknown;
+}
+
+export interface PasswordVerifyResp {
+  success: boolean;
+  data?: { valid: boolean } | null;
   error?: unknown;
 }
 

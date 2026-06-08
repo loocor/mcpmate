@@ -78,6 +78,12 @@ import type {
 	SecretMetadata,
 	SecretMetadataResp,
 	SecretOrigin,
+	SecretStoreStatusData,
+	SecretStoreStatusResp,
+	ProviderSwitchResp,
+	PasswordStatusResp,
+	PasswordSetResp,
+	PasswordVerifyResp,
 	SecretUsage,
 	SecretUsageListResp,
 	OAuthCallbackRequest,
@@ -833,6 +839,11 @@ async function executeBatchOperation(
 }
 
 export const secretsApi = {
+	status: async (): Promise<SecretStoreStatusData> => {
+		const resp = await fetchApi<SecretStoreStatusResp>("/api/secrets/status");
+		return extractApiData(resp as ApiWrapper<SecretStoreStatusData>);
+	},
+
 	list: async (): Promise<SecretMetadata[]> => {
 		const resp = await fetchApi<SecretListResp>("/api/secrets/list");
 		return resp.data?.secrets ?? [];
@@ -884,6 +895,120 @@ export const secretsApi = {
 			body: JSON.stringify({ alias, force }),
 		});
 		return extractApiData(resp as ApiWrapper<{ alias: string; deleted: boolean }>);
+	},
+
+	unlock: async (passphrase: string): Promise<SecretStoreStatusData> => {
+		const resp = await fetchApi<SecretStoreStatusResp>("/api/secrets/unlock", {
+			method: "POST",
+			body: JSON.stringify({ passphrase }),
+		});
+		return extractApiData(resp as ApiWrapper<SecretStoreStatusData>);
+	},
+
+	rotatePassphrase: async (
+		currentPassphrase: string,
+		newPassphrase: string,
+		confirm: string,
+	): Promise<SecretStoreStatusData> => {
+		const resp = await fetchApi<SecretStoreStatusResp>("/api/secrets/passphrase/rotate", {
+			method: "POST",
+			body: JSON.stringify({
+				current_passphrase: currentPassphrase,
+				new_passphrase: newPassphrase,
+				confirm,
+			}),
+		});
+		return extractApiData(resp as ApiWrapper<SecretStoreStatusData>);
+	},
+
+	switchProvider: async (
+		mode: "operating_system" | "passphrase" | "local_file",
+		options?: { passphrase?: string; currentPassphrase?: string },
+	): Promise<SecretStoreStatusData> => {
+		const body: {
+			mode: typeof mode;
+			passphrase?: string;
+			current_passphrase?: string;
+		} = { mode };
+		if (options?.passphrase) {
+			body.passphrase = options.passphrase;
+		}
+		if (options?.currentPassphrase) {
+			body.current_passphrase = options.currentPassphrase;
+		}
+		const resp = await fetchApi<ProviderSwitchResp>("/api/secrets/provider/switch", {
+			method: "POST",
+			body: JSON.stringify(body),
+		});
+		const data = extractApiData(resp as ApiWrapper<{ new_status: SecretStoreStatusData }>);
+		return data.new_status;
+	},
+
+	// Password protection
+	passwordStatus: async (): Promise<{
+		enabled: boolean;
+		scope: string[];
+		has_password: boolean;
+	}> => {
+		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/status");
+		return extractApiData(
+			resp as ApiWrapper<{
+				enabled: boolean;
+				scope: string[];
+				has_password: boolean;
+			}>,
+		);
+	},
+
+	setPassword: async (
+		password: string,
+		confirm: string,
+		scope?: string[],
+	): Promise<{ enabled: boolean; scope: string[] }> => {
+		const resp = await fetchApi<PasswordSetResp>("/api/secrets/password/set", {
+			method: "POST",
+			body: JSON.stringify({ password, confirm, scope }),
+		});
+		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[] }>);
+	},
+
+	verifyPassword: async (password: string): Promise<{ valid: boolean }> => {
+		const resp = await fetchApi<PasswordVerifyResp>("/api/secrets/password/verify", {
+			method: "POST",
+			body: JSON.stringify({ password }),
+		});
+		return extractApiData(resp as ApiWrapper<{ valid: boolean }>);
+	},
+
+	changePassword: async (
+		oldPassword: string,
+		newPassword: string,
+		confirm: string,
+	): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
+		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/change", {
+			method: "POST",
+			body: JSON.stringify({ old_password: oldPassword, new_password: newPassword, confirm }),
+		});
+		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[]; has_password: boolean }>);
+	},
+
+	clearPassword: async (password: string): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
+		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/clear", {
+			method: "POST",
+			body: JSON.stringify({ password }),
+		});
+		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[]; has_password: boolean }>);
+	},
+
+	updatePasswordScope: async (
+		scope: string[],
+		currentPassword: string,
+	): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
+		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/scope", {
+			method: "POST",
+			body: JSON.stringify({ scope, current_password: currentPassword }),
+		});
+		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[]; has_password: boolean }>);
 	},
 };
 

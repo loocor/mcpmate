@@ -1,10 +1,15 @@
+import { Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import type { UseFormRegister } from "react-hook-form";
+import type { Control, UseFormRegister } from "react-hook-form";
 import { Input } from "../../ui/input";
-import { FieldList } from "../field-list";
-import { SecretPickerButton } from "../secret-picker-button";
+import {
+	FIELD_PAIR_KEY_INPUT_CLASS,
+	FIELD_PAIR_VALUE_CELL_CLASS,
+	FieldList,
+	PairGhostRow,
+} from "../field-list";
+import { SecureStringField } from "../secure-string-field";
 import type { SecretOrigin } from "../../../lib/types";
-import { GHOST_INPUT_CLASS } from "../types";
 import type { ManualServerFormValues } from "../types";
 
 interface HttpHeadersProps {
@@ -14,11 +19,13 @@ interface HttpHeadersProps {
 	removeHeader: (index: number) => void;
 	appendHeader: (value: { key: string; value: string }) => void;
 	register: UseFormRegister<ManualServerFormValues>;
+	control: Control<ManualServerFormValues>;
 	deleteConfirmStates: Record<string, boolean>;
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
-	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
+	getRowKeyAt?: (index: number) => string | undefined;
 }
 
 export function HttpHeaders({
@@ -28,11 +35,13 @@ export function HttpHeaders({
 	removeHeader,
 	appendHeader,
 	register,
+	control,
 	deleteConfirmStates,
 	onDeleteClick,
 	onGhostClick,
-	onSecretSelect,
+	onCreateSecret,
 	secretOriginBase,
+	getRowKeyAt,
 }: HttpHeadersProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -44,63 +53,78 @@ export function HttpHeaders({
 			onRemove={removeHeader}
 			deleteConfirmStates={deleteConfirmStates}
 			onDeleteClick={onDeleteClick}
+			pairLayout
 			renderField={(field, index) => {
 				if (field.id === "ghost") {
 					return (
-						<div className="grid grid-cols-2 gap-2">
-							<Input
-								placeholder={t("manual.fields.headers.ghostKey", {
-									defaultValue: "Add a new header",
-								})}
-								onClick={() =>
-									onGhostClick(() => appendHeader({ key: "", value: "" }))
-								}
-								className={GHOST_INPUT_CLASS}
-								readOnly
-							/>
-							<Input
-								placeholder={t("manual.fields.common.ghostValue", {
-									defaultValue: "Add a new value",
-								})}
-								onClick={() =>
-									onGhostClick(() => appendHeader({ key: "", value: "" }))
-								}
-								className={GHOST_INPUT_CLASS}
-								readOnly
-							/>
-						</div>
+						<PairGhostRow
+							keyPlaceholder={t("manual.fields.headers.ghostKey", {
+								defaultValue: "Add a new header",
+							})}
+							valuePlaceholder={t("manual.fields.common.ghostValue", {
+								defaultValue: "Add a new value",
+							})}
+							onAdd={() =>
+								onGhostClick(() => appendHeader({ key: "", value: "" }))
+							}
+						/>
 					);
 				}
+
+				const headerKey =
+					getRowKeyAt?.(index) ??
+					(typeof field.key === "string" ? field.key : undefined);
+				const origin: SecretOrigin = {
+					...secretOriginBase,
+					field_group: "headers",
+					field_key: headerKey,
+					field_index: index,
+					field_path: `headers.${index}.value`,
+				};
+
 				return (
-					<div className="group/secret-field grid grid-cols-2 gap-2">
+					<>
 						<Input
 							{...register(`headers.${index}.key` as const)}
 							placeholder={t("manual.fields.headers.keyPlaceholder", {
 								defaultValue: "Header",
 							})}
+							className={FIELD_PAIR_KEY_INPUT_CLASS}
 						/>
-						<Input
-							{...register(`headers.${index}.value` as const)}
-							placeholder={t("manual.fields.common.valuePlaceholder", {
-								defaultValue: "Value",
-							})}
-							className="pr-20"
+						<Controller
+							name={`headers.${index}.value`}
+							control={control}
+							render={({ field: valueField }) => (
+								<SecureStringField
+									value={valueField.value ?? ""}
+									onChange={valueField.onChange}
+									onBlur={valueField.onBlur}
+									name={valueField.name}
+									headerKey={headerKey}
+									pairLayout
+									pairRemove={{
+										onClick: () =>
+											onDeleteClick(field.id, () => removeHeader(index)),
+										confirmed: Boolean(deleteConfirmStates[field.id]),
+									}}
+									placeholder={t("manual.fields.common.valuePlaceholder", {
+										defaultValue: "Value",
+									})}
+									className={FIELD_PAIR_VALUE_CELL_CLASS}
+									origin={origin}
+									onCreateSecret={
+										onCreateSecret
+											? (pickedOrigin) =>
+												onCreateSecret(
+													`headers.${index}.value`,
+													pickedOrigin ?? origin,
+												)
+											: undefined
+									}
+								/>
+							)}
 						/>
-						<SecretPickerButton
-							className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
-							origin={{
-								...secretOriginBase,
-								field_group: "headers",
-								field_key:
-									typeof field.key === "string" ? field.key : undefined,
-								field_index: index,
-								field_path: `headers.${index}.value`,
-							}}
-							onSelect={(placeholder) =>
-								onSecretSelect?.(`headers.${index}.value`, placeholder)
-							}
-						/>
-					</div>
+					</>
 				);
 			}}
 		/>

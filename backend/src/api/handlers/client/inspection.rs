@@ -307,6 +307,13 @@ pub(super) fn build_config_file_parse_inspect_data(
     }
 }
 
+fn convert_parse_container_type(container_type: ContainerType) -> crate::api::models::client::ClientConfigType {
+    match container_type {
+        ContainerType::Array => crate::api::models::client::ClientConfigType::Array,
+        ContainerType::ObjectMap => crate::api::models::client::ClientConfigType::Standard,
+    }
+}
+
 #[cfg(test)]
 mod file_guard_tests {
     use super::*;
@@ -442,12 +449,5 @@ mod file_guard_tests {
                 "detach mcpmate_present={mcpmate_present:?}, db_state={db_state:?}"
             );
         }
-    }
-}
-
-fn convert_parse_container_type(container_type: ContainerType) -> crate::api::models::client::ClientConfigType {
-    match container_type {
-        ContainerType::Array => crate::api::models::client::ClientConfigType::Array,
-        ContainerType::ObjectMap => crate::api::models::client::ClientConfigType::Standard,
     }
 }

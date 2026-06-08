@@ -16,7 +16,9 @@ import {
 	ChevronRight,
 } from "lucide-react";
 import { Switch } from "../../components/ui/switch";
+import { toolbarSearchInputClassName } from "../../components/ui/page-toolbar";
 import type { ConfigSuitListResponse, Tool } from "../../lib/types";
+import { cn } from "../../lib/utils";
 
 export function ToolsPage() {
 	const [searchTerm, setSearchTerm] = React.useState("");
@@ -211,14 +213,14 @@ export function ToolsPage() {
 				</Button>
 			</div>
 
-			<div className="relative">
+			<div className="relative overflow-visible py-1">
 				<Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
 				<input
 					type="text"
 					placeholder="Search tools..."
 					value={searchTerm}
 					onChange={(e) => setSearchTerm(e.target.value)}
-					className="w-full rounded-md border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-400 dark:focus:ring-slate-600"
+					className={cn(toolbarSearchInputClassName, "pl-10 pr-4")}
 				/>
 			</div>
 

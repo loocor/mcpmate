@@ -6,6 +6,82 @@ use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;
 
 const TABLE: &str = "server_headers";
+const REDACTED_FULL: &str = "***REDACTED***";
+
+/// Returns true when a value is an API redaction mask and must not be persisted.
+/// IMPORTANT: keep in sync with board/src/lib/secure-field.ts isRedactedMask.
+pub fn is_redacted_display_value(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed == REDACTED_FULL {
+        return true;
+    }
+
+    // Partial mask pattern: 6 ASCII chars + "***" + 2 ASCII chars (e.g. "Bearer***ue").
+    // Redaction masks are always ASCII, so byte-length checks are safe and faster
+    // than chars().count().
+    if let Some(idx) = trimmed.find("***") {
+        let head = &trimmed[..idx];
+        let tail = &trimmed[idx + 3..];
+        if head.is_ascii() && tail.is_ascii() && head.len() == 6 && tail.len() == 2 {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Merge incoming header updates with stored values, preserving secrets for redacted masks.
+pub fn merge_headers_for_update(
+    incoming: &HashMap<String, String>,
+    existing: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut merged = HashMap::new();
+
+    for (raw_key, raw_value) in incoming {
+        let key = raw_key.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            continue;
+        }
+
+        if is_redacted_display_value(raw_value) {
+            if let Some(existing_value) = existing.get(&key) {
+                merged.insert(key, existing_value.clone());
+            }
+            continue;
+        }
+
+        merged.insert(key, raw_value.clone());
+    }
+
+    merged
+}
+
+/// Merge incoming env updates with stored values, preserving secrets for redacted masks.
+/// Env keys are case-sensitive (unlike HTTP headers).
+pub fn merge_env_for_update(
+    incoming: &HashMap<String, String>,
+    existing: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut merged = HashMap::new();
+
+    for (raw_key, raw_value) in incoming {
+        let key = raw_key.trim();
+        if key.is_empty() {
+            continue;
+        }
+
+        if is_redacted_display_value(raw_value) {
+            if let Some(existing_value) = existing.get(key) {
+                merged.insert(key.to_string(), existing_value.clone());
+            }
+            continue;
+        }
+
+        merged.insert(key.to_string(), raw_value.clone());
+    }
+
+    merged
+}
 
 /// Create or replace all headers for a server (idempotent upsert per key)
 pub async fn upsert_server_headers(
@@ -99,4 +175,64 @@ pub async fn get_server_headers(
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        is_redacted_display_value, merge_env_for_update, merge_headers_for_update,
+    };
+    use std::collections::HashMap;
+
+    #[test]
+    fn detects_redacted_display_values() {
+        assert!(is_redacted_display_value("***REDACTED***"));
+        assert!(is_redacted_display_value("Bearer***ue"));
+        assert!(!is_redacted_display_value("Bearer [[secret:token]]"));
+    }
+
+    #[test]
+    fn merge_headers_preserves_existing_secrets_for_redacted_masks() {
+        let existing = HashMap::from([
+            ("authorization".to_string(), "Bearer real-token".to_string()),
+            ("x-custom".to_string(), "visible".to_string()),
+        ]);
+        let incoming = HashMap::from([
+            ("authorization".to_string(), "Bearer***ue".to_string()),
+            ("x-custom".to_string(), "updated".to_string()),
+        ]);
+
+        let merged = merge_headers_for_update(&incoming, &existing);
+        assert_eq!(
+            merged.get("authorization").map(String::as_str),
+            Some("Bearer real-token")
+        );
+        assert_eq!(merged.get("x-custom").map(String::as_str), Some("updated"));
+    }
+
+    #[test]
+    fn merge_env_preserves_existing_secrets_for_redacted_masks() {
+        let existing = HashMap::from([
+            ("API_KEY".to_string(), "real-secret".to_string()),
+            ("PUBLIC".to_string(), "visible".to_string()),
+        ]);
+        let incoming = HashMap::from([
+            ("API_KEY".to_string(), "***REDACTED***".to_string()),
+            ("PUBLIC".to_string(), "updated".to_string()),
+        ]);
+
+        let merged = merge_env_for_update(&incoming, &existing);
+        assert_eq!(merged.get("API_KEY").map(String::as_str), Some("real-secret"));
+        assert_eq!(merged.get("PUBLIC").map(String::as_str), Some("updated"));
+    }
+
+    #[test]
+    fn merge_env_preserves_case_sensitive_keys() {
+        let existing = HashMap::from([("Path".to_string(), "/usr/bin".to_string())]);
+        let incoming = HashMap::from([("Path".to_string(), "updated".to_string())]);
+
+        let merged = merge_env_for_update(&incoming, &existing);
+        assert_eq!(merged.get("Path").map(String::as_str), Some("updated"));
+        assert!(!merged.contains_key("path"));
+    }
 }

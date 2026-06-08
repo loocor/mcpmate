@@ -519,8 +519,11 @@ export const serversTranslations = {
 					keyPlaceholder: "Parameter",
 				},
 				common: {
+					addRow: "Add row",
 					ghostValue: "Add a new value",
 					valuePlaceholder: "Value",
+					removeRow: "Remove row",
+					confirmRemoveRow: "Confirm remove",
 				},
 				meta: {
 					iconAlt: "Server icon",
@@ -666,6 +669,12 @@ export const serversTranslations = {
 				loading: "Loading secrets",
 				empty: "No secrets stored",
 				createInline: "New secret",
+				tagAlias: "{{alias}}",
+				inlinePrefix: "Text before secret",
+				inlineTrailing: "Text after secret",
+				inlineText: "Secret value text",
+				clear: "Clear secret",
+				storedSecret: "Stored secret",
 			},
 		},
 		wizard: {
@@ -1313,8 +1322,11 @@ export const serversTranslations = {
 					keyPlaceholder: "参数",
 				},
 				common: {
+					addRow: "添加行",
 					ghostValue: "添加值",
 					valuePlaceholder: "值",
+					removeRow: "删除行",
+					confirmRemoveRow: "确认删除",
 				},
 				meta: {
 					iconAlt: "服务器图标",
@@ -1455,6 +1467,12 @@ export const serversTranslations = {
 				loading: "加载密钥中",
 				empty: "暂无存储密钥",
 				createInline: "新建密钥",
+				tagAlias: "{{alias}}",
+				inlinePrefix: "密钥前的文本",
+				inlineTrailing: "密钥后的文本",
+				inlineText: "密钥字段文本",
+				clear: "清除密钥",
+				storedSecret: "已存储密钥",
 			},
 		},
 		wizard: {
@@ -2094,8 +2112,11 @@ export const serversTranslations = {
 					keyPlaceholder: "パラメータ",
 				},
 				common: {
+					addRow: "行を追加",
 					ghostValue: "値を追加",
 					valuePlaceholder: "値",
+					removeRow: "行を削除",
+					confirmRemoveRow: "削除を確認",
 				},
 				meta: {
 					iconAlt: "サーバーアイコン",
@@ -2240,6 +2261,12 @@ export const serversTranslations = {
 				loading: "シークレットを読み込み中",
 				empty: "保存されたシークレットはありません",
 				createInline: "新しいシークレット",
+				tagAlias: "{{alias}}",
+				inlinePrefix: "シークレット前のテキスト",
+				inlineTrailing: "シークレット後のテキスト",
+				inlineText: "シークレットフィールドのテキスト",
+				clear: "シークレットを削除",
+				storedSecret: "保存済みシークレット",
 			},
 		},
 		wizard: {

@@ -229,7 +229,7 @@ mod tests {
     use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
     use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration};
     use tempfile::tempdir;
-    use tokio::sync::Mutex;
+    use tokio::sync::{Mutex, RwLock};
 
     async fn test_state() -> Arc<AppState> {
         let temp_dir = tempdir().expect("temp dir");
@@ -277,8 +277,8 @@ mod tests {
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager: None,
-            secret_store: None,
-            secret_store_readiness: crate::api::routes::unavailable_secret_store_readiness("test_unavailable"),
+            secret_store: RwLock::new(None),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
         })
     }
 

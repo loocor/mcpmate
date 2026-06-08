@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { secretsApi } from "../../lib/api";
+import { suggestSecretAliasFromOrigin } from "../../lib/secret-alias";
 import type { SecretOrigin } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -12,14 +13,19 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
 interface SecretPickerButtonProps {
 	onSelect: (placeholder: string) => void;
+	onCreateNew?: (origin: SecretOrigin) => void;
 	className?: string;
 	origin?: SecretOrigin;
+	/** Keep visible for read-only redacted fields. */
+	forceVisible?: boolean;
 }
 
 export function SecretPickerButton({
 	onSelect,
+	onCreateNew,
 	className,
 	origin,
+	forceVisible = false,
 }: SecretPickerButtonProps) {
 	const { t } = useTranslation("servers");
 	const navigate = useNavigate();
@@ -31,6 +37,12 @@ export function SecretPickerButton({
 		queryFn: secretsApi.list,
 		enabled: open,
 	});
+
+	const storeStatusQuery = useQuery({
+		queryKey: ["secrets", "status"],
+		queryFn: secretsApi.status,
+	});
+	const storeReady = storeStatusQuery.data?.status === "ready";
 
 	const secrets = useMemo(() => {
 		const normalizedQuery = query.trim().toLowerCase();
@@ -47,6 +59,8 @@ export function SecretPickerButton({
 			});
 	}, [query, secretsQuery.data]);
 
+	if (!storeReady) return null;
+
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
 			<PopoverTrigger asChild>
@@ -55,7 +69,9 @@ export function SecretPickerButton({
 					variant="ghost"
 					size="icon"
 					className={cn(
-						"opacity-0 transition-opacity group-focus-within/secret-field:opacity-100 data-[state=open]:opacity-100",
+						forceVisible
+							? "opacity-100"
+							: "opacity-0 transition-opacity group-focus-within/secret-field:opacity-100 data-[state=open]:opacity-100",
 						className,
 					)}
 					aria-label={t("manual.secrets.pick", { defaultValue: "Use secret" })}
@@ -132,6 +148,10 @@ export function SecretPickerButton({
 							className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							onClick={() => {
 								setOpen(false);
+								if (origin && onCreateNew) {
+									onCreateNew(origin);
+									return;
+								}
 								const params = new URLSearchParams({ editor: "create" });
 								if (origin) {
 									for (const [key, value] of Object.entries(origin)) {
@@ -139,6 +159,13 @@ export function SecretPickerButton({
 											continue;
 										}
 										params.set(`origin_${key}`, String(value));
+									}
+									const suggestedAlias = suggestSecretAliasFromOrigin(
+										origin,
+										(secretsQuery.data ?? []).map((secret) => secret.alias),
+									);
+									if (suggestedAlias) {
+										params.set("suggested_alias", suggestedAlias);
 									}
 								}
 								navigate(`/secrets?${params.toString()}`);

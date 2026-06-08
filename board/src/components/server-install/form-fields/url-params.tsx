@@ -1,10 +1,15 @@
+import { Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import type { UseFormRegister } from "react-hook-form";
+import type { Control, UseFormRegister } from "react-hook-form";
 import { Input } from "../../ui/input";
-import { FieldList } from "../field-list";
-import { SecretPickerButton } from "../secret-picker-button";
+import {
+	FIELD_PAIR_KEY_INPUT_CLASS,
+	FIELD_PAIR_VALUE_CELL_CLASS,
+	FieldList,
+	PairGhostRow,
+} from "../field-list";
+import { SecureStringField } from "../secure-string-field";
 import type { SecretOrigin } from "../../../lib/types";
-import { GHOST_INPUT_CLASS } from "../types";
 import type { ManualServerFormValues } from "../types";
 
 interface UrlParamsProps {
@@ -14,11 +19,13 @@ interface UrlParamsProps {
 	removeUrlParam: (index: number) => void;
 	appendUrlParam: (value: { key: string; value: string }) => void;
 	register: UseFormRegister<ManualServerFormValues>;
+	control: Control<ManualServerFormValues>;
 	deleteConfirmStates: Record<string, boolean>;
 	onDeleteClick: (fieldId: string, removeFn: () => void) => void;
 	onGhostClick: (addFn: () => void) => void;
-	onSecretSelect?: (fieldName: string, placeholder: string) => void;
+	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
+	getRowKeyAt?: (index: number) => string | undefined;
 }
 
 export function UrlParams({
@@ -28,11 +35,13 @@ export function UrlParams({
 	removeUrlParam,
 	appendUrlParam,
 	register,
+	control,
 	deleteConfirmStates,
 	onDeleteClick,
 	onGhostClick,
-	onSecretSelect,
+	onCreateSecret,
 	secretOriginBase,
+	getRowKeyAt,
 }: UrlParamsProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -46,63 +55,78 @@ export function UrlParams({
 			onRemove={removeUrlParam}
 			deleteConfirmStates={deleteConfirmStates}
 			onDeleteClick={onDeleteClick}
+			pairLayout
 			renderField={(field, index) => {
 				if (field.id === "ghost") {
 					return (
-						<div className="grid grid-cols-2 gap-2">
-							<Input
-								placeholder={t("manual.fields.urlParams.ghostKey", {
-									defaultValue: "Parameter name",
-								})}
-								onClick={() =>
-									onGhostClick(() => appendUrlParam({ key: "", value: "" }))
-								}
-								className={GHOST_INPUT_CLASS}
-								readOnly
-							/>
-							<Input
-								placeholder={t("manual.fields.urlParams.ghostValue", {
-									defaultValue: "Value",
-								})}
-								onClick={() =>
-									onGhostClick(() => appendUrlParam({ key: "", value: "" }))
-								}
-								className={GHOST_INPUT_CLASS}
-								readOnly
-							/>
-						</div>
+						<PairGhostRow
+							keyPlaceholder={t("manual.fields.urlParams.ghostKey", {
+								defaultValue: "Parameter name",
+							})}
+							valuePlaceholder={t("manual.fields.urlParams.ghostValue", {
+								defaultValue: "Value",
+							})}
+							onAdd={() =>
+								onGhostClick(() => appendUrlParam({ key: "", value: "" }))
+							}
+						/>
 					);
 				}
+
+				const paramKey =
+					getRowKeyAt?.(index) ??
+					(typeof field.key === "string" ? field.key : undefined);
+				const origin: SecretOrigin = {
+					...secretOriginBase,
+					field_group: "url_params",
+					field_key: paramKey,
+					field_index: index,
+					field_path: `urlParams.${index}.value`,
+				};
+
 				return (
-					<div className="group/secret-field grid grid-cols-2 gap-2">
+					<>
 						<Input
 							{...register(`urlParams.${index}.key` as const)}
 							placeholder={t("manual.fields.urlParams.keyPlaceholder", {
 								defaultValue: "Parameter",
 							})}
+							className={FIELD_PAIR_KEY_INPUT_CLASS}
 						/>
-						<Input
-							{...register(`urlParams.${index}.value` as const)}
-							placeholder={t("manual.fields.common.valuePlaceholder", {
-								defaultValue: "Value",
-							})}
-							className="pr-20"
+						<Controller
+							name={`urlParams.${index}.value`}
+							control={control}
+							render={({ field: valueField }) => (
+								<SecureStringField
+									value={valueField.value ?? ""}
+									onChange={valueField.onChange}
+									onBlur={valueField.onBlur}
+									name={valueField.name}
+									headerKey={paramKey}
+									pairLayout
+									pairRemove={{
+										onClick: () =>
+											onDeleteClick(field.id, () => removeUrlParam(index)),
+										confirmed: Boolean(deleteConfirmStates[field.id]),
+									}}
+									placeholder={t("manual.fields.common.valuePlaceholder", {
+										defaultValue: "Value",
+									})}
+									className={FIELD_PAIR_VALUE_CELL_CLASS}
+									origin={origin}
+									onCreateSecret={
+										onCreateSecret
+											? (pickedOrigin) =>
+												onCreateSecret(
+													`urlParams.${index}.value`,
+													pickedOrigin ?? origin,
+												)
+											: undefined
+									}
+								/>
+							)}
 						/>
-						<SecretPickerButton
-							className="absolute right-9 top-1/2 h-7 w-7 -translate-y-1/2"
-							origin={{
-								...secretOriginBase,
-								field_group: "url_params",
-								field_key:
-									typeof field.key === "string" ? field.key : undefined,
-								field_index: index,
-								field_path: `urlParams.${index}.value`,
-							}}
-							onSelect={(placeholder) =>
-								onSecretSelect?.(`urlParams.${index}.value`, placeholder)
-							}
-						/>
-					</div>
+					</>
 				);
 			}}
 		/>
