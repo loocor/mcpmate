@@ -1040,7 +1040,7 @@ pub async fn client_detach(
 ) -> Result<Json<ClientDetachResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
+    let existing_state = service.fetch_state_repairing_local_target(&request.identifier).await.map_err(|err| {
         tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before detach");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -1131,7 +1131,7 @@ pub async fn client_attach(
 ) -> Result<Json<ClientAttachResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
+    let existing_state = service.fetch_state_repairing_local_target(&request.identifier).await.map_err(|err| {
         tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before attach");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;

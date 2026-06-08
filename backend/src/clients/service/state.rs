@@ -293,8 +293,17 @@ impl ClientConfigService {
         let Some(config_path) = state.config_path() else {
             return Ok(false);
         };
-        if state.effective_config_file_parse()?.is_none() {
-            return Ok(false);
+        match state.effective_config_file_parse() {
+            Ok(Some(_)) => {}
+            Ok(None) => return Ok(false),
+            Err(err) => {
+                tracing::warn!(
+                    client = %identifier,
+                    error = %err,
+                    "Skipping local target repair due to invalid parse metadata"
+                );
+                return Ok(false);
+            }
         }
 
         self.update_runtime_target(

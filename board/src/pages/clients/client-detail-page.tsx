@@ -718,9 +718,8 @@ export function ClientDetailPage() {
     configDetails?.approval_status,
   );
   const isAttachmentApplicable =
-    canWriteClientConfig &&
-    (configDetails?.attachment_state === "attached" ||
-      configDetails?.attachment_state === "detached");
+    configDetails?.attachment_state === "attached" ||
+    configDetails?.attachment_state === "detached";
   const isAttachedClient =
     isAttachmentApplicable && configDetails?.attachment_state === "attached";
   const showLocalConfigMetadata =
