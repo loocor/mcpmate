@@ -14,6 +14,7 @@ use crate::{
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
     config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
+    config::server::{get_server_headers, merge_env_for_update, merge_headers_for_update},
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
@@ -541,7 +542,11 @@ pub async fn update_server(
 
     // Replace default headers if provided
     if let Some(headers) = &payload.headers {
-        replace_server_headers(&db.pool, &server_id, headers)
+        let existing_headers = get_server_headers(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+        let merged_headers = merge_headers_for_update(headers, &existing_headers);
+        replace_server_headers(&db.pool, &server_id, &merged_headers)
             .await
             .map_err(map_anyhow_error)?;
     }
@@ -555,7 +560,11 @@ pub async fn update_server(
 
     // Update server environment variables if provided
     if let Some(env) = &payload.env {
-        crate::config::server::upsert_server_env(&db.pool, &server_id, env)
+        let existing_env = crate::config::server::get_server_env(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+        let merged_env = merge_env_for_update(env, &existing_env);
+        crate::config::server::upsert_server_env(&db.pool, &server_id, &merged_env)
             .await
             .map_err(map_anyhow_error)?;
     }

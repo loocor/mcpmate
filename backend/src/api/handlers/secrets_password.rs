@@ -70,6 +70,24 @@ fn iterations_from_i64(n: i64) -> NonZeroU32 {
 
 // ── Handlers ─────────────────────────────────────────────────
 
+const MIN_PASSWORD_LENGTH: usize = 4;
+
+/// Validate password + confirm pair: non-empty, matching, minimum length.
+fn validate_password_pair(password: &str, confirm: &str) -> Result<(), ApiError> {
+    if password.is_empty() {
+        return Err(ApiError::BadRequest("Password cannot be empty".to_string()));
+    }
+    if password != confirm {
+        return Err(ApiError::BadRequest("Passwords do not match".to_string()));
+    }
+    if password.len() < MIN_PASSWORD_LENGTH {
+        return Err(ApiError::BadRequest(format!(
+            "Password must be at least {MIN_PASSWORD_LENGTH} characters"
+        )));
+    }
+    Ok(())
+}
+
 /// Load password config and verify the supplied password against it.
 /// Returns `Ok(true)` if verified, `Ok(false)` if no password is set or verification fails,
 /// or `Err` on internal errors (corrupt stored data).
@@ -126,17 +144,7 @@ pub async fn set_password(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<PasswordSetReq>,
 ) -> Result<Json<PasswordSetResp>, ApiError> {
-    if payload.password.is_empty() {
-        return Err(ApiError::BadRequest("Password cannot be empty".to_string()));
-    }
-    if payload.password != payload.confirm {
-        return Err(ApiError::BadRequest("Passwords do not match".to_string()));
-    }
-    if payload.password.len() < 4 {
-        return Err(ApiError::BadRequest(
-            "Password must be at least 4 characters".to_string(),
-        ));
-    }
+    validate_password_pair(&payload.password, &payload.confirm)?;
 
     let pool = get_pool(&state)?;
 
@@ -184,17 +192,7 @@ pub async fn change_password(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<PasswordChangeReq>,
 ) -> Result<Json<PasswordStatusResp>, ApiError> {
-    if payload.new_password.is_empty() {
-        return Err(ApiError::BadRequest("New password cannot be empty".to_string()));
-    }
-    if payload.new_password != payload.confirm {
-        return Err(ApiError::BadRequest("Passwords do not match".to_string()));
-    }
-    if payload.new_password.len() < 4 {
-        return Err(ApiError::BadRequest(
-            "Password must be at least 4 characters".to_string(),
-        ));
-    }
+    validate_password_pair(&payload.new_password, &payload.confirm)?;
 
     let pool = get_pool(&state)?;
     let config = mcpmate_secrets::database::get_password_config(&pool)
@@ -235,16 +233,7 @@ pub async fn clear_password(
 ) -> Result<Json<PasswordStatusResp>, ApiError> {
     let pool = get_pool(&state)?;
 
-    // Guard: no password is set.
-    let has_config = mcpmate_secrets::database::get_password_config(&pool)
-        .await
-        .map_err(|err| ApiError::InternalError(format!("Failed to load password config: {err}")))?
-        .is_some();
-    if !has_config {
-        return Err(ApiError::BadRequest("No password is set".to_string()));
-    }
-
-    // Verify password before clearing.
+    // Verify password before clearing. Returns false if no password is set.
     if !load_and_verify_password(&pool, &payload.password).await? {
         return Err(ApiError::BadRequest("Password is incorrect".to_string()));
     }

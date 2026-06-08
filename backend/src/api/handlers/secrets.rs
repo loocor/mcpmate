@@ -843,6 +843,19 @@ pub async fn switch_provider(
         store: Some(new_store),
     };
     let new_readiness = apply_secret_store_bootstrap(&state, bootstrap).await?;
+
+    // Clean up the old provider's key file AFTER bootstrap succeeds.
+    // The root key is now securely stored in the new provider.
+    match current_mode {
+        crate::core::secrets::store::RootKeyProviderMode::LocalFile => {
+            let _ = std::fs::remove_file(&local_file_path);
+        }
+        crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
+            let _ = std::fs::remove_file(&passphrase_path);
+        }
+        _ => {} // OS keyring has no file to clean.
+    }
+
     let new_status = secret_store_status_data(&new_readiness);
     Ok(Json(ProviderSwitchResp::success(ProviderSwitchData {
         new_status,
