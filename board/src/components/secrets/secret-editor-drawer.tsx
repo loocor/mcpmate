@@ -1,10 +1,16 @@
-import { Copy, KeyRound, Trash2 } from "lucide-react";
+import { Copy, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { SecretKind, SecretUsage } from "../../lib/types";
 import { writeClipboardText } from "../../lib/clipboard";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
 import { Button } from "../ui/button";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "../ui/tooltip";
 import {
 	Tabs,
 	TabsContent,
@@ -71,6 +77,7 @@ interface SecretEditorDrawerProps {
 	serverNameById?: ReadonlyMap<string, string>;
 	initialTab?: "general" | "usage";
 	nested?: boolean;
+	onNavigateToServer?: (serverId: string) => void;
 }
 
 export function SecretEditorDrawer({
@@ -88,6 +95,7 @@ export function SecretEditorDrawer({
 	serverNameById,
 	initialTab = "general",
 	nested = false,
+	onNavigateToServer,
 }: SecretEditorDrawerProps) {
 	const { t } = useTranslation("secrets");
 	const aliasId = useId();
@@ -166,6 +174,13 @@ export function SecretEditorDrawer({
 	const activeEditor = editor ?? displayEditor;
 	if (!activeEditor && !open) return null;
 	const canDelete = activeEditor?.mode === "edit" && onDelete;
+	const copyPlaceholderLabel = t("editor.actions.copyPlaceholder", {
+		defaultValue: "Copy placeholder",
+	});
+	const copyPlaceholderDescription = t("editor.actions.copyPlaceholderDescription", {
+		defaultValue:
+			"Copy the [[secret:alias]] placeholder to paste into server env, headers, or args.",
+	});
 
 	const requestClose = () => setOpen(false);
 
@@ -180,17 +195,46 @@ export function SecretEditorDrawer({
 					}}
 				>
 					<DrawerHeader>
-						<DrawerTitle>
-							{activeEditor.mode === "create"
-								? t("editor.createTitle", { defaultValue: "Add Secret" })
-								: t("editor.editTitle", { defaultValue: "Edit Secret" })}
-						</DrawerTitle>
-						<DrawerDescription>
-							{t("editor.description", {
-								defaultValue:
-									"The value is write-only. It will not be shown again after save.",
-							})}
-						</DrawerDescription>
+						<div className="flex items-start justify-between gap-3">
+							<div className="min-w-0 flex-1 space-y-1 text-left">
+								<DrawerTitle>
+									{activeEditor.mode === "create"
+										? t("editor.createTitle", { defaultValue: "Add Secret" })
+										: t("editor.editTitle", { defaultValue: "Edit Secret" })}
+								</DrawerTitle>
+								<DrawerDescription>
+									{t("editor.description", {
+										defaultValue:
+											"The value is write-only. It will not be shown again after save.",
+									})}
+								</DrawerDescription>
+							</div>
+							{placeholder ? (
+								<TooltipProvider delayDuration={200}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<Button
+												type="button"
+												variant="ghost"
+												size="icon"
+												className="-mr-1 -mt-1 h-5 w-5 shrink-0 rounded-md border-0 bg-transparent p-0 text-muted-foreground shadow-none transition-colors hover:bg-transparent hover:text-foreground focus-visible:ring-1 focus-visible:ring-offset-0"
+												disabled={isSaving}
+												onClick={() => void handleCopyPlaceholder()}
+												aria-label={copyPlaceholderLabel}
+											>
+												<Copy className="h-4 w-4" />
+											</Button>
+										</TooltipTrigger>
+										<TooltipContent side="bottom" align="end" className="max-w-xs">
+											<p className="font-medium">{copyPlaceholderLabel}</p>
+											<p className="mt-1 text-background/80">
+												{copyPlaceholderDescription}
+											</p>
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
+							) : null}
+						</div>
 					</DrawerHeader>
 					<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
 						<Tabs
@@ -289,61 +333,54 @@ export function SecretEditorDrawer({
 									usages={usages}
 									isLoading={usagesLoading}
 									serverNameById={serverNameById}
+									onNavigateToServer={onNavigateToServer}
 								/>
 							</TabsContent>
 						</Tabs>
 					</div>
 					<DrawerFooter className="mt-auto border-t px-6 py-4">
 						<div className="flex w-full items-center justify-between gap-3">
-							<div className="flex items-center gap-2">
-								<Button
-									type="button"
-									variant="outline"
-									onClick={requestClose}
-									disabled={isSaving}
-								>
-									{t("editor.actions.cancel", { defaultValue: "Cancel" })}
-								</Button>
+							<Button
+								type="button"
+								variant="outline"
+								onClick={requestClose}
+								disabled={isSaving}
+							>
+								{t("editor.actions.cancel", { defaultValue: "Cancel" })}
+							</Button>
+							<div className="flex items-center gap-3">
 								{canDelete ? (
 									<Button
 										type="button"
 										variant="destructive"
+										className="gap-2"
 										disabled={isSaving || (usedByCount != null && usedByCount > 0)}
 										title={
 											usedByCount != null && usedByCount > 0
 												? t("editor.actions.deleteDisabledTooltip", {
-														defaultValue: "Cannot delete: secret is actively used by {{count}} location(s)",
-														count: usedByCount,
-													})
+													defaultValue:
+														"Cannot delete: secret is actively used by {{count}} location(s)",
+													count: usedByCount,
+												})
 												: undefined
 										}
 										onClick={onDelete}
 									>
-										<Trash2 className="mr-2 h-4 w-4" />
+										<Trash2 className="h-4 w-4" />
 										{t("editor.actions.delete", { defaultValue: "Delete" })}
-									</Button>
-								) : null}
-							</div>
-							<div className="flex items-center gap-3">
-								{placeholder ? (
-									<Button
-										type="button"
-										variant="outline"
-										disabled={isSaving}
-										onClick={() => void handleCopyPlaceholder()}
-									>
-										<Copy className="mr-2 h-4 w-4" />
-										{t("editor.actions.copyPlaceholder", {
-											defaultValue: "Copy placeholder",
-										})}
 									</Button>
 								) : null}
 								<Button
 									type="submit"
 									disabled={isSaving || !activeEditor.alias.trim()}
 								>
-									<KeyRound className="mr-2 h-4 w-4" />
-									{t("editor.actions.save", { defaultValue: "Save" })}
+									{activeEditor.mode === "create"
+										? t("editor.actions.create", {
+											defaultValue: "Create Record",
+										})
+										: t("editor.actions.save", {
+											defaultValue: "Save Changes",
+										})}
 								</Button>
 							</div>
 						</div>

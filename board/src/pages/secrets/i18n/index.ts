@@ -84,7 +84,10 @@ export const secretsTranslations = {
 			actions: {
 				cancel: "Cancel",
 				copyPlaceholder: "Copy placeholder",
-				save: "Save",
+				copyPlaceholderDescription:
+					"Copy the [[secret:alias]] placeholder to paste into server env, headers, or args.",
+				create: "Create Record",
+				save: "Save Changes",
 			},
 		},
 		usage: {
@@ -102,6 +105,9 @@ export const secretsTranslations = {
 			status: {
 				active: "Active",
 				stale: "Stale",
+			},
+			actions: {
+				openServer: "Open server {{name}}",
 			},
 			columns: {
 				server: "Server",
@@ -264,7 +270,10 @@ export const secretsTranslations = {
 			actions: {
 				cancel: "取消",
 				copyPlaceholder: "复制占位符",
-				save: "保存",
+				copyPlaceholderDescription:
+					"复制 [[secret:alias]] 占位符，以便粘贴到服务器的 env、header 或 args 配置中。",
+				create: "创建记录",
+				save: "保存更改",
 			},
 		},
 		usage: {
@@ -280,6 +289,9 @@ export const secretsTranslations = {
 			status: {
 				active: "生效中",
 				stale: "已失效",
+			},
+			actions: {
+				openServer: "打开服务器 {{name}}",
 			},
 			columns: {
 				server: "服务器",
@@ -440,7 +452,10 @@ export const secretsTranslations = {
 			actions: {
 				cancel: "キャンセル",
 				copyPlaceholder: "プレースホルダーをコピー",
-				save: "保存",
+				copyPlaceholderDescription:
+					"[[secret:alias]] プレースホルダーをコピーし、サーバーの env、header、args に貼り付けます。",
+				create: "レコードを作成",
+				save: "変更を保存",
 			},
 		},
 		usage: {
@@ -457,6 +472,9 @@ export const secretsTranslations = {
 			status: {
 				active: "有効",
 				stale: "失効",
+			},
+			actions: {
+				openServer: "サーバー {{name}} を開く",
 			},
 			columns: {
 				server: "サーバー",

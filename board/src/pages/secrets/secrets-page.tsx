@@ -6,9 +6,9 @@ import {
 	ShieldAlert,
 	ShieldCheck,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
@@ -258,6 +258,7 @@ export function SecretsPage() {
 		},
 		onSuccess: async () => {
 			setDeleteTarget(null);
+			setEditor(null);
 			await queryClient.invalidateQueries({ queryKey: ["secrets"] });
 			notifySuccess(
 				t("notifications.deleteSuccess", { defaultValue: "Secret deleted" }),
@@ -292,6 +293,14 @@ export function SecretsPage() {
 		setEditor(null);
 		setEditorInitialTab("general");
 	};
+	const navigate = useNavigate();
+	const handleNavigateToServer = useCallback(
+		(serverId: string) => {
+			closeEditor();
+			navigate(`/servers/${encodeURIComponent(serverId)}`);
+		},
+		[navigate],
+	);
 
 	const editorPlaceholder = useMemo(() => {
 		if (!editor || editor.mode !== "edit") {
@@ -760,9 +769,9 @@ export function SecretsPage() {
 				onDelete={
 					editorAlias
 						? () => {
-								const secret = (secretsQuery.data ?? []).find((s) => s.alias === editorAlias);
-								if (secret) setDeleteTarget(secret);
-							}
+							const secret = (secretsQuery.data ?? []).find((s) => s.alias === editorAlias);
+							if (secret) setDeleteTarget(secret);
+						}
 						: undefined
 				}
 				isSaving={saveMutation.isPending}
@@ -772,6 +781,7 @@ export function SecretsPage() {
 				usedByCount={editorUsedByCount}
 				serverNameById={serverNameById}
 				initialTab={editorInitialTab}
+				onNavigateToServer={handleNavigateToServer}
 			/>
 			<SecretDeleteDialog
 				secret={deleteTarget}
