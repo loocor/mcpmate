@@ -2143,6 +2143,7 @@ export function ClientDetailPage() {
                               )
                             }
                             disabled={
+                              !canWriteClientConfig ||
                               detachMutation.isPending ||
                               attachMutation.isPending
                             }

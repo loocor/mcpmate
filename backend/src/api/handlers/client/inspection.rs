@@ -5,7 +5,8 @@ use crate::api::models::client::{
 use crate::clients::ClientConfigService;
 use crate::clients::analyzer::{ConfigAnalysis, ConfigInspectionReport, inspect_config_content};
 use crate::clients::models::{
-    ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat, canonical_config_transport_key,
+    AttachmentState, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat,
+    canonical_config_transport_key,
 };
 use crate::clients::service::core::ClientStateRow;
 use crate::clients::service::rules::ConfigRuleInspection;
@@ -77,19 +78,82 @@ pub(super) async fn detect_mcpmate_in_client_config(
     Some(inspected.analysis.mcpmate_present)
 }
 
+pub(crate) const ATTACH_OVERWRITE_WARNING: &str =
+    "MCPMate entry already present in config file; attach will overwrite";
+
+pub(crate) const DETACH_NO_EFFECT_WARNING: &str =
+    "MCPMate entry not found in config file; detach has no effect on file content";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClientFileGuardRejection {
+    UndetectableFile,
+    NonApplicableDbState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClientFileGuardOperation {
+    Attach,
+    Detach,
+}
+
+fn evaluate_client_file_guard(
+    operation: ClientFileGuardOperation,
+    mcpmate_present: Option<bool>,
+    db_state: AttachmentState,
+) -> Result<Option<&'static str>, ClientFileGuardRejection> {
+    let attachable = matches!(db_state, AttachmentState::Detached | AttachmentState::Attached);
+    match mcpmate_present {
+        None => Err(ClientFileGuardRejection::UndetectableFile),
+        Some(true) if attachable => Ok(match operation {
+            ClientFileGuardOperation::Attach => Some(ATTACH_OVERWRITE_WARNING),
+            ClientFileGuardOperation::Detach => None,
+        }),
+        Some(false) if attachable => Ok(match operation {
+            ClientFileGuardOperation::Attach => None,
+            ClientFileGuardOperation::Detach => Some(DETACH_NO_EFFECT_WARNING),
+        }),
+        Some(_) => Err(ClientFileGuardRejection::NonApplicableDbState),
+    }
+}
+
+pub(super) fn evaluate_client_attach_file_guard(
+    mcpmate_present: Option<bool>,
+    db_state: AttachmentState,
+) -> Result<Option<&'static str>, ClientFileGuardRejection> {
+    evaluate_client_file_guard(ClientFileGuardOperation::Attach, mcpmate_present, db_state)
+}
+
+pub(super) fn evaluate_client_detach_file_guard(
+    mcpmate_present: Option<bool>,
+    db_state: AttachmentState,
+) -> Result<Option<&'static str>, ClientFileGuardRejection> {
+    evaluate_client_file_guard(ClientFileGuardOperation::Detach, mcpmate_present, db_state)
+}
+
 pub(super) fn derive_attachment_state(
     state: &ClientStateRow,
     config_analysis: &ConfigAnalysis,
 ) -> String {
+    if !state.has_local_config_target() {
+        return state.attachment_state().as_str().to_string();
+    }
+
     if config_analysis.mcpmate_present {
-        return "attached".to_string();
+        "attached".to_string()
+    } else {
+        "detached".to_string()
     }
+}
 
-    if state.has_local_config_target() {
-        return "detached".to_string();
+pub(super) fn attachment_state_drift_reason(
+    state: &ClientStateRow,
+    config_analysis: &ConfigAnalysis,
+) -> Option<&'static str> {
+    if config_analysis.mcpmate_present && !state.has_local_config_target() {
+        Some("attachment_requires_local_config_target")
+    } else {
+        None
     }
-
-    state.attachment_state().as_str().to_string()
 }
 
 pub(super) fn configured_server_entries_data(
@@ -240,6 +304,144 @@ pub(super) fn build_config_file_parse_inspect_data(
         inferred_parse: inspection.inferred_parse.as_ref().map(parse_data_from_rule),
         validation: inspection.validation.map(validation_data_from_rule),
         preview: inspection.preview,
+    }
+}
+
+#[cfg(test)]
+mod file_guard_tests {
+    use super::*;
+    use crate::clients::service::core::ClientStateRow;
+
+    #[test]
+    fn derive_attachment_state_requires_local_config_target_before_file_truth() {
+        let state = ClientStateRow::test_attachment_fixture(
+            "manual",
+            Some("~/.cursor/mcp.json"),
+            Some("not_applicable"),
+        );
+        let analysis = ConfigAnalysis {
+            mcpmate_present: true,
+            ..ConfigAnalysis::default()
+        };
+
+        assert_eq!(derive_attachment_state(&state, &analysis), "not_applicable");
+        assert_eq!(
+            attachment_state_drift_reason(&state, &analysis),
+            Some("attachment_requires_local_config_target")
+        );
+    }
+
+    #[test]
+    fn derive_attachment_state_reflects_file_when_local_config_target_is_active() {
+        let state = ClientStateRow::test_attachment_fixture(
+            "local_config_detected",
+            Some("~/.cursor/mcp.json"),
+            Some("detached"),
+        );
+
+        let attached = ConfigAnalysis {
+            mcpmate_present: true,
+            ..ConfigAnalysis::default()
+        };
+        assert_eq!(derive_attachment_state(&state, &attached), "attached");
+
+        let detached = ConfigAnalysis {
+            mcpmate_present: false,
+            ..ConfigAnalysis::default()
+        };
+        assert_eq!(derive_attachment_state(&state, &detached), "detached");
+    }
+
+    #[test]
+    fn evaluate_client_attach_file_guard_matrix() {
+        let cases = [
+            (
+                (Some(true), AttachmentState::Attached),
+                Ok(Some(ATTACH_OVERWRITE_WARNING)),
+            ),
+            (
+                (Some(true), AttachmentState::Detached),
+                Ok(Some(ATTACH_OVERWRITE_WARNING)),
+            ),
+            (
+                (Some(true), AttachmentState::NotApplicable),
+                Err(ClientFileGuardRejection::NonApplicableDbState),
+            ),
+            (
+                (Some(false), AttachmentState::Attached),
+                Ok(None),
+            ),
+            (
+                (Some(false), AttachmentState::Detached),
+                Ok(None),
+            ),
+            (
+                (Some(false), AttachmentState::NotApplicable),
+                Err(ClientFileGuardRejection::NonApplicableDbState),
+            ),
+            (
+                (None, AttachmentState::Detached),
+                Err(ClientFileGuardRejection::UndetectableFile),
+            ),
+            (
+                (None, AttachmentState::Attached),
+                Err(ClientFileGuardRejection::UndetectableFile),
+            ),
+        ];
+
+        for ((mcpmate_present, db_state), expected) in cases {
+            assert_eq!(
+                evaluate_client_attach_file_guard(mcpmate_present, db_state),
+                expected,
+                "attach mcpmate_present={mcpmate_present:?}, db_state={db_state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn evaluate_client_detach_file_guard_matrix() {
+        let cases = [
+            (
+                (Some(true), AttachmentState::Attached),
+                Ok(None),
+            ),
+            (
+                (Some(true), AttachmentState::Detached),
+                Ok(None),
+            ),
+            (
+                (Some(true), AttachmentState::NotApplicable),
+                Err(ClientFileGuardRejection::NonApplicableDbState),
+            ),
+            (
+                (Some(false), AttachmentState::Attached),
+                Ok(Some(DETACH_NO_EFFECT_WARNING)),
+            ),
+            (
+                (Some(false), AttachmentState::Detached),
+                Ok(Some(DETACH_NO_EFFECT_WARNING)),
+            ),
+            (
+                (Some(false), AttachmentState::NotApplicable),
+                Err(ClientFileGuardRejection::NonApplicableDbState),
+            ),
+            (
+                (None, AttachmentState::Detached),
+                Err(ClientFileGuardRejection::UndetectableFile),
+            ),
+            (
+                (None, AttachmentState::Attached),
+                Err(ClientFileGuardRejection::UndetectableFile),
+            ),
+        ];
+
+        for ((mcpmate_present, db_state), expected) in cases {
+            assert_eq!(
+                evaluate_client_detach_file_guard(mcpmate_present, db_state),
+                expected,
+                "detach mcpmate_present={mcpmate_present:?}, db_state={db_state:?}"
+            );
+        }
     }
 }
 

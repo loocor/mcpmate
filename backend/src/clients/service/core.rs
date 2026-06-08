@@ -208,6 +208,21 @@ impl PersistedTemplateConfig {
 }
 
 impl ClientStateRow {
+    #[cfg(test)]
+    pub(crate) fn test_attachment_fixture(
+        connection_mode: &str,
+        config_path: Option<&str>,
+        attachment_state: Option<&str>,
+    ) -> Self {
+        Self {
+            identifier: "test.client".to_string(),
+            config_path: config_path.map(str::to_string),
+            connection_mode: Some(connection_mode.to_string()),
+            attachment_state: attachment_state.map(str::to_string),
+            ..Self::default()
+        }
+    }
+
     pub fn identifier(&self) -> &str {
         &self.identifier
     }
