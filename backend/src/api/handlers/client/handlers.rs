@@ -3,7 +3,9 @@
 use super::backups::parse_policy_payload;
 use super::inspection::{
     build_config_file_parse_inspect_data, build_parse_metadata, configured_server_entries_data,
-    derive_attachment_state, detect_mcpmate_in_client_config, inspect_client_config_lenient,
+    ClientFileGuardRejection, derive_attachment_state, detect_mcpmate_in_client_config,
+    attachment_state_drift_reason, evaluate_client_attach_file_guard, evaluate_client_detach_file_guard,
+    inspect_client_config_lenient,
     mark_configured_server_managed_status, parse_api_transports, parse_rule_from_api_data, transports_data_from_state,
 };
 use super::runtime::sync_bound_client_runtime_state;
@@ -227,10 +229,16 @@ pub async fn config_details(
 ) -> Result<Json<ClientConfigResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
     let state = service
-        .fetch_state(&request.identifier)
+        .fetch_state_repairing_local_target(&request.identifier)
         .await
-        .ok()
-        .flatten()
+        .map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to load client state for config details"
+            );
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
         .ok_or_else(|| {
             tracing::error!("Failed to resolve client config details for {}", request.identifier);
             StatusCode::NOT_FOUND
@@ -291,6 +299,9 @@ pub async fn config_details(
         .as_ref()
         .map(configured_server_entries_data)
         .unwrap_or_default();
+    if let Some(reason) = attachment_state_drift_reason(&state, &configured_servers_analysis) {
+        degraded_reasons.push(reason.to_string());
+    }
     if let Some(database) = app_state.database.as_ref() {
         mark_configured_server_managed_status(&database.pool, &mut configured_server_entries)
             .await
@@ -650,6 +661,35 @@ fn map_config_error_status(err: &ConfigError) -> StatusCode {
     }
 }
 
+fn client_file_guard_warnings(
+    guard: Result<Option<&'static str>, ClientFileGuardRejection>,
+    operation: &'static str,
+    identifier: &str,
+    attachment_state: AttachmentState,
+) -> Result<Vec<String>, StatusCode> {
+    match guard {
+        Ok(Some(warning)) => Ok(vec![warning.to_string()]),
+        Ok(None) => Ok(Vec::new()),
+        Err(ClientFileGuardRejection::UndetectableFile) => {
+            tracing::warn!(
+                client = %identifier,
+                operation,
+                "Rejected client file guard: config file state undetectable"
+            );
+            Err(StatusCode::BAD_REQUEST)
+        }
+        Err(ClientFileGuardRejection::NonApplicableDbState) => {
+            tracing::warn!(
+                client = %identifier,
+                operation,
+                attachment = ?attachment_state,
+                "Rejected client file guard: non-applicable DB state"
+            );
+            Err(StatusCode::BAD_REQUEST)
+        }
+    }
+}
+
 /// Handler for POST /api/client/config/restore
 /// Restores configuration from a named backup snapshot
 pub async fn config_restore(
@@ -1000,23 +1040,26 @@ pub async fn client_detach(
 ) -> Result<Json<ClientDetachResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let mut warnings: Vec<String> = Vec::new();
+    let existing_state = service.fetch_state(&request.identifier).await.map_err(|err| {
+        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before detach");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
-    // Conflict detection: check if MCPMate is actually present before detaching
-    if let Some(state) = service.fetch_state(&request.identifier).await.ok().flatten() {
-        if let Some(present) = detect_mcpmate_in_client_config(service.as_ref(), &state).await {
-            if !present {
-                warnings
-                    .push("MCPMate entry not found in config file; detach has no effect on file content".to_string());
-            }
-        }
-    }
+    let Some(state) = existing_state.as_ref() else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    let attachment_state = state.attachment_state();
+    let mcpmate_present = detect_mcpmate_in_client_config(service.as_ref(), state).await;
+    let warnings = client_file_guard_warnings(
+        evaluate_client_detach_file_guard(mcpmate_present, attachment_state),
+        "detach",
+        &request.identifier,
+        attachment_state,
+    )?;
 
     let changed = service.detach_client(&request.identifier).await.map_err(|err| {
-        let status = match err {
-            ConfigError::DataAccessError(_) | ConfigError::PathResolutionError(_) => StatusCode::BAD_REQUEST,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
+        let status = map_config_error_status(&err);
         tracing::error!(client = %request.identifier, status = %status.as_u16(), error = %err, "Failed to detach client");
         status
     })?;
@@ -1097,22 +1140,14 @@ pub async fn client_attach(
         return Err(StatusCode::NOT_FOUND);
     };
 
-    // Conflict detection: check if MCPMate already present in config file
-    let mut warnings: Vec<String> = Vec::new();
-    if let Some(present) = detect_mcpmate_in_client_config(service.as_ref(), state).await {
-        if present {
-            warnings.push("MCPMate entry already present in config file; attach will overwrite".to_string());
-        }
-    }
-
-    if state.attachment_state() != AttachmentState::Detached {
-        tracing::warn!(
-            client = %request.identifier,
-            attachment = ?state.attachment_state(),
-            "Rejected client attach while not detached"
-        );
-        return Err(StatusCode::BAD_REQUEST);
-    }
+    let attachment_state = state.attachment_state();
+    let mcpmate_present = detect_mcpmate_in_client_config(service.as_ref(), state).await;
+    let warnings = client_file_guard_warnings(
+        evaluate_client_attach_file_guard(mcpmate_present, attachment_state),
+        "attach",
+        &request.identifier,
+        attachment_state,
+    )?;
 
     let effective_mode = service.get_effective_config_mode(&request.identifier).await.map_err(|err| {
         tracing::error!(client = %request.identifier, error = %err, "Failed to resolve effective config mode for attach");
@@ -1416,6 +1451,9 @@ fn map_mode(mode: ClientConfigMode) -> ConfigMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::handlers::client::inspection::{
+        ATTACH_OVERWRITE_WARNING, DETACH_NO_EFFECT_WARNING,
+    };
     use crate::api::models::client::{ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq};
     use crate::api::routes::AppState;
     use crate::clients::models::{ClientConfigFileState, ClientRegistrationOrigin};
@@ -1636,6 +1674,60 @@ mod tests {
             selected: Some(true),
             ..Default::default()
         }
+    }
+
+    async fn seed_runtime_attachable_client(
+        context: &TestContext,
+        identifier: &str,
+        config_path: &std::path::Path,
+    ) -> serde_json::Value {
+        use crate::api::models::client::ClientBackupPolicyPayload;
+
+        tokio::fs::write(config_path, "{}")
+            .await
+            .expect("seed runtime client config file");
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                display_name: Some("Runtime Attach Client".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(json_object_parse("mcpServers")),
+                transports: Some(HashMap::from([("streamable_http".to_string(), streamable_http_rule())])),
+                ..settings_update_req(identifier)
+            }),
+        )
+        .await
+        .expect("update runtime attachable client");
+
+        assert!(update_response.success);
+
+        let Json(apply_response) = config_apply(
+            State(context.app_state.clone()),
+            Json(ClientConfigUpdateReq {
+                identifier: identifier.to_string(),
+                mode: ClientConfigMode::Hosted,
+                preview: false,
+                selected_config: ClientConfigSelected::Default,
+                backup_policy: Some(ClientBackupPolicyPayload {
+                    policy: "off".to_string(),
+                    limit: None,
+                }),
+            }),
+        )
+        .await
+        .expect("apply runtime attachable client config");
+
+        assert!(apply_response.success);
+        assert!(apply_response.data.expect("apply data").applied);
+
+        let written = tokio::fs::read_to_string(config_path)
+            .await
+            .expect("read applied config");
+        serde_json::from_str(&written).expect("parse applied config")
     }
 
     #[tokio::test]
@@ -3981,4 +4073,235 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), StatusCode::FORBIDDEN);
     }
+
+    #[tokio::test]
+    async fn client_attach_allows_reattach_when_file_already_contains_mcpmate() {
+        let context = create_test_context().await;
+        let identifier = "custom.runtime.attach";
+        let config_path = context._temp_dir.path().join("runtime-attach-client.json");
+        let parsed = seed_runtime_attachable_client(&context, identifier, &config_path).await;
+        assert!(parsed["mcpServers"].get("MCPMate").is_some());
+
+        let Json(attach_response) = client_attach(
+            State(context.app_state.clone()),
+            Json(ClientAttachReq {
+                identifier: identifier.to_string(),
+            }),
+        )
+        .await
+        .expect("reattach while file already contains MCPMate");
+
+        assert!(attach_response.success);
+        let data = attach_response.data.expect("attach data");
+        assert!(
+            data.warnings
+                .iter()
+                .any(|warning| warning == ATTACH_OVERWRITE_WARNING),
+            "expected overwrite warning, got {:?}",
+            data.warnings
+        );
+        assert_eq!(data.attachment_state, "attached");
+    }
+
+    #[tokio::test]
+    async fn client_detach_removes_mcpmate_when_db_detached_but_file_still_present() {
+        let context = create_test_context().await;
+        let identifier = "custom.runtime.detach";
+        let config_path = context._temp_dir.path().join("runtime-detach-client.json");
+        seed_runtime_attachable_client(&context, identifier, &config_path).await;
+
+        sqlx::query("UPDATE client SET attachment_state = 'detached' WHERE identifier = ?")
+            .bind(identifier)
+            .execute(&context.db_pool)
+            .await
+            .expect("force detached DB state while file still contains MCPMate");
+
+        let Json(detach_response) = client_detach(
+            State(context.app_state.clone()),
+            Json(ClientDetachReq {
+                identifier: identifier.to_string(),
+            }),
+        )
+        .await
+        .expect("detach while file still contains MCPMate");
+
+        assert!(detach_response.success);
+        let data = detach_response.data.expect("detach data");
+        assert!(data.changed);
+        assert!(data.warnings.is_empty());
+        assert_eq!(data.attachment_state, "detached");
+
+        let written = tokio::fs::read_to_string(&config_path)
+            .await
+            .expect("read detached config");
+        let parsed: serde_json::Value = serde_json::from_str(&written).expect("parse detached config");
+        assert!(parsed["mcpServers"].get("MCPMate").is_none());
+    }
+
+    #[tokio::test]
+    async fn client_detach_warns_when_mcpmate_absent_from_file() {
+        let context = create_test_context().await;
+        let identifier = "custom.runtime.detach-idempotent";
+        let config_path = context._temp_dir.path().join("runtime-detach-idempotent.json");
+        tokio::fs::write(&config_path, r#"{"mcpServers":{}}"#)
+            .await
+            .expect("seed empty runtime config");
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                display_name: Some("Runtime Detach Idempotent".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(json_object_parse("mcpServers")),
+                transports: Some(HashMap::from([("streamable_http".to_string(), streamable_http_rule())])),
+                ..settings_update_req(identifier)
+            }),
+        )
+        .await
+        .expect("update runtime detach idempotent client");
+        assert!(update_response.success);
+
+        sqlx::query("UPDATE client SET attachment_state = 'detached' WHERE identifier = ?")
+            .bind(identifier)
+            .execute(&context.db_pool)
+            .await
+            .expect("mark client detached");
+
+        let Json(detach_response) = client_detach(
+            State(context.app_state.clone()),
+            Json(ClientDetachReq {
+                identifier: identifier.to_string(),
+            }),
+        )
+        .await
+        .expect("idempotent detach");
+
+        assert!(detach_response.success);
+        let data = detach_response.data.expect("detach data");
+        assert!(!data.changed);
+        assert!(
+            data.warnings
+                .iter()
+                .any(|warning| warning == DETACH_NO_EFFECT_WARNING),
+            "expected no-effect warning, got {:?}",
+            data.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn client_detach_rejects_undetectable_config_file() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("undetectable-detach.json");
+        tokio::fs::write(&config_path, r#"{"mcpServers":{"MCPMate":{"url":"http://127.0.0.1:8000/mcp"}}}"#)
+            .await
+            .expect("seed undetectable detach config");
+
+        context
+            .client_service
+            .set_active_client_settings(
+                "client-a",
+                ActiveClientSettingsUpdate {
+                    display_name: Some("Undetectable Detach Client".to_string()),
+                    config_mode: Some("hosted".to_string()),
+                    transport: Some("streamable_http".to_string()),
+                    config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                    config_path: Some(config_path.to_string_lossy().to_string()),
+                    ..ActiveClientSettingsUpdate::default()
+                },
+            )
+            .await
+            .expect("seed active client state");
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET config_file_parse = 'not-json',
+                approval_status = 'approved',
+                attachment_state = 'attached'
+            WHERE identifier = ?
+            "#,
+        )
+        .bind("client-a")
+        .execute(&context.db_pool)
+        .await
+        .expect("persist invalid parse override");
+
+        let result = client_detach(
+            State(context.app_state.clone()),
+            Json(ClientDetachReq {
+                identifier: "client-a".to_string(),
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn config_details_repairs_local_target_before_deriving_attachment_state() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("drift-attachment.json");
+        tokio::fs::write(
+            &config_path,
+            r#"{"mcpServers":{"MCPMate":{"url":"http://127.0.0.1:8000/mcp"}}}"#,
+        )
+        .await
+        .expect("seed drifted attachment config");
+
+        let Json(update_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                display_name: Some("Drift Attachment Client".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(json_object_parse("mcpServers")),
+                transports: Some(HashMap::from([("streamable_http".to_string(), streamable_http_rule())])),
+                ..settings_update_req("client-a")
+            }),
+        )
+        .await
+        .expect("seed drift attachment client settings");
+        assert!(update_response.success);
+
+        sqlx::query(
+            r#"
+            UPDATE client
+            SET connection_mode = 'manual',
+                attachment_state = 'not_applicable'
+            WHERE identifier = ?
+            "#,
+        )
+        .bind("client-a")
+        .execute(&context.db_pool)
+        .await
+        .expect("persist drifted attachment metadata");
+
+        let Json(details_response) = config_details(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-a".to_string(),
+            }),
+        )
+        .await
+        .expect("config details response");
+
+        assert!(details_response.success);
+        let details = details_response.data.expect("details data");
+        assert_eq!(details.attachment_state.as_deref(), Some("attached"));
+        assert!(
+            !details
+                .degraded_reasons
+                .iter()
+                .any(|reason| reason == "attachment_requires_local_config_target"),
+            "repair should remove attachment drift, got {:?}",
+            details.degraded_reasons
+        );
+    }
+
 }
