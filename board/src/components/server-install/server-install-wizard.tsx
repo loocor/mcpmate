@@ -426,7 +426,7 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		// Form refs
-		const dropZoneRef = useRef<HTMLButtonElement | null>(null);
+		const dropZoneRef = useRef<HTMLDivElement | null>(null);
 		// Form field IDs
 		const nameId = useId();
 		const kindId = useId();
@@ -986,7 +986,7 @@ export const ServerInstallWizard = forwardRef(
 		});
 
 		const handleDropZoneClick = useCallback(
-			(event: MouseEvent<HTMLButtonElement>) => {
+			(event: MouseEvent<HTMLDivElement>) => {
 				event.stopPropagation();
 				if (!ingestEnabled) return;
 				if (isDropZoneCollapsed || ingestError || isIngestSuccess) {
@@ -1876,11 +1876,18 @@ export const ServerInstallWizard = forwardRef(
 								className="relative shrink-0 px-4 py-4"
 								onClick={(event) => event.stopPropagation()}
 							>
-								<button
-									type="button"
+								<div
+									role="button"
+									tabIndex={0}
 									ref={dropZoneRef}
 									onFocus={handleDropZoneFocus}
 									onClick={handleDropZoneClick}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ") {
+											e.preventDefault();
+											handleDropZoneClick(e as unknown as MouseEvent<HTMLDivElement>);
+										}
+									}}
 									onDragOver={(e) => {
 										if (!canIngestFromDataTransfer(e.dataTransfer)) return;
 										e.preventDefault();
@@ -2011,7 +2018,7 @@ export const ServerInstallWizard = forwardRef(
 											</p>
 										)}
 									</div>
-								</button>
+								</div>
 							</div>
 						) : null}
 

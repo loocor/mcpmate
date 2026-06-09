@@ -72,6 +72,8 @@ export function useServerInstallPipeline(
 	const previewGenerationRef = useRef(0);
 
 	const clearResults = useCallback(() => {
+		previewGenerationRef.current++;
+		setPreviewLoading(false);
 		setPreviewState(null);
 		setPreviewError(null);
 		setImportResult(null);
