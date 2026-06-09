@@ -2,7 +2,7 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
-		title: "Machine translated; pending Japanese review. 安全なセットアップ導線の仕上げ",
+		title: "安全なセットアップ導線の仕上げ",
 		description:
 			"0.3.0 で Secure Store と一括インポートの基盤が入ったため、次は OAuth custody、secret lifecycle cleanup、残りの server-field binding の細部を磨いていきます。",
 	},
@@ -72,7 +72,7 @@ const Roadmap = () => {
 			<div className="space-y-6">
 				<h2>進行中</h2>
 				<p>
-					Machine translated; pending Japanese review. 0.3.0 beta の基盤を受けて、いま最もユーザー体験に近い作業は、安全なセットアップ導線、配布、プラットフォーム成熟度、クライアント展開の安全性、そして分かりやすい導線です。
+					0.3.0 beta の基盤を受けて、いま最もユーザー体験に近い作業は、安全なセットアップ導線、配布、プラットフォーム成熟度、クライアント展開の安全性、そして分かりやすい導線です。
 				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
@@ -83,7 +83,7 @@ const Roadmap = () => {
 				<h2>最近届けたもの</h2>
 				<ul className="space-y-2">
 					<li>
-						Machine translated; pending Japanese review. Secure Store は、機密性の高いサーバーパラメータを平文設定ファイルから外し、暗号化された secret record を runtime で解決し、保護と使用状況の流れをダッシュボードで扱えるようにしました。
+						Secure Store は、機密性の高いサーバーパラメータを平文設定ファイルから外し、暗号化された secret record を runtime で解決し、保護と使用状況の流れをダッシュボードで扱えるようにしました。
 					</li>
 					<li>
 						Server インストールは <code>mcp-servers.json</code> のような複数サーバー設定 bundle を受け取り、draft の確認、サーバープレビュー、dry-run 検証、選択した設定のインポートを行えるようになりました。
