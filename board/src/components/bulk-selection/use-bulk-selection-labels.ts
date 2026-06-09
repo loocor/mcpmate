@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 
 export function useBulkSelectionLabels() {
-	const { t } = useTranslation("common");
+	const { t } = useTranslation();
 
 	return {
 		modeToggleLabel: t("bulkSelection.bulkModeEnter", {

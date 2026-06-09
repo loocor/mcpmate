@@ -1147,6 +1147,8 @@ export const ServerInstallWizard = forwardRef(
 							? toDraftFromValues(getValues())
 							: null;
 					if (activeDraft && activeDraftName) {
+						const isValid = await trigger(undefined, { shouldFocus: true });
+						if (!isValid) return;
 						installPipeline.updateDraft(activeDraft, activeDraftName);
 						if (activeDraft.name !== activeDraftName) {
 							setActiveDraftName(activeDraft.name);

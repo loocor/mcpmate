@@ -45,7 +45,7 @@ function hasEntries(
 export function useServerInstallPipeline(
 	opts: UseServerInstallPipelineOptions = {},
 ) {
-	const { t } = useTranslation("servers");
+	const { t, i18n } = useTranslation("servers");
 	const [isDrawerOpen, setDrawerOpen] = useState(false);
 	const [drafts, setDrafts] = useState<ServerInstallDraft[]>([]);
 	const [selectedDraftNames, setSelectedDraftNames] = useState<string[]>([]);
@@ -296,6 +296,7 @@ export function useServerInstallPipeline(
 		selectedDrafts.length,
 		targetProfileId,
 		t,
+		i18n.language,
 	]);
 
 	const confirmImport = useCallback(
@@ -393,6 +394,7 @@ export function useServerInstallPipeline(
 			selectedDrafts.length,
 			targetProfileId,
 			t,
+			i18n.language,
 			opts,
 		],
 	);
