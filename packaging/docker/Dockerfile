@@ -12,14 +12,15 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
 FROM ${RUST_IMAGE} AS builder
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 
 COPY backend ./backend
 
 WORKDIR /workspace/backend
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config \
-    && rm -rf /var/lib/apt/lists/*
 RUN cargo build --release --bin mcpmate --bin bridge
 
 FROM ${RUNTIME_IMAGE} AS runtime

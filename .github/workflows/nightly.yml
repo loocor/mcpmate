@@ -6,7 +6,7 @@ name: Nightly
 on:
   workflow_dispatch:
   # STATUS: DISABLED — schedule trigger is paused.
-  # Re-enable by removing the jobs-level `if` gate on prepare.
+  # Re-enable by uncommenting the schedule trigger below.
   # schedule:
   #   - cron: "20 18 * * *"
 
