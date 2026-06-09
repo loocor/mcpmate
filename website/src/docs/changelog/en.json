@@ -1,5 +1,38 @@
 [
 	{
+		"version": "0.3.0",
+		"date": "2026-06-09",
+		"highlights": [
+			"MCPMate v0.3.0-beta turns the post-0.2.x hardening work into a more practical setup and trust release. It adds encrypted local secret handling, brings batch MCP configuration import into the Server install flow, makes profile capability edits easier to apply in bulk, and tightens client writeback plus desktop release reliability around the new secret-store dependency chain."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Added the Secure Store foundation for local server-runtime secrets, including encrypted local records, OS-backed root-key custody, protection password flows, inline secret placeholders, usage metadata, and fail-closed runtime resolution."
+			},
+			{
+				"type": "feat",
+				"text": "Server install now supports multi-server configuration import, so users can paste or drop an mcp-servers.json-style bundle, review selectable drafts, preview each server, run dry-run validation, and import the selected set in one flow."
+			},
+			{
+				"type": "feat",
+				"text": "Profiles now support bulk include and exclude actions across servers, tools, resources, prompts, and resource templates, reducing repetitive capability management work."
+			},
+			{
+				"type": "feat",
+				"text": "Settings now groups appearance controls under General and exposes Light, Auto, and Dark theme choices more directly."
+			},
+			{
+				"type": "fix",
+				"text": "Client attach and detach actions now use file-verified guards, repair metadata drift where possible, and avoid offering writeback actions for targets that the API will reject."
+			},
+			{
+				"type": "fix",
+				"text": "Docker release validation and image builds now install the D-Bus system dependencies required by the secure-store keyring stack, while the nightly workflow is paused to manual runs until it is needed again."
+			}
+		]
+	},
+	{
 		"version": "0.2.3",
 		"date": "2026-06-06",
 		"highlights": [

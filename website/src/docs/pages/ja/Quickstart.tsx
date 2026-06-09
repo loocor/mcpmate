@@ -16,7 +16,7 @@ const howToSteps = [
 	},
 	{
 		name: "MCP サーバーを取り込む",
-		text: "組み込みマーケットを使うか、JSON/TOML スニペットを取り込むか、既存クライアントから設定を引き継ぐことができます。",
+		text: "Machine translated; pending Japanese review. 組み込みマーケットを使うか、JSON/TOML スニペットまたは複数サーバー設定 bundle を取り込むか、既存クライアントから設定を引き継ぐことができます。",
 	},
 	{
 		name: "プロファイルを整える",

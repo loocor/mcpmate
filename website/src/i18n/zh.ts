@@ -231,7 +231,7 @@ const zh = {
     "导入并维护配置只是第一个收益：它确实可以把复制粘贴和重复配置这种繁琐工作降下来。更大的价值在统一管理之后：你可以复用同一组服务，按工作场景控制每个客户端该拿到什么能力，选择合适的控制模式，并看清运行状态和能力消耗，而不是靠猜。",
   "faq.getting_started.title": "MCPMate 如何降低使用门槛？",
   "faq.getting_started.answer":
-    "MCPMate 会尽量缩短从发现 Server 到真正用起来的路径。首次启动时，onboarding 会检测本机已有的 MCP 客户端和 MCP Server；如果本机还没有可用资源，也可以从 MCPMate 维护的入门清单中直接选择。之后，你可以从 Server 目录直接选择，也可以把网页、聊天消息或文档里的配置片段框选拖到导入组件中，MCPMate 会尽量清理混杂文本并识别可导入内容。浏览器扩展则会在网页上识别 MCP Server 配置或代码片段，并提供浮动入口，一键传递到 MCPMate 中预览和导入。除 onboarding 外，其他导入 Server 的动作都会经过 Inspector 预检，让你在确认安装前看到 Server 暴露了哪些工具，以及它们是否能正常调用。",
+    "MCPMate 会尽量缩短从发现 Server 到真正用起来的路径。首次启动时，onboarding 会检测本机已有的 MCP 客户端和 MCP Server；如果本机还没有可用资源，也可以从 MCPMate 维护的入门清单中直接选择。之后，你可以从 Server 目录直接选择，也可以导入类似 mcp-servers.json 的多服务器配置包并逐项选择草稿，或把网页、聊天消息、文档里的配置片段框选拖到导入组件中。MCPMate 会尽量清理混杂文本并识别可导入内容。浏览器扩展则会在网页上识别 MCP Server 配置或代码片段，并提供浮动入口，一键传递到 MCPMate 中预览和导入。除 onboarding 外，其他导入 Server 的动作都会经过 Inspector 预检，让你在确认安装前看到 Server 暴露了哪些工具，以及它们是否能正常调用。",
   "faq.vs_clients.title": "MCPMate 和 AI 应用自带的 MCP 设置有什么区别？",
   "faq.vs_clients.answer":
     "不同 AI 应用内置的 MCP 设置大多存在差异。MCPMate 让你只需通过一种方法管理服务，减少在每个应用里重新摸索配置流程的成本，也把添加、移除、切换服务这些操作变得更统一。更进一步，MCPMate 提供更多能力，让每一个 AI 应用都可以享用，比如只接收当前工作真正需要的能力，而不是一次性暴露所有工具。",
@@ -240,7 +240,7 @@ const zh = {
     "MCPMate 通过 Profile 让你针对具体业务场景配置所需工具，让 AI 应用在运行过程中只看到选择的工具，而不是把所有 MCP Server 能力都塞进 AI 应用上下文空间消耗用不到的 Token。如果你不想提前配置工具集，那就使用 Unify Mode，MCPMate 会将所有 MCP Server 工具能力信息如名称、描述、Schema 等信息分层管理并后置隔离，只给 AI 应用暴露 3 个标准 MCP 工具：Catalog、Details、Call。这种渐进式披露的原理与 CLI 或 Skills 机制一致，既减少上下文负担，又能尽可能按需调用可用工具。",
   "faq.security_reliability.title": "MCPMate 如何保障安全、隐私与可靠性？",
   "faq.security_reliability.answer":
-    "MCPMate 以本地运行为核心：你的 MCP 配置、运行状态和工具调用管理都保留在本机。当前线上交互只发生在 onboarding 和添加客户端时，并且只是对 Public Discovery 的单向只读查询，用于展示预置客户端配置和 Server 目录。安全存储能力即将上线，MCPMate 将避免把 Token、Key 等敏感信息明文写进配置文件。可靠性方面，MCPMate 的运行内核基于 Rust 构建，并持续对齐 MCP 官方规范和 SDK 实践，负责连接、能力发现、工具暴露和运行检查。",
+    "MCPMate 以本地运行为核心：你的 MCP 配置、运行状态和工具调用管理都保留在本机。当前线上交互只发生在 onboarding 和添加客户端时，并且只是对 Public Discovery 的单向只读查询，用于展示预置客户端配置和 Server 目录。Secure Store 会把敏感服务器参数从明文配置文件中移出：业务配置中保留占位符，加密后的 secret 记录只在运行时启动路径中解析。可靠性方面，MCPMate 的运行内核基于 Rust 构建，并持续对齐 MCP 官方规范和 SDK 实践，负责连接、能力发现、工具暴露和运行检查。",
   "faq.support.title": "如果使用 MCPMate 时遇到问题怎么办？",
   "faq.support.answer":
     "MCPMate 会把帮助、排查和回退尽量放在本地可控范围内。界面中的操作指南和上下文帮助会根据当前操作打开对应文档；你也可以通过 Discord、飞书、GitHub Discussions、源码仓库或邮件获得支持。作为兜底，MCPMate 在改写 MCP Server 配置清单前会自动备份；除敏感信息外，增强能力数据会透明存放在用户目录下的 MCPMate 文件夹中。MCPMate 的接入点主要是配置连接层，不要求改造原有 MCP Server 或 AI 应用；需要回退时，通常恢复备份或切回原有配置方式即可。",

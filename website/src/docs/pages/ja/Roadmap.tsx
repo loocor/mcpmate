@@ -2,9 +2,9 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
-		title: "基盤強化後の使いやすさ改善",
+		title: "Machine translated; pending Japanese review. 安全なセットアップ導線の仕上げ",
 		description:
-			"0.2.3 の安定性強化を土台に、次のリリースでは Onboarding、クライアント設定、マーケットインストール、サポート向けフィードバックの摩擦を減らしていきます。",
+			"0.3.0 で Secure Store と一括インポートの基盤が入ったため、次は OAuth custody、secret lifecycle cleanup、残りの server-field binding の細部を磨いていきます。",
 	},
 	{
 		title: "デスクトップ配布パイプライン",
@@ -17,9 +17,9 @@ const inProgress = [
 			"macOS、Windows、Linux のデスクトップビルドはいずれも Beta として扱いながら、インストーラの挙動、ランタイム検出、デスクトップ体験の一貫性を引き続き高めています。",
 	},
 	{
-		title: "クライアント統制と認証情報の安全性",
+		title: "クライアント統制と展開の安全性",
 		description:
-			"検出済みクライアントへの展開、書き込み可能ターゲットの検証、適用 / クリーンアップ経路、機密 token の扱いを改善し、管理された変更をより信頼しやすくしています。",
+			"検出済みクライアントへの展開、書き込み可能ターゲットの検証、attach / detach 経路、能力の一括編集を改善し、管理された変更をより信頼しやすくしています。",
 	},
 	{
 		title: "ドキュメントと導線の同期",
@@ -72,7 +72,7 @@ const Roadmap = () => {
 			<div className="space-y-6">
 				<h2>進行中</h2>
 				<p>
-					0.2.3 の安定性強化を受けて、いま最もユーザー体験に近い作業は、使いやすさの改善、配布、プラットフォーム成熟度、クライアント展開の安全性、そして分かりやすい導線です。
+					Machine translated; pending Japanese review. 0.3.0 beta の基盤を受けて、いま最もユーザー体験に近い作業は、安全なセットアップ導線、配布、プラットフォーム成熟度、クライアント展開の安全性、そして分かりやすい導線です。
 				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
@@ -82,6 +82,15 @@ const Roadmap = () => {
 
 				<h2>最近届けたもの</h2>
 				<ul className="space-y-2">
+					<li>
+						Machine translated; pending Japanese review. Secure Store は、機密性の高いサーバーパラメータを平文設定ファイルから外し、暗号化された secret record を runtime で解決し、保護と使用状況の流れをダッシュボードで扱えるようにしました。
+					</li>
+					<li>
+						Server インストールは <code>mcp-servers.json</code> のような複数サーバー設定 bundle を受け取り、draft の確認、サーバープレビュー、dry-run 検証、選択した設定のインポートを行えるようになりました。
+					</li>
+					<li>
+						Profiles は servers、tools、resources、prompts、resource templates の一括 include / exclude に対応しました。
+					</li>
 					<li>
 						Onboarding と新規クライアント設定は、バックエンドが管理する互換標準を使うようになり、より新しく適切なクライアント設定を受け取れるようになりました。
 					</li>

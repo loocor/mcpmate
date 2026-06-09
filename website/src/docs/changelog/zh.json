@@ -1,5 +1,38 @@
 [
 	{
+		"version": "0.3.0",
+		"date": "2026-06-09",
+		"highlights": [
+			"MCPMate v0.3.0-beta 把 0.2.x 之后的加固工作推进到更实用的上手与可信操作阶段。这个版本加入本地加密敏感信息管理，把批量 MCP 配置导入接入 Server 安装流程，让配置集能力可以批量调整，并围绕新的安全存储依赖链继续收紧客户端写回与桌面发布可靠性。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "新增 Secure Store 基础能力，用于本地服务器运行时敏感信息：包括加密本地记录、操作系统托管根密钥、保护密码流程、内联 secret 占位符、使用位置元数据，以及失败时显式中止的运行时解析。"
+			},
+			{
+				"type": "feat",
+				"text": "Server 安装流程现在支持多服务器配置批量导入，用户可以粘贴或拖入类似 mcp-servers.json 的配置包，逐项查看可选草稿、预览服务器、执行 dry-run 校验，并一次导入选中的配置。"
+			},
+			{
+				"type": "feat",
+				"text": "配置集现在支持对服务器、工具、资源、提示和资源模板进行批量 include / exclude，减少重复的能力管理操作。"
+			},
+			{
+				"type": "feat",
+				"text": "设置页将外观控制合并到 General，并更直接地提供 Light、Auto、Dark 三种主题选择。"
+			},
+			{
+				"type": "fix",
+				"text": "客户端 attach / detach 现在使用基于真实文件状态的保护规则，在可行时修复元数据漂移，并避免向用户展示 API 最终会拒绝的写回操作。"
+			},
+			{
+				"type": "fix",
+				"text": "Docker 发布校验与镜像构建现在安装 secure-store keyring 依赖链所需的 D-Bus 系统依赖；Nightly workflow 暂停定时触发，保留手动运行入口。"
+			}
+		]
+	},
+	{
 		"version": "0.2.3",
 		"date": "2026-06-06",
 		"highlights": [
