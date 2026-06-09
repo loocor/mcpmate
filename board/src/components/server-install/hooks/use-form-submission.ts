@@ -151,6 +151,8 @@ export function useFormSubmission({
 			if (description) meta.description = description;
 			if (version) meta.version = version;
 			if (websiteUrl) meta.websiteUrl = websiteUrl;
+			const iconUrl = trim(values.meta_icon_url);
+			if (iconUrl) meta.icons = [{ src: iconUrl }];
 			if (repository) meta.repository = repository;
 
 			const envForDraft = values.kind === "stdio" ? env : headers;

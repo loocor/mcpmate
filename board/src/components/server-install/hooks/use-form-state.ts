@@ -56,6 +56,7 @@ export function useFormState() {
 				env: [],
 				headers: [],
 				meta_description: commonMeta.description,
+				meta_icon_url: commonMeta.icons?.[0]?.src ?? "",
 				meta_version: commonMeta.version,
 				meta_website_url: commonMeta.websiteUrl,
 				meta_repository_url: commonMeta.repository.url,

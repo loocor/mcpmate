@@ -5,7 +5,7 @@ import type { SegmentOption } from "../ui/segment";
 
 // Constants
 export const DEFAULT_INGEST_MESSAGE =
-	"Drop JSON/TOML/Text or MCP bundles (WIP) to begin";
+	"Drop or paste JSON, TOML, or text, or click the icon to scan local configs";
 
 export const GHOST_INPUT_CLASS =
 	"border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700 cursor-pointer";
@@ -13,7 +13,7 @@ export const GHOST_INPUT_CLASS =
 // Server type options for Segment component
 export const SERVER_TYPE_OPTIONS: SegmentOption[] = [
 	{ value: "stdio", label: "Stdio" },
-	{ value: "sse", label: "SSE" },
+	{ value: "sse", label: "SSE (Legacy)" },
 	{ value: "streamable_http", label: "Streamable HTTP" },
 ];
 
@@ -66,6 +66,11 @@ export const manualServerSchema = z
 		headers: z.array(headerSchema).optional(),
 		urlParams: z.array(urlParamSchema).optional(),
 		meta_description: z.string().optional(),
+		meta_icon_url: z
+			.string()
+			.url("manual.errors.urlInvalid")
+			.optional()
+			.or(z.literal("")),
 		meta_version: z.string().optional(),
 		meta_website_url: z
 			.string()
@@ -163,6 +168,11 @@ export interface ServerInstallManualFormHandle {
 		text?: string;
 		buffer?: ArrayBuffer;
 		fileName?: string;
+		payloads?: Array<{
+			text?: string;
+			buffer?: ArrayBuffer;
+			fileName?: string;
+		}>;
 	}) => Promise<void>;
 	loadDraft: (draft: ServerInstallDraft) => Promise<void> | void;
 	getCurrentDraft: () => ServerInstallDraft | null;

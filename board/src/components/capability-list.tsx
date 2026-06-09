@@ -1,4 +1,11 @@
-import { Check } from "lucide-react";
+import {
+	Check,
+	Database,
+	LayoutTemplate,
+	MessageSquare,
+	Wrench,
+	type LucideIcon,
+} from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../lib/store";
@@ -8,6 +15,7 @@ import type {
 	CapabilityRecord,
 } from "../types/capabilities";
 import type { JsonSchema } from "../types/json";
+import { CapabilityListSkeleton } from "./capability-list-skeleton";
 import { CardListScrollBody } from "./card-list-scroll-body";
 import { JsonCodeBlock } from "./json-code-block";
 import { CachedAvatar } from "./cached-avatar";
@@ -26,6 +34,13 @@ import {
 
 type CapabilityKind = "tools" | "resources" | "prompts" | "templates";
 type ContextType = "server" | "profile";
+
+const CAPABILITY_KIND_ICONS: Record<CapabilityKind, LucideIcon> = {
+	tools: Wrench,
+	resources: Database,
+	prompts: MessageSquare,
+	templates: LayoutTemplate,
+};
 
 export interface CapabilityListProps<T = CapabilityRecord> {
 	title?: string;
@@ -290,8 +305,17 @@ export function CapabilityList<T = CapabilityRecord>({
 			.sort((a, b) => a.title.localeCompare(b.title)),
 		[mappedItems, search],
 	);
+	const selectedIdSet = useMemo(
+		() => (selectedIds ? new Set(selectedIds) : null),
+		[selectedIds],
+	);
 
-	const skeleton = (
+	const useStripeSkeleton = context === "profile" || useCapsule;
+	const skeleton = useStripeSkeleton ? (
+		<CapabilityListSkeleton
+			className={scrollContainedBody ? "p-0" : undefined}
+		/>
+	) : (
 		<div className="space-y-2">
 			{[1, 2, 3].map((i) => (
 				<div
@@ -305,7 +329,7 @@ export function CapabilityList<T = CapabilityRecord>({
 	const renderedItems = data.map((mapped, idx) => {
 		const item = mapped.raw;
 		const id = getId ? getId(item) : String(idx);
-		const isSelected = !!(selectable && selectedIds?.includes(id));
+		const isSelected = !!(selectable && selectedIdSet?.has(id));
 		const isEnabled = getEnabled ? !!getEnabled(item) : undefined;
 
 		const handleSelect = () => {
@@ -352,14 +376,21 @@ export function CapabilityList<T = CapabilityRecord>({
 				? "font-medium text-primary"
 				: "font-medium";
 
-		const avatarNode = (
-			<CachedAvatar
-				src={mapped.icon}
-				fallback={mapped.title || kind}
-				size="sm"
-				className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
-			/>
-		);
+		const KindIcon = CAPABILITY_KIND_ICONS[kind];
+		const leadingNode =
+			context === "server" ? (
+				<KindIcon
+					className="mt-0.5 h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400"
+					aria-hidden
+				/>
+			) : (
+				<CachedAvatar
+					src={mapped.icon}
+					fallback={mapped.title || kind}
+					size="sm"
+					className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
+				/>
+			);
 
 		const descriptionBlock = mapped.description ? (
 			<div className="mt-1 whitespace-pre-wrap break-words text-xs text-slate-600 dark:text-slate-300">
@@ -459,7 +490,7 @@ export function CapabilityList<T = CapabilityRecord>({
 		) : null;
 
 		const infoBlock = (
-			<div className="min-w-0 flex-1">
+			<div className="min-w-0 flex-1 select-text">
 				<div className={titleClasses}>
 					{mapped.title}
 					{mapped.subtitle ? (
@@ -481,7 +512,7 @@ export function CapabilityList<T = CapabilityRecord>({
 
 		const leftSection = (
 			<div className="flex flex-1 items-start gap-3">
-				{avatarNode}
+				{leadingNode}
 				{infoBlock}
 			</div>
 		);

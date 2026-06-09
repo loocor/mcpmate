@@ -32,9 +32,19 @@ export function buildClientServersImportRequest(init: {
 /** Build `mcpServers` map from install wizard drafts (preview/import). */
 export function buildMcpServersImportBodyFromDrafts(
 	items: ServerInstallDraft[],
+	selectedNames?: Set<string> | string[],
 ): Pick<ServersImportRequestBody, "mcpServers"> {
 	const payload: Record<string, unknown> = {};
+	const selected =
+		selectedNames instanceof Set
+			? selectedNames
+			: Array.isArray(selectedNames)
+				? new Set(selectedNames)
+				: null;
 	for (const item of items) {
+		if (selected && !selected.has(item.name)) {
+			continue;
+		}
 		const metaPayload = serializeMetaForApi(item.meta);
 		const entry: Record<string, unknown> = {
 			type: item.kind,
@@ -69,11 +79,13 @@ export function buildMcpServersImportBodyFromDrafts(
 
 export function buildDraftServersImportRequest(init: {
 	drafts: ServerInstallDraft[];
+	selectedDraftNames?: Set<string> | string[];
 	targetProfileId?: string | null;
 	dryRun?: boolean;
 }): ServersImportRequestBody {
 	const body: ServersImportRequestBody = buildMcpServersImportBodyFromDrafts(
 		init.drafts,
+		init.selectedDraftNames,
 	);
 	if (init.targetProfileId) {
 		body.target_profile_id = init.targetProfileId;

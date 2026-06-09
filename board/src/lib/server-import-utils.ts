@@ -10,11 +10,11 @@ const SKIPPED_REASON_LABELS: Record<
 > = {
   duplicate_name: {
     key: "serverImport.skippedReasons.duplicateName",
-    defaultValue: "Duplicate name",
+    defaultValue: "Name already in use",
   },
   duplicate_fingerprint: {
     key: "serverImport.skippedReasons.duplicateFingerprint",
-    defaultValue: "Duplicate fingerprint",
+    defaultValue: "Already installed",
   },
   url_query_mismatch: {
     key: "serverImport.skippedReasons.urlQueryMismatch",

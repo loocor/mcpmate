@@ -2,14 +2,15 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
-	ChevronDown,
+	ArrowLeft,
 	ChevronRight,
 	Copy,
 	Loader2,
+	Radar,
 	RefreshCw,
-	Target,
+	RotateCcw,
 } from "lucide-react";
-import type { FocusEvent } from "react";
+import type { FocusEvent, MouseEvent } from "react";
 import {
 	forwardRef,
 	useCallback,
@@ -23,7 +24,7 @@ import {
 import { useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { serversApi } from "../../lib/api";
+import { clientsApi, serversApi } from "../../lib/api";
 import {
 	resolveAutoAddTargetProfileId,
 	useAutoAddTargetProfile,
@@ -38,16 +39,39 @@ import {
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
+import { cn, toTitleCase } from "../../lib/utils";
+import { onboardingApi } from "../../lib/onboarding-api";
+import {
+	canIngestFromDataTransfer,
+	extractPayloadFromDataTransfer,
+} from "../../lib/server-uni-import-transfer";
 import {
 	compactKeyValueFields,
 	shouldAppendKeyValueRow,
 } from "../../lib/key-value-fields";
 import { useAppStore } from "../../lib/store";
-import type { MCPServerConfig, SecretOrigin } from "../../lib/types";
+import CapabilityList from "../capability-list";
+import type { ClientInfo, MCPServerConfig, SecretOrigin } from "../../lib/types";
+import type { CapabilityRecord } from "../../types/capabilities";
 import {
 	InlineSecretCreate,
 	useInlineSecretCreateField,
 } from "../secrets";
+import {
+	BulkSelectionCheckbox,
+	BulkSelectionHeader,
+	buildIncludeExcludeBulkActions,
+	useBulkSelectionLabels,
+	useBulkSelection,
+} from "../bulk-selection";
+import CapabilityCombobox from "../capability-combobox";
+import { CachedAvatar } from "../cached-avatar";
+import { CapabilityListSkeleton } from "../capability-list-skeleton";
+import { CardListScrollBody } from "../card-list-scroll-body";
+import {
+	CapsuleStripeList,
+	CapsuleStripeListItem,
+} from "../capsule-stripe-list";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -60,10 +84,18 @@ import {
 	DrawerTitle,
 } from "../ui/drawer";
 import { Input } from "../ui/input";
+import { toolbarSearchInputClassName } from "../ui/page-toolbar";
 import { Label } from "../ui/label";
 import { Segment } from "../ui/segment";
+import { Switch } from "../ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "../ui/tooltip";
 import {
 	CommandField,
 	HttpHeaders,
@@ -72,13 +104,30 @@ import {
 	UrlParams,
 } from "./form-fields";
 import { ServerAuthSection } from "./server-auth-section";
-import { useFormState, useFormSync, useIngest, useSecretFieldInsert } from "./hooks";
+import {
+	buildImportValidationItems,
+	ImportValidationSummary,
+} from "./import-validation-summary";
+import {
+	draftToFormState,
+	useFormState,
+	useFormSync,
+	useIngest,
+	useSecretFieldInsert,
+	useServerTypeOptions,
+} from "./hooks";
+import {
+	FORM_TAB_PANEL_TOP_INSET_CLASS,
+	FORM_TAB_SHELL_CLASS,
+	FORM_TAB_TOOLBAR_ROW_CLASS,
+	formContentScrollClass,
+	formTabScrollClass,
+} from "./form-tab-layout";
 import {
 	breathingAnimation,
 	DEFAULT_INGEST_MESSAGE,
 	type ManualServerFormValues,
 	manualServerSchema,
-	SERVER_TYPE_OPTIONS,
 	type ServerInstallManualFormHandle,
 } from "./types";
 import { FormViewModeToggle } from "./view-mode-toggle";
@@ -86,6 +135,68 @@ import { FormViewModeToggle } from "./view-mode-toggle";
 // Step definitions
 
 const STEP_ORDER: WizardStep[] = ["form", "preview", "result"];
+
+type BulkDraftView = "list" | "detail";
+
+type PreviewCapabilityKind = "tools" | "resources" | "prompts" | "templates";
+
+function draftEndpointSummary(draft: ServerInstallDraft): string {
+	if (draft.kind === "stdio") {
+		return [draft.command, ...(draft.args ?? [])].filter(Boolean).join(" ");
+	}
+	return draft.url ?? "";
+}
+
+function draftListAvatar(draft: ServerInstallDraft) {
+	const draftIcon = draft.meta?.icons?.[0]?.src;
+	const avatarFallback = (draft.name || "S").slice(0, 1).toUpperCase();
+	return (
+		<CachedAvatar
+			src={draftIcon}
+			alt={draft.name ? `${draft.name} icon` : undefined}
+			fallback={avatarFallback}
+			size="sm"
+			shape="rounded"
+			className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
+		/>
+	);
+}
+
+function clientHasScannableConfig(client: ClientInfo): boolean {
+	return Boolean(client.detected && client.config_path?.trim());
+}
+
+function fuzzyTextMatches(value: string, query: string): boolean {
+	const haystack = value.toLowerCase();
+	const needle = query.trim().toLowerCase();
+	if (!needle) return true;
+	if (haystack.includes(needle)) return true;
+	const normalizedHaystack = haystack.replace(/[^a-z0-9]+/g, " ");
+	const tokens = needle.split(/[^a-z0-9]+/).filter(Boolean);
+	if (tokens.length && tokens.every((token) => normalizedHaystack.includes(token))) {
+		return true;
+	}
+	const compactHaystack = haystack.replace(/[^a-z0-9]+/g, "");
+	const compactNeedle = needle.replace(/[^a-z0-9]+/g, "");
+	return Boolean(compactNeedle && compactHaystack.includes(compactNeedle));
+}
+
+function capabilityMatchesSearch(item: Record<string, unknown>, query: string): boolean {
+	if (!query.trim()) return true;
+	const fields = [
+		item.name,
+		item.tool_name,
+		item.prompt_name,
+		item.resource_uri,
+		item.uri,
+		item.uriTemplate,
+		item.uri_template,
+		item.description,
+	]
+		.filter((value): value is string => typeof value === "string")
+		.join(" ");
+	return fuzzyTextMatches(fields, query);
+}
 
 interface ServerInstallWizardProps {
 	isOpen: boolean;
@@ -132,6 +243,24 @@ export const ServerInstallWizard = forwardRef(
 		// Wizard state
 		const [isClosing, setIsClosing] = useState(false);
 		const [uiActiveTab, setUiActiveTab] = useState<"core" | "meta">("core");
+		const [bulkDraftView, setBulkDraftView] = useState<BulkDraftView>("list");
+		const bulkSelection = useBulkSelection<string>();
+		const { bulkModeDescription } = useBulkSelectionLabels();
+		const { serverTypeOptions, transportLabel } = useServerTypeOptions();
+		const [activeDraftName, setActiveDraftName] = useState<string | null>(null);
+		const [activePreviewName, setActivePreviewName] = useState<string | null>(
+			null,
+		);
+		const [isLocalScanLoading, setLocalScanLoading] = useState(false);
+
+		const resetBulkUIState = useCallback(() => {
+			setBulkDraftView("list");
+			bulkSelection.exitBulkMode();
+			setActiveDraftName(null);
+			setActivePreviewName(null);
+		}, [bulkSelection]);
+
+		const [capabilitySearch, setCapabilitySearch] = useState("");
 		const steps = useMemo(
 			() =>
 				STEP_ORDER.map((id) => ({
@@ -297,13 +426,14 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		// Form refs
-		const dropZoneRef = useRef<HTMLButtonElement | null>(null);
+		const dropZoneRef = useRef<HTMLDivElement | null>(null);
 		// Form field IDs
 		const nameId = useId();
 		const kindId = useId();
 		const commandId = useId();
 		const urlId = useId();
 		const manualJsonId = useId();
+		const metaIconUrlId = useId();
 		const metaDescriptionId = useId();
 		const metaVersionId = useId();
 		const metaWebsiteUrlId = useId();
@@ -316,11 +446,6 @@ export const ServerInstallWizard = forwardRef(
 		const kind = watch("kind");
 		const isStdio = kind === "stdio";
 
-		// Form interaction handlers
-		const handleFormInteraction = useCallback(() => {
-			// Track form interaction for auto-save or validation
-		}, []);
-
 		const handleModeChange = useCallback(
 			(mode: "form" | "json") => {
 				setViewMode(mode);
@@ -329,13 +454,6 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		// Type snapshot management (for form state restoration)
-		const saveTypeSnapshot = useCallback((_currentKind: string) => {
-			// Save current form state for restoration
-		}, []);
-
-		const restoreTypeSnapshot = useCallback((_newKind: string) => {
-			// Restore form state based on type
-		}, []);
 
 		// Delete confirmation states
 		const [deleteConfirmStates, setDeleteConfirmStates] = useState<
@@ -369,6 +487,7 @@ export const ServerInstallWizard = forwardRef(
 		// Sync form state with our JSON snapshot and watchers
 		const watchedName = watch("name");
 		const watchedMetaDescription = watch("meta_description");
+		const watchedMetaIconUrl = watch("meta_icon_url");
 		const watchedMetaVersion = watch("meta_version");
 		const watchedMetaWebsite = watch("meta_website_url");
 		const watchedMetaRepositoryUrl = watch("meta_repository_url");
@@ -528,6 +647,8 @@ export const ServerInstallWizard = forwardRef(
 				if (version) meta.version = version;
 				const websiteUrl = trim(values.meta_website_url);
 				if (websiteUrl) meta.websiteUrl = websiteUrl;
+				const iconUrl = trim(values.meta_icon_url);
+				if (iconUrl) meta.icons = [{ src: iconUrl }];
 
 				const repoUrl = trim(values.meta_repository_url);
 				if (repoUrl) repository.url = repoUrl;
@@ -568,6 +689,32 @@ export const ServerInstallWizard = forwardRef(
 			[buildJsonPayloadFromValues, getValues, setJsonError, setJsonText],
 		);
 
+		const formStateFromDraft = useCallback(
+			(draft: ServerInstallDraft) => {
+				return draftToFormState(draft);
+			},
+			[],
+		);
+
+		const loadDraftIntoForm = useCallback(
+			(draft: ServerInstallDraft) => {
+				const nextState = formStateFromDraft(draft);
+				formStateRef.current = nextState;
+				reset(buildFormValuesFromState(nextState));
+				setViewMode("form");
+				setJsonError(null);
+				setUiActiveTab("core");
+			},
+			[
+				buildFormValuesFromState,
+				formStateFromDraft,
+				formStateRef,
+				reset,
+				setJsonError,
+				setViewMode,
+			],
+		);
+
 		useEffect(() => {
 			if (viewMode !== "json") return;
 			updateJsonFromValues();
@@ -605,12 +752,13 @@ export const ServerInstallWizard = forwardRef(
 			[isEditMode, kind, pendingImportServerId, watchedName],
 		);
 
-		useFormSync({
+		const { saveTypeSnapshot, restoreTypeSnapshot } = useFormSync({
 			formStateRef,
 			isRestoringRef,
 			kind,
 			watchedName,
 			watchedMetaDescription,
+			watchedMetaIconUrl,
 			watchedMetaVersion,
 			watchedMetaWebsite,
 			watchedMetaRepositoryUrl,
@@ -631,13 +779,17 @@ export const ServerInstallWizard = forwardRef(
 		const {
 			isIngesting,
 			ingestMessage,
+			setIngestMessage,
 			ingestError,
+			setIngestError,
 			isIngestSuccess,
+			setIsIngestSuccess,
 			isDropZoneCollapsed,
 			isDragOver,
 			setIsDragOver,
 			setIsDropZoneCollapsed,
 			resetIngestState,
+			markIngestSuccess,
 			handleIngestPayload,
 		} = useIngest({
 			ingestEnabled,
@@ -649,54 +801,50 @@ export const ServerInstallWizard = forwardRef(
 				if (onPreview) {
 					onPreview(drafts);
 				} else {
-					installPipeline.begin(drafts, "ingest");
+					installPipeline.setDraftCollection(drafts, "ingest");
+					installPipeline.setCurrentStep("form");
+					resetBulkUIState();
 				}
 			},
-			onClose,
 			messages: ingestMessages,
 		});
 
-		// Drag & drop/paste handlers for the top drop zone (new mode only)
-		const canIngestFromDataTransfer = (dt: DataTransfer | null): boolean => {
-			if (!dt) return false;
-			const types = Array.from(dt.types ?? []);
-			return (
-				types.includes("Files") ||
-				types.includes("text/plain") ||
-				types.includes("text/uri-list")
-			);
-		};
+		const handleResetForm = useCallback(() => {
+			if (initialDraft) {
+				loadDraftIntoForm(initialDraft);
+			} else {
+				const initial = createInitialFormState();
+				formStateRef.current = initial;
+				isRestoringRef.current = true;
+				reset(buildFormValuesFromState(initial));
+				isRestoringRef.current = false;
+				setViewMode("form");
+				setUiActiveTab("core");
+				setJsonError(null);
+			}
 
-		const extractPayloadFromDataTransfer = async (
-			dt: DataTransfer,
-		): Promise<{
-			text?: string;
-			buffer?: ArrayBuffer;
-			fileName?: string;
-		} | null> => {
-			if (dt.files && dt.files.length > 0) {
-				const file = dt.files[0];
-				if (file.name.endsWith(".mcpb") || file.name.endsWith(".dxt")) {
-					return { buffer: await file.arrayBuffer(), fileName: file.name };
-				}
-				return { text: await file.text(), fileName: file.name };
+			resetIngestState();
+			resetBulkUIState();
+
+			if (installPipeline.state.drafts.length > 0) {
+				installPipeline.setDraftCollection([], null);
 			}
-			const plain = dt.getData("text/plain");
-			if (plain) return { text: plain };
-			const uri = dt.getData("text/uri-list");
-			if (uri) return { text: uri };
-			if (dt.items && dt.items.length) {
-				for (const item of Array.from(dt.items)) {
-					if (item.kind === "string") {
-						const v = await new Promise<string | null>((resolve) =>
-							item.getAsString((t) => resolve(t ?? null)),
-						);
-						if (v) return { text: v };
-					}
-				}
-			}
-			return null;
-		};
+			installPipeline.setPreviewState(null);
+			installPipeline.setPreviewError(null);
+		}, [
+			initialDraft,
+			loadDraftIntoForm,
+			createInitialFormState,
+			formStateRef,
+			isRestoringRef,
+			reset,
+			buildFormValuesFromState,
+			setViewMode,
+			setJsonError,
+			resetIngestState,
+			installPipeline,
+			resetBulkUIState,
+		]);
 
 		const ingestClipboardPayload = useCallback(
 			async (initialText?: string | null) => {
@@ -714,20 +862,146 @@ export const ServerInstallWizard = forwardRef(
 			[handleIngestPayload, ingestEnabled, isDropZoneCollapsed, isIngesting],
 		);
 
-		const handleDropZoneActivate = useCallback(() => {
-			if (!ingestEnabled) return;
-			if (isDropZoneCollapsed || ingestError || isIngestSuccess) {
-				resetIngestState();
+		const handleLocalConfigScan = useCallback(async () => {
+			if (
+				!ingestEnabled ||
+				isDropZoneCollapsed ||
+				isLocalScanLoading ||
+				isIngesting
+			) {
+				return;
 			}
-			setIsDropZoneCollapsed(false);
+			try {
+				setLocalScanLoading(true);
+				const clientsResp = await clientsApi.detect(true);
+				const scannableClients = (clientsResp?.client ?? []).filter(
+					clientHasScannableConfig,
+				);
+				if (!scannableClients.length) {
+					notifyError(
+						t("manual.scan.noneTitle", {
+							defaultValue: "No local configs found",
+						}),
+						t("manual.scan.noneDescription", {
+							defaultValue:
+								"No detected MCP clients have a local configuration file to scan.",
+						}),
+					);
+					return;
+				}
+
+				const scanResp = await onboardingApi.scanServers(
+					scannableClients.map((client) => ({
+						identifier: client.identifier,
+						display_name: client.display_name || client.identifier,
+						config_path: client.config_path,
+						config_file_parse:
+							client.config_file_parse_override ??
+							client.config_file_parse_effective ??
+							null,
+					})),
+				);
+				if (!scanResp.success || !scanResp.data) {
+					throw new Error(
+						String(scanResp.error?.message ?? "Local config scan failed"),
+					);
+				}
+
+				const drafts: ServerInstallDraft[] = scanResp.data.candidates.map(
+					(candidate) => ({
+						name: candidate.name,
+						kind:
+							candidate.kind === "sse" ||
+								candidate.kind === "streamable_http"
+								? candidate.kind
+								: "stdio",
+						command:
+							candidate.kind === "stdio"
+								? candidate.command ?? undefined
+								: undefined,
+						args: candidate.args?.length ? candidate.args : undefined,
+						env:
+							candidate.env && Object.keys(candidate.env).length
+								? candidate.env
+								: undefined,
+						url:
+							candidate.kind !== "stdio" && candidate.url
+								? candidate.url
+								: undefined,
+					}),
+				);
+				if (!drafts.length) {
+					notifyError(
+						t("manual.scan.noServersTitle", {
+							defaultValue: "No servers detected",
+						}),
+						t("manual.scan.noServersDescription", {
+							defaultValue:
+								"The local scan did not find importable MCP server entries.",
+						}),
+					);
+					return;
+				}
+
+				if (drafts.length === 1) {
+					loadDraftIntoForm(drafts[0]);
+					installPipeline.setDraftCollection(drafts, "ingest");
+					setBulkDraftView("detail");
+					setActiveDraftName(drafts[0].name);
+					markIngestSuccess();
+					return;
+				}
+
+				installPipeline.setDraftCollection(drafts, "ingest");
+				installPipeline.setCurrentStep("form");
+				resetBulkUIState();
+				markIngestSuccess();
+			} catch (error) {
+				notifyError(
+					t("manual.scan.failedTitle", {
+						defaultValue: "Local scan failed",
+					}),
+					error instanceof Error ? error.message : String(error ?? ""),
+				);
+			} finally {
+				setLocalScanLoading(false);
+			}
 		}, [
 			ingestEnabled,
+			installPipeline,
 			isDropZoneCollapsed,
-			ingestError,
-			isIngestSuccess,
-			resetIngestState,
-			setIsDropZoneCollapsed,
+			isIngesting,
+			isLocalScanLoading,
+			loadDraftIntoForm,
+			markIngestSuccess,
+			resetBulkUIState,
+			t,
 		]);
+
+		const scanActionLabel = t("manual.scan.action", {
+			defaultValue: "Scan local configs",
+		});
+		const scanActionHint = t("manual.scan.actionHint", {
+			defaultValue: "Click to scan local configs",
+		});
+
+		const handleDropZoneClick = useCallback(
+			(event: MouseEvent<HTMLDivElement>) => {
+				event.stopPropagation();
+				if (!ingestEnabled) return;
+				if (isDropZoneCollapsed || ingestError || isIngestSuccess) {
+					resetIngestState();
+					setIsDropZoneCollapsed(false);
+				}
+			},
+			[ingestEnabled, ingestError, isDropZoneCollapsed, isIngestSuccess, resetIngestState, setIsDropZoneCollapsed],
+		);
+
+		const handleDropZoneFocus = useCallback(() => {
+			if (!ingestEnabled || !isDropZoneCollapsed) return;
+			resetIngestState();
+			setIsDropZoneCollapsed(false);
+		}, [ingestEnabled, isDropZoneCollapsed, resetIngestState, setIsDropZoneCollapsed]);
 
 		const handleContentFocus = useCallback(
 			(event: FocusEvent<HTMLDivElement>) => {
@@ -743,6 +1017,13 @@ export const ServerInstallWizard = forwardRef(
 			[ingestEnabled, isDropZoneCollapsed, setIsDropZoneCollapsed],
 		);
 
+		const handleFormInteraction = useCallback(() => {
+			if (!ingestEnabled) return;
+			if (!isDropZoneCollapsed) {
+				setIsDropZoneCollapsed(true);
+			}
+		}, [ingestEnabled, isDropZoneCollapsed, setIsDropZoneCollapsed]);
+
 		// Step navigation logic
 		const canNavigateToStep = useCallback(
 			(step: WizardStep): boolean => {
@@ -750,6 +1031,9 @@ export const ServerInstallWizard = forwardRef(
 					case "form":
 						return true;
 					case "preview":
+						if (installPipeline.state.drafts.length > 1) {
+							return installPipeline.state.selectedDraftNames.length > 0;
+						}
 						return previewPrereqsMet && !hasBlockingErrors && !jsonError;
 					case "result":
 						// Can navigate to result if preview is completed
@@ -763,6 +1047,8 @@ export const ServerInstallWizard = forwardRef(
 				hasBlockingErrors,
 				jsonError,
 				installPipeline.state.previewState,
+				installPipeline.state.drafts.length,
+				installPipeline.state.selectedDraftNames.length,
 			],
 		);
 
@@ -819,6 +1105,8 @@ export const ServerInstallWizard = forwardRef(
 				if (version) meta.version = version;
 				if (websiteUrl) meta.websiteUrl = websiteUrl;
 				if (repository) meta.repository = repository;
+				const iconUrl = trim(values.meta_icon_url);
+				if (iconUrl) meta.icons = [{ src: iconUrl }];
 
 				return {
 					name: values.name.trim(),
@@ -837,9 +1125,68 @@ export const ServerInstallWizard = forwardRef(
 			[initialDraft?.registryServerId],
 		);
 
+		const persistActiveDraft = useCallback(() => {
+			if (!activeDraftName) return;
+			const nextDraft = toDraftFromValues(getValues());
+			installPipeline.updateDraft(nextDraft, activeDraftName);
+			if (nextDraft.name !== activeDraftName) {
+				setActiveDraftName(nextDraft.name);
+			}
+		}, [activeDraftName, getValues, installPipeline, toDraftFromValues]);
+
 		const handlePreview = useCallback(
 			async (opts?: { shouldFocus?: boolean; skipValidation?: boolean }) => {
 				if (previewInFlightRef.current) return;
+				const isBulkCollection = installPipeline.state.drafts.length > 1;
+				if (isBulkCollection) {
+					const selectedNames = new Set(
+						installPipeline.state.selectedDraftNames,
+					);
+					const activeDraft =
+						activeDraftName && bulkDraftView === "detail"
+							? toDraftFromValues(getValues())
+							: null;
+					if (activeDraft && activeDraftName) {
+						const isValid = await trigger(undefined, { shouldFocus: true });
+						if (!isValid) return;
+						installPipeline.updateDraft(activeDraft, activeDraftName);
+						if (activeDraft.name !== activeDraftName) {
+							setActiveDraftName(activeDraft.name);
+							selectedNames.delete(activeDraftName);
+							selectedNames.add(activeDraft.name);
+						}
+					}
+					const nextDrafts = installPipeline.state.drafts.map((draft) =>
+						activeDraft && draft.name === activeDraftName ? activeDraft : draft,
+					);
+					const selectedDrafts = nextDrafts.filter((draft) =>
+						selectedNames.has(draft.name),
+					);
+					if (!selectedDrafts.length) {
+						notifyError(
+							t("manual.bulk.noSelectionTitle", {
+								defaultValue: "No servers selected",
+							}),
+							t("manual.bulk.noSelectionDescription", {
+								defaultValue: "Select at least one server to preview.",
+							}),
+						);
+						return;
+					}
+					installPipeline.setDraftCollection(nextDrafts, "ingest");
+					installPipeline.setSelectedDraftNames(Array.from(selectedNames));
+					previewInFlightRef.current = true;
+					try {
+						installPipeline.setCurrentStep("preview");
+						setActivePreviewName(selectedDrafts[0]?.name ?? null);
+						await installPipeline.previewDrafts(
+							selectedDrafts[0] ? [selectedDrafts[0]] : [],
+						);
+					} finally {
+						previewInFlightRef.current = false;
+					}
+					return;
+				}
 				if (!opts?.skipValidation) {
 					const isValid = await trigger(undefined, {
 						shouldFocus: opts?.shouldFocus ?? true,
@@ -854,7 +1201,7 @@ export const ServerInstallWizard = forwardRef(
 				const origin = isImportMode
 					? ("market" as InstallSource)
 					: ("manual" as InstallSource);
-				installPipeline.setDrafts(drafts);
+				installPipeline.setDraftCollection(drafts, origin);
 
 				if (currentStep !== "preview") {
 					installPipeline.setCurrentStep("preview");
@@ -919,6 +1266,9 @@ export const ServerInstallWizard = forwardRef(
 				onPreview,
 				currentStep,
 				installPipeline,
+				activeDraftName,
+				bulkDraftView,
+				t,
 			],
 		);
 
@@ -970,8 +1320,9 @@ export const ServerInstallWizard = forwardRef(
 				setIsClosing(false);
 				installPipeline.setCurrentStep("form");
 				installPipeline.reset();
+				resetBulkUIState();
 			}
-		}, [cleanupPendingImportServer, onClose, isClosing, installPipeline]);
+		}, [cleanupPendingImportServer, onClose, isClosing, installPipeline, resetBulkUIState]);
 
 		// Handle import action
 		const handleImport = useCallback(async () => {
@@ -1087,6 +1438,7 @@ export const ServerInstallWizard = forwardRef(
 					// Reset UI state
 					setUiActiveTab("core");
 					setViewMode("form");
+					resetBulkUIState();
 				}, 50);
 			}
 		}, [
@@ -1099,6 +1451,7 @@ export const ServerInstallWizard = forwardRef(
 			buildFormValuesFromState,
 			resetIngestState,
 			setViewMode,
+			resetBulkUIState,
 		]);
 
 		type NextStepAction = "close" | "servers" | "profiles" | "preview" | "none";
@@ -1257,6 +1610,237 @@ export const ServerInstallWizard = forwardRef(
 			},
 		}));
 
+		const selectedDraftNameSet = useMemo(
+			() => new Set(installPipeline.state.selectedDraftNames),
+			[installPipeline.state.selectedDraftNames],
+		);
+
+		const wizardBulkActions = useMemo(
+			() =>
+				buildIncludeExcludeBulkActions({
+					bulk: bulkSelection,
+					visibleIds: installPipeline.state.drafts.map((draft) => draft.name),
+					onInclude: () =>
+						installPipeline.setSelectedDraftNames(
+							Array.from(
+								new Set([
+									...installPipeline.state.selectedDraftNames,
+									...bulkSelection.selectedIds,
+								]),
+							),
+						),
+					onExclude: () =>
+						installPipeline.setSelectedDraftNames(
+							installPipeline.state.selectedDraftNames.filter(
+								(name) => !bulkSelection.selectedIdSet.has(name),
+							),
+						),
+					t,
+				}),
+			[bulkSelection, installPipeline.state.drafts, installPipeline.state.selectedDraftNames, installPipeline.setSelectedDraftNames, t],
+		);
+
+		const toggleDraftSelection = useCallback(
+			(name: string) => {
+				const next = new Set(installPipeline.state.selectedDraftNames);
+				if (next.has(name)) {
+					next.delete(name);
+				} else {
+					next.add(name);
+				}
+				installPipeline.setSelectedDraftNames(Array.from(next));
+			},
+			[installPipeline],
+		);
+
+		const openDraftDetail = useCallback(
+			(draft: ServerInstallDraft) => {
+				if (activeDraftName && bulkDraftView === "detail") {
+					persistActiveDraft();
+				}
+				loadDraftIntoForm(draft);
+				setActiveDraftName(draft.name);
+				setBulkDraftView("detail");
+			},
+			[
+				activeDraftName,
+				bulkDraftView,
+				loadDraftIntoForm,
+				persistActiveDraft,
+			],
+		);
+
+		const returnToBulkList = useCallback(() => {
+			persistActiveDraft();
+			setBulkDraftView("list");
+			setActiveDraftName(null);
+		}, [persistActiveDraft]);
+
+		const previewDraftByName = useCallback(
+			async (name: string) => {
+				const draft = installPipeline.state.drafts.find(
+					(item) => item.name === name,
+				);
+				if (!draft) return;
+				setActivePreviewName(name);
+				await installPipeline.previewDrafts([draft]);
+			},
+			[installPipeline],
+		);
+
+		const renderDraftListItem = (
+			draft: ServerInstallDraft,
+			options: {
+				isActive?: boolean;
+				mode: "configure" | "preview";
+			},
+		) => {
+			const includedForImport = selectedDraftNameSet.has(draft.name);
+			const bulkSelected =
+				options.mode === "configure" &&
+				bulkSelection.isBulkMode &&
+				bulkSelection.selectedIdSet.has(draft.name);
+			const endpoint = draftEndpointSummary(draft);
+			const draftIcon = draft.meta?.icons?.[0]?.src;
+			const draftDescription = draft.meta?.description?.trim();
+			const avatarFallback = (draft.name || "S").slice(0, 1).toUpperCase();
+			const isConfigureBulkMode =
+				options.mode === "configure" && bulkSelection.isBulkMode;
+			const handleRowActivate = () => {
+				if (isConfigureBulkMode) {
+					bulkSelection.toggleItem(draft.name);
+					return;
+				}
+				if (options.mode === "configure") {
+					openDraftDetail(draft);
+					return;
+				}
+				void previewDraftByName(draft.name);
+			};
+			return (
+				<CapsuleStripeListItem
+					key={draft.name}
+					interactive
+					className={cn(
+						"group relative transition-colors",
+						(bulkSelected || options.isActive) &&
+						"bg-primary/10 ring-1 ring-primary/40",
+					)}
+					onClick={handleRowActivate}
+					onKeyDown={(event) => {
+						if (event.key === "Enter" || event.key === " ") {
+							event.preventDefault();
+							handleRowActivate();
+						}
+					}}
+				>
+					<div className="flex w-full items-center justify-between gap-4">
+						<div className="flex min-w-0 flex-1 items-center gap-3">
+							{options.mode === "configure" ? (
+								<BulkSelectionCheckbox
+									visible={bulkSelection.isBulkMode}
+									checked={bulkSelected}
+									onToggle={() => bulkSelection.toggleItem(draft.name)}
+									ariaLabel={t("manual.bulk.selectServer", {
+										name: draft.name,
+										defaultValue: "Select {{name}}",
+									})}
+								/>
+							) : null}
+							<CachedAvatar
+								src={draftIcon}
+								alt={draft.name ? `${draft.name} icon` : undefined}
+								fallback={avatarFallback}
+								size="sm"
+								shape="rounded"
+								className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
+							/>
+							<div className="min-w-0">
+								<h3 className="font-medium text-slate-900 dark:text-slate-100">
+									{toTitleCase(draft.name)}
+								</h3>
+								<p className="truncate text-sm text-slate-500">
+									{endpoint ||
+										t("manual.bulk.missingEndpoint", {
+											defaultValue: "Missing command or URL",
+										})}
+								</p>
+								{draftDescription ? (
+									<p className="line-clamp-2 text-xs text-slate-500">
+										{draftDescription}
+									</p>
+								) : null}
+							</div>
+						</div>
+						<div className="ml-auto flex shrink-0 items-center gap-2">
+							{endpoint ? (
+								<Badge variant="secondary">{transportLabel[draft.kind]}</Badge>
+							) : (
+								<Badge variant="outline">
+									{t("manual.bulk.missingEndpoint", {
+										defaultValue: "Missing command or URL",
+									})}
+								</Badge>
+							)}
+							{options.mode === "configure" ? (
+								<Switch
+									checked={includedForImport}
+									onClick={(event) => event.stopPropagation()}
+									onCheckedChange={() => toggleDraftSelection(draft.name)}
+									aria-label={t("manual.bulk.includeForImport", {
+										name: draft.name,
+										defaultValue: "Include {{name}} in import",
+									})}
+								/>
+							) : null}
+							{!isConfigureBulkMode ? (
+								<ChevronRight
+									className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500"
+									aria-hidden
+								/>
+							) : null}
+						</div>
+					</div>
+				</CapsuleStripeListItem>
+			);
+		};
+
+		const renderBulkDraftList = () => {
+			const drafts = installPipeline.state.drafts;
+			return (
+				<div
+					className="flex min-h-0 flex-1 flex-col"
+					onClick={handleFormInteraction}
+				>
+					<BulkSelectionHeader
+						title={t("manual.bulk.title", {
+							count: drafts.length,
+							defaultValue: "{{count}} servers detected",
+						})}
+						description={
+							bulkSelection.isBulkMode
+								? bulkModeDescription(bulkSelection.selectedCount)
+								: t("manual.bulk.description", {
+									count: installPipeline.state.selectedDraftNames.length,
+									defaultValue:
+										"Select the servers to preview and import. {{count}} selected.",
+								})
+						}
+						isBulkMode={bulkSelection.isBulkMode}
+						onToggleBulkMode={bulkSelection.toggleMode}
+						actions={wizardBulkActions}
+					/>
+					<CardListScrollBody>
+						<CapsuleStripeList className="rounded-none border-0 overflow-visible">
+							{drafts.map((draft) =>
+								renderDraftListItem(draft, { mode: "configure" }),
+							)}
+						</CapsuleStripeList>
+					</CardListScrollBody>
+				</div>
+			);
+		};
+
 		// Render step content
 		const renderStepContent = () => {
 			switch (currentStep) {
@@ -1272,28 +1856,40 @@ export const ServerInstallWizard = forwardRef(
 		};
 
 		const renderFormStep = () => {
+			const showBulkDraftList =
+				installPipeline.state.drafts.length > 1 && bulkDraftView === "list";
 			const contentPadding = ingestEnabled
 				? "px-4 pb-4 pt-0"
 				: "px-4 pb-4 pt-4";
+			const flexFillClass =
+				"flex min-h-0 flex-1 flex-col overflow-hidden";
+			const isCoreJsonPanel = viewMode === "json" && uiActiveTab === "core";
 			return (
-				<div className="flex flex-col">
+				<div className={flexFillClass}>
 					<form
 						onSubmit={handleSubmit(() =>
 							handlePreview({ skipValidation: true, shouldFocus: false }),
 						)}
-						className="flex flex-col"
-						onClick={handleFormInteraction}
-						onKeyDown={handleFormInteraction}
+						className={flexFillClass}
 					>
 						{/* New-mode drop zone (top) */}
 						{ingestEnabled ? (
-							<div className="px-4 py-4">
-								<button
-									type="button"
+							<div
+								className="relative shrink-0 px-4 py-4"
+								onClick={(event) => event.stopPropagation()}
+							>
+								<div
+									role="button"
+									tabIndex={0}
 									ref={dropZoneRef}
-									onFocus={handleDropZoneActivate}
-									onClick={handleDropZoneActivate}
-									onMouseDown={handleDropZoneActivate}
+									onFocus={handleDropZoneFocus}
+									onClick={handleDropZoneClick}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ") {
+											e.preventDefault();
+											handleDropZoneClick(e as unknown as MouseEvent<HTMLDivElement>);
+										}
+									}}
 									onDragOver={(e) => {
 										if (!canIngestFromDataTransfer(e.dataTransfer)) return;
 										e.preventDefault();
@@ -1350,20 +1946,51 @@ export const ServerInstallWizard = forwardRef(
 											<Loader2
 												className={`${isDropZoneCollapsed ? "h-4 w-4" : "h-6 w-6"} animate-spin`}
 											/>
-										) : (
-											<Target
-												className={`transition-all duration-300 ${isDropZoneCollapsed ? "h-4 w-4" : "h-12 w-12"
-													} ${isDragOver || isIngesting
-														? "animate-pulse"
-														: "scale-100"
-													} ${isDragOver ? "text-blue-500" : "text-slate-500"}`}
-												style={{
-													animation:
-														ingestError || isDragOver || isIngesting
-															? "breathing 1.5s ease-in-out infinite"
-															: undefined,
-												}}
+										) : isDropZoneCollapsed ? (
+											<Radar
+												className="h-4 w-4 shrink-0 text-slate-500"
+												aria-hidden
 											/>
+										) : (
+											<TooltipProvider delayDuration={200}>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<button
+															type="button"
+															className={cn(
+																"inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-colors",
+																"hover:bg-slate-200/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-slate-800/60",
+															)}
+															disabled={isLocalScanLoading || isIngesting}
+															aria-label={scanActionLabel}
+															onClick={(event) => {
+																event.stopPropagation();
+																void handleLocalConfigScan();
+															}}
+														>
+															{isLocalScanLoading ? (
+																<Loader2 className="h-6 w-6 animate-spin" />
+															) : (
+																<Radar
+																	className={cn(
+																		"h-12 w-12 scale-100 text-slate-500 transition-all duration-300",
+																		isDragOver && "animate-pulse text-blue-500",
+																	)}
+																	style={{
+																		animation:
+																			ingestError || isDragOver
+																				? "breathing 1.5s ease-in-out infinite"
+																				: undefined,
+																	}}
+																/>
+															)}
+														</button>
+													</TooltipTrigger>
+													<TooltipContent side="bottom">
+														{scanActionHint}
+													</TooltipContent>
+												</Tooltip>
+											</TooltipProvider>
 										)}
 										<p
 											className={`text-sm ${ingestError
@@ -1393,364 +2020,394 @@ export const ServerInstallWizard = forwardRef(
 											</p>
 										)}
 									</div>
-								</button>
+								</div>
 							</div>
 						) : null}
 
 						<div
-							className={`relative z-0 ${contentPadding}`}
+							className={cn(
+								"relative z-0 flex min-h-0 flex-1 flex-col",
+								contentPadding,
+								formContentScrollClass(isCoreJsonPanel),
+							)}
 							onFocusCapture={handleContentFocus}
 						>
-							<Tabs
-								value={uiActiveTab}
-								onValueChange={(v) => setUiActiveTab(v as "core" | "meta")}
-								className="h-full flex flex-col"
-							>
-								<TabsList className="grid w-full grid-cols-2">
-									<TabsTrigger value="core">
-										{t("manual.tabs.core", {
-											defaultValue: "Core configuration",
-										})}
-									</TabsTrigger>
-									<TabsTrigger value="meta">
-										{t("manual.tabs.meta", {
-											defaultValue: "Meta information",
-										})}{" "}
-										<sup>
-											({t("manual.tabs.metaWip", { defaultValue: "WIP" })})
-										</sup>
-									</TabsTrigger>
-								</TabsList>
-
-								<TabsContent
-									value="core"
-									className="space-y-4 flex-1 min-h-0"
-									onClick={handleFormInteraction}
-								>
-									<div className="space-y-4">
-										{/* View Mode Toggle */}
-										<div className="flex justify-end pt-2">
-											<FormViewModeToggle
-												mode={viewMode}
-												onChange={handleModeChange}
-												variant="compact"
-											/>
+							{showBulkDraftList ? (
+								renderBulkDraftList()
+							) : (
+								<>
+									{installPipeline.state.drafts.length > 1 ? (
+										<div className="mb-3 shrink-0">
+											<Button
+												type="button"
+												variant="ghost"
+												size="sm"
+												onClick={returnToBulkList}
+											>
+												<ArrowLeft className="mr-2 h-4 w-4" />
+												{t("manual.bulk.backToList", {
+													defaultValue: "Back to detected servers",
+												})}
+											</Button>
 										</div>
+									) : null}
+									<Tabs
+										value={uiActiveTab}
+										onValueChange={(v) => setUiActiveTab(v as "core" | "meta")}
+										className="flex min-h-0 flex-1 flex-col"
+									>
+										<TabsList className="grid w-full shrink-0 grid-cols-2">
+											<TabsTrigger value="core">
+												{t("manual.tabs.core", {
+													defaultValue: "Core configuration",
+												})}
+											</TabsTrigger>
+											<TabsTrigger value="meta">
+												{t("manual.tabs.meta", {
+													defaultValue: "Meta information",
+												})}{" "}
+												<sup>
+													({t("manual.tabs.metaWip", { defaultValue: "WIP" })})
+												</sup>
+											</TabsTrigger>
+										</TabsList>
 
-										{viewMode === "form" ? (
-											<>
-												<div className="space-y-4">
-													<div className="flex items-center gap-4">
-														<Label htmlFor={nameId} className="w-20 text-right">
-															{t("manual.fields.name.label", {
-																defaultValue: "Name",
-															})}
-														</Label>
-														<div className="flex-1">
-															<Input
-																id={nameId}
-																{...register("name")}
-																placeholder={t(
-																	"manual.fields.name.placeholder",
-																	{
-																		defaultValue: "e.g., local-mcp",
-																	},
-																)}
-																readOnly={isEditMode || Boolean(pendingImportServerId)}
-																aria-readonly={isEditMode || Boolean(pendingImportServerId)}
-																title={
-																	isEditMode || Boolean(pendingImportServerId)
-																		? pendingImportServerId
-																			? t("manual.fields.name.readOnlyTitleAfterOAuth", {
-																				defaultValue:
-																					"Editing server names is disabled after OAuth setup starts",
-																			})
-																			: t("manual.fields.name.readOnlyTitle", {
-																				defaultValue: "Editing server names is disabled",
-																			})
-																		: undefined
-																}
-																className={
-																	isEditMode || Boolean(pendingImportServerId)
-																		? "cursor-not-allowed bg-muted text-muted-foreground"
-																		: undefined
-																}
-															/>
-															{errors.name && (
-																<p className="text-xs text-red-500">
-																	{errors.name.message}
-																</p>
-															)}
-														</div>
-													</div>
-													<div className="flex items-center gap-4">
-														<Label htmlFor={kindId} className="w-20 text-right">
-															{t("manual.fields.type.label", {
-																defaultValue: "Type",
-															})}
-														</Label>
-														<div className="flex-1">
-															<Segment
-																options={SERVER_TYPE_OPTIONS}
-																value={kind}
-																onValueChange={(value) => {
-																	if (pendingImportServerId) {
-																		return;
-																	}
-																	const newKind =
-																		value as ManualServerFormValues["kind"];
-																	if (newKind === kind) {
-																		return;
-																	}
-																	saveTypeSnapshot(kind);
-																	setValue("kind", newKind, {
-																		shouldDirty: true,
-																		shouldTouch: true,
-																	});
-																	restoreTypeSnapshot(newKind);
-																}}
-																showDots={true}
-															/>
-															{errors.kind && (
-																<p className="text-xs text-red-500">
-																	{errors.kind.message}
-																</p>
-															)}
-														</div>
-													</div>
-												</div>
-
-												<CommandField
-													kind={kind}
-													control={control}
-													errors={errors}
-													commandId={commandId}
-													urlId={urlId}
-													viewMode={viewMode}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
+										<TabsContent
+											value="core"
+											className={FORM_TAB_SHELL_CLASS}
+										>
+											<div className={FORM_TAB_TOOLBAR_ROW_CLASS}>
+												<FormViewModeToggle
+													mode={viewMode}
+													onChange={handleModeChange}
+													variant="compact"
 												/>
+											</div>
 
-												<ServerAuthSection
-													serverId={pendingImportServerId ?? undefined}
-													isStdio={isStdio}
-													viewMode={viewMode}
-													isNewServer={!isEditMode}
-													suggestedAuthMode={suggestedAuthMode}
-													onAuthModeChange={setSelectedAuthMode}
-													onOAuthConnected={(serverId) => {
-														if (isEditMode || pendingImportServerRef.current !== serverId) {
-															return;
-														}
-														void handlePreview({
-															skipValidation: true,
-															shouldFocus: false,
-														});
-													}}
-													onInitiateOAuth={async (config) => {
-														const formValues = getValues();
-														const draft = toDraftFromValues(formValues);
-														if (!draft.name) {
-															throw new Error(
-																t("manual.errors.nameRequired", {
-																	defaultValue: "Name is required",
-																}),
-															);
-														}
+											<div
+												className={formTabScrollClass(viewMode)}
+												onClick={handleFormInteraction}
+											>
+												{viewMode === "form" ? (
+													<>
+														<div className="space-y-4">
+															<div className="flex items-center gap-4">
+																<Label htmlFor={nameId} className="w-20 text-right">
+																	{t("manual.fields.name.label", {
+																		defaultValue: "Name",
+																	})}
+																</Label>
+																<div className="flex-1">
+																	<Input
+																		id={nameId}
+																		{...register("name")}
+																		placeholder={t(
+																			"manual.fields.name.placeholder",
+																			{
+																				defaultValue: "e.g., local-mcp",
+																			},
+																		)}
+																		readOnly={isEditMode || Boolean(pendingImportServerId)}
+																		aria-readonly={isEditMode || Boolean(pendingImportServerId)}
+																		title={
+																			isEditMode || Boolean(pendingImportServerId)
+																				? pendingImportServerId
+																					? t("manual.fields.name.readOnlyTitleAfterOAuth", {
+																						defaultValue:
+																							"Editing server names is disabled after OAuth setup starts",
+																					})
+																					: t("manual.fields.name.readOnlyTitle", {
+																						defaultValue: "Editing server names is disabled",
+																					})
+																				: undefined
+																		}
+																		className={
+																			isEditMode || Boolean(pendingImportServerId)
+																				? "cursor-not-allowed bg-muted text-muted-foreground"
+																				: undefined
+																		}
+																	/>
+																	{errors.name && (
+																		<p className="text-xs text-red-500">
+																			{errors.name.message}
+																		</p>
+																	)}
+																</div>
+															</div>
+															<div className="flex items-center gap-4">
+																<Label htmlFor={kindId} className="w-20 text-right">
+																	{t("manual.fields.type.label", {
+																		defaultValue: "Type",
+																	})}
+																</Label>
+																<div className="flex-1">
+																	<Segment
+																		options={serverTypeOptions}
+																		value={kind}
+																		onValueChange={(value) => {
+																			if (pendingImportServerId) {
+																				return;
+																			}
+																			const newKind =
+																				value as ManualServerFormValues["kind"];
+																			if (newKind === kind) {
+																				return;
+																			}
+																			saveTypeSnapshot(kind);
+																			setValue("kind", newKind, {
+																				shouldDirty: true,
+																				shouldTouch: true,
+																			});
+																			restoreTypeSnapshot(newKind);
+																		}}
+																		showDots={true}
+																	/>
+																	{errors.kind && (
+																		<p className="text-xs text-red-500">
+																			{errors.kind.message}
+																		</p>
+																	)}
+																</div>
+															</div>
+														</div>
 
-														let targetServerId = pendingImportServerRef.current;
-														if (!isEditMode) {
-															if (targetServerId) {
-																await serversApi.updateServer(
-																	targetServerId,
-																	draftToServerConfig(draft, {
-																		pending_import: true,
-																		enabled: false,
-																	}),
-																);
-															} else {
-																const created = await serversApi.createServer(
-																	draftToServerConfig(draft, {
-																		pending_import: true,
-																		enabled: false,
-																	}),
-																);
-																targetServerId = created.data?.id ?? null;
-																if (!targetServerId) {
+														<CommandField
+															kind={kind}
+															control={control}
+															errors={errors}
+															commandId={commandId}
+															urlId={urlId}
+															viewMode={viewMode}
+															onCreateSecret={onCreateSecret}
+															secretOriginBase={secretOriginBase}
+														/>
+
+														<ServerAuthSection
+															serverId={pendingImportServerId ?? undefined}
+															isStdio={isStdio}
+															viewMode={viewMode}
+															isNewServer={!isEditMode}
+															suggestedAuthMode={suggestedAuthMode}
+															onAuthModeChange={setSelectedAuthMode}
+															onOAuthConnected={(serverId) => {
+																if (isEditMode || pendingImportServerRef.current !== serverId) {
+																	return;
+																}
+																void handlePreview({
+																	skipValidation: true,
+																	shouldFocus: false,
+																});
+															}}
+															onInitiateOAuth={async (config) => {
+																const formValues = getValues();
+																const draft = toDraftFromValues(formValues);
+																if (!draft.name) {
 																	throw new Error(
-																		t("manual.errors.oauthDraftServerFailed", {
-																			defaultValue: "Failed to create OAuth draft server",
+																		t("manual.errors.nameRequired", {
+																			defaultValue: "Name is required",
 																		}),
 																	);
 																}
-																pendingImportServerRef.current = targetServerId;
-																setPendingImportServerId(targetServerId);
-															}
-														} else if (!targetServerId) {
-															throw new Error(
-																t("manual.errors.oauthServerIdRequired", {
-																	defaultValue: "Server ID is required to initiate OAuth",
-																}),
-															);
-														}
 
-														await startOAuthAccessFlow(targetServerId, config);
-													}}
-												/>
-
-												<StdioAdvanced
-													viewMode={viewMode}
-													isStdio={isStdio}
-													argFields={argFields.fields}
-													envFields={envFields.fields}
-													removeArg={removeArg}
-													removeEnv={removeEnv}
-													appendArg={appendArg}
-													appendEnv={appendEnv}
-													register={register}
-													control={control}
-													deleteConfirmStates={deleteConfirmStates}
-													onDeleteClick={handleDeleteClick}
-													onGhostClick={handleGhostClick}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
-													getEnvRowKeyAt={(index) =>
-														watchedEnv?.[index]?.key?.trim() || undefined
-													}
-												/>
-
-												<UrlParams
-													viewMode={viewMode}
-													isStdio={isStdio}
-													urlParamFields={paramFields.fields}
-													removeUrlParam={removeUrlParam}
-													appendUrlParam={appendUrlParam}
-													register={register}
-													control={control}
-													deleteConfirmStates={deleteConfirmStates}
-													onDeleteClick={handleDeleteClick}
-													onGhostClick={handleGhostClick}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
-													getRowKeyAt={(index) =>
-														watchedUrlParams?.[index]?.key?.trim() || undefined
-													}
-												/>
-
-												{!isStdio && selectedAuthMode === "oauth" ? (
-													<p className="text-xs text-slate-500 dark:text-slate-400">
-														{t("manual.auth.transportHint", {
-															defaultValue:
-																"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
-														})}
-													</p>
-												) : null}
-
-												<HttpHeaders
-													viewMode={viewMode}
-													isStdio={isStdio}
-													headerFields={headerFields.fields}
-													removeHeader={removeHeader}
-													appendHeader={appendHeader}
-													register={register}
-													control={control}
-													deleteConfirmStates={deleteConfirmStates}
-													onDeleteClick={handleDeleteClick}
-													onGhostClick={handleGhostClick}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
-													getRowKeyAt={(index) =>
-														watchedHeaders?.[index]?.key?.trim() || undefined
-													}
-												/>
-											</>
-										) : (
-											<div className="flex flex-col h-full">
-												<div className="flex items-start gap-4 flex-1">
-													<Label
-														htmlFor={manualJsonId}
-														className="w-20 text-right pt-3 flex-shrink-0"
-													>
-														{t("manual.fields.json.label", {
-															defaultValue: "Server JSON",
-														})}
-													</Label>
-													<div className="flex-1 flex flex-col">
-														<div className="group relative flex-1 min-h-[400px] border border-input rounded-md flex flex-col">
-															{jsonText && (
-																<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
-																	<Button
-																		type="button"
-																		variant="outline"
-																		size="sm"
-																		className="pointer-events-auto h-7 w-7 p-0 bg-white/95 backdrop-blur-sm opacity-0 shadow-sm transition-opacity group-hover:opacity-100 dark:bg-slate-900/95"
-																		onClick={async (event) => {
-																			event.stopPropagation();
-																			await writeClipboardText(jsonText);
-																		}}
-																		title={t("manual.fields.json.copy", {
-																			defaultValue: "Copy JSON",
-																		})}
-																	>
-																		<Copy className="h-3.5 w-3.5" />
-																	</Button>
-																</div>
-															)}
-															<Textarea
-																id={manualJsonId}
-																value={jsonText}
-																onChange={
-																	jsonEditingEnabled
-																		? (event) => setJsonText(event.target.value)
-																		: undefined
+																let targetServerId = pendingImportServerRef.current;
+																if (!isEditMode) {
+																	if (targetServerId) {
+																		await serversApi.updateServer(
+																			targetServerId,
+																			draftToServerConfig(draft, {
+																				pending_import: true,
+																				enabled: false,
+																			}),
+																		);
+																	} else {
+																		const created = await serversApi.createServer(
+																			draftToServerConfig(draft, {
+																				pending_import: true,
+																				enabled: false,
+																			}),
+																		);
+																		targetServerId = created.data?.id ?? null;
+																		if (!targetServerId) {
+																			throw new Error(
+																				t("manual.errors.oauthDraftServerFailed", {
+																					defaultValue: "Failed to create OAuth draft server",
+																				}),
+																			);
+																		}
+																		pendingImportServerRef.current = targetServerId;
+																		setPendingImportServerId(targetServerId);
+																	}
+																} else if (!targetServerId) {
+																	throw new Error(
+																		t("manual.errors.oauthServerIdRequired", {
+																			defaultValue: "Server ID is required to initiate OAuth",
+																		}),
+																	);
 																}
-																readOnly={!jsonEditingEnabled}
-																aria-readonly={!jsonEditingEnabled}
-																className="font-mono text-sm flex-1 border-0 focus:ring-0 focus:outline-none"
-																style={{
-																	background: "transparent",
-																	caretColor: jsonEditingEnabled
-																		? "currentColor"
-																		: "transparent",
-																	minHeight: "400px",
-																	userSelect: "text",
-																	WebkitUserSelect: "text",
-																	MozUserSelect: "text",
-																	msUserSelect: "text",
-																}}
-															/>
-														</div>
-														{jsonError ? (
-															<p className="text-xs text-red-500 mt-2">
-																{jsonError}
+
+																await startOAuthAccessFlow(targetServerId, config);
+															}}
+														/>
+
+														<StdioAdvanced
+															viewMode={viewMode}
+															isStdio={isStdio}
+															argFields={argFields.fields}
+															envFields={envFields.fields}
+															removeArg={removeArg}
+															removeEnv={removeEnv}
+															appendArg={appendArg}
+															appendEnv={appendEnv}
+															register={register}
+															control={control}
+															deleteConfirmStates={deleteConfirmStates}
+															onDeleteClick={handleDeleteClick}
+															onGhostClick={handleGhostClick}
+															onCreateSecret={onCreateSecret}
+															secretOriginBase={secretOriginBase}
+															getEnvRowKeyAt={(index) =>
+																watchedEnv?.[index]?.key?.trim() || undefined
+															}
+														/>
+
+														<UrlParams
+															viewMode={viewMode}
+															isStdio={isStdio}
+															urlParamFields={paramFields.fields}
+															removeUrlParam={removeUrlParam}
+															appendUrlParam={appendUrlParam}
+															register={register}
+															control={control}
+															deleteConfirmStates={deleteConfirmStates}
+															onDeleteClick={handleDeleteClick}
+															onGhostClick={handleGhostClick}
+															onCreateSecret={onCreateSecret}
+															secretOriginBase={secretOriginBase}
+															getRowKeyAt={(index) =>
+																watchedUrlParams?.[index]?.key?.trim() || undefined
+															}
+														/>
+
+														{!isStdio && selectedAuthMode === "oauth" ? (
+															<p className="text-xs text-slate-500 dark:text-slate-400">
+																{t("manual.auth.transportHint", {
+																	defaultValue:
+																		"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
+																})}
 															</p>
 														) : null}
-													</div>
-												</div>
-											</div>
-										)}
-									</div>
-								</TabsContent>
 
-								<TabsContent
-									value="meta"
-									className="space-y-4 pt-2"
-									onClick={handleFormInteraction}
-								>
-									<MetaFields
-										formStateRef={formStateRef}
-										register={register}
-										errors={errors}
-										metaDescriptionId={metaDescriptionId}
-										metaVersionId={metaVersionId}
-										metaWebsiteUrlId={metaWebsiteUrlId}
-										metaRepositoryUrlId={metaRepositoryUrlId}
-										metaRepositorySourceId={metaRepositorySourceId}
-										metaRepositorySubfolderId={metaRepositorySubfolderId}
-										metaRepositoryId={metaRepositoryId}
-									/>
-								</TabsContent>
-							</Tabs>
+														<HttpHeaders
+															viewMode={viewMode}
+															isStdio={isStdio}
+															headerFields={headerFields.fields}
+															removeHeader={removeHeader}
+															appendHeader={appendHeader}
+															register={register}
+															control={control}
+															deleteConfirmStates={deleteConfirmStates}
+															onDeleteClick={handleDeleteClick}
+															onGhostClick={handleGhostClick}
+															onCreateSecret={onCreateSecret}
+															secretOriginBase={secretOriginBase}
+															getRowKeyAt={(index) =>
+																watchedHeaders?.[index]?.key?.trim() || undefined
+															}
+														/>
+													</>
+												) : (
+													<div className="flex min-h-0 flex-1 flex-col">
+														<div className="flex min-h-0 flex-1 items-stretch gap-4">
+															<Label
+																htmlFor={manualJsonId}
+																className="w-20 shrink-0 pt-3 text-right"
+															>
+																{t("manual.fields.json.label", {
+																	defaultValue: "Server JSON",
+																})}
+															</Label>
+															<div className="flex min-h-0 flex-1 flex-col">
+																<div className="group relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-input">
+																	{jsonText && (
+																		<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
+																			<Button
+																				type="button"
+																				variant="outline"
+																				size="sm"
+																				className="pointer-events-auto h-7 w-7 bg-white/95 p-0 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100 dark:bg-slate-900/95"
+																				onClick={async (event) => {
+																					event.stopPropagation();
+																					await writeClipboardText(jsonText);
+																				}}
+																				title={t("manual.fields.json.copy", {
+																					defaultValue: "Copy JSON",
+																				})}
+																			>
+																				<Copy className="h-3.5 w-3.5" />
+																			</Button>
+																		</div>
+																	)}
+																	<Textarea
+																		id={manualJsonId}
+																		value={jsonText}
+																		onChange={
+																			jsonEditingEnabled
+																				? (event) => setJsonText(event.target.value)
+																				: undefined
+																		}
+																		readOnly={!jsonEditingEnabled}
+																		aria-readonly={!jsonEditingEnabled}
+																		className="min-h-0 flex-1 resize-none overflow-y-auto border-0 font-mono text-sm focus:outline-none focus:ring-0"
+																		style={{
+																			background: "transparent",
+																			caretColor: jsonEditingEnabled
+																				? "currentColor"
+																				: "transparent",
+																			userSelect: "text",
+																			WebkitUserSelect: "text",
+																			MozUserSelect: "text",
+																			msUserSelect: "text",
+																		}}
+																	/>
+																</div>
+																{jsonError ? (
+																	<p className="mt-2 shrink-0 text-xs text-red-500">
+																		{jsonError}
+																	</p>
+																) : null}
+															</div>
+														</div>
+													</div>
+												)}
+											</div>
+										</TabsContent>
+
+										<TabsContent
+											value="meta"
+											className={cn(
+												"mt-2 min-h-0 flex-1 focus-visible:outline-none",
+												FORM_TAB_PANEL_TOP_INSET_CLASS,
+											)}
+											onClick={handleFormInteraction}
+										>
+											<MetaFields
+												formStateRef={formStateRef}
+												register={register}
+												errors={errors}
+												iconUrl={watchedMetaIconUrl}
+												metaIconUrlId={metaIconUrlId}
+												metaDescriptionId={metaDescriptionId}
+												metaVersionId={metaVersionId}
+												metaWebsiteUrlId={metaWebsiteUrlId}
+												metaRepositoryUrlId={metaRepositoryUrlId}
+												metaRepositorySourceId={metaRepositorySourceId}
+												metaRepositorySubfolderId={metaRepositorySubfolderId}
+												metaRepositoryId={metaRepositoryId}
+											/>
+										</TabsContent>
+									</Tabs>
+								</>
+							)}
 						</div>
 					</form>
 				</div>
@@ -1782,51 +2439,34 @@ export const ServerInstallWizard = forwardRef(
 			installPipeline.state.previewState.success !== false &&
 			!installPipeline.state.previewError;
 
-		// Expand/collapse details per draft (moved outside render function)
-		const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-		const toggleExpanded = (name: string) =>
-			setExpanded((e) => ({ ...e, [name]: !e[name] }));
-
 		const renderPreviewStep = () => {
 			const { state } = installPipeline;
 			const { drafts, previewState, previewError, isPreviewLoading } = state;
 
 			// Capability rendering helper
 			const renderCapabilitySection = (
-				kind: string,
+				kind: PreviewCapabilityKind,
 				items: Record<string, unknown>[],
 			) => {
 				if (!items.length) return null;
+				const kindLabel = t(`detail.capabilityList.labels.${kind}`, {
+					defaultValue:
+						kind === "templates"
+							? "Resource Templates"
+							: kind.charAt(0).toUpperCase() + kind.slice(1),
+				});
 				return (
 					<div className="space-y-3">
-						<div className="text-xs font-semibold text-slate-700 dark:text-slate-200 uppercase tracking-wide">
-							{kind}
+						<div className="text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">
+							{kindLabel}
 						</div>
-						<div className="space-y-2.5">
-							{items.map((item, idx) => {
-								const name = String(
-									(item as any).name ??
-									(item as any).title ??
-									`Item ${idx + 1}`,
-								);
-								const description = String(
-									(item as any).description ?? (item as any).summary ?? "",
-								);
-								const uniqueKey = `${kind}-${name}-${idx}`;
-								return (
-									<div key={uniqueKey} className="text-sm leading-relaxed">
-										<div className="font-semibold text-slate-800 dark:text-slate-100">
-											{name}
-										</div>
-										{description && (
-											<div className="text-slate-600 dark:text-slate-400 mt-1 text-xs leading-relaxed">
-												{description}
-											</div>
-										)}
-									</div>
-								);
-							})}
-						</div>
+						<CapabilityList
+							asCard={false}
+							kind={kind}
+							context="server"
+							items={items as CapabilityRecord[]}
+							clickToToggleDetails
+						/>
 					</div>
 				);
 			};
@@ -1843,27 +2483,18 @@ export const ServerInstallWizard = forwardRef(
 			};
 
 			return (
-				<div className="px-4 py-4">
-					<div className="space-y-4">
+				<div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+					<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
 						{previewError ? (
-							<Alert variant="destructive">
+							<Alert variant="destructive" className="shrink-0">
 								<AlertTriangle className="h-4 w-4" />
 								<AlertTitle>Preview failed</AlertTitle>
 								<AlertDescription>{previewError}</AlertDescription>
 							</Alert>
 						) : null}
 
-						{isPreviewLoading ? (
-							<div className="flex items-center justify-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
-								<Loader2 className="h-4 w-4 animate-spin" />{" "}
-								{t("wizard.preview.generating", {
-									defaultValue: "Generating capability preview…",
-								})}
-							</div>
-						) : null}
-
 						{previewState?.success === false && previewState?.error ? (
-							<Alert variant="default">
+							<Alert variant="default" className="shrink-0">
 								<AlertTriangle className="h-4 w-4" />
 								<AlertTitle>Preview reported issues</AlertTitle>
 								<AlertDescription>
@@ -1873,8 +2504,8 @@ export const ServerInstallWizard = forwardRef(
 							</Alert>
 						) : null}
 
-						<div className="space-y-3">
-							{drafts.map((draft) => {
+						{(() => {
+							const renderPreviewCard = (draft: ServerInstallDraft) => {
 								const item = previewItemsByName.get(draft.name) as any;
 								const ok = item?.ok !== false;
 								const tools = asRecordList(item?.tools?.items as any);
@@ -1883,83 +2514,186 @@ export const ServerInstallWizard = forwardRef(
 									item?.resource_templates?.items as any,
 								);
 								const prompts = asRecordList(item?.prompts?.items as any);
+								const searchQuery = capabilitySearch.trim();
+								const filteredTools = tools.filter((entry) =>
+									capabilityMatchesSearch(entry, searchQuery),
+								);
+								const filteredResources = resources.filter((entry) =>
+									capabilityMatchesSearch(entry, searchQuery),
+								);
+								const filteredTemplates = templates.filter((entry) =>
+									capabilityMatchesSearch(entry, searchQuery),
+								);
+								const filteredPrompts = prompts.filter((entry) =>
+									capabilityMatchesSearch(entry, searchQuery),
+								);
+								const visibleTools = searchQuery ? filteredTools : tools;
+								const visibleResources = searchQuery
+									? filteredResources
+									: resources;
+								const visibleTemplates = searchQuery
+									? filteredTemplates
+									: templates;
+								const visiblePrompts = searchQuery ? filteredPrompts : prompts;
 								const summaryParts = [] as string[];
-								if (tools.length)
+								if (visibleTools.length)
 									summaryParts.push(
-										`${tools.length} ${tools.length === 1 ? t("wizard.preview.capabilities.tool", { defaultValue: "tool" }) : t("wizard.preview.capabilities.tools", { defaultValue: "tools" })}`,
+										`${visibleTools.length} ${visibleTools.length === 1 ? t("wizard.preview.capabilities.tool", { defaultValue: "tool" }) : t("wizard.preview.capabilities.tools", { defaultValue: "tools" })}`,
 									);
-								if (resources.length)
+								if (visibleResources.length)
 									summaryParts.push(
-										`${resources.length} ${resources.length === 1 ? t("wizard.preview.capabilities.resource", { defaultValue: "resource" }) : t("wizard.preview.capabilities.resources", { defaultValue: "resources" })}`,
+										`${visibleResources.length} ${visibleResources.length === 1 ? t("wizard.preview.capabilities.resource", { defaultValue: "resource" }) : t("wizard.preview.capabilities.resources", { defaultValue: "resources" })}`,
 									);
-								if (templates.length)
+								if (visibleTemplates.length)
 									summaryParts.push(
-										`${templates.length} ${templates.length === 1 ? t("wizard.preview.capabilities.template", { defaultValue: "template" }) : t("wizard.preview.capabilities.templates", { defaultValue: "templates" })}`,
+										`${visibleTemplates.length} ${visibleTemplates.length === 1 ? t("wizard.preview.capabilities.template", { defaultValue: "template" }) : t("wizard.preview.capabilities.templates", { defaultValue: "templates" })}`,
 									);
-								if (prompts.length)
+								if (visiblePrompts.length)
 									summaryParts.push(
-										`${prompts.length} ${prompts.length === 1 ? t("wizard.preview.capabilities.prompt", { defaultValue: "prompt" }) : t("wizard.preview.capabilities.prompts", { defaultValue: "prompts" })}`,
+										`${visiblePrompts.length} ${visiblePrompts.length === 1 ? t("wizard.preview.capabilities.prompt", { defaultValue: "prompt" }) : t("wizard.preview.capabilities.prompts", { defaultValue: "prompts" })}`,
 									);
 								const summaryText = summaryParts.join(" · ");
-								const isOpen = !!expanded[draft.name];
+								const hasCapabilities =
+									tools.length +
+									resources.length +
+									templates.length +
+									prompts.length >
+									0;
+								const capabilitiesHeading = isPreviewLoading
+									? t("wizard.preview.capabilitiesTitle", {
+										defaultValue: "Capabilities",
+									})
+									: summaryText
+										? t("wizard.preview.capabilitiesSummary", {
+											summary: summaryText,
+											defaultValue: "Capabilities · {{summary}}",
+										})
+										: t("wizard.preview.capabilitiesTitle", {
+											defaultValue: "Capabilities",
+										});
 								return (
-									<div key={draft.name} className="rounded border px-4 py-3">
-										<div className="flex items-center justify-between gap-2">
-											<div className="flex items-center gap-2 min-w-0">
-												<button
-													type="button"
-													className="p-0 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-													onClick={() => toggleExpanded(draft.name)}
-													onKeyDown={(e) => {
-														if (e.key === "Enter" || e.key === " ") {
-															e.preventDefault();
-															toggleExpanded(draft.name);
-														}
-													}}
-													aria-label={isOpen ? "Collapse" : "Expand"}
-												>
-													{isOpen ? (
-														<ChevronDown className="h-4 w-4" />
-													) : (
-														<ChevronRight className="h-4 w-4" />
-													)}
-												</button>
-												<div
-													className="font-medium text-sm truncate"
-													title={draft.name}
-												>
-													{draft.name}
-													{summaryText ? (
-														<span className="ml-2 text-xs text-slate-500">
-															{summaryText}
-														</span>
-													) : null}
-												</div>
+									<CardListScrollBody key={draft.name}>
+										<div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-200/80 bg-background/95 px-4 py-3 backdrop-blur-sm dark:border-slate-700/80">
+											<div
+												className="min-w-0 truncate font-medium text-sm"
+												title={capabilitiesHeading}
+											>
+												{capabilitiesHeading}
 											</div>
-											<Badge variant="secondary" className="text-xs">
-												{draft.kind}
-											</Badge>
+											<div className="shrink-0">
+												<Input
+													type="search"
+													value={capabilitySearch}
+													onChange={(event) =>
+														setCapabilitySearch(event.target.value)
+													}
+													placeholder={t("wizard.preview.filterCapabilities", {
+														defaultValue: "Filter capabilities...",
+													})}
+													className={cn(toolbarSearchInputClassName, "h-8 w-48")}
+												/>
+											</div>
 										</div>
 
-										{!ok && item?.error ? (
-											<div className="mt-2 text-xs text-red-500 break-words overflow-hidden">
+										{isPreviewLoading ? (
+											<CapabilityListSkeleton showSectionLabel />
+										) : !ok && item?.error ? (
+											<div className="overflow-hidden break-words px-4 py-3 text-xs text-red-500">
 												{String(item.error)}
 											</div>
-										) : null}
-
-										{/* Details */}
-										{isOpen ? (
-											<div className="mt-4 pt-3 border-t space-y-5">
-												{renderCapabilitySection("tools", tools)}
-												{renderCapabilitySection("resources", resources)}
-												{renderCapabilitySection("templates", templates)}
-												{renderCapabilitySection("prompts", prompts)}
+										) : !item ? (
+											<div className="px-4 py-3 text-xs text-slate-500">
+												{t("wizard.preview.selectServerHint", {
+													defaultValue:
+														"Select this server from the list to generate its capability preview.",
+												})}
 											</div>
-										) : null}
-									</div>
+										) : !hasCapabilities ? (
+											<div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+												{t("wizard.preview.emptyCapabilities", {
+													defaultValue:
+														"No capabilities discovered for this server.",
+												})}
+											</div>
+										) : searchQuery &&
+											visibleTools.length +
+											visibleResources.length +
+											visibleTemplates.length +
+											visiblePrompts.length ===
+											0 ? (
+											<div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+												{t("wizard.preview.emptyCapabilitySearch", {
+													defaultValue:
+														"No capabilities match this search.",
+												})}
+											</div>
+										) : (
+											<div className="p-3">
+												<div className="space-y-5">
+													{renderCapabilitySection("tools", visibleTools)}
+													{renderCapabilitySection("resources", visibleResources)}
+													{renderCapabilitySection("templates", visibleTemplates)}
+													{renderCapabilitySection("prompts", visiblePrompts)}
+												</div>
+											</div>
+										)}
+									</CardListScrollBody>
 								);
-							})}
-						</div>
+							};
+
+							const selectedDrafts = drafts.filter((draft) =>
+								selectedDraftNameSet.has(draft.name),
+							);
+							if (!selectedDrafts.length) {
+								return null;
+							}
+
+							const activeName =
+								activePreviewName ??
+								selectedDrafts[0]?.name ??
+								null;
+							const activeDraft =
+								selectedDrafts.find((draft) => draft.name === activeName) ??
+								selectedDrafts[0] ??
+								null;
+
+							return (
+								<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+									<div className="shrink-0">
+										<CapabilityCombobox
+											kind="tool"
+											items={selectedDrafts}
+											value={activeName ?? undefined}
+											onChange={(name) => {
+												void previewDraftByName(name);
+											}}
+											placeholder={t("wizard.preview.selectServer", {
+												defaultValue: "Select server",
+											})}
+											triggerClassName="h-10 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-0 shadow-none transition-all duration-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40 dark:hover:bg-slate-900/40"
+											triggerLabelClassName="font-semibold text-slate-900 dark:text-slate-100"
+											renderItemLeading={draftListAvatar}
+											renderTriggerTrailing={(draft) => (
+												<Badge variant="secondary" className="shrink-0 text-xs">
+													{transportLabel[draft.kind]}
+												</Badge>
+											)}
+											renderItemTrailing={(draft) => (
+												<Badge variant="secondary" className="shrink-0 text-xs">
+													{transportLabel[draft.kind]}
+												</Badge>
+											)}
+											getKey={(draft) => draft.name}
+											getLabel={(draft) => toTitleCase(draft.name)}
+											getDescription={(draft) =>
+												draftEndpointSummary(draft) || undefined
+											}
+										/>
+									</div>
+									{activeDraft ? renderPreviewCard(activeDraft) : null}
+								</div>
+							);
+						})()}
 					</div>
 				</div>
 			);
@@ -1973,8 +2707,9 @@ export const ServerInstallWizard = forwardRef(
 				dryRunResult,
 				isDryRunLoading,
 				dryRunError,
-				dryRunStats,
 				dryRunWarning,
+				dryRunStats,
+				selectedDraftNames,
 			} = state;
 			const summary = importResult?.summary as
 				| { imported_count?: number | null; skipped_count?: number | null }
@@ -1996,9 +2731,8 @@ export const ServerInstallWizard = forwardRef(
 			// Determine if we can proceed with import based on dry-run
 			const dryRunImportableCount = dryRunStats?.importedCount ?? 0;
 			const dryRunSkippedCount = dryRunStats?.skippedCount ?? 0;
-			const dryRunFailedCount = dryRunStats?.failedCount ?? 0;
 			const effectiveImportableCount = hiddenPreviewReady
-				? Math.max(dryRunImportableCount, state.drafts.length || 1)
+				? Math.max(dryRunImportableCount, state.selectedDrafts.length || 1)
 				: dryRunImportableCount;
 			const effectiveSkippedCount = hiddenPreviewReady ? 0 : dryRunSkippedCount;
 			const canProceedWithImport =
@@ -2007,35 +2741,6 @@ export const ServerInstallWizard = forwardRef(
 				!dryRunError &&
 				dryRunResult &&
 				dryRunImportableCount > 0;
-			const validationOverviewItems = [
-				{
-					label: t("wizard.result.validation.ready", {
-						defaultValue: "Ready to import",
-					}),
-					value: effectiveImportableCount,
-					accent:
-						effectiveImportableCount > 0
-							? "text-green-600"
-							: "text-muted-foreground",
-				},
-				{
-					label: t("wizard.result.validation.skipped", {
-						defaultValue: "Will be skipped",
-					}),
-					value: effectiveSkippedCount,
-					accent:
-						effectiveSkippedCount > 0 ? "text-amber-600" : "text-muted-foreground",
-				},
-				{
-					label: t("wizard.result.validation.failed", {
-						defaultValue: "Failed validation",
-					}),
-					value: dryRunFailedCount,
-					accent:
-						dryRunFailedCount > 0 ? "text-red-600" : "text-muted-foreground",
-				},
-			];
-
 			const successSteps: Array<{ label: string; action: NextStepAction }> =
 				selectedProfileName
 					? [
@@ -2186,126 +2891,74 @@ export const ServerInstallWizard = forwardRef(
 									})}
 								</div>
 							) : (
-								<div className="rounded-lg border p-4 space-y-4">
-									{(() => {
-										let statusTitle = t("wizard.result.validatedTitle", {
-											defaultValue: "Import Validated",
-										});
-										let detailMessage: string | null = null;
-										let detailTone: "error" | "warning" | "muted" = "muted";
-										if (hiddenPreviewReady) {
-											statusTitle = t("wizard.result.pendingImportReadyTitle", {
-												defaultValue: "Ready to publish",
-											});
-											detailMessage = t("wizard.result.pendingImportReadyDescription", {
-												defaultValue:
-													"OAuth authorization is complete. Import will publish this server and make it visible in your Servers list.",
-											});
-										} else if (dryRunError) {
-											statusTitle = t("wizard.result.validationFailedTitle", {
-												defaultValue: "Import Validation Failed",
-											});
-											detailMessage = dryRunError;
-											detailTone = "error";
-										} else if (canProceedWithImport) {
-											if (dryRunWarning) {
-												statusTitle = t(
-													"wizard.result.validatedWithWarningsTitle",
+								(() => {
+									const validationItems = buildImportValidationItems({
+										selectedNames: selectedDraftNames,
+										stats: dryRunStats,
+										hiddenPreviewReady,
+									});
+									const hasPerServerBreakdown =
+										validationItems.length > 0 &&
+										(hiddenPreviewReady || dryRunStats !== null);
+									const showValidationSummary =
+										!dryRunError || (dryRunStats?.failedCount ?? 0) > 0;
+
+									const skippedOnly =
+										!dryRunError &&
+										!hiddenPreviewReady &&
+										!canProceedWithImport &&
+										effectiveSkippedCount > 0;
+
+									const nextSteps = dryRunError
+										? failureSteps
+										: canProceedWithImport
+											? readySteps
+											: skippedOnly
+												? [
 													{
-														defaultValue: "Import Validated With Warnings",
+														label: t(
+															"wizard.result.skipSteps.useExisting",
+															{
+																defaultValue:
+																	"Close this drawer and start using the existing server.",
+															},
+														),
+														action: "close" as NextStepAction,
 													},
-												);
-												detailMessage = dryRunWarning;
-												detailTone = "warning";
-											}
-										} else {
-											statusTitle = t("wizard.result.alreadyInstalledTitle", {
-												defaultValue: "Already Installed",
-											});
-											detailMessage = dryRunWarning;
-											detailTone = "warning";
-										}
+													{
+														label: t(
+															"wizard.result.skipSteps.chooseAnother",
+															{
+																defaultValue:
+																	"Go back to the previous step to choose a different server if needed.",
+															},
+														),
+														action: "preview" as NextStepAction,
+													},
+												]
+												: readySteps;
 
-										const detailClass =
-											detailTone === "error"
-												? "text-sm text-red-600"
-												: detailTone === "warning"
-													? "text-sm text-amber-600"
-													: "text-sm text-muted-foreground";
-
-										const skippedOnly =
-											!dryRunError &&
-											!hiddenPreviewReady &&
-											!canProceedWithImport &&
-											effectiveSkippedCount > 0;
-
-										const nextSteps = dryRunError
-											? failureSteps
-											: canProceedWithImport
-												? readySteps
-												: skippedOnly
-													? [
-														{
-															label: t(
-																"wizard.result.skipSteps.useExisting",
-																{
-																	defaultValue:
-																		"Close this drawer and start using the existing server.",
-																},
-															),
-															action: "close" as NextStepAction,
-														},
-														{
-															label: t(
-																"wizard.result.skipSteps.chooseAnother",
-																{
-																	defaultValue:
-																		"Go back to the previous step to choose a different server if needed.",
-																},
-															),
-															action: "preview" as NextStepAction,
-														},
-													]
-													: readySteps;
-
-										return (
-											<>
-												<div className="flex items-center gap-2">
-													<span
-														className={`font-medium ${detailTone === "warning" && !dryRunError ? "text-amber-600" : detailTone === "error" ? "text-red-600" : "text-green-600"}`}
-													>
-														{statusTitle}
-													</span>
-												</div>
-												<div className="space-y-3">
-													<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-														{validationOverviewItems.map(
-															({ label, value, accent }) => (
-																<div
-																	key={label}
-																	className="rounded-md border p-3"
-																>
-																	<div className="text-xs font-semibold uppercase text-muted-foreground">
-																		{label}
-																	</div>
-																	<div
-																		className={`text-2xl font-bold ${accent}`}
-																	>
-																		{value}
-																	</div>
-																</div>
-															),
-														)}
-													</div>
-													{detailMessage ? (
-														<p className={detailClass}>{detailMessage}</p>
-													) : null}
-													{renderNextSteps(nextSteps)}
-												</div>
-											</>
-										);
-									})()}
-								</div>
+									return (
+										<div className="flex flex-col gap-20">
+											<div className="space-y-3">
+												{dryRunWarning && !dryRunError ? (
+													<p className="text-sm text-amber-700 dark:text-amber-300">
+														{dryRunWarning}
+													</p>
+												) : null}
+												{hasPerServerBreakdown && showValidationSummary ? (
+													<ImportValidationSummary
+														items={validationItems}
+														hiddenPreviewReady={hiddenPreviewReady}
+													/>
+												) : dryRunError ? (
+													<p className="text-sm text-red-600">{dryRunError}</p>
+												) : null}
+											</div>
+											{renderNextSteps(nextSteps)}
+										</div>
+									);
+								})()
 							)
 						) : isImporting ? (
 							<div className="flex items-center justify-center gap-2 rounded border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
@@ -2432,9 +3085,11 @@ export const ServerInstallWizard = forwardRef(
 									</div>
 								)}
 
-								{renderNextSteps(
-									importResult.success !== false ? successSteps : failureSteps,
-								)}
+								<div className="pt-20">
+									{renderNextSteps(
+										importResult.success !== false ? successSteps : failureSteps,
+									)}
+								</div>
 							</div>
 						) : (
 							<div className="flex items-center justify-center h-full">
@@ -2458,35 +3113,153 @@ export const ServerInstallWizard = forwardRef(
 			);
 		};
 
+		const isFlexFillStep =
+			currentStep === "form" || currentStep === "preview";
+		const detectedServerCount = installPipeline.state.drafts.length;
+		const headerPluralCount = detectedServerCount > 1 ? detectedServerCount : 1;
+
 		return (
 			<>
 				<Drawer
 					open={isOpen}
 					onOpenChange={(open) => !open && handleOverlayClose()}
 				>
-					<DrawerContent className="h-full flex flex-col">
-						<DrawerHeader>
-							<DrawerTitle className="flex items-center gap-2">
-								{isEditMode
-									? t("wizard.header.editTitle", { defaultValue: "Edit Server" })
-									: t("wizard.header.addTitle", {
-										defaultValue: "Add MCP Server",
-									})}
-							</DrawerTitle>
-							<DrawerDescription>
-								{isEditMode
-									? t("wizard.header.editDescription", {
-										defaultValue: "Update server configuration",
-									})
-									: t("wizard.header.addDescription", {
-										defaultValue: "Configure and install a new MCP server",
-									})}
-							</DrawerDescription>
+					<DrawerContent className="flex h-full flex-col overflow-hidden">
+						<DrawerHeader className="shrink-0">
+							<div className="flex items-start justify-between gap-3">
+								<div className="min-w-0 flex-1 space-y-1 text-left">
+									<DrawerTitle className="flex items-center gap-2">
+										{isEditMode
+											? t("wizard.header.editTitle", { defaultValue: "Edit Server" })
+											: t("wizard.header.addTitle", {
+												count: headerPluralCount,
+												defaultValue:
+													detectedServerCount > 1
+														? "Add MCP Servers"
+														: "Add MCP Server",
+											})}
+									</DrawerTitle>
+									<DrawerDescription>
+										{isEditMode
+											? t("wizard.header.editDescription", {
+												defaultValue: "Update server configuration",
+											})
+											: t("wizard.header.addDescription", {
+												count: headerPluralCount,
+												defaultValue:
+													detectedServerCount > 1
+														? `Review and install ${detectedServerCount} detected MCP servers`
+														: "Configure and install a new MCP server",
+											})}
+									</DrawerDescription>
+								</div>
+								{currentStep === "form" ? (
+									<TooltipProvider delayDuration={200}>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="-mr-1 -mt-1 h-5 w-5 shrink-0 rounded-md border-0 bg-transparent p-0 text-muted-foreground shadow-none transition-colors hover:bg-transparent hover:text-foreground focus-visible:ring-1 focus-visible:ring-offset-0"
+													disabled={isSubmitting}
+													onClick={handleResetForm}
+													aria-label={t("wizard.buttons.reset", {
+														defaultValue: "Reset form",
+													})}
+												>
+													<RotateCcw className="h-4 w-4" />
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent side="bottom" align="end" className="max-w-xs">
+												<p className="font-medium">
+													{t("wizard.buttons.reset", {
+														defaultValue: "Reset form",
+													})}
+												</p>
+												<p className="mt-1 text-background/80">
+													{t("wizard.buttons.resetDescription", {
+														defaultValue:
+															"Clear all fields and restore the initial configuration.",
+													})}
+												</p>
+											</TooltipContent>
+										</Tooltip>
+									</TooltipProvider>
+								) : currentStep === "preview" &&
+									(installPipeline.state.previewState !== null ||
+										installPipeline.state.isPreviewLoading) ? (
+									<TooltipProvider delayDuration={200}>
+										<Tooltip>
+											<TooltipTrigger asChild>
+												<Button
+													type="button"
+													variant="ghost"
+													size="icon"
+													className="-mr-1 -mt-1 h-5 w-5 shrink-0 rounded-md border-0 bg-transparent p-0 text-muted-foreground shadow-none transition-colors hover:bg-transparent hover:text-foreground focus-visible:ring-1 focus-visible:ring-offset-0"
+													disabled={
+														installPipeline.state.isImporting ||
+														installPipeline.state.isPreviewLoading
+													}
+													aria-label={
+														installPipeline.state.isPreviewLoading
+															? t("wizard.buttons.previewing", {
+																defaultValue: "Previewing...",
+															})
+															: t("wizard.preview.retry", {
+																defaultValue: "Retry preview",
+															})
+													}
+													onClick={() => {
+														installPipeline.setPreviewState(null);
+														if (
+															installPipeline.state.drafts.length > 1 &&
+															activePreviewName
+														) {
+															void previewDraftByName(activePreviewName);
+														} else {
+															void handlePreview({
+																skipValidation: true,
+																shouldFocus: false,
+															});
+														}
+													}}
+												>
+													<RefreshCw
+														className={cn(
+															"h-4 w-4",
+															installPipeline.state.isPreviewLoading &&
+															"animate-spin",
+														)}
+													/>
+												</Button>
+											</TooltipTrigger>
+											<TooltipContent side="bottom" align="end" className="max-w-xs">
+												<p className="font-medium">
+													{installPipeline.state.isPreviewLoading
+														? t("wizard.buttons.previewing", {
+															defaultValue: "Previewing...",
+														})
+														: t("wizard.preview.retry", {
+															defaultValue: "Retry preview",
+														})}
+												</p>
+												<p className="mt-1 text-background/80">
+													{t("wizard.preview.retryDescription", {
+														defaultValue:
+															"Regenerate capability preview for the selected server.",
+													})}
+												</p>
+											</TooltipContent>
+										</Tooltip>
+									</TooltipProvider>
+								) : null}
+							</div>
 						</DrawerHeader>
 
 						{/* Step Navigation */}
-						<div className="relative z-10 p-4 pb-0 bg-background">
-							<div className="flex items-center justify-between gap-2">
+						<div className="relative z-10 shrink-0 bg-background p-4 pb-0">
+							<div className="flex items-center gap-2">
 								<div className="flex items-center gap-2">
 									{steps.map((step, index) => {
 										const isActive = currentStep === step.id;
@@ -2534,44 +3307,23 @@ export const ServerInstallWizard = forwardRef(
 										);
 									})}
 								</div>
-								{/* Refresh button for preview step - visible during and after preview */}
-								{currentStep === "preview" &&
-									(installPipeline.state.previewState !== null || installPipeline.state.isPreviewLoading) && (
-										<Button
-											variant="ghost"
-											className="h-9 w-9 p-0"
-											aria-label={
-												installPipeline.state.isPreviewLoading
-													? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
-													: t("wizard.preview.retry", { defaultValue: "Retry preview" })
-											}
-											title={
-												installPipeline.state.isPreviewLoading
-													? t("wizard.buttons.previewing", { defaultValue: "Previewing..." })
-													: t("wizard.preview.retry", { defaultValue: "Retry preview" })
-											}
-											disabled={installPipeline.state.isImporting || installPipeline.state.isPreviewLoading}
-											onClick={() => {
-												installPipeline.setPreviewState(null);
-												void handlePreview({
-													skipValidation: true,
-													shouldFocus: false,
-												});
-											}}
-										>
-											<RefreshCw className={`h-4 w-4 ${installPipeline.state.isPreviewLoading ? "animate-spin" : ""}`} />
-										</Button>
-									)}
 							</div>
 						</div>
 
 						{/* Step Content - with spacing and bottom padding to avoid footer overlap */}
-						<div className="flex-1 min-h-0 overflow-y-auto py-2 pb-20">
+						<div
+							className={cn(
+								"flex-1 min-h-0 py-2",
+								isFlexFillStep
+									? "flex flex-col overflow-hidden"
+									: "overflow-y-auto",
+							)}
+						>
 							{renderStepContent()}
 						</div>
 
 						{/* Footer - fixed at bottom with subtle shadow for separation */}
-						<DrawerFooter className="absolute bottom-0 left-0 right-0 z-10 border-t p-4 bg-background">
+						<DrawerFooter className="shrink-0 border-t bg-background p-4">
 							<div className="flex w-full items-center justify-between gap-3">
 								{currentStep === "result" &&
 									installPipeline.state.importResult ? (

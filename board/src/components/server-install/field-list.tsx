@@ -169,7 +169,7 @@ export const FieldList: React.FC<FieldListProps> = ({
 						</div>
 					</div>
 				) : (
-					<div className="flex-1 space-y-0">
+					<div className="flex flex-1 flex-col gap-y-0.5">
 						{fields.map((field, index) => (
 							<div
 								key={field.id}
