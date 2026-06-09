@@ -1,5 +1,38 @@
 [
 	{
+		"version": "0.3.0",
+		"date": "2026-06-09",
+		"highlights": [
+			"MCPMate v0.3.0-beta は、0.2.x 以降の基盤強化を、より実用的なセットアップと信頼しやすい操作へ進めるリリースです。暗号化されたローカル secret 管理、Server インストールでの一括 MCP 設定インポート、プロファイル能力の一括編集、そして新しい secure-store 依存関係に合わせたクライアント書き戻しとデスクトップ配布の信頼性改善を含みます。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "Secure Store の基盤を追加しました。ローカルのサーバー実行時 secret 向けに、暗号化されたローカルレコード、OS-backed root-key custody、保護パスワードフロー、インライン secret プレースホルダー、使用メタデータ、失敗時に明示的に止まるランタイム解決を扱います。"
+			},
+			{
+				"type": "feat",
+				"text": "Server インストールで複数サーバー設定の一括インポートをサポートしました。mcp-servers.json 形式に近い bundle を貼り付けまたはドロップし、選択可能な draft、サーバープレビュー、dry-run 検証、選択分の一括インポートを 1 つの流れで実行できます。"
+			},
+			{
+				"type": "feat",
+				"text": "Profiles で servers、tools、resources、prompts、resource templates の一括 include / exclude が可能になり、繰り返しの能力管理作業を減らしました。"
+			},
+			{
+				"type": "feat",
+				"text": "Settings では Appearance の操作を General に統合し、Light、Auto、Dark のテーマ選択をより直接的に表示しました。"
+			},
+			{
+				"type": "fix",
+				"text": "Client attach / detach は実ファイル状態を確認する guard を使うようになり、可能な場合はメタデータ drift を修復し、API が拒否する書き戻し操作を UI で出しにくくしました。"
+			},
+			{
+				"type": "fix",
+				"text": "Docker release validation と image build は、secure-store keyring stack に必要な D-Bus system dependencies をインストールするようになりました。Nightly workflow は必要になるまで manual run に切り替えられています。"
+			}
+		]
+	},
+	{
 		"version": "0.2.3",
 		"date": "2026-06-06",
 		"highlights": [

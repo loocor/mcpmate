@@ -16,7 +16,7 @@ const howToSteps = [
 	},
 	{
 		name: "Bring in MCP servers",
-		text: "Browse the built-in Market, import JSON/TOML snippets, or pull server settings from an existing client.",
+		text: "Browse the built-in Market, import JSON/TOML snippets or multi-server config bundles, or pull server settings from an existing client.",
 	},
 	{
 		name: "Shape a profile",
@@ -164,11 +164,12 @@ export default function Quickstart() {
 			<Ul>
 				<Li>
 					From <strong>Servers</strong>, choose <strong>Add</strong> and drop MCP
-					bundles or JSON/TOML snippets into the window.
+					bundles, JSON/TOML snippets, or an <code>mcp-servers.json</code>-style
+					multi-server config into the window.
 				</Li>
 				<Li>
-					Review the preview, then confirm the import to create the server
-					entry.
+					Review the detected drafts, choose which servers to include, run the
+					preview or dry-run checks, then confirm the import.
 				</Li>
 			</Ul>
 			<H3>Import from an existing client</H3>
