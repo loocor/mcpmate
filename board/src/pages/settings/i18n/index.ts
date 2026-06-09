@@ -3,7 +3,6 @@ export const settingsTranslations = {
     title: "Tune dashboard preferences and defaults",
     tabs: {
       general: "General",
-      appearance: "Appearance",
       audit: "Logs",
       profile: "Profile",
       security: "Security",
@@ -115,37 +114,27 @@ export const settingsTranslations = {
     },
     general: {
       title: "General",
-      description: "Baseline preferences for the main workspace views.",
+      description:
+        "Baseline preferences for workspace layout, theme, language, and desktop shell options.",
       defaultView: "Default View",
       defaultViewDescription: "Choose the default layout for displaying items.",
+      themeTitle: "Theme",
+      themeDescription: "Switch between light, dark, and system theme.",
       language: "Language",
       languageDescription: "Select the dashboard language.",
       languagePlaceholder: "Select language",
-    },
-    appearance: {
-      title: "Appearance",
-      description: "Customize the look and feel of the dashboard.",
-      themeTitle: "Theme",
-      themeDescription: "Switch between light and dark mode.",
-      systemPreferenceTitle: "System Preference",
-      systemPreferenceDescription:
-        "Follow the operating system preference automatically.",
       menuBarTitle: "Menu Bar Icon",
-      menuBarDescription: "Control the visibility of the menu bar icon.",
-      menuBarIconTitle: "Menu Bar Icon Mode",
+      menuBarDescription: "Choose when the desktop tray icon should appear.",
       dockTitle: "Dock / Taskbar Icon",
       dockDescription:
         "Show MCPMate in the Dock (macOS), taskbar (Windows/Linux), or run from the tray or menu bar only.",
-      dockIconTitle: "Dock Icon Mode",
       dockHiddenNotice:
         "The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
-      menuBarPlaceholder: "Select menu bar icon mode",
-      wipLabel: "Work in Progress",
-      defaultMarketPlaceholder: "Select default market",
     },
     options: {
       theme: {
         light: "Light",
+        auto: "Auto",
         dark: "Dark",
       },
       defaultView: {
@@ -425,16 +414,11 @@ export const settingsTranslations = {
       homepage: "Homepage",
       noPackages: "No third-party packages detected during the latest update.",
     },
-    notices: {
-      dockHidden:
-        "The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
-    },
   },
   "zh-CN": {
     title: "调整面板偏好与默认行为",
     tabs: {
       general: "通用",
-      appearance: "外观",
       audit: "日志",
       profile: "配置集",
       system: "系统",
@@ -541,36 +525,26 @@ export const settingsTranslations = {
     },
     general: {
       title: "通用",
-      description: "管理工作区的默认视图与基础偏好。",
+      description: "管理工作区布局、主题、语言与桌面壳层选项。",
       defaultView: "默认视图",
       defaultViewDescription: "选择条目显示的默认布局方式。",
+      themeTitle: "主题",
+      themeDescription: "在浅色、深色与跟随系统之间切换。",
       language: "界面语言",
       languageDescription: "切换控制台显示语言。",
       languagePlaceholder: "请选择语言",
-    },
-    appearance: {
-      title: "外观",
-      description: "自定义仪表盘的外观和感觉。",
-      themeTitle: "主题",
-      themeDescription: "在浅色和深色模式之间切换。",
-      systemPreferenceTitle: "系统偏好",
-      systemPreferenceDescription: "自动跟随操作系统偏好设置。",
       menuBarTitle: "菜单栏图标",
-      menuBarDescription: "控制菜单栏图标的可见性。",
-      menuBarIconTitle: "菜单栏图标模式",
+      menuBarDescription: "选择桌面托盘图标的显示时机。",
       dockTitle: "Dock / 任务栏图标",
       dockDescription:
         "在 macOS Dock 或 Windows/Linux 任务栏中显示 MCPMate，或仅从托盘或菜单栏运行。",
-      dockIconTitle: "Dock 图标模式",
       dockHiddenNotice:
         "Dock 或任务栏入口已隐藏，托盘图标保持可见以便重新打开 MCPMate。",
-      menuBarPlaceholder: "选择菜单栏图标模式",
-      wipLabel: "开发中",
-      defaultMarketPlaceholder: "选择默认市场",
     },
     options: {
       theme: {
         light: "浅色",
+        auto: "自动",
         dark: "深色",
       },
       defaultView: {
@@ -829,16 +803,11 @@ export const settingsTranslations = {
       homepage: "主页",
       noPackages: "在最新更新期间未检测到第三方包。",
     },
-    notices: {
-      dockHidden:
-        "Dock 或任务栏入口已隐藏，托盘图标保持可见以便重新打开 MCPMate。",
-    },
   },
   "ja-JP": {
     title: "ダッシュボード設定と既定値の調整",
     tabs: {
       general: "一般",
-      appearance: "外観",
       audit: "ログ",
       profile: "プロファイル管理",
       system: "システム",
@@ -952,37 +921,27 @@ export const settingsTranslations = {
     },
     general: {
       title: "一般",
-      description: "ワークスペースの基本設定を管理します。",
+      description:
+        "ワークスペースのレイアウト、テーマ、言語、デスクトップシェル設定を管理します。",
       defaultView: "既定のビュー",
       defaultViewDescription: "項目の表示レイアウトを選択します。",
+      themeTitle: "テーマ",
+      themeDescription: "ライト、ダーク、システム設定の追従を切り替えます。",
       language: "表示言語",
       languageDescription: "ダッシュボードで使用する言語を切り替えます。",
       languagePlaceholder: "言語を選択",
-    },
-    appearance: {
-      title: "外観",
-      description: "ダッシュボードの外観と操作性をカスタマイズします。",
-      themeTitle: "テーマ",
-      themeDescription: "ライトモードとダークモードを切り替えます。",
-      systemPreferenceTitle: "システム設定",
-      systemPreferenceDescription:
-        "オペレーティングシステムの設定を自動的に追従します。",
       menuBarTitle: "メニューバーアイコン",
-      menuBarDescription: "メニューバーアイコンの表示を制御します。",
-      menuBarIconTitle: "メニューバーアイコンモード",
+      menuBarDescription: "デスクトップトレイアイコンの表示タイミングを選択します。",
       dockTitle: "Dock / タスクバーアイコン",
       dockDescription:
         "macOS の Dock、Windows/Linux のタスクバーに表示するか、トレイ／メニューバーのみで実行します。",
-      dockIconTitle: "Dock アイコンモード",
       dockHiddenNotice:
         "Dock／タスクバーからの表示をオフにしました。トレイアイコンは残るため、そこから MCPMate を開き直せます。",
-      menuBarPlaceholder: "メニューバーアイコンモードを選択",
-      wipLabel: "開発中",
-      defaultMarketPlaceholder: "デフォルトマーケットを選択",
     },
     options: {
       theme: {
         light: "ライト",
+        auto: "自動",
         dark: "ダーク",
       },
       defaultView: {
@@ -1267,10 +1226,6 @@ export const settingsTranslations = {
       homepage: "ホームページ",
       noPackages:
         "最新の更新中にサードパーティパッケージが検出されませんでした。",
-    },
-    notices: {
-      dockHidden:
-        "Dock／タスクバーからの表示をオフにしました。トレイアイコンは残るため、そこから MCPMate を開き直せます。",
     },
   },
 } as const;

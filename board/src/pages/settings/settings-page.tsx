@@ -1,5 +1,10 @@
 import { isProfileTokenEstimateMethod } from "../../lib/profile-token-estimate-method";
-import type { AuditPolicyData, AuditRetentionPolicy } from "../../lib/types";
+import type {
+	AuditPolicyData,
+	AuditRetentionPolicy,
+	CapabilitySource,
+	Theme,
+} from "../../lib/types";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
 	Activity,
@@ -9,9 +14,11 @@ import {
 	ExternalLink,
 	FileSearch,
 	Bug,
+	Grid3X3,
 	LayoutGrid,
+	List,
+	Monitor,
 	Moon,
-	Palette,
 	RotateCcw,
 	Server,
 	ShieldCheck,
@@ -99,7 +106,6 @@ import {
 	type MenuBarIconMode,
 	useAppStore,
 } from "../../lib/store";
-import type { CapabilitySource } from "../../lib/types";
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
 
@@ -110,6 +116,12 @@ const THEME_CONFIG = [
 		icon: Sun,
 		labelKey: "settings:options.theme.light",
 		fallback: "Light",
+	},
+	{
+		value: "system" as const,
+		icon: Monitor,
+		labelKey: "settings:options.theme.auto",
+		fallback: "Auto",
 	},
 	{
 		value: "dark" as const,
@@ -145,11 +157,13 @@ const CLIENT_FILTER_CONFIG = [
 const DEFAULT_VIEW_CONFIG = [
 	{
 		value: "list" as const,
+		icon: List,
 		labelKey: "settings:options.defaultView.list",
 		fallback: "List",
 	},
 	{
 		value: "grid" as const,
+		icon: Grid3X3,
 		labelKey: "settings:options.defaultView.grid",
 		fallback: "Grid",
 	},
@@ -1276,6 +1290,10 @@ export function SettingsPage() {
 		"w-full justify-center gap-2 px-2 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 md:justify-start md:px-3 dark:text-slate-300";
 	const settingItemTitleClass = "text-base font-medium";
 	const settingItemDescriptionClass = "text-sm text-muted-foreground";
+	const generalSettingsRowClass =
+		"flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4";
+	const generalSettingsLabelClass = "min-w-0 space-y-0.5";
+	const generalSettingsControlClass = "w-full shrink-0 sm:w-72";
 	/** Clients tab: left column wraps without stealing flex space from controls; right keeps a floor width so Segments are not squeezed. */
 	const clientsSettingsRowClass =
 		"flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6";
@@ -1296,9 +1314,10 @@ export function SettingsPage() {
 
 	const defaultViewOptions = useMemo<SegmentOption[]>(
 		() =>
-			DEFAULT_VIEW_CONFIG.map(({ value, labelKey, fallback }) => ({
+			DEFAULT_VIEW_CONFIG.map(({ value, icon: Icon, labelKey, fallback }) => ({
 				value,
 				label: t(labelKey, { defaultValue: fallback }),
+				icon: <Icon className="h-4 w-4" />,
 			})),
 		[t, i18n.language],
 	);
@@ -1539,7 +1558,6 @@ export function SettingsPage() {
 			showLicenseTab
 				? [
 					"general",
-					"appearance",
 					"servers",
 					"clients",
 					"profile",
@@ -1552,7 +1570,6 @@ export function SettingsPage() {
 				]
 				: [
 					"general",
-					"appearance",
 					"servers",
 					"clients",
 					"profile",
@@ -1593,12 +1610,6 @@ export function SettingsPage() {
 						<LayoutGrid className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.general", { defaultValue: "General" })}
-						</span>
-					</TabsTrigger>
-					<TabsTrigger value="appearance" className={tabTriggerClass}>
-						<Palette className="h-4 w-4 shrink-0" />
-						<span className="hidden md:inline truncate">
-							{t("settings:tabs.appearance", { defaultValue: "Appearance" })}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="servers" className={tabTriggerClass}>
@@ -1673,27 +1684,27 @@ export function SettingsPage() {
 								<CardDescription>
 									{t("settings:general.description", {
 										defaultValue:
-											"Baseline preferences for the main workspace views.",
+											"Baseline preferences for workspace layout, theme, language, and desktop shell options.",
 									})}
 								</CardDescription>
 							</CardHeader>
 							<CardContent className="space-y-5">
 								{/* Default View */}
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
-										<h3 className="text-base font-medium">
+								<div className={generalSettingsRowClass}>
+									<div className={generalSettingsLabelClass}>
+										<h3 className={settingItemTitleClass}>
 											{t("settings:general.defaultView", {
 												defaultValue: "Default View",
 											})}
 										</h3>
-										<p className="text-xs text-muted-foreground">
+										<p className={settingItemDescriptionClass}>
 											{t("settings:general.defaultViewDescription", {
 												defaultValue:
 													"Choose the default layout for displaying items.",
 											})}
 										</p>
 									</div>
-									<div className="w-48">
+									<div className={generalSettingsControlClass}>
 										<Segment
 											options={defaultViewOptions}
 											value={dashboardSettings.defaultView}
@@ -1708,133 +1719,93 @@ export function SettingsPage() {
 									</div>
 								</div>
 
+								{/* Theme */}
+								<div className={generalSettingsRowClass}>
+									<div className={generalSettingsLabelClass}>
+										<h3 className={settingItemTitleClass}>
+											{t("settings:general.themeTitle", {
+												defaultValue: "Theme",
+											})}
+										</h3>
+										<p className={settingItemDescriptionClass}>
+											{t("settings:general.themeDescription", {
+												defaultValue: "Switch between light, dark, and system theme.",
+											})}
+										</p>
+									</div>
+									<div className={generalSettingsControlClass}>
+										<Segment
+											options={themeOptions}
+											value={theme}
+											onValueChange={(value) => setTheme(value as Theme)}
+											showDots={false}
+										/>
+									</div>
+								</div>
+
 								{/* Language Selection */}
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
-										<h3 className="text-base font-medium">
+								<div className={generalSettingsRowClass}>
+									<div className={generalSettingsLabelClass}>
+										<h3 className={settingItemTitleClass}>
 											{t("settings:general.language", {
 												defaultValue: "Language",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={settingItemDescriptionClass}>
 											{t("settings:general.languageDescription", {
 												defaultValue: "Select the dashboard language.",
 											})}
 										</p>
 									</div>
-									<Select
-										value={dashboardSettings.language}
-										onValueChange={(value: DashboardLanguage) =>
-											setDashboardSetting("language", value)
-										}
-									>
-										<SelectTrigger id={languageId} className="w-48">
-											<SelectValue
-												placeholder={t("settings:general.languagePlaceholder", {
-													defaultValue: "Select language",
-												})}
-											/>
-										</SelectTrigger>
-										<SelectContent>
-											{languageOptions.map((option) => (
-												<SelectItem key={option.value} value={option.value}>
-													{option.label}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</div>
-							</CardContent>
-						</Card>
-					</TabsContent>
-
-					<TabsContent value="appearance" className="mt-0 h-full">
-						<Card className="h-full">
-							<CardHeader>
-								<CardTitle>
-									{t("settings:appearance.title", {
-										defaultValue: "Appearance",
-									})}
-								</CardTitle>
-								<CardDescription>
-									{t("settings:appearance.description", {
-										defaultValue:
-											"Customize the look and feel of the dashboard.",
-									})}
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-5">
-								<div className="space-y-4">
-									<div className="flex items-center justify-between gap-4">
-										<div className="space-y-0.5">
-											<h3 className="text-base font-medium">
-												{t("settings:appearance.themeTitle", {
-													defaultValue: "Theme",
-												})}
-											</h3>
-											<p className="text-xs text-muted-foreground">
-												{t("settings:appearance.themeDescription", {
-													defaultValue: "Switch between light and dark mode.",
-												})}
-											</p>
-										</div>
-										<div className="w-48">
-											<Segment
-												options={themeOptions}
-												value={theme === "system" ? "light" : theme}
-												onValueChange={(value) =>
-													setTheme(value as "light" | "dark")
-												}
-												showDots={false}
-											/>
-										</div>
-									</div>
-
-									<div className="flex items-center justify-between gap-4">
-										<div className="space-y-0.5">
-											<h3 className="text-base font-medium">
-												{t("settings:appearance.systemPreferenceTitle", {
-													defaultValue: "System Preference",
-												})}
-											</h3>
-											<p className="text-xs text-muted-foreground">
-												{t("settings:appearance.systemPreferenceDescription", {
-													defaultValue:
-														"Follow the operating system preference automatically.",
-												})}
-											</p>
-										</div>
-										<Switch
-											checked={theme === "system"}
-											onCheckedChange={(checked) =>
-												setTheme(checked ? "system" : "light")
+									<div className={generalSettingsControlClass}>
+										<Select
+											value={dashboardSettings.language}
+											onValueChange={(value: DashboardLanguage) =>
+												setDashboardSetting("language", value)
 											}
-										/>
+										>
+											<SelectTrigger id={languageId} className="w-full">
+												<SelectValue
+													placeholder={t("settings:general.languagePlaceholder", {
+														defaultValue: "Select language",
+													})}
+												/>
+											</SelectTrigger>
+											<SelectContent>
+												{languageOptions.map((option) => (
+													<SelectItem key={option.value} value={option.value}>
+														{option.label}
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
 									</div>
+								</div>
 
-									{isTauriShell && (
-										<div className="space-y-4">
-											<div className="flex items-center justify-between gap-4">
-												<div className="space-y-0.5">
-													<h3 className="text-base font-medium">
-														{t("settings:appearance.menuBarTitle", {
-															defaultValue: "Menu Bar Icon",
-														})}
-													</h3>
-													<p className="text-sm text-muted-foreground">
-														{t("settings:appearance.menuBarDescription", {
-															defaultValue:
-																"Choose when the desktop tray icon should appear.",
-														})}
-													</p>
-												</div>
+								{isTauriShell && (
+									<div className="space-y-5">
+										<div className={generalSettingsRowClass}>
+											<div className={generalSettingsLabelClass}>
+												<h3 className={settingItemTitleClass}>
+													{t("settings:general.menuBarTitle", {
+														defaultValue: "Menu Bar Icon",
+													})}
+												</h3>
+												<p className={settingItemDescriptionClass}>
+													{t("settings:general.menuBarDescription", {
+														defaultValue:
+															"Choose when the desktop tray icon should appear.",
+													})}
+												</p>
+											</div>
+											<div className={generalSettingsControlClass}>
 												<Select
 													value={dashboardSettings.menuBarIconMode}
 													onValueChange={(value: MenuBarIconMode) =>
 														setDashboardSetting("menuBarIconMode", value)
 													}
 												>
-													<SelectTrigger id={menuBarSelectId} className="w-56">
+													<SelectTrigger id={menuBarSelectId} className="w-full">
 														<SelectValue
 															placeholder={t("placeholders.menuBarVisibility", {
 																defaultValue: "Menu bar visibility",
@@ -1857,40 +1828,40 @@ export function SettingsPage() {
 													</SelectContent>
 												</Select>
 											</div>
+										</div>
 
-											<div className="flex items-center justify-between gap-4">
-												<div className="space-y-0.5">
-													<h3 className="text-base font-medium">
-														{t("settings:appearance.dockTitle", {
-															defaultValue: "Dock / Taskbar Icon",
-														})}
-													</h3>
-													<p className="text-sm text-muted-foreground">
-														{t("settings:appearance.dockDescription", {
-															defaultValue:
-																"Show MCPMate in the Dock (macOS), taskbar (Windows/Linux), or run from the tray or menu bar only.",
-														})}
-													</p>
-												</div>
-												<Switch
-													checked={dashboardSettings.showDockIcon}
-													onCheckedChange={(checked) =>
-														setDashboardSetting("showDockIcon", checked)
-													}
-												/>
-											</div>
-
-											{!dashboardSettings.showDockIcon && (
-												<p className="text-sm leading-relaxed text-muted-foreground">
-													{t("settings:appearance.dockHiddenNotice", {
+										<div className={generalSettingsRowClass}>
+											<div className={generalSettingsLabelClass}>
+												<h3 className={settingItemTitleClass}>
+													{t("settings:general.dockTitle", {
+														defaultValue: "Dock / Taskbar Icon",
+													})}
+												</h3>
+												<p className={settingItemDescriptionClass}>
+													{t("settings:general.dockDescription", {
 														defaultValue:
-															"The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
+															"Show MCPMate in the Dock (macOS), taskbar (Windows/Linux), or run from the tray or menu bar only.",
 													})}
 												</p>
-											)}
+											</div>
+											<Switch
+												checked={dashboardSettings.showDockIcon}
+												onCheckedChange={(checked) =>
+													setDashboardSetting("showDockIcon", checked)
+												}
+											/>
 										</div>
-									)}
-								</div>
+
+										{!dashboardSettings.showDockIcon && (
+											<p className="text-sm leading-relaxed text-muted-foreground">
+												{t("settings:general.dockHiddenNotice", {
+													defaultValue:
+														"The Dock or taskbar entry is hidden. The tray icon stays visible so you can reopen MCPMate.",
+												})}
+											</p>
+										)}
+									</div>
+								)}
 							</CardContent>
 						</Card>
 					</TabsContent>
