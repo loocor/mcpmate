@@ -1,5 +1,10 @@
 import { isProfileTokenEstimateMethod } from "../../lib/profile-token-estimate-method";
-import type { AuditPolicyData, AuditRetentionPolicy } from "../../lib/types";
+import type {
+	AuditPolicyData,
+	AuditRetentionPolicy,
+	CapabilitySource,
+	Theme,
+} from "../../lib/types";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
 	Activity,
@@ -101,7 +106,6 @@ import {
 	type MenuBarIconMode,
 	useAppStore,
 } from "../../lib/store";
-import type { CapabilitySource, Theme } from "../../lib/types";
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
 
