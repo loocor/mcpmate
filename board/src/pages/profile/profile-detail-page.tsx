@@ -17,6 +17,13 @@ import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
 import { CardListScrollBody } from "../../components/card-list-scroll-body";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
+import {
+	BulkSelectionCheckbox,
+	BulkSelectionHeader,
+	useBulkSelection,
+	useBulkSelectionLabels,
+	useEnableDisableBulkActions,
+} from "../../components/bulk-selection";
 import CapabilityList from "../../components/capability-list";
 import {
 	CapsuleStripeList,
@@ -65,22 +72,13 @@ import { auditApi, configSuitsApi, serversApi, useProfileTokenChartSource } from
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
+import { toTitleCase } from "../../lib/utils";
 import type {
 	ConfigSuitPrompt,
 	ConfigSuitResource,
 	ConfigSuitServer,
 	ConfigSuitTool,
 } from "../../lib/types";
-
-const toTitleCase = (value?: string | null) =>
-	(value ?? "")
-		.trim()
-		.split(/[\s_-]+/)
-		.filter(Boolean)
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-		.join(" ") ||
-	value ||
-	"";
 
 const formatProfileTypeLabel = (value?: string | null) =>
 	value
@@ -183,12 +181,12 @@ export function ProfileDetailPage() {
 		"all" | "enabled" | "disabled"
 	>("all");
 	const [promptServer, setPromptServer] = useState<string>("all");
-	// Bulk selection states for lists
-	const [selectedServerIds, setSelectedServerIds] = useState<string[]>([]);
-	const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
-	const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
-	const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
-	const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+	const { bulkModeDescription } = useBulkSelectionLabels();
+	const serverBulk = useBulkSelection<string>();
+	const toolBulk = useBulkSelection<string>();
+	const resourceBulk = useBulkSelection<string>();
+	const promptBulk = useBulkSelection<string>();
+	const templateBulk = useBulkSelection<string>();
 	const [logFilter, setLogFilter] = useState("");
 	const [logPageSize, setLogPageSize] = useState<number>(10);
 	const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
@@ -290,14 +288,15 @@ export function ProfileDetailPage() {
 
 	// Bulk mutations using server-side batch manage to improve reliability
 	const bulkToolsM = useMutation({
-		mutationFn: ({ enable }: { enable: boolean }) =>
+		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
 			configSuitsApi.bulkTools(
 				profileId!,
-				selectedToolIds,
+				ids,
 				enable ? "enable" : "disable",
 			),
 		onSuccess: () => {
-			setSelectedToolIds([]);
+			toolBulk.clearSelection();
+			toolBulk.exitBulkMode();
 			refetchTools();
 			notifySuccess(
 				t("profiles:detail.messages.toolsUpdated", { defaultValue: "Tools updated" }),
@@ -310,14 +309,15 @@ export function ProfileDetailPage() {
 		),
 	});
 	const bulkResourcesM = useMutation({
-		mutationFn: ({ enable }: { enable: boolean }) =>
+		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
 			configSuitsApi.bulkResources(
 				profileId!,
-				selectedResourceIds,
+				ids,
 				enable ? "enable" : "disable",
 			),
 		onSuccess: () => {
-			setSelectedResourceIds([]);
+			resourceBulk.clearSelection();
+			resourceBulk.exitBulkMode();
 			refetchResources();
 			notifySuccess(
 				t("profiles:detail.messages.resourcesUpdated", { defaultValue: "Resources updated" }),
@@ -330,14 +330,15 @@ export function ProfileDetailPage() {
 		),
 	});
 	const bulkPromptsM = useMutation({
-		mutationFn: ({ enable }: { enable: boolean }) =>
+		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
 			configSuitsApi.bulkPrompts(
 				profileId!,
-				selectedPromptIds,
+				ids,
 				enable ? "enable" : "disable",
 			),
 		onSuccess: () => {
-			setSelectedPromptIds([]);
+			promptBulk.clearSelection();
+			promptBulk.exitBulkMode();
 			refetchPrompts();
 			notifySuccess(
 				t("profiles:detail.messages.promptsUpdated", { defaultValue: "Prompts updated" }),
@@ -351,14 +352,15 @@ export function ProfileDetailPage() {
 	});
 
 	const bulkTemplatesM = useMutation({
-		mutationFn: ({ enable }: { enable: boolean }) =>
+		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
 			configSuitsApi.bulkResourceTemplates(
 				profileId!,
-				selectedTemplateIds,
+				ids,
 				enable ? "enable" : "disable",
 			),
 		onSuccess: () => {
-			setSelectedTemplateIds([]);
+			templateBulk.clearSelection();
+			templateBulk.exitBulkMode();
 			refetchTemplates();
 			notifySuccess(
 				t("profiles:detail.messages.templatesUpdated", { defaultValue: "Templates updated" }),
@@ -372,14 +374,15 @@ export function ProfileDetailPage() {
 	});
 
 	const bulkServersM = useMutation({
-		mutationFn: ({ enable }: { enable: boolean }) =>
+		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
 			configSuitsApi.bulkServers(
 				profileId!,
-				selectedServerIds,
+				ids,
 				enable ? "enable" : "disable",
 			),
 		onSuccess: () => {
-			setSelectedServerIds([]);
+			serverBulk.clearSelection();
+			serverBulk.exitBulkMode();
 			invalidateProfileCapabilityLedger();
 			refetchServers();
 			notifySuccess(
@@ -859,6 +862,32 @@ export function ProfileDetailPage() {
 		return queryPass && statusPass && serverPass;
 	});
 
+	const serverBulkActions = useEnableDisableBulkActions(
+		serverBulk,
+		visibleServers.map((server) => server.id),
+		bulkServersM,
+	);
+	const toolBulkActions = useEnableDisableBulkActions(
+		toolBulk,
+		visibleTools.map((tool) => tool.id),
+		bulkToolsM,
+	);
+	const promptBulkActions = useEnableDisableBulkActions(
+		promptBulk,
+		visiblePrompts.map((prompt) => prompt.id),
+		bulkPromptsM,
+	);
+	const resourceBulkActions = useEnableDisableBulkActions(
+		resourceBulk,
+		visibleResources.map((resource) => resource.id),
+		bulkResourcesM,
+	);
+	const templateBulkActions = useEnableDisableBulkActions(
+		templateBulk,
+		visibleTemplates.map((template) => template.id),
+		bulkTemplatesM,
+	);
+
 	// Template toggle mutations
 	const templateToggleMutation = useMutation({
 		mutationFn: ({ templateId, enable }: { templateId: string; enable: boolean }) =>
@@ -1240,7 +1269,7 @@ export function ProfileDetailPage() {
 					<TabsContent value="servers" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
-								<div className="flex items-center justify-between gap-2">
+								{isLoadingServers ? (
 									<div>
 										<CardTitle>
 											{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
@@ -1251,87 +1280,74 @@ export function ProfileDetailPage() {
 											})}
 										</CardDescription>
 									</div>
-									{!isLoadingServers && (
-										<div className="flex flex-wrap items-center gap-2">
-											<Input
-												placeholder={t("profiles:detail.placeholders.searchServers", {
-													defaultValue: "Search servers...",
-												})}
-												value={serverQuery}
-												onChange={(e) => setServerQuery(e.target.value)}
-												className="w-48 h-9"
-											/>
-											<div className="hidden xl:block">
-												<Select
-													value={serverStatus}
-													onValueChange={(v) =>
-														setServerStatus(v as "all" | "enabled" | "disabled")
-													}
-												>
-													<SelectTrigger className="w-36 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-														</SelectItem>
-														<SelectItem value="enabled">
-															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-														</SelectItem>
-														<SelectItem value="disabled">
-															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-														</SelectItem>
-													</SelectContent>
-												</Select>
+								) : (
+									<BulkSelectionHeader
+										className="mb-0"
+										title={t("profiles:detail.labels.servers", {
+											defaultValue: "Servers",
+										})}
+										description={
+											serverBulk.isBulkMode
+												? bulkModeDescription(serverBulk.selectedCount)
+												: t("profiles:detail.descriptions.servers", {
+													defaultValue:
+														"Manage servers included in this profile",
+												})
+										}
+										isBulkMode={serverBulk.isBulkMode}
+										onToggleBulkMode={serverBulk.toggleMode}
+										actions={serverBulkActions}
+										trailing={
+											<div className="flex flex-wrap items-center gap-2">
+												<Input
+													placeholder={t(
+														"profiles:detail.placeholders.searchServers",
+														{ defaultValue: "Search servers..." },
+													)}
+													value={serverQuery}
+													onChange={(e) => setServerQuery(e.target.value)}
+													className="h-9 w-48"
+												/>
+												<div className="hidden xl:block">
+													<Select
+														value={serverStatus}
+														onValueChange={(v) =>
+															setServerStatus(
+																v as "all" | "enabled" | "disabled",
+															)
+														}
+													>
+														<SelectTrigger className="h-9 w-36">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.status",
+																	{ defaultValue: "Status" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.status.all", {
+																	defaultValue: "All",
+																})}
+															</SelectItem>
+															<SelectItem value="enabled">
+																{t("profiles:detail.filters.status.enabled", {
+																	defaultValue: "Enabled",
+																})}
+															</SelectItem>
+															<SelectItem value="disabled">
+																{t("profiles:detail.filters.status.disabled", {
+																	defaultValue: "Disabled",
+																})}
+															</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
 											</div>
-											<ButtonGroup className="hidden md:flex ml-2">
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() =>
-														setSelectedServerIds(
-															visibleServers.map((s: any) => s.id),
-														)
-													}
-												>
-													{t("profiles:detail.buttons.selectAll", {
-														defaultValue: "Select all",
-													})}
-												</Button>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => setSelectedServerIds([])}
-												>
-													{t("profiles:detail.buttons.clearSelection", {
-														defaultValue: "Clear",
-													})}
-												</Button>
-												<Button
-													size="sm"
-													disabled={
-														bulkServersM.isPending ||
-														selectedServerIds.length === 0
-													}
-													onClick={() => bulkServersM.mutate({ enable: true })}
-												>
-													{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
-												</Button>
-												<Button
-													size="sm"
-													variant="secondary"
-													disabled={
-														bulkServersM.isPending ||
-														selectedServerIds.length === 0
-													}
-													onClick={() => bulkServersM.mutate({ enable: false })}
-												>
-													{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
-												</Button>
-											</ButtonGroup>
-										</div>
-									)}
-								</div>
+										}
+									/>
+								)}
 							</CardHeader>
 							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CardListScrollBody>
@@ -1362,43 +1378,51 @@ export function ProfileDetailPage() {
 												const iconAlt = global?.name || server.name || server.id;
 												const globalDescription =
 													global?.meta?.description?.trim();
-												const selected = selectedServerIds.includes(server.id);
+												const bulkSelected =
+													serverBulk.isBulkMode &&
+													serverBulk.selectedIdSet.has(server.id);
+												const handleServerRowActivate = () => {
+													if (serverBulk.isBulkMode) {
+														serverBulk.toggleItem(server.id);
+													}
+												};
 												return (
 													<CapsuleStripeListItem
 														key={server.id}
-														interactive
-														className={`group relative transition-colors ${selected
+														interactive={serverBulk.isBulkMode}
+														className={`group relative transition-colors ${bulkSelected
 															? "bg-primary/10 ring-1 ring-primary/40"
 															: ""
 															}`}
-														onClick={() =>
-															setSelectedServerIds((prev) =>
-																prev.includes(server.id)
-																	? prev.filter((x) => x !== server.id)
-																	: [...prev, server.id],
-															)
+														onClick={
+															serverBulk.isBulkMode
+																? handleServerRowActivate
+																: undefined
 														}
 														onKeyDown={(e) => {
+															if (!serverBulk.isBulkMode) return;
 															if (e.key === "Enter" || e.key === " ") {
 																e.preventDefault();
-																setSelectedServerIds((prev) =>
-																	prev.includes(server.id)
-																		? prev.filter((x) => x !== server.id)
-																		: [...prev, server.id],
-																);
+																handleServerRowActivate();
 															}
 														}}
 													>
 														<div className="flex w-full items-center justify-between gap-4">
 															<div className="flex flex-1 items-center gap-3">
-																<div
-																	className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${selected
-																		? "border-primary bg-primary text-white shadow-sm"
-																		: "border-slate-300 text-transparent group-hover:border-primary/50 group-hover:text-primary/60 dark:border-slate-700 dark:group-hover:border-primary/50"
-																		}`}
-																>
-																	<Check className="h-3 w-3" />
-																</div>
+																<BulkSelectionCheckbox
+																	visible={serverBulk.isBulkMode}
+																	checked={bulkSelected}
+																	onToggle={() =>
+																		serverBulk.toggleItem(server.id)
+																	}
+																	ariaLabel={t(
+																		"profiles:detail.bulk.selectItem",
+																		{
+																			name: server.name,
+																			defaultValue: "Select {{name}}",
+																		},
+																	)}
+																/>
 																<CachedAvatar
 																	src={globalIcon}
 																	alt={iconAlt ? `${iconAlt} icon` : undefined}
@@ -1506,7 +1530,7 @@ export function ProfileDetailPage() {
 					<TabsContent value="tools" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
-								<div className="flex items-center justify-between gap-2">
+								{isLoadingTools ? (
 									<div>
 										<CardTitle>
 											{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
@@ -1517,107 +1541,101 @@ export function ProfileDetailPage() {
 											})}
 										</CardDescription>
 									</div>
-									{!isLoadingTools && (
-										<div className="flex flex-wrap items-center gap-2">
-											<Input
-												placeholder={t("profiles:detail.placeholders.searchTools", {
-													defaultValue: "Search tools...",
-												})}
-												value={toolQuery}
-												onChange={(e) => setToolQuery(e.target.value)}
-												className="w-48 h-9"
-											/>
-											<div className="hidden xl:block">
-												<Select
-													value={toolStatus}
-													onValueChange={(v) =>
-														setToolStatus(v as "all" | "enabled" | "disabled")
-													}
-												>
-													<SelectTrigger className="w-36 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-														</SelectItem>
-														<SelectItem value="enabled">
-															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-														</SelectItem>
-														<SelectItem value="disabled">
-															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-														</SelectItem>
-													</SelectContent>
-												</Select>
-											</div>
-											<div className="hidden xl:block">
-												<Select
-													value={toolServer}
-													onValueChange={(v) => setToolServer(v)}
-												>
-													<SelectTrigger className="w-40 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.server", { defaultValue: "Server" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("profiles:detail.filters.server.all", {
-																defaultValue: "All Servers",
-															})}
-														</SelectItem>
-														{serverNameOptions.map((name) => (
-															<SelectItem key={`tool-sel-${name}`} value={name}>
-																{name}
+								) : (
+									<BulkSelectionHeader
+										className="mb-0"
+										title={t("profiles:detail.labels.tools", {
+											defaultValue: "Tools",
+										})}
+										description={
+											toolBulk.isBulkMode
+												? bulkModeDescription(toolBulk.selectedCount)
+												: t("profiles:detail.descriptions.tools", {
+													defaultValue:
+														"Manage tools included in this profile",
+												})
+										}
+										isBulkMode={toolBulk.isBulkMode}
+										onToggleBulkMode={toolBulk.toggleMode}
+										actions={toolBulkActions}
+										trailing={
+											<div className="flex flex-wrap items-center gap-2">
+												<Input
+													placeholder={t(
+														"profiles:detail.placeholders.searchTools",
+														{ defaultValue: "Search tools..." },
+													)}
+													value={toolQuery}
+													onChange={(e) => setToolQuery(e.target.value)}
+													className="h-9 w-48"
+												/>
+												<div className="hidden xl:block">
+													<Select
+														value={toolStatus}
+														onValueChange={(v) =>
+															setToolStatus(
+																v as "all" | "enabled" | "disabled",
+															)
+														}
+													>
+														<SelectTrigger className="h-9 w-36">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.status",
+																	{ defaultValue: "Status" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.status.all", {
+																	defaultValue: "All",
+																})}
 															</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
+															<SelectItem value="enabled">
+																{t("profiles:detail.filters.status.enabled", {
+																	defaultValue: "Enabled",
+																})}
+															</SelectItem>
+															<SelectItem value="disabled">
+																{t("profiles:detail.filters.status.disabled", {
+																	defaultValue: "Disabled",
+																})}
+															</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+												<div className="hidden xl:block">
+													<Select
+														value={toolServer}
+														onValueChange={(v) => setToolServer(v)}
+													>
+														<SelectTrigger className="h-9 w-40">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.server",
+																	{ defaultValue: "Server" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.server.all", {
+																	defaultValue: "All Servers",
+																})}
+															</SelectItem>
+															{serverNameOptions.map((name) => (
+																<SelectItem key={`tool-sel-${name}`} value={name}>
+																	{name}
+																</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
 											</div>
-											<ButtonGroup className="hidden md:flex ml-2">
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() =>
-														setSelectedToolIds(
-															visibleTools.map((t: any) => t.id),
-														)
-													}
-												>
-													{t("profiles:detail.buttons.selectAll", {
-														defaultValue: "Select all",
-													})}
-												</Button>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => setSelectedToolIds([])}
-												>
-													{t("profiles:detail.buttons.clearSelection", {
-														defaultValue: "Clear",
-													})}
-												</Button>
-												<Button
-													size="sm"
-													disabled={
-														bulkToolsM.isPending || selectedToolIds.length === 0
-													}
-													onClick={() => bulkToolsM.mutate({ enable: true })}
-												>
-													{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
-												</Button>
-												<Button
-													size="sm"
-													variant="secondary"
-													disabled={
-														bulkToolsM.isPending || selectedToolIds.length === 0
-													}
-													onClick={() => bulkToolsM.mutate({ enable: false })}
-												>
-													{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
-												</Button>
-											</ButtonGroup>
-										</div>
-									)}
-								</div>
+										}
+									/>
+								)}
 							</CardHeader>
 							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CapabilityList
@@ -1636,15 +1654,9 @@ export function ProfileDetailPage() {
 									}
 									emptyText={t("profiles:detail.emptyStates.noTools", { defaultValue: "No tools found in this profile" })}
 									filterText={toolQuery}
-									selectable
-									selectedIds={selectedToolIds}
-									onSelectToggle={(id) => {
-										setSelectedToolIds((prev) =>
-											prev.includes(id)
-												? prev.filter((x) => x !== id)
-												: [...prev, id],
-										);
-									}}
+									selectable={toolBulk.isBulkMode}
+									selectedIds={toolBulk.selectedIds}
+									onSelectToggle={(id) => toolBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
 							</CardContent>
@@ -1654,7 +1666,7 @@ export function ProfileDetailPage() {
 					<TabsContent value="prompts" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
-								<div className="flex items-center justify-between gap-2">
+								{isLoadingPrompts ? (
 									<div>
 										<CardTitle>
 											{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
@@ -1665,109 +1677,101 @@ export function ProfileDetailPage() {
 											})}
 										</CardDescription>
 									</div>
-									{!isLoadingPrompts && (
-										<div className="flex flex-wrap items-center gap-2">
-											<Input
-												placeholder={t("profiles:detail.placeholders.searchPrompts", {
-													defaultValue: "Search prompts...",
-												})}
-												value={promptQuery}
-												onChange={(e) => setPromptQuery(e.target.value)}
-												className="w-48 h-9"
-											/>
-											<div className="hidden xl:block">
-												<Select
-													value={promptStatus}
-													onValueChange={(v) =>
-														setPromptStatus(v as "all" | "enabled" | "disabled")
-													}
-												>
-													<SelectTrigger className="w-36 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-														</SelectItem>
-														<SelectItem value="enabled">
-															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-														</SelectItem>
-														<SelectItem value="disabled">
-															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-														</SelectItem>
-													</SelectContent>
-												</Select>
-											</div>
-											<div className="hidden xl:block">
-												<Select
-													value={promptServer}
-													onValueChange={(v) => setPromptServer(v)}
-												>
-													<SelectTrigger className="w-40 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.server", { defaultValue: "Server" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("profiles:detail.filters.server.all", {
-																defaultValue: "All Servers",
-															})}
-														</SelectItem>
-														{serverNameOptions.map((name) => (
-															<SelectItem key={`prm-sel-${name}`} value={name}>
-																{name}
+								) : (
+									<BulkSelectionHeader
+										className="mb-0"
+										title={t("profiles:detail.labels.prompts", {
+											defaultValue: "Prompts",
+										})}
+										description={
+											promptBulk.isBulkMode
+												? bulkModeDescription(promptBulk.selectedCount)
+												: t("profiles:detail.descriptions.prompts", {
+													defaultValue:
+														"Manage prompts included in this profile",
+												})
+										}
+										isBulkMode={promptBulk.isBulkMode}
+										onToggleBulkMode={promptBulk.toggleMode}
+										actions={promptBulkActions}
+										trailing={
+											<div className="flex flex-wrap items-center gap-2">
+												<Input
+													placeholder={t(
+														"profiles:detail.placeholders.searchPrompts",
+														{ defaultValue: "Search prompts..." },
+													)}
+													value={promptQuery}
+													onChange={(e) => setPromptQuery(e.target.value)}
+													className="h-9 w-48"
+												/>
+												<div className="hidden xl:block">
+													<Select
+														value={promptStatus}
+														onValueChange={(v) =>
+															setPromptStatus(
+																v as "all" | "enabled" | "disabled",
+															)
+														}
+													>
+														<SelectTrigger className="h-9 w-36">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.status",
+																	{ defaultValue: "Status" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.status.all", {
+																	defaultValue: "All",
+																})}
 															</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
+															<SelectItem value="enabled">
+																{t("profiles:detail.filters.status.enabled", {
+																	defaultValue: "Enabled",
+																})}
+															</SelectItem>
+															<SelectItem value="disabled">
+																{t("profiles:detail.filters.status.disabled", {
+																	defaultValue: "Disabled",
+																})}
+															</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+												<div className="hidden xl:block">
+													<Select
+														value={promptServer}
+														onValueChange={(v) => setPromptServer(v)}
+													>
+														<SelectTrigger className="h-9 w-40">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.server",
+																	{ defaultValue: "Server" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.server.all", {
+																	defaultValue: "All Servers",
+																})}
+															</SelectItem>
+															{serverNameOptions.map((name) => (
+																<SelectItem key={`prm-sel-${name}`} value={name}>
+																	{name}
+																</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
 											</div>
-											<ButtonGroup className="hidden md:flex ml-2">
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() =>
-														setSelectedPromptIds(
-															visiblePrompts.map((p: any) => p.id),
-														)
-													}
-												>
-													{t("profiles:detail.buttons.selectAll", {
-														defaultValue: "Select all",
-													})}
-												</Button>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => setSelectedPromptIds([])}
-												>
-													{t("profiles:detail.buttons.clearSelection", {
-														defaultValue: "Clear",
-													})}
-												</Button>
-												<Button
-													size="sm"
-													disabled={
-														bulkPromptsM.isPending ||
-														selectedPromptIds.length === 0
-													}
-													onClick={() => bulkPromptsM.mutate({ enable: true })}
-												>
-													{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
-												</Button>
-												<Button
-													size="sm"
-													variant="secondary"
-													disabled={
-														bulkPromptsM.isPending ||
-														selectedPromptIds.length === 0
-													}
-													onClick={() => bulkPromptsM.mutate({ enable: false })}
-												>
-													{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
-												</Button>
-											</ButtonGroup>
-										</div>
-									)}
-								</div>
+										}
+									/>
+								)}
 							</CardHeader>
 							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CapabilityList
@@ -1786,15 +1790,9 @@ export function ProfileDetailPage() {
 									}
 									emptyText={t("profiles:detail.emptyStates.noPrompts", { defaultValue: "No prompts found in this profile" })}
 									filterText={promptQuery}
-									selectable
-									selectedIds={selectedPromptIds}
-									onSelectToggle={(id) => {
-										setSelectedPromptIds((prev) =>
-											prev.includes(id)
-												? prev.filter((x) => x !== id)
-												: [...prev, id],
-										);
-									}}
+									selectable={promptBulk.isBulkMode}
+									selectedIds={promptBulk.selectedIds}
+									onSelectToggle={(id) => promptBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
 							</CardContent>
@@ -1804,7 +1802,7 @@ export function ProfileDetailPage() {
 					<TabsContent value="resources" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
-								<div className="flex items-center justify-between gap-2">
+								{isLoadingResources ? (
 									<div>
 										<CardTitle>
 											{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
@@ -1815,115 +1813,101 @@ export function ProfileDetailPage() {
 											})}
 										</CardDescription>
 									</div>
-									{!isLoadingResources && (
-										<div className="flex flex-wrap items-center gap-2">
-											<Input
-												placeholder={t("profiles:detail.placeholders.searchResources", {
-													defaultValue: "Search resources...",
-												})}
-												value={resourceQuery}
-												onChange={(e) => setResourceQuery(e.target.value)}
-												className="w-48 h-9"
-											/>
-											<div className="hidden xl:block">
-												<Select
-													value={resourceStatus}
-													onValueChange={(v) =>
-														setResourceStatus(
-															v as "all" | "enabled" | "disabled",
-														)
-													}
-												>
-													<SelectTrigger className="w-36 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("profiles:detail.filters.status.all", { defaultValue: "All" })}
-														</SelectItem>
-														<SelectItem value="enabled">
-															{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}
-														</SelectItem>
-														<SelectItem value="disabled">
-															{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}
-														</SelectItem>
-													</SelectContent>
-												</Select>
-											</div>
-											<div className="hidden xl:block">
-												<Select
-													value={resourceServer}
-													onValueChange={(v) => setResourceServer(v)}
-												>
-													<SelectTrigger className="w-40 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.server", { defaultValue: "Server" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("profiles:detail.filters.server.all", {
-																defaultValue: "All Servers",
-															})}
-														</SelectItem>
-														{serverNameOptions.map((name) => (
-															<SelectItem key={`res-sel-${name}`} value={name}>
-																{name}
+								) : (
+									<BulkSelectionHeader
+										className="mb-0"
+										title={t("profiles:detail.labels.resources", {
+											defaultValue: "Resources",
+										})}
+										description={
+											resourceBulk.isBulkMode
+												? bulkModeDescription(resourceBulk.selectedCount)
+												: t("profiles:detail.descriptions.resources", {
+													defaultValue:
+														"Manage resources included in this profile",
+												})
+										}
+										isBulkMode={resourceBulk.isBulkMode}
+										onToggleBulkMode={resourceBulk.toggleMode}
+										actions={resourceBulkActions}
+										trailing={
+											<div className="flex flex-wrap items-center gap-2">
+												<Input
+													placeholder={t(
+														"profiles:detail.placeholders.searchResources",
+														{ defaultValue: "Search resources..." },
+													)}
+													value={resourceQuery}
+													onChange={(e) => setResourceQuery(e.target.value)}
+													className="h-9 w-48"
+												/>
+												<div className="hidden xl:block">
+													<Select
+														value={resourceStatus}
+														onValueChange={(v) =>
+															setResourceStatus(
+																v as "all" | "enabled" | "disabled",
+															)
+														}
+													>
+														<SelectTrigger className="h-9 w-36">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.status",
+																	{ defaultValue: "Status" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.status.all", {
+																	defaultValue: "All",
+																})}
 															</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
+															<SelectItem value="enabled">
+																{t("profiles:detail.filters.status.enabled", {
+																	defaultValue: "Enabled",
+																})}
+															</SelectItem>
+															<SelectItem value="disabled">
+																{t("profiles:detail.filters.status.disabled", {
+																	defaultValue: "Disabled",
+																})}
+															</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+												<div className="hidden xl:block">
+													<Select
+														value={resourceServer}
+														onValueChange={(v) => setResourceServer(v)}
+													>
+														<SelectTrigger className="h-9 w-40">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.server",
+																	{ defaultValue: "Server" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.server.all", {
+																	defaultValue: "All Servers",
+																})}
+															</SelectItem>
+															{serverNameOptions.map((name) => (
+																<SelectItem key={`res-sel-${name}`} value={name}>
+																	{name}
+																</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
 											</div>
-											<ButtonGroup className="hidden md:flex ml-2">
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() =>
-														setSelectedResourceIds(
-															visibleResources.map((r: any) => r.id),
-														)
-													}
-												>
-													{t("profiles:detail.buttons.selectAll", {
-														defaultValue: "Select all",
-													})}
-												</Button>
-												<Button
-													variant="outline"
-													size="sm"
-													onClick={() => setSelectedResourceIds([])}
-												>
-													{t("profiles:detail.buttons.clearSelection", {
-														defaultValue: "Clear",
-													})}
-												</Button>
-												<Button
-													size="sm"
-													disabled={
-														bulkResourcesM.isPending ||
-														selectedResourceIds.length === 0
-													}
-													onClick={() =>
-														bulkResourcesM.mutate({ enable: true })
-													}
-												>
-													{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
-												</Button>
-												<Button
-													size="sm"
-													variant="secondary"
-													disabled={
-														bulkResourcesM.isPending ||
-														selectedResourceIds.length === 0
-													}
-													onClick={() =>
-														bulkResourcesM.mutate({ enable: false })
-													}
-												>
-													{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
-												</Button>
-											</ButtonGroup>
-										</div>
-									)}
-								</div>
+										}
+									/>
+								)}
 							</CardHeader>
 							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CapabilityList
@@ -1945,15 +1929,9 @@ export function ProfileDetailPage() {
 									}
 									emptyText={t("profiles:detail.emptyStates.noResources", { defaultValue: "No resources found in this profile" })}
 									filterText={resourceQuery}
-									selectable
-									selectedIds={selectedResourceIds}
-									onSelectToggle={(id) => {
-										setSelectedResourceIds((prev) =>
-											prev.includes(id)
-												? prev.filter((x) => x !== id)
-												: [...prev, id],
-										);
-									}}
+									selectable={resourceBulk.isBulkMode}
+									selectedIds={resourceBulk.selectedIds}
+									onSelectToggle={(id) => resourceBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
 							</CardContent>
@@ -1963,72 +1941,113 @@ export function ProfileDetailPage() {
 					<TabsContent value="templates" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 							<CardHeader className="shrink-0">
-								<div className="flex items-center justify-between gap-2">
+								{isLoadingTemplates ? (
 									<div>
 										<CardTitle>
 											{t("profiles:detail.labels.templates", { defaultValue: "Templates" })}
 										</CardTitle>
 										<CardDescription>
 											{t("profiles:detail.descriptions.templates", {
-												defaultValue: "Manage resource templates included in this profile",
+												defaultValue:
+													"Manage resource templates included in this profile",
 											})}
 										</CardDescription>
 									</div>
-									{!isLoadingTemplates && (
-										<div className="flex flex-wrap items-center gap-2">
-											<Input
-												placeholder={t("profiles:detail.placeholders.searchTemplates", { defaultValue: "Search templates..." })}
-												value={templateQuery}
-												onChange={(e) => setTemplateQuery(e.target.value)}
-												className="w-48 h-9"
-											/>
-											<div className="hidden xl:block">
-												<Select
-													value={templateStatus}
-													onValueChange={(v) => setTemplateStatus(v as "all" | "enabled" | "disabled")}
-												>
-													<SelectTrigger className="w-36 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.status", { defaultValue: "Status" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">{t("profiles:detail.filters.status.all", { defaultValue: "All" })}</SelectItem>
-														<SelectItem value="enabled">{t("profiles:detail.filters.status.enabled", { defaultValue: "Enabled" })}</SelectItem>
-														<SelectItem value="disabled">{t("profiles:detail.filters.status.disabled", { defaultValue: "Disabled" })}</SelectItem>
-													</SelectContent>
-												</Select>
-											</div>
-											<div className="hidden xl:block">
-												<Select value={templateServer} onValueChange={(v) => setTemplateServer(v)}>
-													<SelectTrigger className="w-40 h-9">
-														<SelectValue placeholder={t("profiles:detail.placeholders.server", { defaultValue: "Server" })} />
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">{t("profiles:detail.filters.server.all", { defaultValue: "All Servers" })}</SelectItem>
-														{serverNameOptions.map((name) => (
-															<SelectItem key={`tpl-sel-${name}`} value={name}>
-																{name}
+								) : (
+									<BulkSelectionHeader
+										className="mb-0"
+										title={t("profiles:detail.labels.templates", {
+											defaultValue: "Templates",
+										})}
+										description={
+											templateBulk.isBulkMode
+												? bulkModeDescription(templateBulk.selectedCount)
+												: t("profiles:detail.descriptions.templates", {
+													defaultValue:
+														"Manage resource templates included in this profile",
+												})
+										}
+										isBulkMode={templateBulk.isBulkMode}
+										onToggleBulkMode={templateBulk.toggleMode}
+										actions={templateBulkActions}
+										trailing={
+											<div className="flex flex-wrap items-center gap-2">
+												<Input
+													placeholder={t(
+														"profiles:detail.placeholders.searchTemplates",
+														{ defaultValue: "Search templates..." },
+													)}
+													value={templateQuery}
+													onChange={(e) => setTemplateQuery(e.target.value)}
+													className="h-9 w-48"
+												/>
+												<div className="hidden xl:block">
+													<Select
+														value={templateStatus}
+														onValueChange={(v) =>
+															setTemplateStatus(
+																v as "all" | "enabled" | "disabled",
+															)
+														}
+													>
+														<SelectTrigger className="h-9 w-36">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.status",
+																	{ defaultValue: "Status" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.status.all", {
+																	defaultValue: "All",
+																})}
 															</SelectItem>
-														))}
-													</SelectContent>
-												</Select>
+															<SelectItem value="enabled">
+																{t("profiles:detail.filters.status.enabled", {
+																	defaultValue: "Enabled",
+																})}
+															</SelectItem>
+															<SelectItem value="disabled">
+																{t("profiles:detail.filters.status.disabled", {
+																	defaultValue: "Disabled",
+																})}
+															</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+												<div className="hidden xl:block">
+													<Select
+														value={templateServer}
+														onValueChange={(v) => setTemplateServer(v)}
+													>
+														<SelectTrigger className="h-9 w-40">
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.server",
+																	{ defaultValue: "Server" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("profiles:detail.filters.server.all", {
+																	defaultValue: "All Servers",
+																})}
+															</SelectItem>
+															{serverNameOptions.map((name) => (
+																<SelectItem key={`tpl-sel-${name}`} value={name}>
+																	{name}
+																</SelectItem>
+															))}
+														</SelectContent>
+													</Select>
+												</div>
 											</div>
-											<ButtonGroup className="hidden md:flex ml-2">
-												<Button variant="outline" size="sm" onClick={() => setSelectedTemplateIds(visibleTemplates.map((p: any) => p.id))}>
-													{t("profiles:detail.buttons.selectAll", { defaultValue: "Select all" })}
-												</Button>
-												<Button variant="outline" size="sm" onClick={() => setSelectedTemplateIds([])}>
-													{t("profiles:detail.buttons.clearSelection", { defaultValue: "Clear" })}
-												</Button>
-												<Button size="sm" disabled={bulkTemplatesM.isPending || selectedTemplateIds.length === 0} onClick={() => bulkTemplatesM.mutate({ enable: true })}>
-													{t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
-												</Button>
-												<Button size="sm" variant="secondary" disabled={bulkTemplatesM.isPending || selectedTemplateIds.length === 0} onClick={() => bulkTemplatesM.mutate({ enable: false })}>
-													{t("profiles:detail.buttons.disable", { defaultValue: "Disable" })}
-												</Button>
-											</ButtonGroup>
-										</div>
-									)}
-								</div>
+										}
+									/>
+								)}
 							</CardHeader>
 							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
 								<CapabilityList
@@ -2045,9 +2064,9 @@ export function ProfileDetailPage() {
 									onToggle={(id, next) => templateToggleMutation.mutate({ templateId: id, enable: next })}
 									emptyText={t("profiles:detail.emptyStates.noTemplates", { defaultValue: "No templates found in this profile" })}
 									filterText={templateQuery}
-									selectable
-									selectedIds={selectedTemplateIds}
-									onSelectToggle={(id) => setSelectedTemplateIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
+									selectable={templateBulk.isBulkMode}
+									selectedIds={templateBulk.selectedIds}
+									onSelectToggle={(id) => templateBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
 							</CardContent>
