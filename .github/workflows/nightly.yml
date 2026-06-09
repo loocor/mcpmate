@@ -4,9 +4,11 @@
 name: Nightly
 
 on:
-  # Daily at 18:20 UTC / 02:20 Asia/Singapore.
-  schedule:
-    - cron: "20 18 * * *"
+  workflow_dispatch:
+  # STATUS: DISABLED — schedule trigger is paused.
+  # Re-enable by uncommenting the schedule trigger below.
+  # schedule:
+  #   - cron: "20 18 * * *"
 
 concurrency:
   group: nightly-${{ github.ref }}

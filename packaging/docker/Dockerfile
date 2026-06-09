@@ -12,6 +12,10 @@ RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
 FROM ${RUST_IMAGE} AS builder
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 
 COPY backend ./backend
@@ -27,7 +31,7 @@ LABEL org.opencontainers.image.source="https://github.com/loocor/MCPMate"
 LABEL io.modelcontextprotocol.server.name="io.github.loocor/mcpmate"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates nginx-light \
+    && apt-get install -y --no-install-recommends ca-certificates libdbus-1-3 nginx-light \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --home-dir /data --shell /usr/sbin/nologin mcpmate
 
