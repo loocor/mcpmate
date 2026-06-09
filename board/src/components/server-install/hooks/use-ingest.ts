@@ -4,6 +4,13 @@ import { normalizeIngestResult } from "../../../lib/install-normalizer";
 import { notifyError } from "../../../lib/notify";
 import type { ManualFormStateJson } from "../types";
 import { DEFAULT_INGEST_MESSAGE } from "../types";
+import { draftToFormState } from "./draft-to-form-state";
+
+type IngestPayload = {
+	text?: string;
+	buffer?: ArrayBuffer;
+	fileName?: string;
+};
 
 interface UseIngestProps {
 	ingestEnabled: boolean;
@@ -12,7 +19,6 @@ interface UseIngestProps {
 	buildFormValuesFromState: (state: ManualFormStateJson) => any;
 	reset: (values?: any, options?: any) => void;
 	onSubmitMultiple?: (drafts: ServerInstallDraft[]) => Promise<void> | void;
-	onClose: () => void;
 	messages?: {
 		defaultMessage?: string;
 		parsingDropped?: string;
@@ -33,7 +39,6 @@ export function useIngest({
 	buildFormValuesFromState,
 	reset,
 	onSubmitMultiple,
-	onClose,
 	messages,
 }: UseIngestProps) {
 	const resolvedMessages = {
@@ -71,72 +76,16 @@ export function useIngest({
 		setIngestMessage(resolvedMessages.defaultMessage);
 	}, [ingestEnabled, resolvedMessages.defaultMessage]);
 
+	const markIngestSuccess = useCallback(() => {
+		setIngestError(null);
+		setIsIngestSuccess(true);
+		setIsDropZoneCollapsed(true);
+		setIngestMessage(resolvedMessages.success);
+	}, [resolvedMessages.success]);
+
 	const applySingleDraftToForm = useCallback(
 		(draft: ServerInstallDraft) => {
-			const nextState: ManualFormStateJson = {
-				name: "",
-				kind: "stdio",
-				meta: {
-					description: "",
-					version: "",
-					websiteUrl: "",
-					repository: {
-						url: "",
-						source: "",
-						subfolder: "",
-						id: "",
-					},
-					icons: [],
-				},
-				stdio: { command: "", args: [], env: [] },
-				streamable_http: { url: "", headers: [] },
-			};
-
-			nextState.name = draft.name ?? "";
-			nextState.kind = draft.kind;
-			nextState.meta = {
-				description: draft.meta?.description ?? "",
-				version: draft.meta?.version ?? "",
-				websiteUrl: draft.meta?.websiteUrl ?? "",
-				repository: {
-					url: draft.meta?.repository?.url ?? "",
-					source: draft.meta?.repository?.source ?? "",
-					subfolder: draft.meta?.repository?.subfolder ?? "",
-					id: draft.meta?.repository?.id ?? "",
-				},
-				icons: (draft.meta?.icons || [])
-					.map((it) => ({
-						src: String(
-							(it as any).src ?? (it as any).url ?? (it as any).href ?? "",
-						),
-						mimeType:
-							(it as any).mimeType ?? (it as any).mime_type ?? undefined,
-						sizes: (it as any).sizes ?? (it as any).size ?? undefined,
-					}))
-					.filter((it) => it.src),
-			};
-
-			if (draft.kind === "stdio") {
-				nextState.stdio = {
-					command: draft.command ?? "",
-					args: (draft.args || []).map((value) => ({ value })),
-					env: Object.entries(draft.env || {}).map(([key, value]) => ({
-						key,
-						value,
-					})),
-				};
-			} else {
-				nextState.streamable_http = {
-					url: draft.url ?? "",
-					headers: Object.entries(draft.headers || {}).map(([key, value]) => ({
-						key,
-						value,
-					})),
-					urlParams: Object.entries((draft as any)?.urlParams || {}).map(
-						([key, value]) => ({ key, value: String(value ?? "") }),
-					),
-				};
-			}
+			const nextState = draftToFormState(draft);
 
 			formStateRef.current = nextState;
 			reset(buildFormValuesFromState(nextState), {
@@ -162,23 +111,19 @@ export function useIngest({
 			}
 			if (drafts.length === 1) {
 				applySingleDraftToForm(drafts[0]);
-				setIsIngestSuccess(true);
-				setIsDropZoneCollapsed(true);
-				setIngestMessage(resolvedMessages.success);
-				setIngestError(null);
+				markIngestSuccess();
 				return;
 			}
-			onSubmitMultiple?.(drafts);
-			onClose();
+			markIngestSuccess();
+			await onSubmitMultiple?.(drafts);
 		},
 		[
 			applySingleDraftToForm,
+			markIngestSuccess,
 			onSubmitMultiple,
-			onClose,
 			resolvedMessages.noneDetectedError,
 			resolvedMessages.noneDetectedTitle,
 			resolvedMessages.noneDetectedDescription,
-			resolvedMessages.success,
 		],
 	);
 
@@ -187,12 +132,17 @@ export function useIngest({
 			text?: string;
 			buffer?: ArrayBuffer;
 			fileName?: string;
+			payloads?: IngestPayload[];
 		}) => {
 			if (!canIngestProgrammatically) return;
 			try {
 				setIsIngesting(true);
 				setIngestError(null);
-				const drafts = await normalizeIngestResult(payload);
+				const payloads = payload.payloads ?? [payload];
+				const draftGroups = await Promise.all(
+					payloads.map((item) => normalizeIngestResult(item)),
+				);
+				const drafts = draftGroups.flat();
 				await finalizeIngest(drafts);
 			} catch (error) {
 				const message =
@@ -227,6 +177,7 @@ export function useIngest({
 		setIsDragOver,
 		canIngestProgrammatically,
 		resetIngestState,
+		markIngestSuccess,
 		applySingleDraftToForm,
 		handleIngestPayload,
 	};

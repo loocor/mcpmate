@@ -26,4 +26,32 @@ describe("server import payload", () => {
 			},
 		});
 	});
+
+	test("filters draft imports to the selected server names", () => {
+		const body = buildMcpServersImportBodyFromDrafts(
+			[
+				{
+					name: "alpha",
+					kind: "stdio",
+					command: "node",
+					args: ["alpha.js"],
+				},
+				{
+					name: "beta",
+					kind: "streamable_http",
+					url: "https://beta.example.com/mcp",
+				},
+			],
+			new Set(["beta"]),
+		);
+
+		expect(body).toEqual({
+			mcpServers: {
+				beta: {
+					type: "streamable_http",
+					url: "https://beta.example.com/mcp",
+				},
+			},
+		});
+	});
 });

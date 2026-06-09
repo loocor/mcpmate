@@ -43,8 +43,8 @@ export const commonTranslations = {
 				incoming: "Incoming query",
 			},
 			skippedReasons: {
-				duplicateName: "Duplicate name",
-				duplicateFingerprint: "Duplicate fingerprint",
+				duplicateName: "Name already in use",
+				duplicateFingerprint: "Already installed",
 				urlQueryMismatch: "URL query mismatch",
 				configUnrecognized: "Unrecognized config entry",
 				configInvalidEntry: "Invalid config entry",
@@ -76,6 +76,11 @@ export const commonTranslations = {
 			pageSuffix: "",
 			ofTotal: "of {{total}}",
 			goToPage: "Go to page",
+		},
+		bulkSelection: {
+			bulkModeEnter: "Bulk select",
+			bulkModeExit: "Exit bulk select",
+			bulkModeDescription: "{{count}} selected for bulk actions",
 		},
 		lock: {
 			title: "MCPMate",
@@ -139,8 +144,8 @@ export const commonTranslations = {
 				incoming: "传入查询参数",
 			},
 			skippedReasons: {
-				duplicateName: "名称重复",
-				duplicateFingerprint: "指纹重复",
+				duplicateName: "名称已被占用",
+				duplicateFingerprint: "已安装",
 				urlQueryMismatch: "URL 查询参数不匹配",
 				configUnrecognized: "未识别的配置项",
 				configInvalidEntry: "无效的配置项",
@@ -172,6 +177,11 @@ export const commonTranslations = {
 			pageSuffix: "页",
 			ofTotal: "，共 {{total}} 页",
 			goToPage: "跳转到页码",
+		},
+		bulkSelection: {
+			bulkModeEnter: "批量选择",
+			bulkModeExit: "退出批量选择",
+			bulkModeDescription: "已选择 {{count}} 项，可进行批量操作",
 		},
 		lock: {
 			title: "MCPMate",
@@ -234,8 +244,8 @@ export const commonTranslations = {
 				incoming: "入力クエリ",
 			},
 			skippedReasons: {
-				duplicateName: "名前の重複",
-				duplicateFingerprint: "フィンガープリントの重複",
+				duplicateName: "名前が既に使用中",
+				duplicateFingerprint: "インストール済み",
 				urlQueryMismatch: "URL クエリ不一致",
 				configUnrecognized: "未識別の設定項目",
 				configInvalidEntry: "無効な設定項目",
@@ -267,6 +277,11 @@ export const commonTranslations = {
 			pageSuffix: "",
 			ofTotal: "/ {{total}} ページ",
 			goToPage: "ページへ移動",
+		},
+		bulkSelection: {
+			bulkModeEnter: "一括選択",
+			bulkModeExit: "一括選択を終了",
+			bulkModeDescription: "一括操作の対象 {{count}} 件",
 		},
 		lock: {
 			title: "MCPMate",

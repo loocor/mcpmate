@@ -291,6 +291,10 @@ export function CapabilityList<T = CapabilityRecord>({
 		[mappedItems, search],
 	);
 
+	const selectedIdSet = useMemo(
+		() => (selectedIds ? new Set(selectedIds) : null),
+		[selectedIds],
+	);
 	const skeleton = (
 		<div className="space-y-2">
 			{[1, 2, 3].map((i) => (
@@ -305,7 +309,7 @@ export function CapabilityList<T = CapabilityRecord>({
 	const renderedItems = data.map((mapped, idx) => {
 		const item = mapped.raw;
 		const id = getId ? getId(item) : String(idx);
-		const isSelected = !!(selectable && selectedIds?.includes(id));
+		const isSelected = !!(selectable && selectedIdSet?.has(id));
 		const isEnabled = getEnabled ? !!getEnabled(item) : undefined;
 
 		const handleSelect = () => {

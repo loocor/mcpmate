@@ -97,7 +97,7 @@ const normalizeServerIcon = (icon: unknown): ServerIcon | null => {
 	return normalized;
 };
 
-const normalizeIconList = (value: unknown): ServerIcon[] => {
+export const normalizeIconList = (value: unknown): ServerIcon[] => {
 	if (!value) return [];
 	const array = Array.isArray(value) ? value : [value];
 	return array

@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	extractImportStats,
 	serversApi,
+	type ServersImportResponse,
+	type ServersPreviewResponse,
 } from "../lib/api";
 import {
 	buildDraftServersImportRequest,
@@ -34,12 +36,6 @@ interface UseServerInstallPipelineOptions {
 	onImported?: () => void;
 }
 
-interface PreviewState {
-	success: boolean;
-	data?: any;
-	error?: unknown;
-}
-
 function hasEntries(
 	value?: Record<string, string>,
 ): value is Record<string, string> {
@@ -49,38 +45,91 @@ function hasEntries(
 export function useServerInstallPipeline(
 	opts: UseServerInstallPipelineOptions = {},
 ) {
-	const { t, i18n } = useTranslation("servers");
+	const { t } = useTranslation("servers");
 	const [isDrawerOpen, setDrawerOpen] = useState(false);
 	const [drafts, setDrafts] = useState<ServerInstallDraft[]>([]);
+	const [selectedDraftNames, setSelectedDraftNames] = useState<string[]>([]);
 	const [source, setSource] = useState<InstallSource | null>(null);
 	const [isPreviewLoading, setPreviewLoading] = useState(false);
-	const [previewState, setPreviewState] = useState<PreviewState | null>(null);
+	const [previewState, setPreviewState] = useState<ServersPreviewResponse | null>(
+		null,
+	);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 	const [isImporting, setImporting] = useState(false);
 	const [currentStep, setCurrentStep] = useState<WizardStep>("form");
-	const [importResult, setImportResult] = useState<any>(null);
+	const [importResult, setImportResult] = useState<ServersImportResponse | null>(
+		null,
+	);
 	const [targetProfileId, setTargetProfileId] = useState<string | null>(null);
-	const [dryRunResult, setDryRunResult] = useState<any>(null);
+	const [dryRunResult, setDryRunResult] = useState<ServersImportResponse | null>(
+		null,
+	);
 	const [dryRunStats, setDryRunStats] = useState<ImportStats | null>(null);
 	const [dryRunWarning, setDryRunWarning] = useState<string | null>(null);
 	const [isDryRunLoading, setDryRunLoading] = useState(false);
 	const [dryRunError, setDryRunError] = useState<string | null>(null);
 
-	const reset = useCallback(() => {
-		setDrawerOpen(false);
-		setDrafts([]);
-		setSource(null);
+	const previewGenerationRef = useRef(0);
+
+	const clearResults = useCallback(() => {
 		setPreviewState(null);
 		setPreviewError(null);
-		setPreviewLoading(false);
-		setImporting(false);
-		setCurrentStep("form");
 		setImportResult(null);
-		setTargetProfileId(null);
 		setDryRunResult(null);
 		setDryRunStats(null);
 		setDryRunWarning(null);
+		setDryRunError(null);
+	}, []);
+
+	const reset = useCallback(() => {
+		setDrawerOpen(false);
+		setDrafts([]);
+		setSelectedDraftNames([]);
+		setSource(null);
+		clearResults();
+		setPreviewLoading(false);
+		setImporting(false);
+		setCurrentStep("form");
+		setTargetProfileId(null);
 		setDryRunLoading(false);
+	}, [clearResults]);
+
+	const selectedDraftNameSet = useMemo(
+		() => new Set(selectedDraftNames),
+		[selectedDraftNames],
+	);
+	const selectedDrafts = useMemo(
+		() => drafts.filter((draft) => selectedDraftNameSet.has(draft.name)),
+		[drafts, selectedDraftNameSet],
+	);
+
+	const setDraftCollection = useCallback(
+		(items: ServerInstallDraft[], origin: InstallSource | null) => {
+			setDrafts(items);
+			setSelectedDraftNames(items.map((item) => item.name));
+			setSource(origin);
+			clearResults();
+		},
+		[clearResults],
+	);
+
+	const updateDraft = useCallback((draft: ServerInstallDraft, previousName?: string) => {
+		const matchName = previousName ?? draft.name;
+		setDrafts((current) =>
+			current.map((item) => (item.name === matchName ? draft : item)),
+		);
+		setSelectedDraftNames((current) =>
+			current.map((name) => (name === matchName ? draft.name : name)),
+		);
+		clearResults();
+	}, [clearResults]);
+
+	const updateSelectedDraftNames = useCallback((names: string[]) => {
+		setSelectedDraftNames(names);
+		setImportResult(null);
+		setDryRunResult(null);
+		setDryRunStats(null);
+		setDryRunWarning(null);
 		setDryRunError(null);
 	}, []);
 
@@ -108,6 +157,44 @@ export function useServerInstallPipeline(
 		};
 	}, []);
 
+	const previewDrafts = useCallback(
+		async (items: ServerInstallDraft[]) => {
+			if (!items.length) {
+				notifyError(
+					"No servers selected",
+					"Select at least one server to preview.",
+				);
+				return;
+			}
+
+			const gen = ++previewGenerationRef.current;
+			setPreviewState(null);
+			setPreviewError(null);
+			setPreviewLoading(true);
+
+			try {
+				const payload = buildPreviewPayload(items);
+				const result = await serversApi.previewServers({
+					...payload,
+					timeout_ms: 30000,
+				});
+				if (gen !== previewGenerationRef.current) return;
+				setPreviewState(result);
+			} catch (error) {
+				if (gen !== previewGenerationRef.current) return;
+				const message =
+					error instanceof Error ? error.message : "Preview request failed";
+				setPreviewError(message);
+				notifyError("Preview failed", message);
+			} finally {
+				if (gen === previewGenerationRef.current) {
+					setPreviewLoading(false);
+				}
+			}
+		},
+		[buildPreviewPayload],
+	);
+
 	const begin = useCallback(
 		async (items: ServerInstallDraft[], origin: InstallSource) => {
 			if (!items.length) {
@@ -118,40 +205,23 @@ export function useServerInstallPipeline(
 				return;
 			}
 
-			setDrafts(items);
-			setSource(origin);
-			setPreviewState(null);
-			setPreviewError(null);
+			setDraftCollection(items, origin);
 			setDrawerOpen(true);
 			setCurrentStep("preview");
-			setPreviewLoading(true);
-
-			try {
-				const payload = buildPreviewPayload(items);
-				const result = await serversApi.previewServers({
-					...payload,
-					timeout_ms: 30000, // 30 seconds for stdio servers that need to install dependencies
-					// TODO: Implement intelligent timeout handling for server preview
-					// - Add user-friendly timeout management UI
-					// - Show dependency download progress indication
-					// - Allow users to temporarily increase timeout time
-					// - Implement smart timeout detection based on server type and dependency requirements
-				});
-				setPreviewState(result);
-			} catch (error) {
-				const message =
-					error instanceof Error ? error.message : "Preview request failed";
-				setPreviewError(message);
-				notifyError("Preview failed", message);
-			} finally {
-				setPreviewLoading(false);
-			}
+			await previewDrafts(items);
 		},
-		[buildPreviewPayload],
+		[previewDrafts, setDraftCollection],
 	);
 
 	const performDryRun = useCallback(async () => {
-		if (!drafts.length) return;
+		if (!selectedDrafts.length) {
+			setDryRunError(
+				t("wizard.result.validationNoSelection", {
+					defaultValue: "Select at least one server to validate.",
+				}),
+			);
+			return;
+		}
 		try {
 			setDryRunLoading(true);
 			setDryRunError(null);
@@ -159,6 +229,7 @@ export function useServerInstallPipeline(
 			setDryRunWarning(null);
 			const requestBody = buildDraftServersImportRequest({
 				drafts,
+				selectedDraftNames,
 				targetProfileId,
 				dryRun: true,
 			});
@@ -217,11 +288,23 @@ export function useServerInstallPipeline(
 		} finally {
 			setDryRunLoading(false);
 		}
-	}, [drafts, targetProfileId, t, i18n.language]);
+	}, [
+		drafts,
+		selectedDraftNames,
+		selectedDrafts.length,
+		targetProfileId,
+		t,
+	]);
 
 	const confirmImport = useCallback(
 		async (overrideTargetProfileId?: string | null) => {
-			if (!drafts.length) return false;
+			if (!selectedDrafts.length) {
+				notifyError(
+					"No servers selected",
+					"Select at least one server before importing.",
+				);
+				return false;
+			}
 			// Allow callers (e.g., the install wizard's `handleImport`) to
 			// provide a freshly resolved target profile id — useful when
 			// auto-add is enabled but the pipeline state has not been updated
@@ -236,6 +319,7 @@ export function useServerInstallPipeline(
 				setCurrentStep("result");
 				const requestBody = buildDraftServersImportRequest({
 					drafts,
+					selectedDraftNames,
 					targetProfileId: effectiveTargetProfileId,
 				});
 				const result = await serversApi.importServers(requestBody);
@@ -301,12 +385,21 @@ export function useServerInstallPipeline(
 				setImporting(false);
 			}
 		},
-		[drafts, targetProfileId, t, i18n.language, opts],
+		[
+			drafts,
+			selectedDraftNames,
+			selectedDrafts.length,
+			targetProfileId,
+			t,
+			opts,
+		],
 	);
 
 	const state = useMemo(
 		() => ({
 			drafts,
+			selectedDraftNames,
+			selectedDrafts,
 			source,
 			previewState,
 			previewError,
@@ -324,6 +417,8 @@ export function useServerInstallPipeline(
 		}),
 		[
 			drafts,
+			selectedDraftNames,
+			selectedDrafts,
 			source,
 			previewState,
 			previewError,
@@ -349,12 +444,16 @@ export function useServerInstallPipeline(
 			close: reset,
 			reset,
 			setDrafts,
+			setDraftCollection,
+			updateDraft,
+			setSelectedDraftNames: updateSelectedDraftNames,
 			setImportResult,
 			setPreviewState,
 			setPreviewError,
 			setPreviewLoading,
 			setCurrentStep,
 			setTargetProfileId,
+			previewDrafts,
 			performDryRun,
 		}),
 		[
@@ -362,6 +461,9 @@ export function useServerInstallPipeline(
 			begin,
 			confirmImport,
 			reset,
+			setDraftCollection,
+			updateDraft,
+			updateSelectedDraftNames,
 			setDrafts,
 			setImportResult,
 			setPreviewState,
@@ -369,6 +471,7 @@ export function useServerInstallPipeline(
 			setPreviewLoading,
 			setCurrentStep,
 			setTargetProfileId,
+			previewDrafts,
 			performDryRun,
 		],
 	);

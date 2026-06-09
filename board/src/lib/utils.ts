@@ -162,3 +162,16 @@ export function truncate(str: string | undefined | null, length: number): string
 	if (str.length <= length) return str;
 	return `${str.slice(0, length)}...`;
 }
+
+export function toTitleCase(value?: string | null): string {
+	return (
+		(value ?? "")
+			.trim()
+			.split(/[\s_-]+/)
+			.filter(Boolean)
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+			.join(" ") ||
+		value ||
+		""
+	);
+}

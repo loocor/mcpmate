@@ -415,7 +415,8 @@ export const serversTranslations = {
 		},
 		manual: {
 			ingest: {
-				default: "Drop JSON/TOML/Text or MCP bundles (WIP) to begin",
+				default:
+					"Drop or paste JSON, TOML, or text, or click the icon to scan local configs",
 				parsingDropped: "Parsing dropped text",
 				parsingPasted: "Parsing pasted content",
 				success: "Server configuration loaded successfully",
@@ -472,6 +473,38 @@ export const serversTranslations = {
 				saving: "Saving...",
 				importing: "Importing...",
 				processing: "Processing...",
+			},
+			bulk: {
+				title: "{{count}} servers detected",
+				description:
+					"Select the servers to preview and import. {{count}} selected.",
+				selectAll: "Select all",
+				clearSelection: "Clear",
+				enable: "Enable",
+				disable: "Disable",
+				bulkModeEnter: "Bulk select",
+				bulkModeExit: "Exit bulk select",
+				bulkModeDescription: "{{count}} selected for bulk actions",
+				includeInImport: "Add to import",
+				excludeFromImport: "Remove from import",
+				selectServer: "Select {{name}}",
+				includeForImport: "Include {{name}} in import",
+				missingEndpoint: "Missing command or URL",
+				backToList: "Back to detected servers",
+				noSelectionTitle: "No servers selected",
+				noSelectionDescription:
+					"Select at least one server to continue with preview and import.",
+			},
+			scan: {
+				action: "Scan local configs",
+				actionHint: "Click to scan local configs",
+				noneTitle: "No local configs found",
+				noneDescription:
+					"No detected MCP clients have a local configuration file to scan.",
+				noServersTitle: "No servers detected",
+				noServersDescription:
+					"The local scan did not find importable MCP server entries.",
+				failedTitle: "Local scan failed",
 			},
 			fields: {
 				name: {
@@ -684,14 +717,25 @@ export const serversTranslations = {
 				result: { label: "Import & Profile", hint: "Complete" },
 			},
 			header: {
-				addTitle: "Add MCP Server",
-				addDescription: "Configure and install a new MCP server",
+				addTitle_one: "Add MCP Server",
+				addTitle_other: "Add MCP Servers",
+				addDescription_one: "Configure and install a new MCP server",
+				addDescription_other:
+					"Review and install {{count}} detected MCP servers",
 				editTitle: "Edit Server",
 				editDescription: "Update server configuration",
 			},
 			preview: {
 				retry: "Retry preview",
+				retryDescription:
+					"Regenerate capability preview for the selected server.",
 				generating: "Generating capability preview…",
+				serverPickerLabel: "Server",
+				selectServer: "Select server",
+				capabilitiesTitle: "Capabilities",
+				capabilitiesSummary: "Capabilities · {{summary}}",
+				emptyCapabilities:
+					"No capabilities discovered for this server.",
 				capabilities: {
 					tool: "tool",
 					tools: "tools",
@@ -713,6 +757,9 @@ export const serversTranslations = {
 				importing: "Importing...",
 				validating: "Validating...",
 				done: "Done",
+				reset: "Reset form",
+				resetDescription:
+					"Clear all fields and restore the initial configuration.",
 			},
 			result: {
 				validation: {
@@ -744,6 +791,30 @@ export const serversTranslations = {
 					baseMultiple: "Skipped {{count}} servers",
 					withDetail: "{{base}}: {{detail}}",
 					suffixAlreadyInstalled: "Already installed—no new import required.",
+				},
+				skipNotice: {
+					titlePartial: "{{count}} servers will be skipped",
+					descriptionAlreadyInstalled:
+						"These servers are already in your library and won't be imported again.",
+					descriptionDuplicateName:
+						"These servers use names that are already taken and won't be imported again.",
+					descriptionMixed:
+						"These servers won't be imported. Review the reason for each item below.",
+				},
+				summary: {
+					badgeReady: "Ready",
+					badgeSkipped: "Skipped",
+					badgeFailed: "Failed",
+					titleMixed: "Import Review",
+					titleReadyFailed: "Import Partially Ready",
+					descriptionReadySkipped:
+						"{{ready}} will import and {{skipped}} are already installed and will be skipped.",
+					descriptionReadyFailed:
+						"{{ready}} will import. Resolve validation failures for the remaining {{failed}} before importing.",
+					descriptionSkippedFailed:
+						"{{skipped}} are already installed and {{failed}} failed validation.",
+					descriptionReadySkippedFailed:
+						"{{ready}} will import, {{skipped}} will be skipped, and {{failed}} failed validation.",
 				},
 				readyStatusTitle: "Import Ready",
 				readyStatusDescription:
@@ -1221,7 +1292,8 @@ export const serversTranslations = {
 		},
 		manual: {
 			ingest: {
-				default: "拖拽 JSON/TOML/文本或 MCP 安装包（即将支持）即可开始",
+				default:
+					"拖放或粘贴 JSON、TOML 或文本，或点击图标扫描本地配置",
 				parsingDropped: "正在解析拖入的文本",
 				parsingPasted: "正在解析粘贴的内容",
 				success: "服务器配置已成功载入",
@@ -1276,6 +1348,34 @@ export const serversTranslations = {
 				saving: "正在保存...",
 				importing: "正在导入...",
 				processing: "正在处理...",
+			},
+			bulk: {
+				title: "检测到 {{count}} 个服务器",
+				description: "选择要预览和导入的服务器。已选 {{count}} 个。",
+				selectAll: "全选",
+				clearSelection: "清空",
+				enable: "启用",
+				disable: "禁用",
+				bulkModeEnter: "批量选择",
+				bulkModeExit: "退出批量选择",
+				bulkModeDescription: "已选 {{count}} 项用于批量操作",
+				includeInImport: "纳入导入",
+				excludeFromImport: "移出导入",
+				selectServer: "选择 {{name}}",
+				includeForImport: "将 {{name}} 纳入导入",
+				missingEndpoint: "缺少命令或 URL",
+				backToList: "返回检测到的服务器",
+				noSelectionTitle: "未选择服务器",
+				noSelectionDescription: "请至少选择一个服务器后再继续预览和导入。",
+			},
+			scan: {
+				action: "扫描本地配置",
+				actionHint: "点击扫描本地配置",
+				noneTitle: "未找到本地配置",
+				noneDescription: "未检测到带有可扫描本地配置文件的 MCP 客户端。",
+				noServersTitle: "未检测到服务器",
+				noServersDescription: "本地扫描未发现可导入的 MCP 服务器条目。",
+				failedTitle: "本地扫描失败",
 			},
 			fields: {
 				name: {
@@ -1482,14 +1582,22 @@ export const serversTranslations = {
 				result: { label: "导入", hint: "完成" },
 			},
 			header: {
-				addTitle: "新增服务器",
-				addDescription: "配置并安装新的 MCP 服务器",
+				addTitle_one: "新增 MCP 服务器",
+				addTitle_other: "新增 MCP 服务器",
+				addDescription_one: "配置并安装新的 MCP 服务器",
+				addDescription_other: "查看并安装检测到的 {{count}} 个 MCP 服务器",
 				editTitle: "编辑服务器",
 				editDescription: "更新 MCP 服务器配置",
 			},
 			preview: {
 				retry: "重新预览",
+				retryDescription: "为当前选中的服务器重新生成能力预览。",
 				generating: "正在生成能力预览…",
+				serverPickerLabel: "服务器",
+				selectServer: "选择服务器",
+				capabilitiesTitle: "能力",
+				capabilitiesSummary: "能力 · {{summary}}",
+				emptyCapabilities: "未发现该服务器的能力。",
 				capabilities: {
 					tool: "工具",
 					tools: "工具",
@@ -1511,6 +1619,8 @@ export const serversTranslations = {
 				importing: "正在导入...",
 				validating: "正在校验...",
 				done: "完成",
+				reset: "重置表单",
+				resetDescription: "清空所有字段并恢复初始配置。",
 			},
 			result: {
 				validation: {
@@ -1538,6 +1648,29 @@ export const serversTranslations = {
 					baseMultiple: "已跳过 {{count}} 个服务器",
 					withDetail: "{{base}}：{{detail}}",
 					suffixAlreadyInstalled: "已存在可直接使用，无需重新导入。",
+				},
+				skipNotice: {
+					titlePartial: "将跳过 {{count}} 个服务器",
+					descriptionAlreadyInstalled:
+						"这些服务器已在库中，不会再次导入。",
+					descriptionDuplicateName:
+						"这些服务器名称已被占用，不会再次导入。",
+					descriptionMixed: "以下服务器不会导入，请查看各项原因。",
+				},
+				summary: {
+					badgeReady: "可导入",
+					badgeSkipped: "跳过",
+					badgeFailed: "失败",
+					titleMixed: "导入预览",
+					titleReadyFailed: "部分可导入",
+					descriptionReadySkipped:
+						"{{ready}} 个将导入，{{skipped}} 个已安装并将跳过。",
+					descriptionReadyFailed:
+						"{{ready}} 个将导入，请先解决其余 {{failed}} 个的校验问题。",
+					descriptionSkippedFailed:
+						"{{skipped}} 个已安装，{{failed}} 个校验失败。",
+					descriptionReadySkippedFailed:
+						"{{ready}} 个将导入，{{skipped}} 个将跳过，{{failed}} 个校验失败。",
 				},
 				readyStatusTitle: "可执行导入",
 				readyStatusDescription: "配置已就绪，请确认信息后点击“导入”。",
@@ -2009,7 +2142,7 @@ export const serversTranslations = {
 		manual: {
 			ingest: {
 				default:
-					"JSON/TOML/テキストまたは MCP バンドル（プレビュー）をドロップして開始",
+					"JSON、TOML、またはテキストをドロップ／貼り付け、またはアイコンをクリックしてローカル設定をスキャン",
 				parsingDropped: "ドロップしたテキストを解析しています",
 				parsingPasted: "貼り付けた内容を解析しています",
 				success: "サーバー構成を読み込みました",
@@ -2065,6 +2198,38 @@ export const serversTranslations = {
 				saving: "保存中...",
 				importing: "インポート中...",
 				processing: "処理中...",
+			},
+			bulk: {
+				title: "{{count}} 件のサーバーを検出",
+				description:
+					"プレビューとインポートするサーバーを選択してください。{{count}} 件選択中。",
+				selectAll: "すべて選択",
+				clearSelection: "クリア",
+				enable: "有効化",
+				disable: "無効化",
+				bulkModeEnter: "一括選択",
+				bulkModeExit: "一括選択を終了",
+				bulkModeDescription: "一括操作の対象 {{count}} 件",
+				includeInImport: "インポートに追加",
+				excludeFromImport: "インポートから除外",
+				selectServer: "{{name}} を選択",
+				includeForImport: "{{name}} をインポート対象に含める",
+				missingEndpoint: "コマンドまたは URL がありません",
+				backToList: "検出されたサーバーに戻る",
+				noSelectionTitle: "サーバーが選択されていません",
+				noSelectionDescription:
+					"プレビューとインポートを続行するには、少なくとも 1 件のサーバーを選択してください。",
+			},
+			scan: {
+				action: "ローカル設定をスキャン",
+				actionHint: "クリックしてローカル設定をスキャン",
+				noneTitle: "ローカル設定が見つかりません",
+				noneDescription:
+					"スキャン可能なローカル設定ファイルを持つ MCP クライアントが検出されませんでした。",
+				noServersTitle: "サーバーが検出されませんでした",
+				noServersDescription:
+					"ローカルスキャンでインポート可能な MCP サーバー項目は見つかりませんでした。",
+				failedTitle: "ローカルスキャンに失敗しました",
 			},
 			fields: {
 				name: {
@@ -2276,14 +2441,25 @@ export const serversTranslations = {
 				result: { label: "インポートと割り当て", hint: "完了" },
 			},
 			header: {
-				addTitle: "MCP サーバーを追加",
-				addDescription: "新しい MCP サーバーを設定してインストールします",
+				addTitle_one: "MCP サーバーを追加",
+				addTitle_other: "MCP サーバーを追加",
+				addDescription_one: "新しい MCP サーバーを設定してインストールします",
+				addDescription_other:
+					"検出した {{count}} 件の MCP サーバーを確認してインストールします",
 				editTitle: "サーバーを編集",
 				editDescription: "サーバー設定を更新します",
 			},
 			preview: {
 				retry: "プレビューを再実行",
+				retryDescription:
+					"選択中のサーバーの機能プレビューを再生成します。",
 				generating: "機能プレビューを生成中…",
+				serverPickerLabel: "サーバー",
+				selectServer: "サーバーを選択",
+				capabilitiesTitle: "機能",
+				capabilitiesSummary: "機能 · {{summary}}",
+				emptyCapabilities:
+					"このサーバーでは機能が見つかりませんでした。",
 				capabilities: {
 					tool: "ツール",
 					tools: "ツール",
@@ -2305,6 +2481,8 @@ export const serversTranslations = {
 				importing: "インポート中...",
 				validating: "検証中...",
 				done: "完了",
+				reset: "フォームをリセット",
+				resetDescription: "すべてのフィールドをクリアし、初期設定に戻します。",
 			},
 			result: {
 				validation: {
@@ -2337,6 +2515,30 @@ export const serversTranslations = {
 					withDetail: "{{base}}：{{detail}}",
 					suffixAlreadyInstalled:
 						"既に利用可能なため、再インポートは不要です。",
+				},
+				skipNotice: {
+					titlePartial: "{{count}} 件のサーバーはスキップされます",
+					descriptionAlreadyInstalled:
+						"これらのサーバーは既にライブラリにあり、再インポートされません。",
+					descriptionDuplicateName:
+						"これらのサーバー名は既に使用されているため、インポートされません。",
+					descriptionMixed:
+						"以下のサーバーはインポートされません。各項目の理由を確認してください。",
+				},
+				summary: {
+					badgeReady: "準備完了",
+					badgeSkipped: "スキップ",
+					badgeFailed: "失敗",
+					titleMixed: "インポート確認",
+					titleReadyFailed: "一部のみインポート可能",
+					descriptionReadySkipped:
+						"{{ready}} 件はインポートされ、{{skipped}} 件は既にインストール済みのためスキップされます。",
+					descriptionReadyFailed:
+						"{{ready}} 件はインポート可能です。残り {{failed}} 件の検証エラーを解消してください。",
+					descriptionSkippedFailed:
+						"{{skipped}} 件は既にインストール済み、{{failed}} 件は検証に失敗しました。",
+					descriptionReadySkippedFailed:
+						"{{ready}} 件はインポート、{{skipped}} 件はスキップ、{{failed}} 件は検証失敗です。",
 				},
 				readyStatusTitle: "インポート可能",
 				readyStatusDescription:

@@ -59,13 +59,17 @@ import {
 	useFormSync,
 	useIngest,
 	useSecretFieldInsert,
+	useServerTypeOptions,
 } from "./hooks";
+import {
+	FORM_TAB_PANEL_TOP_INSET_CLASS,
+	FORM_TAB_TOOLBAR_ROW_CLASS,
+} from "./form-tab-layout";
 import {
 	breathingAnimation,
 	DEFAULT_INGEST_MESSAGE,
 	type ManualServerFormValues,
 	manualServerSchema,
-	SERVER_TYPE_OPTIONS,
 	type ServerInstallManualFormHandle,
 	type ServerInstallManualFormProps,
 } from "./types";
@@ -96,6 +100,7 @@ export const ServerInstallManualForm = forwardRef<
 	) => {
 		usePageTranslations("servers");
 		const { t } = useTranslation("servers");
+		const { serverTypeOptions } = useServerTypeOptions();
 		const isEditMode = mode === "edit";
 		const isMarketMode = mode === "market";
 		const jsonEditingEnabled = allowJsonEditing ?? !isEditMode;
@@ -140,6 +145,7 @@ export const ServerInstallManualForm = forwardRef<
 				headers: [],
 				urlParams: [],
 				meta_description: "",
+				meta_icon_url: "",
 				meta_version: "",
 				meta_website_url: "",
 				meta_repository_url: "",
@@ -254,22 +260,12 @@ export const ServerInstallManualForm = forwardRef<
 		// Watched values
 		const kind = watch("kind");
 		const isStdio = kind === "stdio";
-		const serverTypeOptions = useMemo(
-			() =>
-				SERVER_TYPE_OPTIONS.map((option) => ({
-					...option,
-					label: t(`manual.fields.type.options.${option.value}`, {
-						defaultValue:
-							option.value === "stdio" ? "Stdio" : "Streamable HTTP",
-					}),
-				})),
-			[t],
-		);
 		const watchedName = useWatch({ control, name: "name" });
 		const watchedMetaDescription = useWatch({
 			control,
 			name: "meta_description",
 		});
+		const watchedMetaIconUrl = useWatch({ control, name: "meta_icon_url" });
 		const watchedMetaVersion = useWatch({ control, name: "meta_version" });
 		const watchedMetaWebsite = useWatch({ control, name: "meta_website_url" });
 		const watchedMetaRepositoryUrl = useWatch({
@@ -396,6 +392,7 @@ export const ServerInstallManualForm = forwardRef<
 			kind,
 			watchedName,
 			watchedMetaDescription,
+			watchedMetaIconUrl,
 			watchedMetaVersion,
 			watchedMetaWebsite,
 			watchedMetaRepositoryUrl,
@@ -436,7 +433,6 @@ export const ServerInstallManualForm = forwardRef<
 			buildFormValuesFromState,
 			reset,
 			onSubmitMultiple,
-			onClose,
 			messages: ingestMessages,
 		});
 
@@ -531,6 +527,7 @@ export const ServerInstallManualForm = forwardRef<
 		const kindId = useId();
 		const commandId = useId();
 		const urlId = useId();
+		const metaIconUrlId = useId();
 		const metaDescriptionId = useId();
 		const metaVersionId = useId();
 		const metaWebsiteUrlId = useId();
@@ -1077,7 +1074,7 @@ export const ServerInstallManualForm = forwardRef<
 								<Tabs
 									value={activeTab}
 									onValueChange={setActiveTab}
-									className="space-y-4"
+									className="flex flex-col"
 								>
 									<TabsList className={`grid w-full ${extraTab ? "grid-cols-3" : "grid-cols-2"}`}>
 										<TabsTrigger value="core">{tabsCoreLabel}</TabsTrigger>
@@ -1091,11 +1088,10 @@ export const ServerInstallManualForm = forwardRef<
 
 									<TabsContent
 										value="core"
-										className={`space-y-4 ${viewMode === "json" ? "flex flex-col h-full" : ""
-											}`}
+										className={`flex flex-col gap-4 ${viewMode === "json" ? "h-full" : ""}`}
 										onClick={handleFormInteraction}
 									>
-										<div className="flex items-center justify-end pt-2">
+										<div className={FORM_TAB_TOOLBAR_ROW_CLASS}>
 											<FormViewModeToggle
 												mode={viewMode}
 												onChange={handleModeChange}
@@ -1295,7 +1291,7 @@ export const ServerInstallManualForm = forwardRef<
 									{extraTab && (
 										<TabsContent
 											value={extraTab.value}
-											className="space-y-4 pt-4"
+											className={FORM_TAB_PANEL_TOP_INSET_CLASS}
 											onClick={handleFormInteraction}
 										>
 											{extraTab.content}
@@ -1303,14 +1299,15 @@ export const ServerInstallManualForm = forwardRef<
 									)}
 									<TabsContent
 										value="meta"
-
-										className="space-y-4 pt-4"
+										className={FORM_TAB_PANEL_TOP_INSET_CLASS}
 										onClick={handleFormInteraction}
 									>
 										<MetaFields
 											formStateRef={formStateRef}
 											register={register}
 											errors={errors}
+											iconUrl={watchedMetaIconUrl}
+											metaIconUrlId={metaIconUrlId}
 											metaDescriptionId={metaDescriptionId}
 											metaVersionId={metaVersionId}
 											metaWebsiteUrlId={metaWebsiteUrlId}

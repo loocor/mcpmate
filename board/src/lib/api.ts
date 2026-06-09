@@ -1419,16 +1419,22 @@ export const serversApi = {
 			env?: Record<string, string> | null;
 			url?: string | null;
 		}>;
-	}): Promise<{
-		success: boolean;
-		data?: { items: unknown[] } | null;
-		error?: unknown | null;
-	}> => {
+	}): Promise<ServersPreviewResponse> => {
 		return await fetchApi(`/api/mcp/servers/preview`, {
 			method: "POST",
 			body: JSON.stringify(payload),
 		});
 	},
+};
+
+export type ServersImportResponse = Awaited<
+	ReturnType<typeof serversApi.importServers>
+>;
+
+export type ServersPreviewResponse = {
+	success: boolean;
+	data?: { items: unknown[] } | null;
+	error?: unknown | null;
 };
 
 export interface ImportStats {

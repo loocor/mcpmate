@@ -2,6 +2,11 @@ export type ServerUniImportTransferPayload = {
 	text?: string;
 	buffer?: ArrayBuffer;
 	fileName?: string;
+	payloads?: Array<{
+		text?: string;
+		buffer?: ArrayBuffer;
+		fileName?: string;
+	}>;
 };
 
 export function canIngestFromDataTransfer(dataTransfer: DataTransfer | null): boolean {
@@ -18,11 +23,18 @@ export async function extractPayloadFromDataTransfer(
 	dataTransfer: DataTransfer,
 ): Promise<ServerUniImportTransferPayload | null> {
 	if (dataTransfer.files && dataTransfer.files.length > 0) {
-		const file = dataTransfer.files[0];
-		if (file.name.endsWith(".mcpb") || file.name.endsWith(".dxt")) {
-			return { buffer: await file.arrayBuffer(), fileName: file.name };
+		const payloads = await Promise.all(
+			Array.from(dataTransfer.files).map(async (file) => {
+				if (file.name.endsWith(".mcpb") || file.name.endsWith(".dxt")) {
+					return { buffer: await file.arrayBuffer(), fileName: file.name };
+				}
+				return { text: await file.text(), fileName: file.name };
+			}),
+		);
+		if (payloads.length === 1) {
+			return payloads[0];
 		}
-		return { text: await file.text(), fileName: file.name };
+		return { payloads };
 	}
 
 	const plainText = dataTransfer.getData("text/plain");

@@ -8,6 +8,7 @@ interface UseFormSyncProps {
 	kind: ManualServerFormValues["kind"];
 	watchedName: string | undefined;
 	watchedMetaDescription: string | undefined;
+	watchedMetaIconUrl: string | undefined;
 	watchedMetaVersion: string | undefined;
 	watchedMetaWebsite: string | undefined;
 	watchedMetaRepositoryUrl: string | undefined;
@@ -41,6 +42,7 @@ export function useFormSync({
 	kind,
 	watchedName,
 	watchedMetaDescription,
+	watchedMetaIconUrl,
 	watchedMetaVersion,
 	watchedMetaWebsite,
 	watchedMetaRepositoryUrl,
@@ -61,9 +63,19 @@ export function useFormSync({
 		if (isRestoringRef.current) return;
 		formStateRef.current.name = watchedName || "";
 		formStateRef.current.meta.description = watchedMetaDescription || "";
+		const iconUrl = (watchedMetaIconUrl ?? "").trim();
+		formStateRef.current.meta.icons = iconUrl ? [{ src: iconUrl }] : [];
 		formStateRef.current.meta.version = watchedMetaVersion || "";
 		formStateRef.current.meta.websiteUrl = watchedMetaWebsite || "";
-	}, [watchedName, watchedMetaDescription, watchedMetaVersion, watchedMetaWebsite, formStateRef, isRestoringRef]);
+	}, [
+		watchedName,
+		watchedMetaDescription,
+		watchedMetaIconUrl,
+		watchedMetaVersion,
+		watchedMetaWebsite,
+		formStateRef,
+		isRestoringRef,
+	]);
 
 	useEffect(() => {
 		if (isRestoringRef.current) return;
