@@ -16,6 +16,7 @@ use crate::{
     core::{
         models::{Config, MCPServerConfig},
         proxy::args::StartupMode,
+        secrets::store::LocalSecretStore,
     },
 };
 
@@ -29,9 +30,10 @@ fn empty_config() -> Config {
 async fn build_config_from_servers(
     db: &Database,
     servers: &[Server],
+    secret_store: Option<Arc<LocalSecretStore>>,
 ) -> Result<Config> {
     let mut config = empty_config();
-    let oauth_manager = crate::core::oauth::OAuthManager::new(db.pool.clone());
+    let oauth_manager = crate::core::oauth::OAuthManager::new_optional_store(db.pool.clone(), secret_store);
 
     for server in servers {
         let args = if let Some(id) = &server.id {
@@ -115,7 +117,7 @@ pub async fn load_servers_from_active_profile(db: &Database) -> anyhow::Result<(
             servers.push(server);
         }
     }
-    let config = build_config_from_servers(db, &servers).await?;
+    let config = build_config_from_servers(db, &servers, None).await?;
 
     tracing::info!("Loaded {} servers from active profile (unified loader)", servers.len());
 
@@ -130,9 +132,12 @@ async fn get_enabled_servers_from_active_profile(pool: &sqlx::Pool<sqlx::Sqlite>
     Ok(servers)
 }
 
-pub async fn load_pool_base_config(db: &Database) -> Result<Config> {
+pub async fn load_pool_base_config(
+    db: &Database,
+    secret_store: Option<Arc<LocalSecretStore>>,
+) -> Result<Config> {
     let servers = get_globally_enabled_servers(db).await?;
-    let config = build_config_from_servers(db, &servers).await?;
+    let config = build_config_from_servers(db, &servers, secret_store).await?;
 
     tracing::info!(
         "Loaded {} globally enabled servers for pool base configuration",
@@ -145,6 +150,7 @@ pub async fn load_pool_base_config(db: &Database) -> Result<Config> {
 pub async fn load_pool_base_config_with_params(
     db: &Database,
     startup_mode: &StartupMode,
+    secret_store: Option<Arc<LocalSecretStore>>,
 ) -> Result<Config> {
     tracing::info!(
         "Loading pool base configuration from database with startup mode: {:?}",
@@ -173,7 +179,7 @@ pub async fn load_pool_base_config_with_params(
         }
     };
 
-    build_config_from_servers(db, &servers).await
+    build_config_from_servers(db, &servers, secret_store).await
 }
 
 /// Load the MCP server configuration from the database with startup parameters
@@ -209,7 +215,7 @@ pub async fn load_server_config_with_params(
         }
     };
 
-    let config = build_config_from_servers(db, &servers).await?;
+    let config = build_config_from_servers(db, &servers, None).await?;
 
     tracing::info!(
         "Successfully loaded {} enabled servers from database using core loader (mode: {:?})",
@@ -237,6 +243,7 @@ mod tests {
         models::{ServerOAuthConfig, ServerOAuthToken},
         server::{upsert_server_oauth_config, upsert_server_oauth_token},
     };
+    use crate::core::secrets::store::{LocalSecretStore, SecretCreateInput, SecretKindInput, SecretOriginInput};
     use chrono::{Duration, Utc};
     use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
     use tempfile::TempDir;
@@ -309,7 +316,7 @@ mod tests {
 
         insert_server(&db.pool, "server-global", "Global Server", true).await;
 
-        let pool_config = load_pool_base_config(&db).await.expect("load pool base config");
+        let pool_config = load_pool_base_config(&db, None).await.expect("load pool base config");
         let (_, active_profile_config) = load_servers_from_active_profile(&db)
             .await
             .expect("load active-profile config");
@@ -320,7 +327,15 @@ mod tests {
 
     #[tokio::test]
     async fn load_pool_base_config_refreshes_expired_oauth_headers() {
-        let (_temp_dir, db) = create_test_database().await;
+        let (temp_dir, db) = create_test_database().await;
+        let secret_store = Arc::new(
+            LocalSecretStore::initialize_with_development_root_key(
+                db.pool.clone(),
+                temp_dir.path().join("secrets").join("local-root.key"),
+            )
+            .await
+            .expect("initialize secret store"),
+        );
         insert_http_server(&db.pool, "server-oauth", "OAuth Server", true).await;
         let mock_server = MockServer::start().await;
 
@@ -354,13 +369,36 @@ mod tests {
         )
         .await
         .expect("save oauth config");
+        let access_token = secret_store
+            .create_secret(SecretCreateInput {
+                alias: "oauth/server-oauth/access-token".to_string(),
+                kind: SecretKindInput::OAuthAccessToken,
+                value: "access-old".to_string(),
+                label: Some("OAuth access token for OAuth Server".to_string()),
+                origin: Some(oauth_secret_origin("server-oauth", "OAuth Server", "access-token")),
+            })
+            .await
+            .expect("store access token")
+            .placeholder;
+        let refresh_token = secret_store
+            .create_secret(SecretCreateInput {
+                alias: "oauth/server-oauth/refresh-token".to_string(),
+                kind: SecretKindInput::OAuthRefreshToken,
+                value: "refresh-123".to_string(),
+                label: Some("OAuth refresh token for OAuth Server".to_string()),
+                origin: Some(oauth_secret_origin("server-oauth", "OAuth Server", "refresh-token")),
+            })
+            .await
+            .expect("store refresh token")
+            .placeholder;
+
         upsert_server_oauth_token(
             &db.pool,
             &ServerOAuthToken {
                 id: None,
                 server_id: "server-oauth".to_string(),
-                access_token: "access-old".to_string(),
-                refresh_token: Some("refresh-123".to_string()),
+                access_token,
+                refresh_token: Some(refresh_token),
                 token_type: "bearer".to_string(),
                 expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
                 scope: Some("read write".to_string()),
@@ -371,7 +409,9 @@ mod tests {
         .await
         .expect("store expired token");
 
-        let config = load_pool_base_config(&db).await.expect("load pool config");
+        let config = load_pool_base_config(&db, Some(secret_store))
+            .await
+            .expect("load pool config");
         let headers = config
             .mcp_servers
             .get("server-oauth")
@@ -382,5 +422,22 @@ mod tests {
             headers.get("authorization").map(String::as_str),
             Some("Bearer access-new")
         );
+    }
+
+    fn oauth_secret_origin(
+        server_id: &str,
+        server_name: &str,
+        field_key: &str,
+    ) -> SecretOriginInput {
+        SecretOriginInput {
+            server_id: Some(server_id.to_string()),
+            server_name: Some(server_name.to_string()),
+            server_kind: Some("streamable_http".to_string()),
+            source: Some("oauth".to_string()),
+            field_group: Some("oauth".to_string()),
+            field_key: Some(field_key.to_string()),
+            field_index: None,
+            field_path: Some(format!("oauth.{field_key}")),
+        }
     }
 }

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;
 
@@ -137,15 +136,6 @@ pub fn has_manual_authorization_header(headers: &Option<HashMap<String, String>>
         .unwrap_or(false)
 }
 
-fn token_is_expired(token: &ServerOAuthToken) -> bool {
-    token
-        .expires_at
-        .as_ref()
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|expires_at| expires_at.with_timezone(&Utc) <= Utc::now())
-        .unwrap_or(false)
-}
-
 pub async fn get_effective_server_headers(
     pool: &Pool<Sqlite>,
     server_id: &str,
@@ -155,14 +145,12 @@ pub async fn get_effective_server_headers(
         return Ok(manual_headers.filter(|headers| !headers.is_empty()));
     }
 
-    let mut effective = manual_headers.unwrap_or_default();
-    if let Some(token) = get_server_oauth_token(pool, server_id).await? {
-        if !token_is_expired(&token) && !token.access_token.trim().is_empty() {
-            effective.insert(
-                "authorization".to_string(),
-                format!("Bearer {}", token.access_token.trim()),
-            );
-        }
+    let effective = manual_headers.unwrap_or_default();
+    if get_server_oauth_token(pool, server_id).await?.is_some() {
+        anyhow::bail!(
+            "OAuth secure token resolution requires OAuthManager with a Secure Store resolver for server '{}'",
+            server_id
+        );
     }
 
     if effective.is_empty() {
@@ -182,6 +170,7 @@ mod tests {
             server::{crud::upsert_server, init::initialize_server_tables},
         },
     };
+    use chrono::Utc;
 
     async fn setup_pool() -> sqlx::SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
