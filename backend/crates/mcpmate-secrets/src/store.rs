@@ -108,7 +108,13 @@ impl LocalSecretStore {
     ) -> Result<SecretMetadataView> {
         let reference = SecretReference::new(input.alias.clone()).context("invalid secret alias")?;
         let existing = self.get_secret_metadata(reference.alias()).await?;
-        let next_kind = input.kind.map(|kind| kind.to_string()).unwrap_or(existing.kind);
+        let next_kind = match input.kind {
+            Some(kind) if kind.as_str() != existing.kind => {
+                anyhow::bail!("Secret kind cannot be changed after creation");
+            }
+            Some(kind) => kind.to_string(),
+            None => existing.kind,
+        };
         let next_label = input.label.or(existing.label);
         let next_origin = input.origin.or(existing.origin);
         let update = database::SecretUpdate {
@@ -191,11 +197,7 @@ impl LocalSecretStore {
                 .then_with(|| a.location.parts().1.cmp(&b.location.parts().1))
                 .then_with(|| a.location.parts().2.cmp(&b.location.parts().2))
         });
-        usages.dedup_by(|a, b| {
-            a.alias == b.alias
-                && a.server_id == b.server_id
-                && a.location == b.location
-        });
+        usages.dedup_by(|a, b| a.alias == b.alias && a.server_id == b.server_id && a.location == b.location);
 
         for usage in usages {
             self.upsert_usage(usage).await?;
@@ -440,6 +442,60 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn update_secret_rejects_kind_changes() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        let store = LocalSecretStore::initialize_with_development_root_key(
+            db_pool,
+            temp_dir.path().join("secrets").join("local-root.key"),
+        )
+        .await
+        .expect("initialize store");
+
+        store
+            .create_secret(SecretCreateInput {
+                alias: "server/github/token".to_string(),
+                kind: SecretKindInput::Token,
+                value: "secret".to_string(),
+                label: None,
+                origin: None,
+            })
+            .await
+            .expect("create secret");
+
+        let error = store
+            .update_secret(SecretUpdateInput {
+                alias: "server/github/token".to_string(),
+                kind: Some(SecretKindInput::OAuthAccessToken),
+                value: None,
+                label: Some("GitHub token".to_string()),
+                origin: None,
+            })
+            .await
+            .expect_err("kind changes should be rejected");
+
+        assert!(error.to_string().contains("kind cannot be changed"));
+
+        let metadata = store
+            .update_secret(SecretUpdateInput {
+                alias: "server/github/token".to_string(),
+                kind: Some(SecretKindInput::Token),
+                value: None,
+                label: Some("GitHub token".to_string()),
+                origin: None,
+            })
+            .await
+            .expect("same-kind update should remain compatible");
+        assert_eq!(metadata.kind, "token");
+        assert_eq!(metadata.label.as_deref(), Some("GitHub token"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn create_secret_uses_per_record_envelope_keys() {
         let temp_dir = TempDir::new().expect("temp dir");
         let db_pool = SqlitePoolOptions::new()
@@ -531,10 +587,12 @@ mod tests {
             .expect("create beta");
 
         // Capture key material BEFORE rotation.
-        let before_rows = sqlx::query("SELECT alias, key_nonce, encrypted_key, encrypted_value FROM secure_store_secrets ORDER BY alias")
-            .fetch_all(&db_pool)
-            .await
-            .expect("load before rotation");
+        let before_rows = sqlx::query(
+            "SELECT alias, key_nonce, encrypted_key, encrypted_value FROM secure_store_secrets ORDER BY alias",
+        )
+        .fetch_all(&db_pool)
+        .await
+        .expect("load before rotation");
 
         // Rotate to provider B.
         let provider_b = Arc::new(DevelopmentRootKeyProvider::new(
@@ -543,10 +601,12 @@ mod tests {
         store.rotate_root_key(provider_b).await.expect("rotate root key");
 
         // Capture key material AFTER rotation.
-        let after_rows = sqlx::query("SELECT alias, key_nonce, encrypted_key, encrypted_value FROM secure_store_secrets ORDER BY alias")
-            .fetch_all(&db_pool)
-            .await
-            .expect("load after rotation");
+        let after_rows = sqlx::query(
+            "SELECT alias, key_nonce, encrypted_key, encrypted_value FROM secure_store_secrets ORDER BY alias",
+        )
+        .fetch_all(&db_pool)
+        .await
+        .expect("load after rotation");
 
         assert_eq!(before_rows.len(), after_rows.len());
 
@@ -561,7 +621,10 @@ mod tests {
 
             // Key wrapping changed.
             assert_ne!(before_key_nonce, after_key_nonce, "{alias}: key_nonce should change");
-            assert_ne!(before_encrypted_key, after_encrypted_key, "{alias}: encrypted_key should change");
+            assert_ne!(
+                before_encrypted_key, after_encrypted_key,
+                "{alias}: encrypted_key should change"
+            );
             // Encrypted value is unchanged (same data key, same plaintext).
             assert_eq!(before_value, after_value, "{alias}: encrypted_value should not change");
         }
