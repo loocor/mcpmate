@@ -45,6 +45,7 @@ import { onboardingApi } from "../../lib/onboarding-api";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
+	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
 import {
 	compactKeyValueFields,
@@ -1935,7 +1936,7 @@ export const ServerInstallWizard = forwardRef(
 											if (payload) await handleIngestPayload(payload);
 										} catch (error) {
 											setIngestError(
-												error instanceof Error ? error.message : String(error),
+												formatServerUniImportTransferError(error, t),
 											);
 											setIngestMessage(ingestMessages.defaultMessage);
 										}

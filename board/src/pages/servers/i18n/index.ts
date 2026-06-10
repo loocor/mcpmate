@@ -41,6 +41,12 @@ export const serversTranslations = {
 				message:
 					"Drop text, JSON snippets, URLs, or config files to use Uni-Import.",
 			},
+			importRejections: {
+				bundleDisabled: "MCPB and DXT bundle import is currently disabled.",
+				fileTooLarge: "Dropped file exceeds the {{maxMb}} MB import limit.",
+				textTooLarge: "Dropped text exceeds the {{maxMb}} MB import limit.",
+				tooManyFiles: "Drop up to {{maxFiles}} files at a time.",
+			},
 			importEmpty: {
 				title: "Nothing to import",
 				message:
@@ -923,6 +929,12 @@ export const serversTranslations = {
 				title: "不支持的内容",
 				message: "请拖放文本、JSON 片段、URL 或配置文件以使用 Uni-Import。",
 			},
+			importRejections: {
+				bundleDisabled: "MCPB 与 DXT 安装包导入目前已暂停。",
+				fileTooLarge: "拖入的文件超过 {{maxMb}} MB 导入限制。",
+				textTooLarge: "拖入的文本超过 {{maxMb}} MB 导入限制。",
+				tooManyFiles: "一次最多拖入 {{maxFiles}} 个文件。",
+			},
 			importEmpty: {
 				title: "没有可导入的内容",
 				message: "无法从拖放的内容中检测到可用的配置。",
@@ -1760,6 +1772,15 @@ export const serversTranslations = {
 				title: "サポートされていない内容",
 				message:
 					"Uni-Import を使うにはテキスト、JSON スニペット、URL、または設定ファイルをドロップしてください。",
+			},
+			importRejections: {
+				bundleDisabled:
+					"MCPB と DXT バンドルのインポートは現在無効です。",
+				fileTooLarge:
+					"ドロップされたファイルは {{maxMb}} MB のインポート上限を超えています。",
+				textTooLarge:
+					"ドロップされたテキストは {{maxMb}} MB のインポート上限を超えています。",
+				tooManyFiles: "一度にドロップできるファイルは {{maxFiles}} 個までです。",
 			},
 			importEmpty: {
 				title: "インポートできる内容がありません",

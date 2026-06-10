@@ -29,6 +29,7 @@ import { isTauriEnvironmentSync } from "../../lib/platform";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
+	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
 import type { SecretOrigin } from "../../lib/types";
 import {
@@ -746,7 +747,7 @@ export const ServerInstallManualForm = forwardRef<
 					await handleIngestPayload(payload);
 				}
 			} catch (error) {
-				setIngestError(error instanceof Error ? error.message : String(error));
+				setIngestError(formatServerUniImportTransferError(error, t));
 				setIngestMessage(ingestMessages.defaultMessage);
 			}
 		};

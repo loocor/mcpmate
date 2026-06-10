@@ -12,6 +12,7 @@ import { buildDraftServersImportRequest } from "../../lib/server-import-payload"
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
+	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
 import { formatNameList, summarizeSkipped } from "../../lib/server-import-utils";
 import { useAppStore } from "../../lib/store";
@@ -231,7 +232,11 @@ export function useOperatorServerImport({
 					t("servers:notifications.importUnsupported.title", {
 						defaultValue: "Unsupported content",
 					}),
-					error instanceof Error ? error.message : String(error),
+					formatServerUniImportTransferError(
+						error,
+						t,
+						"servers:notifications.importRejections",
+					),
 				);
 				return;
 			}

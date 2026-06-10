@@ -50,6 +50,7 @@ import { cn } from "../../lib/utils";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
+	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
 import type {
 	MCPServerConfig,
@@ -237,7 +238,7 @@ export function ServerListPage() {
 					t("notifications.importUnsupported.title", {
 						defaultValue: "Unsupported content",
 					}),
-					error instanceof Error ? error.message : String(error),
+					formatServerUniImportTransferError(error, t),
 				);
 				return;
 			}
