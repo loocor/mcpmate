@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use mcpmate_secrets::SecretResolver;
 
@@ -26,16 +27,7 @@ pub async fn preview_servers(
     // Process sequentially to avoid uncontrolled concurrency; can add a small semaphore later
     let mut items_out: Vec<ServerPreviewItemData> = Vec::with_capacity(req.servers.len());
     for item in req.servers {
-        items_out.push(
-            preview_one(
-                item,
-                timeout,
-                include_details,
-                db_pool.as_ref(),
-                secret_store.as_deref(),
-            )
-            .await,
-        );
+        items_out.push(preview_one(item, timeout, include_details, db_pool.as_ref(), secret_store.clone()).await);
     }
 
     Ok(Json(ServerPreviewResp::success(ServerPreviewData { items: items_out })))
@@ -46,7 +38,7 @@ async fn preview_one(
     timeout: Option<std::time::Duration>,
     include_details: bool,
     db_pool: Option<&sqlx::SqlitePool>,
-    secret_store: Option<&LocalSecretStore>,
+    secret_store: Option<Arc<LocalSecretStore>>,
 ) -> ServerPreviewItemData {
     // Map kind -> ServerType
     let kind = match crate::common::server::ServerType::from_client_format(item.kind.as_str()) {
@@ -56,11 +48,17 @@ async fn preview_one(
         }
     };
 
-    let effective_headers =
-        match resolve_preview_headers(item.headers.clone(), item.server_id.as_deref(), db_pool).await {
-            Ok(headers) => headers,
-            Err(e) => return empty_with_error(item.name, e.to_string()),
-        };
+    let effective_headers = match resolve_preview_headers(
+        item.headers.clone(),
+        item.server_id.as_deref(),
+        db_pool,
+        secret_store.clone(),
+    )
+    .await
+    {
+        Ok(headers) => headers,
+        Err(e) => return empty_with_error(item.name, e.to_string()),
+    };
 
     let raw_cfg = MCPServerConfig {
         kind,
@@ -71,7 +69,7 @@ async fn preview_one(
         headers: effective_headers,
     };
 
-    let secret_resolver = secret_store.map(|store| store as &dyn SecretResolver);
+    let secret_resolver = secret_store.as_deref().map(|store| store as &dyn SecretResolver);
     let cfg = match resolve_runtime_server_config_with_optional_resolver(&raw_cfg, secret_resolver) {
         Ok(resolved) => resolved,
         Err(err) => return empty_with_error(item.name, err.to_string()),
@@ -124,11 +122,11 @@ async fn resolve_preview_headers(
     item_headers: Option<HashMap<String, String>>,
     server_id: Option<&str>,
     db_pool: Option<&sqlx::SqlitePool>,
+    secret_store: Option<Arc<LocalSecretStore>>,
 ) -> anyhow::Result<Option<HashMap<String, String>>> {
     if let (Some(pool), Some(server_id)) = (db_pool, server_id) {
-        return crate::core::oauth::OAuthManager::new(pool.clone())
-            .get_effective_server_headers(server_id, item_headers)
-            .await;
+        let manager = crate::core::oauth::OAuthManager::new_optional_store(pool.clone(), secret_store);
+        return manager.get_effective_server_headers(server_id, item_headers).await;
     }
 
     Ok(item_headers)
@@ -281,7 +279,9 @@ mod tests {
         models::{ServerOAuthConfig, ServerOAuthToken},
         server::{init::initialize_server_tables, upsert_server_oauth_config, upsert_server_oauth_token},
     };
+    use crate::core::secrets::store::{SecretCreateInput, SecretKindInput, SecretOriginInput};
     use chrono::{Duration, Utc};
+    use tempfile::TempDir;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{body_string_contains, method, path},
@@ -299,6 +299,17 @@ mod tests {
             .expect("enable foreign keys");
         initialize_server_tables(&pool).await.expect("init server tables");
         pool
+    }
+
+    async fn setup_secret_store(pool: sqlx::SqlitePool) -> (Arc<LocalSecretStore>, TempDir) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let store = LocalSecretStore::initialize_with_development_root_key(
+            pool,
+            temp_dir.path().join("secrets").join("local-root.key"),
+        )
+        .await
+        .expect("initialize secret store");
+        (Arc::new(store), temp_dir)
     }
 
     async fn insert_http_server(
@@ -320,6 +331,7 @@ mod tests {
 
     async fn store_expired_oauth_token(
         pool: &sqlx::SqlitePool,
+        secret_store: &LocalSecretStore,
         server_id: &str,
         token_endpoint: String,
     ) {
@@ -340,13 +352,35 @@ mod tests {
         )
         .await
         .expect("save oauth config");
+        let access_token = secret_store
+            .create_secret(SecretCreateInput {
+                alias: format!("oauth/{server_id}/access-token"),
+                kind: SecretKindInput::OAuthAccessToken,
+                value: "access-old".to_string(),
+                label: Some(format!("OAuth access token for server-{server_id}")),
+                origin: Some(oauth_secret_origin(server_id, "access-token")),
+            })
+            .await
+            .expect("store access token")
+            .placeholder;
+        let refresh_token = secret_store
+            .create_secret(SecretCreateInput {
+                alias: format!("oauth/{server_id}/refresh-token"),
+                kind: SecretKindInput::OAuthRefreshToken,
+                value: "refresh-123".to_string(),
+                label: Some(format!("OAuth refresh token for server-{server_id}")),
+                origin: Some(oauth_secret_origin(server_id, "refresh-token")),
+            })
+            .await
+            .expect("store refresh token")
+            .placeholder;
         upsert_server_oauth_token(
             pool,
             &ServerOAuthToken {
                 id: None,
                 server_id: server_id.to_string(),
-                access_token: "access-old".to_string(),
-                refresh_token: Some("refresh-123".to_string()),
+                access_token,
+                refresh_token: Some(refresh_token),
                 token_type: "bearer".to_string(),
                 expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
                 scope: Some("read write".to_string()),
@@ -358,9 +392,26 @@ mod tests {
         .expect("store expired token");
     }
 
+    fn oauth_secret_origin(
+        server_id: &str,
+        field_key: &str,
+    ) -> SecretOriginInput {
+        SecretOriginInput {
+            server_id: Some(server_id.to_string()),
+            server_name: Some(format!("server-{server_id}")),
+            server_kind: Some("streamable_http".to_string()),
+            source: Some("oauth".to_string()),
+            field_group: Some("oauth".to_string()),
+            field_key: Some(field_key.to_string()),
+            field_index: None,
+            field_path: Some(format!("oauth.{field_key}")),
+        }
+    }
+
     #[tokio::test]
     async fn resolve_preview_headers_refreshes_expired_oauth_token() {
         let pool = setup_pool().await;
+        let (secret_store, _temp_dir) = setup_secret_store(pool.clone()).await;
         insert_http_server(&pool, "serv_preview_refresh").await;
         let mock_server = MockServer::start().await;
 
@@ -377,9 +428,15 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        store_expired_oauth_token(&pool, "serv_preview_refresh", format!("{}/token", mock_server.uri())).await;
+        store_expired_oauth_token(
+            &pool,
+            secret_store.as_ref(),
+            "serv_preview_refresh",
+            format!("{}/token", mock_server.uri()),
+        )
+        .await;
 
-        let headers = resolve_preview_headers(None, Some("serv_preview_refresh"), Some(&pool))
+        let headers = resolve_preview_headers(None, Some("serv_preview_refresh"), Some(&pool), Some(secret_store))
             .await
             .expect("resolve headers")
             .expect("headers");
@@ -410,7 +467,9 @@ mod tests {
             )])),
         };
 
-        let resolved = crate::core::secrets::resolve_runtime_server_config_with_optional_resolver(&raw, Some(&resolver)).expect("resolve preview config");
+        let resolved =
+            crate::core::secrets::resolve_runtime_server_config_with_optional_resolver(&raw, Some(&resolver))
+                .expect("resolve preview config");
 
         assert_eq!(
             resolved.url.as_deref(),
@@ -426,10 +485,12 @@ mod tests {
     #[tokio::test]
     async fn preview_reports_oauth_header_resolution_errors() {
         let pool = setup_pool().await;
+        let (secret_store, _temp_dir) = setup_secret_store(pool.clone()).await;
         insert_http_server(&pool, "serv_preview_error").await;
 
         store_expired_oauth_token(
             &pool,
+            secret_store.as_ref(),
             "serv_preview_error",
             "http://not-loopback.example.com/token".to_string(),
         )
@@ -451,7 +512,7 @@ mod tests {
             Some(std::time::Duration::from_millis(100)),
             false,
             Some(&pool),
-            None,
+            Some(secret_store),
         )
         .await;
 

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { SecretKind, SecretUsage } from "../../lib/types";
 import { writeClipboardText } from "../../lib/clipboard";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
+import { isUserCreatableSecretKind } from "../../lib/secret-origin-hints";
 import { Button } from "../ui/button";
 import {
 	Tooltip,
@@ -174,6 +175,25 @@ export function SecretEditorDrawer({
 	const activeEditor = editor ?? displayEditor;
 	if (!activeEditor && !open) return null;
 	const canDelete = activeEditor?.mode === "edit" && onDelete;
+	const activeKindLabel = activeEditor
+		? kindOptions.find((option) => option.value === activeEditor.kind)?.label ??
+			activeEditor.kind
+		: "";
+	const isOAuthSecret = activeEditor ? !isUserCreatableSecretKind(activeEditor.kind) : false;
+	const isActiveOAuthSecret = isOAuthSecret && (usedByCount ?? 0) > 0;
+	let valuePlaceholder = t("editor.placeholders.value", {
+		defaultValue: "Secret value",
+	});
+	if (activeEditor?.mode === "edit") {
+		valuePlaceholder = t("editor.placeholders.keepValue", {
+			defaultValue: "Leave blank to keep existing value",
+		});
+	}
+	if (isOAuthSecret) {
+		valuePlaceholder = t("editor.placeholders.oauthManagedValue", {
+			defaultValue: "Managed by OAuth; reconnect to update this value",
+		});
+	}
 	const copyPlaceholderLabel = t("editor.actions.copyPlaceholder", {
 		defaultValue: "Copy placeholder",
 	});
@@ -181,6 +201,21 @@ export function SecretEditorDrawer({
 		defaultValue:
 			"Copy the [[secret:alias]] placeholder to paste into server env, headers, or args.",
 	});
+	const kindLockedDescription = t("editor.kindLockedDescription", {
+		defaultValue: "Kind is set at creation and cannot be changed.",
+	});
+	const oauthManagedDescription = isActiveOAuthSecret
+		? t("editor.oauthManagedDescription", {
+			defaultValue:
+				"Managed by OAuth. Reconnect or revoke OAuth to update this credential.",
+		})
+		: t("editor.oauthOrphanedDescription", {
+			defaultValue:
+				"Orphaned OAuth credential. No active owner was found; delete it if it is no longer needed.",
+		});
+	const kindDescription = isOAuthSecret
+		? oauthManagedDescription
+		: kindLockedDescription;
 
 	const requestClose = () => setOpen(false);
 
@@ -272,23 +307,53 @@ export function SecretEditorDrawer({
 									label={t("editor.fields.kind", { defaultValue: "Kind" })}
 									htmlFor={kindId}
 								>
-									<Select
-										value={activeEditor.kind}
-										onValueChange={(kind) =>
-											onChange({ ...activeEditor, kind: kind as SecretKind })
-										}
-									>
-										<SelectTrigger id={kindId} className="h-9">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											{kindOptions.map((option) => (
-												<SelectItem key={option.value} value={option.value}>
-													{option.label}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+									<div className="space-y-1.5">
+										{activeEditor.mode === "create" ? (
+											<Select
+												value={activeEditor.kind}
+												onValueChange={(kind) =>
+													onChange({
+														...activeEditor,
+														kind: kind as SecretKind,
+													})
+												}
+											>
+												<SelectTrigger id={kindId} className="h-9">
+													<SelectValue />
+												</SelectTrigger>
+												<SelectContent>
+													{kindOptions.map((option) => (
+														<SelectItem
+															key={option.value}
+															value={option.value}
+														>
+															{option.label}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										) : (
+											<TooltipProvider delayDuration={200}>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<Input
+															id={kindId}
+															value={activeKindLabel}
+															readOnly
+															className="cursor-default bg-muted/50"
+														/>
+													</TooltipTrigger>
+													<TooltipContent
+														side="top"
+														align="start"
+														className="max-w-xs"
+													>
+														{kindDescription}
+													</TooltipContent>
+												</Tooltip>
+											</TooltipProvider>
+										)}
+									</div>
 								</SecretFormRow>
 								<SecretFormRow
 									label={t("editor.fields.label", { defaultValue: "Label" })}
@@ -313,18 +378,11 @@ export function SecretEditorDrawer({
 										id={valueId}
 										type="password"
 										value={activeEditor.value}
+										disabled={isOAuthSecret}
 										onChange={(event) =>
 											onChange({ ...activeEditor, value: event.target.value })
 										}
-										placeholder={
-											activeEditor.mode === "edit"
-												? t("editor.placeholders.keepValue", {
-													defaultValue: "Leave blank to keep existing value",
-												})
-												: t("editor.placeholders.value", {
-													defaultValue: "Secret value",
-												})
-										}
+										placeholder={valuePlaceholder}
 									/>
 								</SecretFormRow>
 							</TabsContent>

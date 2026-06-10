@@ -1321,6 +1321,9 @@ export function ServerDetailPage() {
 																		<ServerAuthBadge
 																			authMode={server.auth_mode}
 																			oauthStatus={server.oauth_status}
+																			oauthCustodyState={server.oauth_custody_state}
+																			oauthRequiresReconnect={server.oauth_requires_reconnect}
+																			oauthIssue={server.oauth_issue}
 																		/>
 																		<Button
 																			variant="ghost"

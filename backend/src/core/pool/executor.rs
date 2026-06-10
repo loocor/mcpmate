@@ -1041,7 +1041,7 @@ impl UpstreamConnectionPool {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
-        let config = crate::core::foundation::loader::load_pool_base_config(db).await?;
+        let config = crate::core::foundation::loader::load_pool_base_config(db, self.secret_store.clone()).await?;
 
         let Some(_server_config) = config.mcp_servers.get(server_id) else {
             return Err(anyhow::anyhow!(

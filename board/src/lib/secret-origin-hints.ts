@@ -1,6 +1,7 @@
 import type { SecretKind, SecretOrigin } from "./types";
 
 export const OAUTH_SECRET_KINDS: SecretKind[] = [
+	"oauth_client_secret",
 	"oauth_access_token",
 	"oauth_refresh_token",
 ];

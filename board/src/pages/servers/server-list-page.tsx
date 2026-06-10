@@ -17,7 +17,11 @@ import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ErrorDisplay } from "../../components/error-display";
 import { ListGridContainer } from "../../components/list-grid-container";
-import { EmptyState, PageLayout } from "../../components/page-layout";
+import {
+	EmptyState,
+	FullHeightEmptyStateCard,
+	PageLayout,
+} from "../../components/page-layout";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { ServerAuthBadge } from "../../components/server-auth-badge";
 import { ServerInstallWizard, type ServerInstallManualFormHandle } from "../../components/server-install";
@@ -733,6 +737,9 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 						<ServerAuthBadge
 							authMode={server.auth_mode}
 							oauthStatus={server.oauth_status}
+							oauthCustodyState={server.oauth_custody_state}
+							oauthRequiresReconnect={server.oauth_requires_reconnect}
+							oauthIssue={server.oauth_issue}
 						/>
 					</div>
 				}
@@ -868,6 +875,9 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 						<ServerAuthBadge
 							authMode={server.auth_mode}
 							oauthStatus={server.oauth_status}
+							oauthCustodyState={server.oauth_custody_state}
+							oauthRequiresReconnect={server.oauth_requires_reconnect}
+							oauthIssue={server.oauth_issue}
 							showLabel={false}
 						/>
 					</div>
@@ -1152,27 +1162,24 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 	) : undefined;
 
 	const emptyState = (
-		<div className="flex h-full min-h-[20rem]">
-			<Card className="flex flex-1">
-				<CardContent
-					className="flex flex-1 flex-col items-center justify-center p-6"
-					onDragEnter={handleEmptyAddDragEnter}
-					onDragOver={handleEmptyAddDragOver}
-					onDragLeave={handleEmptyAddDragLeave}
-					onDrop={handleEmptyAddDrop}
-					onDragEnd={handleEmptyAddDragEnd}
-				>
-					<EmptyState
-						icon={<Server className="h-12 w-12" />}
-						title={t("emptyState.title", { defaultValue: "No servers found" })}
-						description={t("emptyState.description", {
-							defaultValue: "Add your first MCP server to get started",
-						})}
-						action={emptyStateAction}
-					/>
-				</CardContent>
-			</Card>
-		</div>
+		<FullHeightEmptyStateCard
+			contentProps={{
+				onDragEnter: handleEmptyAddDragEnter,
+				onDragOver: handleEmptyAddDragOver,
+				onDragLeave: handleEmptyAddDragLeave,
+				onDrop: handleEmptyAddDrop,
+				onDragEnd: handleEmptyAddDragEnd,
+			}}
+		>
+			<EmptyState
+				icon={<Server className="h-12 w-12" />}
+				title={t("emptyState.title", { defaultValue: "No servers found" })}
+				description={t("emptyState.description", {
+					defaultValue: "Add your first MCP server to get started",
+				})}
+				action={emptyStateAction}
+			/>
+		</FullHeightEmptyStateCard>
 	);
 
 	return (

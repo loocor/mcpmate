@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import {
 	Card,
 	CardContent,
@@ -6,6 +6,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "./ui/card";
+import { cn } from "../lib/utils";
 
 export interface PageLayoutProps {
     title: string;
@@ -95,6 +96,34 @@ export function EmptyState({
 			<p className="text-slate-500 mb-2">{title}</p>
 			<p className="text-sm text-slate-400 mb-4">{description}</p>
 			{action}
+		</div>
+	);
+}
+
+export interface FullHeightEmptyStateCardProps {
+	children: ReactNode;
+	contentProps?: HTMLAttributes<HTMLDivElement>;
+}
+
+export function FullHeightEmptyStateCard({
+	children,
+	contentProps,
+}: FullHeightEmptyStateCardProps) {
+	const { className, ...restContentProps } = contentProps ?? {};
+
+	return (
+		<div className="flex h-full min-h-[20rem]">
+			<Card className="flex flex-1">
+				<CardContent
+					{...restContentProps}
+					className={cn(
+						"flex flex-1 flex-col items-center justify-center p-6",
+						className,
+					)}
+				>
+					{children}
+				</CardContent>
+			</Card>
 		</div>
 	);
 }

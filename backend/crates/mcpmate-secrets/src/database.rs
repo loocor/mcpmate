@@ -471,7 +471,7 @@ pub(crate) async fn upsert_usage(
             id, alias, server_id, location_kind, location_name, location_index
         )
         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-        ON CONFLICT(alias, server_id, location_kind, location_name, location_index)
+        ON CONFLICT(id)
         DO UPDATE SET updated_at = CURRENT_TIMESTAMP
         "#,
     )

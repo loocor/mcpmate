@@ -4,7 +4,7 @@ use mcpmate_secrets::{
     SecretError, SecretResolver, UnavailableSecretResolver, extract_secret_references, resolve_placeholders,
 };
 
-use crate::core::models::MCPServerConfig;
+use crate::{config::server, core::models::MCPServerConfig};
 use store::{LocalSecretStore, SecretUsageLocationInput, SecretUsageUpsertInput, SecretUsageView};
 
 pub mod store;
@@ -234,10 +234,16 @@ pub async fn load_mcp_server_config(
 
 /// Scan persisted server configs for secret placeholder references.
 ///
-/// This is the source of truth for active usage counts. The `secure_store_usages`
-/// index can lag behind config when sync did not run (imports, legacy data, etc.).
+/// This is the source of truth for config-owned active usage counts. The
+/// `secure_store_usages` index can lag behind config when sync did not run
+/// (imports, legacy data, etc.).
 pub async fn discover_config_usages(pool: &sqlx::SqlitePool) -> anyhow::Result<Vec<SecretUsageView>> {
     discover_config_usages_filtered(pool, None).await
+}
+
+/// Scan all owner records that can actively hold secret placeholders.
+pub async fn discover_active_secret_usages(pool: &sqlx::SqlitePool) -> anyhow::Result<Vec<SecretUsageView>> {
+    discover_active_secret_usages_filtered(pool, None).await
 }
 
 pub async fn discover_config_usages_for_alias(
@@ -245,6 +251,23 @@ pub async fn discover_config_usages_for_alias(
     alias: &str,
 ) -> anyhow::Result<Vec<SecretUsageView>> {
     discover_config_usages_filtered(pool, Some(alias)).await
+}
+
+pub async fn discover_active_secret_usages_for_alias(
+    pool: &sqlx::SqlitePool,
+    alias: &str,
+) -> anyhow::Result<Vec<SecretUsageView>> {
+    discover_active_secret_usages_filtered(pool, Some(alias)).await
+}
+
+async fn discover_active_secret_usages_filtered(
+    pool: &sqlx::SqlitePool,
+    alias_filter: Option<&str>,
+) -> anyhow::Result<Vec<SecretUsageView>> {
+    let mut usages = discover_config_usages_filtered(pool, alias_filter).await?;
+    usages.extend(discover_oauth_usages_filtered(pool, alias_filter).await?);
+    dedup_secret_usage_views(&mut usages);
+    Ok(usages)
 }
 
 async fn discover_config_usages_filtered(
@@ -268,6 +291,59 @@ async fn discover_config_usages_filtered(
         }
     }
     Ok(usages)
+}
+
+async fn discover_oauth_usages_filtered(
+    pool: &sqlx::SqlitePool,
+    alias_filter: Option<&str>,
+) -> anyhow::Result<Vec<SecretUsageView>> {
+    use crate::config::server::get_all_servers;
+
+    let servers = get_all_servers(pool).await?;
+    let mut usages = Vec::new();
+    for server_model in servers {
+        let Some(server_id) = server_model.id else {
+            continue;
+        };
+
+        if let Some(config) = server::get_server_oauth_config(pool, &server_id).await? {
+            if let Some(client_secret) = config.client_secret.as_deref() {
+                push_oauth_usages_from_value(&mut usages, alias_filter, &server_id, client_secret)?;
+            }
+        }
+
+        if let Some(token) = server::get_server_oauth_token(pool, &server_id).await? {
+            push_oauth_usages_from_value(&mut usages, alias_filter, &server_id, &token.access_token)?;
+            if let Some(refresh_token) = token.refresh_token.as_deref() {
+                push_oauth_usages_from_value(&mut usages, alias_filter, &server_id, refresh_token)?;
+            }
+        }
+    }
+    Ok(usages)
+}
+
+fn push_oauth_usages_from_value(
+    usages: &mut Vec<SecretUsageView>,
+    alias_filter: Option<&str>,
+    server_id: &str,
+    value: &str,
+) -> anyhow::Result<()> {
+    for reference in extract_secret_references(value)? {
+        if alias_filter.is_some_and(|alias| reference.alias() != alias) {
+            continue;
+        }
+        usages.push(SecretUsageView {
+            alias: reference.alias().to_string(),
+            server_id: server_id.to_string(),
+            location: SecretUsageLocationInput::OAuthToken,
+        });
+    }
+    Ok(())
+}
+
+fn dedup_secret_usage_views(usages: &mut Vec<SecretUsageView>) {
+    let mut seen = HashSet::new();
+    usages.retain(|usage| seen.insert((usage.alias.clone(), usage.server_id.clone(), usage.location.clone())));
 }
 
 #[cfg(test)]

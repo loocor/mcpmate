@@ -638,6 +638,7 @@ export const serversTranslations = {
 						notConfigured: "Not configured",
 					},
 					statusLabel: "OAuth status",
+					secureStoreStored: "OAuth credentials are stored in Secure Store",
 					manualOverride: {
 						title: "Manual Authorization header is active",
 						description:
@@ -1511,6 +1512,7 @@ export const serversTranslations = {
 						notConfigured: "未配置",
 					},
 					statusLabel: "OAuth 状态",
+					secureStoreStored: "OAuth 凭据已存入安全存储",
 					manualOverride: {
 						title: "手动 Authorization 请求头已生效",
 						description:
@@ -2374,6 +2376,7 @@ export const serversTranslations = {
 						notConfigured: "未設定",
 					},
 					statusLabel: "OAuth の状態",
+					secureStoreStored: "OAuth 認証情報は Secure Store に保存されています",
 					manualOverride: {
 						title: "手動の Authorization ヘッダーが有効です",
 						description:

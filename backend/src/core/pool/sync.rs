@@ -13,6 +13,7 @@ use tracing;
 use super::UpstreamConnectionPool;
 use crate::config::database::Database;
 use crate::core::models::Config;
+use crate::core::secrets::store::LocalSecretStore;
 
 /// Manager for synchronizing server configurations and states
 ///
@@ -53,7 +54,7 @@ impl ServerSyncManager {
     ) -> Result<()> {
         tracing::debug!("Starting server synchronization from active profile");
 
-        let config = self.load_pool_base_configuration().await?;
+        let config = self.load_pool_base_configuration(pool.secret_store.clone()).await?;
 
         // Step 2: Update connection pool configuration
         pool.set_config(Arc::new(config))?;
@@ -68,11 +69,13 @@ impl ServerSyncManager {
         Ok(())
     }
 
-    async fn load_pool_base_configuration(&self) -> Result<Config> {
+    async fn load_pool_base_configuration(
+        &self,
+        secret_store: Option<Arc<LocalSecretStore>>,
+    ) -> Result<Config> {
         tracing::debug!("Loading server configuration from globally enabled pool base source");
 
-        let config = crate::core::foundation::loader::load_pool_base_config(&self.database)
-            .await
+        let config = crate::core::foundation::loader::load_pool_base_config(&self.database, secret_store).await
             .context("Failed to load pool base configuration")?;
 
         tracing::debug!("Loaded configuration with {} servers", config.mcp_servers.len());

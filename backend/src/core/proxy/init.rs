@@ -210,8 +210,12 @@ pub async fn setup_proxy_server_with_params(
     audit_db: Option<AuditDatabase>,
     startup_mode: &StartupMode,
 ) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
+    let data_dir = db.path.parent().unwrap_or(std::path::Path::new("."));
+    let secret_store_bootstrap = crate::core::secrets::store::bootstrap_secret_store(db.pool.clone(), data_dir).await;
+    let startup_secret_store = secret_store_bootstrap.store.map(Arc::new);
+
     // Load configuration from database using core loader with startup parameters
-    let config = loader::load_pool_base_config_with_params(&db, startup_mode).await?;
+    let config = loader::load_pool_base_config_with_params(&db, startup_mode, startup_secret_store.clone()).await?;
 
     tracing::info!(
         "Loaded configuration from database with startup mode: {:?}",
@@ -224,6 +228,9 @@ pub async fn setup_proxy_server_with_params(
 
     // Create proxy server using core implementation
     let mut proxy = ProxyServer::new(Arc::new(config));
+    if let Some(secret_store) = startup_secret_store {
+        proxy.connection_pool.lock().await.set_secret_resolver(secret_store);
+    }
 
     // Use the existing database connection
     proxy.set_database(db).await?;

@@ -343,6 +343,15 @@ pub struct ServerDetailsData {
     /// OAuth connection state
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_status: Option<crate::core::oauth::types::OAuthConnectionState>,
+    /// OAuth credential custody state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_custody_state: Option<crate::core::oauth::types::OAuthCustodyState>,
+    /// Whether the OAuth authorization needs a reconnect to restore secure custody
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_requires_reconnect: Option<bool>,
+    /// OAuth custody or readiness issue surfaced by backend status checks
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_issue: Option<crate::core::oauth::types::OAuthStatusIssue>,
 }
 
 /// Repository information compatible with the MCP registry schema

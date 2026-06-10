@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, ChevronDown, Link2, Loader2, Unplug } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Link2, Loader2, ShieldCheck, Unplug } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { notifyError, notifySuccess } from "../../lib/notify";
@@ -7,7 +7,8 @@ import {
 	bindDesktopOAuthCallback,
 	getOAuthRedirectUriForForm,
 } from "../../lib/oauth-callback-access";
-import { serversApi } from "../../lib/api";
+import { secretsApi, serversApi } from "../../lib/api";
+import { resolveOAuthReadiness } from "../../lib/oauth-readiness";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import type {
 	OAuthCallbackNotificationPayload,
@@ -19,6 +20,12 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Segment } from "../ui/segment";
 import { Label } from "../ui/label";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "../ui/tooltip";
 
 type OAuthProgressState = "idle" | "preparing" | "awaiting_callback" | "connected" | "error";
 
@@ -238,6 +245,12 @@ export function ServerAuthSection({
 		refetchOnWindowFocus: progressState === "awaiting_callback",
 		retry: false,
 	});
+	const secretStoreStatusQ = useQuery({
+		queryKey: ["secrets", "status"],
+		queryFn: secretsApi.status,
+		enabled: !isStdio,
+		retry: false,
+	});
 
 	useEffect(() => {
 		if (!serverId || progressState !== "awaiting_callback") {
@@ -380,6 +393,10 @@ export function ServerAuthSection({
 		configured: false,
 		state: "not_configured",
 	} satisfies OAuthStatus;
+	const oauthReadiness = resolveOAuthReadiness({
+		secretStoreStatus: secretStoreStatusQ.data,
+		oauthStatus: status,
+	});
 
 	const stateLabel = (() => {
 		switch (status.state) {
@@ -393,6 +410,11 @@ export function ServerAuthSection({
 				return t("manual.auth.oauth.state.notConfigured", { defaultValue: "Not configured" });
 		}
 	})();
+	const isSecureOAuthCustody =
+		status.state === "connected" && status.custody_state === "secure";
+	const secureOAuthCustodyLabel = t("manual.auth.oauth.secureStoreStored", {
+		defaultValue: "OAuth credentials are stored in Secure Store",
+	});
 
 	const progressItems = [
 		{
@@ -462,7 +484,8 @@ export function ServerAuthSection({
 	}
 
 	const isBusy = connectMutation.isPending || revokeMutation.isPending;
-	const isConnectDisabled = isBusy || (isDesktopEnvironment && !desktopListenerReady);
+	const isConnectDisabled = isBusy || oauthReadiness.actionDisabled || (isDesktopEnvironment && !desktopListenerReady);
+	const isRevokeDisabled = isBusy || oauthReadiness.actionDisabled;
 
 	return (
 		<div className="space-y-4 pt-2 border-t mt-4">
@@ -495,7 +518,26 @@ export function ServerAuthSection({
 							</span>
 						)}
 						<div className="flex items-center gap-2">
-							<Badge variant={statusVariant(status.state)}>{stateLabel}</Badge>
+							{isSecureOAuthCustody ? (
+								<TooltipProvider delayDuration={200}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+												<ShieldCheck
+													className="h-3.5 w-3.5"
+													aria-hidden="true"
+												/>
+												{stateLabel}
+											</span>
+										</TooltipTrigger>
+										<TooltipContent side="top">
+											{secureOAuthCustodyLabel}
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
+							) : (
+								<Badge variant={statusVariant(status.state)}>{stateLabel}</Badge>
+							)}
 							<Button
 								type="button"
 								variant="outline"
@@ -523,6 +565,22 @@ export function ServerAuthSection({
 											defaultValue: "This server already has an Authorization header in its transport settings, which will take precedence over the stored OAuth token."
 										})}
 									</div>
+								</div>
+							</div>
+						</div>
+					) : null}
+
+					{oauthReadiness.notice ? (
+						<div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+							<div className="flex items-start gap-2">
+								<AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+								<div>
+									<div className="font-medium">
+										{oauthReadiness.notice.kind === "secure-store-unavailable"
+											? t("manual.auth.oauth.secureStoreUnavailable.title", { defaultValue: "Secure Store needs attention" })
+											: t("manual.auth.oauth.legacyReconnect.title", { defaultValue: "Reconnect OAuth to secure credentials" })}
+									</div>
+									<div>{oauthReadiness.notice.message}</div>
 								</div>
 							</div>
 						</div>
@@ -562,7 +620,7 @@ export function ServerAuthSection({
 								variant="outline"
 								size="sm"
 								onClick={() => revokeMutation.mutate()}
-								disabled={isBusy}
+								disabled={isRevokeDisabled}
 							>
 								<Unplug className="mr-2 h-3 w-3" />
 								{t("manual.auth.oauth.actions.revoke", { defaultValue: "Revoke token" })}

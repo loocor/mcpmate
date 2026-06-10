@@ -6,6 +6,7 @@ pub enum SecretKind {
     Token,
     ApiKey,
     Password,
+    OAuthClientSecret,
     OAuthAccessToken,
     OAuthRefreshToken,
     UrlCredential,

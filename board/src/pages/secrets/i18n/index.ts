@@ -27,6 +27,7 @@ export const secretsTranslations = {
 			token: "Token",
 			api_key: "API key",
 			password: "Password",
+			oauth_client_secret: "OAuth client",
 			oauth_access_token: "OAuth access",
 			oauth_refresh_token: "OAuth refresh",
 			url_credential: "URL credential",
@@ -75,10 +76,17 @@ export const secretsTranslations = {
 				label: "Label",
 				value: "Value",
 			},
+			kindLockedDescription: "Kind is set at creation and cannot be changed.",
+			oauthManagedDescription:
+				"Managed by OAuth. Reconnect or revoke OAuth to update this credential.",
+			oauthOrphanedDescription:
+				"Orphaned OAuth credential. No active owner was found; delete it if it is no longer needed.",
 			placeholders: {
 				alias: "server-context7-url-parameters-token",
 				label: "context7 · URL parameter · token",
 				keepValue: "Leave blank to keep existing value",
+				oauthManagedValue:
+					"Managed by OAuth; reconnect to update this value",
 				value: "Secret value",
 			},
 			actions: {
@@ -125,7 +133,7 @@ export const secretsTranslations = {
 		delete: {
 			title: "Delete secret?",
 			description:
-				"This removes the encrypted value only when no server usage is recorded.",
+				"This removes the encrypted value only when no active usage is recorded.",
 			actions: {
 				cancel: "Cancel",
 				confirm: "Delete",
@@ -215,6 +223,7 @@ export const secretsTranslations = {
 			token: "令牌",
 			api_key: "API Key",
 			password: "密码",
+			oauth_client_secret: "OAuth client",
 			oauth_access_token: "OAuth access",
 			oauth_refresh_token: "OAuth refresh",
 			url_credential: "URL 凭据",
@@ -261,10 +270,16 @@ export const secretsTranslations = {
 				label: "标签",
 				value: "值",
 			},
+			kindLockedDescription: "类型在创建时确定，之后不能修改。",
+			oauthManagedDescription:
+				"由 OAuth 自动维护。请通过重新连接或撤销 OAuth 来更新这条凭据。",
+			oauthOrphanedDescription:
+				"孤立的 OAuth 凭据。当前没有找到活跃归属；如果不再需要，可以删除。",
 			placeholders: {
 				alias: "server-context7-url-parameters-token",
 				label: "context7 · URL 参数 · token",
 				keepValue: "留空以保留当前值",
+				oauthManagedValue: "由 OAuth 自动维护；请重新连接以更新此值",
 				value: "安全值",
 			},
 			actions: {
@@ -308,7 +323,7 @@ export const secretsTranslations = {
 		},
 		delete: {
 			title: "删除安全记录？",
-			description: "仅当没有服务器使用记录时，才会移除加密值。",
+			description: "仅当没有活跃使用记录时，才会移除加密值。",
 			actions: {
 				cancel: "取消",
 				confirm: "删除",
@@ -396,6 +411,7 @@ export const secretsTranslations = {
 			token: "トークン",
 			api_key: "API キー",
 			password: "パスワード",
+			oauth_client_secret: "OAuth client",
 			oauth_access_token: "OAuth access",
 			oauth_refresh_token: "OAuth refresh",
 			url_credential: "URL 認証情報",
@@ -443,10 +459,17 @@ export const secretsTranslations = {
 				label: "ラベル",
 				value: "値",
 			},
+			kindLockedDescription: "種別は作成時に設定され、後から変更できません。",
+			oauthManagedDescription:
+				"OAuth によって管理されています。この認証情報を更新するには再接続または OAuth の取り消しを行ってください。",
+			oauthOrphanedDescription:
+				"孤立した OAuth 認証情報です。有効な所有元が見つかりません。不要であれば削除できます。",
 			placeholders: {
 				alias: "server-context7-url-parameters-token",
 				label: "context7 · URL パラメータ · token",
 				keepValue: "空欄のままにすると既存値を維持します",
+				oauthManagedValue:
+					"OAuth によって管理されています。更新するには再接続してください",
 				value: "シークレット値",
 			},
 			actions: {
@@ -492,7 +515,7 @@ export const secretsTranslations = {
 		delete: {
 			title: "シークレットを削除しますか？",
 			description:
-				"サーバー使用記録がない場合のみ、暗号化された値を削除します。",
+				"アクティブな使用記録がない場合のみ、暗号化された値を削除します。",
 			actions: {
 				cancel: "キャンセル",
 				confirm: "削除",

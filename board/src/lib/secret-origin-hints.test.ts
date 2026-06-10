@@ -111,6 +111,7 @@ describe("inferSecretDefaultsFromOrigin", () => {
 describe("kindOptionsForEditor", () => {
 	const allOptions = [
 		{ value: "token" as const, label: "Token" },
+		{ value: "oauth_client_secret" as const, label: "OAuth client" },
 		{ value: "oauth_access_token" as const, label: "OAuth access" },
 	];
 
@@ -124,7 +125,7 @@ describe("kindOptionsForEditor", () => {
 		expect(
 			kindOptionsForEditor(allOptions, {
 				mode: "edit",
-				kind: "oauth_access_token",
+				kind: "oauth_client_secret",
 			}),
 		).toEqual(allOptions);
 	});
@@ -132,9 +133,11 @@ describe("kindOptionsForEditor", () => {
 
 describe("USER_CREATABLE_SECRET_KINDS", () => {
 	it("excludes oauth kinds", () => {
+		expect(USER_CREATABLE_SECRET_KINDS).not.toContain("oauth_client_secret");
 		expect(USER_CREATABLE_SECRET_KINDS).not.toContain("oauth_access_token");
 		expect(USER_CREATABLE_SECRET_KINDS).not.toContain("oauth_refresh_token");
 		expect(isUserCreatableSecretKind("token")).toBe(true);
+		expect(isUserCreatableSecretKind("oauth_client_secret")).toBe(false);
 		expect(isUserCreatableSecretKind("oauth_access_token")).toBe(false);
 	});
 });

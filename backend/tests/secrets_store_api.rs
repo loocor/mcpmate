@@ -116,9 +116,7 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
     (temp_dir, state, secret_store)
 }
 
-async fn build_passphrase_test_context(
-    master_password: &str,
-) -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>) {
+async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>) {
     let temp_dir = TempDir::new().expect("temp dir");
     let db_pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -138,19 +136,13 @@ async fn build_passphrase_test_context(
     });
     let secrets_dir = temp_dir.path().join("secrets");
     let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
-    let root_key_provider = Arc::new(PassphraseRootKeyProvider::new(
-        passphrase_path,
-        master_password,
-    ));
+    let root_key_provider = Arc::new(PassphraseRootKeyProvider::new(passphrase_path, master_password));
     let secret_store = Arc::new(
         LocalSecretStore::initialize_with_root_key_provider(db_pool.clone(), root_key_provider)
             .await
             .expect("initialize passphrase secret store"),
     );
-    assert_eq!(
-        secret_store.provider_metadata().mode(),
-        RootKeyProviderMode::Passphrase
-    );
+    assert_eq!(secret_store.provider_metadata().mode(), RootKeyProviderMode::Passphrase);
 
     let redb_cache =
         Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
@@ -207,7 +199,9 @@ fn build_unavailable_secret_store_state(temp_dir: &TempDir) -> Arc<AppState> {
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
         oauth_manager: None,
         secret_store: RwLock::new(None),
-        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness("database_unavailable")),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness(
+            "database_unavailable",
+        )),
     })
 }
 
@@ -371,6 +365,122 @@ async fn secrets_api_never_returns_plaintext_values() {
     let detail_body = read_json_response(detail_response).await;
     assert_eq!(detail_body["data"]["alias"], "server/http/header");
     assert!(!detail_body.to_string().contains("Bearer secret-token"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn secrets_api_rejects_user_managed_oauth_secrets() {
+    let _key = EnvVarGuard::set(
+        "MCPMATE_SECRETS_LOCAL_KEY",
+        "MCPMate test key material for local store oauth01",
+    );
+    let (_temp_dir, state, store) = build_test_context().await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/create")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "alias": "oauth/server-1/access-token",
+                        "kind": "oauth_access_token",
+                        "label": "OAuth access token",
+                        "value": "access-token"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("create response");
+    assert_eq!(create_response.status(), StatusCode::BAD_REQUEST);
+
+    let create_client_secret_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/create")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "alias": "oauth/server-1/client-secret",
+                        "kind": "oauth_client_secret",
+                        "label": "OAuth client secret",
+                        "value": "client-secret"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("create client secret response");
+    assert_eq!(create_client_secret_response.status(), StatusCode::BAD_REQUEST);
+
+    store
+        .create_secret(SecretCreateInput {
+            alias: "oauth/server-1/refresh-token".to_string(),
+            kind: SecretKindInput::OAuthRefreshToken,
+            value: "refresh-token".to_string(),
+            label: Some("OAuth refresh token".to_string()),
+            origin: None,
+        })
+        .await
+        .expect("create oauth secret");
+
+    let update_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/update")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "alias": "oauth/server-1/refresh-token",
+                        "value": "manual-refresh-token"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("update response");
+    assert_eq!(update_response.status(), StatusCode::BAD_REQUEST);
+
+    store
+        .create_secret(SecretCreateInput {
+            alias: "oauth/server-1/client-secret".to_string(),
+            kind: SecretKindInput::OAuthClientSecret,
+            value: "client-secret".to_string(),
+            label: Some("OAuth client secret".to_string()),
+            origin: None,
+        })
+        .await
+        .expect("create oauth client secret");
+
+    let update_client_secret_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/update")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "alias": "oauth/server-1/client-secret",
+                        "value": "manual-client-secret"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("update client secret response");
+    assert_eq!(update_client_secret_response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -541,10 +651,7 @@ async fn usage_sync_deduplicates_same_placeholder_twice_in_one_value() {
         .await
         .expect("sync must succeed even with duplicate placeholders in one value");
 
-    let usages = store
-        .list_usages("server/http/auth")
-        .await
-        .expect("list usages");
+    let usages = store.list_usages("server/http/auth").await.expect("list usages");
 
     // Only one usage record should exist despite the placeholder appearing twice.
     assert_eq!(
@@ -654,9 +761,7 @@ async fn provider_switch_from_passphrase_to_local_file_succeeds_with_current_pas
     assert_eq!(body["data"]["new_status"]["provider"]["provider_mode"], "local_file");
 }
 
-async fn build_locked_passphrase_context(
-    master_password: &str,
-) -> (TempDir, Arc<AppState>) {
+async fn build_locked_passphrase_context(master_password: &str) -> (TempDir, Arc<AppState>) {
     let temp_dir = TempDir::new().expect("temp dir");
     let db_pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -688,8 +793,7 @@ async fn build_locked_passphrase_context(
         .await
         .expect("persist provider mode");
 
-    let bootstrap =
-        mcpmate::core::secrets::store::bootstrap_secret_store(db_pool.clone(), data_dir).await;
+    let bootstrap = mcpmate::core::secrets::store::bootstrap_secret_store(db_pool.clone(), data_dir).await;
     let bootstrap_readiness = bootstrap.readiness.clone();
     match &bootstrap_readiness {
         mcpmate::core::secrets::store::SecretStoreReadiness::Unavailable { reason_code, .. } => {
@@ -848,8 +952,7 @@ async fn provider_mode_persists_across_restart_simulation() {
         .await
         .expect("initialize secret store"),
     );
-    let store_readiness =
-        mcpmate::core::secrets::store::SecretStoreReadiness::ready(secret_store.provider_metadata());
+    let store_readiness = mcpmate::core::secrets::store::SecretStoreReadiness::ready(secret_store.provider_metadata());
     let redb_cache =
         Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
@@ -901,8 +1004,7 @@ async fn provider_mode_persists_across_restart_simulation() {
         .expect("provider config row");
     assert_eq!(persisted.provider_mode, "passphrase");
 
-    let restart_bootstrap =
-        mcpmate::core::secrets::store::bootstrap_secret_store(db_pool, temp_dir.path()).await;
+    let restart_bootstrap = mcpmate::core::secrets::store::bootstrap_secret_store(db_pool, temp_dir.path()).await;
     match restart_bootstrap.readiness {
         mcpmate::core::secrets::store::SecretStoreReadiness::Unavailable { reason_code, .. } => {
             assert_eq!(reason_code, "passphrase_unlock_required");
