@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
+use mcpmate_secrets::{SecretResolver, parse_placeholder};
 use reqwest::Url;
 use reqwest::header::WWW_AUTHENTICATE;
 use serde::Deserialize;
@@ -13,8 +14,15 @@ use crate::config::{
     models::{ServerOAuthConfig, ServerOAuthToken},
     server,
 };
+use crate::core::secrets::store::{
+    LocalSecretStore, SecretCreateInput, SecretKindInput, SecretOriginInput, SecretUpdateInput,
+    SecretUsageLocationInput, SecretUsageUpsertInput,
+};
 
-use super::types::{OAuthConfigInput, OAuthConnectionState, OAuthInitiateResult, OAuthPrepareInput, OAuthStatus};
+use super::types::{
+    OAuthConfigInput, OAuthConnectionState, OAuthCustodyState, OAuthInitiateResult, OAuthPrepareInput, OAuthStatus,
+    OAuthStatusIssue,
+};
 
 #[derive(Debug, Clone)]
 struct PendingOAuthFlow {
@@ -55,20 +63,301 @@ struct DynamicClientRegistrationResponse {
 
 const OAUTH_TOKEN_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+#[derive(Clone, Copy)]
+enum OAuthSecretSlot {
+    ClientSecret,
+    AccessToken,
+    RefreshToken,
+}
+
+impl OAuthSecretSlot {
+    fn key(self) -> &'static str {
+        match self {
+            Self::ClientSecret => "client-secret",
+            Self::AccessToken => "access-token",
+            Self::RefreshToken => "refresh-token",
+        }
+    }
+
+    fn kind(self) -> SecretKindInput {
+        match self {
+            Self::ClientSecret => SecretKindInput::OAuthClientSecret,
+            Self::AccessToken => SecretKindInput::OAuthAccessToken,
+            Self::RefreshToken => SecretKindInput::OAuthRefreshToken,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::ClientSecret => "OAuth client secret",
+            Self::AccessToken => "OAuth access token",
+            Self::RefreshToken => "OAuth refresh token",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct OAuthManager {
     pool: SqlitePool,
     pending_flows: Arc<Mutex<HashMap<String, PendingOAuthFlow>>>,
     http_client: reqwest::Client,
+    secret_store: Option<Arc<LocalSecretStore>>,
+    secret_resolver: Option<Arc<dyn SecretResolver>>,
 }
 
 impl OAuthManager {
     pub fn new(pool: SqlitePool) -> Self {
+        Self::new_optional_store(pool, None)
+    }
+
+    pub fn new_optional_store(
+        pool: SqlitePool,
+        secret_store: Option<Arc<LocalSecretStore>>,
+    ) -> Self {
+        let secret_resolver = secret_store
+            .as_ref()
+            .map(|store| store.clone() as Arc<dyn SecretResolver>);
         Self {
             pool,
             pending_flows: Arc::new(Mutex::new(HashMap::new())),
             http_client: reqwest::Client::new(),
+            secret_store,
+            secret_resolver,
         }
+    }
+
+    fn secret_store(&self) -> Result<&LocalSecretStore> {
+        self.secret_store
+            .as_deref()
+            .ok_or_else(|| anyhow!("Secure Store is unavailable for OAuth credential custody"))
+    }
+
+    fn secret_resolver(&self) -> Result<&dyn SecretResolver> {
+        self.secret_resolver
+            .as_deref()
+            .ok_or_else(|| anyhow!("Secure Store is unavailable for OAuth credential resolution"))
+    }
+
+    async fn store_or_preserve_client_secret(
+        &self,
+        server_id: &str,
+        server_name: &str,
+        server_kind: &str,
+        value: &str,
+    ) -> Result<String> {
+        let trimmed = value.trim();
+        if let Some(reference) = parse_placeholder(trimmed)? {
+            let expected_alias = oauth_secret_alias(server_id, OAuthSecretSlot::ClientSecret);
+            if reference.alias() != expected_alias {
+                bail!("OAuth client secret placeholder must reference the server OAuth client secret alias");
+            }
+            return Ok(trimmed.to_string());
+        }
+        self.store_oauth_secret(
+            server_id,
+            server_name,
+            server_kind,
+            OAuthSecretSlot::ClientSecret,
+            trimmed.to_string(),
+        )
+        .await
+    }
+
+    async fn store_oauth_secret(
+        &self,
+        server_id: &str,
+        server_name: &str,
+        server_kind: &str,
+        slot: OAuthSecretSlot,
+        value: String,
+    ) -> Result<String> {
+        let store = self.secret_store()?;
+        let alias = oauth_secret_alias(server_id, slot);
+        let origin = Some(SecretOriginInput {
+            server_id: Some(server_id.to_string()),
+            server_name: Some(server_name.to_string()),
+            server_kind: Some(server_kind.to_string()),
+            source: Some("oauth".to_string()),
+            field_group: Some("oauth".to_string()),
+            field_key: Some(slot.key().to_string()),
+            field_index: None,
+            field_path: Some(format!("oauth.{}", slot.key())),
+        });
+
+        let metadata = match store.get_secret_metadata(&alias).await {
+            Ok(_) => {
+                store
+                    .update_secret(SecretUpdateInput {
+                        alias: alias.clone(),
+                        kind: Some(slot.kind()),
+                        value: Some(value),
+                        label: Some(format!("{} for {}", slot.label(), server_name)),
+                        origin,
+                    })
+                    .await?
+            }
+            Err(err) if err.to_string().contains("was not found") => {
+                store
+                    .create_secret(SecretCreateInput {
+                        alias: alias.clone(),
+                        kind: slot.kind(),
+                        value,
+                        label: Some(format!("{} for {}", slot.label(), server_name)),
+                        origin,
+                    })
+                    .await?
+            }
+            Err(err) => return Err(err),
+        };
+
+        store
+            .upsert_usage(SecretUsageUpsertInput {
+                alias,
+                server_id: server_id.to_string(),
+                location: SecretUsageLocationInput::OAuthToken,
+            })
+            .await?;
+        Ok(metadata.placeholder)
+    }
+
+    async fn delete_oauth_secret_if_available(
+        &self,
+        server_id: &str,
+        slot: OAuthSecretSlot,
+    ) -> Result<()> {
+        let store = self.secret_store()?;
+        let alias = oauth_secret_alias(server_id, slot);
+        match store.delete_secret(&alias, true).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.to_string().contains("was not found") => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn value_has_secret_reference(value: &str) -> Result<bool> {
+        Ok(parse_placeholder(value.trim())?.is_some())
+    }
+
+    fn oauth_config_has_secret_references(config: &Option<ServerOAuthConfig>) -> Result<bool> {
+        let Some(client_secret) = config
+            .as_ref()
+            .and_then(|config| config.client_secret.as_deref())
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(false);
+        };
+
+        Self::value_has_secret_reference(client_secret)
+    }
+
+    fn oauth_token_has_secret_references(token: &Option<ServerOAuthToken>) -> Result<bool> {
+        let Some(token) = token.as_ref() else {
+            return Ok(false);
+        };
+        for value in [Some(token.access_token.as_str()), token.refresh_token.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+        {
+            if Self::value_has_secret_reference(value)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn oauth_has_secret_references(
+        config: &Option<ServerOAuthConfig>,
+        token: &Option<ServerOAuthToken>,
+    ) -> Result<bool> {
+        Ok(Self::oauth_config_has_secret_references(config)? || Self::oauth_token_has_secret_references(token)?)
+    }
+
+    fn ensure_oauth_secret_cleanup_available(
+        &self,
+        has_secret_references: bool,
+        operation: &str,
+    ) -> Result<()> {
+        if has_secret_references && self.secret_store.is_none() {
+            bail!("Secure Store is unavailable; unlock or initialize it before {operation} OAuth credentials");
+        }
+        Ok(())
+    }
+
+    async fn delete_oauth_token_secrets(
+        &self,
+        server_id: &str,
+    ) -> Result<()> {
+        self.delete_oauth_secret_if_available(server_id, OAuthSecretSlot::AccessToken)
+            .await?;
+        self.delete_oauth_secret_if_available(server_id, OAuthSecretSlot::RefreshToken)
+            .await
+    }
+
+    pub async fn delete_all_oauth_secrets(
+        &self,
+        server_id: &str,
+    ) -> Result<()> {
+        let config = server::get_server_oauth_config(&self.pool, server_id).await?;
+        let token = server::get_server_oauth_token(&self.pool, server_id).await?;
+        let has_secret_references = Self::oauth_has_secret_references(&config, &token)?;
+        self.ensure_oauth_secret_cleanup_available(has_secret_references, "removing")?;
+
+        if !has_secret_references {
+            return Ok(());
+        }
+
+        self.delete_oauth_secret_if_available(server_id, OAuthSecretSlot::ClientSecret)
+            .await?;
+        self.delete_oauth_token_secrets(server_id).await?;
+        Ok(())
+    }
+
+    fn resolve_optional_client_secret(
+        &self,
+        stored: Option<&str>,
+    ) -> Result<Option<String>> {
+        stored
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| self.resolve_oauth_secret_value(value, "client secret"))
+            .transpose()
+    }
+
+    fn resolve_oauth_secret_value(
+        &self,
+        stored: &str,
+        label: &str,
+    ) -> Result<String> {
+        let reference = parse_placeholder(stored)?.ok_or_else(|| {
+            anyhow!(
+                "OAuth {label} is not stored in Secure Store custody; re-save the OAuth configuration and reconnect the server"
+            )
+        })?;
+        let value = self.secret_resolver()?.resolve_secret(&reference)?;
+        Ok(value.expose().to_string())
+    }
+
+    fn oauth_custody_status(
+        &self,
+        config: &Option<ServerOAuthConfig>,
+        token: &Option<ServerOAuthToken>,
+    ) -> Result<(OAuthCustodyState, bool, Option<OAuthStatusIssue>)> {
+        if config.is_none() {
+            return Ok((OAuthCustodyState::Missing, false, None));
+        }
+
+        let mut values = Vec::new();
+        if let Some(client_secret) = config.as_ref().and_then(|item| item.client_secret.as_deref()) {
+            values.push(client_secret);
+        }
+        if let Some(token) = token.as_ref() {
+            values.push(token.access_token.as_str());
+            if let Some(refresh_token) = token.refresh_token.as_deref() {
+                values.push(refresh_token);
+            }
+        }
+
+        super::types::classify_custody(self.secret_store.is_some(), &values)
     }
 
     pub async fn upsert_config(
@@ -84,16 +373,25 @@ impl OAuthManager {
         }
 
         let existing = server::get_server_oauth_config(&self.pool, server_id).await?;
+        let client_secret = match input.client_secret {
+            Some(secret) if !secret.trim().is_empty() => Some(
+                self.store_or_preserve_client_secret(
+                    server_id,
+                    &server_model.name,
+                    &server_model.server_type.to_string(),
+                    &secret,
+                )
+                .await?,
+            ),
+            _ => existing.as_ref().and_then(|item| item.client_secret.clone()),
+        };
         let config = ServerOAuthConfig {
             id: existing.as_ref().and_then(|item| item.id.clone()),
             server_id: server_id.to_string(),
             authorization_endpoint: input.authorization_endpoint.trim().to_string(),
             token_endpoint: input.token_endpoint.trim().to_string(),
             client_id: input.client_id.trim().to_string(),
-            client_secret: match input.client_secret {
-                Some(secret) if !secret.trim().is_empty() => Some(secret.trim().to_string()),
-                _ => existing.and_then(|item| item.client_secret),
-            },
+            client_secret,
             scopes: input.scopes.and_then(|scopes| {
                 let trimmed = scopes.trim().to_string();
                 (!trimmed.is_empty()).then_some(trimmed)
@@ -280,31 +578,13 @@ impl OAuthManager {
             ("code_verifier", pending.code_verifier.clone()),
             ("resource", resource),
         ];
-        if let Some(secret) = config.client_secret.as_ref().filter(|value| !value.trim().is_empty()) {
-            form.push(("client_secret", secret.clone()));
+        if let Some(secret) = self.resolve_optional_client_secret(config.client_secret.as_deref())? {
+            form.push(("client_secret", secret));
         }
 
         let token_response = self.request_token_response(&config.token_endpoint, &form).await?;
 
-        let expires_at = token_response
-            .expires_in
-            .map(|seconds| (Utc::now() + Duration::seconds(seconds)).to_rfc3339());
-
-        server::upsert_server_oauth_token(
-            &self.pool,
-            &ServerOAuthToken {
-                id: None,
-                server_id: pending.server_id.clone(),
-                access_token: token_response.access_token,
-                refresh_token: token_response.refresh_token,
-                token_type: token_response.token_type.unwrap_or_else(|| "bearer".to_string()),
-                expires_at,
-                scope: token_response.scope,
-                created_at: None,
-                updated_at: None,
-            },
-        )
-        .await?;
+        self.store_oauth_token(&pending.server_id, token_response).await?;
 
         self.get_status(&pending.server_id).await
     }
@@ -320,22 +600,15 @@ impl OAuthManager {
 
         let mut effective = manual_headers.unwrap_or_default();
         if let Some(token) = server::get_server_oauth_token(&self.pool, server_id).await? {
-            let token = if is_token_expired(&token)
-                && token
-                    .refresh_token
-                    .as_ref()
-                    .is_some_and(|value| !value.trim().is_empty())
-            {
+            let token = if is_token_refreshable(&token) {
                 self.refresh_access_token(server_id).await?
             } else {
                 token
             };
 
             if !is_token_expired(&token) && !token.access_token.trim().is_empty() {
-                effective.insert(
-                    "authorization".to_string(),
-                    format!("Bearer {}", token.access_token.trim()),
-                );
+                let access_token = self.resolve_oauth_secret_value(&token.access_token, "access token")?;
+                effective.insert("authorization".to_string(), format!("Bearer {}", access_token.trim()));
             }
         }
 
@@ -356,11 +629,12 @@ impl OAuthManager {
         let token = server::get_server_oauth_token(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("OAuth token missing for server '{}'", server_id))?;
-        let refresh_token = token
+        let refresh_token_ref = token
             .refresh_token
-            .as_ref()
+            .as_deref()
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow!("OAuth token for server '{}' has no refresh token", server_id))?;
+        let refresh_token = self.resolve_oauth_secret_value(refresh_token_ref, "refresh token")?;
         let server_model = server::get_server_by_id(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
@@ -375,8 +649,8 @@ impl OAuthManager {
             ("client_id", config.client_id.clone()),
             ("resource", resource),
         ];
-        if let Some(secret) = config.client_secret.as_ref().filter(|value| !value.trim().is_empty()) {
-            form.push(("client_secret", secret.clone()));
+        if let Some(secret) = self.resolve_optional_client_secret(config.client_secret.as_deref())? {
+            form.push(("client_secret", secret));
         }
 
         let token_response = self.request_token_response(&config.token_endpoint, &form).await?;
@@ -384,25 +658,83 @@ impl OAuthManager {
             bail!("OAuth refresh response did not include a usable access_token");
         }
 
-        let refreshed = ServerOAuthToken {
-            id: token.id,
+        self.store_oauth_token_with_existing_refresh(
+            server_id,
+            token.id,
+            token_response,
+            token.refresh_token,
+            token.token_type,
+            token.scope,
+        )
+        .await
+    }
+
+    async fn store_oauth_token(
+        &self,
+        server_id: &str,
+        token_response: OAuthTokenResponse,
+    ) -> Result<ServerOAuthToken> {
+        self.store_oauth_token_with_existing_refresh(server_id, None, token_response, None, "bearer".to_string(), None)
+            .await
+    }
+
+    async fn store_oauth_token_with_existing_refresh(
+        &self,
+        server_id: &str,
+        id: Option<String>,
+        token_response: OAuthTokenResponse,
+        existing_refresh_token: Option<String>,
+        existing_token_type: String,
+        existing_scope: Option<String>,
+    ) -> Result<ServerOAuthToken> {
+        let server_model = server::get_server_by_id(&self.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
+        let access_token = self
+            .store_oauth_secret(
+                server_id,
+                &server_model.name,
+                &server_model.server_type.to_string(),
+                OAuthSecretSlot::AccessToken,
+                token_response.access_token,
+            )
+            .await?;
+        let incoming_refresh_token = token_response.refresh_token.filter(|value| !value.trim().is_empty());
+        let should_delete_stale_refresh_token = id.is_none() && incoming_refresh_token.is_none();
+        let refresh_token = match incoming_refresh_token {
+            Some(refresh_token) => Some(
+                self.store_oauth_secret(
+                    server_id,
+                    &server_model.name,
+                    &server_model.server_type.to_string(),
+                    OAuthSecretSlot::RefreshToken,
+                    refresh_token,
+                )
+                .await?,
+            ),
+            None => existing_refresh_token,
+        };
+        let expires_at = token_response
+            .expires_in
+            .map(|seconds| (Utc::now() + Duration::seconds(seconds)).to_rfc3339());
+        let stored = ServerOAuthToken {
+            id,
             server_id: server_id.to_string(),
-            access_token: token_response.access_token,
-            refresh_token: token_response
-                .refresh_token
-                .filter(|value| !value.trim().is_empty())
-                .or(token.refresh_token),
-            token_type: token_response.token_type.unwrap_or(token.token_type),
-            expires_at: token_response
-                .expires_in
-                .map(|seconds| (Utc::now() + Duration::seconds(seconds)).to_rfc3339()),
-            scope: token_response.scope.or(token.scope),
+            access_token,
+            refresh_token,
+            token_type: token_response.token_type.unwrap_or(existing_token_type),
+            expires_at,
+            scope: token_response.scope.or(existing_scope),
             created_at: None,
             updated_at: None,
         };
 
-        server::upsert_server_oauth_token(&self.pool, &refreshed).await?;
-        Ok(refreshed)
+        server::upsert_server_oauth_token(&self.pool, &stored).await?;
+        if should_delete_stale_refresh_token {
+            self.delete_oauth_secret_if_available(server_id, OAuthSecretSlot::RefreshToken)
+                .await?;
+        }
+        Ok(stored)
     }
 
     pub async fn get_status(
@@ -410,9 +742,22 @@ impl OAuthManager {
         server_id: &str,
     ) -> Result<OAuthStatus> {
         let config = server::get_server_oauth_config(&self.pool, server_id).await?;
-        let token = server::get_server_oauth_token(&self.pool, server_id).await?;
+        let mut token = server::get_server_oauth_token(&self.pool, server_id).await?;
         let manual_headers = server::get_server_headers(&self.pool, server_id).await.ok();
         let manual_authorization_override = server::has_manual_authorization_header(&manual_headers);
+        if !manual_authorization_override && token.as_ref().is_some_and(is_token_refreshable) {
+            match self.refresh_access_token(server_id).await {
+                Ok(refreshed) => token = Some(refreshed),
+                Err(error) => {
+                    tracing::warn!(
+                        server_id = %server_id,
+                        error = %error,
+                        "Failed to refresh expired OAuth token while reading OAuth status"
+                    );
+                }
+            }
+        }
+        let (custody_state, requires_reconnect, issue) = self.oauth_custody_status(&config, &token)?;
 
         let state = match (&config, &token) {
             (None, _) => OAuthConnectionState::NotConfigured,
@@ -442,6 +787,9 @@ impl OAuthManager {
                 .unwrap_or(false),
             manual_authorization_override,
             expires_at: token.and_then(|item| item.expires_at),
+            custody_state,
+            requires_reconnect,
+            issue,
         })
     }
 
@@ -449,6 +797,13 @@ impl OAuthManager {
         &self,
         server_id: &str,
     ) -> Result<OAuthStatus> {
+        let token = server::get_server_oauth_token(&self.pool, server_id).await?;
+        let has_secret_references = Self::oauth_token_has_secret_references(&token)?;
+        self.ensure_oauth_secret_cleanup_available(has_secret_references, "revoking")?;
+
+        if self.secret_store.is_some() {
+            self.delete_oauth_token_secrets(server_id).await?;
+        }
         server::delete_server_oauth_token(&self.pool, server_id).await?;
         self.get_status(server_id).await
     }
@@ -587,8 +942,16 @@ impl OAuthManager {
             serializer.finish()
         };
 
-        let response = self
-            .http_client
+        let client = if is_loopback {
+            reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .context("Failed to build loopback OAuth token client")?
+        } else {
+            self.http_client.clone()
+        };
+
+        let response = client
             .post(token_endpoint)
             .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
             .timeout(OAUTH_TOKEN_REQUEST_TIMEOUT)
@@ -599,19 +962,15 @@ impl OAuthManager {
 
         if !response.status().is_success() {
             let status = response.status();
-            let response_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "<failed to read response body>".to_string());
-            let truncated_response_body: String = if response_body.chars().count() > 512 {
-                let prefix: String = response_body.chars().take(512).collect();
-                format!("{prefix}...")
-            } else {
-                response_body
-            };
-            bail!(
-                "OAuth token endpoint returned error status: {status} for {token_endpoint}. Response body: {truncated_response_body}"
-            );
+            let response_body = response.text().await.unwrap_or_default();
+            let endpoint = token_endpoint_error_target(&endpoint_url);
+            if let Some(oauth_error) = oauth_error_code_from_body(&response_body) {
+                bail!(
+                    "OAuth token endpoint returned error status: {status} for {endpoint}. OAuth error: {oauth_error}"
+                );
+            }
+
+            bail!("OAuth token endpoint returned error status: {status} for {endpoint}");
         }
 
         response
@@ -635,6 +994,28 @@ impl OAuthManager {
             .await
             .with_context(|| format!("Failed to parse OAuth metadata from '{url}'"))
     }
+}
+
+fn token_endpoint_error_target(endpoint_url: &Url) -> String {
+    let mut target = endpoint_url.clone();
+    target.set_query(None);
+    target.set_fragment(None);
+    target.to_string()
+}
+
+fn oauth_error_code_from_body(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    value
+        .get("error")
+        .and_then(|error| error.as_str())
+        .map(|error| {
+            error
+                .chars()
+                .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
+                .take(80)
+                .collect::<String>()
+        })
+        .filter(|error| !error.is_empty())
 }
 
 fn resource_origin(resource_url: &Url) -> String {
@@ -705,6 +1086,13 @@ fn generate_oauth_random(size: usize) -> String {
     nanoid::nanoid!(size, &nanoid::alphabet::SAFE)
 }
 
+fn oauth_secret_alias(
+    server_id: &str,
+    slot: OAuthSecretSlot,
+) -> String {
+    format!("oauth/{}/{}", server_id, slot.key())
+}
+
 fn is_token_expired(token: &ServerOAuthToken) -> bool {
     token
         .expires_at
@@ -712,6 +1100,14 @@ fn is_token_expired(token: &ServerOAuthToken) -> bool {
         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         .map(|expires_at| expires_at.with_timezone(&Utc) <= Utc::now())
         .unwrap_or(false)
+}
+
+fn is_token_refreshable(token: &ServerOAuthToken) -> bool {
+    is_token_expired(token)
+        && token
+            .refresh_token
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -723,7 +1119,10 @@ mod tests {
             models::Server,
             server::{crud::upsert_server, init::initialize_server_tables},
         },
+        core::secrets::store::LocalSecretStore,
     };
+    use std::sync::Arc;
+    use tempfile::TempDir;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{body_string_contains, method, path},
@@ -741,6 +1140,30 @@ mod tests {
             .expect("enable foreign keys");
         initialize_server_tables(&pool).await.expect("init tables");
         OAuthManager::new(pool)
+    }
+
+    async fn setup_secure_manager() -> (OAuthManager, Arc<LocalSecretStore>, TempDir) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        initialize_server_tables(&pool).await.expect("init tables");
+        let store = Arc::new(
+            LocalSecretStore::initialize_with_development_root_key(
+                pool.clone(),
+                temp_dir.path().join("secrets").join("local-root.key"),
+            )
+            .await
+            .expect("initialize secret store"),
+        );
+        let manager = OAuthManager::new_optional_store(pool, Some(store.clone()));
+        (manager, store, temp_dir)
     }
 
     async fn insert_server(
@@ -797,7 +1220,7 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_code_stores_tokens() {
-        let manager = setup_manager().await;
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
         insert_server(&manager.pool, "serv_exchange").await;
         let mock_server = MockServer::start().await;
 
@@ -840,12 +1263,589 @@ mod tests {
             .await
             .expect("load stored token")
             .expect("stored token exists");
-        assert_eq!(stored.access_token, "access-123");
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(&stored.access_token, store.as_ref()).expect("resolve access"),
+            "access-123"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_config_stores_client_secret_in_secure_store() {
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_secure_config").await;
+
+        manager
+            .upsert_config(
+                "serv_secure_config",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                    token_endpoint: "https://issuer.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: Some("client-secret-1".to_string()),
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save secure oauth config");
+
+        let stored = server::get_server_oauth_config(&manager.pool, "serv_secure_config")
+            .await
+            .expect("load oauth config")
+            .expect("oauth config exists");
+        let stored_secret = stored.client_secret.expect("client secret ref");
+        assert_ne!(stored_secret, "client-secret-1");
+        assert!(stored_secret.starts_with("[[secret:"));
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(&stored_secret, store.as_ref()).expect("resolve secret"),
+            "client-secret-1"
+        );
+
+        let metadata = store
+            .list_secret_metadata()
+            .await
+            .expect("list secrets")
+            .into_iter()
+            .find(|secret| secret.kind == "oauth_client_secret")
+            .expect("client secret metadata");
+        assert_eq!(
+            metadata.origin.as_ref().and_then(|origin| origin.source.as_deref()),
+            Some("oauth")
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_config_rejects_unrelated_client_secret_placeholder() {
+        let (manager, _store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_reject_placeholder").await;
+
+        let error = manager
+            .upsert_config(
+                "serv_reject_placeholder",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                    token_endpoint: "https://issuer.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: Some("[[secret:server/other/header-token]]".to_string()),
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect_err("unrelated placeholder should be rejected");
+
+        assert!(error.to_string().contains("OAuth client secret placeholder"));
+    }
+
+    #[tokio::test]
+    async fn status_marks_legacy_plaintext_oauth_values_as_reconnect_required() {
+        let (manager, _store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_legacy_plaintext").await;
+
+        server::upsert_server_oauth_config(
+            &manager.pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: "serv_legacy_plaintext".to_string(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-1".to_string(),
+                client_secret: Some("legacy-client-secret".to_string()),
+                scopes: Some("read write".to_string()),
+                redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("save legacy oauth config");
+        server::upsert_server_oauth_token(
+            &manager.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: "serv_legacy_plaintext".to_string(),
+                access_token: "legacy-access-token".to_string(),
+                refresh_token: Some("legacy-refresh-token".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() + Duration::minutes(5)).to_rfc3339()),
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("save legacy oauth token");
+
+        let status = manager
+            .get_status("serv_legacy_plaintext")
+            .await
+            .expect("load oauth status");
+
+        assert!(matches!(status.state, OAuthConnectionState::Connected));
+        assert!(matches!(status.custody_state, OAuthCustodyState::LegacyPlaintext));
+        assert!(status.requires_reconnect);
+        assert_eq!(
+            status.issue.as_ref().map(|issue| issue.code.as_str()),
+            Some("legacy_plaintext_oauth_credentials")
+        );
+    }
+
+    #[tokio::test]
+    async fn status_reports_secure_store_unavailable_for_configured_oauth() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_store_unavailable").await;
+
+        server::upsert_server_oauth_config(
+            &manager.pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: "serv_store_unavailable".to_string(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-1".to_string(),
+                client_secret: None,
+                scopes: Some("read write".to_string()),
+                redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("save oauth config");
+
+        let status = manager
+            .get_status("serv_store_unavailable")
+            .await
+            .expect("load oauth status");
+
+        assert!(matches!(status.state, OAuthConnectionState::Disconnected));
+        assert!(matches!(status.custody_state, OAuthCustodyState::Unavailable));
+        assert!(status.requires_reconnect);
+        assert_eq!(
+            status.issue.as_ref().map(|issue| issue.code.as_str()),
+            Some("secure_store_unavailable")
+        );
+    }
+
+    #[tokio::test]
+    async fn exchange_code_stores_tokens_in_secure_store() {
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_secure_exchange").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-123",
+                "refresh_token": "refresh-123",
+                "token_type": "bearer",
+                "expires_in": 3600,
+                "scope": "read write"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        manager
+            .upsert_config(
+                "serv_secure_exchange",
+                OAuthConfigInput {
+                    authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                    token_endpoint: format!("{}/token", mock_server.uri()),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+
+        let initiate = manager.initiate("serv_secure_exchange").await.expect("initiate oauth");
+        manager
+            .exchange_code(&initiate.state, "code-123")
+            .await
+            .expect("exchange code");
+
+        let stored = server::get_server_oauth_token(&manager.pool, "serv_secure_exchange")
+            .await
+            .expect("load stored token")
+            .expect("stored token exists");
+        assert_ne!(stored.access_token, "access-123");
+        assert_ne!(stored.refresh_token.as_deref(), Some("refresh-123"));
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(&stored.access_token, store.as_ref()).expect("resolve access"),
+            "access-123"
+        );
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(
+                stored.refresh_token.as_deref().expect("refresh ref"),
+                store.as_ref()
+            )
+            .expect("resolve refresh"),
+            "refresh-123"
+        );
+
+        let headers = manager
+            .get_effective_server_headers("serv_secure_exchange", None)
+            .await
+            .expect("effective headers")
+            .expect("headers");
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer access-123")
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_all_oauth_secrets_removes_client_and_token_secrets() {
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_delete_oauth_secrets").await;
+
+        manager
+            .upsert_config(
+                "serv_delete_oauth_secrets",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                    token_endpoint: "https://issuer.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: Some("client-secret-1".to_string()),
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save secure oauth config");
+        manager
+            .store_oauth_token(
+                "serv_delete_oauth_secrets",
+                OAuthTokenResponse {
+                    access_token: "access-123".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(3600),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store secure oauth token");
+
+        assert_eq!(store.list_secret_metadata().await.expect("list secrets").len(), 3);
+
+        manager
+            .delete_all_oauth_secrets("serv_delete_oauth_secrets")
+            .await
+            .expect("delete oauth secrets");
+
+        assert!(store.list_secret_metadata().await.expect("list secrets").is_empty());
+    }
+
+    #[tokio::test]
+    async fn fresh_token_storage_deletes_stale_refresh_token_secret_when_response_omits_refresh() {
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_drop_refresh").await;
+
+        manager
+            .store_oauth_token(
+                "serv_drop_refresh",
+                OAuthTokenResponse {
+                    access_token: "access-old".to_string(),
+                    refresh_token: Some("refresh-old".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(3600),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store initial token");
+        store
+            .get_secret_metadata("oauth/serv_drop_refresh/refresh-token")
+            .await
+            .expect("refresh secret should exist");
+
+        manager
+            .store_oauth_token(
+                "serv_drop_refresh",
+                OAuthTokenResponse {
+                    access_token: "access-new".to_string(),
+                    refresh_token: None,
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(3600),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store replacement token without refresh");
+
+        let stored = server::get_server_oauth_token(&manager.pool, "serv_drop_refresh")
+            .await
+            .expect("load stored token")
+            .expect("stored token exists");
+        assert!(stored.refresh_token.is_none());
+        assert!(
+            store
+                .get_secret_metadata("oauth/serv_drop_refresh/refresh-token")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn active_secret_discovery_counts_oauth_token_secrets() {
+        let (manager, _store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_oauth_usage").await;
+
+        manager
+            .store_oauth_token(
+                "serv_oauth_usage",
+                OAuthTokenResponse {
+                    access_token: "access-123".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(3600),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store secure oauth token");
+
+        let access_alias = oauth_secret_alias("serv_oauth_usage", OAuthSecretSlot::AccessToken);
+        let refresh_alias = oauth_secret_alias("serv_oauth_usage", OAuthSecretSlot::RefreshToken);
+
+        for alias in [access_alias, refresh_alias] {
+            let usages = crate::core::secrets::discover_active_secret_usages_for_alias(&manager.pool, &alias)
+                .await
+                .expect("discover oauth usage");
+            assert_eq!(usages.len(), 1);
+            assert_eq!(usages[0].server_id, "serv_oauth_usage");
+            assert!(matches!(usages[0].location, SecretUsageLocationInput::OAuthToken));
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_fails_closed_when_secure_token_secret_cleanup_is_unavailable() {
+        let (manager, _store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_revoke_no_store").await;
+        manager
+            .store_oauth_token(
+                "serv_revoke_no_store",
+                OAuthTokenResponse {
+                    access_token: "access-123".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(3600),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store secure oauth token");
+
+        let manager_without_store = OAuthManager::new(manager.pool.clone());
+        let error = manager_without_store
+            .revoke("serv_revoke_no_store")
+            .await
+            .expect_err("revoke should fail without Secure Store cleanup");
+
+        assert!(error.to_string().contains("Secure Store is unavailable"));
+        assert!(
+            server::get_server_oauth_token(&manager.pool, "serv_revoke_no_store")
+                .await
+                .expect("load oauth token")
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_rotates_secure_access_token_without_plaintext_storage() {
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_secure_refresh").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-new",
+                "token_type": "bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        manager
+            .upsert_config(
+                "serv_secure_refresh",
+                OAuthConfigInput {
+                    authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                    token_endpoint: format!("{}/token", mock_server.uri()),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        let stored = manager
+            .store_oauth_token(
+                "serv_secure_refresh",
+                OAuthTokenResponse {
+                    access_token: "access-old".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(-60),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store secure token");
+
+        assert!(stored.access_token.starts_with("[[secret:"));
+        let refreshed = manager
+            .refresh_access_token("serv_secure_refresh")
+            .await
+            .expect("refresh access token");
+
+        assert_ne!(refreshed.access_token, "access-new");
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(&refreshed.access_token, store.as_ref()).expect("resolve access"),
+            "access-new"
+        );
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(
+                refreshed.refresh_token.as_deref().expect("refresh ref"),
+                store.as_ref()
+            )
+            .expect("resolve refresh"),
+            "refresh-123"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_error_redacts_oauth_token_endpoint_body() {
+        let (manager, _store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_refresh_error_redaction").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .and(body_string_contains("client_secret=client-secret-1"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "refresh_token=refresh-123 client_secret=client-secret-1 access-new",
+                "refresh_token": "refresh-123",
+                "client_secret": "client-secret-1"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        manager
+            .upsert_config(
+                "serv_refresh_error_redaction",
+                OAuthConfigInput {
+                    authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                    token_endpoint: format!("{}/token?client_secret=client-secret-1", mock_server.uri()),
+                    client_id: "client-1".to_string(),
+                    client_secret: Some("client-secret-1".to_string()),
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        manager
+            .store_oauth_token(
+                "serv_refresh_error_redaction",
+                OAuthTokenResponse {
+                    access_token: "access-old".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(-60),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store expired token");
+
+        let error = manager
+            .refresh_access_token("serv_refresh_error_redaction")
+            .await
+            .expect_err("refresh should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("OAuth token endpoint returned error status"));
+        assert!(message.contains("OAuth error: invalid_grant"));
+        assert!(!message.contains("refresh-123"));
+        assert!(!message.contains("client-secret-1"));
+        assert!(!message.contains("access-new"));
+        assert!(!message.contains("Response body"));
+    }
+
+    #[tokio::test]
+    async fn status_refreshes_expired_secure_token_when_refresh_available() {
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_status_refresh").await;
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .and(body_string_contains("refresh_token=refresh-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "access-new",
+                "token_type": "bearer",
+                "expires_in": 3600
+            })))
+            .mount(&mock_server)
+            .await;
+
+        manager
+            .upsert_config(
+                "serv_status_refresh",
+                OAuthConfigInput {
+                    authorization_endpoint: format!("{}/authorize", mock_server.uri()),
+                    token_endpoint: format!("{}/token", mock_server.uri()),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        manager
+            .store_oauth_token(
+                "serv_status_refresh",
+                OAuthTokenResponse {
+                    access_token: "access-old".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(-60),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store expired token");
+
+        let status = manager
+            .get_status("serv_status_refresh")
+            .await
+            .expect("status refresh should not fail");
+
+        assert!(matches!(status.state, OAuthConnectionState::Connected));
+        let stored = server::get_server_oauth_token(&manager.pool, "serv_status_refresh")
+            .await
+            .expect("load refreshed token")
+            .expect("refreshed token exists");
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(&stored.access_token, store.as_ref()).expect("resolve access"),
+            "access-new"
+        );
     }
 
     #[tokio::test]
     async fn effective_headers_refresh_expired_oauth_token() {
-        let manager = setup_manager().await;
+        let (manager, _store, _temp_dir) = setup_secure_manager().await;
         insert_server(&manager.pool, "serv_refresh").await;
         let mock_server = MockServer::start().await;
 
@@ -876,22 +1876,19 @@ mod tests {
             )
             .await
             .expect("save oauth config");
-        server::upsert_server_oauth_token(
-            &manager.pool,
-            &ServerOAuthToken {
-                id: None,
-                server_id: "serv_refresh".to_string(),
-                access_token: "access-old".to_string(),
-                refresh_token: Some("refresh-123".to_string()),
-                token_type: "bearer".to_string(),
-                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
-                scope: Some("read write".to_string()),
-                created_at: None,
-                updated_at: None,
-            },
-        )
-        .await
-        .expect("store expired token");
+        manager
+            .store_oauth_token(
+                "serv_refresh",
+                OAuthTokenResponse {
+                    access_token: "access-old".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(-60),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store expired token");
 
         let headers = manager
             .get_effective_server_headers("serv_refresh", None)
@@ -907,8 +1904,13 @@ mod tests {
             .await
             .expect("load refreshed token")
             .expect("refreshed token exists");
-        assert_eq!(stored.access_token, "access-new");
-        assert_eq!(stored.refresh_token.as_deref(), Some("refresh-123"));
+        assert!(stored.access_token.starts_with("[[secret:"));
+        assert!(
+            stored
+                .refresh_token
+                .as_deref()
+                .is_some_and(|value| value.starts_with("[[secret:"))
+        );
         assert!(matches!(
             manager
                 .get_status("serv_refresh")
@@ -921,7 +1923,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_keeps_existing_refresh_token_when_response_is_blank() {
-        let manager = setup_manager().await;
+        let (manager, store, _temp_dir) = setup_secure_manager().await;
         insert_server(&manager.pool, "serv_refresh_blank").await;
         let mock_server = MockServer::start().await;
 
@@ -952,22 +1954,19 @@ mod tests {
             )
             .await
             .expect("save oauth config");
-        server::upsert_server_oauth_token(
-            &manager.pool,
-            &ServerOAuthToken {
-                id: None,
-                server_id: "serv_refresh_blank".to_string(),
-                access_token: "access-old".to_string(),
-                refresh_token: Some("refresh-123".to_string()),
-                token_type: "bearer".to_string(),
-                expires_at: Some((Utc::now() - Duration::minutes(1)).to_rfc3339()),
-                scope: Some("read write".to_string()),
-                created_at: None,
-                updated_at: None,
-            },
-        )
-        .await
-        .expect("store expired token");
+        manager
+            .store_oauth_token(
+                "serv_refresh_blank",
+                OAuthTokenResponse {
+                    access_token: "access-old".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(-60),
+                    scope: Some("read write".to_string()),
+                },
+            )
+            .await
+            .expect("store expired token");
 
         manager
             .refresh_access_token("serv_refresh_blank")
@@ -978,8 +1977,18 @@ mod tests {
             .await
             .expect("load stored token")
             .expect("stored token exists");
-        assert_eq!(stored.access_token, "access-new");
-        assert_eq!(stored.refresh_token.as_deref(), Some("refresh-123"));
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(&stored.access_token, store.as_ref()).expect("resolve access"),
+            "access-new"
+        );
+        assert_eq!(
+            mcpmate_secrets::resolve_placeholders(
+                stored.refresh_token.as_deref().expect("refresh ref"),
+                store.as_ref()
+            )
+            .expect("resolve refresh"),
+            "refresh-123"
+        );
     }
 
     #[tokio::test]
@@ -1097,7 +2106,7 @@ mod tests {
                     authorization_endpoint: "https://auth.example.com/authorize".to_string(),
                     token_endpoint: "http://evil.example.com/token".to_string(),
                     client_id: "client-1".to_string(),
-                    client_secret: Some("secret".to_string()),
+                    client_secret: None,
                     scopes: None,
                     redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
                 },
