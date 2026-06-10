@@ -19,6 +19,7 @@ export const SECRET_KIND_VALUES: SecretKind[] = [
 	"token",
 	"api_key",
 	"password",
+	"oauth_client_secret",
 	"oauth_access_token",
 	"oauth_refresh_token",
 	"url_credential",

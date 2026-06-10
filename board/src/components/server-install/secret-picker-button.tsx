@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { secretsApi } from "../../lib/api";
 import { suggestSecretAliasFromOrigin } from "../../lib/secret-alias";
+import { isUserCreatableSecretKind } from "../../lib/secret-origin-hints";
 import type { SecretOrigin } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -48,6 +49,7 @@ export function SecretPickerButton({
 		const normalizedQuery = query.trim().toLowerCase();
 		return [...(secretsQuery.data ?? [])]
 			.sort((left, right) => left.alias.localeCompare(right.alias))
+			.filter((secret) => isUserCreatableSecretKind(secret.kind))
 			.filter((secret) => {
 				if (!normalizedQuery) return true;
 				return (

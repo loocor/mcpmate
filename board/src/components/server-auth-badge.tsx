@@ -6,18 +6,28 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 interface ServerAuthBadgeProps {
 	authMode?: string | null;
 	oauthStatus?: string | null;
+	oauthCustodyState?: string | null;
+	oauthRequiresReconnect?: boolean | null;
+	oauthIssue?: {
+		code: string;
+		message: string;
+	} | null;
 	showLabel?: boolean;
 }
 
 export function ServerAuthBadge({
 	authMode,
 	oauthStatus,
+	oauthCustodyState,
+	oauthRequiresReconnect,
+	oauthIssue,
 	showLabel = true,
 }: ServerAuthBadgeProps) {
 	const { t } = useTranslation("servers");
 
 	const normalizedMode = (authMode ?? "").toLowerCase();
 	const normalizedStatus = (oauthStatus ?? "").toLowerCase();
+	const normalizedCustodyState = (oauthCustodyState ?? "").toLowerCase();
 
 	const content = (() => {
 		if (normalizedMode === "header") {
@@ -33,6 +43,31 @@ export function ServerAuthBadge({
 		}
 
 		if (normalizedMode === "oauth") {
+			if (
+				normalizedCustodyState === "unavailable" ||
+				oauthIssue?.code === "secure_store_unavailable"
+			) {
+				return {
+					kind: "warning" as const,
+					label:
+						oauthIssue?.message ??
+						t("entity.connectionTags.oauthSecureStoreUnavailable", {
+							defaultValue: "Secure Store needs attention before OAuth can be used",
+						}),
+				};
+			}
+
+			if (normalizedCustodyState === "legacy_plaintext" || oauthRequiresReconnect) {
+				return {
+					kind: "warning" as const,
+					label:
+						oauthIssue?.message ??
+						t("entity.connectionTags.oauthReconnectRequired", {
+							defaultValue: "Reconnect OAuth to move credentials into Secure Store custody",
+						}),
+				};
+			}
+
 			if (normalizedStatus === "expired" || normalizedStatus === "disconnected") {
 				return {
 					kind: "warning" as const,
