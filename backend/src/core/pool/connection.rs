@@ -12,6 +12,7 @@ use tracing;
 use crate::core::{
     foundation::{monitor::ProcessMonitor, types::ConnectionStatus},
     models::Config,
+    secrets::store::LocalSecretStore,
 };
 
 const STANDARD_INSTANCE_IDLE_SECS: u64 = 5 * 60;
@@ -147,6 +148,8 @@ pub struct UpstreamConnectionPool {
     pub(crate) http_clients: Option<Arc<crate::core::pool::connection::HttpClientRegistry>>,
     /// Optional runtime secret resolver for managed upstream server startup parameters.
     pub(crate) secret_resolver: Option<Arc<dyn SecretResolver>>,
+    /// Optional writable secret store for OAuth token refresh during runtime config loading.
+    pub(crate) secret_store: Option<Arc<LocalSecretStore>>,
 }
 
 impl UpstreamConnectionPool {
@@ -194,22 +197,25 @@ impl UpstreamConnectionPool {
                 }
             },
             secret_resolver: None,
+            secret_store: None,
         }
     }
 
     pub fn with_secret_resolver(
         mut self,
-        resolver: Arc<dyn SecretResolver>,
+        store: Arc<LocalSecretStore>,
     ) -> Self {
-        self.secret_resolver = Some(resolver);
+        self.secret_resolver = Some(store.clone());
+        self.secret_store = Some(store);
         self
     }
 
     pub fn set_secret_resolver(
         &mut self,
-        resolver: Arc<dyn SecretResolver>,
+        store: Arc<LocalSecretStore>,
     ) {
-        self.secret_resolver = Some(resolver);
+        self.secret_resolver = Some(store.clone());
+        self.secret_store = Some(store);
     }
 
     pub(crate) fn runtime_server_config(
@@ -420,8 +426,7 @@ impl UpstreamConnectionPool {
             return false;
         }
 
-        self.validation_expirations
-            .insert(session_id.to_string(), now + ttl);
+        self.validation_expirations.insert(session_id.to_string(), now + ttl);
         true
     }
 
@@ -776,9 +781,8 @@ impl UpstreamConnectionPool {
                 Ok(map) if !map.is_empty() => Some(map),
                 _ => None,
             };
-            crate::core::oauth::OAuthManager::new(pool.clone())
-                .get_effective_server_headers(id, manual_headers)
-                .await?
+            let manager = crate::core::oauth::OAuthManager::new_optional_store(pool.clone(), self.secret_store.clone());
+            manager.get_effective_server_headers(id, manual_headers).await?
         } else {
             None
         };
