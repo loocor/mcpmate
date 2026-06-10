@@ -25,7 +25,8 @@ use crate::{
     core::{
         models::MCPServerConfig,
         secrets::{
-            discover_config_usages, discover_config_usages_for_alias, is_usage_active_in_config, load_mcp_server_config,
+            discover_active_secret_usages, discover_active_secret_usages_for_alias, is_usage_active_in_config,
+            load_mcp_server_config,
         },
     },
 };
@@ -60,8 +61,8 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
-    // Count active bindings from persisted server configs (source of truth).
-    let discovered = discover_config_usages(&db.pool)
+    // Count active bindings from persisted server configs and OAuth-owned refs.
+    let discovered = discover_active_secret_usages(&db.pool)
         .await
         .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
     let mut active_count_by_alias: HashMap<String, u64> = HashMap::new();
@@ -83,6 +84,11 @@ pub async fn create_secret(
     Json(payload): Json<SecretCreateReq>,
 ) -> Result<Json<SecretMetadataResp>, ApiError> {
     let store = get_secret_store(&state)?;
+    if !is_user_creatable_secret_kind(&payload.kind) {
+        return Err(ApiError::BadRequest(
+            "OAuth secret kinds are managed by the OAuth flow and cannot be created manually".to_string(),
+        ));
+    }
     let metadata = store
         .create_secret(SecretCreateInput {
             alias: payload.alias,
@@ -101,6 +107,15 @@ pub async fn update_secret(
     Json(payload): Json<SecretUpdateReq>,
 ) -> Result<Json<SecretMetadataResp>, ApiError> {
     let store = get_secret_store(&state)?;
+    let existing = store
+        .get_secret_metadata(&payload.alias)
+        .await
+        .map_err(map_secret_store_error)?;
+    if payload.value.is_some() && is_oauth_secret_kind(&existing.kind) {
+        return Err(ApiError::BadRequest(
+            "OAuth secret values are managed by the OAuth flow; reconnect or revoke OAuth instead".to_string(),
+        ));
+    }
     let metadata = store
         .update_secret(SecretUpdateInput {
             alias: payload.alias,
@@ -133,11 +148,11 @@ pub async fn delete_secret(
     let store = get_secret_store(&state)?;
 
     // When not force-deleting, check if any usages are still active
-    // (i.e. the server still exists and its config still references the secret).
-    // Stale usages (server removed or config changed) should not block deletion.
+    // (i.e. a server-owned config or OAuth record still references the secret).
+    // Stale usages (server removed or owner record changed) should not block deletion.
     if !payload.force {
         let db = crate::api::handlers::server::common::get_database_from_state(&state)?;
-        let active_usages = discover_config_usages_for_alias(&db.pool, &payload.alias)
+        let active_usages = discover_active_secret_usages_for_alias(&db.pool, &payload.alias)
             .await
             .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
         if let Some(usage) = active_usages.first() {
@@ -164,7 +179,7 @@ pub async fn list_secret_usages(
     let store = get_secret_store(&state)?;
     let db = crate::api::handlers::server::common::get_database_from_state(&state)?;
 
-    let discovered = discover_config_usages_for_alias(&db.pool, &query.alias)
+    let discovered = discover_active_secret_usages_for_alias(&db.pool, &query.alias)
         .await
         .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
     let mut active_binding_keys: HashSet<String> = HashSet::with_capacity(discovered.len());
@@ -224,11 +239,28 @@ fn secret_kind_input(kind: SecretKindPayload) -> SecretKindInput {
         SecretKindPayload::Token => SecretKindInput::Token,
         SecretKindPayload::ApiKey => SecretKindInput::ApiKey,
         SecretKindPayload::Password => SecretKindInput::Password,
+        SecretKindPayload::OAuthClientSecret => SecretKindInput::OAuthClientSecret,
         SecretKindPayload::OAuthAccessToken => SecretKindInput::OAuthAccessToken,
         SecretKindPayload::OAuthRefreshToken => SecretKindInput::OAuthRefreshToken,
         SecretKindPayload::UrlCredential => SecretKindInput::UrlCredential,
         SecretKindPayload::HeaderValue => SecretKindInput::HeaderValue,
     }
+}
+
+fn is_user_creatable_secret_kind(kind: &SecretKindPayload) -> bool {
+    !matches!(
+        kind,
+        SecretKindPayload::OAuthClientSecret
+            | SecretKindPayload::OAuthAccessToken
+            | SecretKindPayload::OAuthRefreshToken
+    )
+}
+
+fn is_oauth_secret_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "oauth_client_secret" | "oauth_access_token" | "oauth_refresh_token"
+    )
 }
 
 fn secret_metadata_data(metadata: SecretMetadataView) -> SecretMetadataData {

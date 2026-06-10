@@ -165,13 +165,22 @@ async fn server_details_core(
     let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
 
     let mut oauth_status = None;
+    let mut oauth_custody_state = None;
+    let mut oauth_requires_reconnect = None;
+    let mut oauth_issue = None;
     let mut oauth_configured = false;
     if server.server_type.is_http_transport() {
-        let manager = crate::core::oauth::manager::OAuthManager::new(db_pool.clone());
+        let manager = crate::core::oauth::manager::OAuthManager::new_optional_store(
+            db_pool.clone(),
+            state.secret_store.read().await.clone(),
+        );
         if let Ok(status) = manager.get_status(server_id).await {
             oauth_configured = status.configured;
             if status.configured {
                 oauth_status = Some(status.state);
+                oauth_custody_state = Some(status.custody_state);
+                oauth_requires_reconnect = Some(status.requires_reconnect);
+                oauth_issue = status.issue;
             }
         }
     }
@@ -220,6 +229,9 @@ async fn server_details_core(
         instances: details.instances,
         auth_mode,
         oauth_status,
+        oauth_custody_state,
+        oauth_requires_reconnect,
+        oauth_issue,
     };
 
     Ok(ServerDetailsResp::success(server_details))
@@ -247,13 +259,16 @@ async fn server_list_core(
         .filter(|server| server.server_type.is_http_transport())
         .filter_map(|server| server.id.clone())
         .collect();
-    let oauth_status_map = match crate::core::oauth::load_oauth_states(db_pool, &streamable_http_server_ids).await {
-        Ok(map) => map,
-        Err(error) => {
-            tracing::warn!(error = %error, "Failed to batch load OAuth states for server list");
-            HashMap::new()
-        }
-    };
+    let secure_store_available = state.secret_store.read().await.is_some();
+    let oauth_status_map =
+        match crate::core::oauth::load_oauth_states(db_pool, &streamable_http_server_ids, secure_store_available).await
+        {
+            Ok(map) => map,
+            Err(error) => {
+                tracing::warn!(error = %error, "Failed to batch load OAuth states for server list");
+                HashMap::new()
+            }
+        };
     let mut raw_headers_map = load_server_header_maps(db_pool, &server_ids).await;
     let headers_map = if should_expose_headers() {
         raw_headers_map
@@ -306,13 +321,23 @@ async fn server_list_core(
         let raw_headers = raw_headers_map.remove(&server_id);
         let headers = headers_map.remove(&server_id);
 
-        let oauth_status = if server.server_type.is_http_transport() {
+        let oauth_summary = if server.server_type.is_http_transport() {
             oauth_status_map.get(&server_id).cloned()
         } else {
             None
         };
-        let oauth_configured = oauth_status.is_some();
+        let oauth_configured = oauth_summary.is_some();
         let auth_mode = detect_auth_mode_from_headers_and_oauth(raw_headers.as_ref(), oauth_configured);
+        let (oauth_status, oauth_custody_state, oauth_requires_reconnect, oauth_issue) = oauth_summary
+            .map(|summary| {
+                (
+                    Some(summary.state),
+                    Some(summary.custody_state),
+                    Some(summary.requires_reconnect),
+                    summary.issue,
+                )
+            })
+            .unwrap_or_default();
 
         filtered_servers.push(ServerDetailsData {
             id: server.id.clone(),
@@ -336,6 +361,9 @@ async fn server_list_core(
             instances,
             auth_mode,
             oauth_status,
+            oauth_custody_state,
+            oauth_requires_reconnect,
+            oauth_issue,
         });
     }
 
@@ -881,7 +909,10 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
-    use tokio::{sync::{Mutex, RwLock}, time::Instant};
+    use tokio::{
+        sync::{Mutex, RwLock},
+        time::Instant,
+    };
 
     struct TestContext {
         _temp_dir: TempDir,
@@ -1131,10 +1162,16 @@ mod tests {
             oauth_only.oauth_status,
             Some(crate::core::oauth::OAuthConnectionState::Connected)
         ));
+        assert!(matches!(
+            oauth_only.oauth_custody_state,
+            Some(crate::core::oauth::OAuthCustodyState::Unavailable)
+        ));
+        assert_eq!(oauth_only.oauth_requires_reconnect, Some(true));
 
         let header_only = servers_by_id.get(&header_only_id).expect("header-only server");
         assert_eq!(header_only.auth_mode.as_deref(), Some("header"));
         assert!(header_only.oauth_status.is_none());
+        assert!(header_only.oauth_custody_state.is_none());
 
         let both = servers_by_id.get(&both_id).expect("both server");
         assert_eq!(both.auth_mode.as_deref(), Some("header"));
@@ -1142,6 +1179,11 @@ mod tests {
             both.oauth_status,
             Some(crate::core::oauth::OAuthConnectionState::Connected)
         ));
+        assert!(matches!(
+            both.oauth_custody_state,
+            Some(crate::core::oauth::OAuthCustodyState::Unavailable)
+        ));
+        assert_eq!(both.oauth_requires_reconnect, Some(true));
     }
 
     #[tokio::test]
@@ -1277,7 +1319,9 @@ mod tests {
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
             secret_store: RwLock::new(None),
-            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
+                "test_unavailable",
+            )),
         });
 
         TestContext {

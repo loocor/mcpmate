@@ -9,7 +9,11 @@ pub enum SecretKindPayload {
     Token,
     ApiKey,
     Password,
+    #[serde(rename = "oauth_client_secret")]
+    OAuthClientSecret,
+    #[serde(rename = "oauth_access_token")]
     OAuthAccessToken,
+    #[serde(rename = "oauth_refresh_token")]
     OAuthRefreshToken,
     UrlCredential,
     HeaderValue,
@@ -183,11 +187,7 @@ pub struct ProviderSwitchData {
     pub new_status: SecretStoreStatusData,
 }
 
-api_resp!(
-    ProviderSwitchResp,
-    ProviderSwitchData,
-    "Provider switch response"
-);
+api_resp!(ProviderSwitchResp, ProviderSwitchData, "Provider switch response");
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SecretStoreUnlockReq {

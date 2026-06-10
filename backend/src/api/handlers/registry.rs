@@ -666,6 +666,9 @@ pub async fn refresh_managed_server_metadata(
         instances: details.instances,
         auth_mode: None,
         oauth_status,
+        oauth_custody_state: None,
+        oauth_requires_reconnect: None,
+        oauth_issue: None,
     })))
 }
 
@@ -1135,7 +1138,9 @@ mod tests {
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
             oauth_manager,
             secret_store: RwLock::new(None),
-            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
+                "test_unavailable",
+            )),
         }
     }
 

@@ -190,25 +190,18 @@ async fn create_router_internal(
         None
     };
 
-    let oauth_manager = database
-        .as_ref()
-        .map(|db| Arc::new(crate::core::oauth::OAuthManager::new(db.pool.clone())));
-
     let (secret_store, secret_store_readiness) = if let Some(db) = database.as_ref() {
         let data_dir = db.path.parent().unwrap_or(std::path::Path::new("."));
-        let bootstrap =
-            crate::core::secrets::store::bootstrap_secret_store(db.pool.clone(), data_dir).await;
+        let bootstrap = crate::core::secrets::store::bootstrap_secret_store(db.pool.clone(), data_dir).await;
         if bootstrap.store.is_none() {
-            if let crate::core::secrets::store::SecretStoreReadiness::Unavailable { reason_code, message, .. } =
-                &bootstrap.readiness
+            if let crate::core::secrets::store::SecretStoreReadiness::Unavailable {
+                reason_code, message, ..
+            } = &bootstrap.readiness
             {
                 tracing::info!("Secure store not ready on startup: {reason_code} — {message}");
             }
         }
-        (
-            bootstrap.store.map(Arc::new),
-            bootstrap.readiness,
-        )
+        (bootstrap.store.map(Arc::new), bootstrap.readiness)
     } else {
         (
             None,
@@ -218,6 +211,13 @@ async fn create_router_internal(
             ),
         )
     };
+
+    let oauth_manager = database.as_ref().map(|db| {
+        Arc::new(crate::core::oauth::OAuthManager::new_optional_store(
+            db.pool.clone(),
+            secret_store.clone(),
+        ))
+    });
 
     if let Some(secret_store) = secret_store.clone() {
         connection_pool.lock().await.set_secret_resolver(secret_store);

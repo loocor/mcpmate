@@ -8,18 +8,19 @@ use crate::api::{
 };
 use crate::core::oauth::{OAuthConfigInput, OAuthPrepareInput};
 
-fn get_oauth_manager(state: &Arc<AppState>) -> Result<Arc<crate::core::oauth::OAuthManager>, ApiError> {
-    state
+async fn get_oauth_manager(state: &Arc<AppState>) -> Result<crate::core::oauth::OAuthManager, ApiError> {
+    let manager = state
         .oauth_manager
-        .clone()
-        .ok_or_else(|| ApiError::InternalError("OAuth manager unavailable".to_string()))
+        .as_ref()
+        .ok_or_else(|| ApiError::InternalError("OAuth manager unavailable".to_string()))?;
+    Ok((**manager).clone())
 }
 
 pub async fn configure_oauth(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerOAuthConfigReq>,
 ) -> Result<Json<OAuthStatusResp>, ApiError> {
-    let manager = get_oauth_manager(&state)?;
+    let manager = get_oauth_manager(&state).await?;
     let status = manager
         .upsert_config(
             &payload.server_id,
@@ -41,7 +42,7 @@ pub async fn start_oauth(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerOAuthInitiateReq>,
 ) -> Result<Json<OAuthInitiateResp>, ApiError> {
-    let manager = get_oauth_manager(&state)?;
+    let manager = get_oauth_manager(&state).await?;
     let result = manager
         .initiate(&payload.server_id)
         .await
@@ -53,7 +54,7 @@ pub async fn prepare_oauth(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerOAuthPrepareReq>,
 ) -> Result<Json<OAuthStatusResp>, ApiError> {
-    let manager = get_oauth_manager(&state)?;
+    let manager = get_oauth_manager(&state).await?;
     let status = manager
         .prepare(
             &payload.server_id,
@@ -71,7 +72,7 @@ pub async fn complete_oauth(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerOAuthCallbackReq>,
 ) -> Result<Json<OAuthStatusResp>, ApiError> {
-    let manager = get_oauth_manager(&state)?;
+    let manager = get_oauth_manager(&state).await?;
     let status = manager
         .exchange_code(&payload.state, &payload.code)
         .await
@@ -83,7 +84,7 @@ pub async fn oauth_status(
     State(state): State<Arc<AppState>>,
     Query(request): Query<ServerOAuthStatusReq>,
 ) -> Result<Json<OAuthStatusResp>, ApiError> {
-    let manager = get_oauth_manager(&state)?;
+    let manager = get_oauth_manager(&state).await?;
     let status = manager
         .get_status(&request.id)
         .await
@@ -95,7 +96,7 @@ pub async fn revoke_oauth(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerOAuthRevokeReq>,
 ) -> Result<Json<OAuthStatusResp>, ApiError> {
-    let manager = get_oauth_manager(&state)?;
+    let manager = get_oauth_manager(&state).await?;
     let status = manager
         .revoke(&payload.server_id)
         .await

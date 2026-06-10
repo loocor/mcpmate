@@ -175,6 +175,20 @@ async fn sync_secret_usages_for_server(
         .map_err(map_anyhow_error)
 }
 
+async fn delete_oauth_secrets_for_server(
+    state: &Arc<AppState>,
+    db: &Database,
+    server_id: &str,
+) -> Result<(), ApiError> {
+    let manager =
+        crate::core::oauth::OAuthManager::new_optional_store(db.pool.clone(), state.secret_store.read().await.clone());
+
+    manager
+        .delete_all_oauth_secrets(server_id)
+        .await
+        .map_err(map_anyhow_error)
+}
+
 /// Create a new MCP server configuration
 ///
 /// This endpoint creates a new MCP server configuration. Server types must strictly use the following standard formats:
@@ -214,6 +228,7 @@ pub async fn create_server(
     let reusable_pending_server = existing_server
         .as_ref()
         .filter(|server| is_pending_import && server.pending_import);
+    let reusable_pending_server_id = reusable_pending_server.and_then(|server| server.id.clone());
     if existing_server.is_some() && reusable_pending_server.is_none() {
         return Err(ApiError::Conflict(format!(
             "Server with name '{}' already exists. Please choose a different name for your server.",
@@ -234,6 +249,16 @@ pub async fn create_server(
 
     // Validate server configuration
     validate_server_config(&payload.server_type, &payload.command, &payload.url)?;
+
+    if let Some(server_id) = reusable_pending_server_id.as_deref() {
+        delete_oauth_secrets_for_server(&state, &db, server_id).await?;
+        crate::config::server::delete_server_oauth_config(&db.pool, server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+        crate::config::server::delete_server_oauth_token(&db.pool, server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+    }
 
     // Create server model using validated ServerType
     let mut server = create_server_from_config(
@@ -257,15 +282,6 @@ pub async fn create_server(
         .await
         .map_err(map_anyhow_error)?;
     crate::core::capability::resolver::upsert(&server_id, &payload.name).await;
-
-    if reusable_pending_server.is_some() {
-        crate::config::server::delete_server_oauth_config(&db.pool, &server_id)
-            .await
-            .map_err(map_anyhow_error)?;
-        crate::config::server::delete_server_oauth_token(&db.pool, &server_id)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
 
     // Persist default headers if provided
     if reusable_pending_server.is_some() {
@@ -398,6 +414,9 @@ pub async fn create_server(
         instances: details.instances,
         auth_mode: None,
         oauth_status: None,
+        oauth_custody_state: None,
+        oauth_requires_reconnect: None,
+        oauth_issue: None,
     }));
 
     let mut data = Map::new();
@@ -634,6 +653,9 @@ pub async fn update_server(
         instances: details.instances,
         auth_mode: None,
         oauth_status: None,
+        oauth_custody_state: None,
+        oauth_requires_reconnect: None,
+        oauth_issue: None,
     }));
 
     let mut data = Map::new();
@@ -815,9 +837,12 @@ async fn disconnect_server_instances(
 
 /// Delete server-related records from database
 async fn delete_server_records(
+    state: &Arc<AppState>,
     db: &Database,
     server_id: &str,
 ) -> Result<(), ApiError> {
+    delete_oauth_secrets_for_server(state, db, server_id).await?;
+
     let mut tx = db.pool.begin().await.map_err(map_database_error)?;
 
     // Purge secret usages for this server first (no CASCADE FK to server_config).
@@ -874,7 +899,7 @@ pub async fn delete_server(
     disconnect_server_instances(&state, &existing_server.name).await;
 
     // Delete all server-related records
-    delete_server_records(&db, &server_id).await?;
+    delete_server_records(&state, &db, &server_id).await?;
 
     // Remove capability cache (REDB) for this server
     if let Err(e) = state.redb_cache.remove_server_data(&server_id).await {
