@@ -74,6 +74,9 @@ export interface ServerSummary {
   created_at?: string | null;
   updated_at?: string | null;
   oauth_status?: OAuthStatus["state"] | null;
+  oauth_custody_state?: OAuthStatus["custody_state"] | null;
+  oauth_requires_reconnect?: boolean | null;
+  oauth_issue?: OAuthStatus["issue"] | null;
 }
 
 export interface ServerListResponse {
@@ -599,6 +602,7 @@ export type SecretKind =
   | "token"
   | "api_key"
   | "password"
+  | "oauth_client_secret"
   | "oauth_access_token"
   | "oauth_refresh_token"
   | "url_credential"
@@ -1489,6 +1493,12 @@ export interface OAuthStatus {
   has_client_secret?: boolean | null;
   manual_authorization_override?: boolean | null;
   expires_at?: string | null;
+  custody_state?: "missing" | "secure" | "legacy_plaintext" | "unavailable" | string | null;
+  requires_reconnect?: boolean | null;
+  issue?: {
+    code: string;
+    message: string;
+  } | null;
 }
 
 export interface OAuthConfigRequest {

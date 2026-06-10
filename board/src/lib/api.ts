@@ -375,6 +375,30 @@ function asStringOrNull(v: unknown): string | null | undefined {
 	return typeof v === "string" ? v : undefined;
 }
 
+function asOAuthIssue(v: unknown): OAuthStatus["issue"] | undefined {
+	if (!v || typeof v !== "object") return undefined;
+	const record = v as Record<string, unknown>;
+	if (typeof record.code !== "string" || typeof record.message !== "string") {
+		return undefined;
+	}
+	return {
+		code: record.code,
+		message: record.message,
+	};
+}
+
+function normalizeOAuthSummary(record: Record<string, unknown>) {
+	return {
+		oauth_status: asOptionalString(record.oauth_status) ?? null,
+		oauth_custody_state: asOptionalString(record.oauth_custody_state) ?? null,
+		oauth_requires_reconnect:
+			typeof record.oauth_requires_reconnect === "boolean"
+				? record.oauth_requires_reconnect
+				: null,
+		oauth_issue: asOAuthIssue(record.oauth_issue) ?? null,
+	};
+}
+
 interface NotificationData {
 	[key: string]: unknown;
 	event?: string;
@@ -742,7 +766,7 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 				: undefined,
 		url: typeof enhanced?.url === "string" ? enhanced.url : undefined,
 		auth_mode: asOptionalString(detailRecord.auth_mode) ?? null,
-		oauth_status: asOptionalString(detailRecord.oauth_status) ?? null,
+		...normalizeOAuthSummary(detailRecord),
 		headers:
 			typeof enhanced?.headers === "object" && enhanced?.headers !== null
 				? (enhanced.headers as Record<string, string>)
@@ -1037,7 +1061,7 @@ export const serversApi = {
 					server_type: serverType,
 					registry_server_id: registryServerId,
 					auth_mode: asOptionalString(er.auth_mode) ?? null,
-					oauth_status: asOptionalString(er.oauth_status) ?? null,
+					...normalizeOAuthSummary(er),
 				} as ServerSummary;
 			});
 			return { servers };
