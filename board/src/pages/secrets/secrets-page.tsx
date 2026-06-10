@@ -12,7 +12,11 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { EntityCard } from "../../components/entity-card";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
-import { EmptyState, PageLayout } from "../../components/page-layout";
+import {
+	EmptyState,
+	FullHeightEmptyStateCard,
+	PageLayout,
+} from "../../components/page-layout";
 import { StatsCards } from "../../components/stats-cards";
 import type { StatCardData } from "../../components/stats-cards";
 import { Pagination } from "../../components/pagination";
@@ -70,6 +74,14 @@ type SecretToolbarEntity = Entity & {
 };
 
 const defaultEditorState = defaultSecretEditorState;
+
+function getSecretDisplay(secret: SecretMetadata) {
+	const label = secret.label?.trim();
+	return {
+		title: label || secret.alias,
+		secondary: label ? secret.alias : null,
+	};
+}
 
 export function SecretsPage() {
 	usePageTranslations("secrets");
@@ -228,10 +240,8 @@ export function SecretsPage() {
 			}
 			return secretsApi.update({
 				alias: state.alias.trim(),
-				kind: state.kind,
 				label: state.label.trim() || null,
 				value: state.value.length > 0 ? state.value : undefined,
-				origin: state.origin,
 			});
 		},
 		onSuccess: async () => {
@@ -490,32 +500,30 @@ export function SecretsPage() {
 	) : undefined;
 
 	const emptyState = (
-		<Card>
-			<CardContent className="flex flex-col items-center justify-center p-6">
-				<EmptyState
-					icon={<KeyRound className="h-4 w-4" />}
-					title={
-						hasNoSecretRecords
-							? t("empty.title", { defaultValue: "No secrets stored" })
-							: t("empty.filteredTitle", {
-								defaultValue: "No matching secrets",
-							})
-					}
-					description={
-						hasNoSecretRecords
-							? t("empty.description", {
-								defaultValue:
-									"Store write-only values for server runtime placeholders.",
-							})
-							: t("empty.filteredDescription", {
-								defaultValue:
-									"Adjust the search or sort controls to find a secret.",
-							})
-					}
-					action={emptyStateAction}
-				/>
-			</CardContent>
-		</Card>
+		<FullHeightEmptyStateCard>
+			<EmptyState
+				icon={<KeyRound className="h-12 w-12" />}
+				title={
+					hasNoSecretRecords
+						? t("empty.title", { defaultValue: "No secrets stored" })
+						: t("empty.filteredTitle", {
+							defaultValue: "No matching secrets",
+						})
+				}
+				description={
+					hasNoSecretRecords
+						? t("empty.description", {
+							defaultValue:
+								"Store write-only values for server runtime placeholders.",
+						})
+						: t("empty.filteredDescription", {
+							defaultValue:
+								"Adjust the search or sort controls to find a secret.",
+						})
+				}
+				action={emptyStateAction}
+			/>
+		</FullHeightEmptyStateCard>
 	);
 
 	const actions = (
@@ -549,16 +557,19 @@ export function SecretsPage() {
 	const renderSecretRow = (entity: SecretToolbarEntity) => {
 		const secret = secretsByAlias.get(entity.alias);
 		if (!secret) return null;
+		const display = getSecretDisplay(secret);
 
 		return (
 			<EntityListItem
 				key={secret.alias}
 				id={secret.alias}
-				title={secret.alias}
+				title={display.title}
 				description={
 					<div className="min-w-0">
-						{secret.label ? (
-							<div className="truncate">{secret.label}</div>
+						{display.secondary ? (
+							<div className="truncate font-mono text-xs">
+								{display.secondary}
+							</div>
 						) : null}
 						<div className="truncate font-mono text-xs text-muted-foreground">
 							{secret.placeholder}
@@ -612,16 +623,19 @@ export function SecretsPage() {
 	const renderSecretCard = (entity: SecretToolbarEntity) => {
 		const secret = secretsByAlias.get(entity.alias);
 		if (!secret) return null;
+		const display = getSecretDisplay(secret);
 
 		return (
 			<EntityCard
 				key={secret.alias}
 				id={secret.alias}
-				title={secret.alias}
+				title={display.title}
 				description={
 					<div className="min-w-0">
-						{secret.label ? (
-							<div className="truncate">{secret.label}</div>
+						{display.secondary ? (
+							<div className="truncate font-mono text-xs">
+								{display.secondary}
+							</div>
 						) : null}
 						<div className="truncate font-mono text-xs text-muted-foreground">
 							{secret.placeholder}
@@ -662,6 +676,7 @@ export function SecretsPage() {
 	return (
 		<PageLayout
 			title={t("title", { defaultValue: "Secure Store" })}
+			className="flex h-full min-h-0 flex-col"
 			headerActions={
 				<PageToolbar<SecretToolbarEntity>
 					config={toolbarConfig}
@@ -672,7 +687,7 @@ export function SecretsPage() {
 			}
 			statsCards={<StatsCards cards={statsCards} />}
 		>
-			<div className="space-y-4">
+			<div className="flex min-h-0 flex-1 flex-col gap-4">
 				{storeStatusQuery.isError && (
 					<Alert variant="destructive">
 						<ShieldAlert className="h-4 w-4" />
@@ -721,10 +736,11 @@ export function SecretsPage() {
 						</Button>
 					</div>
 				) : (
-					<>
+					<div className="flex min-h-0 flex-1 flex-col gap-4">
 						<ListGridContainer
 							loading={secretsQuery.isLoading}
 							loadingSkeleton={loadingSkeleton}
+							emptyClassName="h-full"
 							emptyState={sortedSecrets.length === 0 ? emptyState : undefined}
 						>
 							{viewMode === "grid"
@@ -756,7 +772,7 @@ export function SecretsPage() {
 								isLoading={secretsQuery.isRefetching}
 							/>
 						) : null}
-					</>
+					</div>
 				)}
 			</div>
 
@@ -820,7 +836,7 @@ function SecretDeleteDialog({
 					<AlertDialogDescription>
 						{t("delete.description", {
 							defaultValue:
-								"This removes the encrypted value only when no server usage is recorded.",
+								"This removes the encrypted value only when no active usage is recorded.",
 						})}
 					</AlertDialogDescription>
 				</AlertDialogHeader>

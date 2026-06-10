@@ -5,12 +5,16 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
-import { EmptyState, PageLayout } from "../../components/page-layout";
+import {
+	EmptyState,
+	FullHeightEmptyStateCard,
+	PageLayout,
+} from "../../components/page-layout";
 import { StatsCards } from "../../components/stats-cards";
 import { ClientFormDrawer } from "../../components/client-form-drawer";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Card, CardContent } from "../../components/ui/card";
+import { Card } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
 import type { Entity } from "../../components/ui/page-toolbar";
 import type { SegmentOption } from "../../components/ui/segment";
@@ -399,21 +403,19 @@ export function ClientsPage() {
 	) : undefined;
 
 	const emptyState = (
-		<Card>
-			<CardContent className="flex flex-col items-center justify-center p-6">
-				<EmptyState
-					icon={<ToggleLeft className="h-12 w-12" />}
-					title={t("emptyState.title", {
-						defaultValue: "No clients found",
-					})}
-					description={t("emptyState.description", {
-						defaultValue:
-							"Make sure MCPMate backend is running and detection is enabled",
-					})}
-					action={emptyStateAction}
-				/>
-			</CardContent>
-		</Card>
+		<FullHeightEmptyStateCard>
+			<EmptyState
+				icon={<ToggleLeft className="h-12 w-12" />}
+				title={t("emptyState.title", {
+					defaultValue: "No clients found",
+				})}
+				description={t("emptyState.description", {
+					defaultValue:
+						"Make sure MCPMate backend is running and detection is enabled",
+				})}
+				action={emptyStateAction}
+			/>
+		</FullHeightEmptyStateCard>
 	);
 
 	// Toolbar expansion state
@@ -567,6 +569,7 @@ export function ClientsPage() {
 	return (
 		<PageLayout
 			title={t("title", { defaultValue: "Clients" })}
+			className="flex h-full min-h-0 flex-col"
 			headerActions={
 				<PageToolbar<ClientToolbarEntity>
 					config={toolbarConfig}
@@ -578,29 +581,32 @@ export function ClientsPage() {
 			}
 			statsCards={<StatsCards cards={statsCards} />}
 		>
-			<ListGridContainer
-				loading={isLoading}
-				loadingSkeleton={loadingSkeleton}
-				emptyState={sortedClients.length === 0 ? emptyState : undefined}
-			>
-				{view === "grid"
-					? sortedClients.map((client) => {
-						const sourceClient = clientsByIdentifier.get(client.identifier);
-						return sourceClient ? (
-							<ClientCard
-								key={sourceClient.identifier}
-								client={sourceClient}
-								onNavigate={(identifier) => navigate(`/clients/${encodeURIComponent(identifier)}`)}
-								onGovernanceChange={(identifier, approved) => governanceMutation.mutate({ identifier, approved })}
-								isGovernancePending={governanceMutation.isPending}
-							/>
-						) : null;
-					})
-					: sortedClients.map((client) => {
-						const sourceClient = clientsByIdentifier.get(client.identifier);
-						return sourceClient ? renderClientListItem(sourceClient) : null;
-					})}
-			</ListGridContainer>
+			<div className="min-h-0 flex-1">
+				<ListGridContainer
+					loading={isLoading}
+					loadingSkeleton={loadingSkeleton}
+					emptyClassName="h-full"
+					emptyState={sortedClients.length === 0 ? emptyState : undefined}
+				>
+					{view === "grid"
+						? sortedClients.map((client) => {
+							const sourceClient = clientsByIdentifier.get(client.identifier);
+							return sourceClient ? (
+								<ClientCard
+									key={sourceClient.identifier}
+									client={sourceClient}
+									onNavigate={(identifier) => navigate(`/clients/${encodeURIComponent(identifier)}`)}
+									onGovernanceChange={(identifier, approved) => governanceMutation.mutate({ identifier, approved })}
+									isGovernancePending={governanceMutation.isPending}
+								/>
+							) : null;
+						})
+						: sortedClients.map((client) => {
+							const sourceClient = clientsByIdentifier.get(client.identifier);
+							return sourceClient ? renderClientListItem(sourceClient) : null;
+						})}
+				</ListGridContainer>
+			</div>
 			<ClientFormDrawer
 				open={isClientFormOpen}
 				onOpenChange={setIsClientFormOpen}
