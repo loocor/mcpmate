@@ -45,6 +45,7 @@ import {
 	shouldReportBackendReadinessAttempt,
 } from "./lib/backend-readiness-diagnostics";
 import { recordDesktopDiagnosticEvent } from "./lib/desktop-diagnostics";
+import { shouldBlockDesktopDropNavigation } from "./lib/desktop-drop-guard";
 import { isTauriEnvironmentSync } from "./lib/platform";
 
 const ClientDetailPage = lazy(() =>
@@ -93,6 +94,7 @@ function App() {
 					}}
 				>
 					<DesktopFullBoardPathBridge>
+						<DesktopDropNavigationGuard />
 						<Routes>
 							<Route path="oauth/callback" element={<OAuthCallbackPage />} />
 							<Route path="onboarding" element={<OnboardingPage />} />
@@ -176,6 +178,47 @@ function toFullBoardPath(raw: unknown): string | undefined {
 		return undefined;
 	}
 	return raw;
+}
+
+function DesktopDropNavigationGuard() {
+	useEffect(() => {
+		if (!isTauriEnvironmentSync()) {
+			return;
+		}
+
+		const handleDragOver = (event: DragEvent) => {
+			if (
+				event.defaultPrevented ||
+				!shouldBlockDesktopDropNavigation(event.dataTransfer, event.target)
+			) {
+				return;
+			}
+			event.preventDefault();
+			if (event.dataTransfer) {
+				event.dataTransfer.dropEffect = "none";
+			}
+		};
+
+		const handleDrop = (event: DragEvent) => {
+			if (
+				event.defaultPrevented ||
+				!shouldBlockDesktopDropNavigation(event.dataTransfer, event.target)
+			) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+		};
+
+		window.addEventListener("dragover", handleDragOver, { capture: true });
+		window.addEventListener("drop", handleDrop, { capture: true });
+		return () => {
+			window.removeEventListener("dragover", handleDragOver, { capture: true });
+			window.removeEventListener("drop", handleDrop, { capture: true });
+		};
+	}, []);
+
+	return null;
 }
 
 function DesktopFullBoardPathBridge({ children }: { children: ReactNode }) {
