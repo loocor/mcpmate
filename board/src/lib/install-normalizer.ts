@@ -1,5 +1,4 @@
 import JSON5 from "json5";
-import JSZip from "jszip";
 import * as TOML from "toml";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
 import type {
@@ -8,6 +7,15 @@ import type {
 	ServerIcon,
 	ServerMetaInfo,
 } from "./types";
+
+export type ServerIngestPayload = {
+	text?: string;
+	fileName?: string;
+	payloads?: Array<{
+		text?: string;
+		fileName?: string;
+	}>;
+};
 
 const normalizeKind = (value: unknown): ServerInstallDraft["kind"] => {
 	const token = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -441,54 +449,6 @@ const generateServerName = (kind: ServerInstallDraft["kind"]): string => {
 	return `${base}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
-export async function parseMcpbBundle(
-	buffer: ArrayBuffer,
-): Promise<ServerInstallDraft[]> {
-	const zip = await JSZip.loadAsync(buffer);
-	const manifestEntry = zip.file("manifest.json");
-	if (!manifestEntry) {
-		throw new Error("MCPB bundle missing manifest.json");
-	}
-	const manifestText = await manifestEntry.async("string");
-	const manifest = JSON.parse(manifestText);
-	const serverConfig = manifest.server?.mcp_config ?? {};
-	const env = toEnvRecord(serverConfig.env);
-	const args = toStringArray(serverConfig.args);
-	const command = trimmedString(serverConfig.command);
-
-	const metaExtras = {
-		"anthropic.mcpb/manifest": manifest,
-	};
-	const metaIcons = normalizeIconList(
-		(manifest as any)?.icons || (manifest as any)?.icon,
-	);
-	const baseMeta = hydrateMeta(
-		normalizeMeta({
-			description: manifest.description,
-			version: manifest.version,
-			website: manifest.homepage ?? manifest.documentation,
-			repository: manifest.repository,
-			icons: metaIcons,
-		}),
-		metaExtras,
-	);
-
-	const envForDraft = env && Object.keys(env).length ? env : undefined;
-	const draft: ServerInstallDraft = {
-		name:
-			trimmedString(manifest.name) ||
-			trimmedString(manifest.display_name) ||
-			generateServerName("stdio"),
-		kind: "stdio",
-		command: command,
-		args,
-		env: envForDraft,
-		meta: baseMeta,
-	};
-
-	return [draft];
-}
-
 function wrapLooseServerMap(record: Record<string, unknown>): unknown {
 	const values = Object.values(record);
 	const isDictOfObjects =
@@ -584,12 +544,8 @@ export const draftFromText = (text: string): ServerInstallDraft[] => {
 
 export const normalizeIngestResult = async (payload: {
 	text?: string;
-	buffer?: ArrayBuffer;
 	fileName?: string;
 }): Promise<ServerInstallDraft[]> => {
-	if (payload.buffer) {
-		return parseMcpbBundle(payload.buffer);
-	}
 	if (payload.text) {
 		// Try JSON first for best fidelity, then TOML
 		const asJson = draftFromText(payload.text);
@@ -599,4 +555,14 @@ export const normalizeIngestResult = async (payload: {
 		return [];
 	}
 	return [];
+};
+
+export const normalizeIngestPayload = async (
+	payload: ServerIngestPayload,
+): Promise<ServerInstallDraft[]> => {
+	const payloads = payload.payloads ?? [payload];
+	const draftGroups = await Promise.all(
+		payloads.map((item) => normalizeIngestResult(item)),
+	);
+	return draftGroups.flat();
 };

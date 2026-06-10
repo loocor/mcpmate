@@ -26,6 +26,11 @@ import { readClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { parseJsonDrafts } from "../../lib/install-normalizer";
 import { isTauriEnvironmentSync } from "../../lib/platform";
+import {
+	canIngestFromDataTransfer,
+	extractPayloadFromDataTransfer,
+	formatServerUniImportTransferError,
+} from "../../lib/server-uni-import-transfer";
 import type { SecretOrigin } from "../../lib/types";
 import {
 	InlineSecretCreate,
@@ -708,6 +713,7 @@ export const ServerInstallManualForm = forwardRef<
 		// Drag and drop handlers
 		const onDragEnter = (event: React.DragEvent<HTMLButtonElement>) => {
 			if (!ingestEnabled) return;
+			if (!canIngestFromDataTransfer(event.dataTransfer)) return;
 			event.preventDefault();
 			event.stopPropagation();
 			setIsDragOver(true);
@@ -730,40 +736,19 @@ export const ServerInstallManualForm = forwardRef<
 
 		const onDrop = async (event: React.DragEvent<HTMLButtonElement>) => {
 			if (!ingestEnabled) return;
+			if (!canIngestFromDataTransfer(event.dataTransfer)) return;
 			event.preventDefault();
+			event.stopPropagation();
 			setIsDragOver(false);
-			const { files, items } = event.dataTransfer;
-			if (files?.length) {
-				const file = files[0];
-				if (file.name.endsWith(".mcpb") || file.name.endsWith(".dxt")) {
-					const buffer = await file.arrayBuffer();
-					setIngestMessage(
-						t("manual.ingest.processingBundle", {
-							name: file.name,
-							defaultValue: "Processing bundle: {{name}}",
-						}),
-					);
-					await handleIngestPayload({ buffer, fileName: file.name });
-					return;
+			try {
+				const payload = await extractPayloadFromDataTransfer(event.dataTransfer);
+				if (payload) {
+					setIngestMessage(ingestMessages.parsingDropped);
+					await handleIngestPayload(payload);
 				}
-				const text = await file.text();
-				setIngestMessage(
-					t("manual.ingest.parsingFile", {
-						name: file.name,
-						defaultValue: "Parsing text from {{name}}",
-					}),
-				);
-				await handleIngestPayload({ text, fileName: file.name });
-				return;
-			}
-			if (items?.length) {
-				const item = items[0];
-				if (item.kind === "string") {
-					item.getAsString(async (text) => {
-						setIngestMessage(ingestMessages.parsingDropped);
-						await handleIngestPayload({ text });
-					});
-				}
+			} catch (error) {
+				setIngestError(formatServerUniImportTransferError(error, t));
+				setIngestMessage(ingestMessages.defaultMessage);
 			}
 		};
 

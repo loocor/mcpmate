@@ -10,6 +10,7 @@ import {
 	RefreshCw,
 	RotateCcw,
 } from "lucide-react";
+import type { ServerIngestPayload } from "../../lib/install-normalizer";
 import type { FocusEvent, MouseEvent } from "react";
 import {
 	forwardRef,
@@ -44,6 +45,7 @@ import { onboardingApi } from "../../lib/onboarding-api";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
+	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
 import {
 	compactKeyValueFields,
@@ -209,6 +211,10 @@ interface ServerInstallWizardProps {
 	allowProgrammaticIngest?: boolean;
 	// Optional shared pipeline instance from parent page (recommended)
 	pipeline?: ReturnType<typeof useServerInstallPipeline>;
+	/** Payload to ingest when the drawer opens (set by external drop zones). */
+	pendingIngestPayload?: ServerIngestPayload | null;
+	/** Called after pendingIngestPayload has been consumed. */
+	onPendingIngestConsumed?: () => void;
 }
 
 export const ServerInstallWizard = forwardRef(
@@ -222,6 +228,8 @@ export const ServerInstallWizard = forwardRef(
 			onImport,
 			allowProgrammaticIngest = false,
 			pipeline: externalPipeline,
+			pendingIngestPayload,
+			onPendingIngestConsumed,
 		}: ServerInstallWizardProps,
 		ref: React.Ref<ServerInstallManualFormHandle>,
 	) => {
@@ -1489,6 +1497,14 @@ export const ServerInstallWizard = forwardRef(
 			// eslint-disable-next-line react-hooks/exhaustive-deps
 		}, [isOpen]);
 
+		// Ingest payload dropped on external drop zones (e.g. server list page)
+		useEffect(() => {
+			if (!isOpen || !pendingIngestPayload) return;
+			const payload = pendingIngestPayload;
+			onPendingIngestConsumed?.();
+			handleIngestPayload(payload);
+		}, [isOpen, pendingIngestPayload, handleIngestPayload, onPendingIngestConsumed]);
+
 		// Hydrate form when an initial draft is provided (e.g., Market mode)
 		// Create a stable key that only changes when the actual draft content changes
 		const draftKey = useMemo(() => {
@@ -1911,11 +1927,19 @@ export const ServerInstallWizard = forwardRef(
 									onDrop={async (e) => {
 										if (!canIngestFromDataTransfer(e.dataTransfer)) return;
 										e.preventDefault();
+										e.stopPropagation();
 										setIsDragOver(false);
-										const payload = await extractPayloadFromDataTransfer(
-											e.dataTransfer!,
-										);
-										if (payload) await handleIngestPayload(payload);
+										try {
+											const payload = await extractPayloadFromDataTransfer(
+												e.dataTransfer!,
+											);
+											if (payload) await handleIngestPayload(payload);
+										} catch (error) {
+											setIngestError(
+												formatServerUniImportTransferError(error, t),
+											);
+											setIngestMessage(ingestMessages.defaultMessage);
+										}
 									}}
 									onPaste={async (e) => {
 										if (isDropZoneCollapsed) return;

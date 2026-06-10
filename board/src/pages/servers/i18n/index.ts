@@ -39,7 +39,13 @@ export const serversTranslations = {
 			importUnsupported: {
 				title: "Unsupported content",
 				message:
-					"Drop text, JSON snippets, URLs, or MCP bundles to use Uni-Import.",
+					"Drop text, JSON snippets, URLs, or config files to use Uni-Import.",
+			},
+			importRejections: {
+				bundleDisabled: "MCPB and DXT bundle import is currently disabled.",
+				fileTooLarge: "Dropped file exceeds the {{maxMb}} MB import limit.",
+				textTooLarge: "Dropped text exceeds the {{maxMb}} MB import limit.",
+				tooManyFiles: "Drop up to {{maxFiles}} files at a time.",
 			},
 			importEmpty: {
 				title: "Nothing to import",
@@ -426,8 +432,6 @@ export const serversTranslations = {
 					"We could not find any server definitions in the input.",
 				parseFailedFallback: "Failed to parse input",
 				parseFailedTitle: "Parsing failed",
-				processingBundle: "Processing bundle: {{name}}",
-				parsingFile: "Parsing text from {{name}}",
 				editing: "Editing server",
 				shortcut: "Ctrl/Cmd + V",
 				tipPrefix: "Tip: press",
@@ -923,7 +927,13 @@ export const serversTranslations = {
 		notifications: {
 			importUnsupported: {
 				title: "不支持的内容",
-				message: "请拖放文本、JSON 片段、URL 或 MCP 安装包以使用 Uni-Import。",
+				message: "请拖放文本、JSON 片段、URL 或配置文件以使用 Uni-Import。",
+			},
+			importRejections: {
+				bundleDisabled: "MCPB 与 DXT 安装包导入目前已暂停。",
+				fileTooLarge: "拖入的文件超过 {{maxMb}} MB 导入限制。",
+				textTooLarge: "拖入的文本超过 {{maxMb}} MB 导入限制。",
+				tooManyFiles: "一次最多拖入 {{maxFiles}} 个文件。",
 			},
 			importEmpty: {
 				title: "没有可导入的内容",
@@ -1302,8 +1312,6 @@ export const serversTranslations = {
 				noneDetectedDescription: "无法在输入内容中找到任何服务器定义。",
 				parseFailedFallback: "解析输入失败",
 				parseFailedTitle: "解析失败",
-				processingBundle: "正在处理安装包：{{name}}",
-				parsingFile: "正在解析 {{name}} 中的文本",
 				editing: "编辑服务器",
 				shortcut: "Ctrl/Cmd + V",
 				tipPrefix: "提示：按下",
@@ -1763,7 +1771,16 @@ export const serversTranslations = {
 			importUnsupported: {
 				title: "サポートされていない内容",
 				message:
-					"Uni-Import を使うにはテキスト、JSON スニペット、URL、または MCP バンドルをドロップしてください。",
+					"Uni-Import を使うにはテキスト、JSON スニペット、URL、または設定ファイルをドロップしてください。",
+			},
+			importRejections: {
+				bundleDisabled:
+					"MCPB と DXT バンドルのインポートは現在無効です。",
+				fileTooLarge:
+					"ドロップされたファイルは {{maxMb}} MB のインポート上限を超えています。",
+				textTooLarge:
+					"ドロップされたテキストは {{maxMb}} MB のインポート上限を超えています。",
+				tooManyFiles: "一度にドロップできるファイルは {{maxFiles}} 個までです。",
 			},
 			importEmpty: {
 				title: "インポートできる内容がありません",
@@ -2152,8 +2169,6 @@ export const serversTranslations = {
 					"入力内容にサーバー定義が含まれていませんでした。",
 				parseFailedFallback: "入力の解析に失敗しました",
 				parseFailedTitle: "解析に失敗しました",
-				processingBundle: "バンドルを処理中：{{name}}",
-				parsingFile: "{{name}} のテキストを解析しています",
 				editing: "サーバーを編集",
 				shortcut: "Ctrl/Cmd + V",
 				tipPrefix: "ヒント：",
