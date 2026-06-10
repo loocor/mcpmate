@@ -8,6 +8,7 @@ export interface ListGridContainerProps {
 	loadingSkeleton?: ReactNode;
 	emptyState?: ReactNode;
 	className?: string;
+	emptyClassName?: string;
 }
 
 export function ListGridContainer({
@@ -16,6 +17,7 @@ export function ListGridContainer({
 	loadingSkeleton,
 	emptyState,
 	className,
+	emptyClassName,
 }: ListGridContainerProps) {
 	const defaultView = useAppStore(
 		(state) => state.dashboardSettings.defaultView,
@@ -37,7 +39,9 @@ export function ListGridContainer({
 	}
 
 	if (emptyState) {
-		return <div className={cn("col-span-full", className)}>{emptyState}</div>;
+		return (
+			<div className={cn("col-span-full", emptyClassName)}>{emptyState}</div>
+		);
 	}
 
 	return (

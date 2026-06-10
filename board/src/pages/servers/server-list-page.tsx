@@ -1238,7 +1238,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 				<ListGridContainer
 					loading={isLoading}
 					loadingSkeleton={loadingSkeleton}
-					className="h-full"
+					emptyClassName="h-full"
 					emptyState={
 						filteredAndSortedServers.length === 0 ? emptyState : undefined
 					}
