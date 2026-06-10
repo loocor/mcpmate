@@ -45,6 +45,7 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlSort, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
+import type { ServerIngestPayload } from "../../lib/install-normalizer";
 import { cn } from "../../lib/utils";
 import {
 	canIngestFromDataTransfer,
@@ -96,6 +97,7 @@ export function ServerListPage() {
 	const navigate = useNavigate();
 	const [debugInfo, setDebugInfo] = useState<string | null>(null);
 	const [manualOpen, setManualOpen] = useState(false);
+	const [pendingIngestPayload, setPendingIngestPayload] = useState<ServerIngestPayload | null>(null);
 	const manualRef = useRef<ServerInstallManualFormHandle | null>(null);
 	const [isAddDragActive, setAddDragActive] = useState(false);
 	const [isEmptyAddDragActive, setEmptyAddDragActive] = useState(false);
@@ -222,7 +224,7 @@ export function ServerListPage() {
 					}),
 					t("notifications.importUnsupported.message", {
 						defaultValue:
-							"Drop text, JSON snippets, URLs, or MCP bundles to use Uni-Import.",
+							"Drop text, JSON snippets, URLs, or config files to use Uni-Import.",
 					}),
 				);
 				return;
@@ -251,10 +253,8 @@ export function ServerListPage() {
 				);
 				return;
 			}
+			setPendingIngestPayload(payload);
 			setManualOpen(true);
-			requestAnimationFrame(() => {
-				manualRef.current?.ingest(payload);
-			});
 		},
 		[t],
 	);
@@ -1255,6 +1255,8 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 				onClose={() => setManualOpen(false)}
 				mode="new"
 				pipeline={installPipeline}
+				pendingIngestPayload={pendingIngestPayload}
+				onPendingIngestConsumed={() => setPendingIngestPayload(null)}
 			/>
 
 			{/* Edit server drawer */}
