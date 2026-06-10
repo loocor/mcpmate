@@ -3,13 +3,15 @@ import { useTranslation } from "react-i18next";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import { extractImportStats, serversApi, type ImportStats } from "../../lib/api";
 import { resolveAutoAddTargetProfileId } from "../../lib/default-profile";
-import { normalizeIngestResult } from "../../lib/install-normalizer";
+import {
+	normalizeIngestPayload,
+	type ServerIngestPayload,
+} from "../../lib/install-normalizer";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { buildDraftServersImportRequest } from "../../lib/server-import-payload";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
-	type ServerUniImportTransferPayload,
 } from "../../lib/server-uni-import-transfer";
 import { formatNameList, summarizeSkipped } from "../../lib/server-import-utils";
 import { useAppStore } from "../../lib/store";
@@ -164,7 +166,7 @@ export function useOperatorServerImport({
 	);
 
 	const ingestPayload = useCallback(
-		async (payload: ServerUniImportTransferPayload) => {
+		async (payload: ServerIngestPayload) => {
 			setOpen(true);
 			setPhase("parsing");
 			setParseError(null);
@@ -173,7 +175,7 @@ export function useOperatorServerImport({
 			setDryRunWarning(null);
 			setDryRunError(null);
 			try {
-				const parsed = await normalizeIngestResult(payload);
+				const parsed = await normalizeIngestPayload(payload);
 				if (!parsed.length) {
 					const title = t("servers:manual.ingest.noneDetectedTitle", {
 						defaultValue: "No servers detected",
@@ -216,12 +218,23 @@ export function useOperatorServerImport({
 					}),
 					t("servers:notifications.importUnsupported.message", {
 						defaultValue:
-							"Drop text, JSON snippets, URLs, or MCP bundles to use Uni-Import.",
+							"Drop text, JSON snippets, URLs, or config files to use Uni-Import.",
 					}),
 				);
 				return;
 			}
-			const payload = await extractPayloadFromDataTransfer(dataTransfer);
+			let payload;
+			try {
+				payload = await extractPayloadFromDataTransfer(dataTransfer);
+			} catch (error) {
+				notifyError(
+					t("servers:notifications.importUnsupported.title", {
+						defaultValue: "Unsupported content",
+					}),
+					error instanceof Error ? error.message : String(error),
+				);
+				return;
+			}
 			if (!payload) {
 				notifyError(
 					t("servers:notifications.importEmpty.title", {

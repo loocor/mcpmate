@@ -1,13 +1,34 @@
-export type ServerUniImportTransferPayload = {
-	text?: string;
-	buffer?: ArrayBuffer;
-	fileName?: string;
-	payloads?: Array<{
-		text?: string;
-		buffer?: ArrayBuffer;
-		fileName?: string;
-	}>;
-};
+import type { ServerIngestPayload } from "./install-normalizer";
+
+export type ServerUniImportTransferPayload = ServerIngestPayload;
+
+export const SERVER_UNI_IMPORT_TEXT_MAX_BYTES = 1_048_576;
+const SERVER_UNI_IMPORT_MAX_FILES = 16;
+
+function utf8ByteLength(value: string): number {
+	return new TextEncoder().encode(value).byteLength;
+}
+
+function isBundleFileName(fileName: string): boolean {
+	const lower = fileName.toLowerCase();
+	return lower.endsWith(".mcpb") || lower.endsWith(".dxt");
+}
+
+function assertSupportedFile(file: File): void {
+	if (isBundleFileName(file.name)) {
+		throw new Error("MCPB and DXT bundle import is currently disabled.");
+	}
+	if (file.size > SERVER_UNI_IMPORT_TEXT_MAX_BYTES) {
+		throw new Error("Dropped file exceeds the 1 MB import limit.");
+	}
+}
+
+function assertTextWithinLimit(text: string): void {
+	if (text.length <= SERVER_UNI_IMPORT_TEXT_MAX_BYTES) return;
+	if (utf8ByteLength(text) > SERVER_UNI_IMPORT_TEXT_MAX_BYTES) {
+		throw new Error("Dropped text exceeds the 1 MB import limit.");
+	}
+}
 
 export function canIngestFromDataTransfer(dataTransfer: DataTransfer | null): boolean {
 	if (!dataTransfer) return false;
@@ -23,11 +44,12 @@ export async function extractPayloadFromDataTransfer(
 	dataTransfer: DataTransfer,
 ): Promise<ServerUniImportTransferPayload | null> {
 	if (dataTransfer.files && dataTransfer.files.length > 0) {
+		if (dataTransfer.files.length > SERVER_UNI_IMPORT_MAX_FILES) {
+			throw new Error("Drop up to 16 files at a time.");
+		}
 		const payloads = await Promise.all(
 			Array.from(dataTransfer.files).map(async (file) => {
-				if (file.name.endsWith(".mcpb") || file.name.endsWith(".dxt")) {
-					return { buffer: await file.arrayBuffer(), fileName: file.name };
-				}
+				assertSupportedFile(file);
 				return { text: await file.text(), fileName: file.name };
 			}),
 		);
@@ -39,11 +61,13 @@ export async function extractPayloadFromDataTransfer(
 
 	const plainText = dataTransfer.getData("text/plain");
 	if (plainText) {
+		assertTextWithinLimit(plainText);
 		return { text: plainText };
 	}
 
 	const uriList = dataTransfer.getData("text/uri-list");
 	if (uriList) {
+		assertTextWithinLimit(uriList);
 		return { text: uriList };
 	}
 
@@ -54,6 +78,7 @@ export async function extractPayloadFromDataTransfer(
 					item.getAsString((text) => resolve(text ?? null));
 				});
 				if (value) {
+					assertTextWithinLimit(value);
 					return { text: value };
 				}
 			}

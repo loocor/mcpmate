@@ -1911,11 +1911,19 @@ export const ServerInstallWizard = forwardRef(
 									onDrop={async (e) => {
 										if (!canIngestFromDataTransfer(e.dataTransfer)) return;
 										e.preventDefault();
+										e.stopPropagation();
 										setIsDragOver(false);
-										const payload = await extractPayloadFromDataTransfer(
-											e.dataTransfer!,
-										);
-										if (payload) await handleIngestPayload(payload);
+										try {
+											const payload = await extractPayloadFromDataTransfer(
+												e.dataTransfer!,
+											);
+											if (payload) await handleIngestPayload(payload);
+										} catch (error) {
+											setIngestError(
+												error instanceof Error ? error.message : String(error),
+											);
+											setIngestMessage(ingestMessages.defaultMessage);
+										}
 									}}
 									onPaste={async (e) => {
 										if (isDropZoneCollapsed) return;

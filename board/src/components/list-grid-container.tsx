@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useAppStore } from "../lib/store";
+import { cn } from "../lib/utils";
 
 export interface ListGridContainerProps {
 	children: ReactNode;
@@ -14,6 +15,7 @@ export function ListGridContainer({
 	loading = false,
 	loadingSkeleton,
 	emptyState,
+	className,
 }: ListGridContainerProps) {
 	const defaultView = useAppStore(
 		(state) => state.dashboardSettings.defaultView,
@@ -22,11 +24,12 @@ export function ListGridContainer({
 	if (loading) {
 		return (
 			<div
-				className={
+				className={cn(
 					defaultView === "grid"
 						? "grid gap-4 md:grid-cols-2 xl:grid-cols-3"
-						: "space-y-4"
-				}
+						: "space-y-4",
+					className,
+				)}
 			>
 				{loadingSkeleton}
 			</div>
@@ -34,16 +37,17 @@ export function ListGridContainer({
 	}
 
 	if (emptyState) {
-		return <div className="col-span-full">{emptyState}</div>;
+		return <div className={cn("col-span-full", className)}>{emptyState}</div>;
 	}
 
 	return (
 		<div
-			className={
+			className={cn(
 				defaultView === "grid"
 					? "grid gap-4 md:grid-cols-2 xl:grid-cols-3"
-					: "space-y-4"
-			}
+					: "space-y-4",
+				className,
+			)}
 		>
 			{children}
 		</div>

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
+import type { ServerIngestPayload } from "../../lib/install-normalizer";
 import type { OAuthConfigRequest } from "../../lib/types";
 import type { SegmentOption } from "../ui/segment";
 
@@ -164,16 +165,7 @@ export interface ManualFormStateJson {
 }
 
 export interface ServerInstallManualFormHandle {
-	ingest: (payload: {
-		text?: string;
-		buffer?: ArrayBuffer;
-		fileName?: string;
-		payloads?: Array<{
-			text?: string;
-			buffer?: ArrayBuffer;
-			fileName?: string;
-		}>;
-	}) => Promise<void>;
+	ingest: (payload: ServerIngestPayload) => Promise<void>;
 	loadDraft: (draft: ServerInstallDraft) => Promise<void> | void;
 	getCurrentDraft: () => ServerInstallDraft | null;
 }

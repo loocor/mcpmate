@@ -45,6 +45,7 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlSort, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
+import { cn } from "../../lib/utils";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
@@ -68,6 +69,22 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
 }
 
+function prepareServerDropTargetEvent(
+	event: React.DragEvent<HTMLDivElement>,
+): boolean {
+	if (!canIngestFromDataTransfer(event.dataTransfer)) return false;
+	event.preventDefault();
+	event.stopPropagation();
+	return true;
+}
+
+function isDragLeaveInsideCurrentTarget(
+	event: React.DragEvent<HTMLDivElement>,
+): boolean {
+	const nextTarget = event.relatedTarget as Node | null;
+	return Boolean(nextTarget && event.currentTarget.contains(nextTarget));
+}
+
 // Helper function to get the instance count for a server
 function getCapabilitySummary(server: ServerSummary) {
 	return server.capability ?? server.capabilities ?? undefined;
@@ -81,6 +98,7 @@ export function ServerListPage() {
 	const [manualOpen, setManualOpen] = useState(false);
 	const manualRef = useRef<ServerInstallManualFormHandle | null>(null);
 	const [isAddDragActive, setAddDragActive] = useState(false);
+	const [isEmptyAddDragActive, setEmptyAddDragActive] = useState(false);
 	const [editingServer, setEditingServer] = useState<ServerDetail | null>(null);
 	const [deletingServer, setDeletingServer] = useState<string | null>(null);
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -105,9 +123,7 @@ export function ServerListPage() {
 
 	const handleAddDragEnter = useCallback(
 		(event: React.DragEvent<HTMLDivElement>) => {
-			if (!canIngestFromDataTransfer(event.dataTransfer)) return;
-			event.preventDefault();
-			event.stopPropagation();
+			if (!prepareServerDropTargetEvent(event)) return;
 			setAddDragActive(true);
 		},
 		[],
@@ -115,27 +131,20 @@ export function ServerListPage() {
 
 	const handleAddDragOver = useCallback(
 		(event: React.DragEvent<HTMLDivElement>) => {
-			if (!canIngestFromDataTransfer(event.dataTransfer)) return;
-			event.preventDefault();
-			event.stopPropagation();
+			if (!prepareServerDropTargetEvent(event)) return;
 			if (event.dataTransfer) {
 				event.dataTransfer.dropEffect = "copy";
 			}
-			if (!isAddDragActive) {
-				setAddDragActive(true);
-			}
+			setAddDragActive(true);
 		},
-		[isAddDragActive],
+		[],
 	);
 
 	const handleAddDragLeave = useCallback(
 		(event: React.DragEvent<HTMLDivElement>) => {
 			event.preventDefault();
 			event.stopPropagation();
-			const nextTarget = event.relatedTarget as Node | null;
-			if (nextTarget && event.currentTarget.contains(nextTarget)) {
-				return;
-			}
+			if (isDragLeaveInsideCurrentTarget(event)) return;
 			setAddDragActive(false);
 		},
 		[],
@@ -204,12 +213,8 @@ export function ServerListPage() {
 		);
 	}, [pendingServerDeepLinkImport, setPendingServerDeepLinkImport, t]);
 
-	const handleAddDrop = useCallback(
-		async (event: React.DragEvent<HTMLDivElement>) => {
-			event.preventDefault();
-			event.stopPropagation();
-			setAddDragActive(false);
-			const dataTransfer = event.dataTransfer;
+	const ingestDroppedServerPayload = useCallback(
+		async (dataTransfer: DataTransfer | null) => {
 			if (!dataTransfer || !canIngestFromDataTransfer(dataTransfer)) {
 				notifyError(
 					t("notifications.importUnsupported.title", {
@@ -222,7 +227,18 @@ export function ServerListPage() {
 				);
 				return;
 			}
-			const payload = await extractPayloadFromDataTransfer(dataTransfer);
+			let payload;
+			try {
+				payload = await extractPayloadFromDataTransfer(dataTransfer);
+			} catch (error) {
+				notifyError(
+					t("notifications.importUnsupported.title", {
+						defaultValue: "Unsupported content",
+					}),
+					error instanceof Error ? error.message : String(error),
+				);
+				return;
+			}
 			if (!payload) {
 				notifyError(
 					t("notifications.importEmpty.title", {
@@ -241,6 +257,59 @@ export function ServerListPage() {
 			});
 		},
 		[t],
+	);
+
+	const handleAddDrop = useCallback(
+		async (event: React.DragEvent<HTMLDivElement>) => {
+			event.preventDefault();
+			event.stopPropagation();
+			setAddDragActive(false);
+			await ingestDroppedServerPayload(event.dataTransfer);
+		},
+		[ingestDroppedServerPayload],
+	);
+
+	const handleEmptyAddDragEnter = useCallback(
+		(event: React.DragEvent<HTMLDivElement>) => {
+			if (!prepareServerDropTargetEvent(event)) return;
+			setEmptyAddDragActive(true);
+		},
+		[],
+	);
+
+	const handleEmptyAddDragOver = useCallback(
+		(event: React.DragEvent<HTMLDivElement>) => {
+			if (!prepareServerDropTargetEvent(event)) return;
+			if (event.dataTransfer) {
+				event.dataTransfer.dropEffect = "copy";
+			}
+			setEmptyAddDragActive(true);
+		},
+		[],
+	);
+
+	const handleEmptyAddDragLeave = useCallback(
+		(event: React.DragEvent<HTMLDivElement>) => {
+			event.preventDefault();
+			event.stopPropagation();
+			if (isDragLeaveInsideCurrentTarget(event)) return;
+			setEmptyAddDragActive(false);
+		},
+		[],
+	);
+
+	const handleEmptyAddDragEnd = useCallback(() => {
+		setEmptyAddDragActive(false);
+	}, []);
+
+	const handleEmptyAddDrop = useCallback(
+		async (event: React.DragEvent<HTMLDivElement>) => {
+			event.preventDefault();
+			event.stopPropagation();
+			setEmptyAddDragActive(false);
+			await ingestDroppedServerPayload(event.dataTransfer);
+		},
+		[ingestDroppedServerPayload],
 	);
 
 	const {
@@ -1060,33 +1129,55 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 		<Button
 			onClick={() => setManualOpen(true)}
 			size="sm"
-			className="mt-4"
+			className={cn(
+				"mt-4 transition-colors",
+				isEmptyAddDragActive &&
+					"bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900",
+			)}
 		>
-			<Plus className="mr-2 h-4 w-4" />
-			{t("emptyState.action", {
-				defaultValue: "Add First Server",
-			})}
+			{isEmptyAddDragActive ? (
+				<Target className="mr-2 h-4 w-4" />
+			) : (
+				<Plus className="mr-2 h-4 w-4" />
+			)}
+			{isEmptyAddDragActive
+				? t("emptyState.importAction", {
+					defaultValue: "Import server",
+				})
+				: t("emptyState.action", {
+					defaultValue: "Add First Server",
+				})}
 		</Button>
 	) : undefined;
 
 	const emptyState = (
-		<Card>
-			<CardContent className="flex flex-col items-center justify-center p-6">
-				<EmptyState
-					icon={<Server className="h-12 w-12" />}
-					title={t("emptyState.title", { defaultValue: "No servers found" })}
-					description={t("emptyState.description", {
-						defaultValue: "Add your first MCP server to get started",
-					})}
-					action={emptyStateAction}
-				/>
-			</CardContent>
-		</Card>
+		<div className="flex h-full min-h-[20rem]">
+			<Card className="flex flex-1">
+				<CardContent
+					className="flex flex-1 flex-col items-center justify-center p-6"
+					onDragEnter={handleEmptyAddDragEnter}
+					onDragOver={handleEmptyAddDragOver}
+					onDragLeave={handleEmptyAddDragLeave}
+					onDrop={handleEmptyAddDrop}
+					onDragEnd={handleEmptyAddDragEnd}
+				>
+					<EmptyState
+						icon={<Server className="h-12 w-12" />}
+						title={t("emptyState.title", { defaultValue: "No servers found" })}
+						description={t("emptyState.description", {
+							defaultValue: "Add your first MCP server to get started",
+						})}
+						action={emptyStateAction}
+					/>
+				</CardContent>
+			</Card>
+		</div>
 	);
 
 	return (
 		<PageLayout
 			title={t("title", { defaultValue: "Servers" })}
+			className="flex h-full min-h-0 flex-col"
 			headerActions={
 				<PageToolbar<ToolbarServer>
 					config={toolbarConfig}
@@ -1142,17 +1233,20 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 				</Card>
 			)}
 
-			<ListGridContainer
-				loading={isLoading}
-				loadingSkeleton={loadingSkeleton}
-				emptyState={
-					filteredAndSortedServers.length === 0 ? emptyState : undefined
-				}
-			>
-				{viewMode === "grid"
-					? filteredAndSortedServers.map(renderServerCard)
-					: filteredAndSortedServers.map(renderServerListItem)}
-			</ListGridContainer>
+			<div className="min-h-0 flex-1">
+				<ListGridContainer
+					loading={isLoading}
+					loadingSkeleton={loadingSkeleton}
+					className="h-full"
+					emptyState={
+						filteredAndSortedServers.length === 0 ? emptyState : undefined
+					}
+				>
+					{viewMode === "grid"
+						? filteredAndSortedServers.map(renderServerCard)
+						: filteredAndSortedServers.map(renderServerListItem)}
+				</ListGridContainer>
+			</div>
 
 			{/* Server install pipeline */}
 			<ServerInstallWizard
