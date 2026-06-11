@@ -165,9 +165,17 @@ export function SecretUsageList({
 
 	if (usages.length === 0) {
 		return (
-			<p className="py-8 text-center text-sm text-muted-foreground">
-				{t("usage.empty", { defaultValue: "No server usage recorded" })}
-			</p>
+			<div className="rounded-lg border border-dashed p-6 text-center">
+				<p className="text-sm font-medium">
+					{t("usage.empty", { defaultValue: "No server usage recorded" })}
+				</p>
+				<p className="mt-1 text-xs text-muted-foreground">
+					{t("usage.emptyDescription", {
+						defaultValue:
+							"This secret has no active or historical server binding.",
+					})}
+				</p>
+			</div>
 		);
 	}
 

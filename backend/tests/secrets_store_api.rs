@@ -1107,3 +1107,57 @@ async fn delete_secret_blocks_on_active_usage_but_allows_stale() {
         .expect("response");
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn list_secrets_reports_historical_usage_count() {
+    let _key = EnvVarGuard::set(
+        "MCPMATE_SECRETS_LOCAL_KEY",
+        "MCPMate test key material for local store hist001",
+    );
+    let (_temp_dir, state, store) = build_test_context().await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state.clone()));
+
+    store
+        .create_secret(SecretCreateInput {
+            alias: "server/ghost/token".to_string(),
+            kind: SecretKindInput::Token,
+            value: "secret-value".to_string(),
+            label: None,
+            origin: None,
+        })
+        .await
+        .expect("create secret");
+    store
+        .upsert_usage(SecretUsageUpsertInput {
+            alias: "server/ghost/token".to_string(),
+            server_id: "nonexistent-server".to_string(),
+            location: SecretUsageLocationInput::StdioEnv {
+                name: "TOKEN".to_string(),
+            },
+        })
+        .await
+        .expect("record stale usage");
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/secrets/list")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json_response(response).await;
+    let secret = body["data"]["secrets"]
+        .as_array()
+        .expect("secret list")
+        .iter()
+        .find(|item| item["alias"] == "server/ghost/token")
+        .expect("listed secret");
+
+    assert_eq!(secret["used_by_count"], 0);
+    assert_eq!(secret["historical_usage_count"], 1);
+}

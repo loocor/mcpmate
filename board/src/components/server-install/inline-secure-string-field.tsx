@@ -11,6 +11,7 @@ import {
 	type KeyboardEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import {
 	appendInlineText,
 	backspaceInlineAtEnd,
@@ -103,6 +104,7 @@ export function InlineSecureStringField({
 	pairRemove,
 }: InlineSecureStringFieldProps) {
 	const { t } = useTranslation("servers");
+	const navigate = useNavigate();
 	const containerRef = useRef<HTMLDivElement>(null);
 	const insertTargetRef = useRef<InlineInsertTarget | null>(null);
 	const pickerInsertTargetRef = useRef<InlineInsertTarget | null>(null);
@@ -119,6 +121,14 @@ export function InlineSecureStringField({
 			defaultValue: "{{alias}}",
 			alias,
 		});
+
+	const handleInspectSecret = useCallback(
+		(alias: string) => {
+			const params = new URLSearchParams({ secret: alias, tab: "usage" });
+			navigate(`/secrets?${params.toString()}`);
+		},
+		[navigate],
+	);
 
 	const syncInsertTarget = useCallback(
 		(segmentIndex: number, input: HTMLInputElement | null) => {
@@ -632,7 +642,21 @@ export function InlineSecureStringField({
 														<X className="h-2.5 w-2.5" strokeWidth={3} />
 													</button>
 												</span>
-												<span className="truncate">{aliasLabel}</span>
+												<button
+													type="button"
+													className="min-w-0 truncate text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-emerald-700 dark:focus-visible:ring-emerald-200"
+													onClick={(event) => {
+														event.preventDefault();
+														event.stopPropagation();
+														handleInspectSecret(item.alias);
+													}}
+													aria-label={t("manual.secrets.inspect", {
+														defaultValue: "Open {{alias}} in Secure Store",
+														alias: item.alias,
+													})}
+												>
+													{aliasLabel}
+												</button>
 											</Badge>
 										</span>
 									</TooltipTrigger>
