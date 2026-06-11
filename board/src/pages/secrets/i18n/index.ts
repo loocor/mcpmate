@@ -41,7 +41,7 @@ export const secretsTranslations = {
 		},
 		lifecycle: {
 			state: {
-				all: "All lifecycle",
+				all: "All lifecycle states",
 				active: "Active",
 				cleanup_available: "Cleanup available",
 				unused: "Unused",
@@ -282,7 +282,7 @@ export const secretsTranslations = {
 		},
 		lifecycle: {
 			state: {
-				all: "全部生命周期",
+				all: "全部生命周期状态",
 				active: "使用中",
 				cleanup_available: "可清理",
 				unused: "未使用",
@@ -509,7 +509,7 @@ export const secretsTranslations = {
 		},
 		lifecycle: {
 			state: {
-				all: "すべてのライフサイクル",
+				all: "すべてのライフサイクル状態",
 				active: "使用中",
 				cleanup_available: "クリーンアップ可能",
 				unused: "未使用",

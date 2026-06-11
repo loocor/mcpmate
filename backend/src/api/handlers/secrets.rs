@@ -76,13 +76,22 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
             .insert(binding_key);
     }
 
+    let all_indexed = store.list_all_usages().await.map_err(map_secret_store_error)?;
+    let mut indexed_by_alias: HashMap<String, Vec<SecretUsageView>> = HashMap::new();
+    for usage in all_indexed {
+        indexed_by_alias
+            .entry(usage.alias.clone())
+            .or_default()
+            .push(usage);
+    }
+
     let mut enriched = Vec::with_capacity(secrets.len());
     let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
     for metadata in secrets {
         let mut data = secret_metadata_data(metadata);
         data.used_by_count = active_count_by_alias.remove(&data.alias).unwrap_or(0);
         let active_binding_keys = active_binding_keys_by_alias.remove(&data.alias).unwrap_or_default();
-        let indexed = store.list_usages(&data.alias).await.map_err(map_secret_store_error)?;
+        let indexed = indexed_by_alias.remove(&data.alias).unwrap_or_default();
         let mut historical_usage_count = 0;
         for usage in indexed {
             let key = usage.location.binding_key(&usage.server_id);
