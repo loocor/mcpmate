@@ -403,6 +403,11 @@ export function ServerDetailPage() {
 		onSuccess: () => {
 			notifySuccess(
 				t("notifications.delete.title", { defaultValue: "Server deleted" }),
+				t("notifications.delete.cleanupReview", {
+					defaultValue:
+						"Review Secure Store cleanup if this server used stored secrets.",
+				}),
+				"/secrets?lifecycle=unused",
 			);
 			queryClient.invalidateQueries({ queryKey: ["servers"] });
 			queryClient.removeQueries({ queryKey: ["server", serverId] });

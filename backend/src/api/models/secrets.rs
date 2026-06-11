@@ -91,6 +91,7 @@ pub struct SecretMetadataData {
     pub provider_kind: String,
     pub version: u64,
     pub used_by_count: u64,
+    pub historical_usage_count: u64,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }

@@ -39,12 +39,29 @@ export const secretsTranslations = {
 			local_file_root_key: "Local File",
 			local_encrypted_vault: "Development Vault",
 		},
+		lifecycle: {
+			state: {
+				all: "All lifecycle states",
+				active: "Active",
+				cleanup_available: "Cleanup available",
+				unused: "Unused",
+				oauth_managed: "OAuth managed",
+			},
+			description: {
+				active: "Currently referenced by at least one server.",
+				cleanup_available:
+					"No active binding remains, but historical bindings exist.",
+				unused: "No active or historical server binding is recorded.",
+				oauth_managed: "Owned by OAuth and cleaned up with OAuth lifecycle actions.",
+			},
+		},
 		list: {
 			error: "Failed to load secrets. The secure store may be unavailable.",
 			retry: "Retry",
 			stats: {
 				provider: "Provider",
 				usage: "Usage",
+				history: "History",
 				version: "Version",
 			},
 			actions: {
@@ -59,6 +76,8 @@ export const secretsTranslations = {
 			description: "Store write-only values for server runtime placeholders.",
 			filteredDescription:
 				"Adjust the search or sort controls to find a secret.",
+			filteredLifecycleDescription:
+				"Adjust the lifecycle filter or search controls to find a secret.",
 			action: "Add First Secret",
 		},
 		editor: {
@@ -75,6 +94,8 @@ export const secretsTranslations = {
 				kind: "Kind",
 				label: "Label",
 				value: "Value",
+				storedValue:
+					"Stored secret value is hidden. Focus to replace it.",
 			},
 			kindLockedDescription: "Kind is set at creation and cannot be changed.",
 			oauthManagedDescription:
@@ -96,12 +117,27 @@ export const secretsTranslations = {
 					"Copy the [[secret:alias]] placeholder to paste into server env, headers, or args.",
 				create: "Create Record",
 				save: "Save Changes",
+				delete: "Delete",
+				deleteDisabledTooltip:
+					"Cannot delete: secret is actively used by {{count}} location(s)",
+				deleteDisabledOAuthTooltip:
+					"OAuth-managed credentials are removed by OAuth revoke or server deletion.",
 			},
 		},
 		usage: {
 			title: "Secret Usage",
 			loading: "Loading usages",
 			empty: "No server usage recorded",
+			emptyDescription:
+				"This secret has no active or historical server binding.",
+			summary: {
+				active: "Active {{count}}",
+				historical: "Historical {{count}}",
+				canDelete: "No active runtime binding is using this secret.",
+				blocked: "Remove active bindings before deleting this secret.",
+				oauthManaged:
+					"OAuth credentials are cleaned up by OAuth revoke or server deletion.",
+			},
 			sections: {
 				active: "Active bindings",
 				activeDescription:
@@ -134,6 +170,15 @@ export const secretsTranslations = {
 			title: "Delete secret?",
 			description:
 				"This removes the encrypted value only when no active usage is recorded.",
+			descriptionActive:
+				"This secret is still actively used. Remove active bindings before deleting it.",
+			descriptionHistorical:
+				"This removes the encrypted value. Historical usage metadata remains available without the secret value.",
+			descriptionUnused:
+				"This removes the encrypted value. No active or historical usage is recorded.",
+			descriptionOAuth:
+				"OAuth-managed credentials are normally removed by OAuth revoke or server deletion. Delete only orphaned OAuth records.",
+			usageSummary: "Active {{active}} · Historical {{historical}}",
 			actions: {
 				cancel: "Cancel",
 				confirm: "Delete",
@@ -179,9 +224,9 @@ export const secretsTranslations = {
 				title: "In Use",
 				description: "linked to servers",
 			},
-			usageRefs: {
-				title: "Usage References",
-				description: "runtime bindings",
+			cleanup: {
+				title: "Cleanup",
+				description: "ready to review",
 			},
 			store: {
 				title: "Secure Store",
@@ -235,12 +280,28 @@ export const secretsTranslations = {
 			local_file_root_key: "本地文件",
 			local_encrypted_vault: "开发加密库",
 		},
+		lifecycle: {
+			state: {
+				all: "全部生命周期状态",
+				active: "使用中",
+				cleanup_available: "可清理",
+				unused: "未使用",
+				oauth_managed: "OAuth 托管",
+			},
+			description: {
+				active: "当前至少被一个服务器引用。",
+				cleanup_available: "没有活跃绑定，但仍保留历史绑定记录。",
+				unused: "没有记录到活跃或历史服务器绑定。",
+				oauth_managed: "由 OAuth 拥有，并随 OAuth 生命周期动作清理。",
+			},
+		},
 		list: {
 			error: "加载密钥失败，安全存储可能不可用。",
 			retry: "重试",
 			stats: {
 				provider: "提供方",
 				usage: "使用",
+				history: "历史",
 				version: "版本",
 			},
 			actions: {
@@ -254,6 +315,8 @@ export const secretsTranslations = {
 			filteredTitle: "没有匹配的安全记录",
 			description: "为服务器运行时占位符保存写入后不可读的值。",
 			filteredDescription: "调整搜索或排序条件以查找安全记录。",
+			filteredLifecycleDescription:
+				"调整生命周期筛选或搜索条件以查找安全记录。",
 			action: "添加第一条安全记录",
 		},
 		editor: {
@@ -269,6 +332,7 @@ export const secretsTranslations = {
 				kind: "类型",
 				label: "标签",
 				value: "值",
+				storedValue: "已保存的密钥值已隐藏。聚焦后可替换。",
 			},
 			kindLockedDescription: "类型在创建时确定，之后不能修改。",
 			oauthManagedDescription:
@@ -289,12 +353,25 @@ export const secretsTranslations = {
 					"复制 [[secret:alias]] 占位符，以便粘贴到服务器的 env、header 或 args 配置中。",
 				create: "创建记录",
 				save: "保存更改",
+				delete: "删除",
+				deleteDisabledTooltip:
+					"无法删除：该安全记录仍被 {{count}} 处活跃使用引用",
+				deleteDisabledOAuthTooltip:
+					"OAuth 托管凭据请通过撤销 OAuth 或删除服务器来移除。",
 			},
 		},
 		usage: {
 			title: "安全记录使用情况",
 			loading: "正在加载使用情况",
 			empty: "暂无服务器使用记录",
+			emptyDescription: "此安全记录没有活跃或历史服务器绑定。",
+			summary: {
+				active: "活跃 {{count}}",
+				historical: "历史 {{count}}",
+				canDelete: "当前没有运行时绑定正在使用此安全记录。",
+				blocked: "删除此安全记录前，需要先移除活跃绑定。",
+				oauthManaged: "OAuth 凭据会随 OAuth 撤销或服务器删除自动清理。",
+			},
 			sections: {
 				active: "生效中的引用",
 				activeDescription: "当前在服务器运行时配置中仍引用此安全记录的位置。",
@@ -324,6 +401,13 @@ export const secretsTranslations = {
 		delete: {
 			title: "删除安全记录？",
 			description: "仅当没有活跃使用记录时，才会移除加密值。",
+			descriptionActive: "此安全记录仍在使用中。删除前请先移除活跃绑定。",
+			descriptionHistorical:
+				"这会移除加密值。历史使用元数据会保留，但不再包含密钥值。",
+			descriptionUnused: "这会移除加密值。当前没有活跃或历史使用记录。",
+			descriptionOAuth:
+				"OAuth 托管凭据通常会通过 OAuth 撤销或服务器删除自动移除。仅删除孤立的 OAuth 记录。",
+			usageSummary: "活跃 {{active}} · 历史 {{historical}}",
 			actions: {
 				cancel: "取消",
 				confirm: "删除",
@@ -367,9 +451,9 @@ export const secretsTranslations = {
 				title: "使用中",
 				description: "已关联服务器",
 			},
-			usageRefs: {
-				title: "使用引用",
-				description: "运行时绑定",
+			cleanup: {
+				title: "清理",
+				description: "可复核",
 			},
 			store: {
 				title: "安全存储",
@@ -423,12 +507,29 @@ export const secretsTranslations = {
 			local_file_root_key: "ローカルファイル",
 			local_encrypted_vault: "開発用ボルト",
 		},
+		lifecycle: {
+			state: {
+				all: "すべてのライフサイクル状態",
+				active: "使用中",
+				cleanup_available: "クリーンアップ可能",
+				unused: "未使用",
+				oauth_managed: "OAuth 管理",
+			},
+			description: {
+				active: "少なくとも 1 つのサーバーから現在参照されています。",
+				cleanup_available:
+					"有効なバインディングはありませんが、履歴バインディングが残っています。",
+				unused: "有効または履歴のサーバーバインディングは記録されていません。",
+				oauth_managed: "OAuth が所有し、OAuth ライフサイクル操作で削除されます。",
+			},
+		},
 		list: {
 			error: "シークレットの読み込みに失敗しました。セキュアストアが利用できない可能性があります。",
 			retry: "再試行",
 			stats: {
 				provider: "プロバイダー",
 				usage: "使用",
+				history: "履歴",
 				version: "バージョン",
 			},
 			actions: {
@@ -443,6 +544,8 @@ export const secretsTranslations = {
 			description:
 				"サーバー実行時プレースホルダー用の書き込み専用値を保存します。",
 			filteredDescription: "検索または並び替え条件を調整してください。",
+			filteredLifecycleDescription:
+				"ライフサイクルフィルターまたは検索条件を調整してください。",
 			action: "最初のシークレットを追加",
 		},
 		editor: {
@@ -458,6 +561,8 @@ export const secretsTranslations = {
 				kind: "種別",
 				label: "ラベル",
 				value: "値",
+				storedValue:
+					"保存済みのシークレット値は非表示です。フォーカスすると置き換えできます。",
 			},
 			kindLockedDescription: "種別は作成時に設定され、後から変更できません。",
 			oauthManagedDescription:
@@ -479,12 +584,27 @@ export const secretsTranslations = {
 					"[[secret:alias]] プレースホルダーをコピーし、サーバーの env、header、args に貼り付けます。",
 				create: "レコードを作成",
 				save: "変更を保存",
+				delete: "削除",
+				deleteDisabledTooltip:
+					"削除できません：このシークレットは {{count}} 件の有効な使用箇所で参照されています",
+				deleteDisabledOAuthTooltip:
+					"OAuth 管理の認証情報は、OAuth の取り消しまたはサーバー削除で削除されます。",
 			},
 		},
 		usage: {
 			title: "シークレットの使用状況",
 			loading: "使用状況を読み込み中",
 			empty: "サーバー使用記録はありません",
+			emptyDescription:
+				"このシークレットには有効または履歴のサーバーバインディングがありません。",
+			summary: {
+				active: "有効 {{count}}",
+				historical: "履歴 {{count}}",
+				canDelete: "このシークレットを使用中のランタイムバインディングはありません。",
+				blocked: "削除する前に有効なバインディングを削除してください。",
+				oauthManaged:
+					"OAuth 認証情報は OAuth の取り消しまたはサーバー削除で自動削除されます。",
+			},
 			sections: {
 				active: "有効な参照",
 				activeDescription: "現在サーバーのランタイム設定でこのシークレットを参照している場所。",
@@ -516,6 +636,15 @@ export const secretsTranslations = {
 			title: "シークレットを削除しますか？",
 			description:
 				"アクティブな使用記録がない場合のみ、暗号化された値を削除します。",
+			descriptionActive:
+				"このシークレットはまだ使用中です。削除する前に有効なバインディングを削除してください。",
+			descriptionHistorical:
+				"暗号化された値を削除します。履歴使用メタデータはシークレット値なしで残ります。",
+			descriptionUnused:
+				"暗号化された値を削除します。有効または履歴の使用記録はありません。",
+			descriptionOAuth:
+				"OAuth 管理の認証情報は通常、OAuth の取り消しまたはサーバー削除で削除されます。孤立した OAuth レコードのみ削除してください。",
+			usageSummary: "有効 {{active}} · 履歴 {{historical}}",
 			actions: {
 				cancel: "キャンセル",
 				confirm: "削除",
@@ -561,9 +690,9 @@ export const secretsTranslations = {
 				title: "使用中",
 				description: "サーバーにリンク済み",
 			},
-			usageRefs: {
-				title: "使用参照",
-				description: "ランタイムバインディング",
+			cleanup: {
+				title: "クリーンアップ",
+				description: "確認待ち",
 			},
 			store: {
 				title: "セキュアストア",

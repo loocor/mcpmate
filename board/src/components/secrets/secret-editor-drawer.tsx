@@ -5,6 +5,7 @@ import type { SecretKind, SecretUsage } from "../../lib/types";
 import { writeClipboardText } from "../../lib/clipboard";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
 import { isUserCreatableSecretKind } from "../../lib/secret-origin-hints";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
 	Tooltip,
@@ -43,6 +44,9 @@ const DRAWER_CLOSE_ANIMATION_MS = 500;
 
 /** Match Client/Server edit drawer form rows. */
 const SECRET_FORM_ROW_LABEL_CLASS = "w-20 shrink-0 text-right";
+
+/** Visual mask for write-only secrets in edit mode (not the stored value). */
+const STORED_SECRET_VALUE_MASK = "••••••••••••••••••••••••";
 
 function SecretFormRow({
 	label,
@@ -108,6 +112,7 @@ export function SecretEditorDrawer({
 	const [displayEditor, setDisplayEditor] = useState<SecretEditorState | null>(
 		null,
 	);
+	const [valueFieldFocused, setValueFieldFocused] = useState(false);
 	const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const hadEditorRef = useRef(false);
 
@@ -115,6 +120,7 @@ export function SecretEditorDrawer({
 		if (editor) {
 			setDisplayEditor(editor);
 			setActiveTab(initialTab);
+			setValueFieldFocused(false);
 			if (!hadEditorRef.current) {
 				setOpen(true);
 			}
@@ -124,6 +130,7 @@ export function SecretEditorDrawer({
 
 		hadEditorRef.current = false;
 		setOpen(false);
+		setValueFieldFocused(false);
 	}, [editor, initialTab]);
 
 	useEffect(() => {
@@ -181,10 +188,24 @@ export function SecretEditorDrawer({
 		: "";
 	const isOAuthSecret = activeEditor ? !isUserCreatableSecretKind(activeEditor.kind) : false;
 	const isActiveOAuthSecret = isOAuthSecret && (usedByCount ?? 0) > 0;
+	const activeUsageCount =
+		usages.length > 0
+			? usages.filter((usage) => usage.status !== "stale").length
+			: (usedByCount ?? 0);
+	const historicalUsageCount = usages.filter(
+		(usage) => usage.status === "stale",
+	).length;
+	const canDeleteFromUsage = activeUsageCount === 0 && !isActiveOAuthSecret;
+	const showStoredValueMask =
+		activeEditor?.mode === "edit" &&
+		!isOAuthSecret &&
+		activeEditor.value === "" &&
+		!valueFieldFocused;
+
 	let valuePlaceholder = t("editor.placeholders.value", {
 		defaultValue: "Secret value",
 	});
-	if (activeEditor?.mode === "edit") {
+	if (activeEditor?.mode === "edit" && !showStoredValueMask) {
 		valuePlaceholder = t("editor.placeholders.keepValue", {
 			defaultValue: "Leave blank to keep existing value",
 		});
@@ -194,6 +215,9 @@ export function SecretEditorDrawer({
 			defaultValue: "Managed by OAuth; reconnect to update this value",
 		});
 	}
+	const valueInputDisplay = showStoredValueMask
+		? STORED_SECRET_VALUE_MASK
+		: activeEditor.value;
 	const copyPlaceholderLabel = t("editor.actions.copyPlaceholder", {
 		defaultValue: "Copy placeholder",
 	});
@@ -376,9 +400,25 @@ export function SecretEditorDrawer({
 								>
 									<Input
 										id={valueId}
-										type="password"
-										value={activeEditor.value}
+										type={showStoredValueMask ? "text" : "password"}
+										value={valueInputDisplay}
 										disabled={isOAuthSecret}
+										readOnly={showStoredValueMask}
+										className={
+											showStoredValueMask
+												? "cursor-text text-muted-foreground tracking-widest"
+												: undefined
+										}
+										aria-label={
+											showStoredValueMask
+												? t("editor.fields.storedValue", {
+													defaultValue:
+														"Stored secret value is hidden. Focus to replace it.",
+												})
+												: t("editor.fields.value", { defaultValue: "Value" })
+										}
+										onFocus={() => setValueFieldFocused(true)}
+										onBlur={() => setValueFieldFocused(false)}
 										onChange={(event) =>
 											onChange({ ...activeEditor, value: event.target.value })
 										}
@@ -386,7 +426,41 @@ export function SecretEditorDrawer({
 									/>
 								</SecretFormRow>
 							</TabsContent>
-							<TabsContent value="usage" className="pt-4">
+							<TabsContent value="usage" className="space-y-4 pt-4">
+								<div className="rounded-lg border bg-muted/30 p-3">
+									<div className="flex flex-wrap items-center gap-2">
+										<Badge variant={activeUsageCount > 0 ? "success" : "outline"}>
+											{t("usage.summary.active", {
+												defaultValue: "Active {{count}}",
+												count: activeUsageCount,
+											})}
+										</Badge>
+										<Badge
+											variant={historicalUsageCount > 0 ? "warning" : "outline"}
+										>
+											{t("usage.summary.historical", {
+												defaultValue: "Historical {{count}}",
+												count: historicalUsageCount,
+											})}
+										</Badge>
+									</div>
+									<p className="mt-2 text-xs text-muted-foreground">
+										{isActiveOAuthSecret
+											? t("usage.summary.oauthManaged", {
+												defaultValue:
+													"OAuth credentials are cleaned up by OAuth revoke or server deletion.",
+											})
+											: canDeleteFromUsage
+												? t("usage.summary.canDelete", {
+													defaultValue:
+														"No active runtime binding is using this secret.",
+												})
+												: t("usage.summary.blocked", {
+													defaultValue:
+														"Remove active bindings before deleting this secret.",
+												})}
+									</p>
+								</div>
 								<SecretUsageList
 									usages={usages}
 									isLoading={usagesLoading}
@@ -412,14 +486,19 @@ export function SecretEditorDrawer({
 										type="button"
 										variant="destructive"
 										className="gap-2"
-										disabled={isSaving || (usedByCount != null && usedByCount > 0)}
+										disabled={isSaving || !canDeleteFromUsage}
 										title={
-											usedByCount != null && usedByCount > 0
-												? t("editor.actions.deleteDisabledTooltip", {
-													defaultValue:
-														"Cannot delete: secret is actively used by {{count}} location(s)",
-													count: usedByCount,
-												})
+											!canDeleteFromUsage
+												? isActiveOAuthSecret
+													? t("editor.actions.deleteDisabledOAuthTooltip", {
+														defaultValue:
+															"OAuth-managed credentials are removed by OAuth revoke or server deletion.",
+													})
+													: t("editor.actions.deleteDisabledTooltip", {
+														defaultValue:
+															"Cannot delete: secret is actively used by {{count}} location(s)",
+														count: activeUsageCount,
+													})
 												: undefined
 										}
 										onClick={onDelete}

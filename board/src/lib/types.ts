@@ -618,6 +618,7 @@ export interface SecretMetadata {
   provider_kind: string;
   version: number;
   used_by_count: number;
+  historical_usage_count: number;
   created_at?: string | null;
   updated_at?: string | null;
 }

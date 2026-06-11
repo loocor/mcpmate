@@ -66,14 +66,43 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
         .await
         .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
     let mut active_count_by_alias: HashMap<String, u64> = HashMap::new();
+    let mut active_binding_keys_by_alias: HashMap<String, HashSet<String>> = HashMap::new();
     for usage in discovered {
-        *active_count_by_alias.entry(usage.alias).or_insert(0) += 1;
+        let binding_key = usage.location.binding_key(&usage.server_id);
+        *active_count_by_alias.entry(usage.alias.clone()).or_insert(0) += 1;
+        active_binding_keys_by_alias
+            .entry(usage.alias)
+            .or_default()
+            .insert(binding_key);
+    }
+
+    let all_indexed = store.list_all_usages().await.map_err(map_secret_store_error)?;
+    let mut indexed_by_alias: HashMap<String, Vec<SecretUsageView>> = HashMap::new();
+    for usage in all_indexed {
+        indexed_by_alias
+            .entry(usage.alias.clone())
+            .or_default()
+            .push(usage);
     }
 
     let mut enriched = Vec::with_capacity(secrets.len());
+    let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
     for metadata in secrets {
         let mut data = secret_metadata_data(metadata);
         data.used_by_count = active_count_by_alias.remove(&data.alias).unwrap_or(0);
+        let active_binding_keys = active_binding_keys_by_alias.remove(&data.alias).unwrap_or_default();
+        let indexed = indexed_by_alias.remove(&data.alias).unwrap_or_default();
+        let mut historical_usage_count = 0;
+        for usage in indexed {
+            let key = usage.location.binding_key(&usage.server_id);
+            if active_binding_keys.contains(&key) {
+                continue;
+            }
+            if resolve_secret_usage_status(&db.pool, &usage, &mut server_config_cache).await? == "stale" {
+                historical_usage_count += 1;
+            }
+        }
+        data.historical_usage_count = historical_usage_count;
         enriched.push(data);
     }
     Ok(Json(SecretListResp::success(SecretListData { secrets: enriched })))
@@ -274,6 +303,7 @@ fn secret_metadata_data(metadata: SecretMetadataView) -> SecretMetadataData {
         provider_kind: metadata.provider_kind,
         version: metadata.version,
         used_by_count: metadata.used_by_count,
+        historical_usage_count: 0,
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
     }

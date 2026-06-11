@@ -35,6 +35,13 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "../../components/ui/select";
 import type {
 	Entity,
 	PageToolbarCallbacks,
@@ -54,6 +61,13 @@ import {
 } from "../../components/secrets";
 import { secretsApi, serversApi } from "../../lib/api";
 import { requiresEncryptionUnlock } from "../../lib/protection-password";
+import {
+	classifySecretLifecycle,
+	filterSecretsByLifecycle,
+	secretHasCleanupAvailable,
+	type SecretLifecycleFilter,
+	type SecretLifecycleState,
+} from "../../lib/secret-lifecycle";
 import { useUrlView } from "../../lib/hooks/use-url-state";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
@@ -70,10 +84,17 @@ type SecretToolbarEntity = Entity & {
 	kind: string;
 	provider_kind: string;
 	used_by_count: number;
+	historical_usage_count: number;
 	version: number;
 };
 
-const defaultEditorState = defaultSecretEditorState;
+const SECRET_LIFECYCLE_FILTERS: SecretLifecycleFilter[] = [
+	"all",
+	"active",
+	"cleanup_available",
+	"unused",
+	"oauth_managed",
+];
 
 function getSecretDisplay(secret: SecretMetadata) {
 	const label = secret.label?.trim();
@@ -85,7 +106,7 @@ function getSecretDisplay(secret: SecretMetadata) {
 
 export function SecretsPage() {
 	usePageTranslations("secrets");
-	const { t } = useTranslation("secrets");
+	const { t, i18n } = useTranslation("secrets");
 	const queryClient = useQueryClient();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [editor, setEditor] = useState<SecretEditorState | null>(null);
@@ -155,8 +176,65 @@ export function SecretsPage() {
 	const providerLabel = (providerKind: string): string =>
 		t(`provider.${providerKind}`, { defaultValue: providerKind });
 
+	const lifecycleFilter = useMemo<SecretLifecycleFilter>(() => {
+		const raw = searchParams.get("lifecycle");
+		return SECRET_LIFECYCLE_FILTERS.includes(raw as SecretLifecycleFilter)
+			? (raw as SecretLifecycleFilter)
+			: "all";
+	}, [searchParams]);
+
+	const setLifecycleFilter = (value: SecretLifecycleFilter) => {
+		const next = new URLSearchParams(searchParams);
+		if (value === "all") {
+			next.delete("lifecycle");
+		} else {
+			next.set("lifecycle", value);
+		}
+		setSearchParams(next, { replace: true });
+	};
+
+	const lifecycleLabel = (state: SecretLifecycleState | "all"): string =>
+		t(`lifecycle.state.${state}`, { defaultValue: state.replaceAll("_", " ") });
+
+	const lifecycleDescription = (state: SecretLifecycleState): string =>
+		t(`lifecycle.description.${state}`, {
+			defaultValue: state.replaceAll("_", " "),
+		});
+
+	const lifecycleBadgeVariant = (
+		state: SecretLifecycleState,
+	): "secondary" | "success" | "warning" | "outline" | "info" => {
+		switch (state) {
+			case "active":
+				return "success";
+			case "cleanup_available":
+				return "warning";
+			case "oauth_managed":
+				return "info";
+			case "unused":
+				return "outline";
+		}
+	};
+
+	const renderLifecycleBadge = (secret: SecretMetadata) => {
+		const lifecycle = classifySecretLifecycle(secret);
+		return (
+			<Badge
+				variant={lifecycleBadgeVariant(lifecycle.state)}
+				title={lifecycleDescription(lifecycle.state)}
+			>
+				{lifecycleLabel(lifecycle.state)}
+			</Badge>
+		);
+	};
+
+	const filteredSecrets = useMemo(
+		() => filterSecretsByLifecycle(secretsQuery.data ?? [], lifecycleFilter),
+		[secretsQuery.data, lifecycleFilter],
+	);
+
 	const secretsAsEntities = useMemo<SecretToolbarEntity[]>(() => {
-		const mapped = (secretsQuery.data ?? []).map((secret) => ({
+		const mapped = filteredSecrets.map((secret) => ({
 			id: secret.alias,
 			name: secret.alias,
 			description: secret.label ?? secret.placeholder,
@@ -164,11 +242,12 @@ export function SecretsPage() {
 			kind: secret.kind,
 			provider_kind: secret.provider_kind,
 			used_by_count: secret.used_by_count,
+			historical_usage_count: secret.historical_usage_count,
 			version: secret.version,
 		}));
 		mapped.sort((left, right) => left.alias.localeCompare(right.alias));
 		return mapped;
-	}, [secretsQuery.data]);
+	}, [filteredSecrets]);
 
 	const secretsByAlias = useMemo(
 		() =>
@@ -212,7 +291,7 @@ export function SecretsPage() {
 			setEditor(nextEditor);
 		} else {
 			setEditor({
-				...defaultEditorState(),
+				...defaultSecretEditorState(),
 				alias: suggestedFromUrl,
 			});
 		}
@@ -223,6 +302,28 @@ export function SecretsPage() {
 		stripOriginSearchParams(next);
 		setSearchParams(next, { replace: true });
 	}, [searchParams, secretsQuery.data, setSearchParams, t]);
+
+	useEffect(() => {
+		const alias = searchParams.get("secret")?.trim();
+		if (!alias || !secretsQuery.data) return;
+		const secret = secretsByAlias.get(alias);
+		if (!secret) return;
+
+		setEditorInitialTab(searchParams.get("tab") === "usage" ? "usage" : "general");
+		setEditor({
+			mode: "edit",
+			alias: secret.alias,
+			kind: (secret.kind as SecretKind) || "generic",
+			label: secret.label ?? "",
+			value: "",
+			origin: secret.origin ?? null,
+		});
+
+		const next = new URLSearchParams(searchParams);
+		next.delete("secret");
+		next.delete("tab");
+		setSearchParams(next, { replace: true });
+	}, [searchParams, secretsByAlias, secretsQuery.data, setSearchParams]);
 
 	const saveMutation = useMutation({
 		mutationFn: async (state: SecretEditorState) => {
@@ -286,7 +387,7 @@ export function SecretsPage() {
 
 	const openCreate = () => {
 		setEditorInitialTab("general");
-		setEditor(defaultEditorState());
+		setEditor(defaultSecretEditorState());
 	};
 	const openEdit = (secret: SecretMetadata, tab: "general" | "usage" = "general") => {
 		setEditorInitialTab(tab);
@@ -329,7 +430,7 @@ export function SecretsPage() {
 	const statsCards = useMemo((): StatCardData[] => {
 		const secrets = secretsQuery.data ?? [];
 		const inUseCount = secrets.filter((secret) => secret.used_by_count > 0).length;
-		const usageRefs = secrets.reduce((sum, secret) => sum + secret.used_by_count, 0);
+		const cleanupCount = secrets.filter(secretHasCleanupAvailable).length;
 		const storeStatus = storeStatusQuery.data;
 
 		let storeValue: string | number = "—";
@@ -371,10 +472,10 @@ export function SecretsPage() {
 				}),
 			},
 			{
-				title: t("stats.usageRefs.title", { defaultValue: "Usage References" }),
-				value: secretsQuery.isLoading ? "—" : usageRefs,
-				description: t("stats.usageRefs.description", {
-					defaultValue: "runtime bindings",
+				title: t("stats.cleanup.title", { defaultValue: "Cleanup" }),
+				value: secretsQuery.isLoading ? "—" : cleanupCount,
+				description: t("stats.cleanup.description", {
+					defaultValue: "ready to review",
 				}),
 			},
 			{
@@ -388,7 +489,28 @@ export function SecretsPage() {
 		secretsQuery.isLoading,
 		storeStatusQuery.data,
 		t,
+		i18n.language,
 	]);
+
+	const filters = (
+		<Select
+			value={lifecycleFilter}
+			onValueChange={(value) =>
+				setLifecycleFilter(value as SecretLifecycleFilter)
+			}
+		>
+			<SelectTrigger className="h-9 w-[178px]">
+				<SelectValue />
+			</SelectTrigger>
+			<SelectContent align="end">
+				{SECRET_LIFECYCLE_FILTERS.map((filter) => (
+					<SelectItem key={filter} value={filter}>
+						{lifecycleLabel(filter)}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	);
 
 	const toolbarConfig: PageToolbarConfig<SecretToolbarEntity> = {
 		data: secretsAsEntities,
@@ -516,10 +638,15 @@ export function SecretsPage() {
 							defaultValue:
 								"Store write-only values for server runtime placeholders.",
 						})
-						: t("empty.filteredDescription", {
-							defaultValue:
-								"Adjust the search or sort controls to find a secret.",
-						})
+						: lifecycleFilter !== "all"
+							? t("empty.filteredLifecycleDescription", {
+								defaultValue:
+									"Adjust the lifecycle filter or search controls to find a secret.",
+							})
+							: t("empty.filteredDescription", {
+								defaultValue:
+									"Adjust the search or sort controls to find a secret.",
+							})
 				}
 				action={emptyStateAction}
 			/>
@@ -583,6 +710,7 @@ export function SecretsPage() {
 					<Badge key="kind" variant="secondary">
 						{kindLabel(secret.kind)}
 					</Badge>,
+					<span key="lifecycle">{renderLifecycleBadge(secret)}</span>,
 				]}
 				stats={[
 					{
@@ -593,6 +721,10 @@ export function SecretsPage() {
 					{
 						label: t("list.stats.usage", { defaultValue: "Usage" }),
 						value: secret.used_by_count,
+					},
+					{
+						label: t("list.stats.history", { defaultValue: "History" }),
+						value: secret.historical_usage_count,
 					},
 					{
 						label: t("list.stats.version", { defaultValue: "Version" }),
@@ -647,7 +779,10 @@ export function SecretsPage() {
 				}}
 				avatarShape="rounded"
 				topRightBadge={
-					<Badge variant="secondary">{kindLabel(secret.kind)}</Badge>
+					<>
+						{renderLifecycleBadge(secret)}
+						<Badge variant="secondary">{kindLabel(secret.kind)}</Badge>
+					</>
 				}
 				stats={[
 					{
@@ -658,6 +793,10 @@ export function SecretsPage() {
 					{
 						label: t("list.stats.usage", { defaultValue: "Usage" }),
 						value: String(secret.used_by_count),
+					},
+					{
+						label: t("list.stats.history", { defaultValue: "History" }),
+						value: String(secret.historical_usage_count),
 					},
 					{
 						label: t("list.stats.version", { defaultValue: "Version" }),
@@ -683,6 +822,7 @@ export function SecretsPage() {
 					state={toolbarState}
 					callbacks={toolbarCallbacks}
 					actions={actions}
+					filters={filters}
 				/>
 			}
 			statsCards={<StatsCards cards={statsCards} />}
@@ -823,6 +963,8 @@ function SecretDeleteDialog({
 	onConfirm: () => void;
 }) {
 	const { t } = useTranslation("secrets");
+	const lifecycle = secret ? classifySecretLifecycle(secret) : null;
+	const description = resolveDeleteDescription(t, lifecycle?.state);
 	return (
 		<AlertDialog
 			open={Boolean(secret)}
@@ -833,15 +975,19 @@ function SecretDeleteDialog({
 					<AlertDialogTitle>
 						{t("delete.title", { defaultValue: "Delete secret?" })}
 					</AlertDialogTitle>
-					<AlertDialogDescription>
-						{t("delete.description", {
-							defaultValue:
-								"This removes the encrypted value only when no active usage is recorded.",
-						})}
-					</AlertDialogDescription>
+					<AlertDialogDescription>{description}</AlertDialogDescription>
 				</AlertDialogHeader>
-				<div className="rounded-md bg-muted px-3 py-2 font-mono text-xs">
-					{secret?.alias}
+				<div className="space-y-2 rounded-md bg-muted px-3 py-2 text-xs">
+					<div className="font-mono">{secret?.alias}</div>
+					{lifecycle ? (
+						<div className="text-muted-foreground">
+							{t("delete.usageSummary", {
+								defaultValue: "Active {{active}} · Historical {{historical}}",
+								active: lifecycle.activeCount,
+								historical: lifecycle.historicalCount,
+							})}
+						</div>
+					) : null}
 				</div>
 				<AlertDialogFooter>
 					<AlertDialogCancel disabled={isDeleting}>
@@ -858,4 +1004,37 @@ function SecretDeleteDialog({
 			</AlertDialogContent>
 		</AlertDialog>
 	);
+}
+
+function resolveDeleteDescription(
+	t: ReturnType<typeof useTranslation<"secrets">>["t"],
+	state?: SecretLifecycleState,
+): string {
+	switch (state) {
+		case "active":
+			return t("delete.descriptionActive", {
+				defaultValue:
+					"This secret is still actively used. Remove active bindings before deleting it.",
+			});
+		case "cleanup_available":
+			return t("delete.descriptionHistorical", {
+				defaultValue:
+					"This removes the encrypted value. Historical usage metadata remains available without the secret value.",
+			});
+		case "oauth_managed":
+			return t("delete.descriptionOAuth", {
+				defaultValue:
+					"OAuth-managed credentials are normally removed by OAuth revoke or server deletion. Delete only orphaned OAuth records.",
+			});
+		case "unused":
+			return t("delete.descriptionUnused", {
+				defaultValue:
+					"This removes the encrypted value. No active or historical usage is recorded.",
+			});
+		default:
+			return t("delete.description", {
+				defaultValue:
+					"This removes the encrypted value only when no active usage is recorded.",
+			});
+	}
 }

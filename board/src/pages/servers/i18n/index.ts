@@ -76,7 +76,8 @@ export const serversTranslations = {
 			},
 			delete: {
 				title: "Server deleted",
-				message: "Server {{serverId}}",
+				message: "Server {{serverId}}. Review Secure Store cleanup if it used stored secrets.",
+				cleanupReview: "Review Secure Store cleanup if this server used stored secrets.",
 				errorFallback: "Error deleting server",
 			},
 			genericError: {
@@ -722,6 +723,7 @@ export const serversTranslations = {
 				empty: "No secrets stored",
 				createInline: "New secret",
 				tagAlias: "{{alias}}",
+				inspect: "Open {{alias}} in Secure Store",
 				inlinePrefix: "Text before secret",
 				inlineTrailing: "Text after secret",
 				inlineText: "Secret value text",
@@ -977,7 +979,8 @@ export const serversTranslations = {
 			},
 			delete: {
 				title: "服务器已删除",
-				message: "服务器 {{serverId}}",
+				message: "服务器 {{serverId}}。如果它使用过已存储密钥，请复核安全存储清理。",
+				cleanupReview: "如果此服务器使用过已存储密钥，请复核安全存储清理。",
 				errorFallback: "删除服务器时出错",
 			},
 			genericError: {
@@ -1604,6 +1607,7 @@ export const serversTranslations = {
 				empty: "暂无存储密钥",
 				createInline: "新建密钥",
 				tagAlias: "{{alias}}",
+				inspect: "在安全存储中打开 {{alias}}",
 				inlinePrefix: "密钥前的文本",
 				inlineTrailing: "密钥后的文本",
 				inlineText: "密钥字段文本",
@@ -1838,7 +1842,8 @@ export const serversTranslations = {
 			},
 			delete: {
 				title: "サーバーを削除しました",
-				message: "サーバー {{serverId}}",
+				message: "サーバー {{serverId}}。保存済みシークレットを使用していた場合は Secure Store のクリーンアップを確認してください。",
+				cleanupReview: "このサーバーが保存済みシークレットを使用していた場合は Secure Store のクリーンアップを確認してください。",
 				errorFallback: "サーバーの削除中にエラーが発生しました",
 			},
 			genericError: {
@@ -2485,6 +2490,7 @@ export const serversTranslations = {
 				empty: "保存されたシークレットはありません",
 				createInline: "新しいシークレット",
 				tagAlias: "{{alias}}",
+				inspect: "Secure Store で {{alias}} を開く",
 				inlinePrefix: "シークレット前のテキスト",
 				inlineTrailing: "シークレット後のテキスト",
 				inlineText: "シークレットフィールドのテキスト",

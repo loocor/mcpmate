@@ -498,8 +498,10 @@ export function ServerListPage() {
 				}),
 				t("notifications.delete.message", {
 					serverId: deletingServer,
-					defaultValue: "Server {{serverId}}",
+					defaultValue:
+						"Server {{serverId}}. Review Secure Store cleanup if it used stored secrets.",
 				}),
+				"/secrets?lifecycle=unused",
 			);
 			queryClient.invalidateQueries({ queryKey: ["servers"] });
 			setIsDeleteConfirmOpen(false);
