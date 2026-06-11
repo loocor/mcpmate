@@ -27,6 +27,7 @@ import InspectorDrawer, {
 	type InspectorLogEntry,
 } from "../../components/inspector-drawer";
 import { ServerAuthBadge } from "../../components/server-auth-badge";
+import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { StatusBadge } from "../../components/status-badge";
 import {
@@ -1321,9 +1322,7 @@ export function ServerDetailPage() {
 																		<ServerAuthBadge
 																			authMode={server.auth_mode}
 																			oauthStatus={server.oauth_status}
-																			oauthCustodyState={server.oauth_custody_state}
-																			oauthRequiresReconnect={server.oauth_requires_reconnect}
-																			oauthIssue={server.oauth_issue}
+																			readiness={resolveServerOAuthReadiness(server)}
 																		/>
 																		<Button
 																			variant="ghost"

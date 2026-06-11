@@ -24,6 +24,7 @@ import {
 } from "../../components/page-layout";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { ServerAuthBadge } from "../../components/server-auth-badge";
+import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
 import { ServerInstallWizard, type ServerInstallManualFormHandle } from "../../components/server-install";
 import { StatsCards } from "../../components/stats-cards";
 import { StatusBadge } from "../../components/status-badge";
@@ -737,9 +738,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 						<ServerAuthBadge
 							authMode={server.auth_mode}
 							oauthStatus={server.oauth_status}
-							oauthCustodyState={server.oauth_custody_state}
-							oauthRequiresReconnect={server.oauth_requires_reconnect}
-							oauthIssue={server.oauth_issue}
+							readiness={resolveServerOAuthReadiness(server)}
 						/>
 					</div>
 				}
@@ -875,9 +874,7 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 						<ServerAuthBadge
 							authMode={server.auth_mode}
 							oauthStatus={server.oauth_status}
-							oauthCustodyState={server.oauth_custody_state}
-							oauthRequiresReconnect={server.oauth_requires_reconnect}
-							oauthIssue={server.oauth_issue}
+							readiness={resolveServerOAuthReadiness(server)}
 							showLabel={false}
 						/>
 					</div>

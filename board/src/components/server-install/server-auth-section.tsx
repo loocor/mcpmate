@@ -485,7 +485,10 @@ export function ServerAuthSection({
 
 	const isBusy = connectMutation.isPending || revokeMutation.isPending;
 	const isConnectDisabled = isBusy || oauthReadiness.actionDisabled || (isDesktopEnvironment && !desktopListenerReady);
-	const isRevokeDisabled = isBusy || oauthReadiness.actionDisabled;
+	// Revoke is allowed even when the secure store is unavailable — the backend
+	// can delete plaintext OAuth tokens without the store and will return an
+	// error if the token actually requires store access.
+	const isRevokeDisabled = isBusy;
 
 	return (
 		<div className="space-y-4 pt-2 border-t mt-4">
@@ -580,7 +583,7 @@ export function ServerAuthSection({
 											? t("manual.auth.oauth.secureStoreUnavailable.title", { defaultValue: "Secure Store needs attention" })
 											: t("manual.auth.oauth.legacyReconnect.title", { defaultValue: "Reconnect OAuth to secure credentials" })}
 									</div>
-									<div>{oauthReadiness.notice.message}</div>
+									<div>{t(oauthReadiness.notice.messageKey, { defaultValue: oauthReadiness.notice.defaultMessage })}</div>
 								</div>
 							</div>
 						</div>

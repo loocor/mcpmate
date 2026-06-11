@@ -29,7 +29,7 @@ describe("resolveOAuthReadiness", () => {
 
 		expect(readiness.actionDisabled).toBe(true);
 		expect(readiness.notice?.kind).toBe("secure-store-unavailable");
-		expect(readiness.notice?.message).toContain("Secure Store is locked.");
+		expect(readiness.notice?.defaultMessage).toContain("Secure Store is locked.");
 	});
 
 	it("prompts reconnect for legacy plaintext OAuth credentials", () => {
@@ -52,7 +52,7 @@ describe("resolveOAuthReadiness", () => {
 
 		expect(readiness.actionDisabled).toBe(false);
 		expect(readiness.notice?.kind).toBe("legacy-reconnect-required");
-		expect(readiness.notice?.message).toContain("Reconnect OAuth");
+		expect(readiness.notice?.defaultMessage).toContain("Reconnect OAuth");
 	});
 
 	it("blocks when OAuth status reports unavailable custody without a store status", () => {
@@ -75,6 +75,6 @@ describe("resolveOAuthReadiness", () => {
 
 		expect(readiness.actionDisabled).toBe(true);
 		expect(readiness.notice?.kind).toBe("secure-store-unavailable");
-		expect(readiness.notice?.message).toContain("Secure Store is unavailable.");
+		expect(readiness.notice?.defaultMessage).toContain("Secure Store is unavailable.");
 	});
 });
