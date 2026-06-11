@@ -1190,6 +1190,39 @@ mod tests {
     async fn unify_direct_exposure_eligibility_round_trips_through_update_list_and_details() {
         let context = create_test_context().await;
         let server_id = seed_streamable_http_server(&context.db_pool, "eligibility-server").await;
+        crate::config::server::upsert_server_oauth_config(
+            &context.db_pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: server_id.clone(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-eligibility".to_string(),
+                client_secret: None,
+                scopes: Some("read".to_string()),
+                redirect_uri: "http://127.0.0.1:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("upsert eligibility oauth config");
+        crate::config::server::upsert_server_oauth_token(
+            &context.db_pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: server_id.clone(),
+                access_token: "token-eligibility".to_string(),
+                refresh_token: None,
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+                scope: Some("read".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("upsert eligibility oauth token");
 
         let detail_before = server_details_core(
             &ServerDetailsReq { id: server_id.clone() },
@@ -1231,6 +1264,19 @@ mod tests {
         assert!(updated.unify_direct_exposure_eligible);
         assert_eq!(updated.name, "eligibility-server");
         assert_eq!(updated.url.as_deref(), Some("https://example.com/eligibility-server"));
+        assert!(matches!(
+            updated.oauth_status,
+            Some(crate::core::oauth::OAuthConnectionState::Connected)
+        ));
+        assert!(matches!(
+            updated.oauth_custody_state,
+            Some(crate::core::oauth::OAuthCustodyState::Unavailable)
+        ));
+        assert_eq!(updated.oauth_requires_reconnect, Some(true));
+        assert_eq!(
+            updated.oauth_issue.as_ref().map(|issue| issue.code.as_str()),
+            Some("secure_store_unavailable")
+        );
 
         let list_response = server_list_core(
             &ServerListReq {
