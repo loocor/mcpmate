@@ -126,6 +126,9 @@ export const serversTranslations = {
 				stdio: "STDIO",
 				http: "HTTP",
 				streamableHttp: "Streamable HTTP",
+				headerAuth: "Header auth",
+				oauth: "OAuth",
+				oauthWarning: "Authorization expired — reauthorize required",
 			},
 			iconAlt: {
 				named: "{{name}} icon",
@@ -175,6 +178,7 @@ export const serversTranslations = {
 					service: "Service",
 					runtime: "Runtime",
 					type: "Type",
+					auth: "Auth",
 					protocol: "Protocol",
 					version: "Version",
 					capabilities: "Capabilities",
@@ -639,6 +643,16 @@ export const serversTranslations = {
 					},
 					statusLabel: "OAuth status",
 					secureStoreStored: "OAuth credentials are stored in Secure Store",
+					secureStoreUnavailable: {
+						title: "Secure Store needs attention",
+						message:
+							"Secure Store is not ready. Unlock or initialize it before connecting OAuth.",
+					},
+					legacyReconnect: {
+						title: "Reconnect OAuth to secure credentials",
+						message:
+							"Reconnect OAuth to move existing credentials into Secure Store custody.",
+					},
 					manualOverride: {
 						title: "Manual Authorization header is active",
 						description:
@@ -1013,6 +1027,9 @@ export const serversTranslations = {
 				stdio: "STDIO",
 				http: "HTTP",
 				streamableHttp: "Streamable HTTP",
+				headerAuth: "请求头鉴权",
+				oauth: "OAuth",
+				oauthWarning: "授权已过期，请重新授权",
 			},
 			iconAlt: {
 				named: "{{name}} 图标",
@@ -1062,6 +1079,7 @@ export const serversTranslations = {
 					service: "服务",
 					runtime: "运行时",
 					type: "类型",
+					auth: "鉴权",
 					protocol: "协议",
 					version: "版本",
 					capabilities: "能力",
@@ -1513,6 +1531,14 @@ export const serversTranslations = {
 					},
 					statusLabel: "OAuth 状态",
 					secureStoreStored: "OAuth 凭据已存入安全存储",
+					secureStoreUnavailable: {
+						title: "安全存储需要处理",
+						message: "安全存储尚未就绪。请先解锁或初始化后再连接 OAuth。",
+					},
+					legacyReconnect: {
+						title: "重新连接 OAuth 以安全保存凭据",
+						message: "请重新连接 OAuth，将现有凭据迁移到安全存储托管。",
+					},
 					manualOverride: {
 						title: "手动 Authorization 请求头已生效",
 						description:
@@ -1861,6 +1887,9 @@ export const serversTranslations = {
 				stdio: "STDIO",
 				http: "HTTP",
 				streamableHttp: "Streamable HTTP",
+				headerAuth: "ヘッダー認証",
+				oauth: "OAuth",
+				oauthWarning: "認可の期限切れ — 再認可が必要です",
 			},
 			iconAlt: {
 				named: "{{name}} のアイコン",
@@ -1910,6 +1939,7 @@ export const serversTranslations = {
 					service: "サービス",
 					runtime: "ランタイム",
 					type: "タイプ",
+					auth: "認証",
 					protocol: "プロトコル",
 					version: "バージョン",
 					capabilities: "機能",
@@ -2377,6 +2407,16 @@ export const serversTranslations = {
 					},
 					statusLabel: "OAuth の状態",
 					secureStoreStored: "OAuth 認証情報は Secure Store に保存されています",
+					secureStoreUnavailable: {
+						title: "Secure Store の対応が必要です",
+						message:
+							"Secure Store の準備ができていません。OAuth を接続する前にロック解除または初期化してください。",
+					},
+					legacyReconnect: {
+						title: "認証情報を保護するため OAuth を再接続してください",
+						message:
+							"既存の認証情報を Secure Store の管理下に移すため、OAuth を再接続してください。",
+					},
 					manualOverride: {
 						title: "手動の Authorization ヘッダーが有効です",
 						description:

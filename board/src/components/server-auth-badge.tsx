@@ -16,20 +16,21 @@ interface ServerAuthBadgeProps {
   oauthStatus?: string | null;
   readiness?: OAuthReadiness | null;
   showLabel?: boolean;
+  onAction?: () => void;
 }
 
 type ServerAuthBadgeDisplay =
   | { kind: "none" }
   | {
-      kind: "badge";
-      label: string;
-      className: string;
-      icon: ReactNode;
-    }
+    kind: "badge";
+    label: string;
+    className: string;
+    icon: ReactNode;
+  }
   | {
-      kind: "warning";
-      label: string;
-    };
+    kind: "warning";
+    label: string;
+  };
 
 function resolveServerAuthBadgeDisplay({
   authMode,
@@ -74,7 +75,7 @@ function resolveServerAuthBadgeDisplay({
     return {
       kind: "warning",
       label: t("entity.connectionTags.oauthWarning", {
-        defaultValue: "Authorization expired — reauthorize in Edit",
+        defaultValue: "Authorization expired — reauthorize required",
       }),
     };
   }
@@ -95,6 +96,7 @@ export function ServerAuthBadge({
   oauthStatus,
   readiness,
   showLabel = true,
+  onAction,
 }: ServerAuthBadgeProps) {
   const { t } = useTranslation("servers");
   const display = resolveServerAuthBadgeDisplay({
@@ -109,19 +111,40 @@ export function ServerAuthBadge({
   }
 
   if (display.kind === "warning") {
+    if (!showLabel) {
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center">
+                <AlertTriangle className="h-4 w-4 text-red-500 animate-pulse" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{display.label}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      );
+    }
+
+    if (onAction) {
+      return (
+        <button
+          type="button"
+          onClick={onAction}
+          aria-label={display.label}
+          className="w-fit cursor-pointer text-left text-sm text-red-600 underline underline-offset-2 transition-colors hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+        >
+          {display.label}
+        </button>
+      );
+    }
+
     return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="inline-flex items-center">
-              <AlertTriangle className="h-4 w-4 text-red-500 animate-pulse" />
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{display.label}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <span className="text-sm text-red-600 dark:text-red-400">
+        {display.label}
+      </span>
     );
   }
 

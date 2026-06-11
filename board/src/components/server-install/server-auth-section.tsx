@@ -15,7 +15,6 @@ import type {
 	OAuthConfigRequest,
 	OAuthStatus,
 } from "../../lib/types";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Segment } from "../ui/segment";
@@ -51,14 +50,14 @@ function toFormState(status: OAuthStatus | null): OAuthConfigRequest {
 	};
 }
 
-function statusVariant(state: OAuthStatus["state"]): "secondary" | "outline" | "destructive" {
+function oauthStateTextClass(state: OAuthStatus["state"]): string {
 	switch (state) {
 		case "connected":
-			return "secondary";
+			return "text-emerald-700 dark:text-emerald-300";
 		case "expired":
-			return "destructive";
+			return "text-red-600 dark:text-red-400";
 		default:
-			return "outline";
+			return "text-slate-600 dark:text-slate-300";
 	}
 }
 
@@ -415,6 +414,16 @@ export function ServerAuthSection({
 	const secureOAuthCustodyLabel = t("manual.auth.oauth.secureStoreStored", {
 		defaultValue: "OAuth credentials are stored in Secure Store",
 	});
+	const oauthStatusLabel = (
+		<span
+			className={`inline-flex items-center gap-1.5 text-xs font-semibold ${oauthStateTextClass(status.state)}`}
+		>
+			{isSecureOAuthCustody ? (
+				<ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+			) : null}
+			{stateLabel}
+		</span>
+	);
 
 	const progressItems = [
 		{
@@ -525,13 +534,7 @@ export function ServerAuthSection({
 								<TooltipProvider delayDuration={200}>
 									<Tooltip>
 										<TooltipTrigger asChild>
-											<span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-												<ShieldCheck
-													className="h-3.5 w-3.5"
-													aria-hidden="true"
-												/>
-												{stateLabel}
-											</span>
+											{oauthStatusLabel}
 										</TooltipTrigger>
 										<TooltipContent side="top">
 											{secureOAuthCustodyLabel}
@@ -539,7 +542,7 @@ export function ServerAuthSection({
 									</Tooltip>
 								</TooltipProvider>
 							) : (
-								<Badge variant={statusVariant(status.state)}>{stateLabel}</Badge>
+								oauthStatusLabel
 							)}
 							<Button
 								type="button"

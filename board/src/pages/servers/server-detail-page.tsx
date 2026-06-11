@@ -13,7 +13,7 @@ import {
 	ShieldAlert,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
@@ -186,6 +186,35 @@ function makeLogId() {
 		return crypto.randomUUID();
 	}
 	return `log_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
+const overviewMetadataGridClass =
+	"grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 text-sm leading-5";
+const overviewMetadataLabelClass =
+	"text-xs uppercase leading-5 text-slate-500";
+const overviewMetadataValueClass = "min-w-0 text-left text-sm leading-5";
+
+function OverviewMetadataRow({
+	label,
+	children,
+	multiline = false,
+}: {
+	label: ReactNode;
+	children: ReactNode;
+	multiline?: boolean;
+}) {
+	const rowAlignClass = multiline ? "self-start" : "self-center min-h-6";
+
+	return (
+		<div className="contents">
+			<span className={`${overviewMetadataLabelClass} ${rowAlignClass}`}>
+				{label}
+			</span>
+			<div className={`${overviewMetadataValueClass} ${rowAlignClass}`}>
+				{children}
+			</div>
+		</div>
+	);
 }
 
 export function ServerDetailPage() {
@@ -1036,6 +1065,9 @@ export function ServerDetailPage() {
 	}, [serverLogsQuery.data?.events, logFilter]);
 	const serverEnabled = Boolean(server?.enabled ?? server?.globally_enabled);
 	const runtimeStatus = server?.status ?? (serverEnabled ? "idle" : "disabled");
+	const authReadiness = server?.auth_mode
+		? resolveServerOAuthReadiness(server)
+		: null;
 	const overviewActionButtonClass =
 		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
 	const showDefaultHeaders = useAppStore(
@@ -1262,145 +1294,137 @@ export function ServerDetailPage() {
 															fallback={serverDisplayName || "?"}
 															className="text-sm"
 														/>
-														<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
-															<span className="text-xs uppercase text-slate-500">
-																{t("detail.overview.labels.service", {
+														<div className={`min-w-0 flex-1 ${overviewMetadataGridClass}`}>
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.service", {
 																	defaultValue: "Service",
 																})}
-															</span>
-															<div className="flex flex-wrap items-center gap-2 justify-self-start">
-																<Badge
-																	variant={serverEnabled ? "secondary" : "outline"}
-																	className={`${serverEnabled ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200" : "text-slate-600 dark:text-slate-300"}`}
-																>
-																	{serverEnabled
-																		? t("detail.overview.status.enabled", {
-																			defaultValue: "Enabled",
-																		})
-																		: t("detail.overview.status.disabled", {
-																			defaultValue: "Disabled",
-																		})}
-																</Badge>
-																{server.unify_direct_exposure_eligible ? (
-																	<Badge
-																		variant="secondary"
-																		className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+															>
+																<div className="flex flex-wrap items-center gap-2">
+																	<span
+																		className={
+																			serverEnabled
+																				? "text-emerald-700 dark:text-emerald-300"
+																				: "text-slate-600 dark:text-slate-300"
+																		}
 																	>
-																		{t("detail.overview.status.unifyEligible", {
-																			defaultValue: "Direct Exposure Eligible",
-																		})}
-																	</Badge>
-																) : null}
-															</div>
-															<span className="text-xs uppercase text-slate-500">
-																{t("detail.overview.labels.runtime", {
+																		{serverEnabled
+																			? t("detail.overview.status.enabled", {
+																				defaultValue: "Enabled",
+																			})
+																			: t("detail.overview.status.disabled", {
+																				defaultValue: "Disabled",
+																			})}
+																	</span>
+																	{server.unify_direct_exposure_eligible ? (
+																		<Badge
+																			variant="secondary"
+																			className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+																		>
+																			{t("detail.overview.status.unifyEligible", {
+																				defaultValue: "Direct Exposure Eligible",
+																			})}
+																		</Badge>
+																	) : null}
+																</div>
+															</OverviewMetadataRow>
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.runtime", {
 																	defaultValue: "Runtime",
 																})}
-															</span>
-															<StatusBadge
-																status={runtimeStatus}
-																instances={server.instances || []}
-																isServerEnabled={serverEnabled}
-																className="justify-self-start"
-															/>
-															<span className="text-xs uppercase text-slate-500">
-																{t("detail.overview.labels.type", {
+															>
+																<StatusBadge
+																	status={runtimeStatus}
+																	instances={server.instances || []}
+																	isServerEnabled={serverEnabled}
+																	appearance="plain"
+																/>
+															</OverviewMetadataRow>
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.type", {
 																	defaultValue: "Type",
 																})}
-															</span>
-															<span className="font-mono text-sm leading-tight">
-																{server.server_type}
-															</span>
+															>
+																<span className="break-words font-mono">
+																	{server.server_type}
+																</span>
+															</OverviewMetadataRow>
 															{server.auth_mode ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.auth", {
-																			defaultValue: "Auth",
-																		})}
-																	</span>
-																	<div className="flex items-center gap-1.5 text-sm">
-																		<ServerAuthBadge
-																			authMode={server.auth_mode}
-																			oauthStatus={server.oauth_status}
-																			readiness={resolveServerOAuthReadiness(server)}
-																		/>
-																		<Button
-																			variant="ghost"
-																			size="sm"
-																			className="h-6 text-xs px-2"
-																			onClick={() => setIsEditOpen(true)}
-																		>
-																			{t("actions.edit", { defaultValue: "Edit" })}
-																		</Button>
-																	</div>
-																</>
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.auth", {
+																		defaultValue: "Auth",
+																	})}
+																>
+																	<ServerAuthBadge
+																		authMode={server.auth_mode}
+																		oauthStatus={server.oauth_status}
+																		readiness={authReadiness}
+																		onAction={() => setIsEditOpen(true)}
+																	/>
+																</OverviewMetadataRow>
 															) : null}
 															{protocolVersion ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.protocol", {
-																			defaultValue: "Protocol",
-																		})}
-																	</span>
-																	<span className="font-mono text-xs text-slate-600 dark:text-slate-300">
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.protocol", {
+																		defaultValue: "Protocol",
+																	})}
+																>
+																	<span className="font-mono text-slate-600 dark:text-slate-300">
 																		{protocolVersion}
 																	</span>
-																</>
+																</OverviewMetadataRow>
 															) : null}
 															{serverVersion ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.version", {
-																			defaultValue: "Version",
-																		})}
-																	</span>
-																	<span className="font-mono text-xs text-slate-600 dark:text-slate-300">
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.version", {
+																		defaultValue: "Version",
+																	})}
+																>
+																	<span className="font-mono text-slate-600 dark:text-slate-300">
 																		{serverVersion}
 																	</span>
-																</>
+																</OverviewMetadataRow>
 															) : null}
 															{capabilityOverviewText ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.capabilities", {
-																			defaultValue: "Capabilities",
-																		})}
-																	</span>
-																	<span className="text-sm text-slate-600 dark:text-slate-300">
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.capabilities", {
+																		defaultValue: "Capabilities",
+																	})}
+																	multiline
+																>
+																	<span className="text-slate-600 dark:text-slate-300">
 																		{capabilityOverviewText}
 																	</span>
-																</>
+																</OverviewMetadataRow>
 															) : null}
 															{serverDescription ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.description", {
-																			defaultValue: "Description",
-																		})}
-																	</span>
-																	<span className="text-sm text-slate-600 dark:text-slate-300">
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.description", {
+																		defaultValue: "Description",
+																	})}
+																	multiline
+																>
+																	<span className="text-slate-600 dark:text-slate-300">
 																		{serverDescription}
 																	</span>
-																</>
+																</OverviewMetadataRow>
 															) : null}
-
-															{/* Default HTTP Headers (redacted) */}
 															{showDefaultHeaders &&
-																redactedHeaders &&
-																Object.keys(redactedHeaders).length ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t(
-																			"detail.overview.labels.defaultHeaders",
-																			{
-																				defaultValue: "Default Headers",
-																			},
-																		)}
-																	</span>
+															redactedHeaders &&
+															Object.keys(redactedHeaders).length ? (
+																<OverviewMetadataRow
+																	label={t(
+																		"detail.overview.labels.defaultHeaders",
+																		{
+																			defaultValue: "Default Headers",
+																		},
+																	)}
+																	multiline
+																>
 																	<div className="grid grid-cols-1 gap-1">
 																		{Object.entries(redactedHeaders).map(
 																			([k, v]) => (
-																				<div key={k} className="text-sm">
+																				<div key={k}>
 																					<span className="font-mono text-slate-600 dark:text-slate-300">
 																						{k}
 																					</span>
@@ -1412,52 +1436,49 @@ export function ServerDetailPage() {
 																			),
 																		)}
 																	</div>
-																</>
+																</OverviewMetadataRow>
 															) : null}
 															{serverCategory ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.category", {
-																			defaultValue: "Category",
-																		})}
-																	</span>
-																	<span className="text-sm text-slate-600 dark:text-slate-300">
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.category", {
+																		defaultValue: "Category",
+																	})}
+																>
+																	<span className="text-slate-600 dark:text-slate-300">
 																		{serverCategory}
 																	</span>
-																</>
+																</OverviewMetadataRow>
 															) : null}
 															{serverScenario ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.scenario", {
-																			defaultValue: "Scenario",
-																		})}
-																	</span>
-																	<span className="text-sm text-slate-600 dark:text-slate-300">
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.scenario", {
+																		defaultValue: "Scenario",
+																	})}
+																>
+																	<span className="text-slate-600 dark:text-slate-300">
 																		{serverScenario}
 																	</span>
-																</>
+																</OverviewMetadataRow>
 															) : null}
 															{server.command ? (
-																<>
-																	<span className="text-xs uppercase text-slate-500">
-																		{t("detail.overview.labels.command", {
-																			defaultValue: "Command",
-																		})}
-																	</span>
-																	<span className="font-mono text-xs md:text-sm break-all">
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.command", {
+																		defaultValue: "Command",
+																	})}
+																	multiline
+																>
+																	<span className="break-all font-mono">
 																		{server.command}
 																	</span>
-																</>
+																</OverviewMetadataRow>
 															) : null}
-															<span className="text-xs uppercase text-slate-500">
-																{t("detail.overview.labels.repository", {
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.repository", {
 																	defaultValue: "Repository",
 																})}
-															</span>
-															<span className="font-mono text-xs text-slate-500">
-																—
-															</span>
+															>
+																<span className="font-mono text-slate-500">—</span>
+															</OverviewMetadataRow>
 														</div>
 													</div>
 													<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
