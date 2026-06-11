@@ -75,7 +75,8 @@ pub async fn load_oauth_states(
                     true,
                     Some(OAuthStatusIssue {
                         code: "custody_classification_error".to_string(),
-                        message: format!("Custody check failed: {error}"),
+                        message: "OAuth custody could not be verified; reconnect OAuth to restore secure storage."
+                            .to_string(),
                     }),
                 )
             }

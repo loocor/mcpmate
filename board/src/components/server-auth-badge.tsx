@@ -116,9 +116,13 @@ export function ServerAuthBadge({
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="inline-flex items-center">
+              <button
+                type="button"
+                aria-label={display.label}
+                className="inline-flex items-center border-0 bg-transparent p-0"
+              >
                 <AlertTriangle className="h-4 w-4 text-red-500 animate-pulse" />
-              </span>
+              </button>
             </TooltipTrigger>
             <TooltipContent>
               <p>{display.label}</p>
