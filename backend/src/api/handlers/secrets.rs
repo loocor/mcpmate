@@ -403,6 +403,17 @@ async fn apply_secret_store_bootstrap(
         state.connection_pool.lock().await.set_secret_resolver(store);
     }
 
+    // Rebuild the OAuth manager with the new secret store so that
+    // OAuth handlers can resolve credentials after unlock.
+    if let Some(db) = state.database.as_ref() {
+        let new_manager = Arc::new(crate::core::oauth::OAuthManager::new_optional_store(
+            db.pool.clone(),
+            store_arc.clone(),
+        ));
+        let mut manager_guard = state.oauth_manager.write().await;
+        *manager_guard = Some(new_manager);
+    }
+
     {
         let mut store_guard = state.secret_store.write().await;
         *store_guard = store_arc;

@@ -6,7 +6,10 @@ export type OAuthReadinessNoticeKind =
 
 export interface OAuthReadinessNotice {
 	kind: OAuthReadinessNoticeKind;
-	message: string;
+	/** i18n translation key for the notice body */
+	messageKey: string;
+	/** English fallback shown until the key is translated */
+	defaultMessage: string;
 }
 
 export interface OAuthReadiness {
@@ -14,15 +17,23 @@ export interface OAuthReadiness {
 	notice: OAuthReadinessNotice | null;
 }
 
-const SECURE_STORE_UNAVAILABLE_MESSAGE =
-	"Secure Store is not ready. Unlock or initialize it before connecting OAuth.";
+export interface ServerOAuthReadinessSource {
+	id: string;
+	oauth_status?: OAuthStatus["state"] | null;
+	oauth_custody_state?: OAuthStatus["custody_state"] | null;
+	oauth_requires_reconnect?: boolean | null;
+	oauth_issue?: OAuthStatus["issue"] | null;
+}
 
 function secureStoreUnavailable(message?: string): OAuthReadiness {
 	return {
 		actionDisabled: true,
 		notice: {
 			kind: "secure-store-unavailable",
-			message: message ?? SECURE_STORE_UNAVAILABLE_MESSAGE,
+			messageKey: "manual.auth.oauth.secureStoreUnavailable.message",
+			defaultMessage:
+				message ??
+				"Secure Store is not ready. Unlock or initialize it before connecting OAuth.",
 		},
 	};
 }
@@ -50,7 +61,8 @@ export function resolveOAuthReadiness({
 			actionDisabled: false,
 			notice: {
 				kind: "legacy-reconnect-required",
-				message:
+				messageKey: "manual.auth.oauth.legacyReconnect.message",
+				defaultMessage:
 					oauthStatus.issue?.message ??
 					"Reconnect OAuth to move existing credentials into Secure Store custody.",
 			},
@@ -61,4 +73,19 @@ export function resolveOAuthReadiness({
 		actionDisabled: false,
 		notice: null,
 	};
+}
+
+export function resolveServerOAuthReadiness(
+	server: ServerOAuthReadinessSource,
+): OAuthReadiness {
+	return resolveOAuthReadiness({
+		oauthStatus: {
+			server_id: server.id,
+			configured: true,
+			state: server.oauth_status ?? null,
+			custody_state: server.oauth_custody_state ?? null,
+			requires_reconnect: server.oauth_requires_reconnect ?? false,
+			issue: server.oauth_issue ?? null,
+		},
+	});
 }

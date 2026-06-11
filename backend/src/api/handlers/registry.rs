@@ -634,15 +634,13 @@ pub async fn refresh_managed_server_metadata(
     )
     .await;
 
-    let mut oauth_status = None;
-    if refreshed.server_type.is_http_transport() {
-        let manager = crate::core::oauth::manager::OAuthManager::new(db.pool.clone());
-        if let Ok(status) = manager.get_status(&server_id).await {
-            if status.configured {
-                oauth_status = Some(status.state);
-            }
-        }
-    }
+    let oauth_summary = crate::api::handlers::server::common::load_server_oauth_response_summary(
+        &db.pool,
+        &state,
+        &server_id,
+        refreshed.server_type.is_http_transport(),
+    )
+    .await?;
 
     Ok(Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
@@ -665,10 +663,10 @@ pub async fn refresh_managed_server_metadata(
         updated_at: refreshed.updated_at.map(|dt| dt.to_rfc3339()),
         instances: details.instances,
         auth_mode: None,
-        oauth_status,
-        oauth_custody_state: None,
-        oauth_requires_reconnect: None,
-        oauth_issue: None,
+        oauth_status: oauth_summary.oauth_status,
+        oauth_custody_state: oauth_summary.oauth_custody_state,
+        oauth_requires_reconnect: oauth_summary.oauth_requires_reconnect,
+        oauth_issue: oauth_summary.oauth_issue,
     })))
 }
 
@@ -694,7 +692,7 @@ mod tests {
         common::server::ServerType,
         config::{
             database::Database,
-            models::Server,
+            models::{Server, ServerOAuthConfig, ServerOAuthToken},
             profile::init::initialize_profile_tables,
             registry::init::initialize_registry_cache_table,
             server::{self, init::initialize_server_tables},
@@ -1002,12 +1000,60 @@ mod tests {
             .await
             .expect("seed registry cache");
 
-        let server_id = seed_managed_server(&context.pool, "official-filesystem").await;
+        let server_id = seed_managed_streamable_http_server(&context.pool, "official-filesystem").await;
+        server::upsert_server_oauth_config(
+            &context.pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: server_id.clone(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-registry-refresh".to_string(),
+                client_secret: None,
+                scopes: Some("read".to_string()),
+                redirect_uri: "http://127.0.0.1:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("seed managed oauth config");
+        server::upsert_server_oauth_token(
+            &context.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: server_id.clone(),
+                access_token: "token-registry-refresh".to_string(),
+                refresh_token: None,
+                token_type: "bearer".to_string(),
+                expires_at: Some((Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+                scope: Some("read".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("seed managed oauth token");
         let response = refresh_managed_server_metadata(State(context.state), Json(ServerIdReq { id: server_id }))
             .await
             .expect("refresh managed server metadata");
 
-        let meta = response.0.data.expect("response payload").meta.expect("server meta");
+        let data = response.0.data.expect("response payload");
+        assert!(matches!(
+            data.oauth_status,
+            Some(crate::core::oauth::OAuthConnectionState::Connected)
+        ));
+        assert!(matches!(
+            data.oauth_custody_state,
+            Some(crate::core::oauth::OAuthCustodyState::Unavailable)
+        ));
+        assert_eq!(data.oauth_requires_reconnect, Some(true));
+        assert_eq!(
+            data.oauth_issue.as_ref().map(|issue| issue.code.as_str()),
+            Some("secure_store_unavailable")
+        );
+
+        let meta = data.meta.expect("server meta");
         assert_eq!(meta.website_url.as_deref(), Some("https://example.com/filesystem"));
         assert_eq!(
             meta.repository.as_ref().and_then(|repo| repo.source.as_deref()),
@@ -1136,7 +1182,7 @@ mod tests {
             client_service: None::<Arc<ClientConfigService>>,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
-            oauth_manager,
+            oauth_manager: RwLock::new(oauth_manager),
             secret_store: RwLock::new(None),
             secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
                 "test_unavailable",
@@ -1164,5 +1210,29 @@ mod tests {
         };
 
         server::upsert_server(pool, &server).await.expect("seed managed server")
+    }
+
+    async fn seed_managed_streamable_http_server(
+        pool: &sqlx::SqlitePool,
+        registry_server_id: &str,
+    ) -> String {
+        let server = Server {
+            id: None,
+            name: "managed-filesystem".to_string(),
+            server_type: ServerType::StreamableHttp,
+            command: None,
+            url: Some("https://example.com/mcp".to_string()),
+            registry_server_id: Some(registry_server_id.to_string()),
+            capabilities: None,
+            enabled: crate::common::status::EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
+            created_at: None,
+            updated_at: None,
+            pending_import: false,
+        };
+
+        server::upsert_server(pool, &server)
+            .await
+            .expect("seed managed streamable http server")
     }
 }

@@ -279,7 +279,8 @@ mod tests {
         models::{ServerOAuthConfig, ServerOAuthToken},
         server::{init::initialize_server_tables, upsert_server_oauth_config, upsert_server_oauth_token},
     };
-    use crate::core::secrets::store::{SecretCreateInput, SecretKindInput, SecretOriginInput};
+    use crate::core::secrets::store::{SecretCreateInput, SecretKindInput};
+    use crate::test_helpers::oauth_secret_origin;
     use chrono::{Duration, Utc};
     use tempfile::TempDir;
     use wiremock::{
@@ -358,7 +359,11 @@ mod tests {
                 kind: SecretKindInput::OAuthAccessToken,
                 value: "access-old".to_string(),
                 label: Some(format!("OAuth access token for server-{server_id}")),
-                origin: Some(oauth_secret_origin(server_id, "access-token")),
+                origin: Some(oauth_secret_origin(
+                    server_id,
+                    &format!("server-{server_id}"),
+                    "access-token",
+                )),
             })
             .await
             .expect("store access token")
@@ -369,7 +374,11 @@ mod tests {
                 kind: SecretKindInput::OAuthRefreshToken,
                 value: "refresh-123".to_string(),
                 label: Some(format!("OAuth refresh token for server-{server_id}")),
-                origin: Some(oauth_secret_origin(server_id, "refresh-token")),
+                origin: Some(oauth_secret_origin(
+                    server_id,
+                    &format!("server-{server_id}"),
+                    "refresh-token",
+                )),
             })
             .await
             .expect("store refresh token")
@@ -390,22 +399,6 @@ mod tests {
         )
         .await
         .expect("store expired token");
-    }
-
-    fn oauth_secret_origin(
-        server_id: &str,
-        field_key: &str,
-    ) -> SecretOriginInput {
-        SecretOriginInput {
-            server_id: Some(server_id.to_string()),
-            server_name: Some(format!("server-{server_id}")),
-            server_kind: Some("streamable_http".to_string()),
-            source: Some("oauth".to_string()),
-            field_group: Some("oauth".to_string()),
-            field_key: Some(field_key.to_string()),
-            field_index: None,
-            field_path: Some(format!("oauth.{field_key}")),
-        }
     }
 
     #[tokio::test]

@@ -17,6 +17,14 @@ use crate::{
 use axum::http::StatusCode;
 use tracing::{debug, warn};
 
+#[derive(Debug, Default)]
+pub(crate) struct ServerOAuthResponseSummary {
+    pub oauth_status: Option<crate::core::oauth::OAuthConnectionState>,
+    pub oauth_custody_state: Option<crate::core::oauth::OAuthCustodyState>,
+    pub oauth_requires_reconnect: Option<bool>,
+    pub oauth_issue: Option<crate::core::oauth::OAuthStatusIssue>,
+}
+
 pub(crate) fn parse_server_icons(raw: &str) -> Result<Option<Vec<ServerIcon>>, serde_json::Error> {
     if let Ok(list) = serde_json::from_str::<Vec<ServerIcon>>(raw) {
         return Ok((!list.is_empty()).then_some(list));
@@ -323,6 +331,34 @@ pub async fn get_complete_server_details(
     details.protocol_version = get_server_protocol_version(state, server_id).await;
 
     details
+}
+
+pub(crate) async fn load_server_oauth_response_summary(
+    pool: &Pool<Sqlite>,
+    state: &Arc<AppState>,
+    server_id: &str,
+    is_http_transport: bool,
+) -> Result<ServerOAuthResponseSummary, ApiError> {
+    if !is_http_transport {
+        return Ok(ServerOAuthResponseSummary::default());
+    }
+
+    let manager =
+        crate::core::oauth::OAuthManager::new_optional_store(pool.clone(), state.secret_store.read().await.clone());
+    let status = manager.get_status(server_id).await.map_err(|err| {
+        ApiError::InternalError(format!("Failed to load OAuth status for server '{server_id}': {err}"))
+    })?;
+
+    if !status.configured {
+        return Ok(ServerOAuthResponseSummary::default());
+    }
+
+    Ok(ServerOAuthResponseSummary {
+        oauth_status: Some(status.state),
+        oauth_custody_state: Some(status.custody_state),
+        oauth_requires_reconnect: Some(status.requires_reconnect),
+        oauth_issue: status.issue,
+    })
 }
 
 pub(crate) async fn reconcile_client_direct_exposure_after_server_constraint_change(

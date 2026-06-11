@@ -11,6 +11,22 @@ interface StatusBadgeProps {
 	className?: string;
 	blinkOnError?: boolean;
 	isServerEnabled?: boolean;
+	appearance?: "badge" | "plain";
+}
+
+function getStatusTextClass(
+	variant: ReturnType<typeof getStatusVariant>,
+): string {
+	switch (variant) {
+		case "success":
+			return "text-emerald-700 dark:text-emerald-300";
+		case "warning":
+			return "text-amber-600 dark:text-amber-400";
+		case "destructive":
+			return "text-red-600 dark:text-red-400";
+		default:
+			return "text-slate-600 dark:text-slate-300";
+	}
 }
 
 function getStatusDotClass(variant: ReturnType<typeof getStatusVariant>): string {
@@ -36,6 +52,7 @@ export function StatusBadge({
 	className = "",
 	blinkOnError = true,
 	isServerEnabled = false,
+	appearance = "badge",
 }: StatusBadgeProps) {
 	const { t } = useTranslation();
 	let statusStr = status?.toString().toLowerCase() || "unknown";
@@ -121,6 +138,20 @@ export function StatusBadge({
 
 	if (statusLabel != null && statusLabel.trim().length > 0) {
 		displayText = statusLabel.trim();
+	}
+
+	if (appearance === "plain") {
+		if (!showLabel) {
+			return null;
+		}
+
+		return (
+			<span
+				className={`text-sm ${getStatusTextClass(variant)} ${className} ${shouldBlink ? "animate-pulse" : ""}`}
+			>
+				{displayText}
+			</span>
+		);
 	}
 
 	return (

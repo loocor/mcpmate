@@ -106,7 +106,7 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
-        oauth_manager: None,
+        oauth_manager: RwLock::new(None),
         secret_store: RwLock::new(Some(secret_store.clone())),
         secret_store_readiness: RwLock::new(mcpmate::core::secrets::store::SecretStoreReadiness::ready(
             secret_store.provider_metadata(),
@@ -166,7 +166,7 @@ async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<A
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
-        oauth_manager: None,
+        oauth_manager: RwLock::new(None),
         secret_store: RwLock::new(Some(secret_store.clone())),
         secret_store_readiness: RwLock::new(mcpmate::core::secrets::store::SecretStoreReadiness::ready(
             secret_store.provider_metadata(),
@@ -197,7 +197,7 @@ fn build_unavailable_secret_store_state(temp_dir: &TempDir) -> Arc<AppState> {
         client_service: None,
         inspector_calls: Arc::new(InspectorCallRegistry::new()),
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
-        oauth_manager: None,
+        oauth_manager: RwLock::new(None),
         secret_store: RwLock::new(None),
         secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness(
             "database_unavailable",
@@ -823,7 +823,7 @@ async fn build_locked_passphrase_context(master_password: &str) -> (TempDir, Arc
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
-        oauth_manager: None,
+        oauth_manager: RwLock::new(None),
         secret_store: RwLock::new(bootstrap.store.map(Arc::new)),
         secret_store_readiness: RwLock::new(bootstrap_readiness),
     });
@@ -973,7 +973,7 @@ async fn provider_mode_persists_across_restart_simulation() {
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
-        oauth_manager: None,
+        oauth_manager: RwLock::new(None),
         secret_store: RwLock::new(Some(secret_store)),
         secret_store_readiness: RwLock::new(store_readiness),
     });

@@ -129,6 +129,24 @@ pub async fn delete_server_oauth_token(
     Ok(())
 }
 
+pub async fn get_all_oauth_configs(pool: &Pool<Sqlite>) -> Result<Vec<ServerOAuthConfig>> {
+    sqlx::query_as::<_, ServerOAuthConfig>(
+        "SELECT id, server_id, authorization_endpoint, token_endpoint, client_id, client_secret, scopes, redirect_uri, created_at, updated_at FROM server_oauth_config",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn get_all_oauth_tokens(pool: &Pool<Sqlite>) -> Result<Vec<ServerOAuthToken>> {
+    sqlx::query_as::<_, ServerOAuthToken>(
+        "SELECT id, server_id, access_token, refresh_token, token_type, expires_at, scope, created_at, updated_at FROM server_oauth_tokens",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
 pub fn has_manual_authorization_header(headers: &Option<HashMap<String, String>>) -> bool {
     headers
         .as_ref()

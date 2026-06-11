@@ -9,8 +9,8 @@ use crate::api::{
 use crate::core::oauth::{OAuthConfigInput, OAuthPrepareInput};
 
 async fn get_oauth_manager(state: &Arc<AppState>) -> Result<crate::core::oauth::OAuthManager, ApiError> {
-    let manager = state
-        .oauth_manager
+    let guard = state.oauth_manager.read().await;
+    let manager = guard
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("OAuth manager unavailable".to_string()))?;
     Ok((**manager).clone())

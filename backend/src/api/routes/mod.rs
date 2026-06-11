@@ -62,7 +62,7 @@ pub struct AppState {
     pub inspector_calls: Arc<InspectorCallRegistry>,
     /// Inspector session manager
     pub inspector_sessions: Arc<InspectorSessionManager>,
-    pub oauth_manager: Option<Arc<crate::core::oauth::OAuthManager>>,
+    pub oauth_manager: RwLock<Option<Arc<crate::core::oauth::OAuthManager>>>,
     pub secret_store: RwLock<Option<Arc<crate::core::secrets::store::LocalSecretStore>>>,
     pub secret_store_readiness: RwLock<crate::core::secrets::store::SecretStoreReadiness>,
 }
@@ -158,7 +158,7 @@ async fn create_router_internal(
             client_service: None,
             inspector_calls: inspector_calls.clone(),
             inspector_sessions: inspector_sessions.clone(),
-            oauth_manager: None,
+            oauth_manager: RwLock::new(None),
             secret_store: RwLock::new(None),
             secret_store_readiness: RwLock::new(crate::core::secrets::store::SecretStoreReadiness::unavailable(
                 "not_initialized",
@@ -237,7 +237,7 @@ async fn create_router_internal(
         client_service,
         inspector_calls,
         inspector_sessions,
-        oauth_manager,
+        oauth_manager: RwLock::new(oauth_manager),
         secret_store: RwLock::new(secret_store),
         secret_store_readiness: RwLock::new(secret_store_readiness),
     });

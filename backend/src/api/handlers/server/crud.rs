@@ -390,6 +390,13 @@ pub async fn create_server(
 
     let details = common::get_complete_server_details(&db.pool, &server_id, &server_name, &state).await;
     let effective_enabled = details.globally_enabled && details.enabled_in_profile;
+    let oauth_summary = common::load_server_oauth_response_summary(
+        &db.pool,
+        &state,
+        &server_id,
+        server_row.server_type.is_http_transport(),
+    )
+    .await?;
 
     let audit_server_id = server_id.clone();
     let response = Json(ServerDetailsResp::success(ServerDetailsData {
@@ -413,10 +420,10 @@ pub async fn create_server(
         updated_at,
         instances: details.instances,
         auth_mode: None,
-        oauth_status: None,
-        oauth_custody_state: None,
-        oauth_requires_reconnect: None,
-        oauth_issue: None,
+        oauth_status: oauth_summary.oauth_status,
+        oauth_custody_state: oauth_summary.oauth_custody_state,
+        oauth_requires_reconnect: oauth_summary.oauth_requires_reconnect,
+        oauth_issue: oauth_summary.oauth_issue,
     }));
 
     let mut data = Map::new();
@@ -627,6 +634,13 @@ pub async fn update_server(
 
     // Get server details via shared helper
     let details = common::get_complete_server_details(&db.pool, &server_id, &existing_server.name, &state).await;
+    let oauth_summary = common::load_server_oauth_response_summary(
+        &db.pool,
+        &state,
+        &server_id,
+        updated_server.server_type.is_http_transport(),
+    )
+    .await?;
 
     // Return success response
     let audit_server_id = server_id.clone();
@@ -652,10 +666,10 @@ pub async fn update_server(
         updated_at: updated_server.updated_at.map(|dt| dt.to_rfc3339()),
         instances: details.instances,
         auth_mode: None,
-        oauth_status: None,
-        oauth_custody_state: None,
-        oauth_requires_reconnect: None,
-        oauth_issue: None,
+        oauth_status: oauth_summary.oauth_status,
+        oauth_custody_state: oauth_summary.oauth_custody_state,
+        oauth_requires_reconnect: oauth_summary.oauth_requires_reconnect,
+        oauth_issue: oauth_summary.oauth_issue,
     }));
 
     let mut data = Map::new();

@@ -276,9 +276,11 @@ mod tests {
             client_service: None::<Arc<ClientConfigService>>,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
-            oauth_manager: None,
+            oauth_manager: RwLock::new(None),
             secret_store: RwLock::new(None),
-            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
+                "test_unavailable",
+            )),
         })
     }
 

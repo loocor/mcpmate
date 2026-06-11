@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveOAuthReadiness } from "./oauth-readiness";
+import {
+	resolveOAuthReadiness,
+	resolveServerOAuthReadiness,
+} from "./oauth-readiness";
 import type { OAuthStatus, SecretStoreStatusData } from "./types";
 
 const readyStore: SecretStoreStatusData = {
@@ -29,7 +32,7 @@ describe("resolveOAuthReadiness", () => {
 
 		expect(readiness.actionDisabled).toBe(true);
 		expect(readiness.notice?.kind).toBe("secure-store-unavailable");
-		expect(readiness.notice?.message).toContain("Secure Store is locked.");
+		expect(readiness.notice?.defaultMessage).toContain("Secure Store is locked.");
 	});
 
 	it("prompts reconnect for legacy plaintext OAuth credentials", () => {
@@ -52,7 +55,7 @@ describe("resolveOAuthReadiness", () => {
 
 		expect(readiness.actionDisabled).toBe(false);
 		expect(readiness.notice?.kind).toBe("legacy-reconnect-required");
-		expect(readiness.notice?.message).toContain("Reconnect OAuth");
+		expect(readiness.notice?.defaultMessage).toContain("Reconnect OAuth");
 	});
 
 	it("blocks when OAuth status reports unavailable custody without a store status", () => {
@@ -75,6 +78,53 @@ describe("resolveOAuthReadiness", () => {
 
 		expect(readiness.actionDisabled).toBe(true);
 		expect(readiness.notice?.kind).toBe("secure-store-unavailable");
-		expect(readiness.notice?.message).toContain("Secure Store is unavailable.");
+		expect(readiness.notice?.defaultMessage).toContain("Secure Store is unavailable.");
+	});
+});
+
+describe("resolveServerOAuthReadiness", () => {
+	it("defaults requires_reconnect to false when omitted", () => {
+		const readiness = resolveServerOAuthReadiness({
+			id: "serv_default_reconnect",
+			oauth_status: "connected",
+			oauth_custody_state: "secure",
+		});
+
+		expect(readiness.actionDisabled).toBe(false);
+		expect(readiness.notice).toBeNull();
+	});
+
+	it("maps legacy plaintext custody into reconnect notice", () => {
+		const readiness = resolveServerOAuthReadiness({
+			id: "serv_legacy",
+			oauth_status: "connected",
+			oauth_custody_state: "legacy_plaintext",
+			oauth_requires_reconnect: true,
+			oauth_issue: {
+				code: "legacy_plaintext_oauth_credentials",
+				message: "Reconnect OAuth to store credentials securely.",
+			},
+		});
+
+		expect(readiness.actionDisabled).toBe(false);
+		expect(readiness.notice?.kind).toBe("legacy-reconnect-required");
+		expect(readiness.notice?.defaultMessage).toContain("Reconnect OAuth");
+	});
+
+	it("blocks actions when server summary reports unavailable custody", () => {
+		const readiness = resolveServerOAuthReadiness({
+			id: "serv_unavailable",
+			oauth_status: "connected",
+			oauth_custody_state: "unavailable",
+			oauth_requires_reconnect: true,
+			oauth_issue: {
+				code: "secure_store_unavailable",
+				message: "Secure Store is unavailable.",
+			},
+		});
+
+		expect(readiness.actionDisabled).toBe(true);
+		expect(readiness.notice?.kind).toBe("secure-store-unavailable");
+		expect(readiness.notice?.defaultMessage).toContain("Secure Store is unavailable.");
 	});
 });
