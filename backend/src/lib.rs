@@ -11,6 +11,9 @@ pub mod mcper;
 pub mod runtime;
 pub mod system;
 
+#[cfg(test)]
+pub mod test_helpers;
+
 // Re-export FFI types for easier access
 #[cfg(feature = "interop")]
 pub use interop::{MCPMateEngine, ServiceInfo, ServiceStatus, StartupProgress};

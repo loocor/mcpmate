@@ -243,7 +243,8 @@ mod tests {
         models::{ServerOAuthConfig, ServerOAuthToken},
         server::{upsert_server_oauth_config, upsert_server_oauth_token},
     };
-    use crate::core::secrets::store::{LocalSecretStore, SecretCreateInput, SecretKindInput, SecretOriginInput};
+    use crate::core::secrets::store::{LocalSecretStore, SecretCreateInput, SecretKindInput};
+    use crate::test_helpers::oauth_secret_origin;
     use chrono::{Duration, Utc};
     use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
     use tempfile::TempDir;
@@ -422,22 +423,5 @@ mod tests {
             headers.get("authorization").map(String::as_str),
             Some("Bearer access-new")
         );
-    }
-
-    fn oauth_secret_origin(
-        server_id: &str,
-        server_name: &str,
-        field_key: &str,
-    ) -> SecretOriginInput {
-        SecretOriginInput {
-            server_id: Some(server_id.to_string()),
-            server_name: Some(server_name.to_string()),
-            server_kind: Some("streamable_http".to_string()),
-            source: Some("oauth".to_string()),
-            field_group: Some("oauth".to_string()),
-            field_key: Some(field_key.to_string()),
-            field_index: None,
-            field_path: Some(format!("oauth.{field_key}")),
-        }
     }
 }

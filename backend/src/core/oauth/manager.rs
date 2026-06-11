@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::config::{
-    models::{ServerOAuthConfig, ServerOAuthToken},
+    models::{Server, ServerOAuthConfig, ServerOAuthToken},
     server,
 };
 use crate::core::secrets::store::{
@@ -59,6 +59,34 @@ struct DynamicClientRegistrationResponse {
     client_id: String,
     client_secret: Option<String>,
     scope: Option<String>,
+}
+
+/// Existing token fields carried forward during a token refresh.
+struct ExistingTokenContext {
+    id: Option<String>,
+    refresh_token: Option<String>,
+    token_type: String,
+    scope: Option<String>,
+}
+
+/// Server metadata needed when storing OAuth-owned secrets.
+struct OAuthServerContext {
+    id: String,
+    name: String,
+    kind: String,
+}
+
+impl OAuthServerContext {
+    fn from_server(
+        server_id: &str,
+        server: &Server,
+    ) -> Self {
+        Self {
+            id: server_id.to_string(),
+            name: server.name.clone(),
+            kind: server.server_type.to_string(),
+        }
+    }
 }
 
 const OAUTH_TOKEN_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -140,43 +168,33 @@ impl OAuthManager {
 
     async fn store_or_preserve_client_secret(
         &self,
-        server_id: &str,
-        server_name: &str,
-        server_kind: &str,
+        server: &OAuthServerContext,
         value: &str,
     ) -> Result<String> {
         let trimmed = value.trim();
         if let Some(reference) = parse_placeholder(trimmed)? {
-            let expected_alias = oauth_secret_alias(server_id, OAuthSecretSlot::ClientSecret);
+            let expected_alias = oauth_secret_alias(&server.id, OAuthSecretSlot::ClientSecret);
             if reference.alias() != expected_alias {
                 bail!("OAuth client secret placeholder must reference the server OAuth client secret alias");
             }
             return Ok(trimmed.to_string());
         }
-        self.store_oauth_secret(
-            server_id,
-            server_name,
-            server_kind,
-            OAuthSecretSlot::ClientSecret,
-            trimmed.to_string(),
-        )
-        .await
+        self.store_oauth_secret(server, OAuthSecretSlot::ClientSecret, trimmed.to_string())
+            .await
     }
 
     async fn store_oauth_secret(
         &self,
-        server_id: &str,
-        server_name: &str,
-        server_kind: &str,
+        server: &OAuthServerContext,
         slot: OAuthSecretSlot,
         value: String,
     ) -> Result<String> {
         let store = self.secret_store()?;
-        let alias = oauth_secret_alias(server_id, slot);
+        let alias = oauth_secret_alias(&server.id, slot);
         let origin = Some(SecretOriginInput {
-            server_id: Some(server_id.to_string()),
-            server_name: Some(server_name.to_string()),
-            server_kind: Some(server_kind.to_string()),
+            server_id: Some(server.id.clone()),
+            server_name: Some(server.name.clone()),
+            server_kind: Some(server.kind.clone()),
             source: Some("oauth".to_string()),
             field_group: Some("oauth".to_string()),
             field_key: Some(slot.key().to_string()),
@@ -191,7 +209,7 @@ impl OAuthManager {
                         alias: alias.clone(),
                         kind: Some(slot.kind()),
                         value: Some(value),
-                        label: Some(format!("{} for {}", slot.label(), server_name)),
+                        label: Some(format!("{} for {}", slot.label(), server.name)),
                         origin,
                     })
                     .await?
@@ -202,7 +220,7 @@ impl OAuthManager {
                         alias: alias.clone(),
                         kind: slot.kind(),
                         value,
-                        label: Some(format!("{} for {}", slot.label(), server_name)),
+                        label: Some(format!("{} for {}", slot.label(), server.name)),
                         origin,
                     })
                     .await?
@@ -213,7 +231,7 @@ impl OAuthManager {
         store
             .upsert_usage(SecretUsageUpsertInput {
                 alias,
-                server_id: server_id.to_string(),
+                server_id: server.id.clone(),
                 location: SecretUsageLocationInput::OAuthToken,
             })
             .await?;
@@ -372,17 +390,12 @@ impl OAuthManager {
             bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
         }
 
+        let server_context = OAuthServerContext::from_server(server_id, &server_model);
         let existing = server::get_server_oauth_config(&self.pool, server_id).await?;
         let client_secret = match input.client_secret {
-            Some(secret) if !secret.trim().is_empty() => Some(
-                self.store_or_preserve_client_secret(
-                    server_id,
-                    &server_model.name,
-                    &server_model.server_type.to_string(),
-                    &secret,
-                )
-                .await?,
-            ),
+            Some(secret) if !secret.trim().is_empty() => {
+                Some(self.store_or_preserve_client_secret(&server_context, &secret).await?)
+            }
             _ => existing.as_ref().and_then(|item| item.client_secret.clone()),
         };
         let config = ServerOAuthConfig {
@@ -583,8 +596,10 @@ impl OAuthManager {
         }
 
         let token_response = self.request_token_response(&config.token_endpoint, &form).await?;
+        let server_context = OAuthServerContext::from_server(&pending.server_id, &server_model);
 
-        self.store_oauth_token(&pending.server_id, token_response).await?;
+        self.store_oauth_token_with_context(&server_context, token_response, None)
+            .await?;
 
         self.get_status(&pending.server_id).await
     }
@@ -600,6 +615,22 @@ impl OAuthManager {
 
         let mut effective = manual_headers.unwrap_or_default();
         if let Some(token) = server::get_server_oauth_token(&self.pool, server_id).await? {
+            // Skip OAuth token injection when the secret resolver is unavailable
+            // (e.g. locked passphrase store at startup). The server will start
+            // without the Bearer header; the user can unlock the store later and
+            // re-authorize to restore authenticated access.
+            if self.secret_resolver.is_none() {
+                tracing::warn!(
+                    server_id = %server_id,
+                    "Secure Store not available; skipping OAuth token injection for startup"
+                );
+                return if effective.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(effective))
+                };
+            }
+
             let token = if is_token_refreshable(&token) {
                 self.refresh_access_token(server_id).await?
             } else {
@@ -642,6 +673,7 @@ impl OAuthManager {
             bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
         }
         let resource = oauth_resource_from_server(&server_model)?;
+        let server_context = OAuthServerContext::from_server(server_id, &server_model);
 
         let mut form = vec![
             ("grant_type", "refresh_token".to_string()),
@@ -658,59 +690,56 @@ impl OAuthManager {
             bail!("OAuth refresh response did not include a usable access_token");
         }
 
-        self.store_oauth_token_with_existing_refresh(
-            server_id,
-            token.id,
+        self.store_oauth_token_with_context(
+            &server_context,
             token_response,
-            token.refresh_token,
-            token.token_type,
-            token.scope,
+            Some(ExistingTokenContext {
+                id: token.id,
+                refresh_token: token.refresh_token,
+                token_type: token.token_type,
+                scope: token.scope,
+            }),
         )
         .await
     }
 
-    async fn store_oauth_token(
+    #[cfg(test)]
+    async fn store_oauth_token_for_server(
         &self,
         server_id: &str,
         token_response: OAuthTokenResponse,
-    ) -> Result<ServerOAuthToken> {
-        self.store_oauth_token_with_existing_refresh(server_id, None, token_response, None, "bearer".to_string(), None)
-            .await
-    }
-
-    async fn store_oauth_token_with_existing_refresh(
-        &self,
-        server_id: &str,
-        id: Option<String>,
-        token_response: OAuthTokenResponse,
-        existing_refresh_token: Option<String>,
-        existing_token_type: String,
-        existing_scope: Option<String>,
+        existing: Option<ExistingTokenContext>,
     ) -> Result<ServerOAuthToken> {
         let server_model = server::get_server_by_id(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
+        let server_context = OAuthServerContext::from_server(server_id, &server_model);
+        self.store_oauth_token_with_context(&server_context, token_response, existing)
+            .await
+    }
+
+    async fn store_oauth_token_with_context(
+        &self,
+        server: &OAuthServerContext,
+        token_response: OAuthTokenResponse,
+        existing: Option<ExistingTokenContext>,
+    ) -> Result<ServerOAuthToken> {
         let access_token = self
-            .store_oauth_secret(
-                server_id,
-                &server_model.name,
-                &server_model.server_type.to_string(),
-                OAuthSecretSlot::AccessToken,
-                token_response.access_token,
-            )
+            .store_oauth_secret(server, OAuthSecretSlot::AccessToken, token_response.access_token)
             .await?;
+        let existing_id = existing.as_ref().and_then(|ctx| ctx.id.clone());
+        let existing_refresh_token = existing.as_ref().and_then(|ctx| ctx.refresh_token.clone());
+        let existing_token_type = existing
+            .as_ref()
+            .map(|ctx| ctx.token_type.clone())
+            .unwrap_or_else(|| "bearer".to_string());
+        let existing_scope = existing.as_ref().and_then(|ctx| ctx.scope.clone());
         let incoming_refresh_token = token_response.refresh_token.filter(|value| !value.trim().is_empty());
-        let should_delete_stale_refresh_token = id.is_none() && incoming_refresh_token.is_none();
+        let should_delete_stale_refresh_token = existing_id.is_none() && incoming_refresh_token.is_none();
         let refresh_token = match incoming_refresh_token {
             Some(refresh_token) => Some(
-                self.store_oauth_secret(
-                    server_id,
-                    &server_model.name,
-                    &server_model.server_type.to_string(),
-                    OAuthSecretSlot::RefreshToken,
-                    refresh_token,
-                )
-                .await?,
+                self.store_oauth_secret(server, OAuthSecretSlot::RefreshToken, refresh_token)
+                    .await?,
             ),
             None => existing_refresh_token,
         };
@@ -718,8 +747,8 @@ impl OAuthManager {
             .expires_in
             .map(|seconds| (Utc::now() + Duration::seconds(seconds)).to_rfc3339());
         let stored = ServerOAuthToken {
-            id,
-            server_id: server_id.to_string(),
+            id: existing_id,
+            server_id: server.id.clone(),
             access_token,
             refresh_token,
             token_type: token_response.token_type.unwrap_or(existing_token_type),
@@ -731,7 +760,7 @@ impl OAuthManager {
 
         server::upsert_server_oauth_token(&self.pool, &stored).await?;
         if should_delete_stale_refresh_token {
-            self.delete_oauth_secret_if_available(server_id, OAuthSecretSlot::RefreshToken)
+            self.delete_oauth_secret_if_available(&server.id, OAuthSecretSlot::RefreshToken)
                 .await?;
         }
         Ok(stored)
@@ -1516,7 +1545,7 @@ mod tests {
             .await
             .expect("save secure oauth config");
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_delete_oauth_secrets",
                 OAuthTokenResponse {
                     access_token: "access-123".to_string(),
@@ -1525,6 +1554,7 @@ mod tests {
                     expires_in: Some(3600),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store secure oauth token");
@@ -1545,7 +1575,7 @@ mod tests {
         insert_server(&manager.pool, "serv_drop_refresh").await;
 
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_drop_refresh",
                 OAuthTokenResponse {
                     access_token: "access-old".to_string(),
@@ -1554,6 +1584,7 @@ mod tests {
                     expires_in: Some(3600),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store initial token");
@@ -1563,7 +1594,7 @@ mod tests {
             .expect("refresh secret should exist");
 
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_drop_refresh",
                 OAuthTokenResponse {
                     access_token: "access-new".to_string(),
@@ -1572,6 +1603,7 @@ mod tests {
                     expires_in: Some(3600),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store replacement token without refresh");
@@ -1595,7 +1627,7 @@ mod tests {
         insert_server(&manager.pool, "serv_oauth_usage").await;
 
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_oauth_usage",
                 OAuthTokenResponse {
                     access_token: "access-123".to_string(),
@@ -1604,6 +1636,7 @@ mod tests {
                     expires_in: Some(3600),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store secure oauth token");
@@ -1626,7 +1659,7 @@ mod tests {
         let (manager, _store, _temp_dir) = setup_secure_manager().await;
         insert_server(&manager.pool, "serv_revoke_no_store").await;
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_revoke_no_store",
                 OAuthTokenResponse {
                     access_token: "access-123".to_string(),
@@ -1635,6 +1668,7 @@ mod tests {
                     expires_in: Some(3600),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store secure oauth token");
@@ -1686,7 +1720,7 @@ mod tests {
             .await
             .expect("save oauth config");
         let stored = manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_secure_refresh",
                 OAuthTokenResponse {
                     access_token: "access-old".to_string(),
@@ -1695,6 +1729,7 @@ mod tests {
                     expires_in: Some(-60),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store secure token");
@@ -1754,7 +1789,7 @@ mod tests {
             .await
             .expect("save oauth config");
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_refresh_error_redaction",
                 OAuthTokenResponse {
                     access_token: "access-old".to_string(),
@@ -1763,6 +1798,7 @@ mod tests {
                     expires_in: Some(-60),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store expired token");
@@ -1814,7 +1850,7 @@ mod tests {
             .await
             .expect("save oauth config");
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_status_refresh",
                 OAuthTokenResponse {
                     access_token: "access-old".to_string(),
@@ -1823,6 +1859,7 @@ mod tests {
                     expires_in: Some(-60),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store expired token");
@@ -1877,7 +1914,7 @@ mod tests {
             .await
             .expect("save oauth config");
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_refresh",
                 OAuthTokenResponse {
                     access_token: "access-old".to_string(),
@@ -1886,6 +1923,7 @@ mod tests {
                     expires_in: Some(-60),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store expired token");
@@ -1955,7 +1993,7 @@ mod tests {
             .await
             .expect("save oauth config");
         manager
-            .store_oauth_token(
+            .store_oauth_token_for_server(
                 "serv_refresh_blank",
                 OAuthTokenResponse {
                     access_token: "access-old".to_string(),
@@ -1964,6 +2002,7 @@ mod tests {
                     expires_in: Some(-60),
                     scope: Some("read write".to_string()),
                 },
+                None,
             )
             .await
             .expect("store expired token");

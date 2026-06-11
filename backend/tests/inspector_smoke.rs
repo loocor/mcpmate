@@ -81,9 +81,11 @@ fn build_test_state() -> Arc<AppState> {
         client_service: None,
         inspector_calls,
         inspector_sessions,
-        oauth_manager: None,
+        oauth_manager: RwLock::new(None),
         secret_store: RwLock::new(None),
-        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness(
+            "test_unavailable",
+        )),
     })
 }
 
@@ -128,9 +130,11 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
-        oauth_manager: None,
+        oauth_manager: RwLock::new(None),
         secret_store: RwLock::new(None),
-        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness(
+            "test_unavailable",
+        )),
     })
 }
 

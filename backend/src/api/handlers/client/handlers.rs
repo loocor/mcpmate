@@ -2,10 +2,9 @@
 
 use super::backups::parse_policy_payload;
 use super::inspection::{
-    build_config_file_parse_inspect_data, build_parse_metadata, configured_server_entries_data,
-    ClientFileGuardRejection, derive_attachment_state, detect_mcpmate_in_client_config,
-    attachment_state_drift_reason, evaluate_client_attach_file_guard, evaluate_client_detach_file_guard,
-    inspect_client_config_lenient,
+    ClientFileGuardRejection, attachment_state_drift_reason, build_config_file_parse_inspect_data,
+    build_parse_metadata, configured_server_entries_data, derive_attachment_state, detect_mcpmate_in_client_config,
+    evaluate_client_attach_file_guard, evaluate_client_detach_file_guard, inspect_client_config_lenient,
     mark_configured_server_managed_status, parse_api_transports, parse_rule_from_api_data, transports_data_from_state,
 };
 use super::runtime::sync_bound_client_runtime_state;
@@ -283,11 +282,7 @@ pub async fn config_details(
         .as_ref()
         .map(|inspected| inspected.document.clone())
         .unwrap_or_else(|| match state.effective_config_file_parse() {
-            Ok(parse_rule) => parse_config_fallback(
-                content.as_deref(),
-                parse_rule.as_ref(),
-                state.config_path(),
-            ),
+            Ok(parse_rule) => parse_config_fallback(content.as_deref(), parse_rule.as_ref(), state.config_path()),
             Err(err) => {
                 warnings.push(format!("Persisted config parse metadata is invalid: {err}"));
                 degraded_reasons.push("config_file_parse_invalid".to_string());
@@ -613,11 +608,7 @@ async fn apply_client_config_request(
                     None
                 }
             };
-            parse_config_fallback(
-                Some(preview_content),
-                parse_rule.as_ref(),
-                state.config_path(),
-            )
+            parse_config_fallback(Some(preview_content), parse_rule.as_ref(), state.config_path())
         }
         None => Value::String(preview_content.to_string()),
     };
@@ -1040,10 +1031,13 @@ pub async fn client_detach(
 ) -> Result<Json<ClientDetachResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let existing_state = service.fetch_state_repairing_local_target(&request.identifier).await.map_err(|err| {
-        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before detach");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let existing_state = service
+        .fetch_state_repairing_local_target(&request.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before detach");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let Some(state) = existing_state.as_ref() else {
         return Err(StatusCode::NOT_FOUND);
@@ -1131,10 +1125,13 @@ pub async fn client_attach(
 ) -> Result<Json<ClientAttachResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let existing_state = service.fetch_state_repairing_local_target(&request.identifier).await.map_err(|err| {
-        tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before attach");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let existing_state = service
+        .fetch_state_repairing_local_target(&request.identifier)
+        .await
+        .map_err(|err| {
+            tracing::error!(client = %request.identifier, error = %err, "Failed to load client state before attach");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     let Some(state) = existing_state.as_ref() else {
         return Err(StatusCode::NOT_FOUND);
@@ -1451,9 +1448,7 @@ fn map_mode(mode: ClientConfigMode) -> ConfigMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::handlers::client::inspection::{
-        ATTACH_OVERWRITE_WARNING, DETACH_NO_EFFECT_WARNING,
-    };
+    use crate::api::handlers::client::inspection::{ATTACH_OVERWRITE_WARNING, DETACH_NO_EFFECT_WARNING};
     use crate::api::models::client::{ClientConfigFileParseData, ClientFormatRuleData, ClientSettingsUpdateReq};
     use crate::api::routes::AppState;
     use crate::clients::models::{ClientConfigFileState, ClientRegistrationOrigin};
@@ -1616,9 +1611,11 @@ mod tests {
             client_service: Some(client_service.clone()),
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
-            oauth_manager: Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone()))),
+            oauth_manager: RwLock::new(Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone())))),
             secret_store: RwLock::new(None),
-            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness("test_unavailable")),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
+                "test_unavailable",
+            )),
         });
 
         TestContext {
@@ -4094,9 +4091,7 @@ mod tests {
         assert!(attach_response.success);
         let data = attach_response.data.expect("attach data");
         assert!(
-            data.warnings
-                .iter()
-                .any(|warning| warning == ATTACH_OVERWRITE_WARNING),
+            data.warnings.iter().any(|warning| warning == ATTACH_OVERWRITE_WARNING),
             "expected overwrite warning, got {:?}",
             data.warnings
         );
@@ -4183,9 +4178,7 @@ mod tests {
         let data = detach_response.data.expect("detach data");
         assert!(!data.changed);
         assert!(
-            data.warnings
-                .iter()
-                .any(|warning| warning == DETACH_NO_EFFECT_WARNING),
+            data.warnings.iter().any(|warning| warning == DETACH_NO_EFFECT_WARNING),
             "expected no-effect warning, got {:?}",
             data.warnings
         );
@@ -4195,9 +4188,12 @@ mod tests {
     async fn client_detach_rejects_undetectable_config_file() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("undetectable-detach.json");
-        tokio::fs::write(&config_path, r#"{"mcpServers":{"MCPMate":{"url":"http://127.0.0.1:8000/mcp"}}}"#)
-            .await
-            .expect("seed undetectable detach config");
+        tokio::fs::write(
+            &config_path,
+            r#"{"mcpServers":{"MCPMate":{"url":"http://127.0.0.1:8000/mcp"}}}"#,
+        )
+        .await
+        .expect("seed undetectable detach config");
 
         context
             .client_service
@@ -4303,5 +4299,4 @@ mod tests {
             details.degraded_reasons
         );
     }
-
 }

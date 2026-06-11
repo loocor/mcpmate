@@ -57,12 +57,29 @@ pub async fn load_oauth_states(
                 OAuthConnectionState::Connected
             }
         };
-        let (custody_state, requires_reconnect, issue) = oauth_summary_custody(
+        let (custody_state, requires_reconnect, issue) = match oauth_summary_custody(
             secure_store_available,
             client_secret.as_deref(),
             access_token.as_deref(),
             refresh_token.as_deref(),
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(
+                    server_id = %server_id,
+                    error = %error,
+                    "Custody classification failed for server; defaulting to LegacyPlaintext"
+                );
+                (
+                    OAuthCustodyState::LegacyPlaintext,
+                    true,
+                    Some(OAuthStatusIssue {
+                        code: "custody_classification_error".to_string(),
+                        message: format!("Custody check failed: {error}"),
+                    }),
+                )
+            }
+        };
 
         map.insert(
             server_id,

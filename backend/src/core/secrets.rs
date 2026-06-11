@@ -4,7 +4,7 @@ use mcpmate_secrets::{
     SecretError, SecretResolver, UnavailableSecretResolver, extract_secret_references, resolve_placeholders,
 };
 
-use crate::{config::server, core::models::MCPServerConfig};
+use crate::core::models::MCPServerConfig;
 use store::{LocalSecretStore, SecretUsageLocationInput, SecretUsageUpsertInput, SecretUsageView};
 
 pub mod store;
@@ -264,8 +264,11 @@ async fn discover_active_secret_usages_filtered(
     pool: &sqlx::SqlitePool,
     alias_filter: Option<&str>,
 ) -> anyhow::Result<Vec<SecretUsageView>> {
-    let mut usages = discover_config_usages_filtered(pool, alias_filter).await?;
-    usages.extend(discover_oauth_usages_filtered(pool, alias_filter).await?);
+    use crate::config::server::get_all_servers;
+
+    let servers = get_all_servers(pool).await?;
+    let mut usages = discover_config_usages_with_servers(pool, &servers, alias_filter).await?;
+    usages.extend(discover_oauth_usages_with_servers(pool, &servers, alias_filter).await?);
     dedup_secret_usage_views(&mut usages);
     Ok(usages)
 }
@@ -277,12 +280,20 @@ async fn discover_config_usages_filtered(
     use crate::config::server::get_all_servers;
 
     let servers = get_all_servers(pool).await?;
+    discover_config_usages_with_servers(pool, &servers, alias_filter).await
+}
+
+async fn discover_config_usages_with_servers(
+    pool: &sqlx::SqlitePool,
+    servers: &[crate::config::models::server::Server],
+    alias_filter: Option<&str>,
+) -> anyhow::Result<Vec<SecretUsageView>> {
     let mut usages = Vec::new();
     for server in servers {
         let Some(server_id) = server.id.clone() else {
             continue;
         };
-        let config = mcp_config_from_server(pool, &server_id, &server).await?;
+        let config = mcp_config_from_server(pool, &server_id, server).await?;
         for entry in collect_secret_usages(&server_id, &config)? {
             if alias_filter.is_some_and(|alias| entry.alias != alias) {
                 continue;
@@ -293,29 +304,37 @@ async fn discover_config_usages_filtered(
     Ok(usages)
 }
 
-async fn discover_oauth_usages_filtered(
+async fn discover_oauth_usages_with_servers(
     pool: &sqlx::SqlitePool,
+    servers: &[crate::config::models::server::Server],
     alias_filter: Option<&str>,
 ) -> anyhow::Result<Vec<SecretUsageView>> {
-    use crate::config::server::get_all_servers;
+    use crate::config::server::{get_all_oauth_configs, get_all_oauth_tokens};
 
-    let servers = get_all_servers(pool).await?;
+    let oauth_configs = get_all_oauth_configs(pool).await?;
+    let oauth_tokens = get_all_oauth_tokens(pool).await?;
+
+    let config_by_server: std::collections::HashMap<String, _> =
+        oauth_configs.into_iter().map(|c| (c.server_id.clone(), c)).collect();
+    let token_by_server: std::collections::HashMap<String, _> =
+        oauth_tokens.into_iter().map(|t| (t.server_id.clone(), t)).collect();
+
     let mut usages = Vec::new();
     for server_model in servers {
-        let Some(server_id) = server_model.id else {
+        let Some(server_id) = server_model.id.as_deref() else {
             continue;
         };
 
-        if let Some(config) = server::get_server_oauth_config(pool, &server_id).await? {
+        if let Some(config) = config_by_server.get(server_id) {
             if let Some(client_secret) = config.client_secret.as_deref() {
-                push_oauth_usages_from_value(&mut usages, alias_filter, &server_id, client_secret)?;
+                push_oauth_usages_from_value(&mut usages, alias_filter, server_id, client_secret)?;
             }
         }
 
-        if let Some(token) = server::get_server_oauth_token(pool, &server_id).await? {
-            push_oauth_usages_from_value(&mut usages, alias_filter, &server_id, &token.access_token)?;
+        if let Some(token) = token_by_server.get(server_id) {
+            push_oauth_usages_from_value(&mut usages, alias_filter, server_id, &token.access_token)?;
             if let Some(refresh_token) = token.refresh_token.as_deref() {
-                push_oauth_usages_from_value(&mut usages, alias_filter, &server_id, refresh_token)?;
+                push_oauth_usages_from_value(&mut usages, alias_filter, server_id, refresh_token)?;
             }
         }
     }
