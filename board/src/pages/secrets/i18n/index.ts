@@ -209,10 +209,37 @@ export const secretsTranslations = {
 				description:
 					"Could not determine store status. Operations are disabled.",
 			},
-			unavailable: {
+		},
+		guidance: {
+			providerUnavailable: {
+				title: "Secure store provider unavailable",
+				description:
+					"The configured root-key provider could not be initialized. Retry after fixing the environment, or choose a different security mode in Settings → Security.",
+				os: {
+					title: "OS secure storage is unavailable",
+					description:
+						"MCPMate could not access the OS keychain. Grant access when prompted, unlock Keychain Access on macOS, or switch to Password or Local File mode in Settings → Security.",
+				},
+			},
+			readLockFailed: {
+				title: "Secure store is busy",
+				description:
+					"MCPMate could not read the secure store status. Wait a moment and retry.",
+			},
+			generic: {
 				title: "Secure store unavailable",
 				description:
-					"The secret store is not ready. Create and update operations are disabled until the issue is resolved.",
+					"Secret storage is not ready. Create and update operations stay disabled until the issue is resolved.",
+			},
+			actions: {
+				retryProvider: "Retry secure storage",
+				retryStatus: "Retry status check",
+				openSecuritySettings: "Open Security settings",
+			},
+			notifications: {
+				retrySuccess: "Secure store status refreshed",
+				retryError: "Failed to retry secure storage",
+				retryStillUnavailable: "Secure store is still unavailable",
 			},
 		},
 		stats: {
@@ -437,9 +464,35 @@ export const secretsTranslations = {
 				title: "存储状态检查失败",
 				description: "无法确定存储状态，相关操作已禁用。",
 			},
-			unavailable: {
+		},
+		guidance: {
+			providerUnavailable: {
+				title: "安全存储提供方不可用",
+				description:
+					"配置的根密钥提供方无法初始化。请修复环境后重试，或在设置 → 安全中选择其他安全模式。",
+				os: {
+					title: "操作系统安全存储不可用",
+					description:
+						"MCPMate 无法访问系统钥匙串。请在提示时授予访问权限、在 macOS 上解锁钥匙串访问，或在设置 → 安全中切换到密码或本地文件模式。",
+				},
+			},
+			readLockFailed: {
+				title: "安全存储繁忙",
+				description: "MCPMate 无法读取安全存储状态，请稍候后重试。",
+			},
+			generic: {
 				title: "安全存储不可用",
 				description: "密钥存储尚未就绪，在问题解决前无法创建或更新。",
+			},
+			actions: {
+				retryProvider: "重试安全存储",
+				retryStatus: "重试状态检查",
+				openSecuritySettings: "打开安全设置",
+			},
+			notifications: {
+				retrySuccess: "安全存储状态已刷新",
+				retryError: "重试安全存储失败",
+				retryStillUnavailable: "安全存储仍然不可用",
 			},
 		},
 		stats: {
@@ -675,10 +728,37 @@ export const secretsTranslations = {
 				description:
 					"ストア状態を取得できません。操作は無効になっています。",
 			},
-			unavailable: {
+		},
+		guidance: {
+			providerUnavailable: {
+				title: "セキュアストアプロバイダーが利用できません",
+				description:
+					"設定されたルートキープロバイダーを初期化できませんでした。環境を修正して再試行するか、設定 → セキュリティで別のセキュリティモードを選択してください。",
+				os: {
+					title: "OS セキュアストレージが利用できません",
+					description:
+						"MCPMate は OS キーチェーンにアクセスできませんでした。プロンプトでアクセスを許可するか、macOS ではキーチェーンアクセスのロックを解除するか、設定 → セキュリティでパスワードまたはローカルファイルモードに切り替えてください。",
+				},
+			},
+			readLockFailed: {
+				title: "セキュアストアがビジー状態です",
+				description:
+					"MCPMate はセキュアストアの状態を読み取れませんでした。しばらく待ってから再試行してください。",
+			},
+			generic: {
 				title: "セキュアストアは利用できません",
 				description:
 					"シークレットストアの準備ができていません。問題が解決するまで作成・更新は無効です。",
+			},
+			actions: {
+				retryProvider: "セキュアストレージを再試行",
+				retryStatus: "状態確認を再試行",
+				openSecuritySettings: "セキュリティ設定を開く",
+			},
+			notifications: {
+				retrySuccess: "セキュアストアの状態を更新しました",
+				retryError: "セキュアストレージの再試行に失敗しました",
+				retryStillUnavailable: "セキュアストアはまだ利用できません",
 			},
 		},
 		stats: {

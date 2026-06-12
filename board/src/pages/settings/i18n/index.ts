@@ -318,6 +318,7 @@ export const settingsTranslations = {
       error: {
         title: "Status check failed",
         description: "Could not retrieve store status.",
+        retry: "Retry",
       },
       passwordProtection: "Password Protection",
       passwordProtectionDescription:
@@ -334,6 +335,8 @@ export const settingsTranslations = {
       encryptionMode: "Encryption Mode",
       encryptionModeDescription: "How the root encryption key is stored and protected.",
       encryptionModeStatus: "Encryption mode security level",
+      providerModeUnknown:
+        "Encryption mode is unavailable until the secure store reports its provider.",
       encryptionPasswordRow: "Encryption Password",
       encryptionPasswordRowDescription:
         "Master password that wraps the root encryption key.",
@@ -709,6 +712,7 @@ export const settingsTranslations = {
       error: {
         title: "状态检查失败",
         description: "无法获取存储状态。",
+        retry: "重试",
       },
       passwordProtection: "密码保护",
       passwordProtectionDescription:
@@ -725,6 +729,7 @@ export const settingsTranslations = {
       encryptionMode: "加密模式",
       encryptionModeDescription: "根加密密钥的存储与保护方式。",
       encryptionModeStatus: "加密模式安全级别",
+      providerModeUnknown: "安全存储尚未报告提供方信息，暂无法显示或切换加密模式。",
       encryptionPasswordRow: "加密密码",
       encryptionPasswordRowDescription: "用于包裹根加密密钥的主密码。",
       mode: {
@@ -1125,6 +1130,7 @@ export const settingsTranslations = {
       error: {
         title: "状態確認に失敗しました",
         description: "ストア状態を取得できませんでした。",
+        retry: "再試行",
       },
       passwordProtection: "パスワード保護",
       passwordProtectionDescription:
@@ -1142,6 +1148,8 @@ export const settingsTranslations = {
       encryptionModeDescription:
         "ルート暗号化キーの保存と保護方法。",
       encryptionModeStatus: "暗号化モードのセキュリティレベル",
+      providerModeUnknown:
+        "セキュアストアがプロバイダー情報を返すまで、暗号化モードは表示・切り替えできません。",
       encryptionPasswordRow: "暗号化パスワード",
       encryptionPasswordRowDescription:
         "ルート暗号化キーをラップするマスターパスワード。",
