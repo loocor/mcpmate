@@ -75,6 +75,7 @@ interface SecretEditorDrawerProps {
 	onSave: () => void;
 	onDelete?: () => void;
 	isSaving: boolean;
+	writesDisabled?: boolean;
 	placeholder?: string;
 	usages?: SecretUsage[];
 	usagesLoading?: boolean;
@@ -93,6 +94,7 @@ export function SecretEditorDrawer({
 	onSave,
 	onDelete,
 	isSaving,
+	writesDisabled = false,
 	placeholder,
 	usages = [],
 	usagesLoading = false,
@@ -250,6 +252,9 @@ export function SecretEditorDrawer({
 					className="flex min-h-0 flex-1 flex-col"
 					onSubmit={(event) => {
 						event.preventDefault();
+						if (writesDisabled) {
+							return;
+						}
 						onSave();
 					}}
 				>
@@ -486,7 +491,7 @@ export function SecretEditorDrawer({
 										type="button"
 										variant="destructive"
 										className="gap-2"
-										disabled={isSaving || !canDeleteFromUsage}
+										disabled={isSaving || writesDisabled || !canDeleteFromUsage}
 										title={
 											!canDeleteFromUsage
 												? isActiveOAuthSecret
@@ -509,7 +514,9 @@ export function SecretEditorDrawer({
 								) : null}
 								<Button
 									type="submit"
-									disabled={isSaving || !activeEditor.alias.trim()}
+									disabled={
+										isSaving || writesDisabled || !activeEditor.alias.trim()
+									}
 								>
 									{activeEditor.mode === "create"
 										? t("editor.actions.create", {

@@ -8,6 +8,7 @@ import {
 	getOAuthRedirectUriForForm,
 } from "../../lib/oauth-callback-access";
 import { secretsApi, serversApi } from "../../lib/api";
+import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { resolveOAuthReadiness } from "../../lib/oauth-readiness";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import type {
@@ -244,9 +245,7 @@ export function ServerAuthSection({
 		refetchOnWindowFocus: progressState === "awaiting_callback",
 		retry: false,
 	});
-	const secretStoreStatusQ = useQuery({
-		queryKey: ["secrets", "status"],
-		queryFn: secretsApi.status,
+	const secretStoreStatusQ = useSecretStoreStatusQuery({
 		enabled: !isStdio,
 		retry: false,
 	});
