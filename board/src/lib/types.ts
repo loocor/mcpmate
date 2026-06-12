@@ -608,10 +608,39 @@ export type SecretKind =
   | "url_credential"
   | "header_value";
 
+export type SwitchableSecretStoreProviderMode =
+  | "operating_system"
+  | "passphrase"
+  | "local_file";
+
+export type SecretStoreProviderMode =
+  | SwitchableSecretStoreProviderMode
+  | "development"
+  | "custom";
+
+/** Known secure-store issue reason codes emitted by the backend. */
+export const SECRET_STORE_REASON_CODES = [
+  "passphrase_unlock_required",
+  "provider_unavailable",
+  "read_lock_failed",
+  "database_unavailable",
+  "schema_migration_required",
+  "cache_error",
+  "invalid_root_key",
+  "local_storage_error",
+  "development_storage_error",
+  "initialization_failed",
+] as const;
+
+export type SecretStoreReasonCode =
+  (typeof SECRET_STORE_REASON_CODES)[number];
+
+export type SecretStoreIssueReasonCode = SecretStoreReasonCode | "unknown";
+
 export interface SecretMetadata {
   alias: string;
   placeholder: string;
-  kind: string;
+  kind: SecretKind;
   label?: string | null;
   origin?: SecretOrigin | null;
   provider_id: string;
@@ -674,12 +703,12 @@ export interface SecretDeleteResp {
 export interface SecretStoreProviderData {
   provider_id: string;
   provider_kind: string;
-  provider_mode: string;
+  provider_mode: SecretStoreProviderMode;
   security_level: string;
 }
 
 export interface SecretStoreIssueData {
-  reason_code: string;
+  reason_code: SecretStoreReasonCode | (string & {});
   message: string;
 }
 

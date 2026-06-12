@@ -45,14 +45,5 @@ export function requiresEncryptionUnlock(status?: {
 	provider?: { provider_mode: string } | null;
 	issue?: { reason_code: string } | null;
 }): boolean {
-	if (!status) {
-		return false;
-	}
-	if (status.issue?.reason_code === "passphrase_unlock_required") {
-		return true;
-	}
-	return (
-		status.status !== "ready" &&
-		status.provider?.provider_mode === "passphrase"
-	);
+	return status?.issue?.reason_code === "passphrase_unlock_required";
 }
