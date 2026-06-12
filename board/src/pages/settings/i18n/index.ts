@@ -336,7 +336,7 @@ export const settingsTranslations = {
       encryptionModeDescription: "How the root encryption key is stored and protected.",
       encryptionModeStatus: "Encryption mode security level",
       providerModeUnknown:
-        "Encryption mode is unavailable until the secure store reports its provider.",
+        "Current encryption mode could not be determined. Choose a mode below to switch away from a broken provider.",
       encryptionPasswordRow: "Encryption Password",
       encryptionPasswordRowDescription:
         "Master password that wraps the root encryption key.",
@@ -729,7 +729,8 @@ export const settingsTranslations = {
       encryptionMode: "加密模式",
       encryptionModeDescription: "根加密密钥的存储与保护方式。",
       encryptionModeStatus: "加密模式安全级别",
-      providerModeUnknown: "安全存储尚未报告提供方信息，暂无法显示或切换加密模式。",
+      providerModeUnknown:
+        "无法确定当前加密模式。请在下方选择模式以从故障提供方切换离开。",
       encryptionPasswordRow: "加密密码",
       encryptionPasswordRowDescription: "用于包裹根加密密钥的主密码。",
       mode: {
@@ -1149,7 +1150,7 @@ export const settingsTranslations = {
         "ルート暗号化キーの保存と保護方法。",
       encryptionModeStatus: "暗号化モードのセキュリティレベル",
       providerModeUnknown:
-        "セキュアストアがプロバイダー情報を返すまで、暗号化モードは表示・切り替えできません。",
+        "現在の暗号化モードを特定できません。下からモードを選び、障害のあるプロバイダーから切り替えてください。",
       encryptionPasswordRow: "暗号化パスワード",
       encryptionPasswordRowDescription:
         "ルート暗号化キーをラップするマスターパスワード。",

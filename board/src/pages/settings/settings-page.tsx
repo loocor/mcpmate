@@ -2324,26 +2324,29 @@ export function SettingsPage() {
 														})}
 													</p>
 												</div>
-												<div className="flex sm:justify-end">
-													{encryptionModeKnown || selectedMode ? (
-														<Segment
-															options={[
-																{ value: "operating_system", label: t("settings:security.mode.os", { defaultValue: "OS Keychain" }) },
-																{ value: "passphrase", label: t("settings:security.mode.passphrase", { defaultValue: "Password" }) },
-																{ value: "local_file", label: t("settings:security.mode.local", { defaultValue: "Local File" }) },
-															]}
-															value={selectedMode || currentProviderMode || "operating_system"}
-															onValueChange={handleEncryptionModeChange}
-															showDots={false}
-														/>
-													) : (
-														<p className="text-sm text-muted-foreground sm:text-right">
+												<div className="flex flex-col items-stretch gap-2 sm:items-end">
+													{!encryptionModeKnown && !selectedMode ? (
+														<p className="text-xs text-muted-foreground sm:text-right">
 															{t("settings:security.providerModeUnknown", {
 																defaultValue:
-																	"Encryption mode is unavailable until the secure store reports its provider.",
+																	"Current encryption mode could not be determined. Choose a mode below to switch away from a broken provider.",
 															})}
 														</p>
-													)}
+													) : null}
+													<Segment
+														options={[
+															{ value: "operating_system", label: t("settings:security.mode.os", { defaultValue: "OS Keychain" }) },
+															{ value: "passphrase", label: t("settings:security.mode.passphrase", { defaultValue: "Password" }) },
+															{ value: "local_file", label: t("settings:security.mode.local", { defaultValue: "Local File" }) },
+														]}
+														value={
+															selectedMode ||
+															currentProviderMode ||
+															"operating_system"
+														}
+														onValueChange={handleEncryptionModeChange}
+														showDots={false}
+													/>
 												</div>
 											</div>
 											{effectiveEncryptionMode === "passphrase" ? (
