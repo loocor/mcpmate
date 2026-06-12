@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Lock, Unlock } from "lucide-react";
 import { secretsApi } from "../lib/api";
+import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 
@@ -9,10 +10,16 @@ export type LockScreenVariant = "login" | "encryption";
 
 interface LockScreenProps {
 	variant?: LockScreenVariant;
+	/** Fill the parent content pane instead of the full viewport (use inside Layout). */
+	embedded?: boolean;
 	onSuccess: (password: string) => void | Promise<void>;
 }
 
-export function LockScreen({ variant = "login", onSuccess }: LockScreenProps) {
+export function LockScreen({
+	variant = "login",
+	embedded = false,
+	onSuccess,
+}: LockScreenProps) {
 	const { t } = useTranslation();
 	const [password, setPassword] = useState("");
 	const [focused, setFocused] = useState(true);
@@ -67,7 +74,12 @@ export function LockScreen({ variant = "login", onSuccess }: LockScreenProps) {
 	);
 
 	return (
-		<div className="flex h-screen w-screen items-center justify-center bg-background">
+		<div
+			className={cn(
+				"flex items-center justify-center bg-background",
+				embedded ? "h-full min-h-0 w-full" : "h-screen w-screen",
+			)}
+		>
 			<div className="w-full max-w-sm space-y-6 px-6">
 				<div className="flex flex-col items-center space-y-2 text-center">
 					<div className="relative inline-flex">
@@ -155,4 +167,9 @@ export function LockScreen({ variant = "login", onSuccess }: LockScreenProps) {
 			</div>
 		</div>
 	);
+}
+
+/** Lock screen sized for dashboard pages rendered inside Layout (sidebar visible). */
+export function PageLockScreen(props: Omit<LockScreenProps, "embedded">) {
+	return <LockScreen {...props} embedded />;
 }

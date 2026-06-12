@@ -80,6 +80,7 @@ import type {
 	SecretOrigin,
 	SecretStoreStatusData,
 	SecretStoreStatusResp,
+	SwitchableSecretStoreProviderMode,
 	ProviderSwitchResp,
 	PasswordStatusResp,
 	PasswordSetResp,
@@ -946,7 +947,7 @@ export const secretsApi = {
 	},
 
 	switchProvider: async (
-		mode: "operating_system" | "passphrase" | "local_file",
+		mode: SwitchableSecretStoreProviderMode,
 		options?: { passphrase?: string; currentPassphrase?: string },
 	): Promise<SecretStoreStatusData> => {
 		const body: {

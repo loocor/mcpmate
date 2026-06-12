@@ -51,6 +51,25 @@ function ok(data: unknown) {
   };
 }
 
+function okBody(data: unknown) {
+  return {
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(data),
+  };
+}
+
+function readinessAndPasswordMocks() {
+  return {
+    "/api/system/readiness": okBody({ type: "ready", status: "ok" }),
+    "/api/secrets/password/status": ok({
+      enabled: false,
+      has_password: false,
+      scope: [],
+    }),
+  };
+}
+
 async function installSecretsPageMocks(
   page: import("@playwright/test").Page,
   options: {
@@ -74,7 +93,12 @@ async function installSecretsPageMocks(
     const url = new URL(route.request().url());
     const { pathname } = url;
 
+    const mocks = readinessAndPasswordMocks();
     switch (pathname) {
+      case "/api/system/readiness":
+        return route.fulfill(mocks["/api/system/readiness"]);
+      case "/api/secrets/password/status":
+        return route.fulfill(mocks["/api/secrets/password/status"]);
       case "/api/secrets/status":
         return route.fulfill(ok(storeStatus));
       case "/api/secrets/list":
@@ -110,7 +134,7 @@ test.describe("Secrets store status degradation", () => {
     await expect(page.getByRole("alert")).toHaveCount(0);
     const addButton = page.getByRole("button", { name: /add secret/i });
     await expect(addButton).toBeEnabled();
-    await expect(page.getByText("github-token")).toBeVisible();
+    await expect(page.getByRole("button", { name: /GitHub PAT/i })).toBeVisible();
   });
 
   test("store unavailable → alert banner, Add button disabled", async ({
@@ -138,13 +162,15 @@ test.describe("Secrets store status degradation", () => {
 
     const alert = page.getByRole("alert");
     await expect(alert).toBeVisible();
-    await expect(alert).toContainText("Secure store unavailable");
+    await expect(alert).toContainText("Secure store provider unavailable");
     await expect(alert).toContainText("OS keychain not accessible for testing");
 
     const addButton = page.getByRole("button", { name: /add secret/i });
     await expect(addButton).toBeDisabled();
 
-    await expect(page.getByText("existing-token")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "existing-token" }),
+    ).toBeVisible();
   });
 
   test("store unavailable + empty list → empty-state CTA disabled", async ({
@@ -164,7 +190,7 @@ test.describe("Secrets store status degradation", () => {
     await expect(ctaButton).toBeDisabled();
   });
 
-  test("store unavailable → edit and delete buttons disabled", async ({
+  test("store unavailable → catalog write interactions disabled", async ({
     page,
   }) => {
     await installSecretsPageMocks(page, {
@@ -177,20 +203,30 @@ test.describe("Secrets store status degradation", () => {
           provider_id: "dev",
           provider_kind: "development",
           version: 1,
-          used_by_count: 0,
+          used_by_count: 1,
         },
       ],
     });
 
-    await page.goto("/secrets");
+    await page.goto("/secrets?view=list");
 
     await expect(page.getByRole("alert")).toBeVisible();
+    const catalogRow = page.getByRole("button", { name: /my-token/i });
+    await expect(catalogRow).toBeVisible();
 
-    const editButton = page.getByRole("button", { name: /edit secret/i });
-    await expect(editButton).toBeDisabled();
+    await catalogRow.click();
+    await expect(
+      page.getByRole("heading", { name: /edit secret/i }),
+    ).toHaveCount(0);
 
-    const deleteButton = page.getByRole("button", { name: /delete secret/i });
-    await expect(deleteButton).toBeDisabled();
+    const usageButton = page.getByRole("button", {
+      name: "View usage",
+      exact: true,
+    });
+    await usageButton.click();
+    await expect(
+      page.getByRole("heading", { name: /edit secret/i }),
+    ).toHaveCount(0);
   });
 
   test("status API error → error alert shown, Add button disabled", async ({
@@ -199,7 +235,14 @@ test.describe("Secrets store status degradation", () => {
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
       const { pathname } = url;
+      const mocks = readinessAndPasswordMocks();
 
+      if (pathname === "/api/system/readiness") {
+        return route.fulfill(mocks["/api/system/readiness"]);
+      }
+      if (pathname === "/api/secrets/password/status") {
+        return route.fulfill(mocks["/api/secrets/password/status"]);
+      }
       if (pathname === "/api/secrets/status") {
         return route.fulfill({
           status: 500,
@@ -242,7 +285,14 @@ test.describe("Secrets store status degradation", () => {
     await page.route("**/api/**", async (route) => {
       const url = new URL(route.request().url());
       const { pathname } = url;
+      const mocks = readinessAndPasswordMocks();
 
+      if (pathname === "/api/system/readiness") {
+        return route.fulfill(mocks["/api/system/readiness"]);
+      }
+      if (pathname === "/api/secrets/password/status") {
+        return route.fulfill(mocks["/api/secrets/password/status"]);
+      }
       if (pathname === "/api/secrets/status") {
         return route.fulfill(ok(storeStatus));
       }

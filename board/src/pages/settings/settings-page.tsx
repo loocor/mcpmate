@@ -31,7 +31,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { Button } from "../../components/ui/button";
-import { LockScreen } from "../../components/lock-screen";
+import { ErrorDisplay } from "../../components/error-display";
+import { PageLockScreen } from "../../components/lock-screen";
 import {
 	Card,
 	CardContent,
@@ -54,7 +55,6 @@ import {
 	SelectValue,
 } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
-import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -83,6 +83,17 @@ import {
 	type DesktopCoreSourceResponse,
 	useDesktopCoreState,
 } from "../../lib/desktop-core-state";
+import { SecretStoreIssueAlert } from "../../components/secrets";
+import { useSecretStoreProviderRetryMutation } from "../../lib/hooks/use-secret-store-provider-retry";
+import {
+	invalidateSecretStoreStatus,
+	useSecretStoreStatusQuery,
+} from "../../lib/hooks/use-secret-store-status";
+import { useSecretsTranslations } from "../../lib/hooks/use-secrets-translations";
+import {
+	isSwitchableSecretStoreProviderMode,
+	type SwitchableSecretStoreProviderMode,
+} from "../../lib/secret-store-guidance";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
 import {
 	type ProtectionLevel,
@@ -347,6 +358,7 @@ function auditFormMatchesSaved(form: AuditPolicyFormState, saved: AuditPolicyFor
 
 export function SettingsPage() {
 	usePageTranslations("settings");
+	const { t: secretsT } = useSecretsTranslations();
 	const queryClient = useQueryClient();
 	const languageId = useId();
 	const backupLimitId = useId();
@@ -441,10 +453,7 @@ export function SettingsPage() {
 		queryKey: ["system", "settings"],
 		queryFn: () => systemApi.getSettings(),
 	});
-	const storeStatusQuery = useQuery({
-		queryKey: ["secrets", "status"],
-		queryFn: secretsApi.status,
-	});
+	const storeStatusQuery = useSecretStoreStatusQuery();
 	const [selectedMode, setSelectedMode] = useState<string>("");
 	const [passphraseInput, setPassphraseInput] = useState("");
 	const [passphraseConfirmInput, setPassphraseConfirmInput] = useState("");
@@ -458,9 +467,8 @@ export function SettingsPage() {
 	const passphraseSetupPasswordRef = useRef<HTMLInputElement>(null);
 	const currentPassphraseInputRef = useRef<HTMLInputElement>(null);
 
-	type ProviderSwitchMode = "operating_system" | "passphrase" | "local_file";
 	type PendingProviderSwitch = {
-		mode: ProviderSwitchMode;
+		mode: SwitchableSecretStoreProviderMode;
 		passphrase?: string;
 		currentPassphrase?: string;
 	};
@@ -476,8 +484,13 @@ export function SettingsPage() {
 		setCurrentPassphraseError(null);
 	}, []);
 
-	const currentProviderMode =
-		storeStatusQuery.data?.provider?.provider_mode ?? "operating_system";
+	const reportedProviderMode = storeStatusQuery.data?.provider?.provider_mode;
+	const currentProviderMode = isSwitchableSecretStoreProviderMode(
+		reportedProviderMode,
+	)
+		? reportedProviderMode
+		: null;
+	const encryptionModeKnown = currentProviderMode !== null;
 	const isPassphraseModeConfigured =
 		currentProviderMode === "passphrase" && storeStatusQuery.data?.status === "ready";
 	const isPendingPassphraseSwitch =
@@ -492,7 +505,7 @@ export function SettingsPage() {
 				passphraseConfirmInput,
 			),
 		onSuccess: async () => {
-			await queryClient.invalidateQueries({ queryKey: ["secrets", "status"] });
+			await invalidateSecretStoreStatus(queryClient);
 			resetPendingProviderSwitch();
 			setShowPassphraseSetupDialog(false);
 			setShowCurrentPassphraseDialog(false);
@@ -523,7 +536,7 @@ export function SettingsPage() {
 				currentPassphrase: pending.currentPassphrase,
 			}),
 		onSuccess: async () => {
-			await queryClient.invalidateQueries({ queryKey: ["secrets", "status"] });
+			await invalidateSecretStoreStatus(queryClient);
 			resetPendingProviderSwitch();
 			setShowPassphraseSetupDialog(false);
 			setShowSwitchConfirm(false);
@@ -545,6 +558,8 @@ export function SettingsPage() {
 		},
 	});
 
+	const providerRetryMutation = useSecretStoreProviderRetryMutation(secretsT);
+
 	const promptSecurityModeSwitchIfPending = useCallback(
 		(modeOverride?: string) => {
 			const mode = modeOverride ?? selectedMode;
@@ -564,8 +579,11 @@ export function SettingsPage() {
 			if (switchProviderMutation.isPending || showSwitchConfirm) {
 				return;
 			}
+			if (!isSwitchableSecretStoreProviderMode(mode)) {
+				return;
+			}
 			pendingProviderSwitchRef.current = {
-				mode: mode as ProviderSwitchMode,
+				mode,
 				passphrase: mode === "passphrase" ? passphraseInput : undefined,
 			};
 			setShowSwitchConfirm(true);
@@ -692,10 +710,13 @@ export function SettingsPage() {
 			setShowPassphraseSetupDialog(true);
 			return;
 		}
-		const mode = (selectedMode || currentProviderMode) as ProviderSwitchMode;
+		const modeCandidate = selectedMode || currentProviderMode;
+		if (!isSwitchableSecretStoreProviderMode(modeCandidate)) {
+			return;
+		}
 		pendingProviderSwitchRef.current = {
-			mode,
-			passphrase: mode === "passphrase" ? passphraseInput : undefined,
+			mode: modeCandidate,
+			passphrase: modeCandidate === "passphrase" ? passphraseInput : undefined,
 			currentPassphrase: currentPassphraseInput,
 		};
 		setShowCurrentPassphraseDialog(false);
@@ -1588,7 +1609,9 @@ export function SettingsPage() {
 	});
 
 	if (needsSettingsPassword) {
-		return <LockScreen variant="login" onSuccess={handleSettingsPasswordUnlock} />;
+		return (
+			<PageLockScreen variant="login" onSuccess={handleSettingsPasswordUnlock} />
+		);
 	}
 
 	return (
@@ -2154,17 +2177,23 @@ export function SettingsPage() {
 										{t("settings:security.loading", { defaultValue: "Checking store status..." })}
 									</p>
 								) : storeStatusQuery.isError ? (
-									<Alert variant="destructive">
-										<ShieldCheck className="h-4 w-4" />
-										<AlertTitle>
-											{t("settings:security.error.title", { defaultValue: "Status check failed" })}
-										</AlertTitle>
-										<AlertDescription>
-											{storeStatusQuery.error instanceof Error
-												? storeStatusQuery.error.message
-												: t("settings:security.error.description", { defaultValue: "Could not retrieve store status." })}
-										</AlertDescription>
-									</Alert>
+									<ErrorDisplay
+										icon={ShieldCheck}
+										title={t("settings:security.error.title", {
+											defaultValue: "Status check failed",
+										})}
+										error={
+											storeStatusQuery.error instanceof Error
+												? storeStatusQuery.error
+												: t("settings:security.error.description", {
+													defaultValue: "Could not retrieve store status.",
+												})
+										}
+										onRetry={() => void storeStatusQuery.refetch()}
+										retryLabel={t("settings:security.error.retry", {
+											defaultValue: "Retry",
+										})}
+									/>
 								) : storeStatusQuery.data ? (
 									<>
 										<div className="space-y-3">
@@ -2295,14 +2324,26 @@ export function SettingsPage() {
 														})}
 													</p>
 												</div>
-												<div className="flex sm:justify-end">
+												<div className="flex flex-col items-stretch gap-2 sm:items-end">
+													{!encryptionModeKnown && !selectedMode ? (
+														<p className="text-xs text-muted-foreground sm:text-right">
+															{t("settings:security.providerModeUnknown", {
+																defaultValue:
+																	"Current encryption mode could not be determined. Choose a mode below to switch away from a broken provider.",
+															})}
+														</p>
+													) : null}
 													<Segment
 														options={[
 															{ value: "operating_system", label: t("settings:security.mode.os", { defaultValue: "OS Keychain" }) },
 															{ value: "passphrase", label: t("settings:security.mode.passphrase", { defaultValue: "Password" }) },
 															{ value: "local_file", label: t("settings:security.mode.local", { defaultValue: "Local File" }) },
 														]}
-														value={selectedMode || currentProviderMode}
+														value={
+															selectedMode ||
+															currentProviderMode ||
+															"operating_system"
+														}
 														onValueChange={handleEncryptionModeChange}
 														showDots={false}
 													/>
@@ -2341,18 +2382,20 @@ export function SettingsPage() {
 												</div>
 											) : null}
 
-											{storeStatusQuery.data.issue ? (
-												<Alert variant="destructive">
-													<ShieldCheck className="h-4 w-4" />
-													<AlertTitle>
-														{t("settings:security.issue.title", { defaultValue: "Store Issue" })}
-													</AlertTitle>
-													<AlertDescription>
-														<strong>{storeStatusQuery.data.issue.reason_code}</strong>
-														{" — "}
-														{storeStatusQuery.data.issue.message}
-													</AlertDescription>
-												</Alert>
+											{storeStatusQuery.data ? (
+												<SecretStoreIssueAlert
+													status={storeStatusQuery.data}
+													hideSettingsLink
+													isRetrying={
+														providerRetryMutation.isPending ||
+														switchProviderMutation.isPending ||
+														storeStatusQuery.isFetching
+													}
+													onRetryStatus={() => void storeStatusQuery.refetch()}
+													onRetryProvider={(mode) =>
+														providerRetryMutation.mutate(mode)
+													}
+												/>
 											) : null}
 
 											{/* Mode description */}

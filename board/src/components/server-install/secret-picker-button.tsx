@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { secretsApi } from "../../lib/api";
+import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { suggestSecretAliasFromOrigin } from "../../lib/secret-alias";
 import { isUserCreatableSecretKind } from "../../lib/secret-origin-hints";
 import type { SecretOrigin } from "../../lib/types";
@@ -39,10 +40,7 @@ export function SecretPickerButton({
 		enabled: open,
 	});
 
-	const storeStatusQuery = useQuery({
-		queryKey: ["secrets", "status"],
-		queryFn: secretsApi.status,
-	});
+	const storeStatusQuery = useSecretStoreStatusQuery();
 	const storeReady = storeStatusQuery.data?.status === "ready";
 
 	const secrets = useMemo(() => {

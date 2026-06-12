@@ -9,6 +9,8 @@ export {
 	type UseInlineSecretCreateOptions,
 } from "./inline-secret-create";
 export { SecretEditorDrawer } from "./secret-editor-drawer";
+export { SecretCatalogEntry } from "./secret-catalog-entry";
+export { SecretStoreIssueAlert } from "./secret-store-issue-alert";
 export {
 	buildCreateEditorStateFromOrigin,
 	defaultSecretEditorState,
