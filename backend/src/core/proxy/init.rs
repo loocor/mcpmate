@@ -8,12 +8,37 @@ use crate::{
     audit::{AuditRetentionPolicySetting, AuditService, AuditStore, run_retention_worker},
     config::audit_database::AuditDatabase,
     config::database::Database,
-    core::{capability::naming, foundation::loader},
+    core::{
+        capability::naming,
+        foundation::loader,
+        secrets::store::{SecretStoreBootstrap, SecretStoreReadiness},
+    },
 };
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{self, EnvFilter};
+
+const STARTUP_DIAGNOSTIC_COMPONENT: &str = "startup_init";
+
+fn parse_file_log_enabled(raw: Option<&str>) -> Result<bool> {
+    use crate::common::constants::{defaults, env_vars};
+
+    let Some(raw) = raw else {
+        return Ok(defaults::LOG_TO_FILE_DEFAULT);
+    };
+
+    let normalized = raw.trim().to_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "on" | "yes" => Ok(true),
+        "0" | "false" | "off" | "no" => Ok(false),
+        _ => bail!(
+            "Invalid {} value '{}'; expected one of true, false, 1, 0, on, off, yes, no",
+            env_vars::MCPMATE_LOG_TO_FILE,
+            raw
+        ),
+    }
+}
 
 /// Setup logging based on command line arguments
 /// This function is safe to call multiple times - it will only initialize once
@@ -21,7 +46,7 @@ pub fn setup_logging(args: &Args) -> Result<()> {
     // TODO(temporary): This file logging toggle and multiplexer are temporary.
     // Once the audit logging subsystem is implemented, remove MCPMATE_LOG_TO_FILE,
     // the MultiWriter, and all file-path handling here.
-    use crate::common::constants::{defaults, env_vars};
+    use crate::common::constants::env_vars;
     let (env_filter, log_config_msg) = if let Ok(rust_log) = std::env::var("RUST_LOG") {
         // If RUST_LOG is set, respect it completely - no overrides
         let msg = format!("Using RUST_LOG environment variable: {} (full control)", rust_log);
@@ -52,32 +77,15 @@ pub fn setup_logging(args: &Args) -> Result<()> {
     use std::sync::{Arc, Mutex};
 
     // Determine whether to enable file logging (env overrides default)
-    let mut post_init_warning: Option<String> = None;
-    let enable_file_log = match std::env::var(env_vars::MCPMATE_LOG_TO_FILE) {
-        Ok(raw) => {
-            let v = raw.trim().to_lowercase();
-            match v.as_str() {
-                "1" | "true" | "on" | "yes" => true,
-                "0" | "false" | "off" | "no" => false,
-                other => {
-                    // Keep backward-compat by defaulting to enabled for unknown values
-                    post_init_warning = Some(format!(
-                        "Unrecognized {} value ('{}'); defaulting to enabled",
-                        env_vars::MCPMATE_LOG_TO_FILE,
-                        other
-                    ));
-                    true
-                }
-            }
-        }
-        Err(_) => defaults::LOG_TO_FILE_DEFAULT,
-    };
+    let raw_file_log = std::env::var(env_vars::MCPMATE_LOG_TO_FILE).ok();
+    let enable_file_log = parse_file_log_enabled(raw_file_log.as_deref())?;
 
     // Determine log file path (only if enabled)
     let log_file_path = if enable_file_log {
         use crate::common::paths::global_paths;
         let logs_dir = global_paths().logs_dir();
-        std::fs::create_dir_all(&logs_dir).ok();
+        std::fs::create_dir_all(&logs_dir)
+            .with_context(|| format!("Failed to create log directory: {}", logs_dir.display()))?;
         Some(logs_dir.join("mcpmate.log"))
     } else {
         None
@@ -117,13 +125,13 @@ pub fn setup_logging(args: &Args) -> Result<()> {
         }
     }
 
-    let file_handle = match log_file_path {
-        Some(ref path) => std::fs::OpenOptions::new()
+    let file_handle = match log_file_path.as_ref() {
+        Some(path) => std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
-            .ok()
-            .map(|f| Arc::new(Mutex::new(f))),
+            .with_context(|| format!("Failed to open log file: {}", path.display()))
+            .map(|f| Some(Arc::new(Mutex::new(f))))?,
         None => None,
     };
 
@@ -145,9 +153,6 @@ pub fn setup_logging(args: &Args) -> Result<()> {
                     "File logging disabled (set {}=true to enable)",
                     env_vars::MCPMATE_LOG_TO_FILE
                 );
-            }
-            if let Some(msg) = post_init_warning.take() {
-                tracing::warn!("{}", msg);
             }
         }
         Err(_) => {
@@ -198,10 +203,94 @@ pub async fn setup_audit_database() -> Result<Option<AuditDatabase>> {
             Ok(Some(database))
         }
         Err(error) => {
-            tracing::warn!(error = %error, "Audit database initialization failed; continuing without audit subsystem");
+            tracing::warn!(
+                component = STARTUP_DIAGNOSTIC_COMPONENT,
+                phase = "audit_database_setup",
+                subsystem = "audit",
+                degraded = true,
+                startup_continues = true,
+                action_taken = "disable_audit_subsystem",
+                reason_code = "audit_database_init_failed",
+                error = %error,
+                "Audit database initialization failed; continuing without audit subsystem"
+            );
             Ok(None)
         }
     }
+}
+
+async fn init_audit_subsystem(
+    audit_db: AuditDatabase,
+    proxy: &mut ProxyServer,
+) -> Result<Arc<AuditStore>> {
+    let audit_db = Arc::new(audit_db);
+    let audit_store = Arc::new(AuditStore::from_database(audit_db.as_ref()));
+    audit_store
+        .initialize()
+        .await
+        .context("Failed to initialize audit store")?;
+
+    let audit_service = Arc::new(
+        AuditService::new(audit_store.clone())
+            .await
+            .context("Failed to initialize audit service")?,
+    );
+
+    proxy.set_audit_service(audit_db, audit_service);
+    tracing::info!("Audit service initialized and attached to proxy server");
+    Ok(audit_store)
+}
+
+fn spawn_audit_retention_worker(audit_store: Arc<AuditStore>) {
+    let cancellation_token = CancellationToken::new();
+    let retention_token = cancellation_token.clone();
+    tokio::spawn(async move {
+        let policy = match audit_store.get_policy().await {
+            Ok(policy) => policy,
+            Err(error) => {
+                tracing::warn!(
+                    component = STARTUP_DIAGNOSTIC_COMPONENT,
+                    phase = "audit_retention_setup",
+                    subsystem = "audit",
+                    degraded = true,
+                    startup_continues = true,
+                    action_taken = "use_default_audit_retention_policy",
+                    reason_code = "audit_retention_policy_load_failed",
+                    error = %error,
+                    "Failed to load audit retention policy, using default"
+                );
+                AuditRetentionPolicySetting::default()
+            }
+        };
+        run_retention_worker(audit_store, policy, retention_token).await;
+    });
+}
+
+fn warn_secret_store_unavailable(bootstrap: &SecretStoreBootstrap) {
+    let SecretStoreReadiness::Unavailable {
+        reason_code,
+        message,
+        provider,
+    } = &bootstrap.readiness
+    else {
+        return;
+    };
+
+    tracing::warn!(
+        component = STARTUP_DIAGNOSTIC_COMPONENT,
+        phase = "secret_store_bootstrap",
+        subsystem = "secure_store",
+        degraded = true,
+        startup_continues = true,
+        action_taken = "continue_without_secret_store",
+        reason_code = %reason_code,
+        provider_id = provider.as_ref().map(|provider| provider.provider_id.as_str()).unwrap_or("none"),
+        provider_kind = provider.as_ref().map(|provider| provider.provider_kind.as_str()).unwrap_or("none"),
+        provider_mode = provider.as_ref().map(|provider| provider.provider_mode.as_str()).unwrap_or("none"),
+        security_level = provider.as_ref().map(|provider| provider.security_level.as_str()).unwrap_or("unknown"),
+        detail = %message,
+        "Secure Store unavailable during startup; continuing without secret resolver"
+    );
 }
 
 /// Setup proxy server with startup parameters
@@ -212,6 +301,7 @@ pub async fn setup_proxy_server_with_params(
 ) -> Result<(Arc<ProxyServer>, Arc<ProxyServer>)> {
     let data_dir = db.path.parent().unwrap_or(std::path::Path::new("."));
     let secret_store_bootstrap = crate::core::secrets::store::bootstrap_secret_store(db.pool.clone(), data_dir).await;
+    warn_secret_store_unavailable(&secret_store_bootstrap);
     let startup_secret_store = secret_store_bootstrap.store.map(Arc::new);
 
     // Load configuration from database using core loader with startup parameters
@@ -227,7 +317,7 @@ pub async fn setup_proxy_server_with_params(
     );
 
     // Create proxy server using core implementation
-    let mut proxy = ProxyServer::new(Arc::new(config));
+    let mut proxy = ProxyServer::try_new(Arc::new(config))?;
     if let Some(secret_store) = startup_secret_store {
         proxy.connection_pool.lock().await.set_secret_resolver(secret_store);
     }
@@ -237,39 +327,21 @@ pub async fn setup_proxy_server_with_params(
     tracing::info!("Using database connection for tool-level configuration.");
 
     let audit_store = if let Some(audit_db) = audit_db {
-        let audit_db = Arc::new(audit_db);
-        let audit_store = Arc::new(AuditStore::from_database(audit_db.as_ref()));
-        audit_store.initialize().await?;
-        let audit_service = Arc::new(AuditService::new(audit_store.clone()).await?);
-        proxy.set_audit_service(audit_db, audit_service);
-        tracing::info!("Audit service initialized and attached to proxy server");
-        Some(audit_store)
+        Some(init_audit_subsystem(audit_db, &mut proxy).await?)
     } else {
         None
     };
 
-    // Create Arc wrappers for the proxy server
     let proxy_arc = Arc::new(proxy.clone());
     ProxyServer::set_global(Arc::new(tokio::sync::Mutex::new(proxy)));
 
-    if let Some(store) = audit_store {
-        let cancellation_token = CancellationToken::new();
-        let retention_token = cancellation_token.clone();
-        tokio::spawn(async move {
-            let policy = match store.get_policy().await {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to load audit retention policy, using default");
-                    AuditRetentionPolicySetting::default()
-                }
-            };
-            run_retention_worker(store, policy, retention_token).await;
-        });
+    if let Some(audit_store) = audit_store {
+        spawn_audit_retention_worker(audit_store);
     }
 
     tracing::info!("Proxy server created, event system will be initialized with handlers");
 
-    Ok((proxy_arc.clone(), proxy_arc))
+    Ok((Arc::clone(&proxy_arc), proxy_arc))
 }
 
 /// Setup proxy server with database and configuration using core modules (legacy function for backward compatibility)
@@ -280,9 +352,36 @@ pub async fn setup_proxy_server(db: Database) -> Result<(Arc<ProxyServer>, Arc<P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV;
     use crate::config::initialization::run_initialization;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    async fn mount_unavailable_admin_discovery(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path("/discovery/clients"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(server)
+            .await;
+    }
+
+    fn restore_env_var(
+        key: &str,
+        previous: Option<String>,
+    ) {
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var(key, value);
+            },
+            None => unsafe {
+                std::env::remove_var(key);
+            },
+        }
+    }
 
     async fn create_test_database() -> (TempDir, Database) {
         let temp_dir = TempDir::new().expect("temp dir");
@@ -322,31 +421,48 @@ mod tests {
         .expect("insert server");
     }
 
+    #[test]
+    fn parse_file_log_enabled_uses_default_when_unset() {
+        let parsed = parse_file_log_enabled(None).expect("parse default file logging setting");
+
+        assert_eq!(parsed, crate::common::constants::defaults::LOG_TO_FILE_DEFAULT);
+    }
+
+    #[test]
+    fn parse_file_log_enabled_rejects_unknown_values() {
+        let error = parse_file_log_enabled(Some("maybe")).expect_err("unknown values must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains(crate::common::constants::env_vars::MCPMATE_LOG_TO_FILE)
+        );
+    }
+
     #[tokio::test]
     #[serial_test::serial]
     async fn setup_proxy_server_default_mode_seeds_pool_from_globally_enabled_servers() {
+        let admin_discovery_server = MockServer::start().await;
+        mount_unavailable_admin_discovery(&admin_discovery_server).await;
+
         let (temp_dir, db) = create_test_database().await;
         insert_server(&db.pool, "server-global", "Global Server", true).await;
 
         let template_root = temp_dir.path().join("client-template-root");
         std::fs::create_dir_all(&template_root).expect("create isolated template root");
         let previous_template_root = std::env::var("MCPMATE_TEMPLATE_ROOT").ok();
+        let previous_admin_discovery = std::env::var(ADMIN_DISCOVERY_BASE_URL_ENV).ok();
         unsafe {
             std::env::set_var("MCPMATE_TEMPLATE_ROOT", &template_root);
+            std::env::set_var(ADMIN_DISCOVERY_BASE_URL_ENV, admin_discovery_server.uri());
         }
 
         let setup_result = setup_proxy_server_with_params(db, None, &StartupMode::Default)
             .await
             .expect("setup proxy server");
 
-        match previous_template_root {
-            Some(previous) => unsafe {
-                std::env::set_var("MCPMATE_TEMPLATE_ROOT", previous);
-            },
-            None => unsafe {
-                std::env::remove_var("MCPMATE_TEMPLATE_ROOT");
-            },
-        }
+        restore_env_var("MCPMATE_TEMPLATE_ROOT", previous_template_root);
+        restore_env_var(ADMIN_DISCOVERY_BASE_URL_ENV, previous_admin_discovery);
 
         let (proxy, _) = setup_result;
 
