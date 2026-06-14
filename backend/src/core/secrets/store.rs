@@ -235,19 +235,66 @@ async fn initialize_with_root_key_provider(
     provider: Arc<dyn SecretRootKeyProvider>,
 ) -> SecretStoreBootstrap {
     let metadata = provider.metadata();
+    let secret_count = secure_store_secret_count_for_diagnostics(&pool).await.unwrap_or(-1);
+    tracing::info!(
+        provider_id = metadata.provider_id(),
+        provider_kind = metadata.provider_kind(),
+        provider_mode = metadata.mode().as_str(),
+        security_level = metadata.security_level().as_str(),
+        secret_count = secret_count,
+        "Initializing Secure Store root key provider"
+    );
     match LocalSecretStore::initialize_with_root_key_provider(pool, provider).await {
         Ok(store) => {
+            let store_metadata = store.provider_metadata();
+            tracing::info!(
+                provider_id = store_metadata.provider_id(),
+                provider_kind = store_metadata.provider_kind(),
+                provider_mode = store_metadata.mode().as_str(),
+                security_level = store_metadata.security_level().as_str(),
+                secret_count = secret_count,
+                "Secure Store root key provider initialized"
+            );
             let readiness = SecretStoreReadiness::ready(store.provider_metadata());
             SecretStoreBootstrap {
                 store: Some(store),
                 readiness,
             }
         }
-        Err(err) => SecretStoreBootstrap {
-            store: None,
-            readiness: SecretStoreReadiness::from_initialization_error_with_provider(&err, metadata),
-        },
+        Err(err) => {
+            tracing::warn!(
+                provider_id = metadata.provider_id(),
+                provider_kind = metadata.provider_kind(),
+                provider_mode = metadata.mode().as_str(),
+                security_level = metadata.security_level().as_str(),
+                secret_count = secret_count,
+                error = %err,
+                "Secure Store root key provider initialization failed"
+            );
+            SecretStoreBootstrap {
+                store: None,
+                readiness: SecretStoreReadiness::from_initialization_error_with_provider(&err, metadata),
+            }
+        }
     }
+}
+
+async fn secure_store_secret_count_for_diagnostics(pool: &Pool<Sqlite>) -> Option<i64> {
+    let table_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'secure_store_secrets'",
+    )
+    .fetch_one(pool)
+    .await
+    .ok()
+    .unwrap_or(0);
+    if table_count == 0 {
+        return Some(0);
+    }
+
+    sqlx::query_scalar("SELECT COUNT(*) FROM secure_store_secrets")
+        .fetch_one(pool)
+        .await
+        .ok()
 }
 
 pub async fn initialize_development_secret_store(pool: Pool<Sqlite>) -> Result<LocalSecretStore> {
