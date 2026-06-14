@@ -55,14 +55,25 @@ describe("classifySecretLifecycle", () => {
   });
 
   it("marks inactive OAuth secrets as managed", () => {
+    const lifecycle = classifySecretLifecycle(
+      secret("oauth/server/access-token", {
+        kind: "oauth_access_token",
+        historical_usage_count: 1,
+      }),
+    );
+
+    expect(lifecycle.state).toBe("oauth_managed");
+    expect(secretIsUnused(lifecycle)).toBe(false);
+  });
+
+  it("does not mark inactive OAuth metadata as unused", () => {
     expect(
-      classifySecretLifecycle(
-        secret("oauth/server/access-token", {
-          kind: "oauth_access_token",
-          historical_usage_count: 1,
+      secretIsUnused(
+        secret("oauth/server/refresh-token", {
+          kind: "oauth_refresh_token",
         }),
-      ).state,
-    ).toBe("oauth_managed");
+      ),
+    ).toBe(false);
   });
 });
 

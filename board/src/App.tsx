@@ -68,15 +68,15 @@ const OPEN_FULL_BOARD_PATH_EVENT = "mcpmate://open-full-board-path";
 
 let pendingFullBoardNavigation:
 	| {
-			path: string;
-			pathname: string;
-	  }
+		path: string;
+		pathname: string;
+	}
 	| null = null;
 let pendingFullBoardNavigationTake:
 	| Promise<{
-			path: string;
-			pathname: string;
-	  } | null>
+		path: string;
+		pathname: string;
+	} | null>
 	| null = null;
 
 // Initialize the query client
@@ -98,78 +98,78 @@ function App() {
 			<BackendReadinessGate>
 				<MasterPasswordGate>
 					<BrowserRouter
-					future={{
-						v7_startTransition: true,
-						v7_relativeSplatPath: true,
-					}}
-				>
-					<DesktopFullBoardPathBridge>
-						<DesktopDropNavigationGuard />
-						<Routes>
-							<Route path="oauth/callback" element={<OAuthCallbackPage />} />
-							<Route path="onboarding" element={<OnboardingPage />} />
-							<Route path="operator" element={<TrayOperatorPanelPage />} />
-							<Route path="/" element={<Layout />}>
-								<Route index element={<DashboardPage />} />
-								{/* New canonical routes */}
-								<Route path="profiles" element={<ProfilePage />} />
-								<Route
-									path="profiles/presets/:presetId"
-									element={<ProfilePresetPage />}
-								/>
-								<Route path="profiles/:profileId" element={<ProfileDetailPage />} />
-								{/* Back-compat: redirect old routes */}
-								<Route
-									path="config"
-									element={<Navigate to="/profiles" replace />}
-								/>
-								<Route
-									path="config/presets/:presetId"
-									element={<LegacyPresetRedirect />}
-								/>
-								<Route
-									path="config/suits/:suitId"
-									element={<LegacySuitRedirect />}
-								/>
-								<Route
-									path="config/profiles/:suitId"
-									element={<LegacySuitRedirect />}
-								/>
-								<Route path="market" element={<MarketPage />} />
-								<Route path="market/:registryKey" element={<MarketDetailPage />} />
-								<Route path="servers" element={<ServerListPage />} />
-								<Route path="servers/:serverId" element={<ServerDetailPage />} />
-								<Route
-									path="servers/:serverId/instances/:instanceId"
-									element={<InstanceDetailPage />}
-								/>
-								{/* Tools route removed */}
-								<Route path="clients" element={<ClientsPage />} />
-								<Route
-									path="clients/:identifier/direct/:serverId"
-									element={<ClientDirectCapabilitiesPage />}
-								/>
-								<Route
-									path="clients/:identifier"
-									element={
-										<Suspense fallback={null}>
-											<ClientDetailPage />
-										</Suspense>
-									}
-								/>
-								<Route path="runtime" element={<RuntimePage />} />
-								<Route path="secrets" element={<SecretsPage />} />
-								<Route path="audit" element={<AuditPage />} />
-								<Route path="api-docs" element={<ApiDocsPage />} />
-								<Route path="account" element={<Navigate to="/" replace />} />
-								<Route path="settings" element={<SettingsPage />} />
+						future={{
+							v7_startTransition: true,
+							v7_relativeSplatPath: true,
+						}}
+					>
+						<DesktopFullBoardPathBridge>
+							<DesktopDropNavigationGuard />
+							<Routes>
+								<Route path="oauth/callback" element={<OAuthCallbackPage />} />
+								<Route path="onboarding" element={<OnboardingPage />} />
+								<Route path="operator" element={<TrayOperatorPanelPage />} />
+								<Route path="/" element={<Layout />}>
+									<Route index element={<DashboardPage />} />
+									{/* New canonical routes */}
+									<Route path="profiles" element={<ProfilePage />} />
+									<Route
+										path="profiles/presets/:presetId"
+										element={<ProfilePresetPage />}
+									/>
+									<Route path="profiles/:profileId" element={<ProfileDetailPage />} />
+									{/* Back-compat: redirect old routes */}
+									<Route
+										path="config"
+										element={<Navigate to="/profiles" replace />}
+									/>
+									<Route
+										path="config/presets/:presetId"
+										element={<LegacyPresetRedirect />}
+									/>
+									<Route
+										path="config/suits/:suitId"
+										element={<LegacySuitRedirect />}
+									/>
+									<Route
+										path="config/profiles/:suitId"
+										element={<LegacySuitRedirect />}
+									/>
+									<Route path="market" element={<MarketPage />} />
+									<Route path="market/:registryKey" element={<MarketDetailPage />} />
+									<Route path="servers" element={<ServerListPage />} />
+									<Route path="servers/:serverId" element={<ServerDetailPage />} />
+									<Route
+										path="servers/:serverId/instances/:instanceId"
+										element={<InstanceDetailPage />}
+									/>
+									{/* Tools route removed */}
+									<Route path="clients" element={<ClientsPage />} />
+									<Route
+										path="clients/:identifier/direct/:serverId"
+										element={<ClientDirectCapabilitiesPage />}
+									/>
+									<Route
+										path="clients/:identifier"
+										element={
+											<Suspense fallback={null}>
+												<ClientDetailPage />
+											</Suspense>
+										}
+									/>
+									<Route path="runtime" element={<RuntimePage />} />
+									<Route path="secrets" element={<SecretsPage />} />
+									<Route path="audit" element={<AuditPage />} />
+									<Route path="api-docs" element={<ApiDocsPage />} />
+									<Route path="account" element={<Navigate to="/" replace />} />
+									<Route path="settings" element={<SettingsPage />} />
 
-								<Route path="404" element={<NotFoundPage />} />
-								<Route path="*" element={<Navigate to="/404" replace />} />
-							</Route>
-						</Routes>
-					</DesktopFullBoardPathBridge>
-				</BrowserRouter>
+									<Route path="404" element={<NotFoundPage />} />
+									<Route path="*" element={<Navigate to="/404" replace />} />
+								</Route>
+							</Routes>
+						</DesktopFullBoardPathBridge>
+					</BrowserRouter>
 				</MasterPasswordGate>
 			</BackendReadinessGate>
 		</QueryClientProvider>
@@ -391,16 +391,36 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 		}
 
 		let cancelled = false;
+		let unlisten: (() => void) | undefined;
+		const applyDesktopCoreSource = (source: CoreStartupSnapshot) => {
+			if (typeof source.apiBaseUrl === "string") {
+				setApiBaseUrl(source.apiBaseUrl);
+				notificationsService.reconnectAfterApiBaseChanged();
+			}
+			setReadinessIssue(describeCoreStartupIssue(source));
+		};
 		const syncDesktopCoreSource = async () => {
+			try {
+				const { listen } = await import("@tauri-apps/api/event");
+				unlisten = await listen("mcpmate://core/status-changed", (event) => {
+					if (cancelled) {
+						return;
+					}
+					applyDesktopCoreSource(event.payload as CoreStartupSnapshot);
+					setCoreSourceReady(true);
+					setAttempt((value) => value + 1);
+				});
+			} catch (error) {
+				if (import.meta.env.DEV) {
+					console.warn("[App] Failed to bind desktop core source listener", error);
+				}
+			}
+
 			try {
 				const { invoke } = await import("@tauri-apps/api/core");
 				const source = (await invoke("mcp_shell_read_core_source")) as CoreStartupSnapshot;
 				if (!cancelled) {
-					if (typeof source.apiBaseUrl === "string") {
-						setApiBaseUrl(source.apiBaseUrl);
-						notificationsService.reconnectAfterApiBaseChanged();
-					}
-					setReadinessIssue(describeCoreStartupIssue(source));
+					applyDesktopCoreSource(source);
 				}
 			} catch (error) {
 				if (!cancelled) {
@@ -426,6 +446,9 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 
 		return () => {
 			cancelled = true;
+			if (unlisten) {
+				void unlisten();
+			}
 		};
 	}, []);
 
@@ -479,13 +502,13 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 			});
 		}
 
-			async function checkReadiness(): Promise<void> {
-				setMessageKey("waitingForBackend");
-				let payload: unknown = null;
-				let readinessError: unknown = null;
-				try {
-					setMessageKey("confirmingReadiness");
-					payload = await systemApi.getReadiness();
+		async function checkReadiness(): Promise<void> {
+			setMessageKey("waitingForBackend");
+			let payload: unknown = null;
+			let readinessError: unknown = null;
+			try {
+				setMessageKey("confirmingReadiness");
+				payload = await systemApi.getReadiness();
 				if (cancelled) {
 					return;
 				}
@@ -714,11 +737,11 @@ function StartupAttentionFooter({
 						<span className="hidden sm:inline">
 							{diagnosticsExporting
 								? t("backendReadiness.exportingDiagnostics", {
-										defaultValue: "Exporting diagnostics...",
-									})
+									defaultValue: "Exporting diagnostics...",
+								})
 								: t("backendReadiness.exportDiagnostics", {
-										defaultValue: "Export diagnostics",
-									})}
+									defaultValue: "Export diagnostics",
+								})}
 						</span>
 					</button>
 				) : null}

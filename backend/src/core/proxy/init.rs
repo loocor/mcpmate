@@ -40,6 +40,37 @@ fn parse_file_log_enabled(raw: Option<&str>) -> Result<bool> {
     }
 }
 
+fn resolve_log_file_path() -> Option<std::path::PathBuf> {
+    use crate::common::paths::global_paths;
+
+    let logs_dir = global_paths().logs_dir();
+    match std::fs::create_dir_all(&logs_dir) {
+        Ok(()) => Some(logs_dir.join("mcpmate.log")),
+        Err(error) => {
+            eprintln!(
+                "File logging disabled: failed to create log directory {}: {}",
+                logs_dir.display(),
+                error
+            );
+            None
+        }
+    }
+}
+
+fn open_log_file(path: &std::path::Path) -> Option<Arc<std::sync::Mutex<std::fs::File>>> {
+    match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        Ok(file) => Some(Arc::new(std::sync::Mutex::new(file))),
+        Err(error) => {
+            eprintln!(
+                "File logging disabled: failed to open log file {}: {}",
+                path.display(),
+                error
+            );
+            None
+        }
+    }
+}
+
 /// Setup logging based on command line arguments
 /// This function is safe to call multiple times - it will only initialize once
 pub fn setup_logging(args: &Args) -> Result<()> {
@@ -81,15 +112,7 @@ pub fn setup_logging(args: &Args) -> Result<()> {
     let enable_file_log = parse_file_log_enabled(raw_file_log.as_deref())?;
 
     // Determine log file path (only if enabled)
-    let log_file_path = if enable_file_log {
-        use crate::common::paths::global_paths;
-        let logs_dir = global_paths().logs_dir();
-        std::fs::create_dir_all(&logs_dir)
-            .with_context(|| format!("Failed to create log directory: {}", logs_dir.display()))?;
-        Some(logs_dir.join("mcpmate.log"))
-    } else {
-        None
-    };
+    let log_file_path = if enable_file_log { resolve_log_file_path() } else { None };
 
     // Create multi-writer that writes to both stdout and file
     #[derive(Clone)]
@@ -125,15 +148,7 @@ pub fn setup_logging(args: &Args) -> Result<()> {
         }
     }
 
-    let file_handle = match log_file_path.as_ref() {
-        Some(path) => std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .with_context(|| format!("Failed to open log file: {}", path.display()))
-            .map(|f| Some(Arc::new(Mutex::new(f))))?,
-        None => None,
-    };
+    let file_handle = log_file_path.as_ref().and_then(|path| open_log_file(path));
 
     let multi_writer = MultiWriter { file: file_handle };
 

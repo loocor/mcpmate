@@ -10,7 +10,7 @@ use mcpmate::core::proxy::{
     startup::{start_api_server, start_background_connections, start_proxy_server},
 };
 use mcpmate::system::config::init_port_config;
-use mcpmate::system::port_recovery::{LocalhostPortSelection, recover_available_localhost_ports};
+use mcpmate::system::port_recovery::{LocalhostPortSelection, recover_available_localhost_ports_selectively};
 use mcpmate::system::settings::{
     apply_settings_with_effects_for_paths, get_settings_sync, spawn_mcp_port_reapply_result_logger,
 };
@@ -26,15 +26,13 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let explicit_port_args = explicit_port_args();
     let mut args = Args::parse();
-    let settings = get_settings_sync().ok();
+    let settings = get_settings_sync()?;
 
-    if let Some(settings) = settings.as_ref() {
-        if !explicit_port_args.api_port && args.api_port == ports::API_PORT {
-            args.api_port = settings.api_port;
-        }
-        if !explicit_port_args.mcp_port && args.mcp_port == ports::MCP_PORT {
-            args.mcp_port = settings.mcp_port;
-        }
+    if !explicit_port_args.api_port && args.api_port == ports::API_PORT {
+        args.api_port = settings.api_port;
+    }
+    if !explicit_port_args.mcp_port && args.mcp_port == ports::MCP_PORT {
+        args.mcp_port = settings.mcp_port;
     }
 
     // Validate command line arguments
@@ -46,24 +44,31 @@ async fn main() -> Result<()> {
     // Setup logging
     setup_logging(&args)?;
 
-    if !explicit_port_args.api_port && !explicit_port_args.mcp_port {
-        let recovered = recover_available_localhost_ports(args.api_port, args.mcp_port)?;
+    if !explicit_port_args.api_port || !explicit_port_args.mcp_port {
+        let recovered = recover_available_localhost_ports_selectively(
+            args.api_port,
+            args.mcp_port,
+            !explicit_port_args.api_port,
+            !explicit_port_args.mcp_port,
+        )?;
         if recovered.changed_from(args.api_port, args.mcp_port) {
             record_port_recovery(args.api_port, args.mcp_port, recovered);
-            if let Some(previous_settings) = settings.as_ref() {
-                let mut next_settings = previous_settings.clone();
+            let mut next_settings = settings.clone();
+            if !explicit_port_args.api_port {
                 next_settings.api_port = recovered.api_port;
+            }
+            if !explicit_port_args.mcp_port {
                 next_settings.mcp_port = recovered.mcp_port;
-                let applied = apply_settings_with_effects_for_paths(
-                    mcpmate::common::paths::global_paths(),
-                    previous_settings,
-                    &next_settings,
-                    None,
-                )
-                .await?;
-                if let Some(task) = applied.client_reapply_task {
-                    spawn_mcp_port_reapply_result_logger(task);
-                }
+            }
+            let applied = apply_settings_with_effects_for_paths(
+                mcpmate::common::paths::global_paths(),
+                &settings,
+                &next_settings,
+                None,
+            )
+            .await?;
+            if let Some(task) = applied.client_reapply_task {
+                spawn_mcp_port_reapply_result_logger(task);
             }
             args.api_port = recovered.api_port;
             args.mcp_port = recovered.mcp_port;
@@ -203,8 +208,15 @@ async fn main() -> Result<()> {
 }
 
 fn explicit_port_args() -> ExplicitPortArgs {
+    explicit_port_args_from(std::env::args_os().skip(1))
+}
+
+fn explicit_port_args_from<I>(args: I) -> ExplicitPortArgs
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
     let mut explicit = ExplicitPortArgs::default();
-    let mut args = std::env::args_os().skip(1);
+    let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
         let Some(raw) = arg.to_str() else {
@@ -221,6 +233,7 @@ fn explicit_port_args() -> ExplicitPortArgs {
             }
             _ if raw.starts_with("--api-port=") => explicit.api_port = true,
             _ if raw.starts_with("--mcp-port=") => explicit.mcp_port = true,
+            _ if raw.starts_with("-m") && raw.len() > 2 => explicit.mcp_port = true,
             _ => {}
         }
     }
@@ -246,4 +259,30 @@ fn record_port_recovery(
         &detail,
         "Recovered occupied localhost startup ports",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn explicit_args(args: &[&str]) -> ExplicitPortArgs {
+        explicit_port_args_from(args.iter().map(std::ffi::OsString::from))
+    }
+
+    #[test]
+    fn explicit_port_args_detects_mcp_short_value_forms() {
+        assert!(explicit_args(&["-m", "8001"]).mcp_port);
+        assert!(explicit_args(&["-m8001"]).mcp_port);
+    }
+
+    #[test]
+    fn explicit_port_args_detects_long_value_forms() {
+        let inline = explicit_args(&["--api-port=8081", "--mcp-port=8001"]);
+        assert!(inline.api_port);
+        assert!(inline.mcp_port);
+
+        let separated = explicit_args(&["--api-port", "8081", "--mcp-port", "8001"]);
+        assert!(separated.api_port);
+        assert!(separated.mcp_port);
+    }
 }

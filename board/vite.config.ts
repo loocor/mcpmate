@@ -62,15 +62,25 @@ const devApiBaseUrl =
 		? process.env.VITE_API_BASE_URL.trim()
 		: (readDevSettingsApiBaseUrl() ?? "http://127.0.0.1:8080");
 
-const devWsBaseUrl = (() => {
+function devWsBaseUrlFromApiBase(apiBaseUrl: string, fallback: string): string {
 	try {
-		const parsed = new URL(devApiBaseUrl);
+		const parsed = new URL(apiBaseUrl);
 		parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
 		return parsed.toString();
 	} catch {
-		return "ws://127.0.0.1:8080";
+		return fallback;
 	}
-})();
+}
+
+const devWsBaseUrl = devWsBaseUrlFromApiBase(devApiBaseUrl, "ws://127.0.0.1:8080");
+
+function currentDevApiBaseUrl(): string {
+	return readCachedDevSettingsApiBaseUrl() ?? devApiBaseUrl;
+}
+
+function currentDevWsBaseUrl(): string {
+	return devWsBaseUrlFromApiBase(currentDevApiBaseUrl(), devWsBaseUrl);
+}
 
 type HttpProxyError = Error & { code?: string };
 
@@ -109,11 +119,12 @@ const BACKEND_READINESS_PROXY_LOG_INTERVAL_MS = 5_000;
 const DEV_CORE_SOURCE_PATH = "/__mcpmate/dev-core-source";
 
 function backendReadinessTargetLabel(): string {
+	const apiBaseUrl = currentDevApiBaseUrl();
 	try {
-		const parsed = new URL(devApiBaseUrl);
+		const parsed = new URL(apiBaseUrl);
 		return `${parsed.host}/api/system/readiness`;
 	} catch {
-		return `${devApiBaseUrl}/api/system/readiness`;
+		return `${apiBaseUrl}/api/system/readiness`;
 	}
 }
 
@@ -140,7 +151,6 @@ function isBackendStartupError(error: unknown): boolean {
 }
 
 function createBackendReadinessProxyLogger() {
-	const targetLabel = backendReadinessTargetLabel();
 	let unavailableSinceMs: number | null = null;
 	let lastLoggedAtMs = 0;
 	let suppressedCount = 0;
@@ -163,7 +173,7 @@ function createBackendReadinessProxyLogger() {
 			lastLoggedAtMs = nowMs;
 			suppressedCount = 0;
 			console.warn(
-				`[vite] backend readiness proxy waiting: ${targetLabel} ECONNREFUSED (x${repeats}, ${waitedSeconds}s)`,
+				`[vite] backend readiness proxy waiting: ${backendReadinessTargetLabel()} ECONNREFUSED (x${repeats}, ${waitedSeconds}s)`,
 			);
 		},
 		recordSuccess(): void {
@@ -175,7 +185,7 @@ function createBackendReadinessProxyLogger() {
 			const suppressedSuffix =
 				suppressedCount > 0 ? `, suppressed ${suppressedCount} repeat(s)` : "";
 			console.info(
-				`[vite] backend readiness proxy recovered: ${targetLabel} (${waitedSeconds}s${suppressedSuffix})`,
+				`[vite] backend readiness proxy recovered: ${backendReadinessTargetLabel()} (${waitedSeconds}s${suppressedSuffix})`,
 			);
 			unavailableSinceMs = null;
 			lastLoggedAtMs = 0;
@@ -242,7 +252,7 @@ function devCoreSourcePlugin(): Plugin {
 					});
 					return;
 				}
-					const apiBaseUrl = readCachedDevSettingsApiBaseUrl() ?? devApiBaseUrl;
+				const apiBaseUrl = currentDevApiBaseUrl();
 				writeJsonResponse(res, 200, {
 					apiBaseUrl,
 				});
@@ -262,7 +272,7 @@ function compressedBackendReadinessProxyPlugin(): Plugin {
 					return;
 				}
 				try {
-					const targetUrl = new URL(req.url ?? "/api/system/readiness", devApiBaseUrl);
+					const targetUrl = new URL(req.url ?? "/api/system/readiness", currentDevApiBaseUrl());
 					const response = await fetch(targetUrl, {
 						headers: requestHeadersForBackend(req),
 						method: req.method,
@@ -344,24 +354,28 @@ export default defineConfig({
 		proxy: {
 			"^/api(?:/|$)": {
 				target: devApiBaseUrl,
+				router: () => currentDevApiBaseUrl(),
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
 			},
 			"^/docs(?:/|$)": {
 				target: devApiBaseUrl,
+				router: () => currentDevApiBaseUrl(),
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
 			},
 			"^/openapi\\.json$": {
 				target: devApiBaseUrl,
+				router: () => currentDevApiBaseUrl(),
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
 			},
 			"^/ws(?:/|$)": {
 				target: devWsBaseUrl,
+				router: () => currentDevWsBaseUrl(),
 				ws: true,
 				changeOrigin: true,
 				secure: false,

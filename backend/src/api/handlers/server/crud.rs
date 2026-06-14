@@ -186,6 +186,26 @@ async fn delete_oauth_secrets_for_server(
     manager.delete_all_oauth_secrets(server_id).await
 }
 
+async fn delete_oauth_secret_rows_for_server(
+    db: &Database,
+    server_id: &str,
+) -> anyhow::Result<()> {
+    use crate::core::oauth::manager::{OAuthSecretSlot, oauth_secret_alias};
+
+    for slot in [
+        OAuthSecretSlot::ClientSecret,
+        OAuthSecretSlot::AccessToken,
+        OAuthSecretSlot::RefreshToken,
+    ] {
+        let alias = oauth_secret_alias(server_id, slot);
+        sqlx::query("DELETE FROM secure_store_secrets WHERE alias = ?")
+            .bind(alias)
+            .execute(&db.pool)
+            .await?;
+    }
+    Ok(())
+}
+
 fn is_oauth_secret_cleanup_unavailable(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<crate::core::oauth::manager::OAuthSecretCleanupUnavailable>()
@@ -203,8 +223,11 @@ async fn delete_oauth_secrets_for_server_best_effort(
             tracing::warn!(
                 server_id,
                 error = %error,
-                "Skipping OAuth secret cleanup because Secure Store is unavailable during server deletion"
+                "Deleting OAuth secret metadata without decrypting because Secure Store is unavailable during server deletion"
             );
+            delete_oauth_secret_rows_for_server(db, server_id)
+                .await
+                .map_err(map_anyhow_error)?;
             Ok(())
         }
         Err(error) => Err(map_anyhow_error(error)),
@@ -1049,6 +1072,7 @@ mod tests {
         )
         .await
         .expect("insert oauth token");
+        insert_test_oauth_secret_rows(&context.database.pool, server_id).await;
 
         delete_server_records(&context.app_state, context.database.as_ref(), server_id)
             .await
@@ -1072,6 +1096,39 @@ mod tests {
                 .expect("load oauth token")
                 .is_none()
         );
+        let remaining_secret_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM secure_store_secrets WHERE alias LIKE ?")
+                .bind(format!("oauth/{server_id}/%"))
+                .fetch_one(&context.database.pool)
+                .await
+                .expect("count oauth secret rows");
+        assert_eq!(remaining_secret_count, 0);
+    }
+
+    async fn insert_test_oauth_secret_rows(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+    ) {
+        for (alias, kind) in [
+            (format!("oauth/{server_id}/client-secret"), "oauth_client_secret"),
+            (format!("oauth/{server_id}/access-token"), "oauth_access_token"),
+            (format!("oauth/{server_id}/refresh-token"), "oauth_refresh_token"),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO secure_store_secrets (
+                    alias, kind, provider_id, provider_kind, version,
+                    key_nonce, encrypted_key, nonce, encrypted_value
+                )
+                VALUES (?, ?, 'test-provider', 'test', 1, 'key-nonce', 'encrypted-key', 'nonce', 'encrypted-value')
+                "#,
+            )
+            .bind(alias)
+            .bind(kind)
+            .execute(pool)
+            .await
+            .expect("insert oauth secret row");
+        }
     }
 
     async fn create_test_context() -> TestContext {

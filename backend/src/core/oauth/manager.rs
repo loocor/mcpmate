@@ -128,7 +128,7 @@ fn oauth_secret_issue_from_error(error: &anyhow::Error) -> Option<OAuthStatusIss
 const OAUTH_TOKEN_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Clone, Copy)]
-enum OAuthSecretSlot {
+pub(crate) enum OAuthSecretSlot {
     ClientSecret,
     AccessToken,
     RefreshToken,
@@ -1244,7 +1244,7 @@ fn generate_oauth_random(size: usize) -> String {
     nanoid::nanoid!(size, &nanoid::alphabet::SAFE)
 }
 
-fn oauth_secret_alias(
+pub(crate) fn oauth_secret_alias(
     server_id: &str,
     slot: OAuthSecretSlot,
 ) -> String {

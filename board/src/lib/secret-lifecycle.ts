@@ -58,7 +58,7 @@ export function secretIsUnused(
     "state" in secretOrLifecycle
       ? secretOrLifecycle
       : classifySecretLifecycle(secretOrLifecycle);
-  return lifecycle.activeCount === 0;
+  return lifecycle.state === "unused";
 }
 
 export function filterSecretsByLifecycle(

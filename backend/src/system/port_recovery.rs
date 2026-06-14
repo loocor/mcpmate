@@ -32,9 +32,43 @@ pub fn recover_available_localhost_ports(
     )
 }
 
+pub fn recover_available_localhost_ports_selectively(
+    preferred_api_port: u16,
+    preferred_mcp_port: u16,
+    recover_api_port: bool,
+    recover_mcp_port: bool,
+) -> Result<LocalhostPortSelection> {
+    recover_available_localhost_ports_selectively_with(
+        preferred_api_port,
+        preferred_mcp_port,
+        recover_api_port,
+        recover_mcp_port,
+        LOCALHOST_PORT_RECOVERY_SCAN_LIMIT,
+        is_localhost_port_available,
+    )
+}
+
 pub fn recover_available_localhost_ports_with(
     preferred_api_port: u16,
     preferred_mcp_port: u16,
+    scan_limit: u16,
+    is_available: impl FnMut(u16) -> bool,
+) -> Result<LocalhostPortSelection> {
+    recover_available_localhost_ports_selectively_with(
+        preferred_api_port,
+        preferred_mcp_port,
+        true,
+        true,
+        scan_limit,
+        is_available,
+    )
+}
+
+pub fn recover_available_localhost_ports_selectively_with(
+    preferred_api_port: u16,
+    preferred_mcp_port: u16,
+    recover_api_port: bool,
+    recover_mcp_port: bool,
     scan_limit: u16,
     mut is_available: impl FnMut(u16) -> bool,
 ) -> Result<LocalhostPortSelection> {
@@ -46,23 +80,31 @@ pub fn recover_available_localhost_ports_with(
         return Err(anyhow!("localhost port recovery scan limit must be greater than zero"));
     }
 
-    let api_port = next_available_port(preferred_api_port, scan_limit, &mut is_available, None).ok_or_else(|| {
-        anyhow!(
-            "no available API port found from {} within {} ports",
-            preferred_api_port,
-            scan_limit
-        )
-    })?;
-    let mcp_port =
-        next_available_port(preferred_mcp_port, scan_limit, &mut is_available, Some(api_port)).ok_or_else(|| {
-            anyhow!(
-                "no available MCP port found from {} within {} ports",
-                preferred_mcp_port,
-                scan_limit
-            )
-        })?;
+    let api_port = if recover_api_port {
+        let reserved_port = (!recover_mcp_port).then_some(preferred_mcp_port);
+        recover_port("API", preferred_api_port, scan_limit, &mut is_available, reserved_port)?
+    } else {
+        preferred_api_port
+    };
+
+    let mcp_port = if recover_mcp_port {
+        recover_port("MCP", preferred_mcp_port, scan_limit, &mut is_available, Some(api_port))?
+    } else {
+        preferred_mcp_port
+    };
 
     Ok(LocalhostPortSelection { api_port, mcp_port })
+}
+
+fn recover_port(
+    port_kind: &str,
+    preferred_port: u16,
+    scan_limit: u16,
+    is_available: &mut impl FnMut(u16) -> bool,
+    reserved_port: Option<u16>,
+) -> Result<u16> {
+    next_available_port(preferred_port, scan_limit, is_available, reserved_port)
+        .ok_or_else(|| anyhow!("no available {port_kind} port found from {preferred_port} within {scan_limit} ports"))
 }
 
 fn next_available_port(
@@ -157,5 +199,50 @@ mod tests {
         let err = recover_available_localhost_ports_with(8080, 8000, 2, availability(&[8080, 8081])).unwrap_err();
 
         assert!(err.to_string().contains("available API port"));
+    }
+
+    #[test]
+    fn selectively_recovers_only_api_port() {
+        let selection =
+            recover_available_localhost_ports_selectively_with(8080, 8000, true, false, 10, availability(&[8080]))
+                .unwrap();
+
+        assert_eq!(
+            selection,
+            LocalhostPortSelection {
+                api_port: 8081,
+                mcp_port: 8000
+            }
+        );
+    }
+
+    #[test]
+    fn selectively_recovers_only_mcp_port() {
+        let selection =
+            recover_available_localhost_ports_selectively_with(8080, 8000, false, true, 10, availability(&[8000]))
+                .unwrap();
+
+        assert_eq!(
+            selection,
+            LocalhostPortSelection {
+                api_port: 8080,
+                mcp_port: 8001
+            }
+        );
+    }
+
+    #[test]
+    fn selective_api_recovery_reserves_explicit_mcp_port() {
+        let selection =
+            recover_available_localhost_ports_selectively_with(8080, 8081, true, false, 10, availability(&[8080]))
+                .unwrap();
+
+        assert_eq!(
+            selection,
+            LocalhostPortSelection {
+                api_port: 8082,
+                mcp_port: 8081
+            }
+        );
     }
 }
