@@ -9,6 +9,11 @@ export interface DesktopDiagnosticEvent {
 	source: string;
 }
 
+export interface DesktopDiagnosticsExport {
+	exportPath: string;
+	fileCount: number;
+}
+
 type DesktopDiagnosticsInvoke = (
 	command: string,
 	args?: Record<string, unknown>,
@@ -41,4 +46,32 @@ export async function recordDesktopDiagnosticEvent(
 		},
 	});
 	return true;
+}
+
+export async function exportDesktopDiagnostics(
+	options: DesktopDiagnosticsOptions = {},
+): Promise<DesktopDiagnosticsExport | null> {
+	if (!(options.isTauri ?? isTauriEnvironmentSync())) {
+		return null;
+	}
+	const invoke = options.invoke ?? defaultInvoke;
+	const response = await invoke("mcp_shell_export_diagnostics");
+	if (isDiagnosticsExport(response)) {
+		return response;
+	}
+	return null;
+}
+
+function isDiagnosticsExport(value: unknown): value is DesktopDiagnosticsExport {
+	if (value === null) {
+		return false;
+	}
+	if (typeof value !== "object") {
+		return false;
+	}
+	const candidate = value as Record<string, unknown>;
+	return (
+		typeof candidate.exportPath === "string" &&
+		typeof candidate.fileCount === "number"
+	);
 }
