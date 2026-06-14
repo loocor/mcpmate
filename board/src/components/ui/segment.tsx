@@ -78,6 +78,7 @@ const Segment = React.forwardRef<
 								className={cn(
 									"group inline-flex flex-1 items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-slate-950 data-[state=active]:shadow-sm dark:ring-offset-slate-950 dark:focus-visible:ring-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-slate-50",
 									"flex items-center gap-2",
+									option.tooltip && "w-full",
 									option.disabled && "opacity-50 cursor-not-allowed",
 								)}
 							>
@@ -121,7 +122,9 @@ const Segment = React.forwardRef<
 							return (
 								<TooltipProvider key={option.value} delayDuration={200}>
 									<Tooltip>
-										<TooltipTrigger asChild>{trigger}</TooltipTrigger>
+										<TooltipTrigger asChild>
+											<span className="flex flex-1">{trigger}</span>
+										</TooltipTrigger>
 										<TooltipContent
 											side="top"
 											align="center"

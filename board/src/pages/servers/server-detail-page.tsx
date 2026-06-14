@@ -27,7 +27,11 @@ import InspectorDrawer, {
 	type InspectorLogEntry,
 } from "../../components/inspector-drawer";
 import { ServerAuthBadge } from "../../components/server-auth-badge";
-import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
+import {
+	getOAuthReadinessActionTarget,
+	resolveOAuthReadiness,
+	resolveServerOAuthReadiness,
+} from "../../lib/oauth-readiness";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { StatusBadge } from "../../components/status-badge";
 import {
@@ -67,6 +71,7 @@ import {
 } from "../../lib/api";
 import { smartFormat } from "../../lib/format";
 import { writeClipboardText } from "../../lib/clipboard";
+import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { maskHeaderValue, sanitizeRecord } from "../../lib/security";
@@ -272,11 +277,27 @@ export function ServerDetailPage() {
 		queryKey: ["server", serverId],
 		queryFn: () => serversApi.getServer(serverId || ""),
 		enabled: !!serverId,
+		refetchOnMount: "always",
 		refetchInterval: (query) => {
 			const currentServer = query.state.data;
 			if (!currentServer || query.state.error) return false;
 			return isTransitionalServerStatus(currentServer.status) ? 5000 : false;
 		},
+	});
+	const isOAuthServer = (server?.auth_mode ?? "").toLowerCase() === "oauth";
+	const oauthStatusQuery = useQuery({
+		queryKey: ["server-oauth", serverId],
+		queryFn: () => serversApi.getOAuthStatus(serverId!),
+		enabled: Boolean(serverId && isOAuthServer),
+		staleTime: 0,
+		refetchOnMount: "always",
+		retry: false,
+	});
+	const secretStoreStatusQuery = useSecretStoreStatusQuery({
+		enabled: Boolean(serverId && isOAuthServer),
+		staleTime: 0,
+		refetchOnMount: "always",
+		retry: false,
 	});
 
 	const toggleServerM = useMutation({
@@ -1070,9 +1091,28 @@ export function ServerDetailPage() {
 	}, [serverLogsQuery.data?.events, logFilter]);
 	const serverEnabled = Boolean(server?.enabled ?? server?.globally_enabled);
 	const runtimeStatus = server?.status ?? (serverEnabled ? "idle" : "disabled");
-	const authReadiness = server?.auth_mode
-		? resolveServerOAuthReadiness(server)
-		: null;
+	const liveOAuthStatus = oauthStatusQuery.data ?? null;
+	const authReadiness = (() => {
+		if (!server?.auth_mode) return null;
+		if (isOAuthServer && liveOAuthStatus) {
+			return resolveOAuthReadiness({
+				secretStoreStatus: secretStoreStatusQuery.data,
+				oauthStatus: liveOAuthStatus,
+			});
+		}
+		return resolveServerOAuthReadiness(server);
+	})();
+	const authBadgeOAuthStatus =
+		isOAuthServer && liveOAuthStatus
+			? liveOAuthStatus.state
+			: server?.oauth_status;
+	const handleAuthAction = useCallback(() => {
+		if (getOAuthReadinessActionTarget(authReadiness) === "security-settings") {
+			navigate("/settings?tab=security");
+			return;
+		}
+		setIsEditOpen(true);
+	}, [authReadiness, navigate]);
 	const overviewActionButtonClass =
 		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
 	const showDefaultHeaders = useAppStore(
@@ -1362,9 +1402,9 @@ export function ServerDetailPage() {
 																>
 																	<ServerAuthBadge
 																		authMode={server.auth_mode}
-																		oauthStatus={server.oauth_status}
+																		oauthStatus={authBadgeOAuthStatus}
 																		readiness={authReadiness}
-																		onAction={() => setIsEditOpen(true)}
+																		onAction={handleAuthAction}
 																	/>
 																</OverviewMetadataRow>
 															) : null}

@@ -14,7 +14,7 @@ const DEFAULT_STALE_TIME_MS = 30_000;
 
 type SecretStoreStatusQueryOptions = Pick<
 	UseQueryOptions<SecretStoreStatusData>,
-	"enabled" | "staleTime" | "retry" | "refetchOnWindowFocus"
+	"enabled" | "staleTime" | "retry" | "refetchOnWindowFocus" | "refetchOnMount"
 >;
 
 export function useSecretStoreStatusQuery(

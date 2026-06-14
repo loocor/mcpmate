@@ -48,6 +48,9 @@ const SECRET_FORM_ROW_LABEL_CLASS = "w-20 shrink-0 text-right";
 /** Visual mask for write-only secrets in edit mode (not the stored value). */
 const STORED_SECRET_VALUE_MASK = "••••••••••••••••••••••••";
 
+const PROVIDER_UNAVAILABLE_DESCRIPTION_CLASS =
+	"text-amber-700 dark:text-amber-300";
+
 function SecretFormRow({
 	label,
 	htmlFor,
@@ -266,11 +269,22 @@ export function SecretEditorDrawer({
 										? t("editor.createTitle", { defaultValue: "Add Secret" })
 										: t("editor.editTitle", { defaultValue: "Edit Secret" })}
 								</DrawerTitle>
-								<DrawerDescription>
-									{t("editor.description", {
-										defaultValue:
-											"The value is write-only. It will not be shown again after save.",
-									})}
+								<DrawerDescription
+									className={
+										writesDisabled
+											? PROVIDER_UNAVAILABLE_DESCRIPTION_CLASS
+											: undefined
+									}
+								>
+									{writesDisabled
+										? t("editor.providerUnavailableDescription", {
+											defaultValue:
+												"Provider unavailable. Record is kept; manage recovery in Security settings.",
+										})
+										: t("editor.description", {
+											defaultValue:
+												"The value is write-only. It will not be shown again after save.",
+										})}
 								</DrawerDescription>
 							</div>
 							{placeholder ? (

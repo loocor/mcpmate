@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	getOAuthReadinessActionTarget,
 	resolveOAuthReadiness,
 	resolveServerOAuthReadiness,
 } from "./oauth-readiness";
@@ -126,5 +127,36 @@ describe("resolveServerOAuthReadiness", () => {
 		expect(readiness.actionDisabled).toBe(true);
 		expect(readiness.notice?.kind).toBe("secure-store-unavailable");
 		expect(readiness.notice?.defaultMessage).toContain("Secure Store is unavailable.");
+	});
+});
+
+describe("getOAuthReadinessActionTarget", () => {
+	it("routes secure-store unavailable notices to Settings Security", () => {
+		const readiness = resolveServerOAuthReadiness({
+			id: "serv_unavailable",
+			oauth_status: "connected",
+			oauth_custody_state: "unavailable",
+			oauth_issue: {
+				code: "secure_store_unavailable",
+				message: "Secure Store is unavailable.",
+			},
+		});
+
+		expect(getOAuthReadinessActionTarget(readiness)).toBe("security-settings");
+	});
+
+	it("keeps legacy reconnect notices in the auth flow", () => {
+		const readiness = resolveServerOAuthReadiness({
+			id: "serv_legacy",
+			oauth_status: "connected",
+			oauth_custody_state: "legacy_plaintext",
+			oauth_requires_reconnect: true,
+			oauth_issue: {
+				code: "legacy_plaintext_oauth_credentials",
+				message: "Reconnect OAuth to store credentials securely.",
+			},
+		});
+
+		expect(getOAuthReadinessActionTarget(readiness)).toBe("auth-flow");
 	});
 });

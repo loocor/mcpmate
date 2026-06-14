@@ -23,7 +23,13 @@ export interface EntityCardProps {
 	topRightBadge?: ReactNode;
 
 	// 统计信息 (4x2 网格)
-	stats?: Array<{ label: string; value: string | number; valueTitle?: string }>;
+	stats?: Array<{
+		label: string;
+		value: string | number;
+		valueTitle?: string;
+		labelClassName?: string;
+		valueClassName?: string;
+	}>;
 
 	// 底部左侧内容
 	bottomLeft?: ReactNode;
@@ -134,11 +140,13 @@ export function EntityCard({
 										key={`stat-${id}-${item.label}`}
 										className="min-w-0 space-y-0.5"
 									>
-										<div className="text-[9px] uppercase tracking-wide text-muted-foreground/80">
+										<div
+											className={`text-[9px] uppercase tracking-wide ${item.labelClassName ?? "text-muted-foreground/80"}`}
+										>
 											{item.label}
 										</div>
 										<div
-											className="truncate text-[9px] tracking-wide text-muted-foreground/80"
+											className={`truncate text-[9px] tracking-wide ${item.valueClassName ?? "text-muted-foreground/80"}`}
 											title={item.valueTitle ?? valueText}
 										>
 											{item.value}

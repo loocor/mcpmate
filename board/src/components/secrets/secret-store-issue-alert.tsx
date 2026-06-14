@@ -51,11 +51,6 @@ export function SecretStoreIssueAlert({
 			<AlertTitle>{guidance.title}</AlertTitle>
 			<AlertDescription className="space-y-3">
 				<p>{guidance.description}</p>
-				{guidance.technicalDetail ? (
-					<p className="font-mono text-xs text-destructive/80">
-						{guidance.technicalDetail}
-					</p>
-				) : null}
 				{showRetryStatus || showRetryProvider || showSettingsLink ? (
 					<div className="flex flex-wrap gap-2">
 						{showRetryProvider ? (

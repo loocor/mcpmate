@@ -3,7 +3,6 @@ import type { SecretMetadata } from "./types";
 
 export type SecretLifecycleState =
   | "active"
-  | "cleanup_available"
   | "unused"
   | "oauth_managed";
 
@@ -29,14 +28,6 @@ export function classifySecretLifecycle(
   const activeCount = secret.used_by_count;
   const historicalCount = secret.historical_usage_count;
 
-  if (isOAuthManagedSecret(secret)) {
-    return {
-      state: "oauth_managed",
-      activeCount,
-      historicalCount,
-    };
-  }
-
   if (activeCount > 0) {
     return {
       state: "active",
@@ -45,9 +36,9 @@ export function classifySecretLifecycle(
     };
   }
 
-  if (historicalCount > 0) {
+  if (isOAuthManagedSecret(secret)) {
     return {
-      state: "cleanup_available",
+      state: "oauth_managed",
       activeCount,
       historicalCount,
     };
@@ -60,16 +51,14 @@ export function classifySecretLifecycle(
   };
 }
 
-export function secretHasCleanupAvailable(
+export function secretIsUnused(
   secretOrLifecycle: SecretMetadata | SecretLifecycle,
 ): boolean {
   const lifecycle =
     "state" in secretOrLifecycle
       ? secretOrLifecycle
       : classifySecretLifecycle(secretOrLifecycle);
-  return (
-    lifecycle.state === "cleanup_available" || lifecycle.state === "unused"
-  );
+  return lifecycle.activeCount === 0;
 }
 
 export function filterSecretsByLifecycle(
@@ -77,7 +66,13 @@ export function filterSecretsByLifecycle(
   filter: SecretLifecycleFilter,
 ): SecretMetadata[] {
   if (filter === "all") return secrets;
-  return secrets.filter(
-    (secret) => classifySecretLifecycle(secret).state === filter,
-  );
+  return secrets.filter((secret) => secretMatchesLifecycleFilter(secret, filter));
+}
+
+export function secretMatchesLifecycleFilter(
+  secret: SecretMetadata,
+  filter: SecretLifecycleFilter,
+): boolean {
+  if (filter === "all") return true;
+  return classifySecretLifecycle(secret).state === filter;
 }

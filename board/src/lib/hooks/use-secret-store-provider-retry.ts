@@ -48,7 +48,8 @@ export function useSecretStoreProviderRetryMutation(
 					}),
 			);
 		},
-		onError: (error: unknown) => {
+		onError: async (error: unknown) => {
+			await invalidateSecretStoreStatus(queryClient);
 			notifyError(
 				t("guidance.notifications.retryError", {
 					defaultValue: "Failed to retry secure storage",

@@ -55,23 +55,65 @@ export interface StatsCardProps {
 	value: string | number;
 	description: string;
 	icon?: ReactNode;
+	action?: ReactNode;
+	tone?: "default" | "warning" | "destructive";
+	tooltip?: string;
 	className?: string;
+}
+
+function statsCardToneClassName(tone: StatsCardProps["tone"]): string {
+	switch (tone) {
+		case "warning":
+			return "border-amber-300/80 bg-amber-50/60 text-amber-950 shadow-amber-200/30 dark:border-amber-700/70 dark:bg-amber-950/20 dark:text-amber-100";
+		case "destructive":
+			return "border-red-300/80 bg-red-50/60 text-red-950 shadow-red-200/30 dark:border-red-800/70 dark:bg-red-950/20 dark:text-red-100";
+		default:
+			return "";
+	}
+}
+
+function statsCardDescriptionClassName(tone: StatsCardProps["tone"]): string {
+	switch (tone) {
+		case "warning":
+			return "text-amber-700 dark:text-amber-300";
+		case "destructive":
+			return "text-red-700 dark:text-red-300";
+		default:
+			return "";
+	}
 }
 
 export function StatsCard({
 	title,
 	value,
 	description,
+	action,
+	tone = "default",
+	tooltip,
 	className = "",
 }: StatsCardProps) {
 	return (
-		<Card className={`flex flex-col ${className}`}>
-			<CardHeader className="pb-2">
+		<Card
+			className={cn(
+				"group relative flex flex-col overflow-hidden transition-colors",
+				statsCardToneClassName(tone),
+				className,
+			)}
+			title={tooltip}
+		>
+			<CardHeader className={cn("pb-2", action && "pr-14")}>
 				<CardTitle className="text-sm">{title}</CardTitle>
+				{action ? (
+					<div className="absolute right-3 top-3 flex gap-1 opacity-70 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+						{action}
+					</div>
+				) : null}
 			</CardHeader>
 			<CardContent className="pt-0">
 				<div className="text-2xl font-bold">{value}</div>
-				<CardDescription>{description}</CardDescription>
+				<CardDescription className={statsCardDescriptionClassName(tone)}>
+					{description}
+				</CardDescription>
 			</CardContent>
 		</Card>
 	);
@@ -80,21 +122,30 @@ export function StatsCard({
 export interface EmptyStateProps {
 	icon: ReactNode;
 	title: string;
-	description: string;
+	titleTooltip?: string;
+	description?: string;
 	action?: ReactNode;
 }
 
 export function EmptyState({
 	icon,
 	title,
+	titleTooltip,
 	description,
 	action,
 }: EmptyStateProps) {
 	return (
 		<div className="text-center py-8">
 			<div className="mx-auto h-12 w-12 text-slate-400 mb-4">{icon}</div>
-			<p className="text-slate-500 mb-2">{title}</p>
-			<p className="text-sm text-slate-400 mb-4">{description}</p>
+			<p
+				className={cn("text-slate-500", description ? "mb-2" : "mb-4")}
+				title={titleTooltip}
+			>
+				{title}
+			</p>
+			{description ? (
+				<p className="text-sm text-slate-400 mb-4">{description}</p>
+			) : null}
 			{action}
 		</div>
 	);
