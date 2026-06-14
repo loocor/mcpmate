@@ -40,6 +40,7 @@ use core_service::{
 use deeplink::DeepLinkState;
 use diagnostics::{DiagnosticEventPayload, DiagnosticsExportResponse};
 use mcpmate::system::config::api_url_from_port;
+use mcpmate::system::port_recovery::{LocalhostPortSelection, recover_available_localhost_ports};
 use mcpmate::system::settings::{
     apply_settings_with_effects_for_paths, get_settings_sync_for_paths,
 };
@@ -446,6 +447,56 @@ async fn sync_and_emit_core_state(
     sync_shell_service_state(shell_state, &view.local_service).await?;
     emit_core_state_changed(app, view);
     Ok(())
+}
+
+async fn recover_desktop_managed_ports(
+    config: &mut DesktopCoreSourceConfig,
+) -> Result<Option<LocalhostPortSelection>> {
+    let previous_api_port = config.localhost.api_port;
+    let previous_mcp_port = config.localhost.mcp_port;
+    let recovered = recover_available_localhost_ports(previous_api_port, previous_mcp_port)?;
+    if !recovered.changed_from(previous_api_port, previous_mcp_port) {
+        return Ok(None);
+    }
+
+    let mut settings = get_settings_sync_for_paths(global_paths())
+        .context("failed to read system settings for localhost port recovery")?;
+    let previous_settings = settings.clone();
+    settings.api_port = recovered.api_port;
+    settings.mcp_port = recovered.mcp_port;
+    let applied =
+        apply_settings_with_effects_for_paths(global_paths(), &previous_settings, &settings, None)
+            .await
+            .context("failed to persist recovered localhost ports")?;
+    if let Some(task) = applied.client_reapply_task {
+        mcpmate::system::settings::spawn_mcp_port_reapply_result_logger(task);
+    }
+
+    config.localhost.api_port = recovered.api_port;
+    config.localhost.mcp_port = recovered.mcp_port;
+    record_desktop_port_recovery(previous_api_port, previous_mcp_port, recovered);
+
+    Ok(Some(recovered))
+}
+
+fn record_desktop_port_recovery(
+    previous_api_port: u16,
+    previous_mcp_port: u16,
+    recovered: LocalhostPortSelection,
+) {
+    let detail = format!(
+        "api_port {} -> {}, mcp_port {} -> {}",
+        previous_api_port, recovered.api_port, previous_mcp_port, recovered.mcp_port
+    );
+    mcpmate::common::startup_diagnostics::warn_degraded_reason(
+        "desktop_shell",
+        "localhost_port_recovery",
+        "occupied_localhost_port",
+        "advanced_localhost_ports",
+        "runtime_ports",
+        &detail,
+        "Recovered occupied desktop-managed localhost ports",
+    );
 }
 
 async fn stop_localhost_runtime(
@@ -896,15 +947,17 @@ pub fn run() -> Result<()> {
                                 match config.selected_source {
                                     DesktopCoreSourceKind::Localhost => {
 									let result = match config.localhost_runtime_mode {
-										LocalCoreRuntimeMode::Service => start_local_service(&handle, &config).await,
+										LocalCoreRuntimeMode::Service => start_local_service(&handle, &config)
+                                            .await
+                                            .map(|status| (config.clone(), status)),
 										LocalCoreRuntimeMode::DesktopManaged => start_desktop_managed_core(&handle, &managed_state, &config).await,
 									};
 									match result {
-                                            Ok(status) => {
+                                            Ok((effective_config, status)) => {
                                                 if let Err(err) = sync_shell_service_state(&shell_state, &status).await {
                                                     warn!(error = %err, "Failed to sync tray state after starting service");
                                                 }
-										let view = DesktopCoreSourceView::from_config(&config, status.clone());
+										let view = DesktopCoreSourceView::from_config(&effective_config, status.clone());
 										emit_core_state_changed(&handle, &view);
                                                 if let Err(err) = shell::ensure_window_visibility(&handle) {
                                                     warn!(error = %err, "Failed to reveal main window after starting service");
@@ -942,7 +995,9 @@ pub fn run() -> Result<()> {
                                 match config.selected_source {
                                     DesktopCoreSourceKind::Localhost => {
 									let result = match config.localhost_runtime_mode {
-										LocalCoreRuntimeMode::Service => restart_local_service(&handle, &config).await,
+										LocalCoreRuntimeMode::Service => restart_local_service(&handle, &config)
+                                            .await
+                                            .map(|status| (config.clone(), status)),
 										LocalCoreRuntimeMode::DesktopManaged => {
 											match stop_desktop_managed_core(&managed_state, &config).await {
 												Ok(_) => start_desktop_managed_core(&handle, &managed_state, &config).await,
@@ -951,11 +1006,11 @@ pub fn run() -> Result<()> {
 										}
 									};
 									match result {
-                                            Ok(status) => {
+                                            Ok((effective_config, status)) => {
                                                 if let Err(err) = sync_shell_service_state(&shell_state, &status).await {
                                                     warn!(error = %err, "Failed to sync tray state after restarting service");
                                                 }
-										let view = DesktopCoreSourceView::from_config(&config, status.clone());
+										let view = DesktopCoreSourceView::from_config(&effective_config, status.clone());
 										emit_core_state_changed(&handle, &view);
                                             }
                                             Err(err) => {
@@ -1119,6 +1174,7 @@ pub fn run() -> Result<()> {
         mcp_shell_close_operator_panel,
         mcp_shell_set_operator_panel_pinned,
         mcp_shell_record_diagnostic_event,
+        mcp_shell_export_diagnostics,
         deeplink::mcp_deep_link_take_pending_server_import,
         deeplink::mcp_deep_link_log_frontend_import,
         account::mcp_account_start_github_login,
@@ -1285,6 +1341,16 @@ fn mcp_shell_record_diagnostic_event(payload: DiagnosticEventPayload) -> Result<
 }
 
 #[tauri::command]
+async fn mcp_shell_export_diagnostics(
+    app: tauri::AppHandle,
+    managed_state: tauri::State<'_, DesktopManagedCoreState>,
+) -> Result<Option<DiagnosticsExportResponse>, String> {
+    export_diagnostics_with_dialog(&app, managed_state.inner())
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn mcp_shell_read_core_source(
     managed_state: tauri::State<'_, DesktopManagedCoreState>,
 ) -> Result<DesktopCoreSourceView, String> {
@@ -1342,9 +1408,11 @@ async fn mcp_shell_apply_core_source(
                 .map_err(|err| err.to_string())?
         }
         (DesktopCoreSourceKind::Localhost, LocalCoreRuntimeMode::DesktopManaged) => {
-            let status = start_desktop_managed_core(&app, managed_state.inner(), &config)
-                .await
-                .map_err(|err| err.to_string())?;
+            let (effective_config, status) =
+                start_desktop_managed_core(&app, managed_state.inner(), &config)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            config = effective_config;
             DesktopCoreSourceView::from_config(&config, status)
         }
         _ => read_core_state_view(&config, managed_state.inner())
@@ -1464,7 +1532,9 @@ async fn mcp_shell_manage_local_core_service(
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Start) => {
             start_desktop_managed_core(&app, managed_state.inner(), &config)
                 .await
-                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map(|(effective_config, status)| {
+                    DesktopCoreSourceView::from_config(&effective_config, status)
+                })
                 .map_err(|err| err.to_string())?
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => {
@@ -1473,7 +1543,9 @@ async fn mcp_shell_manage_local_core_service(
                 .map_err(|err| err.to_string())?;
             start_desktop_managed_core(&app, managed_state.inner(), &config)
                 .await
-                .map(|status| DesktopCoreSourceView::from_config(&config, status))
+                .map(|(effective_config, status)| {
+                    DesktopCoreSourceView::from_config(&effective_config, status)
+                })
                 .map_err(|err| err.to_string())?
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => {
@@ -1607,7 +1679,7 @@ async fn initialize_selected_core_source(
     shell_state: ShellState,
     managed_state: DesktopManagedCoreState,
 ) -> Result<()> {
-    let config = DesktopCoreSourceConfig::load(global_paths())?;
+    let mut config = DesktopCoreSourceConfig::load(global_paths())?;
     info!(
         selected_source = ?config.selected_source,
         localhost_runtime_mode = ?config.localhost_runtime_mode,
@@ -1619,7 +1691,10 @@ async fn initialize_selected_core_source(
         LocalCoreRuntimeMode::Service => read_local_service_status(&config).await?,
         LocalCoreRuntimeMode::DesktopManaged => {
             if config.selected_source == DesktopCoreSourceKind::Localhost {
-                start_desktop_managed_core(&app, &managed_state, &config).await?
+                let (effective_config, status) =
+                    start_desktop_managed_core(&app, &managed_state, &config).await?;
+                config = effective_config;
+                status
             } else {
                 read_desktop_managed_status(&managed_state, &config).await?
             }
@@ -1900,21 +1975,36 @@ async fn start_desktop_managed_core(
     app: &tauri::AppHandle,
     state: &DesktopManagedCoreState,
     config: &DesktopCoreSourceConfig,
-) -> Result<LocalCoreServiceStatusView> {
+) -> Result<(DesktopCoreSourceConfig, LocalCoreServiceStatusView)> {
     if core_service::probe_localhost_core(config.localhost.api_port).await {
-        return read_desktop_managed_status(state, config).await;
+        let status = read_desktop_managed_status(state, config).await?;
+        return Ok((config.clone(), status));
+    }
+
+    let mut effective_config = config.clone();
+    recover_desktop_managed_ports(&mut effective_config).await?;
+
+    if core_service::probe_localhost_core(effective_config.localhost.api_port).await {
+        let status = read_desktop_managed_status(state, &effective_config).await?;
+        return Ok((effective_config, status));
     }
     let startup_id = uuid::Uuid::new_v4().to_string();
-    let child = spawn_desktop_managed_core(app, config, &startup_id)?;
+    let child = spawn_desktop_managed_core(app, &effective_config, &startup_id)?;
     info!(
         startup_id,
         "Desktop-managed localhost core spawn returned successfully"
     );
     state.replace(child).await;
 
-    spawn_core_ready_notification(app.clone(), state.clone(), config.clone(), startup_id);
+    spawn_core_ready_notification(
+        app.clone(),
+        state.clone(),
+        effective_config.clone(),
+        startup_id,
+    );
 
-    read_desktop_managed_status(state, config).await
+    let status = read_desktop_managed_status(state, &effective_config).await?;
+    Ok((effective_config, status))
 }
 
 fn spawn_core_ready_notification(

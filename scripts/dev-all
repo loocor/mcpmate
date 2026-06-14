@@ -55,7 +55,6 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-report_port_conflict 8080 backend "$(project_dir backend)"
 report_port_conflict 5173 board "$(project_dir board)"
 
 print_section "backend"

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { ClientRequest, IncomingMessage } from "node:http";
+import { homedir } from "node:os";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
 import topLevelAwait from "vite-plugin-top-level-await";
@@ -13,11 +14,53 @@ const packageJson = JSON.parse(
 const appVersion =
 	typeof packageJson.version === "string" ? packageJson.version : "";
 
+function readDevSettingsApiBaseUrl(): string | null {
+	const dataDir =
+		typeof process.env.MCPMATE_DATA_DIR === "string" &&
+		process.env.MCPMATE_DATA_DIR.trim().length > 0
+			? process.env.MCPMATE_DATA_DIR.trim()
+			: path.join(homedir(), ".mcpmate");
+	const configPath = path.join(dataDir, "config.json");
+	try {
+		const payload = JSON.parse(readFileSync(configPath, "utf8")) as {
+			api_port?: unknown;
+		};
+		if (
+			typeof payload.api_port === "number" &&
+			Number.isInteger(payload.api_port) &&
+			payload.api_port > 0
+		) {
+			return `http://127.0.0.1:${payload.api_port}`;
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
+
+let cachedDevSettingsApiBaseUrl: {
+	value: string | null;
+	expiresAt: number;
+} | null = null;
+
+function readCachedDevSettingsApiBaseUrl(): string | null {
+	const now = Date.now();
+	if (cachedDevSettingsApiBaseUrl && cachedDevSettingsApiBaseUrl.expiresAt > now) {
+		return cachedDevSettingsApiBaseUrl.value;
+	}
+	const value = readDevSettingsApiBaseUrl();
+	cachedDevSettingsApiBaseUrl = {
+		value,
+		expiresAt: now + 1_000,
+	};
+	return value;
+}
+
 const devApiBaseUrl =
 	typeof process.env.VITE_API_BASE_URL === "string" &&
 	process.env.VITE_API_BASE_URL.trim().length > 0
 		? process.env.VITE_API_BASE_URL.trim()
-		: "http://127.0.0.1:8080";
+		: (readDevSettingsApiBaseUrl() ?? "http://127.0.0.1:8080");
 
 const devWsBaseUrl = (() => {
 	try {
@@ -63,6 +106,7 @@ type HttpProxyServer = {
 };
 
 const BACKEND_READINESS_PROXY_LOG_INTERVAL_MS = 5_000;
+const DEV_CORE_SOURCE_PATH = "/__mcpmate/dev-core-source";
 
 function backendReadinessTargetLabel(): string {
 	try {
@@ -140,20 +184,26 @@ function createBackendReadinessProxyLogger() {
 	};
 }
 
-function writeBackendStartingResponse(res: HttpProxyResponse): void {
+function writeJsonResponse(
+	res: HttpProxyResponse,
+	statusCode: number,
+	payload: Record<string, unknown>,
+): void {
 	if (res.headersSent) {
 		return;
 	}
-	res.writeHead(503, {
+	res.writeHead(statusCode, {
+		"Cache-Control": "no-store",
 		"Content-Type": "application/json",
-		"Retry-After": "1",
 	});
-	res.end(
-		JSON.stringify({
-			success: false,
-			error: { message: "Backend is starting" },
-		}),
-	);
+	res.end(JSON.stringify(payload));
+}
+
+function writeBackendStartingResponse(res: HttpProxyResponse): void {
+	writeJsonResponse(res, 503, {
+		success: false,
+		error: { message: "Backend is starting" },
+	});
 }
 
 function requestHeadersForBackend(req: IncomingMessage): Headers {
@@ -173,6 +223,32 @@ function requestHeadersForBackend(req: IncomingMessage): Headers {
 		}
 	}
 	return headers;
+}
+
+function devCoreSourcePlugin(): Plugin {
+	return {
+		name: "mcpmate-dev-core-source",
+		configureServer(server) {
+			server.middlewares.use((req, res, next) => {
+				const pathName = req.url?.split(/[?#]/, 1)[0];
+				if (pathName !== DEV_CORE_SOURCE_PATH) {
+					next();
+					return;
+				}
+				if (req.method?.toUpperCase() !== "GET") {
+					writeJsonResponse(res, 405, {
+						success: false,
+						error: { message: "Method not allowed" },
+					});
+					return;
+				}
+					const apiBaseUrl = readCachedDevSettingsApiBaseUrl() ?? devApiBaseUrl;
+				writeJsonResponse(res, 200, {
+					apiBaseUrl,
+				});
+			});
+		},
+	};
 }
 
 function compressedBackendReadinessProxyPlugin(): Plugin {
@@ -249,7 +325,13 @@ export default defineConfig({
 	define: {
 		"import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
 	},
-	plugins: [compressedBackendReadinessProxyPlugin(), react(), wasm(), topLevelAwait()],
+	plugins: [
+		devCoreSourcePlugin(),
+		compressedBackendReadinessProxyPlugin(),
+		react(),
+		wasm(),
+		topLevelAwait(),
+	],
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "./src"),

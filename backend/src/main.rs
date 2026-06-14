@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use mcpmate::common::constants::ports;
+use mcpmate::common::startup_diagnostics;
 use mcpmate::config::registry::start_registry_sync_service;
 use mcpmate::core::proxy::{
     Args,
@@ -9,18 +10,29 @@ use mcpmate::core::proxy::{
     startup::{start_api_server, start_background_connections, start_proxy_server},
 };
 use mcpmate::system::config::init_port_config;
-use mcpmate::system::settings::get_settings_sync;
+use mcpmate::system::port_recovery::{LocalhostPortSelection, recover_available_localhost_ports};
+use mcpmate::system::settings::{
+    apply_settings_with_effects_for_paths, get_settings_sync, spawn_mcp_port_reapply_result_logger,
+};
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ExplicitPortArgs {
+    api_port: bool,
+    mcp_port: bool,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
+    let explicit_port_args = explicit_port_args();
     let mut args = Args::parse();
+    let settings = get_settings_sync().ok();
 
-    if let Ok(settings) = get_settings_sync() {
-        if args.api_port == ports::API_PORT {
+    if let Some(settings) = settings.as_ref() {
+        if !explicit_port_args.api_port && args.api_port == ports::API_PORT {
             args.api_port = settings.api_port;
         }
-        if args.mcp_port == ports::MCP_PORT {
+        if !explicit_port_args.mcp_port && args.mcp_port == ports::MCP_PORT {
             args.mcp_port = settings.mcp_port;
         }
     }
@@ -31,21 +43,51 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Get startup mode from arguments
-    let startup_mode = args.get_startup_mode();
-    tracing::info!("Starting MCPMate with mode: {:?}", startup_mode);
+    // Setup logging
+    setup_logging(&args)?;
+
+    if !explicit_port_args.api_port && !explicit_port_args.mcp_port {
+        let recovered = recover_available_localhost_ports(args.api_port, args.mcp_port)?;
+        if recovered.changed_from(args.api_port, args.mcp_port) {
+            record_port_recovery(args.api_port, args.mcp_port, recovered);
+            if let Some(previous_settings) = settings.as_ref() {
+                let mut next_settings = previous_settings.clone();
+                next_settings.api_port = recovered.api_port;
+                next_settings.mcp_port = recovered.mcp_port;
+                let applied = apply_settings_with_effects_for_paths(
+                    mcpmate::common::paths::global_paths(),
+                    previous_settings,
+                    &next_settings,
+                    None,
+                )
+                .await?;
+                if let Some(task) = applied.client_reapply_task {
+                    spawn_mcp_port_reapply_result_logger(task);
+                }
+            }
+            args.api_port = recovered.api_port;
+            args.mcp_port = recovered.mcp_port;
+        }
+    }
 
     // Initialize runtime port configuration from command line arguments
     init_port_config(args.api_port, args.mcp_port);
 
-    // Setup logging
-    setup_logging(&args)?;
+    // Get startup mode from arguments
+    let startup_mode = args.get_startup_mode();
+    tracing::info!("Starting MCPMate with mode: {:?}", startup_mode);
 
     // Initialize metrics reporting
     mcpmate::core::foundation::monitor::initialize_metrics_reporting();
 
     // Setup database
-    let db = setup_database().await?;
+    let db = match setup_database().await {
+        Ok(db) => db,
+        Err(error) => {
+            startup_diagnostics::error_fatal("database_setup", "database_setup_failed", &error);
+            return Err(error);
+        }
+    };
     let audit_db = setup_audit_database().await?;
 
     // Start registry sync service (background task)
@@ -55,17 +97,42 @@ async fn main() -> Result<()> {
     });
 
     // Setup proxy server with startup parameters
-    let (proxy_arc1, proxy_arc2) = setup_proxy_server_with_params(db, audit_db, &startup_mode).await?;
+    let (proxy_arc1, proxy_arc2) = match setup_proxy_server_with_params(db, audit_db, &startup_mode).await {
+        Ok(proxy) => proxy,
+        Err(error) => {
+            startup_diagnostics::error_fatal("proxy_setup", "proxy_setup_failed", &error);
+            return Err(error);
+        }
+    };
 
     // Start background connections
-    start_background_connections(&proxy_arc1, proxy_arc2.clone()).await?;
+    if let Err(error) = start_background_connections(&proxy_arc1, proxy_arc2.clone()).await {
+        startup_diagnostics::error_fatal(
+            "background_connections_start",
+            "background_connections_start_failed",
+            &error,
+        );
+        return Err(error);
+    }
 
     // Start proxy server - we need to get a mutable reference from Arc
     let mut proxy_clone = (*proxy_arc1).clone();
-    let mcp_server_handle = start_proxy_server(&mut proxy_clone, &args).await?;
+    let mcp_server_handle = match start_proxy_server(&mut proxy_clone, &args).await {
+        Ok(handle) => handle,
+        Err(error) => {
+            startup_diagnostics::error_fatal("mcp_server_start", "mcp_server_start_failed", &error);
+            return Err(error);
+        }
+    };
 
     // Start API server
-    let (api_task, api_cancellation_token) = start_api_server(proxy_arc2.clone(), &args).await?;
+    let (api_task, api_cancellation_token) = match start_api_server(proxy_arc2.clone(), &args).await {
+        Ok(api) => api,
+        Err(error) => {
+            startup_diagnostics::error_fatal("api_server_start", "api_server_start_failed", &error);
+            return Err(error);
+        }
+    };
 
     tracing::info!("Servers started. Press Ctrl+C to stop.");
 
@@ -133,4 +200,50 @@ async fn main() -> Result<()> {
     proxy_clone.complete_shutdown().await?;
 
     Ok(())
+}
+
+fn explicit_port_args() -> ExplicitPortArgs {
+    let mut explicit = ExplicitPortArgs::default();
+    let mut args = std::env::args_os().skip(1);
+
+    while let Some(arg) = args.next() {
+        let Some(raw) = arg.to_str() else {
+            continue;
+        };
+        match raw {
+            "--api-port" => {
+                explicit.api_port = true;
+                let _ = args.next();
+            }
+            "--mcp-port" | "-m" => {
+                explicit.mcp_port = true;
+                let _ = args.next();
+            }
+            _ if raw.starts_with("--api-port=") => explicit.api_port = true,
+            _ if raw.starts_with("--mcp-port=") => explicit.mcp_port = true,
+            _ => {}
+        }
+    }
+
+    explicit
+}
+
+fn record_port_recovery(
+    previous_api_port: u16,
+    previous_mcp_port: u16,
+    recovered: LocalhostPortSelection,
+) {
+    let detail = format!(
+        "api_port {} -> {}, mcp_port {} -> {}",
+        previous_api_port, recovered.api_port, previous_mcp_port, recovered.mcp_port
+    );
+    startup_diagnostics::warn_degraded_reason(
+        startup_diagnostics::component::MAIN,
+        "localhost_port_recovery",
+        "occupied_localhost_port",
+        "advanced_localhost_ports",
+        "runtime_ports",
+        &detail,
+        "Recovered occupied localhost startup ports",
+    );
 }
