@@ -7,7 +7,7 @@ use reqwest::header::WWW_AUTHENTICATE;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, error::Error, fmt, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::config::{
@@ -132,6 +132,32 @@ pub struct OAuthManager {
     secret_store: Option<Arc<LocalSecretStore>>,
     secret_resolver: Option<Arc<dyn SecretResolver>>,
 }
+
+#[derive(Debug)]
+pub struct OAuthSecretCleanupUnavailable {
+    operation: &'static str,
+}
+
+impl OAuthSecretCleanupUnavailable {
+    fn new(operation: &'static str) -> Self {
+        Self { operation }
+    }
+}
+
+impl fmt::Display for OAuthSecretCleanupUnavailable {
+    fn fmt(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            formatter,
+            "Secure Store is unavailable; unlock or initialize it before {} OAuth credentials",
+            self.operation
+        )
+    }
+}
+
+impl Error for OAuthSecretCleanupUnavailable {}
 
 impl OAuthManager {
     pub fn new(pool: SqlitePool) -> Self {
@@ -297,7 +323,12 @@ impl OAuthManager {
         operation: &str,
     ) -> Result<()> {
         if has_secret_references && self.secret_store.is_none() {
-            bail!("Secure Store is unavailable; unlock or initialize it before {operation} OAuth credentials");
+            return Err(OAuthSecretCleanupUnavailable::new(match operation {
+                "removing" => "removing",
+                "revoking" => "revoking",
+                _ => "managing",
+            })
+            .into());
         }
         Ok(())
     }

@@ -179,14 +179,36 @@ async fn delete_oauth_secrets_for_server(
     state: &Arc<AppState>,
     db: &Database,
     server_id: &str,
-) -> Result<(), ApiError> {
+) -> anyhow::Result<()> {
     let manager =
         crate::core::oauth::OAuthManager::new_optional_store(db.pool.clone(), state.secret_store.read().await.clone());
 
-    manager
-        .delete_all_oauth_secrets(server_id)
-        .await
-        .map_err(map_anyhow_error)
+    manager.delete_all_oauth_secrets(server_id).await
+}
+
+fn is_oauth_secret_cleanup_unavailable(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<crate::core::oauth::manager::OAuthSecretCleanupUnavailable>()
+        .is_some()
+}
+
+async fn delete_oauth_secrets_for_server_best_effort(
+    state: &Arc<AppState>,
+    db: &Database,
+    server_id: &str,
+) -> Result<(), ApiError> {
+    match delete_oauth_secrets_for_server(state, db, server_id).await {
+        Ok(()) => Ok(()),
+        Err(error) if is_oauth_secret_cleanup_unavailable(&error) => {
+            tracing::warn!(
+                server_id,
+                error = %error,
+                "Skipping OAuth secret cleanup because Secure Store is unavailable during server deletion"
+            );
+            Ok(())
+        }
+        Err(error) => Err(map_anyhow_error(error)),
+    }
 }
 
 /// Create a new MCP server configuration
@@ -251,7 +273,7 @@ pub async fn create_server(
     validate_server_config(&payload.server_type, &payload.command, &payload.url)?;
 
     if let Some(server_id) = reusable_pending_server_id.as_deref() {
-        delete_oauth_secrets_for_server(&state, &db, server_id).await?;
+        delete_oauth_secrets_for_server_best_effort(&state, &db, server_id).await?;
         crate::config::server::delete_server_oauth_config(&db.pool, server_id)
             .await
             .map_err(map_anyhow_error)?;
@@ -855,7 +877,7 @@ async fn delete_server_records(
     db: &Database,
     server_id: &str,
 ) -> Result<(), ApiError> {
-    delete_oauth_secrets_for_server(state, db, server_id).await?;
+    delete_oauth_secrets_for_server_best_effort(state, db, server_id).await?;
 
     let mut tx = db.pool.begin().await.map_err(map_database_error)?;
 
@@ -878,6 +900,8 @@ async fn delete_server_records(
     // - server_args (has FK to server_config.id)
     // - server_env (has FK to server_config.id)
     // - server_meta (has FK to server_config.id)
+    // - server_oauth_config (has FK to server_config.id)
+    // - server_oauth_tokens (has FK to server_config.id)
     // - profile_server (has FK to server_config.id)
     // - profile_resource (has FK to server_config.id)
     // - profile_prompt (has FK to server_config.id)
@@ -951,4 +975,164 @@ pub async fn delete_server(
     .await;
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::models::{ServerOAuthConfig, ServerOAuthToken},
+        core::{
+            cache::{RedbCacheManager, manager::CacheConfig},
+            models::Config,
+            pool::UpstreamConnectionPool,
+            profile::ConfigApplicationStateManager,
+            secrets::store::LocalSecretStore,
+        },
+        inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
+        system::metrics::MetricsCollector,
+    };
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use tempfile::TempDir;
+    use tokio::sync::{Mutex, RwLock};
+
+    struct TestContext {
+        _temp_dir: TempDir,
+        app_state: Arc<AppState>,
+        database: Arc<Database>,
+    }
+
+    #[tokio::test]
+    async fn delete_server_records_continues_when_oauth_secret_cleanup_needs_secure_store() {
+        let context = create_test_context().await;
+        let server_id = "serv_delete_without_store";
+
+        let mut server =
+            Server::new_streamable_http("oauth server".to_string(), Some("https://example.com/mcp".to_string()));
+        server.id = Some(server_id.to_string());
+        server::upsert_server(&context.database.pool, &server)
+            .await
+            .expect("insert server");
+
+        server::upsert_server_oauth_config(
+            &context.database.pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: server_id.to_string(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-1".to_string(),
+                client_secret: Some(format!("[[secret:oauth/{server_id}/client-secret]]")),
+                scopes: Some("read write".to_string()),
+                redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("insert oauth config");
+
+        server::upsert_server_oauth_token(
+            &context.database.pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: server_id.to_string(),
+                access_token: format!("[[secret:oauth/{server_id}/access-token]]"),
+                refresh_token: Some(format!("[[secret:oauth/{server_id}/refresh-token]]")),
+                token_type: "bearer".to_string(),
+                expires_at: None,
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("insert oauth token");
+
+        delete_server_records(&context.app_state, context.database.as_ref(), server_id)
+            .await
+            .expect("delete server records");
+
+        assert!(
+            server::get_server_by_id(&context.database.pool, server_id)
+                .await
+                .expect("load server")
+                .is_none()
+        );
+        assert!(
+            server::get_server_oauth_config(&context.database.pool, server_id)
+                .await
+                .expect("load oauth config")
+                .is_none()
+        );
+        assert!(
+            server::get_server_oauth_token(&context.database.pool, server_id)
+                .await
+                .expect("load oauth token")
+                .is_none()
+        );
+    }
+
+    async fn create_test_context() -> TestContext {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&db_pool)
+            .await
+            .expect("enable foreign keys");
+
+        crate::config::server::init::initialize_server_tables(&db_pool)
+            .await
+            .expect("init server tables");
+        LocalSecretStore::initialize_with_development_root_key(
+            db_pool.clone(),
+            temp_dir.path().join("secrets").join("local-root.key"),
+        )
+        .await
+        .expect("init secret store tables");
+
+        let database = Arc::new(Database {
+            pool: db_pool.clone(),
+            path: PathBuf::from(":memory:"),
+        });
+
+        let cache_path = temp_dir.path().join("capability.redb");
+        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
+
+        let app_state = Arc::new(AppState {
+            connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
+                Arc::new(Config::default()),
+                Some(database.clone()),
+            ))),
+            metrics_collector: Arc::new(MetricsCollector::new(Duration::from_secs(5))),
+            http_proxy: None,
+            profile_merge_service: None,
+            database: Some(database.clone()),
+            audit_database: None,
+            audit_service: None,
+            config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+            redb_cache,
+            unified_query: None,
+            client_service: None,
+            inspector_calls: Arc::new(InspectorCallRegistry::new()),
+            inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager: RwLock::new(Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool)))),
+            secret_store: RwLock::new(None),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
+                "test_unavailable",
+            )),
+        });
+
+        TestContext {
+            _temp_dir: temp_dir,
+            app_state,
+            database,
+        }
+    }
 }
