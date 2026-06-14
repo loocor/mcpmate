@@ -258,8 +258,17 @@ pub mod defaults {
     /// Default runtime value
     pub const RUNTIME: &str = "node";
 
-    /// Default behavior for writing logs to file (temporary default: disabled to avoid log bloat)
-    pub const LOG_TO_FILE_DEFAULT: bool = false;
+    /// Default behavior for writing logs to file so startup diagnostics are available for export.
+    pub const LOG_TO_FILE_DEFAULT: bool = true;
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn file_logging_is_enabled_by_default_for_startup_diagnostics() {
+        let default_enabled = std::hint::black_box(super::defaults::LOG_TO_FILE_DEFAULT);
+        assert!(default_enabled);
+    }
 }
 
 /// Common strategy labels for inspect responses

@@ -3,6 +3,7 @@ use crate::{
     audit::AuditService,
     clients::models::FirstContactBehavior,
     clients::service::ClientConfigService,
+    common::startup_diagnostics::{self, StartupDegradedEvent, component},
     common::constants::protocol,
     config::audit_database::AuditDatabase,
     config::database::Database,
@@ -29,6 +30,7 @@ use std::{
 use tokio::sync::Mutex;
 
 static GLOBAL_PROXY_SERVER: OnceCell<Arc<Mutex<ProxyServer>>> = OnceCell::new();
+const STARTUP_DIAGNOSTIC_COMPONENT: &str = "startup_proxy";
 
 #[derive(Debug, Clone)]
 pub struct DownstreamRoute {
@@ -711,6 +713,10 @@ impl ProxyServer {
     }
 
     pub fn new(config: Arc<crate::core::models::Config>) -> Self {
+        Self::try_new(config).expect("Failed to create ProxyServer")
+    }
+
+    pub fn try_new(config: Arc<crate::core::models::Config>) -> anyhow::Result<Self> {
         let mut pool = UpstreamConnectionPool::new(config.clone(), None);
         pool.initialize();
         let connection_pool = Arc::new(Mutex::new(pool));
@@ -718,12 +724,10 @@ impl ProxyServer {
 
         let paginator = crate::core::foundation::pagination::ProxyPaginator::new();
         let builtin_services = Arc::new(BuiltinServiceRegistry::new());
-        let redb_cache = crate::core::cache::RedbCacheManager::global().unwrap_or_else(|e| {
-            tracing::error!("Failed to initialize REDB cache manager: {}", e);
-            panic!("REDB cache manager is required for ProxyServer")
-        });
+        let redb_cache = crate::core::cache::RedbCacheManager::global()
+            .map_err(|error| anyhow::anyhow!("Failed to initialize REDB cache manager: {error}"))?;
 
-        Self {
+        Ok(Self {
             connection_pool,
             database: None,
             audit_database: None,
@@ -741,7 +745,39 @@ impl ProxyServer {
             call_sessions_by_request: Arc::new(dashmap::DashMap::new()),
             client_config_service: None,
             list_changed_in_progress: Arc::new(AtomicBool::new(false)),
-        }
+        })
+    }
+
+    async fn bootstrap_client_services(
+        &mut self,
+        db_arc: &Arc<Database>,
+    ) {
+        let bootstrap_result = ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await;
+        let client_config_service = match bootstrap_result {
+            Ok(service) => Arc::new(service),
+            Err(error) => {
+                tracing::warn!(
+                    component = STARTUP_DIAGNOSTIC_COMPONENT,
+                    phase = "client_services_bootstrap",
+                    subsystem = "builtin_services",
+                    degraded = true,
+                    startup_continues = true,
+                    action_taken = "use_reduced_builtin_services",
+                    reason_code = "client_config_bootstrap_failed",
+                    error = %error,
+                    "Client configuration bootstrap failed during startup; continuing with reduced builtin services"
+                );
+                self.builtin_services = Arc::new(BuiltinServiceRegistry::new());
+                return;
+            }
+        };
+
+        self.client_config_service = Some(Arc::clone(&client_config_service));
+        self.builtin_services = Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(
+            Arc::clone(db_arc),
+            Arc::clone(&self.connection_pool),
+            client_config_service,
+        ));
     }
 
     pub async fn set_database(
@@ -752,15 +788,19 @@ impl ProxyServer {
         self.database = Some(db_arc.clone());
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
-        let client_config_service = Arc::new(ClientConfigService::bootstrap(Arc::new(db_arc.pool.clone())).await?);
-        self.client_config_service = Some(client_config_service.clone());
-        self.builtin_services = Arc::new(BuiltinServiceRegistry::new().with_mcpmate_services(
-            db_arc.clone(),
-            self.connection_pool.clone(),
-            client_config_service,
-        ));
-        if let Err(e) = crate::core::capability::resolver::init(db_arc.clone()).await {
-            tracing::warn!("Failed to initialize global resolver: {}", e);
+        self.bootstrap_client_services(&db_arc).await;
+        if let Err(error) = crate::core::capability::resolver::init(db_arc.clone()).await {
+            startup_diagnostics::warn_degraded(
+                StartupDegradedEvent {
+                    component: component::PROXY,
+                    phase: "resolver_setup",
+                    reason_code: "resolver_init_failed",
+                    action_taken: "continue_without_resolver_cache",
+                    subsystem: "capability",
+                },
+                &error,
+                "Failed to initialize global resolver; continuing without in-memory name resolution cache",
+            );
         } else {
             tracing::info!("Global server resolver initialized");
         }
@@ -768,7 +808,19 @@ impl ProxyServer {
             let mut pool = self.connection_pool.lock().await;
             pool.set_database(Some(db_arc));
         }
-        self.setup_event_handlers().await?;
+        if let Err(error) = self.setup_event_handlers().await {
+            tracing::warn!(
+                component = STARTUP_DIAGNOSTIC_COMPONENT,
+                phase = "event_handlers_setup",
+                subsystem = "event_sync",
+                degraded = true,
+                startup_continues = true,
+                action_taken = "disable_event_driven_sync",
+                reason_code = "event_handler_init_failed",
+                error = %error,
+                "Event handler initialization failed during startup; continuing without event-driven sync"
+            );
+        }
         tracing::debug!(
             "Database connection, builtin services, server manager, and event handlers set for proxy server"
         );

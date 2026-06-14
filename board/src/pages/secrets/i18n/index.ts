@@ -38,20 +38,18 @@ export const secretsTranslations = {
 			passphrase_wrapped_root_key: "Password",
 			local_file_root_key: "Local File",
 			local_encrypted_vault: "Development Vault",
+			unavailable: "Unavailable",
 		},
 		lifecycle: {
 			state: {
 				all: "All lifecycle states",
 				active: "Active",
-				cleanup_available: "Cleanup available",
 				unused: "Unused",
 				oauth_managed: "OAuth managed",
 			},
 			description: {
 				active: "Currently referenced by at least one server.",
-				cleanup_available:
-					"No active binding remains, but historical bindings exist.",
-				unused: "No active or historical server binding is recorded.",
+				unused: "Not currently referenced by any server.",
 				oauth_managed: "Owned by OAuth and cleaned up with OAuth lifecycle actions.",
 			},
 		},
@@ -85,6 +83,8 @@ export const secretsTranslations = {
 			editTitle: "Edit Secret",
 			description:
 				"The value is write-only. It will not be shown again after save.",
+			providerUnavailableDescription:
+				"Provider unavailable. Record is kept; manage recovery in Security settings.",
 			tabs: {
 				general: "General",
 				usage: "Usage",
@@ -172,10 +172,8 @@ export const secretsTranslations = {
 				"This removes the encrypted value only when no active usage is recorded.",
 			descriptionActive:
 				"This secret is still actively used. Remove active bindings before deleting it.",
-			descriptionHistorical:
-				"This removes the encrypted value. Historical usage metadata remains available without the secret value.",
 			descriptionUnused:
-				"This removes the encrypted value. No active or historical usage is recorded.",
+				"This removes the encrypted value. No active usage is recorded.",
 			descriptionOAuth:
 				"OAuth-managed credentials are normally removed by OAuth revoke or server deletion. Delete only orphaned OAuth records.",
 			usageSummary: "Active {{active}} · Historical {{historical}}",
@@ -218,13 +216,18 @@ export const secretsTranslations = {
 				os: {
 					title: "OS secure storage is unavailable",
 					description:
-						"MCPMate could not access the OS keychain. Grant access when prompted, unlock Keychain Access on macOS, or switch to Password or Local File mode in Settings → Security.",
+						"MCPMate could not access the OS keychain. Grant access when prompted, unlock Keychain Access on macOS, or switch to Password or Local File mode below.",
 				},
 			},
 			readLockFailed: {
 				title: "Secure store is busy",
 				description:
 					"MCPMate could not read the secure store status. Wait a moment and retry.",
+			},
+			missingRootKey: {
+				title: "Root key material is missing",
+				description:
+					"Existing encrypted secrets need the original root key material. Restore access to the configured provider before editing stored secrets or switching encryption mode.",
 			},
 			generic: {
 				title: "Secure store unavailable",
@@ -251,9 +254,9 @@ export const secretsTranslations = {
 				title: "In Use",
 				description: "linked to servers",
 			},
-			cleanup: {
-				title: "Cleanup",
-				description: "ready to review",
+			unused: {
+				title: "Unused",
+				description: "not linked",
 			},
 			store: {
 				title: "Secure Store",
@@ -306,19 +309,18 @@ export const secretsTranslations = {
 			passphrase_wrapped_root_key: "密码",
 			local_file_root_key: "本地文件",
 			local_encrypted_vault: "开发加密库",
+			unavailable: "不可用",
 		},
 		lifecycle: {
 			state: {
 				all: "全部生命周期状态",
 				active: "使用中",
-				cleanup_available: "可清理",
 				unused: "未使用",
 				oauth_managed: "OAuth 托管",
 			},
 			description: {
 				active: "当前至少被一个服务器引用。",
-				cleanup_available: "没有活跃绑定，但仍保留历史绑定记录。",
-				unused: "没有记录到活跃或历史服务器绑定。",
+				unused: "当前没有被任何服务器引用。",
 				oauth_managed: "由 OAuth 拥有，并随 OAuth 生命周期动作清理。",
 			},
 		},
@@ -350,6 +352,8 @@ export const secretsTranslations = {
 			createTitle: "添加安全记录",
 			editTitle: "编辑安全记录",
 			description: "值保存后不可读取，也不会再次显示。",
+			providerUnavailableDescription:
+				"提供方不可用，记录已保留；如需恢复请前往安全设置处理。",
 			tabs: {
 				general: "常规",
 				usage: "使用情况",
@@ -429,9 +433,7 @@ export const secretsTranslations = {
 			title: "删除安全记录？",
 			description: "仅当没有活跃使用记录时，才会移除加密值。",
 			descriptionActive: "此安全记录仍在使用中。删除前请先移除活跃绑定。",
-			descriptionHistorical:
-				"这会移除加密值。历史使用元数据会保留，但不再包含密钥值。",
-			descriptionUnused: "这会移除加密值。当前没有活跃或历史使用记录。",
+			descriptionUnused: "这会移除加密值。当前没有活跃使用记录。",
 			descriptionOAuth:
 				"OAuth 托管凭据通常会通过 OAuth 撤销或服务器删除自动移除。仅删除孤立的 OAuth 记录。",
 			usageSummary: "活跃 {{active}} · 历史 {{historical}}",
@@ -480,6 +482,11 @@ export const secretsTranslations = {
 				title: "安全存储繁忙",
 				description: "MCPMate 无法读取安全存储状态，请稍候后重试。",
 			},
+			missingRootKey: {
+				title: "缺少根密钥材料",
+				description:
+					"已有加密密钥需要原始根密钥材料才能恢复。请先恢复对当前提供方的访问，再编辑已存储密钥或切换加密模式。",
+			},
 			generic: {
 				title: "安全存储不可用",
 				description: "密钥存储尚未就绪，在问题解决前无法创建或更新。",
@@ -504,9 +511,9 @@ export const secretsTranslations = {
 				title: "使用中",
 				description: "已关联服务器",
 			},
-			cleanup: {
-				title: "清理",
-				description: "可复核",
+			unused: {
+				title: "未使用",
+				description: "未关联",
 			},
 			store: {
 				title: "安全存储",
@@ -559,20 +566,18 @@ export const secretsTranslations = {
 			passphrase_wrapped_root_key: "パスワード",
 			local_file_root_key: "ローカルファイル",
 			local_encrypted_vault: "開発用ボルト",
+			unavailable: "利用不可",
 		},
 		lifecycle: {
 			state: {
 				all: "すべてのライフサイクル状態",
 				active: "使用中",
-				cleanup_available: "クリーンアップ可能",
 				unused: "未使用",
 				oauth_managed: "OAuth 管理",
 			},
 			description: {
 				active: "少なくとも 1 つのサーバーから現在参照されています。",
-				cleanup_available:
-					"有効なバインディングはありませんが、履歴バインディングが残っています。",
-				unused: "有効または履歴のサーバーバインディングは記録されていません。",
+				unused: "現在どのサーバーからも参照されていません。",
 				oauth_managed: "OAuth が所有し、OAuth ライフサイクル操作で削除されます。",
 			},
 		},
@@ -605,6 +610,8 @@ export const secretsTranslations = {
 			createTitle: "シークレットを追加",
 			editTitle: "シークレットを編集",
 			description: "値は書き込み専用です。保存後に再表示されません。",
+			providerUnavailableDescription:
+				"プロバイダーは利用できません。記録は保持されます。復旧はセキュリティ設定で行ってください。",
 			tabs: {
 				general: "一般",
 				usage: "使用状況",
@@ -691,10 +698,8 @@ export const secretsTranslations = {
 				"アクティブな使用記録がない場合のみ、暗号化された値を削除します。",
 			descriptionActive:
 				"このシークレットはまだ使用中です。削除する前に有効なバインディングを削除してください。",
-			descriptionHistorical:
-				"暗号化された値を削除します。履歴使用メタデータはシークレット値なしで残ります。",
 			descriptionUnused:
-				"暗号化された値を削除します。有効または履歴の使用記録はありません。",
+				"暗号化された値を削除します。有効な使用記録はありません。",
 			descriptionOAuth:
 				"OAuth 管理の認証情報は通常、OAuth の取り消しまたはサーバー削除で削除されます。孤立した OAuth レコードのみ削除してください。",
 			usageSummary: "有効 {{active}} · 履歴 {{historical}}",
@@ -745,6 +750,11 @@ export const secretsTranslations = {
 				description:
 					"MCPMate はセキュアストアの状態を読み取れませんでした。しばらく待ってから再試行してください。",
 			},
+			missingRootKey: {
+				title: "ルートキー素材が見つかりません",
+				description:
+					"既存の暗号化済みシークレットを復元するには元のルートキー素材が必要です。保存済みシークレットの編集や暗号化モードの切り替えの前に、設定済みプロバイダーへのアクセスを復旧してください。",
+			},
 			generic: {
 				title: "セキュアストアは利用できません",
 				description:
@@ -770,9 +780,9 @@ export const secretsTranslations = {
 				title: "使用中",
 				description: "サーバーにリンク済み",
 			},
-			cleanup: {
-				title: "クリーンアップ",
-				description: "確認待ち",
+			unused: {
+				title: "未使用",
+				description: "未リンク",
 			},
 			store: {
 				title: "セキュアストア",

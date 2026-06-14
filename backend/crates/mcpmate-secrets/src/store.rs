@@ -53,9 +53,13 @@ impl LocalSecretStore {
     ) -> Result<Self> {
         Self::ensure_schema(&pool).await?;
         let provider_metadata = root_key_provider.metadata();
-        let key = root_key_provider
-            .load_or_create_root_key()
-            .with_context(|| format!("initialize root key provider '{}'", provider_metadata.provider_id()))?;
+        let secret_count = database::secure_store_secret_count(&pool).await?;
+        let key = if secret_count > 0 {
+            root_key_provider.load_existing_root_key()
+        } else {
+            root_key_provider.load_or_create_root_key()
+        }
+        .with_context(|| format!("initialize root key provider '{}'", provider_metadata.provider_id()))?;
         let store = Self {
             pool,
             crypto: EnvelopeCrypto::new(key),
@@ -323,7 +327,7 @@ impl SecretResolver for LocalSecretStore {
 mod tests {
     use super::*;
 
-    use crate::{SecretRootKey, SecretRootKeyError};
+    use crate::{LocalFileRootKeyProvider, SecretRootKey, SecretRootKeyError};
     use sqlx::{Row, sqlite::SqlitePoolOptions};
     use tempfile::TempDir;
 
@@ -336,6 +340,12 @@ mod tests {
         }
 
         fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+            Err(SecretRootKeyError::ProviderUnavailable(
+                "provider unavailable".to_string(),
+            ))
+        }
+
+        fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
             Err(SecretRootKeyError::ProviderUnavailable(
                 "provider unavailable".to_string(),
             ))
@@ -356,6 +366,60 @@ mod tests {
             .expect_err("failing provider must fail store initialization");
 
         assert!(err.to_string().contains("test-failing-provider"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn initialization_with_existing_secrets_does_not_create_missing_local_root_key() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        LocalSecretStore::ensure_schema(&db_pool).await.expect("ensure schema");
+        sqlx::query(
+            r#"
+            INSERT INTO secure_store_secrets (
+                alias,
+                kind,
+                provider_id,
+                provider_kind,
+                version,
+                key_nonce,
+                encrypted_key,
+                nonce,
+                encrypted_value
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+        )
+        .bind("server/test/token")
+        .bind("token")
+        .bind("local-file-root-key")
+        .bind("local_encrypted_vault")
+        .bind(1_i64)
+        .bind("fake-key-nonce")
+        .bind("fake-encrypted-key")
+        .bind("fake-nonce")
+        .bind("fake-encrypted-value")
+        .execute(&db_pool)
+        .await
+        .expect("insert fake secret row");
+
+        let local_key_path = temp_dir.path().join("secrets").join("missing-local-root.key");
+        let err = LocalSecretStore::initialize_with_root_key_provider(
+            db_pool,
+            Arc::new(LocalFileRootKeyProvider::new(&local_key_path)),
+        )
+        .await
+        .expect_err("existing secrets must not create a replacement local root key");
+
+        assert!(
+            err.chain()
+                .any(|cause| cause.to_string().contains("root key material is missing"))
+        );
+        assert!(!local_key_path.exists());
     }
 
     #[tokio::test]

@@ -546,7 +546,8 @@ export function SettingsPage() {
 				}),
 			);
 		},
-		onError: (error: unknown) => {
+		onError: async (error: unknown) => {
+			await invalidateSecretStoreStatus(queryClient);
 			resetPendingProviderSwitch();
 			setShowSwitchConfirm(false);
 			notifyError(
@@ -2335,9 +2336,30 @@ export function SettingsPage() {
 													) : null}
 													<Segment
 														options={[
-															{ value: "operating_system", label: t("settings:security.mode.os", { defaultValue: "OS Keychain" }) },
-															{ value: "passphrase", label: t("settings:security.mode.passphrase", { defaultValue: "Password" }) },
-															{ value: "local_file", label: t("settings:security.mode.local", { defaultValue: "Local File" }) },
+															{
+																value: "operating_system",
+																label: t("settings:security.mode.os", { defaultValue: "OS Keychain" }),
+																tooltip: t("settings:security.mode.osDetail", {
+																	defaultValue:
+																		"Root key stored in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Best protection — no password needed.",
+																}),
+															},
+															{
+																value: "passphrase",
+																label: t("settings:security.mode.passphrase", { defaultValue: "Password" }),
+																tooltip: t("settings:security.mode.passphraseDetail", {
+																	defaultValue:
+																		"Protect secrets with a password you set. Losing the password makes stored secrets unrecoverable.",
+																}),
+															},
+															{
+																value: "local_file",
+																label: t("settings:security.mode.local", { defaultValue: "Local File" }),
+																tooltip: t("settings:security.mode.localDetail", {
+																	defaultValue:
+																		"Root key stored as a file in the app data directory. Protected by file permissions only — not recommended for sensitive environments.",
+																}),
+															},
 														]}
 														value={
 															selectedMode ||
@@ -2397,32 +2419,6 @@ export function SettingsPage() {
 													}
 												/>
 											) : null}
-
-											{/* Mode description */}
-											{effectiveEncryptionMode === "operating_system" && (
-												<p className="text-xs text-muted-foreground">
-													{t("settings:security.mode.osDetail", {
-														defaultValue:
-															"Root key stored in macOS Keychain, Windows Credential Manager, or Linux Secret Service. Best protection — no password needed.",
-													})}
-												</p>
-											)}
-											{effectiveEncryptionMode === "passphrase" && (
-												<p className="text-xs text-muted-foreground">
-													{t("settings:security.mode.passphraseDetail", {
-														defaultValue:
-															"Protect secrets with a password you set. Losing the password makes stored secrets unrecoverable.",
-													})}
-												</p>
-											)}
-											{effectiveEncryptionMode === "local_file" && (
-												<p className="text-xs text-muted-foreground">
-													{t("settings:security.mode.localDetail", {
-														defaultValue:
-															"Root key stored as a file in the app data directory. Protected by file permissions only — not recommended for sensitive environments.",
-													})}
-												</p>
-											)}
 										</div>
 
 									</>

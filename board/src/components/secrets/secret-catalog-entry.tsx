@@ -26,6 +26,7 @@ type SecretCatalogEntryBaseProps = {
 	kindLabel: string;
 	lifecycleState: SecretLifecycleState;
 	providerLabel: string;
+	providerNeedsAttention?: boolean;
 	statsLabels: SecretCatalogStatsLabels;
 	onOpen: (alias: string) => void;
 };
@@ -44,14 +45,14 @@ export type SecretCatalogEntryProps =
 	| SecretCatalogListEntryProps
 	| SecretCatalogGridEntryProps;
 
+const providerAttentionClassName = "text-amber-700 dark:text-amber-300";
+
 function lifecycleBadgeVariant(
 	state: SecretLifecycleState,
 ): "secondary" | "success" | "warning" | "outline" | "info" {
 	switch (state) {
 		case "active":
 			return "success";
-		case "cleanup_available":
-			return "warning";
 		case "oauth_managed":
 			return "info";
 		case "unused":
@@ -63,12 +64,19 @@ function buildStats(
 	secret: SecretMetadata,
 	providerLabel: string,
 	statsLabels: SecretCatalogStatsLabels,
+	providerNeedsAttention: boolean,
 ) {
 	return [
 		{
 			label: statsLabels.provider,
 			value: providerLabel,
 			valueTitle: secret.provider_kind,
+			labelClassName: providerNeedsAttention
+				? providerAttentionClassName
+				: undefined,
+			valueClassName: providerNeedsAttention
+				? providerAttentionClassName
+				: undefined,
 		},
 		{
 			label: statsLabels.usage,
@@ -93,6 +101,7 @@ function SecretCatalogEntryComponent(props: SecretCatalogEntryProps) {
 		kindLabel,
 		lifecycleState,
 		providerLabel,
+		providerNeedsAttention = false,
 		statsLabels,
 		onOpen,
 	} = props;
@@ -141,8 +150,8 @@ function SecretCatalogEntryComponent(props: SecretCatalogEntryProps) {
 	);
 
 	const stats = useMemo(
-		() => buildStats(secret, providerLabel, statsLabels),
-		[providerLabel, secret, statsLabels],
+		() => buildStats(secret, providerLabel, statsLabels, providerNeedsAttention),
+		[providerLabel, providerNeedsAttention, secret, statsLabels],
 	);
 
 	if (props.variant === "list") {

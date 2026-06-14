@@ -11,6 +11,8 @@ pub enum SecretError {
     NotFound(String),
     #[error("invalid secret metadata: {0}")]
     InvalidMetadata(String),
+    #[error("secret cannot be decrypted: {0}")]
+    DecryptionFailed(String),
     #[error("secret provider is unavailable")]
     ProviderUnavailable,
     #[error("unterminated secret placeholder")]

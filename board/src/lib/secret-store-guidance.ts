@@ -66,7 +66,7 @@ export function resolveSecretStoreIssueGuidance(
 			}),
 			description: t("guidance.providerUnavailable.os.description", {
 				defaultValue:
-					"MCPMate could not access the OS keychain. Grant access when prompted, unlock Keychain Access on macOS, or switch to Password or Local File mode in Settings → Security.",
+					"MCPMate could not access the OS keychain. Grant access when prompted, unlock Keychain Access on macOS, or switch to Password or Local File mode below.",
 			}),
 			technicalDetail,
 			actions: ["retry_provider", "open_security_settings"],
@@ -103,6 +103,24 @@ export function resolveSecretStoreIssueGuidance(
 			}),
 			technicalDetail,
 			actions: ["retry_status"],
+		};
+	}
+
+	if (reasonCode === "missing_root_key") {
+		const mode = isSwitchableSecretStoreProviderMode(providerMode) ? providerMode : undefined;
+		return {
+			title: t("guidance.missingRootKey.title", {
+				defaultValue: "Root key material is missing",
+			}),
+			description: t("guidance.missingRootKey.description", {
+				defaultValue:
+					"Existing encrypted secrets need the original root key material. Restore access to the configured provider before editing stored secrets or switching encryption mode.",
+			}),
+			technicalDetail,
+			actions: mode
+				? ["retry_provider", "open_security_settings"]
+				: ["retry_status", "open_security_settings"],
+			retryProviderMode: mode,
 		};
 	}
 

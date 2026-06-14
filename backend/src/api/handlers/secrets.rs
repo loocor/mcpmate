@@ -30,7 +30,7 @@ use crate::{
         },
     },
 };
-use mcpmate_secrets::SecretRootKeyProvider;
+use mcpmate_secrets::{RootKeyProviderMetadata, SecretRootKeyError, SecretRootKeyProvider};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
@@ -79,10 +79,7 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
     let all_indexed = store.list_all_usages().await.map_err(map_secret_store_error)?;
     let mut indexed_by_alias: HashMap<String, Vec<SecretUsageView>> = HashMap::new();
     for usage in all_indexed {
-        indexed_by_alias
-            .entry(usage.alias.clone())
-            .or_default()
-            .push(usage);
+        indexed_by_alias.entry(usage.alias.clone()).or_default().push(usage);
     }
 
     let mut enriched = Vec::with_capacity(secrets.len());
@@ -112,7 +109,8 @@ pub async fn create_secret(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SecretCreateReq>,
 ) -> Result<Json<SecretMetadataResp>, ApiError> {
-    let store = get_secret_store(&state)?;
+    let store_guard = state.secret_store.read().await;
+    let store = get_secret_store_from_guard(&store_guard)?;
     if !is_user_creatable_secret_kind(&payload.kind) {
         return Err(ApiError::BadRequest(
             "OAuth secret kinds are managed by the OAuth flow and cannot be created manually".to_string(),
@@ -135,7 +133,8 @@ pub async fn update_secret(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SecretUpdateReq>,
 ) -> Result<Json<SecretMetadataResp>, ApiError> {
-    let store = get_secret_store(&state)?;
+    let store_guard = state.secret_store.read().await;
+    let store = get_secret_store_from_guard(&store_guard)?;
     let existing = store
         .get_secret_metadata(&payload.alias)
         .await
@@ -174,7 +173,8 @@ pub async fn delete_secret(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SecretDeleteReq>,
 ) -> Result<Json<SecretDeleteResp>, ApiError> {
-    let store = get_secret_store(&state)?;
+    let store_guard = state.secret_store.read().await;
+    let store = get_secret_store_from_guard(&store_guard)?;
 
     // When not force-deleting, check if any usages are still active
     // (i.e. a server-owned config or OAuth record still references the secret).
@@ -249,6 +249,18 @@ fn get_secret_store(state: &Arc<AppState>) -> Result<Arc<crate::core::secrets::s
                     .to_string(),
             )
         })
+}
+
+fn get_secret_store_from_guard(
+    guard: &Option<Arc<crate::core::secrets::store::LocalSecretStore>>
+) -> Result<Arc<crate::core::secrets::store::LocalSecretStore>, ApiError> {
+    guard.clone().ok_or_else(secret_store_unavailable_error)
+}
+
+fn secret_store_unavailable_error() -> ApiError {
+    ApiError::ServiceUnavailable(
+        "Secret store is unavailable. Unlock or configure the operating-system secure storage provider.".to_string(),
+    )
 }
 
 fn map_secret_store_error(error: anyhow::Error) -> ApiError {
@@ -414,6 +426,40 @@ fn secret_store_status_data(readiness: &SecretStoreReadiness) -> SecretStoreStat
     }
 }
 
+fn secret_store_readiness_from_root_key_error(
+    error: &SecretRootKeyError,
+    metadata: RootKeyProviderMetadata,
+) -> SecretStoreReadiness {
+    let reason_code = match error {
+        SecretRootKeyError::ProviderUnavailable(_) => "provider_unavailable",
+        SecretRootKeyError::MissingMaterial(_) => "missing_root_key",
+        SecretRootKeyError::InvalidMaterial(_) => "invalid_root_key",
+        SecretRootKeyError::LocalStorage(_) => "local_storage_error",
+        SecretRootKeyError::DevelopmentStorage(_) => "development_storage_error",
+    };
+    SecretStoreReadiness::unavailable_with_provider(reason_code, error.to_string(), metadata)
+}
+
+async fn update_secret_store_readiness(
+    state: &Arc<AppState>,
+    readiness: SecretStoreReadiness,
+) {
+    let mut readiness_guard = state.secret_store_readiness.write().await;
+    *readiness_guard = readiness;
+}
+
+fn api_error_from_secret_root_key_error(error: SecretRootKeyError) -> ApiError {
+    match error {
+        SecretRootKeyError::InvalidMaterial(message) => {
+            ApiError::BadRequest(format!("Invalid current passphrase: {message}"))
+        }
+        SecretRootKeyError::MissingMaterial(message) => {
+            ApiError::ServiceUnavailable(format!("Current root key material is missing: {message}"))
+        }
+        other => ApiError::InternalError(format!("Failed to load root key: {other}")),
+    }
+}
+
 fn data_dir_from_state(state: &Arc<AppState>) -> Result<std::path::PathBuf, ApiError> {
     let db = state
         .database
@@ -426,6 +472,15 @@ async fn apply_secret_store_bootstrap(
     state: &Arc<AppState>,
     bootstrap: crate::core::secrets::store::SecretStoreBootstrap,
 ) -> Result<SecretStoreReadiness, ApiError> {
+    let mut store_guard = state.secret_store.write().await;
+    apply_secret_store_bootstrap_with_locked_store(state, &mut store_guard, bootstrap).await
+}
+
+async fn apply_secret_store_bootstrap_with_locked_store(
+    state: &Arc<AppState>,
+    store_guard: &mut Option<Arc<crate::core::secrets::store::LocalSecretStore>>,
+    bootstrap: crate::core::secrets::store::SecretStoreBootstrap,
+) -> Result<SecretStoreReadiness, ApiError> {
     let readiness = bootstrap.readiness.clone();
     let store_arc = bootstrap.store.map(Arc::new);
 
@@ -433,8 +488,6 @@ async fn apply_secret_store_bootstrap(
         state.connection_pool.lock().await.set_secret_resolver(store);
     }
 
-    // Rebuild the OAuth manager with the new secret store so that
-    // OAuth handlers can resolve credentials after unlock.
     if let Some(db) = state.database.as_ref() {
         let new_manager = Arc::new(crate::core::oauth::OAuthManager::new_optional_store(
             db.pool.clone(),
@@ -444,10 +497,7 @@ async fn apply_secret_store_bootstrap(
         *manager_guard = Some(new_manager);
     }
 
-    {
-        let mut store_guard = state.secret_store.write().await;
-        *store_guard = store_arc;
-    }
+    *store_guard = store_arc;
     {
         let mut readiness_guard = state.secret_store_readiness.write().await;
         *readiness_guard = readiness.clone();
@@ -473,6 +523,67 @@ async fn persist_provider_mode(
     .await
     .map_err(|err| ApiError::InternalError(format!("Failed to persist provider mode: {err}")))?;
     Ok(())
+}
+
+async fn secure_store_secret_count(pool: &SqlitePool) -> Result<i64, ApiError> {
+    let table_name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'secure_store_secrets'")
+            .fetch_optional(pool)
+            .await
+            .map_err(|err| ApiError::InternalError(format!("Failed to inspect secure store schema: {err}")))?;
+    if table_name.is_none() {
+        return Ok(0);
+    }
+
+    sqlx::query_scalar("SELECT COUNT(*) FROM secure_store_secrets")
+        .fetch_one(pool)
+        .await
+        .map_err(|err| ApiError::InternalError(format!("Failed to count secure store secrets: {err}")))
+}
+
+async fn initialize_fresh_provider_with_locked_store(
+    state: &Arc<AppState>,
+    store_guard: &mut Option<Arc<crate::core::secrets::store::LocalSecretStore>>,
+    pool: SqlitePool,
+    mode: crate::core::secrets::store::RootKeyProviderMode,
+    passphrase_path: &std::path::Path,
+    local_file_path: &std::path::Path,
+    passphrase: &str,
+) -> Result<Json<ProviderSwitchResp>, ApiError> {
+    let provider: Arc<dyn crate::core::secrets::store::SecretRootKeyProvider> = match mode {
+        crate::core::secrets::store::RootKeyProviderMode::OperatingSystem => {
+            Arc::new(crate::core::secrets::store::OperatingSystemRootKeyProvider::new())
+        }
+        crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
+            Arc::new(crate::core::secrets::store::PassphraseRootKeyProvider::new(
+                passphrase_path.to_path_buf(),
+                passphrase.to_string(),
+            ))
+        }
+        crate::core::secrets::store::RootKeyProviderMode::LocalFile => Arc::new(
+            crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.to_path_buf()),
+        ),
+        _ => {
+            return Err(ApiError::BadRequest(
+                "Target provider mode is not supported".to_string(),
+            ));
+        }
+    };
+
+    let new_store = crate::core::secrets::store::LocalSecretStore::initialize_with_root_key_provider(pool, provider)
+        .await
+        .map_err(|err| ApiError::InternalError(format!("Failed to initialize fresh provider: {err}")))?;
+
+    persist_provider_mode(state, mode).await?;
+
+    let bootstrap = crate::core::secrets::store::SecretStoreBootstrap {
+        readiness: crate::core::secrets::store::SecretStoreReadiness::ready(new_store.provider_metadata()),
+        store: Some(new_store),
+    };
+    let readiness = apply_secret_store_bootstrap_with_locked_store(state, store_guard, bootstrap).await?;
+
+    let new_status = secret_store_status_data(&readiness);
+    Ok(Json(ProviderSwitchResp::success(ProviderSwitchData { new_status })))
 }
 
 pub async fn unlock_secret_store(
@@ -556,7 +667,7 @@ pub async fn rotate_passphrase(
         passphrase_path.clone(),
         payload.current_passphrase.clone(),
     );
-    let root_key = current_provider.load_or_create_root_key().map_err(|err| match err {
+    let root_key = current_provider.load_existing_root_key().map_err(|err| match err {
         mcpmate_secrets::SecretRootKeyError::InvalidMaterial(message) => {
             ApiError::BadRequest(format!("Invalid current passphrase: {message}"))
         }
@@ -647,6 +758,13 @@ pub async fn switch_provider(
     let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
     let local_file_path = secrets_dir.join("local-root.key");
 
+    // Determine new mode.
+    let new_mode = match payload.mode {
+        ProviderModePayload::OperatingSystem => crate::core::secrets::store::RootKeyProviderMode::OperatingSystem,
+        ProviderModePayload::Passphrase => crate::core::secrets::store::RootKeyProviderMode::Passphrase,
+        ProviderModePayload::LocalFile => crate::core::secrets::store::RootKeyProviderMode::LocalFile,
+    };
+
     // Check current mode. Fall back to persisted provider mode from the database
     // when the in-memory store is unavailable (e.g. passphrase_unlock_required).
     let current_mode = {
@@ -670,22 +788,13 @@ pub async fn switch_provider(
                         .map_err(ApiError::BadRequest)
                 })
                 .transpose()?
-                .ok_or_else(|| {
-                    ApiError::BadRequest(
-                        "Secret store is not configured. Set up encryption before switching providers.".to_string(),
-                    )
-                })?
+                .unwrap_or(crate::core::secrets::store::RootKeyProviderMode::OperatingSystem)
         }
     };
 
-    // Determine new mode.
-    let new_mode = match payload.mode {
-        ProviderModePayload::OperatingSystem => crate::core::secrets::store::RootKeyProviderMode::OperatingSystem,
-        ProviderModePayload::Passphrase => crate::core::secrets::store::RootKeyProviderMode::Passphrase,
-        ProviderModePayload::LocalFile => crate::core::secrets::store::RootKeyProviderMode::LocalFile,
-    };
-
-    // Already on this mode — return current status.
+    // Already on this mode. If the store is unavailable, treat this as an
+    // explicit retry so OS keychain prompts can be raised again after the user
+    // fixes the environment or grants access.
     if current_mode == new_mode {
         let readiness = state
             .secret_store_readiness
@@ -696,6 +805,12 @@ pub async fn switch_provider(
                 provider: None,
                 issue: None,
             });
+        if readiness.status != "ready" {
+            let bootstrap = crate::core::secrets::store::bootstrap_secret_store(db.pool.clone(), data_dir).await;
+            let new_readiness = apply_secret_store_bootstrap(&state, bootstrap).await?;
+            let new_status = secret_store_status_data(&new_readiness);
+            return Ok(Json(ProviderSwitchResp::success(ProviderSwitchData { new_status })));
+        }
         return Ok(Json(ProviderSwitchResp::success(ProviderSwitchData {
             new_status: readiness,
         })));
@@ -721,33 +836,82 @@ pub async fn switch_provider(
     let load_passphrase = current_passphrase.clone().unwrap_or_default();
     let store_passphrase = new_passphrase.clone().unwrap_or_default();
 
-    // Load root key from the old provider.
-    let root_key = {
-        let old_provider: Box<dyn crate::core::secrets::store::SecretRootKeyProvider> = match current_mode {
-            crate::core::secrets::store::RootKeyProviderMode::OperatingSystem => {
-                Box::new(crate::core::secrets::store::OperatingSystemRootKeyProvider::new())
-            }
-            crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
-                Box::new(crate::core::secrets::store::PassphraseRootKeyProvider::new(
-                    passphrase_path.clone(),
-                    load_passphrase.clone(),
-                ))
-            }
-            crate::core::secrets::store::RootKeyProviderMode::LocalFile => Box::new(
-                crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone()),
-            ),
-            _ => {
-                return Err(ApiError::BadRequest(
-                    "Current provider mode does not support switching".to_string(),
-                ));
-            }
+    let load_current_root_key =
+        || -> Result<mcpmate_secrets::SecretRootKey, (SecretRootKeyError, RootKeyProviderMetadata)> {
+            let old_provider: Box<dyn crate::core::secrets::store::SecretRootKeyProvider> = match current_mode {
+                crate::core::secrets::store::RootKeyProviderMode::OperatingSystem => {
+                    Box::new(crate::core::secrets::store::OperatingSystemRootKeyProvider::new())
+                }
+                crate::core::secrets::store::RootKeyProviderMode::Passphrase => {
+                    Box::new(crate::core::secrets::store::PassphraseRootKeyProvider::new(
+                        passphrase_path.clone(),
+                        load_passphrase.clone(),
+                    ))
+                }
+                crate::core::secrets::store::RootKeyProviderMode::LocalFile => Box::new(
+                    crate::core::secrets::store::LocalFileRootKeyProvider::new(local_file_path.clone()),
+                ),
+                _ => {
+                    return Err((
+                        SecretRootKeyError::InvalidMaterial(
+                            "Current provider mode does not support switching".to_string(),
+                        ),
+                        crate::core::secrets::store::default_root_key_provider().metadata(),
+                    ));
+                }
+            };
+            let old_provider_metadata = old_provider.metadata();
+            old_provider
+                .load_existing_root_key()
+                .map_err(|err| (err, old_provider_metadata))
         };
-        old_provider.load_or_create_root_key().map_err(|err| match err {
-            mcpmate_secrets::SecretRootKeyError::InvalidMaterial(message) => {
-                ApiError::BadRequest(format!("Invalid current passphrase: {message}"))
+
+    let current_passphrase_root_key = if switching_from_passphrase {
+        Some(match load_current_root_key() {
+            Ok(root_key) => root_key,
+            Err((error, _old_provider_metadata)) => return Err(api_error_from_secret_root_key_error(error)),
+        })
+    } else {
+        None
+    };
+
+    {
+        let mut store_guard = state.secret_store.write().await;
+        let secret_count = secure_store_secret_count(&db.pool).await?;
+        if secret_count == 0 {
+            return initialize_fresh_provider_with_locked_store(
+                &state,
+                &mut store_guard,
+                db.pool.clone(),
+                new_mode,
+                &passphrase_path,
+                &local_file_path,
+                &store_passphrase,
+            )
+            .await;
+        }
+    }
+
+    // Load root key from the old provider.
+    let root_key = match current_passphrase_root_key {
+        Some(root_key) => root_key,
+        None => match load_current_root_key() {
+            Ok(root_key) => root_key,
+            Err((error, old_provider_metadata)) => {
+                if current_mode == crate::core::secrets::store::RootKeyProviderMode::OperatingSystem {
+                    let readiness = secret_store_readiness_from_root_key_error(&error, old_provider_metadata);
+                    update_secret_store_readiness(&state, readiness).await;
+                    return Err(ApiError::ServiceUnavailable(
+                        concat!(
+                            "OS secure storage is unavailable and existing encrypted secrets require ",
+                            "the current root key before switching providers."
+                        )
+                        .to_string(),
+                    ));
+                }
+                return Err(api_error_from_secret_root_key_error(error));
             }
-            other => ApiError::InternalError(format!("Failed to load root key: {other}")),
-        })?
+        },
     };
 
     // Backup old provider key file (for passphrase/local_file modes).
@@ -908,4 +1072,29 @@ pub async fn switch_provider(
 
     let new_status = secret_store_status_data(&new_readiness);
     Ok(Json(ProviderSwitchResp::success(ProviderSwitchData { new_status })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_key_load_error_readiness_preserves_provider_metadata() {
+        let metadata = crate::core::secrets::store::OperatingSystemRootKeyProvider::new().metadata();
+        let error = mcpmate_secrets::SecretRootKeyError::ProviderUnavailable("keychain denied".to_string());
+
+        let readiness = secret_store_readiness_from_root_key_error(&error, metadata);
+
+        match readiness {
+            SecretStoreReadiness::Unavailable {
+                reason_code,
+                provider: Some(provider),
+                ..
+            } => {
+                assert_eq!(reason_code, "provider_unavailable");
+                assert_eq!(provider.provider_mode, "operating_system");
+            }
+            other => panic!("expected unavailable readiness with provider metadata, got {other:?}"),
+        }
+    }
 }

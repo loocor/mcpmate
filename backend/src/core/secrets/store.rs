@@ -9,8 +9,8 @@ pub use mcpmate_secrets::store::{
     SecretUsageLocationInput, SecretUsageUpsertInput, SecretUsageView,
 };
 pub use mcpmate_secrets::{
-    LocalFileRootKeyProvider, OperatingSystemRootKeyProvider, PassphraseRootKeyProvider,
-    RootKeyProviderMode, SecretRootKeyProvider, default_root_key_provider,
+    LocalFileRootKeyProvider, OperatingSystemRootKeyProvider, PassphraseRootKeyProvider, RootKeyProviderMode,
+    SecretRootKeyProvider, default_root_key_provider,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +89,7 @@ impl SecretStoreReadiness {
             if let Some(root_key_error) = cause.downcast_ref::<SecretRootKeyError>() {
                 let reason_code = match root_key_error {
                     SecretRootKeyError::ProviderUnavailable(_) => "provider_unavailable",
+                    SecretRootKeyError::MissingMaterial(_) => "missing_root_key",
                     SecretRootKeyError::InvalidMaterial(_) => "invalid_root_key",
                     SecretRootKeyError::LocalStorage(_) => "local_storage_error",
                     SecretRootKeyError::DevelopmentStorage(_) => "development_storage_error",
@@ -98,6 +99,24 @@ impl SecretStoreReadiness {
         }
 
         Self::unavailable("initialization_failed", message)
+    }
+
+    pub fn from_initialization_error_with_provider(
+        error: &anyhow::Error,
+        metadata: RootKeyProviderMetadata,
+    ) -> Self {
+        match Self::from_initialization_error(error) {
+            Self::Unavailable {
+                reason_code,
+                message,
+                provider,
+            } => Self::Unavailable {
+                reason_code,
+                message,
+                provider: provider.or_else(|| Some(provider_snapshot(metadata))),
+            },
+            ready => ready,
+        }
     }
 }
 
@@ -165,7 +184,8 @@ pub async fn bootstrap_secret_store(
 
     match persisted_mode {
         RootKeyProviderMode::Passphrase => {
-            let metadata = PassphraseRootKeyProvider::new(passphrase_path.clone(), "bootstrap-metadata-only").metadata();
+            let metadata =
+                PassphraseRootKeyProvider::new(passphrase_path.clone(), "bootstrap-metadata-only").metadata();
             // Passphrase mode always requires unlock — the wrapped key file is
             // never loaded automatically at bootstrap time.
             SecretStoreBootstrap {
@@ -178,11 +198,7 @@ pub async fn bootstrap_secret_store(
             }
         }
         RootKeyProviderMode::LocalFile => {
-            initialize_with_root_key_provider(
-                pool,
-                Arc::new(LocalFileRootKeyProvider::new(local_file_path)),
-            )
-            .await
+            initialize_with_root_key_provider(pool, Arc::new(LocalFileRootKeyProvider::new(local_file_path))).await
         }
         RootKeyProviderMode::OperatingSystem => {
             initialize_with_root_key_provider(pool, Arc::new(OperatingSystemRootKeyProvider::new())).await
@@ -218,19 +234,67 @@ async fn initialize_with_root_key_provider(
     pool: Pool<Sqlite>,
     provider: Arc<dyn SecretRootKeyProvider>,
 ) -> SecretStoreBootstrap {
+    let metadata = provider.metadata();
+    let secret_count = secure_store_secret_count_for_diagnostics(&pool).await.unwrap_or(-1);
+    tracing::info!(
+        provider_id = metadata.provider_id(),
+        provider_kind = metadata.provider_kind(),
+        provider_mode = metadata.mode().as_str(),
+        security_level = metadata.security_level().as_str(),
+        secret_count = secret_count,
+        "Initializing Secure Store root key provider"
+    );
     match LocalSecretStore::initialize_with_root_key_provider(pool, provider).await {
         Ok(store) => {
+            let store_metadata = store.provider_metadata();
+            tracing::info!(
+                provider_id = store_metadata.provider_id(),
+                provider_kind = store_metadata.provider_kind(),
+                provider_mode = store_metadata.mode().as_str(),
+                security_level = store_metadata.security_level().as_str(),
+                secret_count = secret_count,
+                "Secure Store root key provider initialized"
+            );
             let readiness = SecretStoreReadiness::ready(store.provider_metadata());
             SecretStoreBootstrap {
                 store: Some(store),
                 readiness,
             }
         }
-        Err(err) => SecretStoreBootstrap {
-            store: None,
-            readiness: SecretStoreReadiness::from_initialization_error(&err),
-        },
+        Err(err) => {
+            tracing::warn!(
+                provider_id = metadata.provider_id(),
+                provider_kind = metadata.provider_kind(),
+                provider_mode = metadata.mode().as_str(),
+                security_level = metadata.security_level().as_str(),
+                secret_count = secret_count,
+                error = %err,
+                "Secure Store root key provider initialization failed"
+            );
+            SecretStoreBootstrap {
+                store: None,
+                readiness: SecretStoreReadiness::from_initialization_error_with_provider(&err, metadata),
+            }
+        }
     }
+}
+
+async fn secure_store_secret_count_for_diagnostics(pool: &Pool<Sqlite>) -> Option<i64> {
+    let table_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'secure_store_secrets'",
+    )
+    .fetch_one(pool)
+    .await
+    .ok()
+    .unwrap_or(0);
+    if table_count == 0 {
+        return Some(0);
+    }
+
+    sqlx::query_scalar("SELECT COUNT(*) FROM secure_store_secrets")
+        .fetch_one(pool)
+        .await
+        .ok()
 }
 
 pub async fn initialize_development_secret_store(pool: Pool<Sqlite>) -> Result<LocalSecretStore> {
@@ -242,4 +306,29 @@ pub fn development_root_key_path() -> Result<PathBuf> {
         .base_dir()
         .join("secrets")
         .join("local-root.key"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initialization_error_with_provider_preserves_provider_metadata() {
+        let error = anyhow::Error::new(SecretRootKeyError::ProviderUnavailable("access denied".to_string()));
+        let metadata = OperatingSystemRootKeyProvider::new().metadata();
+
+        let readiness = SecretStoreReadiness::from_initialization_error_with_provider(&error, metadata);
+
+        match readiness {
+            SecretStoreReadiness::Unavailable {
+                reason_code,
+                provider: Some(provider),
+                ..
+            } => {
+                assert_eq!(reason_code, "provider_unavailable");
+                assert_eq!(provider.provider_mode, "operating_system");
+            }
+            other => panic!("expected unavailable readiness with provider metadata, got {other:?}"),
+        }
+    }
 }

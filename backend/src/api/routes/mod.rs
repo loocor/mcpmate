@@ -26,6 +26,7 @@ use tower_http::trace::TraceLayer;
 use tracing::Level;
 
 use crate::clients::ClientConfigService;
+use crate::common::startup_diagnostics::{self, StartupDegradedEvent, component};
 use crate::{
     core::{pool::UpstreamConnectionPool, proxy::ProxyServer},
     inspector::{calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager},
@@ -180,8 +181,18 @@ async fn create_router_internal(
         let pool = Arc::new(db.pool.clone());
         match ClientConfigService::bootstrap(pool).await {
             Ok(service) => Some(Arc::new(service)),
-            Err(err) => {
-                tracing::error!("Failed to bootstrap client configuration service: {}", err);
+            Err(error) => {
+                startup_diagnostics::warn_degraded(
+                    StartupDegradedEvent {
+                        component: component::API,
+                        phase: "client_services_bootstrap",
+                        reason_code: "client_config_bootstrap_failed",
+                        action_taken: "disable_client_config_service",
+                        subsystem: "builtin_services",
+                    },
+                    &error,
+                    "Failed to bootstrap client configuration service during API startup; continuing without client templates",
+                );
                 None
             }
         }
@@ -198,7 +209,15 @@ async fn create_router_internal(
                 reason_code, message, ..
             } = &bootstrap.readiness
             {
-                tracing::info!("Secure store not ready on startup: {reason_code} — {message}");
+                startup_diagnostics::warn_degraded_reason(
+                    component::API,
+                    "secret_store_bootstrap",
+                    reason_code,
+                    "continue_without_secret_store",
+                    "secure_store",
+                    message,
+                    "Secure store unavailable during API startup; continuing without secret resolver",
+                );
             }
         }
         (bootstrap.store.map(Arc::new), bootstrap.readiness)

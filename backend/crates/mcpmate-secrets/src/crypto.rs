@@ -78,7 +78,7 @@ impl EnvelopeCrypto {
                 aead::Aad::from(value_aad(&encrypted.alias).as_slice()),
                 &mut in_out,
             )
-            .map_err(|_| SecretError::ProviderUnavailable)?;
+            .map_err(|_| SecretError::DecryptionFailed("secret value authentication failed".to_string()))?;
         let value = std::str::from_utf8(plaintext)
             .map_err(|err| SecretError::InvalidMetadata(format!("secret value is not utf-8: {err}")))?;
         Ok(SecretValue::new(value.to_string()))
@@ -104,7 +104,7 @@ impl EnvelopeCrypto {
                 aead::Aad::from(key_aad(&encrypted.alias).as_slice()),
                 &mut encrypted_key,
             )
-            .map_err(|_| SecretError::ProviderUnavailable)?;
+            .map_err(|_| SecretError::DecryptionFailed("secret data key authentication failed".to_string()))?;
         data_key
             .try_into()
             .map_err(|_| SecretError::InvalidMetadata("invalid secret data key length".to_string()))

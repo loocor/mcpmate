@@ -3,6 +3,7 @@
 //! This module handles the startup and background connection management using core modules.
 
 use super::{Args, ProxyServer};
+use crate::common::startup_diagnostics::{self, StartupDegradedEvent, component};
 use crate::core::{pool::UpstreamConnectionPool, transport::TransportType};
 use crate::system::config::bind_socket_addr;
 use anyhow::Result;
@@ -39,8 +40,18 @@ pub async fn start_background_connections(
                 connection_pool_for_prewarm.clone(),
                 db.clone(),
             );
-            if let Err(e) = service.prewarm_enabled_servers_if_cache_miss().await {
-                tracing::warn!(error = %e, "Capability prewarm task failed");
+            if let Err(error) = service.prewarm_enabled_servers_if_cache_miss().await {
+                startup_diagnostics::warn_degraded(
+                    StartupDegradedEvent {
+                        component: component::BACKGROUND,
+                        phase: "capability_prewarm",
+                        reason_code: "capability_prewarm_failed",
+                        action_taken: "skip_prewarm",
+                        subsystem: "capability",
+                    },
+                    &error,
+                    "Capability prewarm task failed",
+                );
             }
         } else {
             tracing::debug!("Database not set on proxy; skipping cache prewarm");

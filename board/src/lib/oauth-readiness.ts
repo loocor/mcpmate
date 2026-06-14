@@ -17,6 +17,8 @@ export interface OAuthReadiness {
 	notice: OAuthReadinessNotice | null;
 }
 
+export type OAuthReadinessActionTarget = "auth-flow" | "security-settings";
+
 export interface ServerOAuthReadinessSource {
 	id: string;
 	oauth_status?: OAuthStatus["state"] | null;
@@ -88,4 +90,12 @@ export function resolveServerOAuthReadiness(
 			issue: server.oauth_issue ?? null,
 		},
 	});
+}
+
+export function getOAuthReadinessActionTarget(
+	readiness?: OAuthReadiness | null,
+): OAuthReadinessActionTarget {
+	return readiness?.notice?.kind === "secure-store-unavailable"
+		? "security-settings"
+		: "auth-flow";
 }

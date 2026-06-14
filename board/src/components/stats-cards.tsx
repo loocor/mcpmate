@@ -6,6 +6,9 @@ export interface StatCardData {
 	value: string | number;
 	description: string;
 	icon?: ReactNode;
+	action?: ReactNode;
+	tone?: "default" | "warning" | "destructive";
+	tooltip?: string;
 }
 
 interface StatsCardsProps {
@@ -22,6 +25,9 @@ export function StatsCards({ cards }: StatsCardsProps) {
 					value={card.value}
 					description={card.description}
 					icon={card.icon}
+					action={card.action}
+					tone={card.tone}
+					tooltip={card.tooltip}
 				/>
 			))}
 		</>

@@ -19,6 +19,8 @@ export interface EntityListItemProps {
 		label: string;
 		value: string | number;
 		valueTitle?: string;
+		labelClassName?: string;
+		valueClassName?: string;
 	}>;
 	bottomTags?: ReactNode[];
 
@@ -118,7 +120,9 @@ export function EntityListItem({
 									key={`stat-${id}-${index}`}
 									title={stat.valueTitle}
 								>
-									{stat.label}: {stat.value}
+									<span className={stat.labelClassName}>{stat.label}</span>
+									{": "}
+									<span className={stat.valueClassName}>{stat.value}</span>
 								</span>
 							))}
 						</div>

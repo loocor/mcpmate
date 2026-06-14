@@ -109,6 +109,13 @@ pub(crate) async fn ensure_schema(pool: &Pool<Sqlite>) -> Result<()> {
     Ok(())
 }
 
+pub(crate) async fn secure_store_secret_count(pool: &Pool<Sqlite>) -> Result<i64> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM secure_store_secrets")
+        .fetch_one(pool)
+        .await
+        .context("count secure store secrets")
+}
+
 async fn ensure_secure_store_secrets_schema(pool: &Pool<Sqlite>) -> Result<()> {
     if !table_exists(pool, SECURE_STORE_SECRETS_TABLE).await? {
         create_secure_store_secrets_table(pool).await?;
@@ -661,7 +668,9 @@ pub async fn get_provider_config(pool: &Pool<Sqlite>) -> Result<Option<ProviderC
         .context("load provider config")?;
 
     Ok(row.map(|r| ProviderConfigRow {
-        provider_mode: r.try_get("provider_mode").unwrap_or_else(|_| "operating_system".to_string()),
+        provider_mode: r
+            .try_get("provider_mode")
+            .unwrap_or_else(|_| "operating_system".to_string()),
     }))
 }
 

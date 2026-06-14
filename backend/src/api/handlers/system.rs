@@ -53,13 +53,12 @@ pub async fn get_readiness(State(state): State<Arc<AppState>>) -> Result<Json<Sy
 }
 
 async fn get_readiness_status(state: &AppState) -> SystemReadinessResp {
-    match (state.database.as_ref(), state.client_service.as_ref()) {
-        (Some(database), Some(_)) => match crate::system::settings::get_settings(&database.pool).await {
+    match state.database.as_ref() {
+        Some(database) => match crate::system::settings::get_settings(&database.pool).await {
             Ok(_) => SystemReadinessResp::ready(),
             Err(err) => SystemReadinessResp::waiting(err.to_string()),
         },
-        (None, _) => SystemReadinessResp::waiting("database_unavailable"),
-        (_, None) => SystemReadinessResp::waiting("client_service_unavailable"),
+        None => SystemReadinessResp::waiting("database_unavailable"),
     }
 }
 

@@ -3,7 +3,7 @@ import type { SecretMetadata } from "./types";
 import {
   classifySecretLifecycle,
   filterSecretsByLifecycle,
-  secretHasCleanupAvailable,
+  secretIsUnused,
 } from "./secret-lifecycle";
 
 function secret(
@@ -28,7 +28,7 @@ function secret(
 }
 
 describe("classifySecretLifecycle", () => {
-  it("marks active secrets before cleanup states", () => {
+  it("marks active secrets before inactive ownership states", () => {
     expect(
       classifySecretLifecycle(
         secret("active-token", {
@@ -39,13 +39,13 @@ describe("classifySecretLifecycle", () => {
     ).toBe("active");
   });
 
-  it("marks historical-only secrets as cleanup available", () => {
+  it("marks historical-only secrets as unused", () => {
     const lifecycle = classifySecretLifecycle(
       secret("old-token", { historical_usage_count: 2 }),
     );
 
-    expect(lifecycle.state).toBe("cleanup_available");
-    expect(secretHasCleanupAvailable(lifecycle)).toBe(true);
+    expect(lifecycle.state).toBe("unused");
+    expect(secretIsUnused(lifecycle)).toBe(true);
   });
 
   it("marks unreferenced user-created secrets as unused", () => {
@@ -54,35 +54,62 @@ describe("classifySecretLifecycle", () => {
     );
   });
 
-  it("marks OAuth secrets as managed even without active usage", () => {
+  it("marks inactive OAuth secrets as managed", () => {
+    const lifecycle = classifySecretLifecycle(
+      secret("oauth/server/access-token", {
+        kind: "oauth_access_token",
+        historical_usage_count: 1,
+      }),
+    );
+
+    expect(lifecycle.state).toBe("oauth_managed");
+    expect(secretIsUnused(lifecycle)).toBe(false);
+  });
+
+  it("does not mark inactive OAuth metadata as unused", () => {
     expect(
-      classifySecretLifecycle(
-        secret("oauth/server/access-token", {
-          kind: "oauth_access_token",
-          historical_usage_count: 1,
+      secretIsUnused(
+        secret("oauth/server/refresh-token", {
+          kind: "oauth_refresh_token",
         }),
-      ).state,
-    ).toBe("oauth_managed");
+      ),
+    ).toBe(false);
   });
 });
 
 describe("filterSecretsByLifecycle", () => {
-  const secrets = [
-    secret("active", { used_by_count: 1 }),
-    secret("cleanup", { historical_usage_count: 1 }),
-    secret("unused"),
-    secret("oauth", { kind: "oauth_refresh_token" }),
-  ];
+	const secrets = [
+		secret("active", { used_by_count: 1 }),
+		secret("cleanup", { historical_usage_count: 1 }),
+		secret("unused"),
+		secret("oauth", { kind: "oauth_refresh_token" }),
+		secret("active-oauth", {
+			kind: "oauth_access_token",
+			used_by_count: 1,
+		}),
+	];
 
-  it("filters cleanup-available secrets", () => {
-    expect(
-      filterSecretsByLifecycle(secrets, "cleanup_available").map(
-        (item) => item.alias,
-      ),
-    ).toEqual(["cleanup"]);
-  });
+	it("filters unused secrets by exclusive lifecycle classification", () => {
+		expect(
+			filterSecretsByLifecycle(secrets, "unused").map((item) => item.alias),
+		).toEqual(["cleanup", "unused"]);
+	});
 
-  it("keeps all secrets when filter is all", () => {
-    expect(filterSecretsByLifecycle(secrets, "all")).toHaveLength(4);
-  });
+	it("keeps all secrets when filter is all", () => {
+		expect(filterSecretsByLifecycle(secrets, "all")).toHaveLength(5);
+	});
+
+	it("includes active OAuth managed secrets in active filter", () => {
+		expect(
+			filterSecretsByLifecycle(secrets, "active").map((item) => item.alias),
+		).toEqual(["active", "active-oauth"]);
+	});
+
+	it("keeps OAuth managed filter exclusive to inactive OAuth ownership", () => {
+		expect(
+			filterSecretsByLifecycle(secrets, "oauth_managed").map(
+				(item) => item.alias,
+			),
+		).toEqual(["oauth"]);
+	});
 });

@@ -224,7 +224,8 @@ fn is_diagnostic_source(path: &Path) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
-    file_name == FRONTEND_DIAGNOSTICS_FILE_NAME
+    file_name == "mcpmate.log"
+        || file_name == FRONTEND_DIAGNOSTICS_FILE_NAME
         || file_name.starts_with("desktop-shell") && file_name.ends_with(".log")
         || file_name.starts_with("desktop-core.") && file_name.ends_with(".log")
 }
@@ -508,6 +509,7 @@ mod tests {
 
     #[test]
     fn diagnostic_source_filter_includes_runtime_logs_and_frontend_events() {
+        assert!(super::is_diagnostic_source(Path::new("mcpmate.log")));
         assert!(super::is_diagnostic_source(Path::new("desktop-shell.log")));
         assert!(super::is_diagnostic_source(Path::new(
             "desktop-shell.2026-06-04.log"
@@ -535,6 +537,7 @@ mod tests {
         let logs_dir = base_dir.join("logs");
         std::fs::create_dir_all(&logs_dir).expect("create logs dir");
         std::fs::create_dir_all(&destination).expect("create export dir");
+        std::fs::write(logs_dir.join("mcpmate.log"), "backend log").expect("write backend log");
         std::fs::write(logs_dir.join("desktop-shell.log"), "shell log").expect("write shell log");
         std::fs::write(logs_dir.join("frontend-diagnostics.jsonl"), "{}\n")
             .expect("write frontend log");
@@ -553,10 +556,11 @@ mod tests {
         assert!(export_path.join("manifest.json").exists());
         assert!(export_path.join("runtime.json").exists());
         assert!(export_path.join("snapshot.json").exists());
+        assert!(export_path.join("logs/mcpmate.log").exists());
         assert!(export_path.join("logs/desktop-shell.log").exists());
         assert!(export_path.join("logs/frontend-diagnostics.jsonl").exists());
         assert!(!export_path.join("logs/notes.txt").exists());
-        assert_eq!(response.file_count, 5);
+        assert_eq!(response.file_count, 6);
 
         let _ = std::fs::remove_dir_all(&test_dir);
     }

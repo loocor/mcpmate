@@ -15,6 +15,7 @@ pub mod path;
 pub mod paths;
 pub mod profile;
 pub mod server;
+pub mod startup_diagnostics;
 pub mod status;
 pub mod sync;
 pub mod types;

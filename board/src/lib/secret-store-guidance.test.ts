@@ -112,6 +112,29 @@ describe("resolveSecretStoreIssueGuidance", () => {
 		expect(guidance?.actions).toEqual(["retry_status"]);
 	});
 
+	it("guides missing root key without generic fallback", () => {
+		const guidance = resolveSecretStoreIssueGuidance(
+			{
+				status: "unavailable",
+				provider: {
+					provider_id: "local-file",
+					provider_kind: "local_file_root_key",
+					provider_mode: "local_file",
+					security_level: "medium",
+				},
+				issue: {
+					reason_code: "missing_root_key",
+					message: "root key file missing",
+				},
+			} satisfies SecretStoreStatusData,
+			t,
+		);
+
+		expect(guidance?.title).toBe("Root key material is missing");
+		expect(guidance?.actions).toEqual(["retry_provider", "open_security_settings"]);
+		expect(guidance?.retryProviderMode).toBe("local_file");
+	});
+
 	it("uses generic guidance for unknown reason codes", () => {
 		const guidance = resolveSecretStoreIssueGuidance(
 			{

@@ -48,7 +48,6 @@ import { PageLockScreen } from "../../components/lock-screen";
 import {
 	SecretEditorDrawer,
 	SecretCatalogEntry,
-	SecretStoreIssueAlert,
 	buildCreateEditorStateFromOrigin,
 	defaultSecretEditorState,
 	originFromSearchParams,
@@ -61,7 +60,8 @@ import { secretsApi, serversApi } from "../../lib/api";
 import { requiresEncryptionUnlock } from "../../lib/protection-password";
 import {
 	classifySecretLifecycle,
-	secretHasCleanupAvailable,
+	secretIsUnused,
+	secretMatchesLifecycleFilter,
 	type SecretLifecycleFilter,
 	type SecretLifecycleState,
 } from "../../lib/secret-lifecycle";
@@ -74,6 +74,7 @@ import {
 import { useSecretsTranslations } from "../../lib/hooks/use-secrets-translations";
 import { useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
+import { resolveSecretStoreIssueGuidance } from "../../lib/secret-store-guidance";
 import { useAppStore } from "../../lib/store";
 import type { SecretMetadata } from "../../lib/types";
 
@@ -91,7 +92,6 @@ type SecretToolbarEntity = Entity & {
 const SECRET_LIFECYCLE_FILTERS: SecretLifecycleFilter[] = [
 	"all",
 	"active",
-	"cleanup_available",
 	"unused",
 	"oauth_managed",
 ];
@@ -140,6 +140,7 @@ export function SecretsPage() {
 	const secretsQuery = useQuery({
 		queryKey: ["secrets"],
 		queryFn: secretsApi.list,
+		refetchOnMount: "always",
 		staleTime: 30_000,
 	});
 	const editorAlias = editor?.mode === "edit" ? editor.alias : null;
@@ -156,11 +157,19 @@ export function SecretsPage() {
 	});
 	const storeStatusQuery = useSecretStoreStatusQuery();
 	const storeReady = storeStatusQuery.data?.status === "ready";
+	const storeAccessUnavailable =
+		storeStatusQuery.data != null && storeStatusQuery.data.status !== "ready";
 	const needsEncryptionUnlock = requiresEncryptionUnlock(storeStatusQuery.data);
+	const storeIssueGuidance = useMemo(
+		() => resolveSecretStoreIssueGuidance(storeStatusQuery.data, t),
+		[storeStatusQuery.data, t],
+	);
 
 	const providerRetryMutation = useSecretStoreProviderRetryMutation(t, {
 		invalidateCatalog: true,
 	});
+	const { isPending: isProviderRetryPending, mutate: retrySecretStoreProvider } =
+		providerRetryMutation;
 
 	const serverNameById = useMemo(() => {
 		const map = new Map<string, string>();
@@ -193,6 +202,9 @@ export function SecretsPage() {
 			t(`provider.${providerKind}`, { defaultValue: providerKind }),
 		[t, i18n.language],
 	);
+	const providerUnavailableLabel = t("provider.unavailable", {
+		defaultValue: "Unavailable",
+	});
 
 	const catalogStatsLabels = useMemo(
 		() => ({
@@ -240,10 +252,10 @@ export function SecretsPage() {
 	const filteredSecrets = useMemo(() => {
 		const secrets = secretsQuery.data ?? [];
 		if (lifecycleFilter === "all") return secrets;
-		return secrets.filter(
-			(secret) => lifecycleByAlias.get(secret.alias)?.state === lifecycleFilter,
+		return secrets.filter((secret) =>
+			secretMatchesLifecycleFilter(secret, lifecycleFilter),
 		);
-	}, [lifecycleByAlias, lifecycleFilter, secretsQuery.data]);
+	}, [lifecycleFilter, secretsQuery.data]);
 
 	const secretsAsEntities = useMemo<SecretToolbarEntity[]>(() => {
 		return filteredSecrets.map((secret) => ({
@@ -294,10 +306,11 @@ export function SecretsPage() {
 					return {
 						secret,
 						display: secretDisplayByAlias.get(secret.alias)!,
-						kindLabel:
-							kindLabelByKind.get(secret.kind) ?? secret.kind,
+						kindLabel: kindLabelByKind.get(secret.kind) ?? secret.kind,
 						lifecycleState: lifecycle.state,
-						providerLabel: providerLabel(secret.provider_kind),
+						providerLabel: storeAccessUnavailable
+							? providerUnavailableLabel
+							: providerLabel(secret.provider_kind),
 					};
 				}),
 		[
@@ -305,8 +318,10 @@ export function SecretsPage() {
 			lifecycleByAlias,
 			pagedSecrets,
 			providerLabel,
+			providerUnavailableLabel,
 			secretsByAlias,
 			secretDisplayByAlias,
+			storeAccessUnavailable,
 		],
 	);
 	const hasNoSecretRecords = (secretsQuery.data?.length ?? 0) === 0;
@@ -442,27 +457,21 @@ export function SecretsPage() {
 	);
 	const handleCatalogOpen = useCallback(
 		(alias: string) => {
-			if (!storeReady) {
-				return;
-			}
 			const secret = secretsByAliasRef.current.get(alias);
 			if (secret) {
 				openEdit(secret);
 			}
 		},
-		[openEdit, storeReady],
+		[openEdit],
 	);
 	const handleCatalogViewUsage = useCallback(
 		(alias: string) => {
-			if (!storeReady) {
-				return;
-			}
 			const secret = secretsByAliasRef.current.get(alias);
 			if (secret) {
 				openEdit(secret, "usage");
 			}
 		},
-		[openEdit, storeReady],
+		[openEdit],
 	);
 	const { refetch: refetchSecretsList } = secretsQuery;
 	const { refetch: refetchStoreStatus } = storeStatusQuery;
@@ -471,6 +480,18 @@ export function SecretsPage() {
 	}, [refetchSecretsList, refetchStoreStatus]);
 	const isRefreshing =
 		secretsQuery.isRefetching || storeStatusQuery.isRefetching;
+	const isStoreIssueRetrying = isProviderRetryPending || storeStatusQuery.isFetching;
+	const retrySecureStoreIssue = useCallback(() => {
+		if (storeIssueGuidance?.retryProviderMode) {
+			retrySecretStoreProvider(storeIssueGuidance.retryProviderMode);
+			return;
+		}
+		void refetchStoreStatus();
+	}, [
+		refetchStoreStatus,
+		retrySecretStoreProvider,
+		storeIssueGuidance?.retryProviderMode,
+	]);
 	const viewUsageLabel = t("list.actions.viewUsage", {
 		defaultValue: "View usage",
 	});
@@ -501,8 +522,8 @@ export function SecretsPage() {
 	const statsCards = useMemo((): StatCardData[] => {
 		const secrets = secretsQuery.data ?? [];
 		const inUseCount = secrets.filter((secret) => secret.used_by_count > 0).length;
-		const cleanupCount = [...lifecycleByAlias.values()].filter(
-			secretHasCleanupAvailable,
+		const unusedCount = [...lifecycleByAlias.values()].filter(
+			secretIsUnused,
 		).length;
 		const storeStatus = storeStatusQuery.data;
 
@@ -545,25 +566,35 @@ export function SecretsPage() {
 				}),
 			},
 			{
-				title: t("stats.cleanup.title", { defaultValue: "Cleanup" }),
-				value: secretsQuery.isLoading ? "—" : cleanupCount,
-				description: t("stats.cleanup.description", {
-					defaultValue: "ready to review",
+				title: t("stats.unused.title", { defaultValue: "Unused" }),
+				value: secretsQuery.isLoading ? "—" : unusedCount,
+				description: t("stats.unused.description", {
+					defaultValue: "not linked",
 				}),
 			},
 			{
 				title: t("stats.store.title", { defaultValue: "Secure Store" }),
 				value: storeValue,
 				description: storeDescription,
+				tone: storeIssueGuidance ? "warning" : "default",
+				tooltip: storeIssueGuidance
+					? [
+						storeIssueGuidance.title,
+						storeIssueGuidance.description,
+						storeIssueGuidance.technicalDetail,
+					]
+						.filter(Boolean)
+						.join("\n\n")
+					: undefined,
 			},
 		];
 	}, [
 		lifecycleByAlias,
 		secretsQuery.data,
 		secretsQuery.isLoading,
+		storeIssueGuidance,
 		storeStatusQuery.data,
 		t,
-		i18n.language,
 	]);
 
 	const filters = (
@@ -808,28 +839,65 @@ export function SecretsPage() {
 						retryLabel={t("list.retry", { defaultValue: "Retry" })}
 					/>
 				) : null}
-				{storeStatusQuery.isSuccess && !storeReady && storeStatusQuery.data ? (
-					<SecretStoreIssueAlert
-						status={storeStatusQuery.data}
-						isRetrying={
-							providerRetryMutation.isPending || storeStatusQuery.isFetching
-						}
-						onRetryStatus={() => void storeStatusQuery.refetch()}
-						onRetryProvider={(mode) => providerRetryMutation.mutate(mode)}
-					/>
-				) : null}
 				{secretsQuery.isError ? (
-					<div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-						<p className="text-sm text-destructive">
-							{t("list.error", {
-								defaultValue: "Failed to load secrets. The secure store may be unavailable.",
-							})}
-						</p>
-						<Button variant="outline" size="sm" onClick={refreshSecretsPage}>
-							<RefreshCw className="mr-2 h-4 w-4" />
-							{t("list.retry", { defaultValue: "Retry" })}
-						</Button>
-					</div>
+					<FullHeightEmptyStateCard>
+						<EmptyState
+							icon={<ShieldAlert className="h-12 w-12" />}
+							title={
+								storeIssueGuidance?.title ??
+								t("list.issue.title", {
+									defaultValue: "Secure store needs attention",
+								})
+							}
+							titleTooltip={
+								storeIssueGuidance?.description ??
+								t("list.error", {
+									defaultValue:
+										"Failed to load secrets. The secure store may be unavailable.",
+								})
+							}
+							action={
+								<div className="flex flex-col items-center gap-4">
+									{storeIssueGuidance ? (
+										<p className="max-w-xl text-sm leading-6 text-muted-foreground">
+											{t("list.issue.actionPrefix", {
+												defaultValue: "Use the retry button below, or open",
+											})}{" "}
+											<Button
+												type="button"
+												variant="link"
+												className="h-auto p-0 align-baseline text-sm text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+												onClick={() => navigate("/settings?tab=security")}
+											>
+												{t("list.issue.securitySettings", {
+													defaultValue: "Security settings",
+												})}
+											</Button>{" "}
+											{t("list.issue.actionSuffix", {
+												defaultValue: "to change secure storage settings.",
+											})}
+										</p>
+									) : null}
+									<Button
+										type="button"
+										variant="warning"
+										size="sm"
+										onClick={retrySecureStoreIssue}
+										disabled={isStoreIssueRetrying}
+									>
+										<RefreshCw
+											className={`mr-2 h-4 w-4 ${
+												isStoreIssueRetrying ? "animate-spin" : ""
+											}`}
+										/>
+										{t("guidance.actions.retryProvider", {
+											defaultValue: "Retry secure storage",
+										})}
+									</Button>
+								</div>
+							}
+						/>
+					</FullHeightEmptyStateCard>
 				) : (
 					<div className="flex min-h-0 flex-1 flex-col gap-4">
 						<ListGridContainer
@@ -850,6 +918,7 @@ export function SecretsPage() {
 											kindLabel={row.kindLabel}
 											lifecycleState={row.lifecycleState}
 											providerLabel={row.providerLabel}
+											providerNeedsAttention={storeAccessUnavailable}
 											statsLabels={catalogStatsLabels}
 											onOpen={handleCatalogOpen}
 										/>
@@ -862,6 +931,7 @@ export function SecretsPage() {
 											kindLabel={row.kindLabel}
 											lifecycleState={row.lifecycleState}
 											providerLabel={row.providerLabel}
+											providerNeedsAttention={storeAccessUnavailable}
 											statsLabels={catalogStatsLabels}
 											viewUsageLabel={viewUsageLabel}
 											onOpen={handleCatalogOpen}
@@ -999,11 +1069,6 @@ function resolveDeleteDescription(
 			return t("delete.descriptionActive", {
 				defaultValue:
 					"This secret is still actively used. Remove active bindings before deleting it.",
-			});
-		case "cleanup_available":
-			return t("delete.descriptionHistorical", {
-				defaultValue:
-					"This removes the encrypted value. Historical usage metadata remains available without the secret value.",
 			});
 		case "oauth_managed":
 			return t("delete.descriptionOAuth", {

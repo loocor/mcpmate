@@ -1,13 +1,13 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use mcpmate_secrets::{SecretResolver, parse_placeholder};
+use mcpmate_secrets::{SecretError, SecretResolver, parse_placeholder};
 use reqwest::Url;
 use reqwest::header::WWW_AUTHENTICATE;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, error::Error, fmt, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::config::{
@@ -89,10 +89,46 @@ impl OAuthServerContext {
     }
 }
 
+const OAUTH_ISSUE_SECURE_STORE_UNAVAILABLE: &str = "secure_store_unavailable";
+const OAUTH_ISSUE_SECRET_UNREADABLE: &str = "oauth_secret_unreadable";
+const OAUTH_SECURE_STORE_UNAVAILABLE_MESSAGE: &str =
+    "Secure Store is unavailable; unlock or initialize it before connecting OAuth.";
+const OAUTH_SECRET_UNREADABLE_MESSAGE: &str =
+    "OAuth credentials cannot be read from Secure Store; reconnect OAuth to replace them.";
+
+fn secret_error_code(error: &SecretError) -> &'static str {
+    match error {
+        SecretError::InvalidReference(_) => "invalid_reference",
+        SecretError::NotFound(_) => "not_found",
+        SecretError::InvalidMetadata(_) => "invalid_metadata",
+        SecretError::DecryptionFailed(_) => "decryption_failed",
+        SecretError::ProviderUnavailable => "provider_unavailable",
+        SecretError::UnterminatedPlaceholder => "unterminated_placeholder",
+    }
+}
+
+fn oauth_secret_issue_from_error(error: &anyhow::Error) -> Option<OAuthStatusIssue> {
+    let secret_error = error.downcast_ref::<SecretError>()?;
+    match secret_error {
+        SecretError::ProviderUnavailable => Some(OAuthStatusIssue {
+            code: OAUTH_ISSUE_SECURE_STORE_UNAVAILABLE.to_string(),
+            message: OAUTH_SECURE_STORE_UNAVAILABLE_MESSAGE.to_string(),
+        }),
+        SecretError::InvalidReference(_)
+        | SecretError::NotFound(_)
+        | SecretError::InvalidMetadata(_)
+        | SecretError::DecryptionFailed(_)
+        | SecretError::UnterminatedPlaceholder => Some(OAuthStatusIssue {
+            code: OAUTH_ISSUE_SECRET_UNREADABLE.to_string(),
+            message: OAUTH_SECRET_UNREADABLE_MESSAGE.to_string(),
+        }),
+    }
+}
+
 const OAUTH_TOKEN_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Clone, Copy)]
-enum OAuthSecretSlot {
+pub(crate) enum OAuthSecretSlot {
     ClientSecret,
     AccessToken,
     RefreshToken,
@@ -132,6 +168,32 @@ pub struct OAuthManager {
     secret_store: Option<Arc<LocalSecretStore>>,
     secret_resolver: Option<Arc<dyn SecretResolver>>,
 }
+
+#[derive(Debug)]
+pub struct OAuthSecretCleanupUnavailable {
+    operation: &'static str,
+}
+
+impl OAuthSecretCleanupUnavailable {
+    fn new(operation: &'static str) -> Self {
+        Self { operation }
+    }
+}
+
+impl fmt::Display for OAuthSecretCleanupUnavailable {
+    fn fmt(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        write!(
+            formatter,
+            "Secure Store is unavailable; unlock or initialize it before {} OAuth credentials",
+            self.operation
+        )
+    }
+}
+
+impl Error for OAuthSecretCleanupUnavailable {}
 
 impl OAuthManager {
     pub fn new(pool: SqlitePool) -> Self {
@@ -297,7 +359,12 @@ impl OAuthManager {
         operation: &str,
     ) -> Result<()> {
         if has_secret_references && self.secret_store.is_none() {
-            bail!("Secure Store is unavailable; unlock or initialize it before {operation} OAuth credentials");
+            return Err(OAuthSecretCleanupUnavailable::new(match operation {
+                "removing" => "removing",
+                "revoking" => "revoking",
+                _ => "managing",
+            })
+            .into());
         }
         Ok(())
     }
@@ -351,7 +418,41 @@ impl OAuthManager {
                 "OAuth {label} is not stored in Secure Store custody; re-save the OAuth configuration and reconnect the server"
             )
         })?;
-        let value = self.secret_resolver()?.resolve_secret(&reference)?;
+        let alias = reference.alias().to_string();
+        let value = match self.secret_resolver()?.resolve_secret(&reference) {
+            Ok(value) => value,
+            Err(error) => {
+                let provider = self.secret_store.as_ref().map(|store| store.provider_metadata());
+                let provider_id = provider
+                    .as_ref()
+                    .map(|metadata| metadata.provider_id())
+                    .unwrap_or("none");
+                let provider_kind = provider
+                    .as_ref()
+                    .map(|metadata| metadata.provider_kind())
+                    .unwrap_or("none");
+                let provider_mode = provider
+                    .as_ref()
+                    .map(|metadata| metadata.mode().as_str())
+                    .unwrap_or("none");
+                let security_level = provider
+                    .as_ref()
+                    .map(|metadata| metadata.security_level().as_str())
+                    .unwrap_or("unknown");
+                tracing::warn!(
+                    oauth_secret_label = %label,
+                    secret_alias = %alias,
+                    error_code = secret_error_code(&error),
+                    error = %error,
+                    provider_id = provider_id,
+                    provider_kind = provider_kind,
+                    provider_mode = provider_mode,
+                    security_level = security_level,
+                    "Failed to resolve OAuth secret reference"
+                );
+                return Err(error.into());
+            }
+        };
         Ok(value.expose().to_string())
     }
 
@@ -774,10 +875,12 @@ impl OAuthManager {
         let mut token = server::get_server_oauth_token(&self.pool, server_id).await?;
         let manual_headers = server::get_server_headers(&self.pool, server_id).await.ok();
         let manual_authorization_override = server::has_manual_authorization_header(&manual_headers);
+        let mut refresh_issue = None;
         if !manual_authorization_override && token.as_ref().is_some_and(is_token_refreshable) {
             match self.refresh_access_token(server_id).await {
                 Ok(refreshed) => token = Some(refreshed),
                 Err(error) => {
+                    refresh_issue = oauth_secret_issue_from_error(&error);
                     tracing::warn!(
                         server_id = %server_id,
                         error = %error,
@@ -786,7 +889,14 @@ impl OAuthManager {
                 }
             }
         }
-        let (custody_state, requires_reconnect, issue) = self.oauth_custody_status(&config, &token)?;
+        let (mut custody_state, mut requires_reconnect, mut issue) = self.oauth_custody_status(&config, &token)?;
+        if let Some(refresh_issue) = refresh_issue {
+            if refresh_issue.code == OAUTH_ISSUE_SECURE_STORE_UNAVAILABLE {
+                custody_state = OAuthCustodyState::Unavailable;
+            }
+            requires_reconnect = true;
+            issue = Some(refresh_issue);
+        }
 
         let state = match (&config, &token) {
             (None, _) => OAuthConnectionState::NotConfigured,
@@ -980,6 +1090,7 @@ impl OAuthManager {
             self.http_client.clone()
         };
 
+        let endpoint = token_endpoint_error_target(&endpoint_url);
         let response = client
             .post(token_endpoint)
             .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
@@ -987,18 +1098,36 @@ impl OAuthManager {
             .body(encoded_body)
             .send()
             .await
+            .map_err(|error| {
+                tracing::warn!(
+                    endpoint = %endpoint,
+                    error = %error,
+                    "Failed to call OAuth token endpoint"
+                );
+                error
+            })
             .context("Failed to call OAuth token endpoint")?;
 
         if !response.status().is_success() {
             let status = response.status();
             let response_body = response.text().await.unwrap_or_default();
-            let endpoint = token_endpoint_error_target(&endpoint_url);
             if let Some(oauth_error) = oauth_error_code_from_body(&response_body) {
+                tracing::warn!(
+                    endpoint = %endpoint,
+                    status = %status,
+                    oauth_error = %oauth_error,
+                    "OAuth token endpoint returned error status"
+                );
                 bail!(
                     "OAuth token endpoint returned error status: {status} for {endpoint}. OAuth error: {oauth_error}"
                 );
             }
 
+            tracing::warn!(
+                endpoint = %endpoint,
+                status = %status,
+                "OAuth token endpoint returned error status"
+            );
             bail!("OAuth token endpoint returned error status: {status} for {endpoint}");
         }
 
@@ -1115,7 +1244,7 @@ fn generate_oauth_random(size: usize) -> String {
     nanoid::nanoid!(size, &nanoid::alphabet::SAFE)
 }
 
-fn oauth_secret_alias(
+pub(crate) fn oauth_secret_alias(
     server_id: &str,
     slot: OAuthSecretSlot,
 ) -> String {
@@ -1452,7 +1581,7 @@ mod tests {
         assert!(status.requires_reconnect);
         assert_eq!(
             status.issue.as_ref().map(|issue| issue.code.as_str()),
-            Some("secure_store_unavailable")
+            Some(OAUTH_ISSUE_SECURE_STORE_UNAVAILABLE)
         );
     }
 
@@ -1877,6 +2006,75 @@ mod tests {
         assert_eq!(
             mcpmate_secrets::resolve_placeholders(&stored.access_token, store.as_ref()).expect("resolve access"),
             "access-new"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_marks_unreadable_oauth_secret_as_reconnect_required() {
+        let (manager, _store, temp_dir) = setup_secure_manager().await;
+        insert_server(&manager.pool, "serv_unreadable_oauth_secret").await;
+
+        manager
+            .upsert_config(
+                "serv_unreadable_oauth_secret",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                    token_endpoint: "https://issuer.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+        manager
+            .store_oauth_token_for_server(
+                "serv_unreadable_oauth_secret",
+                OAuthTokenResponse {
+                    access_token: "access-old".to_string(),
+                    refresh_token: Some("refresh-123".to_string()),
+                    token_type: Some("bearer".to_string()),
+                    expires_in: Some(-60),
+                    scope: Some("read write".to_string()),
+                },
+                None,
+            )
+            .await
+            .expect("store expired token");
+
+        let corrupted_key = base64::engine::general_purpose::STANDARD.encode([0_u8; 48]);
+        sqlx::query("UPDATE secure_store_secrets SET encrypted_key = ?2 WHERE alias = ?1")
+            .bind(oauth_secret_alias(
+                "serv_unreadable_oauth_secret",
+                OAuthSecretSlot::RefreshToken,
+            ))
+            .bind(corrupted_key)
+            .execute(&manager.pool)
+            .await
+            .expect("corrupt refresh token record");
+
+        let reloaded_store = Arc::new(
+            LocalSecretStore::initialize_with_development_root_key(
+                manager.pool.clone(),
+                temp_dir.path().join("secrets").join("local-root.key"),
+            )
+            .await
+            .expect("reload secret store"),
+        );
+        let reloaded_manager = OAuthManager::new_optional_store(manager.pool.clone(), Some(reloaded_store));
+
+        let status = reloaded_manager
+            .get_status("serv_unreadable_oauth_secret")
+            .await
+            .expect("status should report unreadable secret");
+
+        assert!(matches!(status.state, OAuthConnectionState::Expired));
+        assert!(matches!(status.custody_state, OAuthCustodyState::Secure));
+        assert!(status.requires_reconnect);
+        assert_eq!(
+            status.issue.as_ref().map(|issue| issue.code.as_str()),
+            Some(OAUTH_ISSUE_SECRET_UNREADABLE)
         );
     }
 

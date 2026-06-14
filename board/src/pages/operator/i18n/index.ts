@@ -40,7 +40,7 @@ export const operatorTranslations = {
 			title: "Starting Core",
 			starting: "Starting MCPMate Core...",
 			waitingForBackend: "Waiting for MCPMate backend",
-			confirmingReadiness: "Confirming backend readiness...",
+			confirmingReadiness: "Confirming backend readiness",
 		},
 		readiness: {
 			ready: "Core ready",
