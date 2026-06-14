@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
 	backendReadinessStatusKey,
+	describeCoreStartupIssue,
+	describeBackendReadinessIssue,
 	shouldReportBackendReadinessAttempt,
 } from "./backend-readiness-diagnostics";
 
@@ -55,6 +57,131 @@ describe("backend readiness diagnostics", () => {
 		expect(backendReadinessStatusKey(null, new TypeError("fetch failed"))).toBe(
 			"network_error",
 		);
+		expect(backendReadinessStatusKey(null, new Error("Backend is starting"))).toBe(
+			"backend_starting",
+		);
 		expect(backendReadinessStatusKey(null, new Error("boom"))).toBe("error");
+	});
+
+	test("describes network readiness failures with the current api base", () => {
+		expect(
+			describeBackendReadinessIssue(
+				null,
+				new TypeError("fetch failed"),
+				"http://127.0.0.1:8080",
+			),
+		).toMatchObject({
+			kind: "network_error",
+			statusKey: "network_error",
+			detail: "Backend API is not reachable at http://127.0.0.1:8080: fetch failed",
+			messageKey: "networkError",
+			messageParams: {
+				error: "fetch failed",
+				target: " at http://127.0.0.1:8080",
+			},
+		});
+	});
+
+	test("describes backend-starting proxy responses as startup state", () => {
+		expect(
+			describeBackendReadinessIssue(
+				null,
+				new Error("Backend is starting"),
+				"http://127.0.0.1:8081",
+			),
+		).toMatchObject({
+			kind: "backend_starting",
+			statusKey: "backend_starting",
+			detail: "Backend process is starting at http://127.0.0.1:8081",
+			messageKey: "backendStarting",
+			messageParams: {
+				target: " at http://127.0.0.1:8081",
+			},
+		});
+	});
+
+	test("describes non-ready payloads without treating them as fatal", () => {
+		expect(
+			describeBackendReadinessIssue(
+				{ type: "starting", status: "pending", reason: "database_setup_failed" },
+				null,
+			),
+		).toMatchObject({
+			kind: "not_ready",
+			statusKey: "starting:pending",
+			detail: "Backend readiness is starting:pending (database_setup_failed)",
+			messageKey: "notReady",
+			messageParams: {
+				reason: " (database_setup_failed)",
+				statusKey: "starting:pending",
+			},
+		});
+	});
+
+	test("omits issues for ready payloads", () => {
+		expect(
+			describeBackendReadinessIssue(
+				{ type: "ready", status: "ok" },
+				null,
+				"http://127.0.0.1:8080",
+			),
+		).toBeNull();
+	});
+
+	test("describes stopped desktop core source state", () => {
+		expect(
+			describeCoreStartupIssue({
+				localService: {
+					status: "stopped",
+					label: "Stopped",
+					detail: "The localhost core is currently stopped.",
+					running: false,
+				},
+			}),
+		).toMatchObject({
+			kind: "core_stopped",
+			statusKey: "core:stopped",
+			detail: "Stopped: The localhost core is currently stopped.",
+			messageKey: "coreService",
+			messageParams: {
+				detail: "The localhost core is currently stopped.",
+				label: "Stopped: ",
+			},
+		});
+	});
+
+	test("describes unhealthy desktop core source state", () => {
+		expect(
+			describeCoreStartupIssue({
+				localService: {
+					status: "running_unhealthy",
+					label: "Running (Unhealthy)",
+					detail: "The API health check is failing.",
+					running: true,
+				},
+			}),
+		).toMatchObject({
+			kind: "core_unhealthy",
+			statusKey: "core:running_unhealthy",
+			detail: "Running (Unhealthy): The API health check is failing.",
+			messageKey: "coreService",
+			messageParams: {
+				detail: "The API health check is failing.",
+				label: "Running (Unhealthy): ",
+			},
+		});
+	});
+
+	test("omits running desktop core source state", () => {
+		expect(
+			describeCoreStartupIssue({
+				localService: {
+					status: "running",
+					label: "Running",
+					detail: "The API health check is passing.",
+					running: true,
+				},
+			}),
+		).toBeNull();
 	});
 });

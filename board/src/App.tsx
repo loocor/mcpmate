@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
 	BrowserRouter,
@@ -36,15 +37,24 @@ import { OnboardingPage } from "./pages/onboarding/onboarding-page";
 import { TrayOperatorPanelPage } from "./pages/operator/tray-operator-panel-page";
 import { OperatorBackendWaitingPage } from "./pages/operator/operator-backend-waiting";
 import {
+	API_BASE_URL,
 	notificationsService,
 	setApiBaseUrl,
 	systemApi,
 } from "./lib/api";
 import {
+	describeBackendReadinessIssue,
+	describeCoreStartupIssue,
 	backendReadinessStatusKey,
 	shouldReportBackendReadinessAttempt,
+	translateBackendReadinessIssue,
+	type CoreStartupSnapshot,
+	type BackendReadinessIssue,
 } from "./lib/backend-readiness-diagnostics";
-import { recordDesktopDiagnosticEvent } from "./lib/desktop-diagnostics";
+import {
+	exportDesktopDiagnostics,
+	recordDesktopDiagnosticEvent,
+} from "./lib/desktop-diagnostics";
 import { shouldBlockDesktopDropNavigation } from "./lib/desktop-drop-guard";
 import { isTauriEnvironmentSync } from "./lib/platform";
 
@@ -340,17 +350,23 @@ type BackendReadinessMessageKey = "starting" | "waitingForBackend" | "confirming
 const backendReadinessFallbacks: Record<BackendReadinessMessageKey, string> = {
 	starting: "Starting MCPMate Core...",
 	waitingForBackend: "Waiting for MCPMate backend",
-	confirmingReadiness: "Confirming backend readiness...",
+	confirmingReadiness: "Confirming backend readiness",
 };
+
+const DEV_CORE_SOURCE_PATH = "/__mcpmate/dev-core-source";
 
 function BackendReadinessGate({ children }: { children: ReactNode }) {
 	const { t } = useTranslation();
-	const [desktopSourceReady, setDesktopSourceReady] = useState(
-		() => !isTauriEnvironmentSync(),
+	const [coreSourceReady, setCoreSourceReady] = useState(
+		() => !isTauriEnvironmentSync() && !import.meta.env.DEV,
 	);
 	const [backendReady, setBackendReady] = useState(false);
 	const [attempt, setAttempt] = useState(0);
 	const [messageKey, setMessageKey] = useState<BackendReadinessMessageKey>("starting");
+	const [readinessIssue, setReadinessIssue] = useState<BackendReadinessIssue | null>(null);
+	const [diagnosticsExporting, setDiagnosticsExporting] = useState(false);
+	const [diagnosticsExportPath, setDiagnosticsExportPath] = useState<string | null>(null);
+	const [diagnosticsExportError, setDiagnosticsExportError] = useState<string | null>(null);
 	const [readinessStartedAtMs] = useState(() => Date.now());
 	const lastDiagnosticRef = useRef<{
 		reportedAtMs: number;
@@ -359,7 +375,18 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 
 	useEffect(() => {
 		if (!isTauriEnvironmentSync()) {
-			setDesktopSourceReady(true);
+			if (import.meta.env.DEV) {
+				let cancelled = false;
+				void syncDevCoreSource().finally(() => {
+					if (!cancelled) {
+						setCoreSourceReady(true);
+					}
+				});
+				return () => {
+					cancelled = true;
+				};
+			}
+			setCoreSourceReady(true);
 			return;
 		}
 
@@ -367,20 +394,30 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 		const syncDesktopCoreSource = async () => {
 			try {
 				const { invoke } = await import("@tauri-apps/api/core");
-				const source = (await invoke("mcp_shell_read_core_source")) as {
-					apiBaseUrl?: string;
-				};
-				if (!cancelled && typeof source.apiBaseUrl === "string") {
-					setApiBaseUrl(source.apiBaseUrl);
-					notificationsService.reconnectAfterApiBaseChanged();
+				const source = (await invoke("mcp_shell_read_core_source")) as CoreStartupSnapshot;
+				if (!cancelled) {
+					if (typeof source.apiBaseUrl === "string") {
+						setApiBaseUrl(source.apiBaseUrl);
+						notificationsService.reconnectAfterApiBaseChanged();
+					}
+					setReadinessIssue(describeCoreStartupIssue(source));
 				}
 			} catch (error) {
+				if (!cancelled) {
+					setReadinessIssue(
+						describeBackendReadinessIssue(
+							null,
+							error,
+							API_BASE_URL,
+						),
+					);
+				}
 				if (import.meta.env.DEV) {
 					console.warn("[App] Failed to resolve desktop core source", error);
 				}
 			} finally {
 				if (!cancelled) {
-					setDesktopSourceReady(true);
+					setCoreSourceReady(true);
 				}
 			}
 		};
@@ -393,7 +430,7 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 	}, []);
 
 	useEffect(() => {
-		if (!desktopSourceReady || backendReady) {
+		if (!coreSourceReady || backendReady) {
 			return;
 		}
 
@@ -442,17 +479,18 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 			});
 		}
 
-		async function checkReadiness(): Promise<void> {
-			setMessageKey("waitingForBackend");
-			let payload: unknown = null;
-			let readinessError: unknown = null;
-			try {
-				setMessageKey("confirmingReadiness");
-				payload = await systemApi.getReadiness();
+			async function checkReadiness(): Promise<void> {
+				setMessageKey("waitingForBackend");
+				let payload: unknown = null;
+				let readinessError: unknown = null;
+				try {
+					setMessageKey("confirmingReadiness");
+					payload = await systemApi.getReadiness();
 				if (cancelled) {
 					return;
 				}
 				if (isReadinessPayload(payload) && payload.type === "ready" && payload.status === "ok") {
+					setReadinessIssue(null);
 					setBackendReady(true);
 					return;
 				}
@@ -460,6 +498,13 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 				readinessError = error;
 				// Keep retrying until the backend API is reachable.
 			}
+			setReadinessIssue(
+				describeBackendReadinessIssue(
+					isReadinessPayload(payload) ? payload : null,
+					readinessError,
+					API_BASE_URL,
+				),
+			);
 			reportReadinessWait(payload, readinessError);
 			scheduleRetry();
 		}
@@ -475,24 +520,81 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 	}, [
 		attempt,
 		backendReady,
-		desktopSourceReady,
+		coreSourceReady,
 		readinessStartedAtMs,
 	]);
 
+	async function handleExportDiagnostics(): Promise<void> {
+		setDiagnosticsExporting(true);
+		setDiagnosticsExportPath(null);
+		setDiagnosticsExportError(null);
+		try {
+			const response = await exportDesktopDiagnostics();
+			if (response?.exportPath) {
+				setDiagnosticsExportPath(response.exportPath);
+			}
+		} catch (error) {
+			setDiagnosticsExportError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setDiagnosticsExporting(false);
+		}
+	}
+
 	if (!backendReady) {
+		const waitingProps = {
+			diagnosticsAvailable: isTauriEnvironmentSync(),
+			diagnosticsExportError,
+			diagnosticsExporting,
+			diagnosticsExportPath,
+			issue: readinessIssue,
+			onExportDiagnostics: handleExportDiagnostics,
+		};
 		if (isOperatorSurfacePath()) {
-			return <OperatorBackendWaitingPage messageKey={messageKey} />;
+			return <OperatorBackendWaitingPage messageKey={messageKey} {...waitingProps} />;
 		}
 		return (
 			<BackendWaitingPage
 				message={t(`backendReadiness.${messageKey}`, {
 					defaultValue: backendReadinessFallbacks[messageKey],
 				})}
+				{...waitingProps}
 			/>
 		);
 	}
 
 	return <>{children}</>;
+}
+
+async function syncDevCoreSource(): Promise<boolean> {
+	if (!import.meta.env.DEV || isTauriEnvironmentSync()) {
+		return false;
+	}
+	try {
+		const response = await fetch(DEV_CORE_SOURCE_PATH, { cache: "no-store" });
+		if (!response.ok) {
+			return false;
+		}
+		const payload: unknown = await response.json();
+		if (!isDevCoreSourcePayload(payload)) {
+			return false;
+		}
+		if (payload.apiBaseUrl === API_BASE_URL) {
+			return false;
+		}
+		setApiBaseUrl(payload.apiBaseUrl);
+		notificationsService.reconnectAfterApiBaseChanged();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function isDevCoreSourcePayload(value: unknown): value is { apiBaseUrl: string } {
+	if (typeof value !== "object" || value === null) {
+		return false;
+	}
+	const candidate = value as { apiBaseUrl?: unknown };
+	return typeof candidate.apiBaseUrl === "string" && candidate.apiBaseUrl.trim().length > 0;
 }
 
 function isReadinessPayload(value: unknown): value is {
@@ -511,11 +613,27 @@ function isOperatorSurfacePath(): boolean {
 	return normalized === "/operator";
 }
 
-function BackendWaitingPage({ message }: { message: string }) {
+function BackendWaitingPage({
+	diagnosticsAvailable,
+	diagnosticsExportError,
+	diagnosticsExporting,
+	diagnosticsExportPath,
+	issue,
+	message,
+	onExportDiagnostics,
+}: {
+	diagnosticsAvailable: boolean;
+	diagnosticsExportError: string | null;
+	diagnosticsExporting: boolean;
+	diagnosticsExportPath: string | null;
+	issue: BackendReadinessIssue | null;
+	message: string;
+	onExportDiagnostics: () => Promise<void>;
+}) {
 	const { t } = useTranslation();
 
 	return (
-		<div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 text-slate-900 dark:bg-slate-950 dark:text-white">
+		<div className="relative flex min-h-screen items-center justify-center bg-slate-50 px-6 text-slate-900 dark:bg-slate-950 dark:text-white">
 			<div className="flex max-w-sm flex-col items-center text-center">
 				<img
 					src="/logo.svg"
@@ -527,6 +645,83 @@ function BackendWaitingPage({ message }: { message: string }) {
 					{t("backendReadiness.title", { defaultValue: "MCPMate is starting" })}
 				</h1>
 				<p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{message}</p>
+			</div>
+			<StartupAttentionFooter
+				diagnosticsAvailable={diagnosticsAvailable}
+				diagnosticsExportError={diagnosticsExportError}
+				diagnosticsExporting={diagnosticsExporting}
+				diagnosticsExportPath={diagnosticsExportPath}
+				issue={issue}
+				onExportDiagnostics={onExportDiagnostics}
+			/>
+		</div>
+	);
+}
+
+function StartupAttentionFooter({
+	diagnosticsAvailable,
+	diagnosticsExportError,
+	diagnosticsExporting,
+	diagnosticsExportPath,
+	issue,
+	onExportDiagnostics,
+}: {
+	diagnosticsAvailable: boolean;
+	diagnosticsExportError: string | null;
+	diagnosticsExporting: boolean;
+	diagnosticsExportPath: string | null;
+	issue: BackendReadinessIssue | null;
+	onExportDiagnostics: () => Promise<void>;
+}) {
+	const { t } = useTranslation();
+	if (!issue && !diagnosticsExportError && !diagnosticsExportPath) {
+		return null;
+	}
+
+	let detail = issue ? translateBackendReadinessIssue(t, issue) : undefined;
+	if (diagnosticsExportError) {
+		detail = t("backendReadiness.exportFailed", {
+			defaultValue: "Unable to export diagnostics: {{error}}",
+			error: diagnosticsExportError,
+		});
+	} else if (diagnosticsExportPath) {
+		detail = t("backendReadiness.exportSuccess", {
+			defaultValue: "Diagnostics exported to {{path}}",
+			path: diagnosticsExportPath,
+		});
+	}
+
+	return (
+		<div className="pointer-events-none fixed inset-x-0 bottom-5 z-10 flex justify-center px-4">
+			<div
+				className="pointer-events-auto flex h-10 max-w-[min(48rem,calc(100vw-2rem))] items-center gap-2 rounded-full border border-amber-200/70 bg-white/85 px-3 text-xs text-slate-600 opacity-75 shadow-sm shadow-slate-950/5 backdrop-blur transition-opacity duration-200 hover:opacity-100 dark:border-amber-400/20 dark:bg-slate-950/80 dark:text-slate-300"
+				aria-live="polite"
+				title={detail}
+			>
+				<span className="relative flex h-2.5 w-2.5 flex-none" aria-hidden="true">
+					<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-40" />
+					<span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+				</span>
+				<span className="min-w-0 truncate">{detail}</span>
+				{diagnosticsAvailable ? (
+					<button
+						type="button"
+						onClick={() => void onExportDiagnostics()}
+						disabled={diagnosticsExporting}
+						className="ml-1 inline-flex h-7 flex-none items-center gap-1 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+					>
+						<Download className="h-3 w-3" aria-hidden="true" />
+						<span className="hidden sm:inline">
+							{diagnosticsExporting
+								? t("backendReadiness.exportingDiagnostics", {
+										defaultValue: "Exporting diagnostics...",
+									})
+								: t("backendReadiness.exportDiagnostics", {
+										defaultValue: "Export diagnostics",
+									})}
+						</span>
+					</button>
+				) : null}
 			</div>
 		</div>
 	);
