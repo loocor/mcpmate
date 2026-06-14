@@ -626,6 +626,7 @@ export const SECRET_STORE_REASON_CODES = [
   "database_unavailable",
   "schema_migration_required",
   "cache_error",
+  "missing_root_key",
   "invalid_root_key",
   "local_storage_error",
   "development_storage_error",

@@ -131,6 +131,8 @@ impl RootKeyProviderMetadata {
 pub enum SecretRootKeyError {
     #[error("operating-system secure storage is unavailable: {0}")]
     ProviderUnavailable(String),
+    #[error("root key material is missing: {0}")]
+    MissingMaterial(String),
     #[error("invalid root key material: {0}")]
     InvalidMaterial(String),
     #[error("local root key storage failed: {0}")]
@@ -141,6 +143,7 @@ pub enum SecretRootKeyError {
 
 pub trait SecretRootKeyProvider: fmt::Debug + Send + Sync {
     fn metadata(&self) -> RootKeyProviderMetadata;
+    fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError>;
     fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError>;
 }
 
@@ -171,7 +174,10 @@ impl OperatingSystemRootKeyProvider {
 
     /// Store an existing root key in the OS keyring.
     /// Used during provider migration.
-    pub fn set_root_key(&self, root_key: &SecretRootKey) -> Result<(), SecretRootKeyError> {
+    pub fn set_root_key(
+        &self,
+        root_key: &SecretRootKey,
+    ) -> Result<(), SecretRootKeyError> {
         let entry = keyring::Entry::new(&self.service, &self.user)
             .map_err(|err| SecretRootKeyError::ProviderUnavailable(format!("keyring entry: {err}")))?;
         entry
@@ -199,6 +205,10 @@ impl SecretRootKeyProvider for OperatingSystemRootKeyProvider {
 
     fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
         load_or_create_os_root_key(&self.service, &self.user)
+    }
+
+    fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        load_existing_os_root_key(&self.service, &self.user)
     }
 }
 
@@ -234,7 +244,10 @@ impl PassphraseRootKeyProvider {
 
     /// Store an existing root key wrapped with this provider's passphrase.
     /// Used during provider migration — writes the wrapped key file.
-    pub fn set_root_key(&self, root_key: &SecretRootKey) -> Result<(), SecretRootKeyError> {
+    pub fn set_root_key(
+        &self,
+        root_key: &SecretRootKey,
+    ) -> Result<(), SecretRootKeyError> {
         if self.passphrase.is_empty() {
             return Err(SecretRootKeyError::InvalidMaterial(
                 "passphrase cannot be empty".to_string(),
@@ -280,6 +293,10 @@ impl SecretRootKeyProvider for PassphraseRootKeyProvider {
     fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
         load_or_create_passphrase_root_key(&self.wrapped_key_path, &self.passphrase)
     }
+
+    fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        load_existing_passphrase_root_key(&self.wrapped_key_path, &self.passphrase)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -296,7 +313,10 @@ impl LocalFileRootKeyProvider {
 
     /// Store an existing root key as a local file.
     /// Used during provider migration.
-    pub fn set_root_key(&self, root_key: &SecretRootKey) -> Result<(), SecretRootKeyError> {
+    pub fn set_root_key(
+        &self,
+        root_key: &SecretRootKey,
+    ) -> Result<(), SecretRootKeyError> {
         if let Some(parent) = self.local_key_path.parent() {
             fs::create_dir_all(parent).map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
         }
@@ -317,6 +337,10 @@ impl SecretRootKeyProvider for LocalFileRootKeyProvider {
 
     fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
         load_or_create_local_file_root_key(&self.local_key_path)
+    }
+
+    fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        load_existing_local_file_root_key(&self.local_key_path)
     }
 }
 
@@ -355,6 +379,19 @@ impl SecretRootKeyProvider for DevelopmentRootKeyProvider {
             other => other,
         })
     }
+
+    fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        if let Ok(value) = std::env::var(DEVELOPMENT_ROOT_KEY_ENV) {
+            if !value.trim().is_empty() {
+                return Ok(derive_key(value.as_bytes()));
+            }
+        }
+
+        self.fallback.load_existing_root_key().map_err(|err| match err {
+            SecretRootKeyError::LocalStorage(message) => SecretRootKeyError::DevelopmentStorage(message),
+            other => other,
+        })
+    }
 }
 
 fn generate_root_key() -> Result<[u8; 32], SecretRootKeyError> {
@@ -384,14 +421,7 @@ fn derive_key(material: &[u8]) -> SecretRootKey {
 
 fn load_or_create_local_file_root_key(local_key_path: &Path) -> Result<SecretRootKey, SecretRootKeyError> {
     if local_key_path.exists() {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(local_key_path)
-            .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
-        let mut encoded = String::new();
-        file.read_to_string(&mut encoded)
-            .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
-        return decode_root_key(&encoded);
+        return read_local_file_root_key(local_key_path);
     }
 
     if let Some(parent) = local_key_path.parent() {
@@ -400,6 +430,27 @@ fn load_or_create_local_file_root_key(local_key_path: &Path) -> Result<SecretRoo
     let root = generate_root_key()?;
     write_secret_file(local_key_path, STANDARD.encode(root).as_bytes())?;
     Ok(derive_key(&root))
+}
+
+fn load_existing_local_file_root_key(local_key_path: &Path) -> Result<SecretRootKey, SecretRootKeyError> {
+    if !local_key_path.exists() {
+        return Err(SecretRootKeyError::MissingMaterial(format!(
+            "local root key file '{}' does not exist",
+            local_key_path.display()
+        )));
+    }
+    read_local_file_root_key(local_key_path)
+}
+
+fn read_local_file_root_key(local_key_path: &Path) -> Result<SecretRootKey, SecretRootKeyError> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .open(local_key_path)
+        .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    let mut encoded = String::new();
+    file.read_to_string(&mut encoded)
+        .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    decode_root_key(&encoded)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -423,14 +474,7 @@ fn load_or_create_passphrase_root_key(
     }
 
     if wrapped_key_path.exists() {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(wrapped_key_path)
-            .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
-        let mut serialized = String::new();
-        file.read_to_string(&mut serialized)
-            .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
-        return unwrap_passphrase_root_key(&serialized, passphrase);
+        return read_passphrase_root_key(wrapped_key_path, passphrase);
     }
 
     if let Some(parent) = wrapped_key_path.parent() {
@@ -453,6 +497,40 @@ fn load_or_create_passphrase_root_key(
     .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
     write_secret_file(wrapped_key_path, &serialized)?;
     Ok(derive_key(&root))
+}
+
+fn load_existing_passphrase_root_key(
+    wrapped_key_path: &Path,
+    passphrase: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    if passphrase.is_empty() {
+        return Err(SecretRootKeyError::InvalidMaterial(
+            "passphrase cannot be empty".to_string(),
+        ));
+    }
+
+    if !wrapped_key_path.exists() {
+        return Err(SecretRootKeyError::MissingMaterial(format!(
+            "passphrase root key file '{}' does not exist",
+            wrapped_key_path.display()
+        )));
+    }
+
+    read_passphrase_root_key(wrapped_key_path, passphrase)
+}
+
+fn read_passphrase_root_key(
+    wrapped_key_path: &Path,
+    passphrase: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .open(wrapped_key_path)
+        .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    let mut serialized = String::new();
+    file.read_to_string(&mut serialized)
+        .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    unwrap_passphrase_root_key(&serialized, passphrase)
 }
 
 fn unwrap_passphrase_root_key(
@@ -639,8 +717,34 @@ fn load_or_create_os_root_key(
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn load_existing_os_root_key(
+    service: &str,
+    user: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    let entry =
+        keyring::Entry::new(service, user).map_err(|err| SecretRootKeyError::ProviderUnavailable(err.to_string()))?;
+    match entry.get_password() {
+        Ok(encoded) => decode_root_key(&encoded),
+        Err(keyring::Error::NoEntry) => Err(SecretRootKeyError::MissingMaterial(
+            "operating-system root key entry does not exist".to_string(),
+        )),
+        Err(err) => Err(SecretRootKeyError::ProviderUnavailable(err.to_string())),
+    }
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn load_or_create_os_root_key(
+    _service: &str,
+    _user: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    Err(SecretRootKeyError::ProviderUnavailable(
+        "unsupported platform".to_string(),
+    ))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn load_existing_os_root_key(
     _service: &str,
     _user: &str,
 ) -> Result<SecretRootKey, SecretRootKeyError> {
@@ -758,6 +862,20 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn local_file_provider_load_existing_missing_file_does_not_create_root_key() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let key_path = temp_dir.path().join("secrets").join("missing-local-root.key");
+
+        let err = LocalFileRootKeyProvider::new(&key_path)
+            .load_existing_root_key()
+            .expect_err("missing local root key should fail");
+
+        assert!(matches!(err, SecretRootKeyError::MissingMaterial(_)));
+        assert!(!key_path.exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn local_file_provider_rejects_short_root_material() {
         let temp_dir = TempDir::new().expect("temp dir");
         let key_path = temp_dir.path().join("secrets").join("local-root.key");
@@ -818,6 +936,20 @@ mod tests {
 
         assert_eq!(first, second);
         assert!(key_path.exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn passphrase_provider_load_existing_missing_file_does_not_create_root_key() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let key_path = temp_dir.path().join("secrets").join("missing-passphrase-root-key.json");
+
+        let err = PassphraseRootKeyProvider::new(&key_path, "correct horse battery staple")
+            .load_existing_root_key()
+            .expect_err("missing passphrase root key should fail");
+
+        assert!(matches!(err, SecretRootKeyError::MissingMaterial(_)));
+        assert!(!key_path.exists());
     }
 
     #[test]
