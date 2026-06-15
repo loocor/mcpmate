@@ -64,7 +64,7 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 
 export function ServerListPage() {
 	usePageTranslations("servers");
-	const { t } = useTranslation("servers");
+	const { t, i18n } = useTranslation("servers");
 	const navigate = useNavigate();
 	const [debugInfo, setDebugInfo] = useState<string | null>(null);
 	const [manualOpen, setManualOpen] = useState(false);
@@ -153,6 +153,7 @@ export function ServerListPage() {
 			}),
 		);
 	}, [
+		i18n.language,
 		openManualIngest,
 		pendingServerDeepLinkImport,
 		setPendingServerDeepLinkImport,
@@ -202,7 +203,7 @@ export function ServerListPage() {
 
 			openManualIngest(payload);
 		},
-		[openManualIngest, t],
+		[i18n.language, openManualIngest, t],
 	);
 
 	const {
@@ -311,7 +312,7 @@ export function ServerListPage() {
 				setPending((p) => ({ ...p, [serverId]: false }));
 			}
 		},
-		[queryClient, t],
+		[i18n.language, queryClient, t],
 	);
 
 	// Note: Reconnect functionality is moved to instance-level pages
@@ -451,7 +452,7 @@ export function ServerListPage() {
 				setIsTogglePending(false);
 			}
 		},
-		[queryClient, syncServerStateToClients, t],
+		[i18n.language, queryClient, syncServerStateToClients, t],
 	);
 
 	const catalogStatsLabels = useMemo(
@@ -461,7 +462,7 @@ export function ServerListPage() {
 			resources: t("entity.stats.resources", { defaultValue: "Resources" }),
 			templates: t("entity.stats.templates", { defaultValue: "Templates" }),
 		}),
-		[t],
+		[i18n.language, t],
 	);
 
 	const handleCatalogOpen = useCallback(
@@ -565,7 +566,7 @@ export function ServerListPage() {
 				}),
 			},
 		];
-	}, [serverData, t]);
+	}, [i18n.language, serverData, t]);
 
 	// Prepare loading skeleton
 	const loadingSkeleton =

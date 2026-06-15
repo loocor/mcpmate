@@ -71,7 +71,7 @@ function buildCapabilityStats(
 }
 
 function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
-	const { t } = useTranslation("servers");
+	const { t, i18n } = useTranslation("servers");
 	const {
 		server,
 		statsLabels,
@@ -185,7 +185,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		}
 
 		return tags;
-	}, [server.server_type, t]);
+	}, [i18n.language, server.server_type, t]);
 
 	const unifyEligibilityDescriptionTag = renderUnifyEligibilityTag();
 	const unifyEligibilityTitleTag = renderUnifyEligibilityTag();
@@ -250,7 +250,14 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 				{firstLine}
 			</div>
 		);
-	}, [server.id, server.meta?.description, server.name, server.server_type, t]);
+	}, [
+		i18n.language,
+		server.id,
+		server.meta?.description,
+		server.name,
+		server.server_type,
+		t,
+	]);
 
 	const listDescription = useMemo(
 		() => (
