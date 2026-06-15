@@ -3,6 +3,11 @@ import type { ServerIngestPayload } from "./install-normalizer";
 export type ServerUniImportTransferPayload = ServerIngestPayload;
 
 export const SERVER_UNI_IMPORT_TEXT_MAX_BYTES = 1_048_576;
+export const SERVER_UNI_IMPORT_TRANSFER_TYPES = [
+	"Files",
+	"text/plain",
+	"text/uri-list",
+] as const;
 const SERVER_UNI_IMPORT_MAX_FILES = 16;
 
 export type ServerUniImportTransferErrorCode =
@@ -105,13 +110,19 @@ function assertTextWithinLimit(text: string): void {
 	}
 }
 
+export function hasDataTransferType(
+	types: DataTransfer["types"] | null | undefined,
+	type: string,
+): boolean {
+	if (!types) return false;
+	return "contains" in types
+		? (types as unknown as DOMStringList).contains(type)
+		: (types as readonly string[]).includes(type);
+}
+
 export function canIngestFromDataTransfer(dataTransfer: DataTransfer | null): boolean {
-	if (!dataTransfer) return false;
-	const types = Array.from(dataTransfer.types ?? []);
-	return (
-		types.includes("Files") ||
-		types.includes("text/plain") ||
-		types.includes("text/uri-list")
+	return SERVER_UNI_IMPORT_TRANSFER_TYPES.some((type) =>
+		hasDataTransferType(dataTransfer?.types, type),
 	);
 }
 

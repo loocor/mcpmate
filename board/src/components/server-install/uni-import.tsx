@@ -972,6 +972,7 @@ export const ServerInstallManualForm = forwardRef<
 							{/* Uni-Import Drop Zone */}
 							{ingestEnabled ? (
 								<button
+									data-desktop-drop-target="server-import"
 									ref={dropZoneRef}
 									type="button"
 									onDrop={onDrop}

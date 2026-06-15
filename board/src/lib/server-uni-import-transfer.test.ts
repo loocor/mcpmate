@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	SERVER_UNI_IMPORT_TEXT_MAX_BYTES,
 	ServerUniImportTransferError,
+	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
 	formatServerUniImportTransferError,
 } from "./server-uni-import-transfer";
@@ -26,6 +27,14 @@ function dataTransferWithText(text: string): DataTransfer {
 	} as unknown as DataTransfer;
 }
 
+function dataTransferWithDomStringListTypes(types: string[]): DataTransfer {
+	return {
+		types: {
+			contains: (type: string) => types.includes(type),
+		},
+	} as unknown as DataTransfer;
+}
+
 function fileLike({
 	name,
 	size,
@@ -46,6 +55,22 @@ function fileLike({
 }
 
 describe("server uni-import transfer", () => {
+	test("detects ingestible DOMStringList drag types", () => {
+		expect(
+			canIngestFromDataTransfer(
+				dataTransferWithDomStringListTypes(["text/uri-list"]),
+			),
+		).toBe(true);
+	});
+
+	test("rejects unrelated DOMStringList drag types", () => {
+		expect(
+			canIngestFromDataTransfer(
+				dataTransferWithDomStringListTypes(["application/x-custom"]),
+			),
+		).toBe(false);
+	});
+
 	test("rejects MCPB bundles before reading them", async () => {
 		await expect(
 			extractPayloadFromDataTransfer(

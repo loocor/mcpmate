@@ -10,9 +10,34 @@ function dataTransferWithTypes(types: string[]): DataTransfer {
 	} as unknown as DataTransfer;
 }
 
-function targetWithClosest(isEditable: boolean): EventTarget {
+function targetWithClosest({
+	isEditable = false,
+	isDesktopDropTarget = false,
+	isOtherDesktopDropTarget = false,
+}: {
+	isEditable?: boolean;
+	isDesktopDropTarget?: boolean;
+	isOtherDesktopDropTarget?: boolean;
+}): EventTarget {
 	return {
-		closest: () => (isEditable ? {} : null),
+		closest: (selector: string) => {
+			if (isEditable && selector.includes("input")) {
+				return {};
+			}
+			if (
+				isDesktopDropTarget &&
+				selector === "[data-desktop-drop-target='server-import']"
+			) {
+				return {};
+			}
+			if (
+				isOtherDesktopDropTarget &&
+				selector === "[data-desktop-drop-target='other']"
+			) {
+				return {};
+			}
+			return null;
+		},
 	} as unknown as EventTarget;
 }
 
@@ -21,16 +46,25 @@ describe("desktop drop guard", () => {
 		expect(
 			shouldBlockDesktopDropNavigation(
 				dataTransferWithTypes(["Files"]),
-				targetWithClosest(true),
+				targetWithClosest({ isEditable: true }),
 			),
 		).toBe(true);
+	});
+
+	test("allows dropped files on explicit desktop drop targets", () => {
+		expect(
+			shouldBlockDesktopDropNavigation(
+				dataTransferWithTypes(["Files"]),
+				targetWithClosest({ isDesktopDropTarget: true }),
+			),
+		).toBe(false);
 	});
 
 	test("blocks dropped text outside editable targets", () => {
 		expect(
 			shouldBlockDesktopDropNavigation(
 				dataTransferWithTypes(["text/plain"]),
-				targetWithClosest(false),
+				targetWithClosest({}),
 			),
 		).toBe(true);
 	});
@@ -39,16 +73,43 @@ describe("desktop drop guard", () => {
 		expect(
 			shouldBlockDesktopDropNavigation(
 				dataTransferWithTypes(["text/plain"]),
-				targetWithClosest(true),
+				targetWithClosest({ isEditable: true }),
 			),
 		).toBe(false);
+	});
+
+	test("allows dropped text on explicit desktop drop targets", () => {
+		expect(
+			shouldBlockDesktopDropNavigation(
+				dataTransferWithTypes(["text/plain"]),
+				targetWithClosest({ isDesktopDropTarget: true }),
+			),
+		).toBe(false);
+	});
+
+	test("allows dropped URI lists on explicit desktop drop targets", () => {
+		expect(
+			shouldBlockDesktopDropNavigation(
+				dataTransferWithTypes(["text/uri-list"]),
+				targetWithClosest({ isDesktopDropTarget: true }),
+			),
+		).toBe(false);
+	});
+
+	test("blocks dropped text on unrelated desktop drop targets", () => {
+		expect(
+			shouldBlockDesktopDropNavigation(
+				dataTransferWithTypes(["text/plain"]),
+				targetWithClosest({ isOtherDesktopDropTarget: true }),
+			),
+		).toBe(true);
 	});
 
 	test("blocks unrelated drag payloads outside editable targets", () => {
 		expect(
 			shouldBlockDesktopDropNavigation(
 				dataTransferWithTypes(["application/x-custom"]),
-				targetWithClosest(false),
+				targetWithClosest({}),
 			),
 		).toBe(true);
 	});
@@ -57,8 +118,17 @@ describe("desktop drop guard", () => {
 		expect(
 			shouldBlockDesktopDropNavigation(
 				dataTransferWithTypes(["application/x-custom"]),
-				targetWithClosest(true),
+				targetWithClosest({ isEditable: true }),
 			),
 		).toBe(false);
+	});
+
+	test("blocks unrelated drag payloads on explicit desktop drop targets", () => {
+		expect(
+			shouldBlockDesktopDropNavigation(
+				dataTransferWithTypes(["application/x-custom"]),
+				targetWithClosest({ isDesktopDropTarget: true }),
+			),
+		).toBe(true);
 	});
 });

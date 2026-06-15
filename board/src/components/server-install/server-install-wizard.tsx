@@ -1895,6 +1895,7 @@ export const ServerInstallWizard = forwardRef(
 								onClick={(event) => event.stopPropagation()}
 							>
 								<div
+									data-desktop-drop-target="server-import"
 									role="button"
 									tabIndex={0}
 									ref={dropZoneRef}
