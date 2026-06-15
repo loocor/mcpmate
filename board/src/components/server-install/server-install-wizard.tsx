@@ -216,14 +216,14 @@ export const ServerInstallWizard = forwardRef(
 	(
 		{
 			isOpen,
-				onClose,
-				mode = "create",
-				initialDraft,
-				onPreview,
-				onImport,
-				allowProgrammaticIngest = false,
-				pipeline: externalPipeline,
-			}: ServerInstallWizardProps,
+			onClose,
+			mode = "create",
+			initialDraft,
+			onPreview,
+			onImport,
+			allowProgrammaticIngest = false,
+			pipeline: externalPipeline,
+		}: ServerInstallWizardProps,
 		ref: React.Ref<ServerInstallManualFormHandle>,
 	) => {
 		usePageTranslations("servers");
@@ -1490,7 +1490,7 @@ export const ServerInstallWizard = forwardRef(
 			// eslint-disable-next-line react-hooks/exhaustive-deps
 		}, [isOpen]);
 
-			// Hydrate form when an initial draft is provided (e.g., Market mode)
+		// Hydrate form when an initial draft is provided (e.g., Market mode)
 		// Create a stable key that only changes when the actual draft content changes
 		const draftKey = useMemo(() => {
 			if (!initialDraft) return null;
