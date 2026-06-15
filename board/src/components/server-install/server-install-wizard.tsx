@@ -17,6 +17,7 @@ import {
 	useEffect,
 	useId,
 	useImperativeHandle,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -1483,7 +1484,7 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		// Reset wizard when opening (only on transition from closed to open)
-		useEffect(() => {
+		useLayoutEffect(() => {
 			if (isOpen) {
 				installPipeline.reset();
 			}
