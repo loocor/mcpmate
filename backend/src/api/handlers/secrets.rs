@@ -22,12 +22,9 @@ use crate::{
         SecretCreateInput, SecretKindInput, SecretMetadataView, SecretOriginInput, SecretStoreReadiness,
         SecretUpdateInput, SecretUsageLocationInput, SecretUsageView,
     },
-    core::{
-        models::MCPServerConfig,
-        secrets::{
-            discover_active_secret_usages, discover_active_secret_usages_for_alias, is_usage_active_in_config,
-            load_mcp_server_config,
-        },
+    core::secrets::{
+        discover_active_secret_usages, discover_active_secret_usages_for_alias, preload_mcp_server_configs,
+        resolve_secret_usage_status_from_cache,
     },
 };
 use mcpmate_secrets::{RootKeyProviderMetadata, SecretRootKeyError, SecretRootKeyProvider};
@@ -82,8 +79,15 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
         indexed_by_alias.entry(usage.alias.clone()).or_default().push(usage);
     }
 
+    let indexed_server_ids: Vec<String> = indexed_by_alias
+        .values()
+        .flat_map(|usages| usages.iter().map(|usage| usage.server_id.clone()))
+        .collect();
+    let server_config_cache = preload_mcp_server_configs(&db.pool, indexed_server_ids)
+        .await
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
+
     let mut enriched = Vec::with_capacity(secrets.len());
-    let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
     for metadata in secrets {
         let mut data = secret_metadata_data(metadata);
         data.used_by_count = active_count_by_alias.remove(&data.alias).unwrap_or(0);
@@ -95,7 +99,10 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
             if active_binding_keys.contains(&key) {
                 continue;
             }
-            if resolve_secret_usage_status(&db.pool, &usage, &mut server_config_cache).await? == "stale" {
+            if resolve_secret_usage_status_from_cache(&usage, &server_config_cache)
+                .map_err(crate::api::handlers::common::errors::map_anyhow_error)?
+                == "stale"
+            {
                 historical_usage_count += 1;
             }
         }
@@ -219,15 +226,19 @@ pub async fn list_secret_usages(
     }
 
     let indexed = store.list_usages(&query.alias).await.map_err(map_secret_store_error)?;
-    let mut server_config_cache: HashMap<String, Option<MCPServerConfig>> = HashMap::new();
+    let indexed_server_ids: Vec<String> = indexed.iter().map(|usage| usage.server_id.clone()).collect();
+    let server_config_cache = preload_mcp_server_configs(&db.pool, indexed_server_ids)
+        .await
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
     for usage in indexed {
         let key = usage.location.binding_key(&usage.server_id);
         if active_binding_keys.contains(&key) {
             continue;
         }
-        let status = resolve_secret_usage_status(&db.pool, &usage, &mut server_config_cache).await?;
+        let status = resolve_secret_usage_status_from_cache(&usage, &server_config_cache)
+            .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
         if status == "stale" {
-            enriched.push(secret_usage_data(usage, status));
+            enriched.push(secret_usage_data(usage, status.to_string()));
         }
     }
 
@@ -357,30 +368,6 @@ fn secret_usage_data(
         location: secret_usage_location_data(usage.location),
         status,
     }
-}
-
-async fn resolve_secret_usage_status(
-    pool: &SqlitePool,
-    usage: &SecretUsageView,
-    cache: &mut HashMap<String, Option<MCPServerConfig>>,
-) -> Result<String, ApiError> {
-    let config = if let Some(cached) = cache.get(&usage.server_id) {
-        cached.clone()
-    } else {
-        let loaded = load_mcp_server_config(pool, &usage.server_id)
-            .await
-            .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
-        cache.insert(usage.server_id.clone(), loaded.clone());
-        loaded
-    };
-
-    let Some(config) = config else {
-        return Ok("stale".to_string());
-    };
-
-    let active = is_usage_active_in_config(&usage.alias, &usage.server_id, &usage.location, &config)
-        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
-    Ok(if active { "active" } else { "stale" }.to_string())
 }
 
 fn secret_store_provider_data(
