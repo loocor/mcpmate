@@ -10,7 +10,6 @@ import {
 	RefreshCw,
 	RotateCcw,
 } from "lucide-react";
-import type { ServerIngestPayload } from "../../lib/install-normalizer";
 import type { FocusEvent, MouseEvent } from "react";
 import {
 	forwardRef,
@@ -18,6 +17,7 @@ import {
 	useEffect,
 	useId,
 	useImperativeHandle,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -211,10 +211,6 @@ interface ServerInstallWizardProps {
 	allowProgrammaticIngest?: boolean;
 	// Optional shared pipeline instance from parent page (recommended)
 	pipeline?: ReturnType<typeof useServerInstallPipeline>;
-	/** Payload to ingest when the drawer opens (set by external drop zones). */
-	pendingIngestPayload?: ServerIngestPayload | null;
-	/** Called after pendingIngestPayload has been consumed. */
-	onPendingIngestConsumed?: () => void;
 }
 
 export const ServerInstallWizard = forwardRef(
@@ -228,8 +224,6 @@ export const ServerInstallWizard = forwardRef(
 			onImport,
 			allowProgrammaticIngest = false,
 			pipeline: externalPipeline,
-			pendingIngestPayload,
-			onPendingIngestConsumed,
 		}: ServerInstallWizardProps,
 		ref: React.Ref<ServerInstallManualFormHandle>,
 	) => {
@@ -1490,20 +1484,12 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		// Reset wizard when opening (only on transition from closed to open)
-		useEffect(() => {
+		useLayoutEffect(() => {
 			if (isOpen) {
 				installPipeline.reset();
 			}
 			// eslint-disable-next-line react-hooks/exhaustive-deps
 		}, [isOpen]);
-
-		// Ingest payload dropped on external drop zones (e.g. server list page)
-		useEffect(() => {
-			if (!isOpen || !pendingIngestPayload) return;
-			const payload = pendingIngestPayload;
-			onPendingIngestConsumed?.();
-			handleIngestPayload(payload);
-		}, [isOpen, pendingIngestPayload, handleIngestPayload, onPendingIngestConsumed]);
 
 		// Hydrate form when an initial draft is provided (e.g., Market mode)
 		// Create a stable key that only changes when the actual draft content changes
@@ -1895,6 +1881,7 @@ export const ServerInstallWizard = forwardRef(
 								onClick={(event) => event.stopPropagation()}
 							>
 								<div
+									data-desktop-drop-target="server-import"
 									role="button"
 									tabIndex={0}
 									ref={dropZoneRef}

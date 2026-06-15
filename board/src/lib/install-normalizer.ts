@@ -449,14 +449,222 @@ const generateServerName = (kind: ServerInstallDraft["kind"]): string => {
 	return `${base}-${Math.random().toString(36).slice(2, 8)}`;
 };
 
+const SERVER_CONFIG_FIELDS = [
+	"command",
+	"command_path",
+	"launch",
+	"url",
+	"httpUrl",
+	"http_url",
+	"endpoint",
+	"baseUrl",
+];
+const SERVER_CONTAINER_KEYS = new Set(["mcpServers", "servers"]);
+
 function wrapLooseServerMap(record: Record<string, unknown>): unknown {
+	if (hasKnownServerContainer(record)) return record;
 	const values = Object.values(record);
-	const isDictOfObjects =
-		values.length > 0 &&
-		values.every(
-			(v) => typeof v === "object" && v !== null && !Array.isArray(v),
+	const isServerMap =
+		values.length > 0 && values.every((value) => isServerConfigObject(value));
+	return isServerMap ? { mcpServers: record } : record;
+}
+
+function hasKnownServerContainer(record: Record<string, unknown>): boolean {
+	return Boolean(record.mcpServers || record.servers);
+}
+
+function tryParseJsonLike(source: string): unknown | null {
+	try {
+		return JSON.parse(source);
+	} catch {
+		// Not valid JSON, try JSON5 next
+	}
+	try {
+		return JSON5.parse(source);
+	} catch {
+		return null;
+	}
+}
+
+function findMatchingBrace(source: string, openIndex: number): number | null {
+	let depth = 0;
+	let quote: string | null = null;
+	let escaping = false;
+	for (let index = openIndex; index < source.length; index += 1) {
+		const char = source[index];
+		if (quote) {
+			if (escaping) {
+				escaping = false;
+				continue;
+			}
+			if (char === "\\") {
+				escaping = true;
+				continue;
+			}
+			if (char === quote) {
+				quote = null;
+			}
+			continue;
+		}
+		if (char === "\"" || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === "{") {
+			depth += 1;
+			continue;
+		}
+		if (char === "}") {
+			depth -= 1;
+			if (depth === 0) return index;
+		}
+	}
+	return null;
+}
+
+function getBraceDepthBefore(source: string, offset: number): number {
+	let depth = 0;
+	let quote: string | null = null;
+	let escaping = false;
+	for (let index = 0; index < offset; index += 1) {
+		const char = source[index];
+		if (quote) {
+			if (escaping) {
+				escaping = false;
+				continue;
+			}
+			if (char === "\\") {
+				escaping = true;
+				continue;
+			}
+			if (char === quote) {
+				quote = null;
+			}
+			continue;
+		}
+		if (char === "\"" || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === "{") {
+			depth += 1;
+			continue;
+		}
+		if (char === "}") {
+			depth = Math.max(0, depth - 1);
+		}
+	}
+	return depth;
+}
+
+function parsePropertyKey(propertyPrefix: string): string | null {
+	const colonIndex = propertyPrefix.lastIndexOf(":");
+	if (colonIndex < 0) return null;
+	const keyLiteral = propertyPrefix.slice(0, colonIndex).trim();
+	const parsed = tryParseJsonLike(keyLiteral);
+	return typeof parsed === "string" && parsed.trim() ? parsed : null;
+}
+
+function isServerConfigObject(value: unknown): boolean {
+	if (!value || typeof value !== "object" || value === null) return false;
+	const raw = value as Record<string, unknown>;
+	return SERVER_CONFIG_FIELDS.some((field) => Boolean(trimmedString(raw[field])));
+}
+
+type JsonObjectProperty = {
+	key: string;
+	value: unknown;
+	start: number;
+	end: number;
+	depth: number;
+};
+
+function getPropertyObjectStart(text: string, propertyPrefixEnd: number): number | null {
+	let objectStart = propertyPrefixEnd;
+	while (objectStart < text.length && /\s/.test(text[objectStart])) {
+		objectStart += 1;
+	}
+	return text[objectStart] === "{" ? objectStart : null;
+}
+
+function extractObjectProperties(
+	text: string,
+	parseValue: (text: string, start: number, end: number) => unknown | undefined,
+	options: { allowOpenEnd?: boolean } = {},
+): JsonObjectProperty[] {
+	const objectProperties: JsonObjectProperty[] = [];
+	const propertyPattern = /(["'])(?:\\.|(?!\1).)*\1\s*:/g;
+	for (const match of text.matchAll(propertyPattern)) {
+		const propertyPrefix = match[0];
+		const key = parsePropertyKey(propertyPrefix);
+		if (!key) continue;
+		const objectStart = getPropertyObjectStart(
+			text,
+			(match.index ?? 0) + propertyPrefix.length,
 		);
-	return isDictOfObjects ? { mcpServers: record } : record;
+		if (objectStart === null) continue;
+		const objectEnd =
+			findMatchingBrace(text, objectStart) ??
+			(options.allowOpenEnd ? text.length : null);
+		if (objectEnd === null) continue;
+		const value = parseValue(text, objectStart, objectEnd);
+		if (value === undefined) continue;
+		objectProperties.push({
+			key,
+			value,
+			start: objectStart,
+			end: objectEnd,
+			depth: getBraceDepthBefore(text, match.index ?? 0),
+		});
+	}
+	return objectProperties;
+}
+
+function extractJsonObjectProperties(text: string): JsonObjectProperty[] {
+	return extractObjectProperties(text, (source, start, end) =>
+		tryParseJsonLike(source.slice(start, end + 1)) ?? undefined,
+	);
+}
+
+function extractKnownServerContainers(text: string): JsonObjectProperty[] {
+	return extractObjectProperties(
+		text,
+		() => null,
+		{ allowOpenEnd: true },
+	).filter((property) => SERVER_CONTAINER_KEYS.has(property.key));
+}
+
+function isDirectChildOfKnownServerContainer(
+	property: JsonObjectProperty,
+	containers: JsonObjectProperty[],
+): boolean {
+	return containers.some(
+		(container) =>
+			property.start > container.start &&
+			property.end < container.end &&
+			property.depth === container.depth + 1,
+	);
+}
+
+function isTopLevelServerMapEntry(property: JsonObjectProperty): boolean {
+	return property.depth <= 1;
+}
+
+function extractCompleteServerObjectsFromText(text: string): unknown | null {
+	const serverMap: Record<string, unknown> = {};
+	const properties = extractJsonObjectProperties(text);
+	const containers = extractKnownServerContainers(text);
+	for (const property of properties) {
+		if (!isServerConfigObject(property.value)) continue;
+		if (
+			!isTopLevelServerMapEntry(property) &&
+			!isDirectChildOfKnownServerContainer(property, containers)
+		) {
+			continue;
+		}
+		serverMap[property.key] = property.value;
+	}
+	return Object.keys(serverMap).length ? { mcpServers: serverMap } : null;
 }
 
 export const extractJsonFromText = (
@@ -468,16 +676,8 @@ export const extractJsonFromText = (
 	if (depth > 3) return null; // prevent runaway recursion on malformed input
 
 	// 1) Direct parse (JSON → JSON5)
-	try {
-		return JSON.parse(trimmed);
-	} catch {
-		// Not valid JSON, try JSON5 next
-	}
-	try {
-		return JSON5.parse(trimmed);
-	} catch {
-		// Not valid JSON5 either, try other formats
-	}
+	const parsedWhole = tryParseJsonLike(trimmed);
+	if (parsedWhole) return parsedWhole;
 
 	// 2) Fenced code block: ```json ... ```
 	const fenceMatch =
@@ -529,6 +729,9 @@ export const extractJsonFromText = (
 		}
 	}
 
+	const extractedServerObjects = extractCompleteServerObjectsFromText(trimmed);
+	if (extractedServerObjects) return extractedServerObjects;
+
 	return null;
 };
 
@@ -536,10 +739,27 @@ export const draftFromText = (text: string): ServerInstallDraft[] => {
 	const json = extractJsonFromText(text);
 	if (!json) return [];
 	try {
-		return draftFromJson(json);
+		return draftFromIngestJson(json);
 	} catch {
 		return [];
 	}
+};
+
+const draftFromIngestJson = (value: unknown): ServerInstallDraft[] => {
+	const json = normalizeIngestJson(value);
+	return json ? draftFromJson(json) : [];
+};
+
+const normalizeIngestJson = (value: unknown): unknown | null => {
+	if (!value || typeof value !== "object" || value === null) return null;
+	if (Array.isArray(value)) return null;
+
+	const raw = value as Record<string, unknown>;
+	if (hasKnownServerContainer(raw)) return raw;
+	if (isServerConfigObject(raw)) return raw;
+
+	const wrappedServerMap = wrapLooseServerMap(raw);
+	return wrappedServerMap === raw ? null : wrappedServerMap;
 };
 
 export const normalizeIngestResult = async (payload: {

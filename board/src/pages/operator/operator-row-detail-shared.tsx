@@ -222,6 +222,7 @@ export function OperatorImportDropChip({
 
 	const chipButton = (
 		<button
+			data-desktop-drop-target="server-import"
 			type="button"
 			className={layoutClass}
 			style={operatorNoDragRegionStyle}
