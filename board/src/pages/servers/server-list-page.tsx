@@ -1,12 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Bug, Plug, RefreshCw, Server } from "lucide-react";
+import { AlertCircle, RefreshCw, Server } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
-import { EntityCard } from "../../components/entity-card";
-import { EntityListItem } from "../../components/entity-list-item";
 import { ErrorDisplay } from "../../components/error-display";
 import { ListGridContainer } from "../../components/list-grid-container";
 import {
@@ -16,12 +14,9 @@ import {
 } from "../../components/page-layout";
 import { ServerImportDropButton } from "../../components/server-import-drop-button";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
-import { ServerAuthBadge } from "../../components/server-auth-badge";
-import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
+import { ServerCatalogEntry } from "../../components/servers";
 import { ServerInstallWizard, type ServerInstallManualFormHandle } from "../../components/server-install";
 import { StatsCards } from "../../components/stats-cards";
-import { StatusBadge } from "../../components/status-badge";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import {
 	Card,
@@ -36,7 +31,6 @@ import {
 	type PageToolbarCallbacks,
 	type PageToolbarState,
 } from "../../components/ui/page-toolbar";
-import { Switch } from "../../components/ui/switch";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
@@ -68,14 +62,9 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
 }
 
-// Helper function to get the instance count for a server
-function getCapabilitySummary(server: ServerSummary) {
-	return server.capability ?? server.capabilities ?? undefined;
-}
-
 export function ServerListPage() {
 	usePageTranslations("servers");
-	const { t } = useTranslation("servers");
+	const { t, i18n } = useTranslation("servers");
 	const navigate = useNavigate();
 	const [debugInfo, setDebugInfo] = useState<string | null>(null);
 	const [manualOpen, setManualOpen] = useState(false);
@@ -164,6 +153,7 @@ export function ServerListPage() {
 			}),
 		);
 	}, [
+		i18n.language,
 		openManualIngest,
 		pendingServerDeepLinkImport,
 		setPendingServerDeepLinkImport,
@@ -213,7 +203,7 @@ export function ServerListPage() {
 
 			openManualIngest(payload);
 		},
-		[openManualIngest, t],
+		[i18n.language, openManualIngest, t],
 	);
 
 	const {
@@ -274,54 +264,56 @@ export function ServerListPage() {
 	}, [serverData?.servers, sortedServers.length, sortState]);
 
 	// Enable/disable server
-	async function toggleServerAsync(
-		serverId: string,
-		enable: boolean,
-		sync?: boolean,
-	) {
-		setPending((p) => ({ ...p, [serverId]: true }));
-		try {
-			if (enable) {
-				await serversApi.enableServer(serverId, sync);
-			} else {
-				await serversApi.disableServer(serverId, sync);
-			}
-			const successTitle = enable
-				? t("notifications.toggle.enabledTitle", {
-					defaultValue: "Server enabled",
-				})
-				: t("notifications.toggle.disabledTitle", {
-					defaultValue: "Server disabled",
+	const toggleServerAsync = useCallback(
+		async (serverId: string, enable: boolean, sync?: boolean) => {
+			setPending((p) => ({ ...p, [serverId]: true }));
+			try {
+				if (enable) {
+					await serversApi.enableServer(serverId, sync);
+				} else {
+					await serversApi.disableServer(serverId, sync);
+				}
+				const successTitle = enable
+					? t("notifications.toggle.enabledTitle", {
+							defaultValue: "Server enabled",
+						})
+					: t("notifications.toggle.disabledTitle", {
+							defaultValue: "Server disabled",
+						});
+				const successMessage = t("notifications.toggle.message", {
+					serverId,
+					defaultValue: "Server {{serverId}}",
 				});
-			const successMessage = t("notifications.toggle.message", {
-				serverId,
-				defaultValue: "Server {{serverId}}",
-			});
-			notifySuccess(successTitle, successMessage);
-			queryClient.invalidateQueries({ queryKey: ["servers"] });
-			setTimeout(
-				() => queryClient.invalidateQueries({ queryKey: ["servers"] }),
-				1000,
-			);
-		} catch (error) {
-			const actionLabel = enable
-				? t("notifications.toggle.enableAction", { defaultValue: "enable" })
-				: t("notifications.toggle.disableAction", { defaultValue: "disable" });
-			const errorMessage = error instanceof Error ? error.message : String(error);
-			notifyError(
-				t("notifications.genericError.title", {
-					defaultValue: "Operation failed",
-				}),
-				t("notifications.toggle.error", {
-					action: actionLabel,
-					message: errorMessage,
-					defaultValue: "Unable to {{action}} server: {{message}}",
-				}),
-			);
-		} finally {
-			setPending((p) => ({ ...p, [serverId]: false }));
-		}
-	}
+				notifySuccess(successTitle, successMessage);
+				queryClient.invalidateQueries({ queryKey: ["servers"] });
+				setTimeout(
+					() => queryClient.invalidateQueries({ queryKey: ["servers"] }),
+					1000,
+				);
+			} catch (error) {
+				const actionLabel = enable
+					? t("notifications.toggle.enableAction", { defaultValue: "enable" })
+					: t("notifications.toggle.disableAction", {
+							defaultValue: "disable",
+						});
+				const errorMessage =
+					error instanceof Error ? error.message : String(error);
+				notifyError(
+					t("notifications.genericError.title", {
+						defaultValue: "Operation failed",
+					}),
+					t("notifications.toggle.error", {
+						action: actionLabel,
+						message: errorMessage,
+						defaultValue: "Unable to {{action}} server: {{message}}",
+					}),
+				);
+			} finally {
+				setPending((p) => ({ ...p, [serverId]: false }));
+			}
+		},
+		[i18n.language, queryClient, t],
+	);
 
 	// Note: Reconnect functionality is moved to instance-level pages
 
@@ -417,397 +409,96 @@ export function ServerListPage() {
 		}
 	};
 
-	const handleServerToggle = async (serverId: string, enabled: boolean) => {
-		setIsTogglePending(true);
-		try {
-			if (enabled) {
-				await serversApi.enableServer(serverId, syncServerStateToClients);
-				notifySuccess(
-					t("notifications.toggle.enabledTitle", {
-						defaultValue: "Server enabled",
+	const handleServerToggle = useCallback(
+		async (serverId: string, enabled: boolean) => {
+			setIsTogglePending(true);
+			try {
+				if (enabled) {
+					await serversApi.enableServer(serverId, syncServerStateToClients);
+					notifySuccess(
+						t("notifications.toggle.enabledTitle", {
+							defaultValue: "Server enabled",
+						}),
+						t("notifications.toggle.enabledDetail", {
+							serverId,
+							defaultValue: "Server {{serverId}} has been enabled",
+						}),
+					);
+				} else {
+					await serversApi.disableServer(serverId, syncServerStateToClients);
+					notifySuccess(
+						t("notifications.toggle.disabledTitle", {
+							defaultValue: "Server disabled",
+						}),
+						t("notifications.toggle.disabledDetail", {
+							serverId,
+							defaultValue: "Server {{serverId}} has been disabled",
+						}),
+					);
+				}
+				queryClient.invalidateQueries({ queryKey: ["servers"] });
+			} catch (error) {
+				notifyError(
+					t("notifications.toggle.failedTitle", {
+						defaultValue: "Failed to toggle server",
 					}),
-					t("notifications.toggle.enabledDetail", {
-						serverId,
-						defaultValue: "Server {{serverId}} has been enabled",
-					}),
+					error instanceof Error
+						? error.message
+						: t("notifications.genericError.unknown", {
+								defaultValue: "Unknown error",
+							}),
 				);
-			} else {
-				await serversApi.disableServer(serverId, syncServerStateToClients);
-				notifySuccess(
-					t("notifications.toggle.disabledTitle", {
-						defaultValue: "Server disabled",
-					}),
-					t("notifications.toggle.disabledDetail", {
-						serverId,
-						defaultValue: "Server {{serverId}} has been disabled",
-					}),
-				);
+			} finally {
+				setIsTogglePending(false);
 			}
-			queryClient.invalidateQueries({ queryKey: ["servers"] });
-		} catch (error) {
-			notifyError(
-				t("notifications.toggle.failedTitle", {
-					defaultValue: "Failed to toggle server",
-				}),
-				error instanceof Error
-					? error.message
-					: t("notifications.genericError.unknown", {
-						defaultValue: "Unknown error",
-					}),
-			);
-		} finally {
-			setIsTogglePending(false);
-		}
-	};
+		},
+		[i18n.language, queryClient, syncServerStateToClients, t],
+	);
 
-	const getServerDescription = (server: ServerSummary) => {
-		const serverTypeRaw = server.server_type || "";
-		const serverType = serverTypeRaw.toLowerCase();
+	const catalogStatsLabels = useMemo(
+		() => ({
+			tools: t("entity.stats.tools", { defaultValue: "Tools" }),
+			prompts: t("entity.stats.prompts", { defaultValue: "Prompts" }),
+			resources: t("entity.stats.resources", { defaultValue: "Resources" }),
+			templates: t("entity.stats.templates", { defaultValue: "Templates" }),
+		}),
+		[i18n.language, t],
+	);
 
-		let technicalLine = "";
-		if (serverType.includes("stdio") || serverType.includes("process")) {
-			technicalLine = `stdio://${server.name || server.id}`;
-		} else if (serverType.includes("http") || serverType.includes("sse")) {
-			technicalLine = `http://localhost:3000/${server.id}`;
-		} else {
-			technicalLine = t("entity.description.serverLabel", {
-				name: server.name || server.id,
-				defaultValue: "Server: {{name}}",
-			});
-		}
+	const handleCatalogOpen = useCallback(
+		(serverId: string) => {
+			navigate(`/servers/${encodeURIComponent(serverId)}`);
+		},
+		[navigate],
+	);
 
-		const metaDescription = server.meta?.description?.trim();
-		const firstLine = metaDescription
-			? `${metaDescription}${serverTypeRaw ? ` · ${serverTypeRaw}` : ""}`
-			: technicalLine;
+	const handleCatalogListToggle = useCallback(
+		(serverId: string, enabled: boolean) => {
+			void handleServerToggle(serverId, enabled);
+		},
+		[handleServerToggle],
+	);
 
-		return (
-			<div
-				className="text-sm text-slate-500 truncate max-w-[200px]"
-				title={firstLine}
-			>
-				{firstLine}
-			</div>
-		);
-	};
+	const handleCatalogGridToggle = useCallback(
+		(serverId: string, enabled: boolean) => {
+			void toggleServerAsync(serverId, enabled, syncServerStateToClients);
+		},
+		[syncServerStateToClients, toggleServerAsync],
+	);
 
-	const getUnifyEligibilityTag = (server: ServerSummary) => {
-		if (!server.unify_direct_exposure_eligible) return null;
-		return (
-			<Badge
-				variant="secondary"
-				className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
-			>
-				{t("entity.tags.unifyEligible", { defaultValue: "Unify Direct" })}
-			</Badge>
-		);
-	};
-
-	const getConnectionTypeTags = (server: ServerSummary) => {
-		const tags = [];
-		const lower = (server.server_type || "").toLowerCase();
-		const isStdio = lower.includes("stdio") || lower.includes("process");
-		const isStreamable =
-			lower.includes("stream") ||
-			lower.includes("sse") ||
-			lower.includes("streamable");
-		const isGenericHttp = lower.includes("http") || lower.includes("rest");
-
-		if (isStdio) {
-			tags.push(
-				<span
-					key="stdio"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.stdio", { defaultValue: "STDIO" })}
-				</span>,
-			);
-		} else if (isStreamable) {
-			tags.push(
-				<span
-					key="streamable_http"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.streamableHttp", {
-						defaultValue: "Streamable HTTP",
-					})}
-				</span>,
-			);
-		} else if (isGenericHttp) {
-			tags.push(
-				<span
-					key="http"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
-				</span>,
-			);
-		}
-
-		if (tags.length === 0) {
-			tags.push(
-				<span
-					key="default"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
-				</span>,
-			);
-		}
-
-		return tags;
-	};
-
-	const renderServerListItem = (server: ServerSummary) => {
-		const serverInitial = (server.name || server.id || "S")
-			.slice(0, 1)
-			.toUpperCase();
-		const iconSrc = server.icons?.[0]?.src;
-		const iconAlt = server.name
-			? t("entity.iconAlt.named", {
-				name: server.name,
-				defaultValue: "{{name}} icon",
-			})
-			: t("entity.iconAlt.fallback", { defaultValue: "Server icon" });
-		const capabilitySummary = getCapabilitySummary(server);
-		const capabilityStats = capabilitySummary
-			? [
-				{
-					label: t("entity.stats.tools", { defaultValue: "Tools" }),
-					value: capabilitySummary.tools_count,
-				},
-				{
-					label: t("entity.stats.prompts", {
-						defaultValue: "Prompts",
-					}),
-					value: capabilitySummary.prompts_count,
-				},
-				{
-					label: t("entity.stats.resources", {
-						defaultValue: "Resources",
-					}),
-					value: capabilitySummary.resources_count,
-				},
-				{
-					label: t("entity.stats.templates", {
-						defaultValue: "Templates",
-					}),
-					value: capabilitySummary.resource_templates_count,
-				},
-			]
-			: [
-				{
-					label: t("entity.stats.tools", { defaultValue: "Tools" }),
-					value: 0,
-				},
-				{
-					label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
-					value: 0,
-				},
-				{
-					label: t("entity.stats.resources", {
-						defaultValue: "Resources",
-					}),
-					value: 0,
-				},
-				{
-					label: t("entity.stats.templates", {
-						defaultValue: "Templates",
-					}),
-					value: 0,
-				},
-			];
-
-		return (
-			<EntityListItem
-				key={server.id}
-				id={server.id}
-				title={server.name}
-				description={
-					<div className="flex items-center gap-2">
-						{getConnectionTypeTags(server)}
-						{getUnifyEligibilityTag(server)}
-						<ServerAuthBadge
-							authMode={server.auth_mode}
-							oauthStatus={server.oauth_status}
-							readiness={resolveServerOAuthReadiness(server)}
-						/>
-					</div>
+	const handleCatalogDebugOpen = useCallback(
+		(serverId: string) => {
+			const url = `/servers/${encodeURIComponent(serverId)}?view=debug&channel=native`;
+			if (openDebugInNewWindow) {
+				if (typeof window !== "undefined") {
+					window.open(url, "_blank", "noopener,noreferrer");
 				}
-				avatar={{
-					src: iconSrc,
-					alt: iconSrc ? iconAlt : undefined,
-					fallback: serverInitial,
-				}}
-				titleBadges={getUnifyEligibilityTag(server) ? [getUnifyEligibilityTag(server)] : []}
-				stats={capabilityStats}
-				statusBadge={
-					<StatusBadge
-						status={server.status}
-						instances={server.instances}
-						blinkOnError={["error", "unhealthy", "stopped", "failed"].includes(
-							(server.status || "").toLowerCase(),
-						)}
-						isServerEnabled={server.enabled}
-					/>
-				}
-				enableSwitch={{
-					checked: server.enabled || false,
-					onChange: (checked: boolean) =>
-						handleServerToggle(server.id, checked),
-					disabled: isTogglePending,
-				}}
-				actionButtons={
-					enableServerDebug
-						? [
-							<Button
-								key="debug"
-								size="sm"
-								variant="outline"
-								className="p-2"
-								onClick={(ev) => {
-									ev.stopPropagation();
-									const url = `/servers/${encodeURIComponent(server.id)}?view=debug&channel=native`;
-									if (openDebugInNewWindow) {
-										if (typeof window !== "undefined") {
-											window.open(url, "_blank", "noopener,noreferrer");
-										}
-										return;
-									}
-									navigate(url);
-								}}
-								title={t("actions.debug.open", {
-									defaultValue: "Open inspect view",
-								})}
-							>
-								<Bug className="h-4 w-4" />
-							</Button>,
-						]
-						: []
-				}
-				onClick={() => navigate(`/servers/${encodeURIComponent(server.id)}`)}
-			/>
-		);
-	};
-
-	const renderServerCard = (server: ServerSummary) => {
-		const serverInitial = (server.name || server.id || "S")
-			.slice(0, 1)
-			.toUpperCase();
-		const iconSrc = server.icons?.[0]?.src;
-		const iconAlt = server.name
-			? t("entity.iconAlt.named", {
-				name: server.name,
-				defaultValue: "{{name}} icon",
-			})
-			: t("entity.iconAlt.fallback", { defaultValue: "Server icon" });
-		const capabilitySummary = getCapabilitySummary(server);
-		const cardStats = capabilitySummary
-			? [
-				{
-					label: t("entity.stats.tools", { defaultValue: "Tools" }),
-					value: capabilitySummary.tools_count,
-				},
-				{
-					label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
-					value: capabilitySummary.prompts_count,
-				},
-				{
-					label: t("entity.stats.resources", {
-						defaultValue: "Resources",
-					}),
-					value: capabilitySummary.resources_count,
-				},
-				{
-					label: t("entity.stats.templates", {
-						defaultValue: "Templates",
-					}),
-					value: capabilitySummary.resource_templates_count,
-				},
-			]
-			: [
-				{
-					label: t("entity.stats.tools", { defaultValue: "Tools" }),
-					value: 0,
-				},
-				{
-					label: t("entity.stats.prompts", { defaultValue: "Prompts" }),
-					value: 0,
-				},
-				{
-					label: t("entity.stats.resources", {
-						defaultValue: "Resources",
-					}),
-					value: 0,
-				},
-				{
-					label: t("entity.stats.templates", {
-						defaultValue: "Templates",
-					}),
-					value: 0,
-				},
-			];
-
-		return (
-			<EntityCard
-				key={server.id}
-				id={server.id}
-				title={server.name}
-				description={getServerDescription(server)}
-				avatar={{
-					src: iconSrc,
-					alt: iconSrc ? iconAlt : undefined,
-					fallback: serverInitial,
-				}}
-				topRightBadge={
-					<div className="flex items-center gap-2">
-						{getConnectionTypeTags(server)}
-						{getUnifyEligibilityTag(server)}
-						<ServerAuthBadge
-							authMode={server.auth_mode}
-							oauthStatus={server.oauth_status}
-							readiness={resolveServerOAuthReadiness(server)}
-							showLabel={false}
-						/>
-					</div>
-				}
-				stats={cardStats}
-				bottomLeft={
-					<StatusBadge
-						status={server.status}
-						instances={server.instances}
-						blinkOnError={["error", "unhealthy", "stopped", "failed"].includes(
-							(server.status || "").toLowerCase(),
-						)}
-						isServerEnabled={server.enabled}
-					/>
-				}
-				bottomRight={
-					<Switch
-						checked={server.enabled || false}
-						onCheckedChange={(checked) => {
-							toggleServerAsync(
-								server.id,
-								checked,
-								syncServerStateToClients,
-							);
-						}}
-						disabled={!!pending[server.id]}
-						onClick={(e) => e.stopPropagation()}
-					/>
-				}
-				onClick={() => navigate(`/servers/${encodeURIComponent(server.id)}`)}
-			/>
-		);
-	};
+				return;
+			}
+			navigate(url);
+		},
+		[navigate, openDebugInNewWindow],
+	);
 
 	// Add inspect button handler
 	const toggleDebugInfo = () => {
@@ -875,7 +566,7 @@ export function ServerListPage() {
 				}),
 			},
 		];
-	}, [serverData, t]);
+	}, [i18n.language, serverData, t]);
 
 	// Prepare loading skeleton
 	const loadingSkeleton =
@@ -1112,8 +803,30 @@ export function ServerListPage() {
 					}
 				>
 					{viewMode === "grid"
-						? filteredAndSortedServers.map(renderServerCard)
-						: filteredAndSortedServers.map(renderServerListItem)}
+						? filteredAndSortedServers.map((server) => (
+								<ServerCatalogEntry
+									key={server.id}
+									variant="grid"
+									server={server}
+									statsLabels={catalogStatsLabels}
+									onOpen={handleCatalogOpen}
+									onToggle={handleCatalogGridToggle}
+									isToggleDisabled={!!pending[server.id]}
+								/>
+							))
+						: filteredAndSortedServers.map((server) => (
+								<ServerCatalogEntry
+									key={server.id}
+									variant="list"
+									server={server}
+									statsLabels={catalogStatsLabels}
+									onOpen={handleCatalogOpen}
+									onToggle={handleCatalogListToggle}
+									isToggleDisabled={isTogglePending}
+									enableServerDebug={enableServerDebug}
+									onOpenDebug={handleCatalogDebugOpen}
+								/>
+							))}
 				</ListGridContainer>
 			</div>
 
