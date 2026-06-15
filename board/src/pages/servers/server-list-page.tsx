@@ -1,13 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	AlertCircle,
-	Bug,
-	Plug,
-	Plus,
-	RefreshCw,
-	Server,
-	Target,
-} from "lucide-react";
+import { AlertCircle, Bug, Plug, RefreshCw, Server } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -22,6 +14,7 @@ import {
 	FullHeightEmptyStateCard,
 	PageLayout,
 } from "../../components/page-layout";
+import { ServerImportDropButton } from "../../components/server-import-drop-button";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { ServerAuthBadge } from "../../components/server-auth-badge";
 import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
@@ -49,14 +42,13 @@ import { serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlSort, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
-import { useAppStore } from "../../lib/store";
 import type { ServerIngestPayload } from "../../lib/install-normalizer";
-import { cn } from "../../lib/utils";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
 	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
+import { useAppStore } from "../../lib/store";
 import type {
 	MCPServerConfig,
 	ServerDetail,
@@ -76,22 +68,6 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
 }
 
-function prepareServerDropTargetEvent(
-	event: React.DragEvent<HTMLDivElement>,
-): boolean {
-	if (!canIngestFromDataTransfer(event.dataTransfer)) return false;
-	event.preventDefault();
-	event.stopPropagation();
-	return true;
-}
-
-function isDragLeaveInsideCurrentTarget(
-	event: React.DragEvent<HTMLDivElement>,
-): boolean {
-	const nextTarget = event.relatedTarget as Node | null;
-	return Boolean(nextTarget && event.currentTarget.contains(nextTarget));
-}
-
 // Helper function to get the instance count for a server
 function getCapabilitySummary(server: ServerSummary) {
 	return server.capability ?? server.capabilities ?? undefined;
@@ -103,10 +79,7 @@ export function ServerListPage() {
 	const navigate = useNavigate();
 	const [debugInfo, setDebugInfo] = useState<string | null>(null);
 	const [manualOpen, setManualOpen] = useState(false);
-	const [pendingIngestPayload, setPendingIngestPayload] = useState<ServerIngestPayload | null>(null);
 	const manualRef = useRef<ServerInstallManualFormHandle | null>(null);
-	const [isAddDragActive, setAddDragActive] = useState(false);
-	const [isEmptyAddDragActive, setEmptyAddDragActive] = useState(false);
 	const [editingServer, setEditingServer] = useState<ServerDetail | null>(null);
 	const [deletingServer, setDeletingServer] = useState<string | null>(null);
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -128,39 +101,6 @@ export function ServerListPage() {
 			refetch();
 		},
 	});
-
-	const handleAddDragEnter = useCallback(
-		(event: React.DragEvent<HTMLDivElement>) => {
-			if (!prepareServerDropTargetEvent(event)) return;
-			setAddDragActive(true);
-		},
-		[],
-	);
-
-	const handleAddDragOver = useCallback(
-		(event: React.DragEvent<HTMLDivElement>) => {
-			if (!prepareServerDropTargetEvent(event)) return;
-			if (event.dataTransfer) {
-				event.dataTransfer.dropEffect = "copy";
-			}
-			setAddDragActive(true);
-		},
-		[],
-	);
-
-	const handleAddDragLeave = useCallback(
-		(event: React.DragEvent<HTMLDivElement>) => {
-			event.preventDefault();
-			event.stopPropagation();
-			if (isDragLeaveInsideCurrentTarget(event)) return;
-			setAddDragActive(false);
-		},
-		[],
-	);
-
-	const handleAddDragEnd = useCallback(() => {
-		setAddDragActive(false);
-	}, []);
 
 	const storedDefaultView = useAppStore((state) => state.dashboardSettings.defaultView);
 	const setDashboardSetting = useAppStore((state) => state.setDashboardSetting);
@@ -194,6 +134,13 @@ export function ServerListPage() {
 		(state) => state.dashboardSettings.syncServerStateToClients,
 	);
 
+	const openManualIngest = useCallback((payload: ServerIngestPayload) => {
+		setManualOpen(true);
+		requestAnimationFrame(() => {
+			manualRef.current?.ingest(payload);
+		});
+	}, []);
+
 	React.useEffect(() => {
 		if (!pendingServerDeepLinkImport) {
 			return;
@@ -206,10 +153,7 @@ export function ServerListPage() {
 				: format === "toml"
 					? "snippet.toml"
 					: "snippet.txt";
-		setManualOpen(true);
-		requestAnimationFrame(() => {
-			manualRef.current?.ingest({ text, fileName });
-		});
+		openManualIngest({ text, fileName });
 		notifyInfo(
 			t("notifications.deepLinkImport.title", {
 				defaultValue: "Configuration received",
@@ -219,9 +163,14 @@ export function ServerListPage() {
 					"Review the imported server snippet in the drawer before saving.",
 			}),
 		);
-	}, [pendingServerDeepLinkImport, setPendingServerDeepLinkImport, t]);
+	}, [
+		openManualIngest,
+		pendingServerDeepLinkImport,
+		setPendingServerDeepLinkImport,
+		t,
+	]);
 
-	const ingestDroppedServerPayload = useCallback(
+	const ingestServerImportDataTransfer = useCallback(
 		async (dataTransfer: DataTransfer | null) => {
 			if (!dataTransfer || !canIngestFromDataTransfer(dataTransfer)) {
 				notifyError(
@@ -235,6 +184,7 @@ export function ServerListPage() {
 				);
 				return;
 			}
+
 			let payload;
 			try {
 				payload = await extractPayloadFromDataTransfer(dataTransfer);
@@ -247,6 +197,7 @@ export function ServerListPage() {
 				);
 				return;
 			}
+
 			if (!payload) {
 				notifyError(
 					t("notifications.importEmpty.title", {
@@ -259,63 +210,10 @@ export function ServerListPage() {
 				);
 				return;
 			}
-			setPendingIngestPayload(payload);
-			setManualOpen(true);
-		},
-		[t],
-	);
 
-	const handleAddDrop = useCallback(
-		async (event: React.DragEvent<HTMLDivElement>) => {
-			event.preventDefault();
-			event.stopPropagation();
-			setAddDragActive(false);
-			await ingestDroppedServerPayload(event.dataTransfer);
+			openManualIngest(payload);
 		},
-		[ingestDroppedServerPayload],
-	);
-
-	const handleEmptyAddDragEnter = useCallback(
-		(event: React.DragEvent<HTMLDivElement>) => {
-			if (!prepareServerDropTargetEvent(event)) return;
-			setEmptyAddDragActive(true);
-		},
-		[],
-	);
-
-	const handleEmptyAddDragOver = useCallback(
-		(event: React.DragEvent<HTMLDivElement>) => {
-			if (!prepareServerDropTargetEvent(event)) return;
-			if (event.dataTransfer) {
-				event.dataTransfer.dropEffect = "copy";
-			}
-			setEmptyAddDragActive(true);
-		},
-		[],
-	);
-
-	const handleEmptyAddDragLeave = useCallback(
-		(event: React.DragEvent<HTMLDivElement>) => {
-			event.preventDefault();
-			event.stopPropagation();
-			if (isDragLeaveInsideCurrentTarget(event)) return;
-			setEmptyAddDragActive(false);
-		},
-		[],
-	);
-
-	const handleEmptyAddDragEnd = useCallback(() => {
-		setEmptyAddDragActive(false);
-	}, []);
-
-	const handleEmptyAddDrop = useCallback(
-		async (event: React.DragEvent<HTMLDivElement>) => {
-			event.preventDefault();
-			event.stopPropagation();
-			setEmptyAddDragActive(false);
-			await ingestDroppedServerPayload(event.dataTransfer);
-		},
-		[ingestDroppedServerPayload],
+		[openManualIngest, t],
 	);
 
 	const {
@@ -594,18 +492,18 @@ export function ServerListPage() {
 	};
 
 	const getUnifyEligibilityTag = (server: ServerSummary) => {
-	if (!server.unify_direct_exposure_eligible) return null;
-	return (
-		<Badge
-			variant="secondary"
-			className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
-		>
-			{t("entity.tags.unifyEligible", { defaultValue: "Unify Direct" })}
-		</Badge>
-	);
-};
+		if (!server.unify_direct_exposure_eligible) return null;
+		return (
+			<Badge
+				variant="secondary"
+				className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+			>
+				{t("entity.tags.unifyEligible", { defaultValue: "Unify Direct" })}
+			</Badge>
+		);
+	};
 
-const getConnectionTypeTags = (server: ServerSummary) => {
+	const getConnectionTypeTags = (server: ServerSummary) => {
 		const tags = [];
 		const lower = (server.server_type || "").toLowerCase();
 		const isStdio = lower.includes("stdio") || lower.includes("process");
@@ -1106,70 +1004,34 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 					className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`}
 				/>
 			</Button>
-			<div
-				onDragEnter={handleAddDragEnter}
-				onDragOver={handleAddDragOver}
-				onDragLeave={handleAddDragLeave}
-				onDrop={handleAddDrop}
-				onDragEnd={handleAddDragEnd}
-				className={`rounded-md ${isAddDragActive ? "ring-2 ring-slate-300 dark:ring-slate-600" : ""
-					}`}
-			>
-				<Button
-					size="icon"
-					className={`h-9 w-9 transition-colors ${isAddDragActive
-						? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900"
-						: ""
-						}`}
+			<div className="rounded-md">
+				<ServerImportDropButton
 					title={t("actions.add.title", { defaultValue: "Add Server" })}
 					onClick={() => setManualOpen(true)}
-				>
-					{isAddDragActive ? (
-						<Target className="h-4 w-4" />
-					) : (
-						<Plus className="h-4 w-4" />
-					)}
-				</Button>
+					onDrop={ingestServerImportDataTransfer}
+				/>
 			</div>
 		</div>
 	);
 
 	// Prepare empty state
 	const emptyStateAction = hasNoServerRecords ? (
-		<Button
+		<ServerImportDropButton
+			variant="labeled"
+			className="mt-4"
 			onClick={() => setManualOpen(true)}
-			size="sm"
-			className={cn(
-				"mt-4 transition-colors",
-				isEmptyAddDragActive &&
-					"bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900",
-			)}
-		>
-			{isEmptyAddDragActive ? (
-				<Target className="mr-2 h-4 w-4" />
-			) : (
-				<Plus className="mr-2 h-4 w-4" />
-			)}
-			{isEmptyAddDragActive
-				? t("emptyState.importAction", {
-					defaultValue: "Import server",
-				})
-				: t("emptyState.action", {
-					defaultValue: "Add First Server",
-				})}
-		</Button>
+			onDrop={ingestServerImportDataTransfer}
+			title={t("emptyState.action", {
+				defaultValue: "Add First Server",
+			})}
+			label={t("emptyState.action", {
+				defaultValue: "Add First Server",
+			})}
+		/>
 	) : undefined;
 
 	const emptyState = (
-		<FullHeightEmptyStateCard
-			contentProps={{
-				onDragEnter: handleEmptyAddDragEnter,
-				onDragOver: handleEmptyAddDragOver,
-				onDragLeave: handleEmptyAddDragLeave,
-				onDrop: handleEmptyAddDrop,
-				onDragEnd: handleEmptyAddDragEnd,
-			}}
-		>
+		<FullHeightEmptyStateCard>
 			<EmptyState
 				icon={<Server className="h-12 w-12" />}
 				title={t("emptyState.title", { defaultValue: "No servers found" })}
@@ -1262,8 +1124,6 @@ const getConnectionTypeTags = (server: ServerSummary) => {
 				onClose={() => setManualOpen(false)}
 				mode="new"
 				pipeline={installPipeline}
-				pendingIngestPayload={pendingIngestPayload}
-				onPendingIngestConsumed={() => setPendingIngestPayload(null)}
 			/>
 
 			{/* Edit server drawer */}
