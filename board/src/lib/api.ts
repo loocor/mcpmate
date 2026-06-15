@@ -948,18 +948,26 @@ export const secretsApi = {
 
 	switchProvider: async (
 		mode: SwitchableSecretStoreProviderMode,
-		options?: { passphrase?: string; currentPassphrase?: string },
+		options?: {
+			passphrase?: string;
+			currentPassphrase?: string;
+			confirmationPhrase?: string;
+		},
 	): Promise<SecretStoreStatusData> => {
 		const body: {
 			mode: typeof mode;
 			passphrase?: string;
 			current_passphrase?: string;
+			confirmation_phrase?: string;
 		} = { mode };
 		if (options?.passphrase) {
 			body.passphrase = options.passphrase;
 		}
 		if (options?.currentPassphrase) {
 			body.current_passphrase = options.currentPassphrase;
+		}
+		if (options?.confirmationPhrase) {
+			body.confirmation_phrase = options.confirmationPhrase;
 		}
 		const resp = await fetchApi<ProviderSwitchResp>("/api/secrets/provider/switch", {
 			method: "POST",

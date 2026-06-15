@@ -23,7 +23,7 @@ use mcpmate::{
     inspector::{calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager},
     system::metrics::MetricsCollector,
 };
-use mcpmate_secrets::SecretRootKeyProvider;
+use mcpmate_secrets::{SecretReference, SecretResolver, SecretRootKeyProvider};
 use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
@@ -143,6 +143,9 @@ async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<A
             .expect("initialize passphrase secret store"),
     );
     assert_eq!(secret_store.provider_metadata().mode(), RootKeyProviderMode::Passphrase);
+    mcpmate_secrets::database::upsert_provider_config(&db_pool, "passphrase")
+        .await
+        .expect("persist provider mode");
 
     let redb_cache =
         Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
@@ -666,6 +669,40 @@ async fn usage_sync_deduplicates_same_placeholder_twice_in_one_value() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn provider_switch_requires_confirmation_phrase_when_mode_changes() {
+    let (_temp_dir, state, _store) = build_passphrase_test_context("correct horse battery staple").await;
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/provider/switch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "mode": "local_file",
+                        "current_passphrase": "correct horse battery staple"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("switch response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = read_json_response(response).await;
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("confirmation phrase")
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn provider_switch_from_passphrase_requires_current_passphrase() {
     let (_temp_dir, state, _store) = build_passphrase_test_context("correct horse battery staple").await;
     let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
@@ -678,7 +715,8 @@ async fn provider_switch_from_passphrase_requires_current_passphrase() {
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({
-                        "mode": "local_file"
+                        "mode": "local_file",
+                        "confirmation_phrase": "ROTATE SECRETS"
                     })
                     .to_string(),
                 ))
@@ -712,7 +750,8 @@ async fn provider_switch_from_passphrase_rejects_wrong_current_passphrase() {
                 .body(axum::body::Body::from(
                     json!({
                         "mode": "local_file",
-                        "current_passphrase": "wrong password"
+                        "current_passphrase": "wrong password",
+                        "confirmation_phrase": "ROTATE SECRETS"
                     })
                     .to_string(),
                 ))
@@ -734,8 +773,18 @@ async fn provider_switch_from_passphrase_rejects_wrong_current_passphrase() {
 #[tokio::test]
 #[serial_test::serial]
 async fn provider_switch_from_passphrase_to_local_file_succeeds_with_current_passphrase() {
-    let (_temp_dir, state, _store) = build_passphrase_test_context("correct horse battery staple").await;
-    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state));
+    let (_temp_dir, state, store) = build_passphrase_test_context("correct horse battery staple").await;
+    store
+        .create_secret(SecretCreateInput {
+            alias: "rotate/api-token".to_string(),
+            kind: SecretKindInput::Token,
+            value: "api-token-value".to_string(),
+            label: None,
+            origin: None,
+        })
+        .await
+        .expect("create secret before switch");
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state.clone()));
 
     let response = app
         .oneshot(
@@ -746,7 +795,8 @@ async fn provider_switch_from_passphrase_to_local_file_succeeds_with_current_pas
                 .body(axum::body::Body::from(
                     json!({
                         "mode": "local_file",
-                        "current_passphrase": "correct horse battery staple"
+                        "current_passphrase": "correct horse battery staple",
+                        "confirmation_phrase": "ROTATE SECRETS"
                     })
                     .to_string(),
                 ))
@@ -759,6 +809,77 @@ async fn provider_switch_from_passphrase_to_local_file_succeeds_with_current_pas
     let body = read_json_response(response).await;
     assert_eq!(body["data"]["new_status"]["status"], "ready");
     assert_eq!(body["data"]["new_status"]["provider"]["provider_mode"], "local_file");
+
+    let store_guard = state.secret_store.read().await;
+    let switched_store = store_guard.as_ref().expect("switched store");
+    let reference = SecretReference::new("rotate/api-token").expect("secret reference");
+    let resolved = switched_store
+        .resolve_secret(&reference)
+        .expect("secret remains decryptable after switch");
+    assert_eq!(resolved.expose(), "api-token-value");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn provider_switch_rejects_corrupted_existing_record_and_keeps_provider_mode() {
+    let (_temp_dir, state, store) = build_passphrase_test_context("correct horse battery staple").await;
+    store
+        .create_secret(SecretCreateInput {
+            alias: "rotate/corrupted-token".to_string(),
+            kind: SecretKindInput::Token,
+            value: "corrupted-token-value".to_string(),
+            label: None,
+            origin: None,
+        })
+        .await
+        .expect("create secret before switch");
+    let db_pool = state.database.as_ref().expect("database").pool.clone();
+    sqlx::query("UPDATE secure_store_secrets SET encrypted_key = ?2 WHERE alias = ?1")
+        .bind("rotate/corrupted-token")
+        .bind("not-valid-base64")
+        .execute(&db_pool)
+        .await
+        .expect("corrupt record");
+    let app = axum::Router::new().merge(mcpmate::api::routes::secrets::routes(state.clone()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/secrets/provider/switch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({
+                        "mode": "local_file",
+                        "current_passphrase": "correct horse battery staple",
+                        "confirmation_phrase": "ROTATE SECRETS"
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("switch response");
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let persisted = mcpmate_secrets::database::get_provider_config(&db_pool)
+        .await
+        .expect("load provider config")
+        .expect("provider config row");
+    assert_eq!(persisted.provider_mode, "passphrase");
+    let status = state.secret_store_readiness.read().await;
+    match &*status {
+        mcpmate::core::secrets::store::SecretStoreReadiness::Unavailable {
+            reason_code, provider, ..
+        } => {
+            assert_eq!(reason_code, "secret_key_mismatch");
+            assert_eq!(
+                provider.as_ref().map(|snapshot| snapshot.provider_mode.as_str()),
+                Some("passphrase")
+            );
+        }
+        other => panic!("expected secret_key_mismatch readiness, got {other:?}"),
+    }
 }
 
 async fn build_locked_passphrase_context(master_password: &str) -> (TempDir, Arc<AppState>) {
@@ -988,7 +1109,8 @@ async fn provider_mode_persists_across_restart_simulation() {
                 .body(axum::body::Body::from(
                     json!({
                         "mode": "passphrase",
-                        "passphrase": "switch passphrase"
+                        "passphrase": "switch passphrase",
+                        "confirmation_phrase": "ROTATE SECRETS"
                     })
                     .to_string(),
                 ))

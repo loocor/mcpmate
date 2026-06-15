@@ -120,6 +120,8 @@ import {
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
 
+const PROVIDER_SWITCH_CONFIRMATION_PHRASE = "ROTATE SECRETS";
+
 // Options for Segment components
 const THEME_CONFIG = [
 	{
@@ -463,6 +465,7 @@ export function SettingsPage() {
 	const [showCurrentPassphraseDialog, setShowCurrentPassphraseDialog] = useState(false);
 	const [currentPassphraseInput, setCurrentPassphraseInput] = useState("");
 	const [currentPassphraseError, setCurrentPassphraseError] = useState<string | null>(null);
+	const [providerSwitchConfirmationText, setProviderSwitchConfirmationText] = useState("");
 	const [passphraseAction, setPassphraseAction] = useState<"switch" | "rotate" | null>(null);
 	const passphraseSetupPasswordRef = useRef<HTMLInputElement>(null);
 	const currentPassphraseInputRef = useRef<HTMLInputElement>(null);
@@ -471,6 +474,7 @@ export function SettingsPage() {
 		mode: SwitchableSecretStoreProviderMode;
 		passphrase?: string;
 		currentPassphrase?: string;
+		confirmationPhrase?: string;
 	};
 	const pendingProviderSwitchRef = useRef<PendingProviderSwitch | null>(null);
 
@@ -482,6 +486,7 @@ export function SettingsPage() {
 		setPassphraseSetupError(null);
 		setCurrentPassphraseInput("");
 		setCurrentPassphraseError(null);
+		setProviderSwitchConfirmationText("");
 	}, []);
 
 	const reportedProviderMode = storeStatusQuery.data?.provider?.provider_mode;
@@ -534,6 +539,7 @@ export function SettingsPage() {
 			secretsApi.switchProvider(pending.mode, {
 				passphrase: pending.passphrase,
 				currentPassphrase: pending.currentPassphrase,
+				confirmationPhrase: pending.confirmationPhrase,
 			}),
 		onSuccess: async () => {
 			await invalidateSecretStoreStatus(queryClient);
@@ -587,6 +593,7 @@ export function SettingsPage() {
 				mode,
 				passphrase: mode === "passphrase" ? passphraseInput : undefined,
 			};
+			setProviderSwitchConfirmationText("");
 			setShowSwitchConfirm(true);
 		},
 		[
@@ -720,6 +727,7 @@ export function SettingsPage() {
 			passphrase: modeCandidate === "passphrase" ? passphraseInput : undefined,
 			currentPassphrase: currentPassphraseInput,
 		};
+		setProviderSwitchConfirmationText("");
 		setShowCurrentPassphraseDialog(false);
 		setShowSwitchConfirm(true);
 	}, [
@@ -734,6 +742,9 @@ export function SettingsPage() {
 	const handleSwitchConfirmOpenChange = useCallback(
 		(open: boolean) => {
 			setShowSwitchConfirm(open);
+			if (open) {
+				setProviderSwitchConfirmationText("");
+			}
 			if (!open && !switchProviderMutation.isPending) {
 				resetPendingProviderSwitch();
 			}
@@ -756,8 +767,19 @@ export function SettingsPage() {
 			resetPendingProviderSwitch();
 			return;
 		}
-		switchProviderMutation.mutate(pending);
-	}, [switchProviderMutation, resetPendingProviderSwitch, t]);
+		if (providerSwitchConfirmationText !== PROVIDER_SWITCH_CONFIRMATION_PHRASE) {
+			return;
+		}
+		switchProviderMutation.mutate({
+			...pending,
+			confirmationPhrase: providerSwitchConfirmationText,
+		});
+	}, [
+		providerSwitchConfirmationText,
+		switchProviderMutation,
+		resetPendingProviderSwitch,
+		t,
+	]);
 
 	// Password protection state
 	const passwordQuery = useQuery({
@@ -2587,10 +2609,35 @@ export function SettingsPage() {
 									<AlertDialogDescription>
 										{t("settings:security.confirmDescription", {
 											defaultValue:
-												"This will migrate your root key to a new storage provider. Your encrypted secrets remain unchanged — only the key custody location changes. This operation is safe and reversible.",
+												"This will rotate Secure Store records to a new provider. MCPMate verifies existing records first and keeps the current provider authoritative if rotation fails.",
 										})}
 									</AlertDialogDescription>
 								</AlertDialogHeader>
+								<div className="space-y-2">
+									<Label htmlFor="provider-switch-confirmation">
+										{t("settings:security.confirmPhraseLabel", {
+											defaultValue: "Type ROTATE SECRETS to continue",
+										})}
+									</Label>
+									<Input
+										id="provider-switch-confirmation"
+										value={providerSwitchConfirmationText}
+										onChange={(event) => setProviderSwitchConfirmationText(event.target.value)}
+										onPaste={(event) => event.preventDefault()}
+										onDrop={(event) => event.preventDefault()}
+										autoComplete="off"
+										spellCheck={false}
+										placeholder={t("settings:security.confirmPhrasePlaceholder", {
+											defaultValue: "ROTATE SECRETS",
+										})}
+									/>
+									<p className="text-xs text-muted-foreground">
+										{t("settings:security.confirmPhraseDescription", {
+											defaultValue:
+												"This migration rewrites secure-store key wrapping metadata. The phrase must be typed manually.",
+										})}
+									</p>
+								</div>
 								<AlertDialogFooter>
 									<AlertDialogCancel>
 										{t("settings:security.confirmCancel", { defaultValue: "Cancel" })}
@@ -2600,7 +2647,10 @@ export function SettingsPage() {
 											event.preventDefault();
 											handleConfirmProviderSwitch();
 										}}
-										disabled={switchProviderMutation.isPending}
+										disabled={
+											switchProviderMutation.isPending ||
+											providerSwitchConfirmationText !== PROVIDER_SWITCH_CONFIRMATION_PHRASE
+										}
 									>
 										{switchProviderMutation.isPending
 											? t("settings:security.switching", { defaultValue: "Switching..." })

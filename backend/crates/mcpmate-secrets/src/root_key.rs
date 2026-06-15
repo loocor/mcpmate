@@ -145,6 +145,7 @@ pub trait SecretRootKeyProvider: fmt::Debug + Send + Sync {
     fn metadata(&self) -> RootKeyProviderMetadata;
     fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError>;
     fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError>;
+    fn generate_and_store_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError>;
 }
 
 pub fn default_root_key_provider() -> Arc<dyn SecretRootKeyProvider> {
@@ -171,20 +172,6 @@ impl OperatingSystemRootKeyProvider {
             user: user.into(),
         }
     }
-
-    /// Store an existing root key in the OS keyring.
-    /// Used during provider migration.
-    pub fn set_root_key(
-        &self,
-        root_key: &SecretRootKey,
-    ) -> Result<(), SecretRootKeyError> {
-        let entry = keyring::Entry::new(&self.service, &self.user)
-            .map_err(|err| SecretRootKeyError::ProviderUnavailable(format!("keyring entry: {err}")))?;
-        entry
-            .set_password(&STANDARD.encode(root_key))
-            .map_err(|err| SecretRootKeyError::ProviderUnavailable(format!("keyring set: {err}")))?;
-        Ok(())
-    }
 }
 
 impl Default for OperatingSystemRootKeyProvider {
@@ -209,6 +196,10 @@ impl SecretRootKeyProvider for OperatingSystemRootKeyProvider {
 
     fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
         load_existing_os_root_key(&self.service, &self.user)
+    }
+
+    fn generate_and_store_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        generate_and_store_os_root_key(&self.service, &self.user)
     }
 }
 
@@ -242,9 +233,8 @@ impl PassphraseRootKeyProvider {
         }
     }
 
-    /// Store an existing root key wrapped with this provider's passphrase.
-    /// Used during provider migration — writes the wrapped key file.
-    pub fn set_root_key(
+    #[cfg(test)]
+    fn set_root_key(
         &self,
         root_key: &SecretRootKey,
     ) -> Result<(), SecretRootKeyError> {
@@ -297,6 +287,10 @@ impl SecretRootKeyProvider for PassphraseRootKeyProvider {
     fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
         load_existing_passphrase_root_key(&self.wrapped_key_path, &self.passphrase)
     }
+
+    fn generate_and_store_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        generate_and_store_passphrase_root_key(&self.wrapped_key_path, &self.passphrase)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -309,19 +303,6 @@ impl LocalFileRootKeyProvider {
         Self {
             local_key_path: local_key_path.into(),
         }
-    }
-
-    /// Store an existing root key as a local file.
-    /// Used during provider migration.
-    pub fn set_root_key(
-        &self,
-        root_key: &SecretRootKey,
-    ) -> Result<(), SecretRootKeyError> {
-        if let Some(parent) = self.local_key_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
-        }
-        write_secret_file_replace(&self.local_key_path, STANDARD.encode(root_key).as_bytes())?;
-        Ok(())
     }
 }
 
@@ -341,6 +322,10 @@ impl SecretRootKeyProvider for LocalFileRootKeyProvider {
 
     fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
         load_existing_local_file_root_key(&self.local_key_path)
+    }
+
+    fn generate_and_store_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        generate_and_store_local_file_root_key(&self.local_key_path)
     }
 }
 
@@ -392,6 +377,13 @@ impl SecretRootKeyProvider for DevelopmentRootKeyProvider {
             other => other,
         })
     }
+
+    fn generate_and_store_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+        self.fallback.generate_and_store_root_key().map_err(|err| match err {
+            SecretRootKeyError::LocalStorage(message) => SecretRootKeyError::DevelopmentStorage(message),
+            other => other,
+        })
+    }
 }
 
 fn generate_root_key() -> Result<[u8; 32], SecretRootKeyError> {
@@ -429,6 +421,15 @@ fn load_or_create_local_file_root_key(local_key_path: &Path) -> Result<SecretRoo
     }
     let root = generate_root_key()?;
     write_secret_file(local_key_path, STANDARD.encode(root).as_bytes())?;
+    Ok(derive_key(&root))
+}
+
+fn generate_and_store_local_file_root_key(local_key_path: &Path) -> Result<SecretRootKey, SecretRootKeyError> {
+    if let Some(parent) = local_key_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    }
+    let root = generate_root_key()?;
+    write_secret_file_replace(local_key_path, STANDARD.encode(root).as_bytes())?;
     Ok(derive_key(&root))
 }
 
@@ -496,6 +497,38 @@ fn load_or_create_passphrase_root_key(
     })
     .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
     write_secret_file(wrapped_key_path, &serialized)?;
+    Ok(derive_key(&root))
+}
+
+fn generate_and_store_passphrase_root_key(
+    wrapped_key_path: &Path,
+    passphrase: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    if passphrase.is_empty() {
+        return Err(SecretRootKeyError::InvalidMaterial(
+            "passphrase cannot be empty".to_string(),
+        ));
+    }
+
+    if let Some(parent) = wrapped_key_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    }
+
+    let root = generate_root_key()?;
+    let salt = generate_random_bytes(PASSPHRASE_SALT_LEN)?;
+    let nonce = generate_random_bytes(AES_256_GCM_NONCE_LEN)?;
+    let wrapping_key = derive_passphrase_wrapping_key(passphrase, &salt, PASSPHRASE_KDF_ITERATIONS)?;
+    let encrypted_root_key = encrypt_root_material(&root, &wrapping_key, &nonce)?;
+    let serialized = serde_json::to_vec_pretty(&PassphraseRootKeyFile {
+        version: PASSPHRASE_FILE_VERSION,
+        kdf: PASSPHRASE_KDF_NAME.to_string(),
+        iterations: PASSPHRASE_KDF_ITERATIONS,
+        salt: STANDARD.encode(salt),
+        nonce: STANDARD.encode(nonce),
+        encrypted_root_key: STANDARD.encode(encrypted_root_key),
+    })
+    .map_err(|err| SecretRootKeyError::LocalStorage(err.to_string()))?;
+    write_secret_file_replace(wrapped_key_path, &serialized)?;
     Ok(derive_key(&root))
 }
 
@@ -718,6 +751,20 @@ fn load_or_create_os_root_key(
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn generate_and_store_os_root_key(
+    service: &str,
+    user: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    let entry =
+        keyring::Entry::new(service, user).map_err(|err| SecretRootKeyError::ProviderUnavailable(err.to_string()))?;
+    let root = generate_root_key()?;
+    entry
+        .set_password(&STANDARD.encode(root))
+        .map_err(|err| SecretRootKeyError::ProviderUnavailable(err.to_string()))?;
+    Ok(derive_key(&root))
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn load_existing_os_root_key(
     service: &str,
     user: &str,
@@ -731,6 +778,16 @@ fn load_existing_os_root_key(
         )),
         Err(err) => Err(SecretRootKeyError::ProviderUnavailable(err.to_string())),
     }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn generate_and_store_os_root_key(
+    _service: &str,
+    _user: &str,
+) -> Result<SecretRootKey, SecretRootKeyError> {
+    Err(SecretRootKeyError::ProviderUnavailable(
+        "unsupported platform".to_string(),
+    ))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]

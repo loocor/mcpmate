@@ -379,7 +379,11 @@ export const settingsTranslations = {
         "Your root key is wrapped with your current master password. Enter it to unlock the key before switching encryption mode.",
       confirmTitle: "Switch Security Mode?",
       confirmDescription:
-        "This will migrate your root key to a new storage provider. Your encrypted secrets remain unchanged — only the key custody location changes. This operation is safe and reversible.",
+        "This will rotate Secure Store records to a new provider. MCPMate verifies existing records first and keeps the current provider authoritative if rotation fails.",
+      confirmPhraseLabel: "Type ROTATE SECRETS to continue",
+      confirmPhrasePlaceholder: "ROTATE SECRETS",
+      confirmPhraseDescription:
+        "This migration rewrites secure-store key wrapping metadata. The phrase must be typed manually.",
       confirmCancel: "Cancel",
       confirmAction: "Switch Mode",
       switching: "Switching...",
@@ -772,7 +776,11 @@ export const settingsTranslations = {
         "根密钥由当前主密码包裹。切换加密模式前请先输入以解锁密钥。",
       confirmTitle: "切换安全模式？",
       confirmDescription:
-        "这将把根密钥迁移到新的存储提供方。已加密的密钥内容不变，仅密钥托管位置改变。此操作安全且可逆。",
+        "这会将 Secure Store 记录轮换到新的存储提供方。MCPMate 会先验证现有记录；如果轮换失败，当前提供方仍保持权威状态。",
+      confirmPhraseLabel: "输入 ROTATE SECRETS 以继续",
+      confirmPhrasePlaceholder: "ROTATE SECRETS",
+      confirmPhraseDescription:
+        "此迁移会重写 Secure Store 的密钥包裹元数据。确认短语必须手动输入。",
       confirmCancel: "取消",
       confirmAction: "切换模式",
       switching: "切换中…",
@@ -1197,7 +1205,11 @@ export const settingsTranslations = {
         "ルートキーは現在のマスターパスワードでラップされています。暗号化モードを切り替える前に入力してキーのロックを解除してください。",
       confirmTitle: "セキュリティモードを切り替えますか？",
       confirmDescription:
-        "ルートキーを新しいストレージプロバイダーに移行します。暗号化済みシークレットは変更されず、キーの保管場所のみ変わります。この操作は安全で元に戻せます。",
+        "Secure Store レコードを新しいプロバイダーへローテーションします。MCPMate は既存レコードを先に検証し、失敗した場合は現在のプロバイダーを正とします。",
+      confirmPhraseLabel: "続行するには ROTATE SECRETS と入力してください",
+      confirmPhrasePlaceholder: "ROTATE SECRETS",
+      confirmPhraseDescription:
+        "この移行では Secure Store のキーラップメタデータを書き換えます。確認フレーズは手入力してください。",
       confirmCancel: "キャンセル",
       confirmAction: "モードを切り替え",
       switching: "切り替え中…",
