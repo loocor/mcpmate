@@ -89,7 +89,6 @@ export function useServerInstallPipeline(
 		setSelectedDraftNames([]);
 		setSource(null);
 		clearResults();
-		setPreviewLoading(false);
 		setImporting(false);
 		setCurrentStep("form");
 		setTargetProfileId(null);
@@ -224,6 +223,7 @@ export function useServerInstallPipeline(
 			);
 			return;
 		}
+		const generation = previewGenerationRef.current;
 		try {
 			setDryRunLoading(true);
 			setDryRunError(null);
@@ -236,6 +236,9 @@ export function useServerInstallPipeline(
 				dryRun: true,
 			});
 			const result = await serversApi.importServers(requestBody);
+			if (generation !== previewGenerationRef.current) {
+				return;
+			}
 			setDryRunResult(result);
 			const stats = extractImportStats(result);
 			setDryRunStats(stats);
@@ -278,6 +281,9 @@ export function useServerInstallPipeline(
 				setDryRunError(null);
 			}
 		} catch (error) {
+			if (generation !== previewGenerationRef.current) {
+				return;
+			}
 			setDryRunStats(null);
 			setDryRunWarning(null);
 			const message = error instanceof Error ? error.message : String(error ?? "");
@@ -288,7 +294,9 @@ export function useServerInstallPipeline(
 					}),
 			);
 		} finally {
-			setDryRunLoading(false);
+			if (generation === previewGenerationRef.current) {
+				setDryRunLoading(false);
+			}
 		}
 	}, [
 		drafts,

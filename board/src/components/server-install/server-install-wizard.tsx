@@ -536,6 +536,7 @@ export const ServerInstallWizard = forwardRef(
 			[t],
 		);
 		const previewInFlightRef = useRef(false);
+		const wizardSessionEpochRef = useRef(0);
 		const pendingImportServerRef = useRef<string | null>(null);
 		const [pendingImportServerId, setPendingImportServerId] =
 			useState<string | null>(null);
@@ -799,6 +800,7 @@ export const ServerInstallWizard = forwardRef(
 			formStateRef,
 			buildFormValuesFromState,
 			reset,
+			sessionEpochRef: wizardSessionEpochRef,
 			onSubmitMultiple: (drafts) => {
 				if (onPreview) {
 					onPreview(drafts);
@@ -812,6 +814,8 @@ export const ServerInstallWizard = forwardRef(
 		});
 
 		const resetWizardSession = useCallback(() => {
+			wizardSessionEpochRef.current += 1;
+			previewInFlightRef.current = false;
 			installPipeline.setCurrentStep("form");
 			installPipeline.reset();
 			const initialFormState = createInitialFormState();
@@ -824,6 +828,7 @@ export const ServerInstallWizard = forwardRef(
 			setViewMode("form");
 			setJsonError(null);
 			resetBulkUIState();
+			setPendingImportServerId(null);
 		}, [
 			installPipeline,
 			createInitialFormState,
@@ -1236,6 +1241,7 @@ export const ServerInstallWizard = forwardRef(
 
 				try {
 					if (pendingImportServerRef.current && !isEditMode) {
+						const previewEpoch = wizardSessionEpochRef.current;
 						installPipeline.setPreviewError(null);
 						installPipeline.setPreviewState(null);
 						installPipeline.setPreviewLoading(true);
@@ -1247,6 +1253,10 @@ export const ServerInstallWizard = forwardRef(
 								serversApi.listPrompts(hiddenServerId, "force"),
 								serversApi.listResourceTemplates(hiddenServerId, "force"),
 							]);
+
+							if (previewEpoch !== wizardSessionEpochRef.current) {
+								return;
+							}
 
 							installPipeline.setPreviewState({
 								success: true,
@@ -1265,12 +1275,17 @@ export const ServerInstallWizard = forwardRef(
 								},
 							});
 						} catch (error) {
+							if (previewEpoch !== wizardSessionEpochRef.current) {
+								return;
+							}
 							const message =
 								error instanceof Error ? error.message : "Preview request failed";
 							installPipeline.setPreviewError(message);
 							notifyError("Preview failed", message);
 						} finally {
-							installPipeline.setPreviewLoading(false);
+							if (previewEpoch === wizardSessionEpochRef.current) {
+								installPipeline.setPreviewLoading(false);
+							}
 						}
 						return;
 					}
@@ -1345,9 +1360,8 @@ export const ServerInstallWizard = forwardRef(
 
 				onClose();
 				setIsClosing(false);
-				resetWizardSession();
 			}
-		}, [cleanupPendingImportServer, onClose, isClosing, resetWizardSession]);
+		}, [cleanupPendingImportServer, onClose, isClosing]);
 
 		// Handle import action
 		const handleImport = useCallback(async () => {
@@ -1447,14 +1461,12 @@ export const ServerInstallWizard = forwardRef(
 				setTimeout(() => {
 					onClose();
 					setIsClosing(false);
-					resetWizardSession();
 				}, 50);
 			}
 		}, [
 			cleanupPendingImportServer,
 			onClose,
 			isClosing,
-			resetWizardSession,
 		]);
 
 		type NextStepAction = "close" | "servers" | "profiles" | "preview" | "none";
@@ -1484,10 +1496,11 @@ export const ServerInstallWizard = forwardRef(
 			[handleOverlayClose, navigate, handleStepChange],
 		);
 
-		// Reset wizard when opening (only on transition from closed to open)
+		// Reset wizard whenever the drawer opens or closes
 		const wasOpenRef = useRef(false);
 		useLayoutEffect(() => {
-			if (isOpen && !wasOpenRef.current) {
+			const wasOpen = wasOpenRef.current;
+			if (isOpen !== wasOpen) {
 				resetWizardSession();
 			}
 			wasOpenRef.current = isOpen;

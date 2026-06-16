@@ -843,7 +843,10 @@ export function ServerListPage() {
 			<ServerInstallWizard
 				ref={manualRef}
 				isOpen={manualOpen}
-				onClose={() => setManualOpen(false)}
+				onClose={() => {
+					setManualOpen(false);
+					setPendingIngestPayload(null);
+				}}
 				mode="new"
 				pipeline={installPipeline}
 			/>
