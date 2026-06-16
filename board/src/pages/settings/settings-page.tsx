@@ -469,6 +469,7 @@ export function SettingsPage() {
 	const [passphraseAction, setPassphraseAction] = useState<"switch" | "rotate" | null>(null);
 	const passphraseSetupPasswordRef = useRef<HTMLInputElement>(null);
 	const currentPassphraseInputRef = useRef<HTMLInputElement>(null);
+	const providerSwitchConfirmationInputRef = useRef<HTMLInputElement>(null);
 
 	type PendingProviderSwitch = {
 		mode: SwitchableSecretStoreProviderMode;
@@ -2599,7 +2600,12 @@ export function SettingsPage() {
 						</AlertDialog>
 
 						<AlertDialog open={showSwitchConfirm} onOpenChange={handleSwitchConfirmOpenChange}>
-							<AlertDialogContent>
+							<AlertDialogContent
+								onOpenAutoFocus={(event) => {
+									event.preventDefault();
+									providerSwitchConfirmationInputRef.current?.focus();
+								}}
+							>
 								<AlertDialogHeader>
 									<AlertDialogTitle>
 										{t("settings:security.confirmTitle", {
@@ -2620,6 +2626,7 @@ export function SettingsPage() {
 										})}
 									</Label>
 									<Input
+										ref={providerSwitchConfirmationInputRef}
 										id="provider-switch-confirmation"
 										value={providerSwitchConfirmationText}
 										onChange={(event) => setProviderSwitchConfirmationText(event.target.value)}
