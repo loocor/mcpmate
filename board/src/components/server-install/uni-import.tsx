@@ -22,7 +22,7 @@ import {
 } from "react";
 import { useFieldArray, useForm, useWatch } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { readClipboardText } from "../../lib/clipboard";
+import { cn } from "../../lib/utils";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { parseJsonDrafts } from "../../lib/install-normalizer";
 import { isTauriEnvironmentSync } from "../../lib/platform";
@@ -50,7 +50,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Segment } from "../ui/segment";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { Textarea } from "../ui/textarea";
 import {
 	CommandField,
 	HttpHeaders,
@@ -68,9 +67,15 @@ import {
 	useServerTypeOptions,
 } from "./hooks";
 import {
-	FORM_TAB_PANEL_TOP_INSET_CLASS,
-	FORM_TAB_TOOLBAR_ROW_CLASS,
+	FORM_TAB_SHELL_CLASS,
+	INSTALL_DRAWER_CONTENT_CLASS,
+	INSTALL_FORM_CLASS,
+	installFormBodyClass,
+	isCoreJsonView,
+	SECONDARY_TAB_CONTENT_CLASS,
 } from "./form-tab-layout";
+import { CoreConfigTabPanel } from "./core-config-tab-panel";
+import { ServerConfigJsonPanel } from "./server-config-json-panel";
 import {
 	breathingAnimation,
 	DEFAULT_INGEST_MESSAGE,
@@ -79,7 +84,6 @@ import {
 	type ServerInstallManualFormHandle,
 	type ServerInstallManualFormProps,
 } from "./types";
-import { FormViewModeToggle } from "./view-mode-toggle";
 
 function formatRecordForJsonPreview(
 	record: Record<string, string> | null | undefined,
@@ -941,8 +945,8 @@ export const ServerInstallManualForm = forwardRef<
 			}
 		};
 
-		const isCoreTabActive = activeTab === "core";
-		const showCoreJsonPanel = isCoreTabActive && viewMode === "json";
+
+		const isCoreJsonPanel = isCoreJsonView(activeTab, viewMode);
 
 		return (
 			<>
@@ -950,9 +954,9 @@ export const ServerInstallManualForm = forwardRef<
 					open={isOpen}
 					onOpenChange={(value) => (!value ? onClose() : undefined)}
 				>
-					<DrawerContent>
-						<form onSubmit={onFormSubmit} className="flex h-full flex-col">
-							<DrawerHeader className="pb-2">
+					<DrawerContent className={INSTALL_DRAWER_CONTENT_CLASS}>
+						<form onSubmit={onFormSubmit} className={INSTALL_FORM_CLASS}>
+							<DrawerHeader className="shrink-0 pb-2">
 								<div className="flex items-start justify-between gap-2">
 									<div>
 										<DrawerTitle>{headerTitle}</DrawerTitle>
@@ -1072,16 +1076,15 @@ export const ServerInstallManualForm = forwardRef<
 							) : null}
 
 							{/* Main Content Area */}
-							<div
-								className={`flex-1 overflow-y-auto px-4 pb-4 ${ingestEnabled ? "pt-0" : "pt-4"
-									}`}
-							>
+							<div className={installFormBodyClass(ingestEnabled, isCoreJsonPanel)}>
 								<Tabs
 									value={activeTab}
 									onValueChange={setActiveTab}
-									className="flex flex-col"
+									className="flex min-h-0 flex-1 flex-col"
 								>
-									<TabsList className={`grid w-full ${extraTab ? "grid-cols-3" : "grid-cols-2"}`}>
+									<TabsList
+										className={`grid w-full shrink-0 ${extraTab ? "grid-cols-3" : "grid-cols-2"}`}
+									>
 										<TabsTrigger value="core">{tabsCoreLabel}</TabsTrigger>
 										{extraTab && (
 											<TabsTrigger value={extraTab.value}>{extraTab.label}</TabsTrigger>
@@ -1091,225 +1094,183 @@ export const ServerInstallManualForm = forwardRef<
 										</TabsTrigger>
 									</TabsList>
 
-									{isCoreTabActive ? (
-										<div className={FORM_TAB_TOOLBAR_ROW_CLASS}>
-											<FormViewModeToggle
-												mode={viewMode}
-												onChange={handleModeChange}
-											/>
-										</div>
-									) : null}
-
-									{showCoreJsonPanel ? (
-										<div className="flex min-h-0 flex-1 flex-col">
-											<div className="flex flex-1 items-start gap-4">
-												<Label
-													htmlFor={manualJsonId}
-													className="w-20 shrink-0 pt-3 text-right"
-												>
-													{jsonLabel}
-												</Label>
-												<div className="flex min-h-0 flex-1 flex-col">
-													<div className="flex min-h-[400px] flex-1 flex-col rounded-md border border-input">
-														<Textarea
-															id={manualJsonId}
-															value={jsonText}
-															onChange={
-																jsonEditingEnabled
-																	? (event) =>
-																			setJsonText(event.target.value)
-																	: undefined
-															}
-															readOnly={!jsonEditingEnabled}
-															aria-readonly={!jsonEditingEnabled}
-															className="min-h-0 flex-1 border-0 font-mono text-sm focus:outline-none focus:ring-0"
-															style={{
-																background: "transparent",
-																minHeight: "400px",
-																userSelect: "text",
-																WebkitUserSelect: "text",
-																MozUserSelect: "text",
-																msUserSelect: "text",
-																caretColor: jsonEditingEnabled
-																	? "currentColor"
-																	: "transparent",
-															}}
-														/>
-													</div>
-													{jsonError ? (
-														<p className="mt-2 text-xs text-red-500">
-															{jsonError}
-														</p>
-													) : null}
-												</div>
-											</div>
-										</div>
-									) : null}
-
-									<TabsContent
-										value="core"
-										className="flex flex-col gap-4"
-										onClick={handleFormInteraction}
-									>
-										{viewMode === "form" ? (
-											<>
-												<div className="space-y-4">
-													<div className="flex items-center gap-4">
-														<Label htmlFor={nameId} className="w-20 text-right">
-															{nameLabel}
-														</Label>
-														<div className="flex-1">
-															<Input
-																id={nameId}
-																{...register("name")}
-																placeholder={namePlaceholder}
-																readOnly={isEditMode}
-																aria-readonly={isEditMode}
-																title={isEditMode ? nameReadOnlyTitle : undefined}
-																className={
-																	isEditMode
-																		? "cursor-not-allowed bg-muted text-muted-foreground"
-																		: undefined
-																}
-															/>
-															{errors.name && (
-																<p className="text-xs text-red-500">
-																	{t(errors.name.message ?? "", {
-																		defaultValue: errors.name.message,
-																	})}
-																</p>
-															)}
-														</div>
-													</div>
-													<div className="flex items-center gap-4">
-														<Label htmlFor={kindId} className="w-20 text-right">
-															{typeLabel}
-														</Label>
-														<div className="flex-1">
-															<Segment
-																options={serverTypeOptions}
-																value={kind}
-																onValueChange={(value) => {
-																	const newKind =
-																		value as ManualServerFormValues["kind"];
-																	if (newKind === kind) {
-																		return;
+									<TabsContent value="core" className={FORM_TAB_SHELL_CLASS}>
+										<CoreConfigTabPanel
+											viewMode={viewMode}
+											onViewModeChange={handleModeChange}
+											onContentClick={handleFormInteraction}
+											formContent={
+												<>
+													<div className="space-y-4">
+														<div className="flex items-center gap-4">
+															<Label htmlFor={nameId} className="w-20 text-right">
+																{nameLabel}
+															</Label>
+															<div className="flex-1">
+																<Input
+																	id={nameId}
+																	{...register("name")}
+																	placeholder={namePlaceholder}
+																	readOnly={isEditMode}
+																	aria-readonly={isEditMode}
+																	title={isEditMode ? nameReadOnlyTitle : undefined}
+																	className={
+																		isEditMode
+																			? "cursor-not-allowed bg-muted text-muted-foreground"
+																			: undefined
 																	}
-																	saveTypeSnapshot(kind);
-																	setValue("kind", newKind, {
-																		shouldDirty: true,
-																		shouldTouch: true,
-																	});
-																	restoreTypeSnapshot(newKind);
-																}}
-																showDots={true}
-															/>
-															{errors.kind && (
-																<p className="text-xs text-red-500">
-																	{t(errors.kind.message ?? "", {
-																		defaultValue: errors.kind.message,
-																	})}
-																</p>
-															)}
+																/>
+																{errors.name && (
+																	<p className="text-xs text-red-500">
+																		{t(errors.name.message ?? "", {
+																			defaultValue: errors.name.message,
+																		})}
+																	</p>
+																)}
+															</div>
+														</div>
+														<div className="flex items-center gap-4">
+															<Label htmlFor={kindId} className="w-20 text-right">
+																{typeLabel}
+															</Label>
+															<div className="flex-1">
+																<Segment
+																	options={serverTypeOptions}
+																	value={kind}
+																	onValueChange={(value) => {
+																		const newKind =
+																			value as ManualServerFormValues["kind"];
+																		if (newKind === kind) {
+																			return;
+																		}
+																		saveTypeSnapshot(kind);
+																		setValue("kind", newKind, {
+																			shouldDirty: true,
+																			shouldTouch: true,
+																		});
+																		restoreTypeSnapshot(newKind);
+																	}}
+																	showDots={true}
+																/>
+																{errors.kind && (
+																	<p className="text-xs text-red-500">
+																		{t(errors.kind.message ?? "", {
+																			defaultValue: errors.kind.message,
+																		})}
+																	</p>
+																)}
+															</div>
 														</div>
 													</div>
-												</div>
 
-												<CommandField
-													kind={kind}
-													control={control}
-													errors={errors}
-													commandId={commandId}
-													urlId={urlId}
-													viewMode={viewMode}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
-												/>
-
-												{serverId && onInitiateOAuth ? (
-													<ServerAuthSection
-														serverId={serverId}
-														isStdio={isStdio}
+													<CommandField
+														kind={kind}
+														control={control}
+														errors={errors}
+														commandId={commandId}
+														urlId={urlId}
 														viewMode={viewMode}
-														isNewServer={false}
-														onInitiateOAuth={onInitiateOAuth}
+														onCreateSecret={onCreateSecret}
+														secretOriginBase={secretOriginBase}
 													/>
-												) : null}
 
-												<StdioAdvanced
-													viewMode={viewMode}
-													isStdio={isStdio}
-													argFields={argFields}
-													envFields={envFields}
-													removeArg={removeArg}
-													removeEnv={removeEnv}
-													appendArg={appendArg}
-													appendEnv={appendEnv}
-													register={register}
-													control={control}
-													deleteConfirmStates={deleteConfirmStates}
-													onDeleteClick={handleDeleteClick}
-													onGhostClick={handleGhostClick}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
-													getEnvRowKeyAt={(index) =>
-														watchedEnv?.[index]?.key?.trim() || undefined
-													}
+													{serverId && onInitiateOAuth ? (
+														<ServerAuthSection
+															serverId={serverId}
+															isStdio={isStdio}
+															viewMode={viewMode}
+															isNewServer={false}
+															onInitiateOAuth={onInitiateOAuth}
+														/>
+													) : null}
+
+													<StdioAdvanced
+														viewMode={viewMode}
+														isStdio={isStdio}
+														argFields={argFields}
+														envFields={envFields}
+														removeArg={removeArg}
+														removeEnv={removeEnv}
+														appendArg={appendArg}
+														appendEnv={appendEnv}
+														register={register}
+														control={control}
+														deleteConfirmStates={deleteConfirmStates}
+														onDeleteClick={handleDeleteClick}
+														onGhostClick={handleGhostClick}
+														onCreateSecret={onCreateSecret}
+														secretOriginBase={secretOriginBase}
+														getEnvRowKeyAt={(index) =>
+															watchedEnv?.[index]?.key?.trim() || undefined
+														}
+													/>
+
+													<UrlParams
+														viewMode={viewMode}
+														isStdio={isStdio}
+														urlParamFields={urlParamFields}
+														removeUrlParam={removeUrlParam}
+														appendUrlParam={appendUrlParam}
+														register={register}
+														control={control}
+														deleteConfirmStates={deleteConfirmStates}
+														onDeleteClick={handleDeleteClick}
+														onGhostClick={handleGhostClick}
+														onCreateSecret={onCreateSecret}
+														secretOriginBase={secretOriginBase}
+														getRowKeyAt={(index) =>
+															watchedUrlParams?.[index]?.key?.trim() || undefined
+														}
+													/>
+
+													<HttpHeaders
+														viewMode={viewMode}
+														isStdio={isStdio}
+														headerFields={headerFields}
+														removeHeader={removeHeader}
+														appendHeader={appendHeader}
+														register={register}
+														control={control}
+														deleteConfirmStates={deleteConfirmStates}
+														onDeleteClick={handleDeleteClick}
+														onGhostClick={handleGhostClick}
+														onCreateSecret={onCreateSecret}
+														secretOriginBase={secretOriginBase}
+														getRowKeyAt={(index) =>
+															watchedHeaders?.[index]?.key?.trim() || undefined
+														}
+													/>
+												</>
+											}
+											jsonContent={
+												<ServerConfigJsonPanel
+													id={manualJsonId}
+													label={jsonLabel}
+													jsonText={jsonText}
+													jsonError={jsonError}
+													jsonEditingEnabled={jsonEditingEnabled}
+													onJsonChange={setJsonText}
+													copyLabel={t("manual.fields.json.copy", {
+														defaultValue: "Copy JSON",
+													})}
 												/>
-
-												<UrlParams
-													viewMode={viewMode}
-													isStdio={isStdio}
-													urlParamFields={urlParamFields}
-													removeUrlParam={removeUrlParam}
-													appendUrlParam={appendUrlParam}
-													register={register}
-													control={control}
-													deleteConfirmStates={deleteConfirmStates}
-													onDeleteClick={handleDeleteClick}
-													onGhostClick={handleGhostClick}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
-													getRowKeyAt={(index) =>
-														watchedUrlParams?.[index]?.key?.trim() || undefined
-													}
-												/>
-
-												<HttpHeaders
-													viewMode={viewMode}
-													isStdio={isStdio}
-													headerFields={headerFields}
-													removeHeader={removeHeader}
-													appendHeader={appendHeader}
-													register={register}
-													control={control}
-													deleteConfirmStates={deleteConfirmStates}
-													onDeleteClick={handleDeleteClick}
-													onGhostClick={handleGhostClick}
-													onCreateSecret={onCreateSecret}
-													secretOriginBase={secretOriginBase}
-													getRowKeyAt={(index) =>
-														watchedHeaders?.[index]?.key?.trim() || undefined
-													}
-												/>
-
-											</>
-										) : null}
+											}
+										/>
 									</TabsContent>
 
 
-									{extraTab && (
+									{extraTab ? (
 										<TabsContent
 											value={extraTab.value}
-											className={FORM_TAB_PANEL_TOP_INSET_CLASS}
+											className={SECONDARY_TAB_CONTENT_CLASS}
 											onClick={handleFormInteraction}
 										>
 											{extraTab.content}
 										</TabsContent>
-									)}
+									) : null}
 									<TabsContent
 										value="meta"
-										className={FORM_TAB_PANEL_TOP_INSET_CLASS}
+										className={SECONDARY_TAB_CONTENT_CLASS}
 										onClick={handleFormInteraction}
 									>
 										<MetaFields
@@ -1330,7 +1291,7 @@ export const ServerInstallManualForm = forwardRef<
 								</Tabs>
 							</div>
 
-							<DrawerFooter className="mt-auto border-t px-6 py-4">
+							<DrawerFooter className="mt-auto shrink-0 border-t px-6 py-4">
 								<div className="flex w-full items-center justify-between gap-3">
 									<Button
 										type="button"
