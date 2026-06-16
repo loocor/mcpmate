@@ -77,6 +77,15 @@ export function SecureStringField({
 		},
 		[onChange, isBearerRedacted],
 	);
+	const handleRedactedTextInput = useCallback(
+		(text: string) => {
+			pendingPlainFocusRef.current = isBearerRedacted
+				? `Bearer ${text}`.length
+				: text.length;
+			replaceRedactedWithText(text);
+		},
+		[isBearerRedacted, replaceRedactedWithText],
+	);
 
 	const handleValueChange = useCallback(
 		(next: string) => {
@@ -219,7 +228,7 @@ export function SecureStringField({
 				<input
 					type="text"
 					defaultValue=""
-					onChange={(event) => replaceRedactedWithText(event.target.value)}
+					onChange={(event) => handleRedactedTextInput(event.target.value)}
 					onBlur={onBlur}
 					className="h-6 min-w-[2ch] flex-1 basis-0 border-0 bg-transparent p-0 text-sm outline-none focus:outline-none focus:ring-0"
 					aria-label={t("manual.secrets.inlineText", {

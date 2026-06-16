@@ -436,15 +436,7 @@ export function ServerAuthSection({
 			<TooltipProvider delayDuration={200}>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<span
-							className="inline-flex cursor-help items-center gap-1.5"
-							aria-label={[
-								showManualOverride && `${manualOverrideTitle}. ${manualOverrideDescription}`,
-								isSecureOAuthCustody && secureOAuthCustodyLabel,
-							]
-								.filter((part): part is string => Boolean(part))
-								.join(" ")}
-						>
+						<span className="inline-flex cursor-help items-center gap-1.5">
 							{showManualOverride ? (
 								<AlertTriangle
 									className="h-3.5 w-3.5 flex-none text-amber-600 dark:text-amber-400"
