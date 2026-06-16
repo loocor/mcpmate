@@ -74,7 +74,6 @@ import { writeClipboardText } from "../../lib/clipboard";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
-import { maskHeaderValue, sanitizeRecord } from "../../lib/security";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import type {
@@ -198,7 +197,6 @@ const overviewMetadataGridClass =
 const overviewMetadataLabelClass =
 	"text-xs uppercase leading-5 text-slate-500";
 const overviewMetadataValueClass = "min-w-0 text-left text-sm leading-5";
-
 function OverviewMetadataRow({
 	label,
 	children,
@@ -1115,16 +1113,6 @@ export function ServerDetailPage() {
 	}, [authReadiness, navigate]);
 	const overviewActionButtonClass =
 		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
-	const showDefaultHeaders = useAppStore(
-		(state) => state.dashboardSettings.showDefaultHeaders,
-	);
-	const redactedHeaders = useMemo(() => {
-		const src = sanitizeRecord(server?.headers);
-		if (!src) return undefined;
-		const out: Record<string, string> = {};
-		for (const [k, v] of Object.entries(src)) out[k] = maskHeaderValue(k, v);
-		return out;
-	}, [server?.headers]);
 	const isServerPending = !server && (isLoading || !isFetched || isRefetching);
 
 	if (!serverId) {
@@ -1452,35 +1440,6 @@ export function ServerDetailPage() {
 																	<span className="text-slate-600 dark:text-slate-300">
 																		{serverDescription}
 																	</span>
-																</OverviewMetadataRow>
-															) : null}
-															{showDefaultHeaders &&
-															redactedHeaders &&
-															Object.keys(redactedHeaders).length ? (
-																<OverviewMetadataRow
-																	label={t(
-																		"detail.overview.labels.defaultHeaders",
-																		{
-																			defaultValue: "Default Headers",
-																		},
-																	)}
-																	multiline
-																>
-																	<div className="grid grid-cols-1 gap-1">
-																		{Object.entries(redactedHeaders).map(
-																			([k, v]) => (
-																				<div key={k}>
-																					<span className="font-mono text-slate-600 dark:text-slate-300">
-																						{k}
-																					</span>
-																					<span className="mx-2 text-slate-400">
-																						:
-																					</span>
-																					<span className="font-mono">{v}</span>
-																				</div>
-																			),
-																		)}
-																	</div>
 																</OverviewMetadataRow>
 															) : null}
 															{serverCategory ? (

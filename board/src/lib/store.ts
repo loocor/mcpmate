@@ -33,7 +33,6 @@ export interface DashboardSettings {
 	enableServerDebug: boolean;
 	openDebugInNewWindow: boolean;
 	showRawCapabilityJson: boolean;
-	showDefaultHeaders: boolean;
 	menuBarIconMode: MenuBarIconMode;
 	showDockIcon: boolean;
 	clientDefaultMode: ClientDefaultMode;
@@ -103,7 +102,6 @@ const defaultDashboardSettings: DashboardSettings = {
 	enableServerDebug: true,
 	openDebugInNewWindow: false,
 	showRawCapabilityJson: false,
-	showDefaultHeaders: true,
 	menuBarIconMode: "runtime",
 	showDockIcon: true,
 	clientDefaultMode: "unify",
@@ -164,10 +162,6 @@ function normalizeDashboardSettings(
 
 	if (typeof patch.showRawCapabilityJson === "boolean") {
 		next.showRawCapabilityJson = patch.showRawCapabilityJson;
-	}
-
-	if (typeof patch.showDefaultHeaders === "boolean") {
-		next.showDefaultHeaders = patch.showDefaultHeaders;
 	}
 
 	if (

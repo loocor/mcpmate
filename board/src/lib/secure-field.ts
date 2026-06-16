@@ -1,4 +1,8 @@
 export const REDACTED_FULL = "***REDACTED***";
+/** User-facing label for stored secrets in form fields. */
+export const STORED_SECRET_DISPLAY = "Stored secret";
+/** Canonical secret placeholder for redacted values in JSON preview. */
+export const STORED_SECRET_JSON_PLACEHOLDER = "[[secret:stored-secret]]";
 
 const SECRET_PLACEHOLDER_PATTERN = /\[\[secret:([^\]]+)\]\]/g;
 const WHOLE_SECRET_PLACEHOLDER_PATTERN = /^\[\[secret:([^\]]+)\]\]$/;
@@ -60,6 +64,25 @@ export function parseBearerSecretValue(value: string): BearerSecretParts | null 
 	}
 
 	return { prefix: "Bearer ", secretAlias: null, redacted: false };
+}
+
+function formatRedactedToken(value: string, token: string): string | null {
+	const bearer = parseBearerSecretValue(value);
+	if (bearer?.redacted) return `${bearer.prefix}${token}`;
+	if (isRedactedMask(value)) return token;
+	return null;
+}
+
+export function formatRedactedDisplayValue(
+	value: string,
+	displayLabel: string = STORED_SECRET_DISPLAY,
+): string {
+	return formatRedactedToken(value, displayLabel) ?? value;
+}
+
+/** JSON preview for redacted values, e.g. `Bearer [[secret:stored-secret]]`. */
+export function formatRedactedJsonPreviewValue(value: string): string {
+	return formatRedactedToken(value, STORED_SECRET_JSON_PLACEHOLDER) ?? value;
 }
 
 export function isAuthorizationHeaderKey(key?: string | null): boolean {

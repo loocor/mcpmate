@@ -3292,29 +3292,6 @@ export function SettingsPage() {
 									/>
 								</div>
 
-								{/* Show Default Headers (redacted) */}
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
-											{t("settings:developer.showDefaultHeadersTitle", {
-												defaultValue: "Show Default HTTP Headers",
-											})}
-										</h3>
-										<p className="text-sm text-muted-foreground">
-											{t("settings:developer.showDefaultHeadersDescription", {
-												defaultValue:
-													"Display the server's default HTTP headers (values are redacted) in Server Details. Use only for inspection.",
-											})}
-										</p>
-									</div>
-									<Switch
-										checked={dashboardSettings.showDefaultHeaders}
-										onCheckedChange={(checked) =>
-											setDashboardSetting("showDefaultHeaders", checked)
-										}
-									/>
-								</div>
-
 								<div className="flex items-center justify-between gap-4">
 									<div>
 										<h3 className="text-base font-medium">

@@ -7,7 +7,7 @@ import {
 	bindDesktopOAuthCallback,
 	getOAuthRedirectUriForForm,
 } from "../../lib/oauth-callback-access";
-import { secretsApi, serversApi } from "../../lib/api";
+import { serversApi } from "../../lib/api";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { resolveOAuthReadiness } from "../../lib/oauth-readiness";
 import { isTauriEnvironmentSync } from "../../lib/platform";
@@ -408,8 +408,16 @@ export function ServerAuthSection({
 				return t("manual.auth.oauth.state.notConfigured", { defaultValue: "Not configured" });
 		}
 	})();
+	const showManualOverride = Boolean(status.manual_authorization_override);
 	const isSecureOAuthCustody =
 		status.state === "connected" && status.custody_state === "secure";
+	const manualOverrideTitle = t("manual.auth.oauth.manualOverride.title", {
+		defaultValue: "Manual Authorization header is active",
+	});
+	const manualOverrideDescription = t("manual.auth.oauth.manualOverride.description", {
+		defaultValue:
+			"This server already has an Authorization header in its transport settings, which will take precedence over the stored OAuth token.",
+	});
 	const secureOAuthCustodyLabel = t("manual.auth.oauth.secureStoreStored", {
 		defaultValue: "OAuth credentials are stored in Secure Store",
 	});
@@ -423,6 +431,41 @@ export function ServerAuthSection({
 			{stateLabel}
 		</span>
 	);
+	const oauthStatusBadge =
+		showManualOverride || isSecureOAuthCustody ? (
+			<TooltipProvider delayDuration={200}>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<span className="inline-flex cursor-help items-center gap-1.5">
+							{showManualOverride ? (
+								<AlertTriangle
+									className="h-3.5 w-3.5 flex-none text-amber-600 dark:text-amber-400"
+									aria-hidden="true"
+								/>
+							) : null}
+							{oauthStatusLabel}
+						</span>
+					</TooltipTrigger>
+					<TooltipContent side="top">
+						<div className="max-w-xs space-y-1">
+							{showManualOverride ? (
+								<>
+									<p className="font-medium">{manualOverrideTitle}</p>
+									<p className="text-xs">{manualOverrideDescription}</p>
+								</>
+							) : null}
+							{isSecureOAuthCustody ? (
+								<p className={showManualOverride ? "text-xs" : undefined}>
+									{secureOAuthCustodyLabel}
+								</p>
+							) : null}
+						</div>
+					</TooltipContent>
+				</Tooltip>
+			</TooltipProvider>
+		) : (
+			oauthStatusLabel
+		);
 
 	const progressItems = [
 		{
@@ -529,20 +572,7 @@ export function ServerAuthSection({
 							</span>
 						)}
 						<div className="flex items-center gap-2">
-							{isSecureOAuthCustody ? (
-								<TooltipProvider delayDuration={200}>
-									<Tooltip>
-										<TooltipTrigger asChild>
-											{oauthStatusLabel}
-										</TooltipTrigger>
-										<TooltipContent side="top">
-											{secureOAuthCustodyLabel}
-										</TooltipContent>
-									</Tooltip>
-								</TooltipProvider>
-							) : (
-								oauthStatusLabel
-							)}
+							{oauthStatusBadge}
 							<Button
 								type="button"
 								variant="outline"
@@ -556,24 +586,6 @@ export function ServerAuthSection({
 							</Button>
 						</div>
 					</div>
-
-					{status.manual_authorization_override ? (
-						<div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
-							<div className="flex items-start gap-2">
-								<AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-								<div>
-									<div className="font-medium">
-										{t("manual.auth.oauth.manualOverride.title", { defaultValue: "Manual Authorization header is active" })}
-									</div>
-									<div>
-										{t("manual.auth.oauth.manualOverride.description", {
-											defaultValue: "This server already has an Authorization header in its transport settings, which will take precedence over the stored OAuth token."
-										})}
-									</div>
-								</div>
-							</div>
-						</div>
-					) : null}
 
 					{oauthReadiness.notice ? (
 						<div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">

@@ -1,3 +1,4 @@
+import { KeyRound, X } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, type FocusEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -37,8 +38,8 @@ interface SecureStringFieldProps {
 	pairRemove?: PairFieldRemoveProps;
 }
 
-const storedSecretBadgeClassName =
-	"border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20";
+const redactedFieldShellClassName =
+	"relative flex h-10 w-full min-w-0 flex-nowrap items-center gap-1 overflow-x-auto rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2";
 
 export function SecureStringField({
 	id,
@@ -62,6 +63,7 @@ export function SecureStringField({
 	const pickerInsertTargetRef = useRef<InlineInsertTarget | null>(null);
 	const pendingPlainFocusRef = useRef<number | null>(null);
 	const variant = resolveSecureFieldVariant(value, headerKey);
+	const isBearerRedacted = variant === "bearer-redacted";
 	const usePairChrome = pairLayout || Boolean(pairRemove);
 	const actionsPadding = usePairChrome
 		? FIELD_PAIR_VALUE_ACTIONS_PR
@@ -69,6 +71,21 @@ export function SecureStringField({
 	const pickerPositionClass = usePairChrome
 		? FIELD_PAIR_VALUE_PICKER_CLASS
 		: FIELD_SINGLE_VALUE_PICKER_CLASS;
+	const replaceRedactedWithText = useCallback(
+		(text: string) => {
+			onChange(isBearerRedacted ? `Bearer ${text}` : text);
+		},
+		[onChange, isBearerRedacted],
+	);
+	const handleRedactedTextInput = useCallback(
+		(text: string) => {
+			pendingPlainFocusRef.current = isBearerRedacted
+				? `Bearer ${text}`.length
+				: text.length;
+			replaceRedactedWithText(text);
+		},
+		[isBearerRedacted, replaceRedactedWithText],
+	);
 
 	const handleValueChange = useCallback(
 		(next: string) => {
@@ -133,9 +150,16 @@ export function SecureStringField({
 		);
 	};
 
-	const storedSecretLabel = t("manual.secrets.storedSecret", {
-		defaultValue: "Stored secret",
-	});
+	const secretPicker = (
+		<div onPointerDownCapture={capturePlainInsertTargetForPicker}>
+			<SecretPickerButton
+				className={cn(pickerPositionClass, pickerClassName)}
+				origin={origin}
+				onCreateNew={onCreateSecret}
+				onSelect={handleSecretPick}
+			/>
+		</div>
+	);
 
 	if (shouldUseInlineEditor(value)) {
 		return (
@@ -160,21 +184,58 @@ export function SecureStringField({
 		return (
 			<div
 				className={cn(
-					"group/secret-field relative flex h-10 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-muted/30 px-3 text-sm ring-offset-background",
+					"group/secret-field",
+					redactedFieldShellClassName,
 					actionsPadding,
 					className,
 				)}
 			>
-				<Badge variant="outline" className={storedSecretBadgeClassName}>
-					{storedSecretLabel}
-				</Badge>
-				<SecretPickerButton
-					className={cn(pickerPositionClass, pickerClassName)}
-					origin={origin}
-					onCreateNew={onCreateSecret}
-					onSelect={handleSecretPick}
-					forceVisible
+				{isBearerRedacted ? (
+					<span className="shrink-0 text-sm text-foreground">Bearer </span>
+				) : null}
+				<span className="relative inline-flex h-6 shrink-0 items-center max-w-[11rem] group/badge">
+					<Badge
+						variant="outline"
+						className="inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-full border-emerald-200 bg-emerald-50 px-2 py-0 font-mono text-xs text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20"
+					>
+						<span className="relative inline-flex h-3 w-3 shrink-0 items-center justify-center">
+							<KeyRound
+								className="h-3 w-3 transition-opacity group-hover/badge:opacity-0 group-focus-within/badge:opacity-0 [@media(hover:none)]:opacity-0"
+								aria-hidden
+							/>
+							<button
+								type="button"
+								className="absolute inset-0 flex h-3 w-3 items-center justify-center rounded-full bg-destructive text-white opacity-0 transition-opacity hover:bg-destructive/90 focus:opacity-100 group-hover/badge:opacity-100 group-focus-within/badge:opacity-100 [@media(hover:none)]:opacity-100"
+								onClick={(event) => {
+									event.preventDefault();
+									event.stopPropagation();
+									replaceRedactedWithText("");
+								}}
+								aria-label={t("manual.secrets.clear", {
+									defaultValue: "Clear secret",
+								})}
+							>
+								<X className="h-2.5 w-2.5" strokeWidth={3} />
+							</button>
+						</span>
+						<span className="min-w-0 truncate">
+							{t("manual.secrets.storedSecret", {
+								defaultValue: "Stored secret",
+							})}
+						</span>
+					</Badge>
+				</span>
+				<input
+					type="text"
+					defaultValue=""
+					onChange={(event) => handleRedactedTextInput(event.target.value)}
+					onBlur={onBlur}
+					className="h-6 min-w-[2ch] flex-1 basis-0 border-0 bg-transparent p-0 text-sm outline-none focus:outline-none focus:ring-0"
+					aria-label={t("manual.secrets.inlineText", {
+						defaultValue: "Secret value text",
+					})}
 				/>
+				{secretPicker}
 				{pairRemove ? <PairFieldRemoveButton {...pairRemove} /> : null}
 			</div>
 		);
@@ -202,14 +263,7 @@ export function SecureStringField({
 				placeholder={placeholder}
 				className={cn("w-full", actionsPadding)}
 			/>
-			<div onPointerDownCapture={capturePlainInsertTargetForPicker}>
-				<SecretPickerButton
-					className={cn(pickerPositionClass, pickerClassName)}
-					origin={origin}
-					onCreateNew={onCreateSecret}
-					onSelect={handleSecretPick}
-				/>
-			</div>
+			{secretPicker}
 			{pairRemove ? <PairFieldRemoveButton {...pairRemove} /> : null}
 		</div>
 	);

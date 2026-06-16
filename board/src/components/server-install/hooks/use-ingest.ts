@@ -15,6 +15,7 @@ interface UseIngestProps {
 	formStateRef: React.MutableRefObject<ManualFormStateJson>;
 	buildFormValuesFromState: (state: ManualFormStateJson) => any;
 	reset: (values?: any, options?: any) => void;
+	sessionEpochRef?: React.MutableRefObject<number>;
 	onSubmitMultiple?: (drafts: ServerInstallDraft[]) => Promise<void> | void;
 	messages?: {
 		defaultMessage?: string;
@@ -35,6 +36,7 @@ export function useIngest({
 	formStateRef,
 	buildFormValuesFromState,
 	reset,
+	sessionEpochRef,
 	onSubmitMultiple,
 	messages,
 }: UseIngestProps) {
@@ -66,6 +68,7 @@ export function useIngest({
 
 	// Reset ingest state to default
 	const resetIngestState = useCallback(() => {
+		setIsIngesting(false);
 		setIngestError(null);
 		setIsIngestSuccess(false);
 		setIsDropZoneCollapsed(!ingestEnabled);
@@ -96,8 +99,17 @@ export function useIngest({
 		[buildFormValuesFromState, reset],
 	);
 
+	const isSessionStale = useCallback(
+		(epochAtStart: number) =>
+			Boolean(sessionEpochRef && sessionEpochRef.current !== epochAtStart),
+		[sessionEpochRef],
+	);
+
 	const finalizeIngest = useCallback(
-		async (drafts: ServerInstallDraft[]) => {
+		async (drafts: ServerInstallDraft[], epochAtStart: number) => {
+			if (isSessionStale(epochAtStart)) {
+				return;
+			}
 			if (!drafts.length) {
 				setIngestError(resolvedMessages.noneDetectedError);
 				notifyError(
@@ -116,6 +128,7 @@ export function useIngest({
 		},
 		[
 			applySingleDraftToForm,
+			isSessionStale,
 			markIngestSuccess,
 			onSubmitMultiple,
 			resolvedMessages.noneDetectedError,
@@ -127,12 +140,19 @@ export function useIngest({
 	const handleIngestPayload = useCallback(
 		async (payload: ServerIngestPayload) => {
 			if (!canIngestProgrammatically) return;
+			const epochAtStart = sessionEpochRef?.current ?? 0;
 			try {
 				setIsIngesting(true);
 				setIngestError(null);
 				const drafts = await normalizeIngestPayload(payload);
-				await finalizeIngest(drafts);
+				if (isSessionStale(epochAtStart)) {
+					return;
+				}
+				await finalizeIngest(drafts, epochAtStart);
 			} catch (error) {
+				if (isSessionStale(epochAtStart)) {
+					return;
+				}
 				const message =
 					error instanceof Error
 						? error.message
@@ -140,12 +160,16 @@ export function useIngest({
 				setIngestError(message);
 				notifyError(resolvedMessages.parseFailedTitle, message);
 			} finally {
-				setIsIngesting(false);
+				if (!isSessionStale(epochAtStart)) {
+					setIsIngesting(false);
+				}
 			}
 		},
 		[
 			canIngestProgrammatically,
 			finalizeIngest,
+			isSessionStale,
+			sessionEpochRef,
 			resolvedMessages.parseFailedFallback,
 			resolvedMessages.parseFailedTitle,
 		],

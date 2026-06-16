@@ -4,7 +4,6 @@ import {
 	AlertTriangle,
 	ArrowLeft,
 	ChevronRight,
-	Copy,
 	Loader2,
 	Radar,
 	RefreshCw,
@@ -37,7 +36,7 @@ import {
 	useServerInstallPipeline,
 	type WizardStep,
 } from "../../hooks/use-server-install-pipeline";
-import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
+import { readClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
 import { cn, toTitleCase } from "../../lib/utils";
@@ -91,7 +90,6 @@ import { Label } from "../ui/label";
 import { Segment } from "../ui/segment";
 import { Switch } from "../ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { Textarea } from "../ui/textarea";
 import {
 	Tooltip,
 	TooltipContent,
@@ -119,12 +117,15 @@ import {
 	useServerTypeOptions,
 } from "./hooks";
 import {
-	FORM_TAB_PANEL_TOP_INSET_CLASS,
+	FORM_FILL_SHELL_CLASS,
 	FORM_TAB_SHELL_CLASS,
-	FORM_TAB_TOOLBAR_ROW_CLASS,
-	formContentScrollClass,
-	formTabScrollClass,
+	INSTALL_DRAWER_CONTENT_CLASS,
+	installFormBodyClass,
+	isCoreJsonView,
+	SECONDARY_TAB_CONTENT_CLASS,
 } from "./form-tab-layout";
+import { CoreConfigTabPanel } from "./core-config-tab-panel";
+import { ServerConfigJsonPanel } from "./server-config-json-panel";
 import {
 	breathingAnimation,
 	DEFAULT_INGEST_MESSAGE,
@@ -132,7 +133,6 @@ import {
 	manualServerSchema,
 	type ServerInstallManualFormHandle,
 } from "./types";
-import { FormViewModeToggle } from "./view-mode-toggle";
 
 // Step definitions
 
@@ -536,6 +536,7 @@ export const ServerInstallWizard = forwardRef(
 			[t],
 		);
 		const previewInFlightRef = useRef(false);
+		const wizardSessionEpochRef = useRef(0);
 		const pendingImportServerRef = useRef<string | null>(null);
 		const [pendingImportServerId, setPendingImportServerId] =
 			useState<string | null>(null);
@@ -799,6 +800,7 @@ export const ServerInstallWizard = forwardRef(
 			formStateRef,
 			buildFormValuesFromState,
 			reset,
+			sessionEpochRef: wizardSessionEpochRef,
 			onSubmitMultiple: (drafts) => {
 				if (onPreview) {
 					onPreview(drafts);
@@ -810,6 +812,34 @@ export const ServerInstallWizard = forwardRef(
 			},
 			messages: ingestMessages,
 		});
+
+		const resetWizardSession = useCallback(() => {
+			wizardSessionEpochRef.current += 1;
+			previewInFlightRef.current = false;
+			installPipeline.setCurrentStep("form");
+			installPipeline.reset();
+			const initialFormState = createInitialFormState();
+			formStateRef.current = initialFormState;
+			isRestoringRef.current = true;
+			reset(buildFormValuesFromState(initialFormState));
+			isRestoringRef.current = false;
+			resetIngestState();
+			setUiActiveTab("core");
+			setViewMode("form");
+			setJsonError(null);
+			resetBulkUIState();
+			setPendingImportServerId(null);
+		}, [
+			installPipeline,
+			createInitialFormState,
+			formStateRef,
+			isRestoringRef,
+			reset,
+			buildFormValuesFromState,
+			resetIngestState,
+			setViewMode,
+			resetBulkUIState,
+		]);
 
 		const handleResetForm = useCallback(() => {
 			if (initialDraft) {
@@ -1211,6 +1241,7 @@ export const ServerInstallWizard = forwardRef(
 
 				try {
 					if (pendingImportServerRef.current && !isEditMode) {
+						const previewEpoch = wizardSessionEpochRef.current;
 						installPipeline.setPreviewError(null);
 						installPipeline.setPreviewState(null);
 						installPipeline.setPreviewLoading(true);
@@ -1222,6 +1253,10 @@ export const ServerInstallWizard = forwardRef(
 								serversApi.listPrompts(hiddenServerId, "force"),
 								serversApi.listResourceTemplates(hiddenServerId, "force"),
 							]);
+
+							if (previewEpoch !== wizardSessionEpochRef.current) {
+								return;
+							}
 
 							installPipeline.setPreviewState({
 								success: true,
@@ -1240,12 +1275,17 @@ export const ServerInstallWizard = forwardRef(
 								},
 							});
 						} catch (error) {
+							if (previewEpoch !== wizardSessionEpochRef.current) {
+								return;
+							}
 							const message =
 								error instanceof Error ? error.message : "Preview request failed";
 							installPipeline.setPreviewError(message);
 							notifyError("Preview failed", message);
 						} finally {
-							installPipeline.setPreviewLoading(false);
+							if (previewEpoch === wizardSessionEpochRef.current) {
+								installPipeline.setPreviewLoading(false);
+							}
 						}
 						return;
 					}
@@ -1317,14 +1357,10 @@ export const ServerInstallWizard = forwardRef(
 			if (!isClosing) {
 				setIsClosing(true);
 				cleanupPendingImportServer();
-
 				onClose();
 				setIsClosing(false);
-				installPipeline.setCurrentStep("form");
-				installPipeline.reset();
-				resetBulkUIState();
 			}
-		}, [cleanupPendingImportServer, onClose, isClosing, installPipeline, resetBulkUIState]);
+		}, [cleanupPendingImportServer, onClose, isClosing]);
 
 		// Handle import action
 		const handleImport = useCallback(async () => {
@@ -1424,37 +1460,9 @@ export const ServerInstallWizard = forwardRef(
 				setTimeout(() => {
 					onClose();
 					setIsClosing(false);
-
-					// Complete reset for Cancel button
-					installPipeline.setCurrentStep("form");
-					installPipeline.reset();
-
-					// Reset form to initial state
-					const initialFormState = createInitialFormState();
-					formStateRef.current = initialFormState;
-					reset(buildFormValuesFromState(initialFormState));
-
-					// Reset ingest state (drag zone)
-					resetIngestState();
-
-					// Reset UI state
-					setUiActiveTab("core");
-					setViewMode("form");
-					resetBulkUIState();
 				}, 50);
 			}
-		}, [
-			cleanupPendingImportServer,
-			onClose,
-			isClosing,
-			installPipeline,
-			createInitialFormState,
-			reset,
-			buildFormValuesFromState,
-			resetIngestState,
-			setViewMode,
-			resetBulkUIState,
-		]);
+		}, [cleanupPendingImportServer, onClose, isClosing]);
 
 		type NextStepAction = "close" | "servers" | "profiles" | "preview" | "none";
 
@@ -1483,13 +1491,15 @@ export const ServerInstallWizard = forwardRef(
 			[handleOverlayClose, navigate, handleStepChange],
 		);
 
-		// Reset wizard when opening (only on transition from closed to open)
+		// Reset wizard whenever the drawer opens or closes
+		const wasOpenRef = useRef(false);
 		useLayoutEffect(() => {
-			if (isOpen) {
-				installPipeline.reset();
+			const wasOpen = wasOpenRef.current;
+			if (isOpen !== wasOpen) {
+				resetWizardSession();
 			}
-			// eslint-disable-next-line react-hooks/exhaustive-deps
-		}, [isOpen]);
+			wasOpenRef.current = isOpen;
+		}, [isOpen, resetWizardSession]);
 
 		// Hydrate form when an initial draft is provided (e.g., Market mode)
 		// Create a stable key that only changes when the actual draft content changes
@@ -1860,19 +1870,14 @@ export const ServerInstallWizard = forwardRef(
 		const renderFormStep = () => {
 			const showBulkDraftList =
 				installPipeline.state.drafts.length > 1 && bulkDraftView === "list";
-			const contentPadding = ingestEnabled
-				? "px-4 pb-4 pt-0"
-				: "px-4 pb-4 pt-4";
-			const flexFillClass =
-				"flex min-h-0 flex-1 flex-col overflow-hidden";
-			const isCoreJsonPanel = viewMode === "json" && uiActiveTab === "core";
+			const isCoreJsonPanel = isCoreJsonView(uiActiveTab, viewMode);
 			return (
-				<div className={flexFillClass}>
+				<div className={FORM_FILL_SHELL_CLASS}>
 					<form
 						onSubmit={handleSubmit(() =>
 							handlePreview({ skipValidation: true, shouldFocus: false }),
 						)}
-						className={flexFillClass}
+						className={FORM_FILL_SHELL_CLASS}
 					>
 						{/* New-mode drop zone (top) */}
 						{ingestEnabled ? (
@@ -2036,11 +2041,7 @@ export const ServerInstallWizard = forwardRef(
 						) : null}
 
 						<div
-							className={cn(
-								"relative z-0 flex min-h-0 flex-1 flex-col",
-								contentPadding,
-								formContentScrollClass(isCoreJsonPanel),
-							)}
+							className={installFormBodyClass(ingestEnabled, isCoreJsonPanel)}
 							onFocusCapture={handleContentFocus}
 						>
 							{showBulkDraftList ? (
@@ -2087,19 +2088,11 @@ export const ServerInstallWizard = forwardRef(
 											value="core"
 											className={FORM_TAB_SHELL_CLASS}
 										>
-											<div className={FORM_TAB_TOOLBAR_ROW_CLASS}>
-												<FormViewModeToggle
-													mode={viewMode}
-													onChange={handleModeChange}
-													variant="compact"
-												/>
-											</div>
-
-											<div
-												className={formTabScrollClass(viewMode)}
-												onClick={handleFormInteraction}
-											>
-												{viewMode === "form" ? (
+											<CoreConfigTabPanel
+												viewMode={viewMode}
+												onViewModeChange={handleModeChange}
+												onContentClick={handleFormInteraction}
+												formContent={
 													<>
 														<div className="space-y-4">
 															<div className="flex items-center gap-4">
@@ -2326,79 +2319,28 @@ export const ServerInstallWizard = forwardRef(
 															}
 														/>
 													</>
-												) : (
-													<div className="flex min-h-0 flex-1 flex-col">
-														<div className="flex min-h-0 flex-1 items-stretch gap-4">
-															<Label
-																htmlFor={manualJsonId}
-																className="w-20 shrink-0 pt-3 text-right"
-															>
-																{t("manual.fields.json.label", {
-																	defaultValue: "Server JSON",
-																})}
-															</Label>
-															<div className="flex min-h-0 flex-1 flex-col">
-																<div className="group relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-input">
-																	{jsonText && (
-																		<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
-																			<Button
-																				type="button"
-																				variant="outline"
-																				size="sm"
-																				className="pointer-events-auto h-7 w-7 bg-white/95 p-0 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100 dark:bg-slate-900/95"
-																				onClick={async (event) => {
-																					event.stopPropagation();
-																					await writeClipboardText(jsonText);
-																				}}
-																				title={t("manual.fields.json.copy", {
-																					defaultValue: "Copy JSON",
-																				})}
-																			>
-																				<Copy className="h-3.5 w-3.5" />
-																			</Button>
-																		</div>
-																	)}
-																	<Textarea
-																		id={manualJsonId}
-																		value={jsonText}
-																		onChange={
-																			jsonEditingEnabled
-																				? (event) => setJsonText(event.target.value)
-																				: undefined
-																		}
-																		readOnly={!jsonEditingEnabled}
-																		aria-readonly={!jsonEditingEnabled}
-																		className="min-h-0 flex-1 resize-none overflow-y-auto border-0 font-mono text-sm focus:outline-none focus:ring-0"
-																		style={{
-																			background: "transparent",
-																			caretColor: jsonEditingEnabled
-																				? "currentColor"
-																				: "transparent",
-																			userSelect: "text",
-																			WebkitUserSelect: "text",
-																			MozUserSelect: "text",
-																			msUserSelect: "text",
-																		}}
-																	/>
-																</div>
-																{jsonError ? (
-																	<p className="mt-2 shrink-0 text-xs text-red-500">
-																		{jsonError}
-																	</p>
-																) : null}
-															</div>
-														</div>
-													</div>
-												)}
-											</div>
+												}
+												jsonContent={
+													<ServerConfigJsonPanel
+														id={manualJsonId}
+														label={t("manual.fields.json.label", {
+															defaultValue: "Server JSON",
+														})}
+														jsonText={jsonText}
+														jsonError={jsonError}
+														jsonEditingEnabled={jsonEditingEnabled}
+														onJsonChange={setJsonText}
+														copyLabel={t("manual.fields.json.copy", {
+															defaultValue: "Copy JSON",
+														})}
+													/>
+												}
+											/>
 										</TabsContent>
 
 										<TabsContent
 											value="meta"
-											className={cn(
-												"mt-2 min-h-0 flex-1 focus-visible:outline-none",
-												FORM_TAB_PANEL_TOP_INSET_CLASS,
-											)}
+											className={SECONDARY_TAB_CONTENT_CLASS}
 											onClick={handleFormInteraction}
 										>
 											<MetaFields
@@ -3135,7 +3077,7 @@ export const ServerInstallWizard = forwardRef(
 					open={isOpen}
 					onOpenChange={(open) => !open && handleOverlayClose()}
 				>
-					<DrawerContent className="flex h-full flex-col overflow-hidden">
+					<DrawerContent className={INSTALL_DRAWER_CONTENT_CLASS}>
 						<DrawerHeader className="shrink-0">
 							<div className="flex items-start justify-between gap-3">
 								<div className="min-w-0 flex-1 space-y-1 text-left">

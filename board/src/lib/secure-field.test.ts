@@ -3,6 +3,8 @@ import {
 	buildBearerSecretValue,
 	classifyFieldValue,
 	extractWholeSecretAlias,
+	formatRedactedDisplayValue,
+	formatRedactedJsonPreviewValue,
 	isRedactedMask,
 	parseBearerSecretValue,
 	resolveRecordUpdatePayload,
@@ -39,6 +41,27 @@ describe("secure-field", () => {
 			secretAlias: null,
 			redacted: true,
 		});
+	});
+
+	it("formats redacted values for display", () => {
+		expect(formatRedactedDisplayValue("Bearer***]]")).toBe(
+			"Bearer Stored secret",
+		);
+		expect(formatRedactedDisplayValue("Bearer ***REDACTED***")).toBe(
+			"Bearer Stored secret",
+		);
+		expect(formatRedactedDisplayValue("abcdef***xy")).toBe("Stored secret");
+		expect(formatRedactedDisplayValue("plain-value")).toBe("plain-value");
+	});
+
+	it("wraps redacted values for JSON preview", () => {
+		expect(formatRedactedJsonPreviewValue("Bearer ***REDACTED***")).toBe(
+			"Bearer [[secret:stored-secret]]",
+		);
+		expect(formatRedactedJsonPreviewValue("abcdef***xy")).toBe(
+			"[[secret:stored-secret]]",
+		);
+		expect(formatRedactedJsonPreviewValue("plain-value")).toBe("plain-value");
 	});
 
 	it("resolves secure field variants", () => {
