@@ -627,6 +627,7 @@ export const SECRET_STORE_REASON_CODES = [
   "schema_migration_required",
   "cache_error",
   "missing_root_key",
+  "secret_key_mismatch",
   "invalid_root_key",
   "local_storage_error",
   "development_storage_error",

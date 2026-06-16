@@ -229,6 +229,11 @@ export const secretsTranslations = {
 				description:
 					"Existing encrypted secrets need the original root key material. Restore access to the configured provider before editing stored secrets or switching encryption mode.",
 			},
+			secretKeyMismatch: {
+				title: "Secure store records need repair",
+				description:
+					"Stored secrets do not match the active root-key provider. Restore the configured provider in Settings → Security before editing secrets or reconnecting OAuth.",
+			},
 			generic: {
 				title: "Secure store unavailable",
 				description:
@@ -486,6 +491,11 @@ export const secretsTranslations = {
 				title: "缺少根密钥材料",
 				description:
 					"已有加密密钥需要原始根密钥材料才能恢复。请先恢复对当前提供方的访问，再编辑已存储密钥或切换加密模式。",
+			},
+			secretKeyMismatch: {
+				title: "安全存储记录需要修复",
+				description:
+					"已存储密钥与当前根密钥提供方不匹配。请先在设置 → 安全中恢复配置的提供方，再编辑密钥或重新连接 OAuth。",
 			},
 			generic: {
 				title: "安全存储不可用",
@@ -754,6 +764,11 @@ export const secretsTranslations = {
 				title: "ルートキー素材が見つかりません",
 				description:
 					"既存の暗号化済みシークレットを復元するには元のルートキー素材が必要です。保存済みシークレットの編集や暗号化モードの切り替えの前に、設定済みプロバイダーへのアクセスを復旧してください。",
+			},
+			secretKeyMismatch: {
+				title: "セキュアストアレコードの修復が必要です",
+				description:
+					"保存済みシークレットが現在のルートキープロバイダーと一致していません。シークレットの編集や OAuth の再接続前に、設定 → セキュリティで設定済みプロバイダーを復旧してください。",
 			},
 			generic: {
 				title: "セキュアストアは利用できません",

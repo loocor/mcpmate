@@ -20,5 +20,6 @@ pub use root_key::{
     DEVELOPMENT_ROOT_KEY_ENV, DevelopmentRootKeyProvider, LOCAL_FILE_PROVIDER_ID, LOCAL_FILE_PROVIDER_KIND,
     LocalFileRootKeyProvider, OperatingSystemRootKeyProvider, PASSPHRASE_PROVIDER_ID, PASSPHRASE_PROVIDER_KIND,
     PassphraseRootKeyProvider, RootKeyProviderMetadata, RootKeyProviderMode, RootKeySecurityLevel, SecretRootKey,
-    SecretRootKeyError, SecretRootKeyProvider, default_root_key_provider,
+    SecretRootKeyError, SecretRootKeyProvider, StagedSecretRootKeyMaterial, default_root_key_provider,
 };
+pub use store::SecretStoreRotationError;

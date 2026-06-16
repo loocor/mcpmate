@@ -181,6 +181,9 @@ pub struct ProviderSwitchReq {
     /// Current passphrase when switching away from passphrase mode.
     #[serde(default)]
     pub current_passphrase: Option<String>,
+    /// Required confirmation phrase when switching provider modes.
+    #[serde(default)]
+    pub confirmation_phrase: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

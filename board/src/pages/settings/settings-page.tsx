@@ -8,6 +8,7 @@ import type {
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
 	Activity,
+	AlertTriangle,
 	AppWindow,
 	BookText,
 	Download,
@@ -119,6 +120,8 @@ import {
 } from "../../lib/store";
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
+
+const PROVIDER_SWITCH_CONFIRMATION_PHRASE = "ROTATE SECRETS";
 
 // Options for Segment components
 const THEME_CONFIG = [
@@ -463,25 +466,37 @@ export function SettingsPage() {
 	const [showCurrentPassphraseDialog, setShowCurrentPassphraseDialog] = useState(false);
 	const [currentPassphraseInput, setCurrentPassphraseInput] = useState("");
 	const [currentPassphraseError, setCurrentPassphraseError] = useState<string | null>(null);
+	const [providerSwitchConfirmationText, setProviderSwitchConfirmationText] = useState("");
 	const [passphraseAction, setPassphraseAction] = useState<"switch" | "rotate" | null>(null);
 	const passphraseSetupPasswordRef = useRef<HTMLInputElement>(null);
 	const currentPassphraseInputRef = useRef<HTMLInputElement>(null);
+	const providerSwitchConfirmationInputRef = useRef<HTMLInputElement>(null);
 
 	type PendingProviderSwitch = {
 		mode: SwitchableSecretStoreProviderMode;
 		passphrase?: string;
 		currentPassphrase?: string;
+		confirmationPhrase?: string;
 	};
+	type ProviderSwitchFlow =
+		| "idle"
+		| "confirm_phrase"
+		| "enter_new_passphrase"
+		| "enter_current_passphrase"
+		| "submitting";
 	const pendingProviderSwitchRef = useRef<PendingProviderSwitch | null>(null);
+	const [providerSwitchFlow, setProviderSwitchFlow] = useState<ProviderSwitchFlow>("idle");
 
 	const resetPendingProviderSwitch = useCallback(() => {
 		pendingProviderSwitchRef.current = null;
+		setProviderSwitchFlow("idle");
 		setSelectedMode("");
 		setPassphraseInput("");
 		setPassphraseConfirmInput("");
 		setPassphraseSetupError(null);
 		setCurrentPassphraseInput("");
 		setCurrentPassphraseError(null);
+		setProviderSwitchConfirmationText("");
 	}, []);
 
 	const reportedProviderMode = storeStatusQuery.data?.provider?.provider_mode;
@@ -534,6 +549,7 @@ export function SettingsPage() {
 			secretsApi.switchProvider(pending.mode, {
 				passphrase: pending.passphrase,
 				currentPassphrase: pending.currentPassphrase,
+				confirmationPhrase: pending.confirmationPhrase,
 			}),
 		onSuccess: async () => {
 			await invalidateSecretStoreStatus(queryClient);
@@ -587,6 +603,8 @@ export function SettingsPage() {
 				mode,
 				passphrase: mode === "passphrase" ? passphraseInput : undefined,
 			};
+			setProviderSwitchFlow("confirm_phrase");
+			setProviderSwitchConfirmationText("");
 			setShowSwitchConfirm(true);
 		},
 		[
@@ -608,12 +626,18 @@ export function SettingsPage() {
 				setPassphraseInput("");
 				setPassphraseConfirmInput("");
 				setPassphraseSetupError(null);
-				setShowPassphraseSetupDialog(true);
+				pendingProviderSwitchRef.current = {
+					mode: "passphrase",
+				};
+				setProviderSwitchFlow("confirm_phrase");
+				setProviderSwitchConfirmationText("");
+				setShowSwitchConfirm(true);
 				return;
 			}
 			if (currentProviderMode === "passphrase") {
 				setCurrentPassphraseInput("");
 				setCurrentPassphraseError(null);
+				setProviderSwitchFlow("enter_current_passphrase");
 				setShowCurrentPassphraseDialog(true);
 				return;
 			}
@@ -631,12 +655,16 @@ export function SettingsPage() {
 				setPassphraseInput("");
 				setPassphraseConfirmInput("");
 				setPassphraseSetupError(null);
+				if (providerSwitchFlow === "enter_new_passphrase") {
+					resetPendingProviderSwitch();
+					return;
+				}
 				if (!showSwitchConfirm && !switchProviderMutation.isPending) {
 					setSelectedMode("");
 				}
 			}
 		},
-		[showSwitchConfirm, switchProviderMutation.isPending],
+		[providerSwitchFlow, resetPendingProviderSwitch, showSwitchConfirm, switchProviderMutation.isPending],
 	);
 
 	const handlePassphraseSetupContinue = useCallback(() => {
@@ -658,14 +686,30 @@ export function SettingsPage() {
 		}
 		setPassphraseSetupError(null);
 		setPassphraseConfirmInput("");
-		setShowPassphraseSetupDialog(false);
+		const pending = pendingProviderSwitchRef.current;
+		const nextPassphrase = passphraseInput;
 		if (passphraseAction === "rotate") {
+			setShowPassphraseSetupDialog(false);
 			rotatePassphraseMutation.mutate();
 			return;
 		}
+		if (
+			pending?.mode === "passphrase" &&
+			pending.confirmationPhrase === PROVIDER_SWITCH_CONFIRMATION_PHRASE
+		) {
+			setProviderSwitchFlow("submitting");
+			setShowPassphraseSetupDialog(false);
+			switchProviderMutation.mutate({
+				...pending,
+				passphrase: nextPassphrase,
+			});
+			return;
+		}
+		setShowPassphraseSetupDialog(false);
 		if (currentProviderMode === "passphrase") {
 			setCurrentPassphraseInput("");
 			setCurrentPassphraseError(null);
+			setProviderSwitchFlow("enter_current_passphrase");
 			setShowCurrentPassphraseDialog(true);
 			return;
 		}
@@ -678,6 +722,7 @@ export function SettingsPage() {
 		currentProviderMode,
 		passphraseAction,
 		rotatePassphraseMutation,
+		switchProviderMutation,
 		promptSecurityModeSwitchIfPending,
 		t,
 	]);
@@ -688,12 +733,16 @@ export function SettingsPage() {
 			if (!open && !switchProviderMutation.isPending) {
 				setCurrentPassphraseInput("");
 				setCurrentPassphraseError(null);
+				if (providerSwitchFlow === "enter_current_passphrase") {
+					resetPendingProviderSwitch();
+					return;
+				}
 				if (!showSwitchConfirm) {
 					resetPendingProviderSwitch();
 				}
 			}
 		},
-		[switchProviderMutation.isPending, showSwitchConfirm, resetPendingProviderSwitch],
+		[providerSwitchFlow, switchProviderMutation.isPending, showSwitchConfirm, resetPendingProviderSwitch],
 	);
 
 	const handleCurrentPassphraseContinue = useCallback(() => {
@@ -712,7 +761,7 @@ export function SettingsPage() {
 			return;
 		}
 		const modeCandidate = selectedMode || currentProviderMode;
-		if (!isSwitchableSecretStoreProviderMode(modeCandidate)) {
+		if (!modeCandidate || !isSwitchableSecretStoreProviderMode(modeCandidate)) {
 			return;
 		}
 		pendingProviderSwitchRef.current = {
@@ -720,6 +769,8 @@ export function SettingsPage() {
 			passphrase: modeCandidate === "passphrase" ? passphraseInput : undefined,
 			currentPassphrase: currentPassphraseInput,
 		};
+		setProviderSwitchFlow("confirm_phrase");
+		setProviderSwitchConfirmationText("");
 		setShowCurrentPassphraseDialog(false);
 		setShowSwitchConfirm(true);
 	}, [
@@ -734,11 +785,19 @@ export function SettingsPage() {
 	const handleSwitchConfirmOpenChange = useCallback(
 		(open: boolean) => {
 			setShowSwitchConfirm(open);
+			if (open) {
+				setProviderSwitchFlow("confirm_phrase");
+				setProviderSwitchConfirmationText("");
+			}
 			if (!open && !switchProviderMutation.isPending) {
+				if (providerSwitchFlow === "enter_new_passphrase" || providerSwitchFlow === "submitting") {
+					setProviderSwitchConfirmationText("");
+					return;
+				}
 				resetPendingProviderSwitch();
 			}
 		},
-		[switchProviderMutation.isPending, resetPendingProviderSwitch],
+		[providerSwitchFlow, switchProviderMutation.isPending, resetPendingProviderSwitch],
 	);
 
 	const handleConfirmProviderSwitch = useCallback(() => {
@@ -756,8 +815,34 @@ export function SettingsPage() {
 			resetPendingProviderSwitch();
 			return;
 		}
-		switchProviderMutation.mutate(pending);
-	}, [switchProviderMutation, resetPendingProviderSwitch, t]);
+		if (providerSwitchConfirmationText !== PROVIDER_SWITCH_CONFIRMATION_PHRASE) {
+			return;
+		}
+		if (pending.mode === "passphrase" && !pending.passphrase) {
+			pendingProviderSwitchRef.current = {
+				...pending,
+				confirmationPhrase: providerSwitchConfirmationText,
+			};
+			setProviderSwitchFlow("enter_new_passphrase");
+			setProviderSwitchConfirmationText("");
+			setShowSwitchConfirm(false);
+			setPassphraseInput("");
+			setPassphraseConfirmInput("");
+			setPassphraseSetupError(null);
+			setShowPassphraseSetupDialog(true);
+			return;
+		}
+		setProviderSwitchFlow("submitting");
+		switchProviderMutation.mutate({
+			...pending,
+			confirmationPhrase: providerSwitchConfirmationText,
+		});
+	}, [
+		providerSwitchConfirmationText,
+		switchProviderMutation,
+		resetPendingProviderSwitch,
+		t,
+	]);
 
 	// Password protection state
 	const passwordQuery = useQuery({
@@ -2577,20 +2662,54 @@ export function SettingsPage() {
 						</AlertDialog>
 
 						<AlertDialog open={showSwitchConfirm} onOpenChange={handleSwitchConfirmOpenChange}>
-							<AlertDialogContent>
+							<AlertDialogContent
+								onOpenAutoFocus={(event) => {
+									event.preventDefault();
+									providerSwitchConfirmationInputRef.current?.focus();
+								}}
+							>
 								<AlertDialogHeader>
 									<AlertDialogTitle>
 										{t("settings:security.confirmTitle", {
 											defaultValue: "Switch Security Mode?",
 										})}
 									</AlertDialogTitle>
-									<AlertDialogDescription>
-										{t("settings:security.confirmDescription", {
-											defaultValue:
-												"This will migrate your root key to a new storage provider. Your encrypted secrets remain unchanged — only the key custody location changes. This operation is safe and reversible.",
-										})}
+									<AlertDialogDescription className="flex gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+										<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+										<span>
+											{t("settings:security.confirmDescription", {
+												defaultValue:
+													"This will rotate Secure Store records to a new provider. MCPMate verifies existing records first and keeps the current provider authoritative if rotation fails.",
+											})}
+										</span>
 									</AlertDialogDescription>
 								</AlertDialogHeader>
+								<div className="space-y-2">
+									<Label htmlFor="provider-switch-confirmation" className="text-destructive">
+										{t("settings:security.confirmPhraseLabel", {
+											defaultValue: "Type ROTATE SECRETS to continue",
+										})}
+									</Label>
+									<Input
+										ref={providerSwitchConfirmationInputRef}
+										id="provider-switch-confirmation"
+										value={providerSwitchConfirmationText}
+										onChange={(event) => setProviderSwitchConfirmationText(event.target.value)}
+										onPaste={(event) => event.preventDefault()}
+										onDrop={(event) => event.preventDefault()}
+										autoComplete="off"
+										spellCheck={false}
+										placeholder={t("settings:security.confirmPhrasePlaceholder", {
+											defaultValue: "ROTATE SECRETS",
+										})}
+									/>
+									<p className="text-xs text-destructive/80">
+										{t("settings:security.confirmPhraseDescription", {
+											defaultValue:
+												"This migration rewrites secure-store key wrapping metadata. The phrase must be typed manually.",
+										})}
+									</p>
+								</div>
 								<AlertDialogFooter>
 									<AlertDialogCancel>
 										{t("settings:security.confirmCancel", { defaultValue: "Cancel" })}
@@ -2600,7 +2719,11 @@ export function SettingsPage() {
 											event.preventDefault();
 											handleConfirmProviderSwitch();
 										}}
-										disabled={switchProviderMutation.isPending}
+										disabled={
+											switchProviderMutation.isPending ||
+											providerSwitchConfirmationText !== PROVIDER_SWITCH_CONFIRMATION_PHRASE
+										}
+										className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 									>
 										{switchProviderMutation.isPending
 											? t("settings:security.switching", { defaultValue: "Switching..." })

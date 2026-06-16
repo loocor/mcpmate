@@ -124,6 +124,20 @@ export function resolveSecretStoreIssueGuidance(
 		};
 	}
 
+	if (reasonCode === "secret_key_mismatch") {
+		return {
+			title: t("guidance.secretKeyMismatch.title", {
+				defaultValue: "Secure store records need repair",
+			}),
+			description: t("guidance.secretKeyMismatch.description", {
+				defaultValue:
+					"Stored secrets do not match the active root-key provider. Restore the configured provider in Settings → Security before editing secrets or reconnecting OAuth.",
+			}),
+			technicalDetail,
+			actions: ["open_security_settings"],
+		};
+	}
+
 	return {
 		title: t("guidance.generic.title", {
 			defaultValue: "Secure store unavailable",

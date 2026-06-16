@@ -135,6 +135,29 @@ describe("resolveSecretStoreIssueGuidance", () => {
 		expect(guidance?.retryProviderMode).toBe("local_file");
 	});
 
+	it("guides secret key mismatch without retrying the same provider", () => {
+		const guidance = resolveSecretStoreIssueGuidance(
+			{
+				status: "unavailable",
+				provider: {
+					provider_id: "local-file",
+					provider_kind: "local_file_root_key",
+					provider_mode: "local_file",
+					security_level: "medium",
+				},
+				issue: {
+					reason_code: "secret_key_mismatch",
+					message: "record cannot be decrypted",
+				},
+			} satisfies SecretStoreStatusData,
+			t,
+		);
+
+		expect(guidance?.title).toBe("Secure store records need repair");
+		expect(guidance?.actions).toEqual(["open_security_settings"]);
+		expect(guidance?.retryProviderMode).toBeUndefined();
+	});
+
 	it("uses generic guidance for unknown reason codes", () => {
 		const guidance = resolveSecretStoreIssueGuidance(
 			{

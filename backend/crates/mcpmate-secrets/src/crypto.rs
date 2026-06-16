@@ -62,6 +62,14 @@ impl EnvelopeCrypto {
         encrypted: &EncryptedSecret,
     ) -> Result<SecretValue, SecretError> {
         let data_key = self.unwrap_data_key(encrypted)?;
+        self.decrypt_secret_with_data_key(encrypted, &data_key)
+    }
+
+    pub(crate) fn decrypt_secret_with_data_key(
+        &self,
+        encrypted: &EncryptedSecret,
+        data_key: &SecretRootKey,
+    ) -> Result<SecretValue, SecretError> {
         let nonce_bytes = STANDARD
             .decode(&encrypted.nonce)
             .map_err(|err| SecretError::InvalidMetadata(format!("invalid secret nonce: {err}")))?;
@@ -71,7 +79,7 @@ impl EnvelopeCrypto {
         let mut in_out = STANDARD
             .decode(&encrypted.encrypted_value)
             .map_err(|err| SecretError::InvalidMetadata(format!("invalid encrypted secret value: {err}")))?;
-        let value_key = aead_key(&data_key).map_err(|err| SecretError::InvalidMetadata(err.to_string()))?;
+        let value_key = aead_key(data_key).map_err(|err| SecretError::InvalidMetadata(err.to_string()))?;
         let plaintext = value_key
             .open_in_place(
                 aead::Nonce::assume_unique_for_key(nonce_array),
