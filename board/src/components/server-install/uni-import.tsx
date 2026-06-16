@@ -26,6 +26,7 @@ import { readClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { parseJsonDrafts } from "../../lib/install-normalizer";
 import { isTauriEnvironmentSync } from "../../lib/platform";
+import { formatRedactedJsonPreviewValue } from "../../lib/secure-field";
 import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
@@ -79,6 +80,19 @@ import {
 	type ServerInstallManualFormProps,
 } from "./types";
 import { FormViewModeToggle } from "./view-mode-toggle";
+
+function formatRecordForJsonPreview(
+	record: Record<string, string> | null | undefined,
+): Record<string, string> | undefined {
+	if (!record || !Object.keys(record).length) return undefined;
+
+	return Object.fromEntries(
+		Object.entries(record).map(([key, value]) => [
+			key,
+			formatRedactedJsonPreviewValue(value),
+		]),
+	);
+}
 
 export const ServerInstallManualForm = forwardRef<
 	ServerInstallManualFormHandle,
@@ -843,10 +857,12 @@ export const ServerInstallManualForm = forwardRef<
 			};
 
 			if (current.kind === "stdio") {
-				if (current.command) entry.command = current.command;
+				if (current.command) {
+					entry.command = formatRedactedJsonPreviewValue(current.command);
+				}
 				if (current.args?.length) entry.args = current.args;
-				if (current.env && Object.keys(current.env).length)
-					entry.env = current.env;
+				const envForPreview = formatRecordForJsonPreview(current.env);
+				if (envForPreview) entry.env = envForPreview;
 			} else {
 				if (current.url) {
 					const params = (current as { urlParams?: Record<string, string> })
@@ -874,8 +890,8 @@ export const ServerInstallManualForm = forwardRef<
 						entry.url = current.url;
 					}
 				}
-				if (current.headers && Object.keys(current.headers).length)
-					entry.headers = current.headers;
+				const headersForPreview = formatRecordForJsonPreview(current.headers);
+				if (headersForPreview) entry.headers = headersForPreview;
 			}
 
 			if (current.meta && Object.keys(current.meta).length)
@@ -924,6 +940,9 @@ export const ServerInstallManualForm = forwardRef<
 				setViewMode("form");
 			}
 		};
+
+		const isCoreTabActive = activeTab === "core";
+		const showCoreJsonPanel = isCoreTabActive && viewMode === "json";
 
 		return (
 			<>
@@ -1072,18 +1091,66 @@ export const ServerInstallManualForm = forwardRef<
 										</TabsTrigger>
 									</TabsList>
 
-									<TabsContent
-										value="core"
-										className={`flex flex-col gap-4 ${viewMode === "json" ? "h-full" : ""}`}
-										onClick={handleFormInteraction}
-									>
+									{isCoreTabActive ? (
 										<div className={FORM_TAB_TOOLBAR_ROW_CLASS}>
 											<FormViewModeToggle
 												mode={viewMode}
 												onChange={handleModeChange}
 											/>
 										</div>
+									) : null}
 
+									{showCoreJsonPanel ? (
+										<div className="flex min-h-0 flex-1 flex-col">
+											<div className="flex flex-1 items-start gap-4">
+												<Label
+													htmlFor={manualJsonId}
+													className="w-20 shrink-0 pt-3 text-right"
+												>
+													{jsonLabel}
+												</Label>
+												<div className="flex min-h-0 flex-1 flex-col">
+													<div className="flex min-h-[400px] flex-1 flex-col rounded-md border border-input">
+														<Textarea
+															id={manualJsonId}
+															value={jsonText}
+															onChange={
+																jsonEditingEnabled
+																	? (event) =>
+																			setJsonText(event.target.value)
+																	: undefined
+															}
+															readOnly={!jsonEditingEnabled}
+															aria-readonly={!jsonEditingEnabled}
+															className="min-h-0 flex-1 border-0 font-mono text-sm focus:outline-none focus:ring-0"
+															style={{
+																background: "transparent",
+																minHeight: "400px",
+																userSelect: "text",
+																WebkitUserSelect: "text",
+																MozUserSelect: "text",
+																msUserSelect: "text",
+																caretColor: jsonEditingEnabled
+																	? "currentColor"
+																	: "transparent",
+															}}
+														/>
+													</div>
+													{jsonError ? (
+														<p className="mt-2 text-xs text-red-500">
+															{jsonError}
+														</p>
+													) : null}
+												</div>
+											</div>
+										</div>
+									) : null}
+
+									<TabsContent
+										value="core"
+										className="flex flex-col gap-4"
+										onClick={handleFormInteraction}
+									>
 										{viewMode === "form" ? (
 											<>
 												<div className="space-y-4">
@@ -1227,50 +1294,7 @@ export const ServerInstallManualForm = forwardRef<
 												/>
 
 											</>
-										) : (
-											<div className="flex flex-col h-full">
-												<div className="flex items-start gap-4 flex-1">
-													<Label
-														htmlFor={manualJsonId}
-														className="w-20 text-right pt-3 flex-shrink-0"
-													>
-														{jsonLabel}
-													</Label>
-													<div className="flex-1 flex flex-col">
-														<div className="flex-1 min-h-[400px] border border-input rounded-md flex flex-col">
-															<Textarea
-																id={manualJsonId}
-																value={jsonText}
-																onChange={
-																	jsonEditingEnabled
-																		? (event) => setJsonText(event.target.value)
-																		: undefined
-																}
-																readOnly={!jsonEditingEnabled}
-																aria-readonly={!jsonEditingEnabled}
-																className="font-mono text-sm flex-1 border-0 focus:ring-0 focus:outline-none"
-																style={{
-																	background: "transparent",
-																	caretColor: jsonEditingEnabled
-																		? "currentColor"
-																		: "transparent",
-																	minHeight: "400px",
-																	userSelect: "text",
-																	WebkitUserSelect: "text",
-																	MozUserSelect: "text",
-																	msUserSelect: "text",
-																}}
-															/>
-														</div>
-														{jsonError ? (
-															<p className="text-xs text-red-500 mt-2">
-																{jsonError}
-															</p>
-														) : null}
-													</div>
-												</div>
-											</div>
-										)}
+										) : null}
 									</TabsContent>
 
 
