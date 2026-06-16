@@ -125,7 +125,6 @@ export function resolveSecretStoreIssueGuidance(
 	}
 
 	if (reasonCode === "secret_key_mismatch") {
-		const mode = isSwitchableSecretStoreProviderMode(providerMode) ? providerMode : undefined;
 		return {
 			title: t("guidance.secretKeyMismatch.title", {
 				defaultValue: "Secure store records need repair",
@@ -135,10 +134,7 @@ export function resolveSecretStoreIssueGuidance(
 					"Stored secrets do not match the active root-key provider. Restore the configured provider in Settings → Security before editing secrets or reconnecting OAuth.",
 			}),
 			technicalDetail,
-			actions: mode
-				? ["retry_provider", "open_security_settings"]
-				: ["retry_status", "open_security_settings"],
-			retryProviderMode: mode,
+			actions: ["open_security_settings"],
 		};
 	}
 
