@@ -68,6 +68,8 @@ export function ServerListPage() {
 	const navigate = useNavigate();
 	const [debugInfo, setDebugInfo] = useState<string | null>(null);
 	const [manualOpen, setManualOpen] = useState(false);
+	const [pendingIngestPayload, setPendingIngestPayload] =
+		useState<ServerIngestPayload | null>(null);
 	const manualRef = useRef<ServerInstallManualFormHandle | null>(null);
 	const [editingServer, setEditingServer] = useState<ServerDetail | null>(null);
 	const [deletingServer, setDeletingServer] = useState<string | null>(null);
@@ -124,11 +126,18 @@ export function ServerListPage() {
 	);
 
 	const openManualIngest = useCallback((payload: ServerIngestPayload) => {
+		setPendingIngestPayload(payload);
 		setManualOpen(true);
-		requestAnimationFrame(() => {
-			manualRef.current?.ingest(payload);
-		});
 	}, []);
+
+	React.useEffect(() => {
+		if (!manualOpen || pendingIngestPayload === null) {
+			return;
+		}
+		const payload = pendingIngestPayload;
+		setPendingIngestPayload(null);
+		void manualRef.current?.ingest(payload);
+	}, [manualOpen, pendingIngestPayload]);
 
 	React.useEffect(() => {
 		if (!pendingServerDeepLinkImport) {
@@ -275,11 +284,11 @@ export function ServerListPage() {
 				}
 				const successTitle = enable
 					? t("notifications.toggle.enabledTitle", {
-							defaultValue: "Server enabled",
-						})
+						defaultValue: "Server enabled",
+					})
 					: t("notifications.toggle.disabledTitle", {
-							defaultValue: "Server disabled",
-						});
+						defaultValue: "Server disabled",
+					});
 				const successMessage = t("notifications.toggle.message", {
 					serverId,
 					defaultValue: "Server {{serverId}}",
@@ -294,8 +303,8 @@ export function ServerListPage() {
 				const actionLabel = enable
 					? t("notifications.toggle.enableAction", { defaultValue: "enable" })
 					: t("notifications.toggle.disableAction", {
-							defaultValue: "disable",
-						});
+						defaultValue: "disable",
+					});
 				const errorMessage =
 					error instanceof Error ? error.message : String(error);
 				notifyError(
@@ -445,8 +454,8 @@ export function ServerListPage() {
 					error instanceof Error
 						? error.message
 						: t("notifications.genericError.unknown", {
-								defaultValue: "Unknown error",
-							}),
+							defaultValue: "Unknown error",
+						}),
 				);
 			} finally {
 				setIsTogglePending(false);
@@ -804,29 +813,29 @@ export function ServerListPage() {
 				>
 					{viewMode === "grid"
 						? filteredAndSortedServers.map((server) => (
-								<ServerCatalogEntry
-									key={server.id}
-									variant="grid"
-									server={server}
-									statsLabels={catalogStatsLabels}
-									onOpen={handleCatalogOpen}
-									onToggle={handleCatalogGridToggle}
-									isToggleDisabled={!!pending[server.id]}
-								/>
-							))
+							<ServerCatalogEntry
+								key={server.id}
+								variant="grid"
+								server={server}
+								statsLabels={catalogStatsLabels}
+								onOpen={handleCatalogOpen}
+								onToggle={handleCatalogGridToggle}
+								isToggleDisabled={!!pending[server.id]}
+							/>
+						))
 						: filteredAndSortedServers.map((server) => (
-								<ServerCatalogEntry
-									key={server.id}
-									variant="list"
-									server={server}
-									statsLabels={catalogStatsLabels}
-									onOpen={handleCatalogOpen}
-									onToggle={handleCatalogListToggle}
-									isToggleDisabled={isTogglePending}
-									enableServerDebug={enableServerDebug}
-									onOpenDebug={handleCatalogDebugOpen}
-								/>
-							))}
+							<ServerCatalogEntry
+								key={server.id}
+								variant="list"
+								server={server}
+								statsLabels={catalogStatsLabels}
+								onOpen={handleCatalogOpen}
+								onToggle={handleCatalogListToggle}
+								isToggleDisabled={isTogglePending}
+								enableServerDebug={enableServerDebug}
+								onOpenDebug={handleCatalogDebugOpen}
+							/>
+						))}
 				</ListGridContainer>
 			</div>
 

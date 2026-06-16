@@ -811,6 +811,31 @@ export const ServerInstallWizard = forwardRef(
 			messages: ingestMessages,
 		});
 
+		const resetWizardSession = useCallback(() => {
+			installPipeline.setCurrentStep("form");
+			installPipeline.reset();
+			const initialFormState = createInitialFormState();
+			formStateRef.current = initialFormState;
+			isRestoringRef.current = true;
+			reset(buildFormValuesFromState(initialFormState));
+			isRestoringRef.current = false;
+			resetIngestState();
+			setUiActiveTab("core");
+			setViewMode("form");
+			setJsonError(null);
+			resetBulkUIState();
+		}, [
+			installPipeline,
+			createInitialFormState,
+			formStateRef,
+			isRestoringRef,
+			reset,
+			buildFormValuesFromState,
+			resetIngestState,
+			setViewMode,
+			resetBulkUIState,
+		]);
+
 		const handleResetForm = useCallback(() => {
 			if (initialDraft) {
 				loadDraftIntoForm(initialDraft);
@@ -1320,11 +1345,9 @@ export const ServerInstallWizard = forwardRef(
 
 				onClose();
 				setIsClosing(false);
-				installPipeline.setCurrentStep("form");
-				installPipeline.reset();
-				resetBulkUIState();
+				resetWizardSession();
 			}
-		}, [cleanupPendingImportServer, onClose, isClosing, installPipeline, resetBulkUIState]);
+		}, [cleanupPendingImportServer, onClose, isClosing, resetWizardSession]);
 
 		// Handle import action
 		const handleImport = useCallback(async () => {
@@ -1424,36 +1447,14 @@ export const ServerInstallWizard = forwardRef(
 				setTimeout(() => {
 					onClose();
 					setIsClosing(false);
-
-					// Complete reset for Cancel button
-					installPipeline.setCurrentStep("form");
-					installPipeline.reset();
-
-					// Reset form to initial state
-					const initialFormState = createInitialFormState();
-					formStateRef.current = initialFormState;
-					reset(buildFormValuesFromState(initialFormState));
-
-					// Reset ingest state (drag zone)
-					resetIngestState();
-
-					// Reset UI state
-					setUiActiveTab("core");
-					setViewMode("form");
-					resetBulkUIState();
+					resetWizardSession();
 				}, 50);
 			}
 		}, [
 			cleanupPendingImportServer,
 			onClose,
 			isClosing,
-			installPipeline,
-			createInitialFormState,
-			reset,
-			buildFormValuesFromState,
-			resetIngestState,
-			setViewMode,
-			resetBulkUIState,
+			resetWizardSession,
 		]);
 
 		type NextStepAction = "close" | "servers" | "profiles" | "preview" | "none";
@@ -1484,12 +1485,13 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		// Reset wizard when opening (only on transition from closed to open)
+		const wasOpenRef = useRef(false);
 		useLayoutEffect(() => {
-			if (isOpen) {
-				installPipeline.reset();
+			if (isOpen && !wasOpenRef.current) {
+				resetWizardSession();
 			}
-			// eslint-disable-next-line react-hooks/exhaustive-deps
-		}, [isOpen]);
+			wasOpenRef.current = isOpen;
+		}, [isOpen, resetWizardSession]);
 
 		// Hydrate form when an initial draft is provided (e.g., Market mode)
 		// Create a stable key that only changes when the actual draft content changes
