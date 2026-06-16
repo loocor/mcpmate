@@ -428,6 +428,9 @@ function applyToolbarIcon(theme) {
 function applyTheme(theme) {
 	document.documentElement.dataset.theme = resolvedTheme(theme);
 	applyToolbarIcon(theme);
+	try {
+		chrome.storage?.local?.set({ "mcpmate.toolbarTheme": resolvedTheme(theme) === "dark" ? "dark" : "light" });
+	} catch {}
 }
 
 function setText(id, value) {
