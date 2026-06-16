@@ -231,9 +231,6 @@ export const settingsTranslations = {
       showApiDocsTitle: "Show API Docs Menu",
       showApiDocsDescription:
         "Display API documentation menu in the navigation.",
-      showDefaultHeadersTitle: "Show Default HTTP Headers",
-      showDefaultHeadersDescription:
-        "Display the server's default HTTP headers (values are redacted) in Server Details. Use only for inspection.",
       showRawJsonTitle: "Show Raw Capability JSON",
       showRawJsonDescription:
         "Display raw JSON payloads under Details in capability lists (Server details and Uni‑Import preview).",
@@ -637,9 +634,6 @@ export const settingsTranslations = {
         "启用后，检视按钮将启动单独的标签页而不是导航当前视图。",
       showApiDocsTitle: "显示 API 文档菜单",
       showApiDocsDescription: "在导航中显示 API 文档菜单。",
-      showDefaultHeadersTitle: "显示默认 HTTP 头",
-      showDefaultHeadersDescription:
-        "在服务器详细信息中显示服务器的默认 HTTP 头（值已脱敏）。仅用于检视。",
       showRawJsonTitle: "显示原始能力 JSON",
       showRawJsonDescription:
         "在能力列表中显示原始 JSON 负载（服务器详情和统一导入预览）。",
@@ -1052,9 +1046,6 @@ export const settingsTranslations = {
       showApiDocsTitle: "API ドキュメントメニューを表示",
       showApiDocsDescription:
         "ナビゲーションに API ドキュメントメニューを表示します。",
-      showDefaultHeadersTitle: "デフォルト HTTP ヘッダーを表示",
-      showDefaultHeadersDescription:
-        "サーバー詳細でサーバーのデフォルト HTTP ヘッダー（値は編集済み）を表示します。検査専用です。",
       showRawJsonTitle: "生の能力 JSON を表示",
       showRawJsonDescription:
         "能力リスト（サーバー詳細と統合インポートプレビュー）で生の JSON ペイロードを表示します。",
