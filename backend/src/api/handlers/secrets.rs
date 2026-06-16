@@ -520,16 +520,6 @@ async fn map_secret_store_rotation_error(
     }
 }
 
-fn should_restore_passphrase_backup(error: &mcpmate_secrets::SecretStoreRotationError) -> bool {
-    !matches!(
-        error,
-        mcpmate_secrets::SecretStoreRotationError::PersistenceFailed {
-            action: "reload rotated store" | "verify rotated store" | "commit rotation transaction",
-            ..
-        }
-    )
-}
-
 fn data_dir_from_state(state: &Arc<AppState>) -> Result<std::path::PathBuf, ApiError> {
     let db = state
         .database
@@ -721,12 +711,6 @@ pub async fn rotate_passphrase(
         .pool
         .clone();
 
-    let backup_path = passphrase_path.with_extension("json.rotate-bak");
-    if passphrase_path.exists() {
-        std::fs::copy(&passphrase_path, &backup_path)
-            .map_err(|err| ApiError::InternalError(format!("Failed to back up passphrase material: {err}")))?;
-    }
-
     let current_provider: Arc<dyn crate::core::secrets::store::SecretRootKeyProvider> =
         Arc::new(crate::core::secrets::store::PassphraseRootKeyProvider::new(
             passphrase_path.clone(),
@@ -746,20 +730,9 @@ pub async fn rotate_passphrase(
         {
             Ok(store) => store,
             Err(err) => {
-                if backup_path.exists() {
-                    if should_restore_passphrase_backup(&err) {
-                        let _ = std::fs::rename(&backup_path, &passphrase_path);
-                    } else {
-                        let _ = std::fs::remove_file(&backup_path);
-                    }
-                }
                 return Err(map_secret_store_rotation_error(&state, err, current_provider_metadata).await);
             }
         };
-
-    if backup_path.exists() {
-        let _ = std::fs::remove_file(&backup_path);
-    }
 
     let bootstrap = crate::core::secrets::store::SecretStoreBootstrap {
         readiness: crate::core::secrets::store::SecretStoreReadiness::ready(new_store.provider_metadata()),

@@ -5,11 +5,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Row, Sqlite, SqliteConnection};
 use thiserror::Error;
 
 use crate::{
-    DevelopmentRootKeyProvider, RootKeyProviderMetadata, SecretError, SecretReference, SecretResolver,
+    DevelopmentRootKeyProvider, RootKeyProviderMetadata, SecretError, SecretReference, SecretResolver, SecretRootKey,
     SecretRootKeyError, SecretRootKeyProvider, SecretValue,
     crypto::{EncryptedSecret, EncryptedSecretParts, EnvelopeCrypto},
     database, default_root_key_provider,
@@ -282,152 +282,258 @@ impl LocalSecretStore {
                 message: err.to_string(),
             })?;
 
-        let target_metadata = target_provider.metadata();
-        let current_root_key = current_provider
-            .load_existing_root_key()
-            .map_err(SecretStoreRotationError::CurrentProviderUnavailable)?;
-        let current_crypto = EnvelopeCrypto::new(current_root_key);
-        let encrypted_secrets = database::load_encrypted_secrets(&pool).await.map_err(|err| {
-            SecretStoreRotationError::PersistenceFailed {
-                action: "load encrypted secrets",
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|err| SecretStoreRotationError::PersistenceFailed {
+                action: "acquire rotation connection",
                 message: err.to_string(),
-            }
-        })?;
-
-        let mut verified_data_keys = Vec::with_capacity(encrypted_secrets.len());
-        for encrypted in encrypted_secrets {
-            current_crypto.decrypt_secret(&encrypted).map_err(|err| {
-                SecretStoreRotationError::CurrentRecordUnreadable {
-                    alias: encrypted.alias.clone(),
-                    message: err.to_string(),
-                }
             })?;
-            let data_key = current_crypto.unwrap_data_key(&encrypted).map_err(|err| {
-                SecretStoreRotationError::CurrentRecordUnreadable {
-                    alias: encrypted.alias.clone(),
-                    message: err.to_string(),
-                }
-            })?;
-            verified_data_keys.push((encrypted, data_key));
-        }
-
-        let target_root_key = target_provider
-            .generate_and_store_root_key()
-            .map_err(SecretStoreRotationError::TargetProviderUnavailable)?;
-        let target_crypto = EnvelopeCrypto::new(target_root_key);
-        let mut rotated_records = Vec::with_capacity(verified_data_keys.len());
-
-        for (encrypted, data_key) in &verified_data_keys {
-            let (key_nonce, encrypted_key) =
-                target_crypto.wrap_data_key(&encrypted.alias, data_key).map_err(|err| {
-                    SecretStoreRotationError::PostRotationVerificationFailed {
-                        alias: encrypted.alias.clone(),
-                        message: err.to_string(),
-                    }
-                })?;
-            let rotated = EncryptedSecret {
-                alias: encrypted.alias.clone(),
-                key_nonce,
-                encrypted_key,
-                nonce: encrypted.nonce.clone(),
-                encrypted_value: encrypted.encrypted_value.clone(),
-            };
-            target_crypto.decrypt_secret(&rotated).map_err(|err| {
-                SecretStoreRotationError::PostRotationVerificationFailed {
-                    alias: rotated.alias.clone(),
-                    message: err.to_string(),
-                }
-            })?;
-            rotated_records.push(rotated);
-        }
-
-        let mut tx = pool
-            .begin()
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *conn)
             .await
             .map_err(|err| SecretStoreRotationError::PersistenceFailed {
                 action: "begin rotation transaction",
                 message: err.to_string(),
             })?;
 
-        for rotated in &rotated_records {
-            let result = sqlx::query(
-                r#"
-                UPDATE secure_store_secrets
-                SET key_nonce = ?2,
-                    encrypted_key = ?3,
-                    provider_id = ?4,
-                    provider_kind = ?5,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE alias = ?1
-                "#,
-            )
-            .bind(&rotated.alias)
-            .bind(&rotated.key_nonce)
-            .bind(&rotated.encrypted_key)
-            .bind(target_metadata.provider_id())
-            .bind(target_metadata.provider_kind())
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| SecretStoreRotationError::PersistenceFailed {
-                action: "update rotated secret records",
-                message: err.to_string(),
-            })?;
-            if result.rows_affected() != 1 {
-                return Err(SecretStoreRotationError::PersistenceFailed {
-                    action: "update rotated secret records",
-                    message: format!("secret '{}' changed during rotation", rotated.alias),
-                });
-            }
-        }
+        let target_metadata = target_provider.metadata();
+        let mut target_material = None;
+        let rotation_result = async {
+            let current_root_key = current_provider
+                .load_existing_root_key()
+                .map_err(SecretStoreRotationError::CurrentProviderUnavailable)?;
+            let current_crypto = EnvelopeCrypto::new(current_root_key);
+            let encrypted_secrets = load_encrypted_secrets_for_rotation(&mut conn).await?;
+            let verified_data_keys = verify_current_records(&current_crypto, encrypted_secrets)?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO secure_store_provider_config (id, provider_mode, updated_at)
-            VALUES (1, ?1, CURRENT_TIMESTAMP)
-            ON CONFLICT(id) DO UPDATE SET
-                provider_mode = ?1,
-                updated_at = CURRENT_TIMESTAMP
-            "#,
-        )
-        .bind(target_metadata.mode().as_str())
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| SecretStoreRotationError::PersistenceFailed {
-            action: "persist provider mode",
-            message: err.to_string(),
-        })?;
+            let material = target_provider
+                .generate_and_store_root_key_for_rotation()
+                .map_err(SecretStoreRotationError::TargetProviderUnavailable)?;
+            let target_root_key = material.root_key();
+            let target_crypto = EnvelopeCrypto::new(target_root_key);
+            target_material = Some(material);
+            let rotated_records = rotate_secret_records(&target_crypto, &verified_data_keys)?;
 
-        tx.commit()
-            .await
-            .map_err(|err| SecretStoreRotationError::PersistenceFailed {
-                action: "commit rotation transaction",
-                message: err.to_string(),
-            })?;
+            persist_rotated_records(&mut conn, &target_metadata, &rotated_records).await?;
+            persist_provider_mode(&mut conn, &target_metadata).await?;
 
-        let rotated_store = Self::initialize_with_root_key_provider(pool, target_provider)
-            .await
-            .map_err(|err| SecretStoreRotationError::PersistenceFailed {
-                action: "reload rotated store",
-                message: err.to_string(),
-            })?;
-
-        for (encrypted, _) in verified_data_keys {
-            let reference = SecretReference::new(encrypted.alias.clone()).map_err(|err| {
+            sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|err| {
                 SecretStoreRotationError::PersistenceFailed {
-                    action: "verify rotated store",
+                    action: "commit rotation transaction",
                     message: err.to_string(),
                 }
             })?;
-            rotated_store
-                .resolve_secret(&reference)
-                .map_err(|err| SecretStoreRotationError::PersistenceFailed {
-                    action: "verify rotated store",
-                    message: err.to_string(),
-                })?;
-        }
 
-        Ok(rotated_store)
+            Ok::<_, SecretStoreRotationError>((target_root_key, rotated_records))
+        }
+        .await;
+
+        let (target_root_key, rotated_records) = match rotation_result {
+            Ok(rotated_state) => {
+                if let Some(material) = target_material.take() {
+                    material.commit();
+                }
+                rotated_state
+            }
+            Err(err) => {
+                let err = rollback_rotation_failure(&mut conn, target_material.take(), err).await;
+                return Err(err);
+            }
+        };
+
+        drop(conn);
+
+        Ok(Self::from_rotated_records(
+            pool,
+            target_root_key,
+            target_metadata,
+            rotated_records,
+        ))
     }
+
+    fn from_rotated_records(
+        pool: Pool<Sqlite>,
+        root_key: SecretRootKey,
+        provider_metadata: RootKeyProviderMetadata,
+        rotated_records: Vec<EncryptedSecret>,
+    ) -> Self {
+        let encrypted_cache = rotated_records
+            .into_iter()
+            .map(|record| (record.alias.clone(), record))
+            .collect();
+        Self {
+            pool,
+            crypto: EnvelopeCrypto::new(root_key),
+            provider_metadata,
+            encrypted_cache: RwLock::new(encrypted_cache),
+        }
+    }
+}
+
+type VerifiedDataKey = (EncryptedSecret, SecretRootKey);
+
+fn verify_current_records(
+    current_crypto: &EnvelopeCrypto,
+    encrypted_secrets: Vec<EncryptedSecret>,
+) -> std::result::Result<Vec<VerifiedDataKey>, SecretStoreRotationError> {
+    let mut verified_data_keys = Vec::with_capacity(encrypted_secrets.len());
+    for encrypted in encrypted_secrets {
+        let data_key = current_crypto.unwrap_data_key(&encrypted).map_err(|err| {
+            SecretStoreRotationError::CurrentRecordUnreadable {
+                alias: encrypted.alias.clone(),
+                message: err.to_string(),
+            }
+        })?;
+        current_crypto
+            .decrypt_secret_with_data_key(&encrypted, &data_key)
+            .map_err(|err| SecretStoreRotationError::CurrentRecordUnreadable {
+                alias: encrypted.alias.clone(),
+                message: err.to_string(),
+            })?;
+        verified_data_keys.push((encrypted, data_key));
+    }
+    Ok(verified_data_keys)
+}
+
+fn rotate_secret_records(
+    target_crypto: &EnvelopeCrypto,
+    verified_data_keys: &[VerifiedDataKey],
+) -> std::result::Result<Vec<EncryptedSecret>, SecretStoreRotationError> {
+    let mut rotated_records = Vec::with_capacity(verified_data_keys.len());
+    for (encrypted, data_key) in verified_data_keys {
+        let (key_nonce, encrypted_key) = target_crypto.wrap_data_key(&encrypted.alias, data_key).map_err(|err| {
+            SecretStoreRotationError::PostRotationVerificationFailed {
+                alias: encrypted.alias.clone(),
+                message: err.to_string(),
+            }
+        })?;
+        let rotated = EncryptedSecret {
+            alias: encrypted.alias.clone(),
+            key_nonce,
+            encrypted_key,
+            nonce: encrypted.nonce.clone(),
+            encrypted_value: encrypted.encrypted_value.clone(),
+        };
+        target_crypto.decrypt_secret(&rotated).map_err(|err| {
+            SecretStoreRotationError::PostRotationVerificationFailed {
+                alias: rotated.alias.clone(),
+                message: err.to_string(),
+            }
+        })?;
+        rotated_records.push(rotated);
+    }
+    Ok(rotated_records)
+}
+
+async fn persist_rotated_records(
+    conn: &mut SqliteConnection,
+    target_metadata: &RootKeyProviderMetadata,
+    rotated_records: &[EncryptedSecret],
+) -> std::result::Result<(), SecretStoreRotationError> {
+    for rotated in rotated_records {
+        let result = sqlx::query(
+            r#"
+            UPDATE secure_store_secrets
+            SET key_nonce = ?2,
+                encrypted_key = ?3,
+                provider_id = ?4,
+                provider_kind = ?5,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE alias = ?1
+            "#,
+        )
+        .bind(&rotated.alias)
+        .bind(&rotated.key_nonce)
+        .bind(&rotated.encrypted_key)
+        .bind(target_metadata.provider_id())
+        .bind(target_metadata.provider_kind())
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| SecretStoreRotationError::PersistenceFailed {
+            action: "update rotated secret records",
+            message: err.to_string(),
+        })?;
+        if result.rows_affected() != 1 {
+            return Err(SecretStoreRotationError::PersistenceFailed {
+                action: "update rotated secret records",
+                message: format!("secret '{}' changed during rotation", rotated.alias),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn persist_provider_mode(
+    conn: &mut SqliteConnection,
+    target_metadata: &RootKeyProviderMetadata,
+) -> std::result::Result<(), SecretStoreRotationError> {
+    sqlx::query(
+        r#"
+        INSERT INTO secure_store_provider_config (id, provider_mode, updated_at)
+        VALUES (1, ?1, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            provider_mode = ?1,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(target_metadata.mode().as_str())
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| SecretStoreRotationError::PersistenceFailed {
+        action: "persist provider mode",
+        message: err.to_string(),
+    })?;
+    Ok(())
+}
+
+async fn load_encrypted_secrets_for_rotation(
+    conn: &mut SqliteConnection
+) -> std::result::Result<Vec<EncryptedSecret>, SecretStoreRotationError> {
+    let rows = sqlx::query("SELECT alias, key_nonce, encrypted_key, nonce, encrypted_value FROM secure_store_secrets")
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(load_encrypted_secrets_error)?;
+
+    rows.into_iter()
+        .map(|row| {
+            let alias: String = row.try_get("alias").map_err(load_encrypted_secrets_error)?;
+            Ok(EncryptedSecret {
+                alias,
+                key_nonce: row.try_get("key_nonce").map_err(load_encrypted_secrets_error)?,
+                encrypted_key: row.try_get("encrypted_key").map_err(load_encrypted_secrets_error)?,
+                nonce: row.try_get("nonce").map_err(load_encrypted_secrets_error)?,
+                encrypted_value: row.try_get("encrypted_value").map_err(load_encrypted_secrets_error)?,
+            })
+        })
+        .collect()
+}
+
+fn load_encrypted_secrets_error(err: sqlx::Error) -> SecretStoreRotationError {
+    SecretStoreRotationError::PersistenceFailed {
+        action: "load encrypted secrets",
+        message: err.to_string(),
+    }
+}
+
+async fn rollback_rotation_failure(
+    conn: &mut SqliteConnection,
+    target_material: Option<crate::StagedSecretRootKeyMaterial>,
+    err: SecretStoreRotationError,
+) -> SecretStoreRotationError {
+    if let Some(material) = target_material {
+        if let Err(rollback_err) = material.rollback() {
+            let original = err.to_string();
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            return SecretStoreRotationError::PersistenceFailed {
+                action: "rollback target root key material",
+                message: format!("{rollback_err}; original rotation error: {original}"),
+            };
+        }
+    }
+
+    let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+    err
 }
 
 impl SecretResolver for LocalSecretStore {
@@ -523,6 +629,51 @@ mod tests {
 
         fn generate_and_store_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
             self.fallback.generate_and_store_root_key()
+        }
+
+        fn generate_and_store_root_key_for_rotation(
+            &self
+        ) -> Result<crate::StagedSecretRootKeyMaterial, SecretRootKeyError> {
+            self.fallback.generate_and_store_root_key_for_rotation()
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct RotationOnlyRootKeyProvider {
+        fallback: TestRootKeyProvider,
+    }
+
+    impl RotationOnlyRootKeyProvider {
+        fn new(path: std::path::PathBuf) -> Self {
+            Self {
+                fallback: TestRootKeyProvider::new(path, "rotation-only-provider", "rotation_only_kind"),
+            }
+        }
+    }
+
+    impl SecretRootKeyProvider for RotationOnlyRootKeyProvider {
+        fn metadata(&self) -> RootKeyProviderMetadata {
+            self.fallback.metadata()
+        }
+
+        fn load_existing_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+            Err(SecretRootKeyError::ProviderUnavailable(
+                "post-commit reload disabled".to_string(),
+            ))
+        }
+
+        fn load_or_create_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+            self.fallback.load_or_create_root_key()
+        }
+
+        fn generate_and_store_root_key(&self) -> Result<SecretRootKey, SecretRootKeyError> {
+            self.fallback.generate_and_store_root_key()
+        }
+
+        fn generate_and_store_root_key_for_rotation(
+            &self
+        ) -> Result<crate::StagedSecretRootKeyMaterial, SecretRootKeyError> {
+            self.fallback.generate_and_store_root_key_for_rotation()
         }
     }
 
@@ -935,6 +1086,47 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn rotate_provider_returns_committed_store_without_target_reload() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        let provider_a = Arc::new(TestRootKeyProvider::new(
+            temp_dir.path().join("secrets-a").join("local-root.key"),
+            "provider-a",
+            "provider_a_kind",
+        ));
+        let provider_b = Arc::new(RotationOnlyRootKeyProvider::new(
+            temp_dir.path().join("secrets-b").join("local-root.key"),
+        ));
+        let store = LocalSecretStore::initialize_with_root_key_provider(db_pool.clone(), provider_a.clone())
+            .await
+            .expect("initialize provider A");
+        database::upsert_provider_config(&db_pool, "local_file")
+            .await
+            .expect("persist provider A");
+        create_test_secret(&store, "rotate/alpha", SecretKindInput::Token, "alpha-value").await;
+
+        let rotated = LocalSecretStore::rotate_provider(db_pool.clone(), provider_a, provider_b.clone())
+            .await
+            .expect("rotate provider without target reload");
+
+        assert_eq!(rotated.provider_metadata(), provider_b.metadata());
+        assert_secret_value(&rotated, "rotate/alpha", "alpha-value");
+        assert_eq!(
+            database::get_provider_config(&db_pool)
+                .await
+                .expect("provider config")
+                .expect("provider config row")
+                .provider_mode,
+            "local_file"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn rotate_provider_target_failure_keeps_current_state() {
         let temp_dir = TempDir::new().expect("temp dir");
         let db_pool = SqlitePoolOptions::new()
@@ -1004,6 +1196,130 @@ mod tests {
             .expect("reopen with new passphrase");
         assert_secret_value(&rotated, "rotate/alpha", "alpha-value");
         assert_secret_value(&reopened, "rotate/alpha", "alpha-value");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn passphrase_rotation_persistence_failure_restores_root_material() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        let passphrase_path = temp_dir.path().join("secrets").join("passphrase-wrapped-key.json");
+        let old_provider = Arc::new(crate::PassphraseRootKeyProvider::new(
+            &passphrase_path,
+            "old passphrase",
+        ));
+        let new_provider = Arc::new(crate::PassphraseRootKeyProvider::new(
+            &passphrase_path,
+            "new passphrase",
+        ));
+        let store = LocalSecretStore::initialize_with_root_key_provider(db_pool.clone(), old_provider.clone())
+            .await
+            .expect("initialize old passphrase store");
+        database::upsert_provider_config(&db_pool, "passphrase")
+            .await
+            .expect("persist passphrase mode");
+        create_test_secret(&store, "rotate/alpha", SecretKindInput::Token, "alpha-value").await;
+        let before_rows = encrypted_rows(&db_pool).await;
+        let before_material = std::fs::read(&passphrase_path).expect("read original passphrase material");
+
+        sqlx::query(
+            r#"
+            CREATE TRIGGER fail_rotation_secret_update
+            BEFORE UPDATE OF key_nonce ON secure_store_secrets
+            BEGIN
+                SELECT RAISE(FAIL, 'forced rotation update failure');
+            END
+            "#,
+        )
+        .execute(&db_pool)
+        .await
+        .expect("create failing update trigger");
+
+        let error = LocalSecretStore::rotate_provider(db_pool.clone(), old_provider.clone(), new_provider.clone())
+            .await
+            .expect_err("rotation update failure should roll back root material");
+
+        match error {
+            SecretStoreRotationError::PersistenceFailed {
+                action: "update rotated secret records",
+                ..
+            } => {}
+            other => panic!("expected update persistence failure, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(&passphrase_path).expect("read restored material"),
+            before_material
+        );
+        assert_eq!(encrypted_rows(&db_pool).await, before_rows);
+        assert_eq!(
+            database::get_provider_config(&db_pool)
+                .await
+                .expect("provider config")
+                .expect("provider config row")
+                .provider_mode,
+            "passphrase"
+        );
+        assert!(old_provider.load_existing_root_key().is_ok());
+        assert!(new_provider.load_existing_root_key().is_err());
+        assert_secret_value(&store, "rotate/alpha", "alpha-value");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn passphrase_rotation_root_material_write_failure_keeps_current_material() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        let secrets_dir = temp_dir.path().join("secrets");
+        let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
+        let old_provider = Arc::new(crate::PassphraseRootKeyProvider::new(
+            &passphrase_path,
+            "old passphrase",
+        ));
+        let new_provider = Arc::new(crate::PassphraseRootKeyProvider::new(
+            &passphrase_path,
+            "new passphrase",
+        ));
+        let store = LocalSecretStore::initialize_with_root_key_provider(db_pool.clone(), old_provider.clone())
+            .await
+            .expect("initialize old passphrase store");
+        database::upsert_provider_config(&db_pool, "passphrase")
+            .await
+            .expect("persist passphrase mode");
+        create_test_secret(&store, "rotate/alpha", SecretKindInput::Token, "alpha-value").await;
+        let before_rows = encrypted_rows(&db_pool).await;
+        let before_material = std::fs::read(&passphrase_path).expect("read original passphrase material");
+
+        std::fs::set_permissions(&secrets_dir, std::fs::Permissions::from_mode(0o500))
+            .expect("make passphrase directory read-only");
+        let result =
+            LocalSecretStore::rotate_provider(db_pool.clone(), old_provider.clone(), new_provider.clone()).await;
+        std::fs::set_permissions(&secrets_dir, std::fs::Permissions::from_mode(0o700))
+            .expect("restore passphrase directory permissions");
+
+        let error = result.expect_err("root material write failure should block rotation");
+        match error {
+            SecretStoreRotationError::TargetProviderUnavailable(SecretRootKeyError::LocalStorage(_)) => {}
+            other => panic!("expected target local storage failure, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(&passphrase_path).expect("read preserved material"),
+            before_material
+        );
+        assert_eq!(encrypted_rows(&db_pool).await, before_rows);
+        assert!(old_provider.load_existing_root_key().is_ok());
+        assert!(new_provider.load_existing_root_key().is_err());
+        assert_secret_value(&store, "rotate/alpha", "alpha-value");
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
