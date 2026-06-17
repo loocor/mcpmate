@@ -26,7 +26,7 @@ export interface ServerInstallDraft {
 	args?: string[];
 	env?: Record<string, string>;
 	url?: string;
-	registryServerId?: string;
+	sourceRef?: string;
 	headers?: Record<string, string>;
 	urlParams?: Record<string, string>;
 	meta?: ServerMetaInfo;

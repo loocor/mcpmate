@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::config::database::Database;
-use crate::config::registry::RegistryCacheService;
 use crate::core::cache::manager::RedbCacheManager;
 use crate::core::capability::naming::{NamingKind, resolve_unique_name};
 use crate::core::foundation::types::ConnectionStatus;
@@ -943,7 +942,7 @@ impl BrokerService {
         let placeholders_str = placeholders.join(",");
         let query_str = format!(
             r#"
-            SELECT sc.id, sc.registry_server_id
+            SELECT sc.id, sc.source_ref
             FROM server_config sc
             WHERE sc.id IN ({})
             "#,
@@ -961,44 +960,14 @@ impl BrokerService {
 
         let server_registry_map: HashMap<String, Option<String>> = rows.into_iter().collect();
 
-        let registry_names: Vec<String> = server_registry_map
-            .values()
-            .filter_map(|r| r.as_ref())
-            .cloned()
-            .collect();
-
-        if registry_names.is_empty() {
-            let result: HashMap<String, (bool, Option<String>)> = server_ids
-                .iter()
-                .map(|id| {
-                    let enriched = server_registry_map.get(id).and_then(|r| r.as_ref()).is_some();
-                    (id.clone(), (enriched, None))
-                })
-                .collect();
-            return Ok(result);
-        }
-
-        let cache_service = RegistryCacheService::new(self.database.pool.clone());
         let mut enrichment_map: HashMap<String, (bool, Option<String>)> = HashMap::new();
 
         for server_id in server_ids {
-            if let Some(Some(registry_name)) = server_registry_map.get(server_id) {
-                match cache_service.get_by_name(registry_name).await {
-                    Ok(Some(entry)) => {
-                        let category = entry
-                            .meta_json
-                            .as_ref()
-                            .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
-                            .and_then(|v| v.get("category").and_then(|c| c.as_str()).map(|s| s.to_string()));
-                        enrichment_map.insert(server_id.clone(), (true, category));
-                    }
-                    _ => {
-                        enrichment_map.insert(server_id.clone(), (true, None));
-                    }
-                }
-            } else {
-                enrichment_map.insert(server_id.clone(), (false, None));
-            }
+            let has_source_ref = server_registry_map
+                .get(server_id)
+                .and_then(|r| r.as_ref())
+                .is_some();
+            enrichment_map.insert(server_id.clone(), (has_source_ref, None));
         }
 
         Ok(enrichment_map)

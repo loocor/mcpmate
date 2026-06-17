@@ -103,6 +103,7 @@ import type {
 } from "./types";
 import { useMemo } from "react";
 import { isTauriEnvironmentSync } from "./platform";
+import { McpRegistryProvider } from "./market/providers/mcp-registry-provider";
 import { useQuery } from "@tanstack/react-query";
 
 // Base API configuration
@@ -723,7 +724,7 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 
 	const detailRecord = enhanced as Record<string, unknown>;
 	const registryServerId = asStringOrNull(
-		detailRecord.registry_server_id ?? detailRecord.registryServerId,
+		detailRecord.source_ref ?? detailRecord.registry_server_id ?? detailRecord.registryServerId,
 	);
 
 	const serverType =
@@ -738,7 +739,7 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 		status:
 			(typeof enhanced?.status === "string" && enhanced.status) || "unknown",
 		server_type: serverType,
-		registry_server_id: registryServerId,
+		source_ref: registryServerId,
 		enabled: enabledValue,
 		unify_direct_exposure_eligible:
 			typeof enhanced?.unify_direct_exposure_eligible === "boolean"
@@ -1058,6 +1059,7 @@ export const serversApi = {
 				const enhanced = enrichServerRecord(rec);
 				const er = enhanced as Record<string, unknown>;
 				const registryServerId =
+					(er.source_ref as string | null | undefined) ??
 					(er.registry_server_id as string | null | undefined) ??
 					(er.registryServerId as string | null | undefined) ??
 					null;
@@ -1068,7 +1070,7 @@ export const serversApi = {
 				return {
 					...enhanced,
 					server_type: serverType,
-					registry_server_id: registryServerId,
+					source_ref: registryServerId,
 					auth_mode: asOptionalString(er.auth_mode) ?? null,
 					...normalizeOAuthSummary(er),
 				} as ServerSummary;
@@ -1179,17 +1181,32 @@ export const serversApi = {
 	},
 
 	refreshRegistryMetadata: async (id: string): Promise<ServerDetail> => {
-		const resp = await fetchApi<ServerDetailsResp>(
-			`/api/mcp/registry/servers/refresh`,
-			{
-				method: "POST",
-				body: JSON.stringify({ id }),
-			},
-		);
-		const data = extractApiData(resp as unknown as ApiWrapper<ServerDetail>) as unknown as Record<string, unknown>;
-		const enhanced = enrichServerRecord(data);
+		const current = await serversApi.getServer(id);
+		const sourceRef = current.source_ref;
+		if (!sourceRef) throw new Error("Server has no source_ref");
 
-		return normalizeServerDetail(enhanced, id);
+		const serverName = sourceRef.includes(":")
+			? sourceRef.slice(sourceRef.indexOf(":") + 1)
+			: sourceRef;
+
+		const provider = new McpRegistryProvider();
+		const entry = await provider.fetchByKey(serverName);
+		if (!entry) throw new Error(`Server '${serverName}' not found in registry`);
+
+		const officialMeta = entry._meta?.["io.modelcontextprotocol.registry/official"];
+
+		return {
+			...current,
+			meta: {
+				description: entry.description,
+				version: entry.version,
+				websiteUrl: entry.websiteUrl,
+				repository: entry.repository,
+				icons: entry.icons,
+				_meta: entry._meta,
+				extras: { packages: entry.packages, remotes: entry.remotes, status: officialMeta?.status },
+			},
+		};
 	},
 
 	getInstances: async (serverId: string) => {

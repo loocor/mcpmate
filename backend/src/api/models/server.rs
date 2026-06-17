@@ -301,8 +301,8 @@ pub struct ServerDetailsData {
     pub id: Option<String>,
     /// Server name
     pub name: String,
-    /// Registry server id (from official registry)
-    pub registry_server_id: Option<String>,
+    /// Source reference (namespaced identifier tracking import origin)
+    pub source_ref: Option<String>,
     /// Is enabled in configuration (combined global and profile status)
     pub enabled: bool,
     /// Is globally enabled (server_config.enabled)
@@ -737,9 +737,10 @@ pub struct ServerCreateReq {
     pub pending_import: Option<bool>,
 
     #[schemars(
-        description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
+        description = "Source reference (namespaced identifier tracking import origin, e.g. \"registry:server-name\")"
     )]
-    pub registry_server_id: Option<String>,
+    #[serde(alias = "registry_server_id")]
+    pub source_ref: Option<String>,
 
     /// Optional metadata block for this server
     #[serde(default)]
@@ -807,9 +808,10 @@ pub struct ServerUpdateReq {
     pub pending_import: Option<bool>,
 
     #[schemars(
-        description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
+        description = "Source reference (namespaced identifier tracking import origin, e.g. \"registry:server-name\")"
     )]
-    pub registry_server_id: Option<String>,
+    #[serde(alias = "registry_server_id")]
+    pub source_ref: Option<String>,
 
     /// Optional metadata update payload
     #[serde(default)]
@@ -865,9 +867,10 @@ pub struct ServersImportConfig {
     pub headers: Option<HashMap<String, String>>,
 
     #[schemars(
-        description = "Canonical registry server identifier (official `server.name`; `official.serverId` alias only when equivalent) used to link managed servers"
+        description = "Source reference (namespaced identifier tracking import origin, e.g. \"registry:server-name\")"
     )]
-    pub registry_server_id: Option<String>,
+    #[serde(alias = "registry_server_id")]
+    pub source_ref: Option<String>,
     /// Optional metadata payload aligned with registry schema
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<ServerMetaPayload>,

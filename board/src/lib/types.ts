@@ -62,7 +62,7 @@ export interface ServerSummary {
   globally_enabled?: boolean;
   enabled_in_suits?: boolean;
   enabled_in_profile?: boolean;
-  registry_server_id?: string | null;
+  source_ref?: string | null;
   instance_count?: number;
   instances?: InstanceSummary[];
   meta?: ServerMetaInfo;

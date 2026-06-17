@@ -41,7 +41,7 @@ async fn import_config_with_cache(
                     url: server_config.url,
                     env: server_config.env,
                     headers: None,
-                    registry_server_id: None,
+                    source_ref: None,
                     meta: None,
                 },
             )

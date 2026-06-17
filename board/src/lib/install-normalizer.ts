@@ -428,7 +428,7 @@ const buildDraft = (
 		toEnvRecord((raw as any)?.httpHeaders) ||
 		toEnvRecord((raw as any)?.requestHeaders);
 	const registryServerId = trimmedString(
-		raw.registry_server_id ?? raw.registryServerId,
+		raw.source_ref ?? raw.registry_server_id ?? raw.registryServerId,
 	);
 
 	const baseMeta = normalizeMeta(raw.meta);
@@ -462,7 +462,7 @@ const buildDraft = (
 		env: envForDraft,
 		headers: headersForDraft ?? undefined,
 		...(kind !== "stdio" && urlParams ? { urlParams } : {}),
-		registryServerId,
+		sourceRef: registryServerId,
 		meta,
 	};
 };

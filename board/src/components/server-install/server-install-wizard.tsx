@@ -1143,7 +1143,7 @@ export const ServerInstallWizard = forwardRef(
 				return {
 					name: values.name.trim(),
 					serverId: pendingImportServerRef.current ?? undefined,
-					registryServerId: initialDraft?.registryServerId,
+					sourceRef: initialDraft?.sourceRef,
 					kind: values.kind,
 					command: values.kind === "stdio" ? trim(values.command) : undefined,
 					url: values.kind === "stdio" ? undefined : trim(values.url),
@@ -1154,7 +1154,7 @@ export const ServerInstallWizard = forwardRef(
 					meta: Object.keys(meta).length ? meta : undefined,
 				};
 			},
-			[initialDraft?.registryServerId],
+			[initialDraft?.sourceRef],
 		);
 
 		const persistActiveDraft = useCallback(() => {
