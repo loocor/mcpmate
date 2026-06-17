@@ -47,8 +47,10 @@ describe("browser extension discovery pagination", () => {
 		expect(url.searchParams.get("locale")).toBe("zh");
 	});
 
-	test("does not paginate portal requests", () => {
+	test("paginates portal requests like other discovery lists", () => {
 		expect(discoveryQueryForPage({ kind: "portals", limit: 6, offset: 0 })).toEqual({
+			limit: 6,
+			offset: 0,
 			surface: "extension",
 		});
 	});

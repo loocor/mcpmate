@@ -1,6 +1,6 @@
 export const DISCOVERY_SURFACE = "extension";
 export const DISCOVERY_PAGE_SIZE = 6;
-export const PAGEABLE_DISCOVERY_KINDS = new Set(["servers", "clients"]);
+export const PAGEABLE_DISCOVERY_KINDS = new Set(["portals", "servers", "clients"]);
 
 export function isPageableDiscoveryKind(kind) {
 	return PAGEABLE_DISCOVERY_KINDS.has(kind);
