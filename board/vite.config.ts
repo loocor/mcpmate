@@ -352,6 +352,11 @@ export default defineConfig({
 	},
 	server: {
 		proxy: {
+			"^/registry-api(?:/|$)": {
+				target: "https://registry.modelcontextprotocol.io",
+				changeOrigin: true,
+				rewrite: (path: string) => path.replace(/^\/registry-api/, "/v0.1"),
+			},
 			"^/api(?:/|$)": {
 				target: devApiBaseUrl,
 				router: () => currentDevApiBaseUrl(),

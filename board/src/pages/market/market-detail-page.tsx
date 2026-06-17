@@ -22,11 +22,11 @@ import { useServerInstallPipeline } from "../../hooks/use-server-install-pipelin
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { serversApi } from "../../lib/api";
 import {
-	fetchCachedRegistryServerByKey,
 	getCanonicalRegistryServerId,
 	getOfficialMeta,
 	matchesInstalledRegistryServer,
 } from "../../lib/registry";
+import { useCatalogProvider } from "../../lib/market";
 import type { RegistryServerEntry } from "../../lib/types";
 import { cn, formatLocalDateTime } from "../../lib/utils";
 import type { RemoteOption } from "./types";
@@ -207,13 +207,14 @@ export function MarketDetailPage() {
 	usePageTranslations("market");
 	const navigate = useNavigate();
 	const { registryKey } = useParams();
+	const { provider } = useCatalogProvider();
 	const decodedKey = useMemo(
 		() => decodeURIComponent(registryKey ?? ""),
 		[registryKey],
 	);
 	const serverQuery = useQuery({
-		queryKey: ["market", "detail", decodedKey],
-		queryFn: () => fetchCachedRegistryServerByKey(decodedKey),
+		queryKey: ["market", "detail", provider.meta.id, decodedKey],
+		queryFn: () => provider.fetchByKey(decodedKey),
 		enabled: Boolean(decodedKey),
 	});
 	const installedServersQuery = useQuery({
@@ -250,7 +251,7 @@ export function MarketDetailPage() {
 		const draft = buildDraftFromRemoteOption(selectedRemote, slugifyForConfig(server.name));
 		return {
 			...draft,
-			registryServerId: server.name,
+			sourceRef: provider.buildSourceRef(server),
 			meta: {
 				description: server.description || "",
 				version: server.version || "",
@@ -273,7 +274,7 @@ export function MarketDetailPage() {
 				},
 			},
 		};
-	}, [selectedRemote, server]);
+	}, [selectedRemote, server, provider]);
 
 	const installPipeline = useServerInstallPipeline({
 		onImported: () => {

@@ -74,7 +74,6 @@ export interface MarketSearchProps {
 
 export interface UseMarketDataReturn {
 	servers: RegistryServerEntry[];
-	sortedServers: RegistryServerEntry[];
 	isInitialLoading: boolean;
 	isPageLoading: boolean;
 	isEmpty: boolean;

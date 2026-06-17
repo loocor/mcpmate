@@ -22,6 +22,7 @@ import { ClientsPage } from "./pages/clients/clients-page";
 import { DashboardPage } from "./pages/dashboard/dashboard-page";
 import { MarketDetailPage } from "./pages/market/market-detail-page";
 import { MarketPage } from "./pages/market/market-page";
+import { CatalogProvider } from "./lib/market";
 import { NotFoundPage } from "./pages/not-found-page";
 import { ProfileDetailPage } from "./pages/profile/profile-detail-page";
 import { ProfilePage } from "./pages/profile/profile-page";
@@ -135,8 +136,8 @@ function App() {
 										path="config/profiles/:suitId"
 										element={<LegacySuitRedirect />}
 									/>
-									<Route path="market" element={<MarketPage />} />
-									<Route path="market/:registryKey" element={<MarketDetailPage />} />
+									<Route path="market" element={<CatalogProvider><MarketPage /></CatalogProvider>} />
+									<Route path="market/:registryKey" element={<CatalogProvider><MarketDetailPage /></CatalogProvider>} />
 									<Route path="servers" element={<ServerListPage />} />
 									<Route path="servers/:serverId" element={<ServerDetailPage />} />
 									<Route

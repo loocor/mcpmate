@@ -1,11 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCursorPagination } from "../../../hooks/use-cursor-pagination";
-import {
-	fetchCachedRegistryServers,
-	getOfficialMeta,
-	syncRegistry,
-} from "../../../lib/registry";
+import { useCatalogProvider } from "../../../lib/market";
+import { getOfficialMeta } from "../../../lib/registry";
 import { useAppStore } from "../../../lib/store";
 import type { RegistryServerEntry } from "../../../lib/types";
 import type { UseMarketDataReturn } from "../types";
@@ -15,6 +12,7 @@ export function useMarketData(
 	search: string,
 	sort: "recent" | "name",
 ): UseMarketDataReturn {
+	const { provider } = useCatalogProvider();
 	const queryClient = useQueryClient();
 	const [itemsPerPage, setItemsPerPage] = useState(9);
 	const [isPaginationActionLoading, setIsPaginationActionLoading] = useState(false);
@@ -23,8 +21,8 @@ export function useMarketData(
 	);
 
 	const handlePaginationReset = useCallback(() => {
-		queryClient.removeQueries({ queryKey: ["market", "registry"] });
-	}, [queryClient]);
+		queryClient.removeQueries({ queryKey: ["market", provider.meta.id] });
+	}, [queryClient, provider.meta.id]);
 
 	const pagination = useCursorPagination({
 		limit: itemsPerPage,
@@ -32,14 +30,13 @@ export function useMarketData(
 	});
 
 	const registryQuery = useQuery({
-		queryKey: ["market", "registry", search, pagination.currentPage, itemsPerPage],
+		queryKey: ["market", provider.meta.id, search, pagination.currentPage, itemsPerPage],
 		queryFn: async () => {
-			const result = await fetchCachedRegistryServers({
+			const result = await provider.fetchPage({
 				cursor: pagination.currentCursor,
 				search: search || undefined,
 				limit: pagination.itemsPerPage,
 			});
-
 			return result;
 		},
 		staleTime: 1000 * 60 * 5,
@@ -47,49 +44,39 @@ export function useMarketData(
 
 	const syncMutation = useMutation({
 		mutationFn: async () => {
-			await syncRegistry();
-			queryClient.removeQueries({ queryKey: ["market", "registry"] });
+			if (provider.sync) {
+				await provider.sync();
+			}
+			queryClient.removeQueries({ queryKey: ["market", provider.meta.id] });
 			return registryQuery.refetch();
 		},
-		onSuccess: () => {},
 	});
 
 	// Update pagination state when query data changes
 	useEffect(() => {
-		if (registryQuery.data?.metadata) {
+		if (registryQuery.data) {
 			pagination.setHasNextPage(
-				Boolean(registryQuery.data.metadata.nextCursor),
+				Boolean(registryQuery.data.nextCursor),
 			);
 		}
-	}, [registryQuery.data?.metadata, pagination]);
+	}, [registryQuery.data, pagination]);
 
 	const blacklistIds = useMemo(() => {
 		return new Set(marketBlacklist.map((entry) => entry.serverId));
 	}, [marketBlacklist]);
 
-	const servers = useMemo(() => {
+	const deduped = useMemo(() => {
 		if (!registryQuery.data) return [] as RegistryServerEntry[];
 		const dedup = new Map<string, RegistryServerEntry>();
 
-		// Process servers from current page
-		for (const serverEntry of registryQuery.data.servers) {
-			// Extract the actual server data from the nested structure
-			const server = serverEntry.server;
-			if (!server) continue;
-
-			// Create a flattened server object with _meta at the top level
-			const flattenedServer: RegistryServerEntry = {
-				...server,
-				_meta: serverEntry._meta,
-			};
-
-			const key = getRegistryIdentity(flattenedServer);
+		for (const server of registryQuery.data.entries) {
+			const key = getRegistryIdentity(server);
 			if (blacklistIds.has(key)) {
 				continue;
 			}
-			const official = getOfficialMeta(flattenedServer);
+			const official = getOfficialMeta(server);
 			if (!dedup.has(key)) {
-				dedup.set(key, flattenedServer);
+				dedup.set(key, server);
 				continue;
 			}
 			const existing = dedup.get(key);
@@ -101,14 +88,14 @@ export function useMarketData(
 				candidateTs &&
 				Date.parse(candidateTs) > Date.parse(existingTs)
 			) {
-				dedup.set(key, flattenedServer);
+				dedup.set(key, server);
 			}
 		}
 		return Array.from(dedup.values());
 	}, [registryQuery.data, blacklistIds]);
 
-	const sortedServers = useMemo(() => {
-		const items = [...servers];
+	const servers = useMemo(() => {
+		const items = [...deduped];
 		if (sort === "recent") {
 			items.sort((a, b) => {
 				const metaA = getOfficialMeta(a);
@@ -121,24 +108,24 @@ export function useMarketData(
 			items.sort((a, b) => a.name.localeCompare(b.name));
 		}
 		return items;
-	}, [servers, sort]);
+	}, [deduped, sort]);
 
 	const isInitialLoading = registryQuery.isLoading && !registryQuery.data;
 	const isPageLoading = registryQuery.isFetching && Boolean(registryQuery.data);
-	const isEmpty = !isInitialLoading && sortedServers.length === 0;
+	const isEmpty = !isInitialLoading && servers.length === 0;
 	const fetchError =
 		registryQuery.error instanceof Error ? registryQuery.error : undefined;
 
 	const handleRefresh = useCallback(() => {
-		queryClient.removeQueries({ queryKey: ["market", "registry"] });
+		queryClient.removeQueries({ queryKey: ["market", provider.meta.id] });
 		void registryQuery.refetch();
-	}, [queryClient, registryQuery]);
+	}, [queryClient, provider.meta.id, registryQuery]);
 
 	const handleNextPage = useCallback(() => {
-		if (!registryQuery.data?.metadata?.nextCursor) return;
-		pagination.goToNextPage(registryQuery.data.metadata.nextCursor);
+		if (!registryQuery.data?.nextCursor) return;
+		pagination.goToNextPage(registryQuery.data.nextCursor);
 		window.scrollTo({ top: 0, behavior: "smooth" });
-	}, [registryQuery.data?.metadata?.nextCursor, pagination]);
+	}, [registryQuery.data?.nextCursor, pagination]);
 
 	const handlePreviousPage = useCallback(() => {
 		pagination.goToPreviousPage();
@@ -162,17 +149,18 @@ export function useMarketData(
 	);
 
 	const handleLastPage = useCallback(async () => {
-		if (!registryQuery.data?.metadata?.nextCursor) {
+		if (!registryQuery.data?.nextCursor) {
 			return;
 		}
 
 		setIsPaginationActionLoading(true);
 		try {
-			let nextCursor: string | undefined = registryQuery.data.metadata.nextCursor;
+			let nextCursor: string | undefined = registryQuery.data.nextCursor;
 			let targetPage = pagination.currentPage;
 			const history = [...pagination.cursorHistory];
 
-			while (nextCursor) {
+			const MAX_PAGES = 100;
+			while (nextCursor && targetPage < MAX_PAGES) {
 				if (history.length < targetPage + 1) {
 					history.push(nextCursor);
 				} else {
@@ -180,12 +168,12 @@ export function useMarketData(
 				}
 				targetPage += 1;
 
-				const result = await fetchCachedRegistryServers({
+				const result = await provider.fetchPage({
 					cursor: nextCursor,
 					search: search || undefined,
 					limit: itemsPerPage,
 				});
-				nextCursor = result.metadata?.nextCursor;
+				nextCursor = result.nextCursor;
 			}
 
 			pagination.setPaginationState(targetPage, history, false);
@@ -193,7 +181,7 @@ export function useMarketData(
 		} finally {
 			setIsPaginationActionLoading(false);
 		}
-	}, [itemsPerPage, pagination, registryQuery.data?.metadata?.nextCursor, search]);
+	}, [itemsPerPage, pagination, registryQuery.data?.nextCursor, search, provider]);
 
 	const handleGoToPage = useCallback(
 		async (targetPage: number) => {
@@ -215,17 +203,19 @@ export function useMarketData(
 				}
 				return;
 			}
-			if (!registryQuery.data?.metadata?.nextCursor) {
+			if (!registryQuery.data?.nextCursor) {
 				return;
 			}
 
 			setIsPaginationActionLoading(true);
 			try {
-				let nextCursor: string | undefined = registryQuery.data.metadata.nextCursor;
+				let nextCursor: string | undefined = registryQuery.data.nextCursor;
 				let targetPagePtr = pagination.currentPage;
 				const history = [...pagination.cursorHistory];
 
-				while (nextCursor && targetPagePtr < p) {
+				const MAX_PAGES = 100;
+				const clampedTarget = Math.min(p, MAX_PAGES);
+				while (nextCursor && targetPagePtr < clampedTarget) {
 					if (history.length < targetPagePtr + 1) {
 						history.push(nextCursor);
 					} else {
@@ -233,12 +223,12 @@ export function useMarketData(
 					}
 					targetPagePtr += 1;
 
-					const result = await fetchCachedRegistryServers({
+					const result = await provider.fetchPage({
 						cursor: nextCursor,
 						search: search || undefined,
 						limit: itemsPerPage,
 					});
-					nextCursor = result.metadata?.nextCursor ?? undefined;
+					nextCursor = result.nextCursor ?? undefined;
 				}
 
 				if (targetPagePtr !== p) {
@@ -257,19 +247,19 @@ export function useMarketData(
 			handleFirstPage,
 			itemsPerPage,
 			pagination,
-			registryQuery.data?.metadata?.nextCursor,
+			registryQuery.data?.nextCursor,
 			search,
+			provider,
 		],
 	);
 
 	const totalPages =
-		registryQuery.data && !registryQuery.data.metadata?.nextCursor
+		registryQuery.data && !registryQuery.data.nextCursor
 			? pagination.currentPage
 			: null;
 
 	return {
-		servers: sortedServers,
-		sortedServers,
+		servers,
 		isInitialLoading,
 		isPageLoading,
 		isEmpty,
@@ -289,10 +279,10 @@ export function useMarketData(
 		onItemsPerPageChange: handleItemsPerPageChange,
 		isPaginationActionLoading,
 		onRefresh: handleRefresh,
-		lastSyncedAt: registryQuery.data?.last_synced_at,
-		onSync: async () => {
-			await syncMutation.mutateAsync();
-		},
-		isSyncing: syncMutation.isPending,
+		lastSyncedAt: registryQuery.data?.lastSyncedAt,
+		onSync: provider.meta.supportsSync
+			? async () => { await syncMutation.mutateAsync(); }
+			: async () => { handleRefresh(); },
+		isSyncing: provider.meta.supportsSync ? syncMutation.isPending : registryQuery.isFetching,
 	};
 }
