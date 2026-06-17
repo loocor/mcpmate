@@ -18,6 +18,7 @@ const distDir = join(rootDir, "dist");
 const EXCLUDE = new Set([
 	".DS_Store",
 	".gitignore",
+	"dev",
 	"dist",
 	"scripts",
 	"mock",
