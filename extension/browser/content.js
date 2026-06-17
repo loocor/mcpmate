@@ -671,41 +671,6 @@
 	const CURSOR_DEEPLINK_ATTR = "data-mcpmate-cursor-injected";
 	const CURSOR_MCP_RE = /^cursor:\/\/anysphere\.cursor-deeplink\/mcp\/install\b/;
 
-	function parseCursorMcpConfig(link) {
-		try {
-			const url = new URL(link.href);
-			const name = url.searchParams.get("name") || "unknown";
-			const configB64 = url.searchParams.get("config");
-			if (!configB64) return null;
-
-			const configJson = atob(configB64);
-			const cursorConfig = JSON.parse(configJson);
-
-			const entry = {};
-			if (cursorConfig.url) {
-				entry.url = cursorConfig.url;
-			}
-			if (cursorConfig.command) {
-				entry.command = cursorConfig.command;
-			}
-			if (Array.isArray(cursorConfig.args)) {
-				entry.args = cursorConfig.args;
-			}
-			if (cursorConfig.env && typeof cursorConfig.env === "object") {
-				entry.env = cursorConfig.env;
-			}
-			if (cursorConfig.transport && typeof cursorConfig.transport === "string") {
-				entry.type = cursorConfig.transport;
-			}
-
-			if (!entry.url && !entry.command) return null;
-
-			return JSON.stringify({ mcpServers: { [name]: entry } });
-		} catch {
-			return null;
-		}
-	}
-
 	function attachCursorMcpMateButton(link) {
 		if (link.getAttribute(CURSOR_DEEPLINK_ATTR) === "1") return;
 		link.setAttribute(CURSOR_DEEPLINK_ATTR, "1");
@@ -719,10 +684,11 @@
 		btn.className = link.className;
 		btn.textContent = "Add to MCPMate";
 		btn.style.marginLeft = "4px";
-		btn.addEventListener("click", (event) => {
+		btn.addEventListener("click", async (event) => {
 			event.preventDefault();
 			event.stopPropagation();
-			const config = parseCursorMcpConfig(link);
+			const { parseCursorMcpInstallLink } = await import("./cursor-deeplink.mjs");
+			const config = parseCursorMcpInstallLink(link.href);
 			if (config) openMcpMate(config);
 		});
 
