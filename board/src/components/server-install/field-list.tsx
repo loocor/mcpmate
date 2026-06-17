@@ -4,6 +4,12 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "../ui/tooltip";
 import { GHOST_INPUT_CLASS } from "./types";
 
 /** Key column: content-sized within group, but capped so value always keeps room. */
@@ -119,6 +125,7 @@ export function PairGhostRow({
 // Reusable Field List Component
 interface FieldListProps {
 	label: string;
+	labelTooltip?: string;
 	fields: Array<{ id: string;[key: string]: unknown }>;
 	onRemove: (index: number) => void;
 	renderField: (
@@ -135,6 +142,7 @@ interface FieldListProps {
 
 export const FieldList: React.FC<FieldListProps> = ({
 	label,
+	labelTooltip,
 	fields,
 	onRemove,
 	renderField,
@@ -151,12 +159,33 @@ export const FieldList: React.FC<FieldListProps> = ({
 				: "border-slate-300 hover:border-red-500 hover:bg-red-50",
 		);
 
+	const labelNode = labelTooltip ? (
+		<TooltipProvider delayDuration={200}>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<Label className="flex w-20 shrink-0 cursor-help select-none items-center justify-end self-start pt-2.5 text-right">
+						{label}
+					</Label>
+				</TooltipTrigger>
+				<TooltipContent
+					side="top"
+					align="start"
+					className="max-w-xs leading-relaxed"
+				>
+					{labelTooltip}
+				</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
+	) : (
+		<Label className="flex w-20 shrink-0 items-center justify-end self-start pt-2.5 text-right">
+			{label}
+		</Label>
+	);
+
 	return (
 		<div className="space-y-0">
 			<div className="flex items-start gap-4">
-				<Label className="flex w-20 shrink-0 items-center justify-end self-start pt-2.5 text-right">
-					{label}
-				</Label>
+				{labelNode}
 				{pairLayout ? (
 					<div className={cn("flex-1", fieldPairGridClassName)}>
 						{fields.map((field, index) => (

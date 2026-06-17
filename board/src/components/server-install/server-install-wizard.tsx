@@ -2292,18 +2292,17 @@ export const ServerInstallWizard = forwardRef(
 															}
 														/>
 
-														{!isStdio && selectedAuthMode === "oauth" ? (
-															<p className="text-xs text-slate-500 dark:text-slate-400">
-																{t("manual.auth.transportHint", {
-																	defaultValue:
-																		"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
-																})}
-															</p>
-														) : null}
-
 														<HttpHeaders
 															viewMode={viewMode}
 															isStdio={isStdio}
+															labelTooltip={
+																!isStdio && selectedAuthMode === "oauth"
+																	? t("manual.auth.transportHint", {
+																		defaultValue:
+																			"URL Parameters and HTTP Headers are optional transport extras. They still apply after OAuth if this server needs them.",
+																	})
+																	: undefined
+															}
 															headerFields={headerFields.fields}
 															removeHeader={removeHeader}
 															appendHeader={appendHeader}

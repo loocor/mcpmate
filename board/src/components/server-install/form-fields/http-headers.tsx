@@ -15,6 +15,7 @@ import type { ManualServerFormValues } from "../types";
 interface HttpHeadersProps {
 	viewMode: "form" | "json";
 	isStdio: boolean;
+	labelTooltip?: string;
 	headerFields: Array<{ id: string;[key: string]: unknown }>;
 	removeHeader: (index: number) => void;
 	appendHeader: (value: { key: string; value: string }) => void;
@@ -31,6 +32,7 @@ interface HttpHeadersProps {
 export function HttpHeaders({
 	viewMode,
 	isStdio,
+	labelTooltip,
 	headerFields,
 	removeHeader,
 	appendHeader,
@@ -49,6 +51,7 @@ export function HttpHeaders({
 	return (
 		<FieldList
 			label={t("manual.fields.headers.label", { defaultValue: "HTTP Headers" })}
+			labelTooltip={labelTooltip}
 			fields={headerFields}
 			onRemove={removeHeader}
 			deleteConfirmStates={deleteConfirmStates}
