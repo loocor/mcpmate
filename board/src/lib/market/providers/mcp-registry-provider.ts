@@ -1,5 +1,5 @@
-import type { RegistryServerListResponse } from "../../types";
-import { getCanonicalRegistryServerId } from "../../registry";
+import type { RegistryServerEntryWrapper, RegistryServerListResponse } from "../../types";
+import { getCanonicalRegistryServerId, getOfficialMeta } from "../../registry";
 import type {
   CatalogEntry,
   CatalogPage,
@@ -7,11 +7,15 @@ import type {
   MarketCatalogProvider,
 } from "../types";
 
+const REGISTRY_API_BASE = import.meta.env.DEV
+  ? "/registry-api"
+  : "https://registry.modelcontextprotocol.io/v0.1";
+
 /**
  * MCP Registry provider — fetches directly from the official MCP Registry.
  *
- * No backend proxy needed. The Vite dev server proxies /registry-api to
- * avoid CORS issues; production deployments use an nginx/CF Worker proxy.
+ * In dev mode the Vite proxy rewrites /registry-api → the real API.
+ * In production builds (Tauri desktop etc.) the full URL is used directly.
  */
 export class McpRegistryProvider implements MarketCatalogProvider {
   readonly meta = {
@@ -23,16 +27,104 @@ export class McpRegistryProvider implements MarketCatalogProvider {
 
   async fetchPage(query: CatalogQuery): Promise<CatalogPage> {
     const { limit = 30, cursor, search } = query;
-    const params = new URLSearchParams();
-    // Official registry caps at 100; higher values return empty results.
-    params.set("limit", Math.max(1, Math.min(limit, 100)).toString());
-    if (cursor) params.set("cursor", cursor);
-    if (search?.trim()) params.set("search", search.trim());
+    const cappedLimit = Math.max(1, Math.min(limit, 100));
 
-    const requestUrl = `/registry-api/servers?${params.toString()}`;
+    // Batch-prefetch: request 2× the needed limit upfront to compensate for
+    // upstream duplicates, dedup in a single pass, then top up only if needed.
+    const BATCH_MULTIPLIER = 2;
+    const batchLimit = cappedLimit * BATCH_MULTIPLIER;
+
+    const dedup = new Map<string, CatalogEntry>();
+    let nextCursor: string | undefined = cursor;
+    let upstreamTotalCount: number | undefined;
+
+    const MAX_REQUESTS = 5;
+    let requestsUsed = 0;
+
+    const upsertEntry = (wrapper: RegistryServerEntryWrapper) => {
+      const entry: CatalogEntry = {
+        ...wrapper.server,
+        _meta: wrapper._meta ?? wrapper.server._meta,
+      };
+      const key = getCanonicalRegistryServerId(entry);
+      if (!dedup.has(key)) {
+        dedup.set(key, entry);
+      } else {
+        const existing = dedup.get(key)!;
+        const existingTs = getOfficialMeta(existing)?.updatedAt;
+        const candidateTs = getOfficialMeta(entry)?.updatedAt;
+        if (
+          existingTs &&
+          candidateTs &&
+          Date.parse(candidateTs) > Date.parse(existingTs)
+        ) {
+          dedup.set(key, entry);
+        }
+      }
+    };
+
+    const doFetch = async (fetchLimit: number): Promise<string | undefined> => {
+      const params = new URLSearchParams();
+      params.set("limit", fetchLimit.toString());
+      params.set("version", "latest");
+      if (nextCursor) params.set("cursor", nextCursor);
+      if (search?.trim()) params.set("search", search.trim());
+
+      const requestUrl = `${REGISTRY_API_BASE}/servers?${params.toString()}`;
+      const response = await fetch(requestUrl, {
+        headers: { Accept: "application/json" },
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(
+          `Registry request failed (${response.status} ${response.statusText}): ${text}`,
+        );
+      }
+
+      const result = (await response.json()) as RegistryServerListResponse;
+      if (upstreamTotalCount === undefined) {
+        upstreamTotalCount = result.metadata?.count;
+      }
+
+      for (const wrapper of result.servers ?? []) {
+        upsertEntry(wrapper);
+      }
+
+      return result.metadata?.nextCursor;
+    };
+
+    // First batch: request 2× limit to absorb duplicates in one pass.
+    nextCursor = await doFetch(batchLimit);
+    requestsUsed++;
+
+    // Top-up loop: only if the first batch didn't yield enough unique entries.
+    while (dedup.size < cappedLimit && nextCursor && requestsUsed < MAX_REQUESTS) {
+      nextCursor = await doFetch(cappedLimit);
+      requestsUsed++;
+    }
+
+    const entries = Array.from(dedup.values()).slice(0, cappedLimit);
+
+    return {
+      entries,
+      nextCursor,
+      totalCount: upstreamTotalCount,
+    };
+  }
+
+  async fetchByKey(key: string): Promise<CatalogEntry | null> {
+    const trimmed = key.trim();
+    if (!trimmed) return null;
+
+    const requestUrl = `${REGISTRY_API_BASE}/servers/${encodeURIComponent(trimmed)}/versions/latest`;
     const response = await fetch(requestUrl, {
       headers: { Accept: "application/json" },
     });
+
+    if (response.status === 404) {
+      return null;
+    }
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
@@ -41,45 +133,11 @@ export class McpRegistryProvider implements MarketCatalogProvider {
       );
     }
 
-    const result = (await response.json()) as RegistryServerListResponse;
-
-    const entries: CatalogEntry[] = (result.servers ?? []).map((wrapper) => ({
-      ...wrapper.server,
-      _meta: wrapper._meta ?? wrapper.server._meta,
-    }));
-
+    const result = (await response.json()) as RegistryServerEntryWrapper;
     return {
-      entries,
-      nextCursor: result.metadata?.nextCursor,
-      totalCount: result.metadata?.count,
+      ...result.server,
+      _meta: result._meta ?? result.server._meta,
     };
-  }
-
-  async fetchByKey(key: string): Promise<CatalogEntry | null> {
-    const trimmed = key.trim();
-    if (!trimmed) return null;
-
-    // Paginate through search results to find the exact match.
-    // The official registry caps at 100 per page.
-    let cursor: string | undefined;
-    for (let page = 0; page < 10; page++) {
-      const result = await this.fetchPage({
-        search: trimmed,
-        limit: 100,
-        cursor,
-      });
-
-      const match = result.entries.find(
-        (entry) =>
-          getCanonicalRegistryServerId(entry) === trimmed ||
-          entry.name === trimmed,
-      );
-      if (match) return match;
-      if (!result.nextCursor) break;
-      cursor = result.nextCursor;
-    }
-
-    return null;
   }
 
   buildSourceRef(entry: CatalogEntry): string {
