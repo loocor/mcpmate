@@ -1,4 +1,4 @@
-import { dirname, join, normalize } from "node:path";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,11 +23,15 @@ function contentType(pathname) {
 	return MIME_TYPES[pathname.slice(dot)] || "application/octet-stream";
 }
 
+const rootResolved = resolve(rootDir);
+
 function resolvePath(pathname) {
 	const decoded = decodeURIComponent(pathname === "/" ? "/dev/popup.html" : pathname);
-	const normalized = normalize(decoded).replace(/^(\.\.(\/|\\|$))+/, "");
-	const absolute = join(rootDir, normalized);
-	if (!absolute.startsWith(rootDir)) {
+	const relative = normalize(decoded)
+		.replace(/^(\.\.(\/|\\|$))+/, "")
+		.replace(/^[/\\]+/, "");
+	const absolute = resolve(rootDir, relative);
+	if (absolute !== rootResolved && !absolute.startsWith(rootResolved + sep)) {
 		return null;
 	}
 	return absolute;

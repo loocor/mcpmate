@@ -5,7 +5,7 @@
 	"version": "0.3.3",
 	"description": "Discover curated MCP resources and send detected MCP snippets to MCPMate desktop.",
 	"homepage_url": "https://mcp.umate.ai",
-	"minimum_chrome_version": "114",
+	"minimum_chrome_version": "120",
 	"permissions": [
 		"storage"
 	],

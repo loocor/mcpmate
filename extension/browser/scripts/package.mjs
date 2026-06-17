@@ -56,8 +56,7 @@ async function copyToStage(files, stageDir) {
 }
 
 function makeZip(stageDir, outPath) {
-	// ditto --keepParent includes the stage dir itself; use cd + zip for flat layout
-	execFileSync("ditto", ["-c", "-k", "--sequesterRsrc", stageDir + "/", outPath], {
+	execFileSync("zip", ["-r", "-q", outPath, "."], {
 		stdio: "inherit",
 		cwd: stageDir,
 	});
@@ -80,11 +79,7 @@ async function main() {
 	await copyToStage(files, stageDir);
 
 	// 4. Read version from manifest
-	const manifest = JSON.parse(
-		await new Response(
-			(await import("node:fs")).createReadStream(join(rootDir, "manifest.json")),
-		).text(),
-	);
+	const manifest = JSON.parse(await Bun.file(join(rootDir, "manifest.json")).text());
 	const version = manifest.version || "0.0.0";
 
 	// 5. Create zip
