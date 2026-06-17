@@ -125,13 +125,18 @@ const COPY = {
 		pullRefresh: "Pull to refresh",
 		releaseRefresh: "Release to refresh",
 		refreshing: "Refreshing...",
+		filters: {
+			label: "Filter list",
+			all: "All",
+			empty: "No entries match the selected filters.",
+		},
 	},
 	"zh-cn": {
 		title: "MCPMate",
 		subtitle: "你的渐进式 MCP 管理伙伴",
 		tabs: {
 			portals: "入口",
-			servers: "服务",
+			servers: "服务器",
 			clients: "客户端",
 		},
 		footer: {
@@ -152,22 +157,22 @@ const COPY = {
 		},
 		loading: {
 			portals: "正在加载入口推荐...",
-			servers: "正在加载服务推荐...",
+			servers: "正在加载服务器推荐...",
 			clients: "正在加载客户端推荐...",
 		},
 		empty: {
 			portals: "暂未发布入口推荐。",
-			servers: "暂未发布服务推荐。",
+			servers: "暂未发布服务器推荐。",
 			clients: "暂未发布客户端推荐。",
 		},
 		unavailable: {
 			portals: "当前未提供入口目录。",
-			servers: "当前未提供服务目录。",
+			servers: "当前未提供服务器目录。",
 			clients: "当前未提供客户端目录。",
 		},
 		mockUnavailable: {
 			portals: "当前未提供模拟入口目录。",
-			servers: "当前未提供模拟服务目录。",
+			servers: "当前未提供模拟服务器目录。",
 			clients: "当前未提供模拟客户端目录。",
 		},
 		source: {
@@ -179,6 +184,11 @@ const COPY = {
 		pullRefresh: "下拉刷新",
 		releaseRefresh: "松开刷新",
 		refreshing: "正在刷新...",
+		filters: {
+			label: "筛选列表",
+			all: "全部",
+			empty: "没有符合当前筛选的条目。",
+		},
 	},
 	ja: {
 		title: "MCPMate",
@@ -233,12 +243,18 @@ const COPY = {
 		pullRefresh: "引いて更新",
 		releaseRefresh: "離して更新",
 		refreshing: "更新中...",
+		filters: {
+			label: "リストを絞り込み",
+			all: "すべて",
+			empty: "選択した条件に一致する項目がありません。",
+		},
 	},
 };
 
 let activeCopy = COPY.en;
 let activePanelName = "servers";
 const discoveryStates = new Map();
+const compactFilterSelection = new Map();
 let paginationObserver = null;
 
 function openExternalUrl(url) {
@@ -509,7 +525,7 @@ function createOpenButton(url) {
 	return openButton;
 }
 
-function card({ name, description, url, source, signal, meta, iconUrl }) {
+function card({ name, description, url, source, signal, meta, iconUrl, showMeta = true }) {
 	const el = document.createElement("article");
 	el.className = "card";
 	const title = document.createElement("div");
@@ -532,19 +548,20 @@ function card({ name, description, url, source, signal, meta, iconUrl }) {
 	const body = document.createElement("p");
 	body.textContent = description;
 
-	const metaEl = document.createElement("div");
-	metaEl.className = "card-meta";
-	for (const item of [signal, meta, source].filter(Boolean)) {
-		const pill = document.createElement("span");
-		pill.className = "pill";
-		pill.textContent = item;
-		metaEl.appendChild(pill);
-	}
-
 	el.appendChild(title);
 	el.appendChild(body);
-	if (metaEl.childElementCount > 0) {
-		el.appendChild(metaEl);
+	if (showMeta) {
+		const metaEl = document.createElement("div");
+		metaEl.className = "card-meta";
+		for (const item of [signal, meta, source].filter(Boolean)) {
+			const pill = document.createElement("span");
+			pill.className = "pill";
+			pill.textContent = item;
+			metaEl.appendChild(pill);
+		}
+		if (metaEl.childElementCount > 0) {
+			el.appendChild(metaEl);
+		}
 	}
 	return el;
 }
@@ -580,6 +597,337 @@ function compactCard({ name, description, url, iconUrl }) {
 	return el;
 }
 
+function getCompactFilterSelection(kind) {
+	if (!compactFilterSelection.has(kind)) {
+		compactFilterSelection.set(kind, new Set());
+	}
+	return compactFilterSelection.get(kind);
+}
+
+function clearCompactFilterSelection(kind) {
+	getCompactFilterSelection(kind).clear();
+}
+
+function compactRestEntries(kind) {
+	const entries = sectionState(kind).entries;
+	return entries.length > 3 ? entries.slice(3) : [];
+}
+
+function entryFilterTags(entry, kind) {
+	const server = entry?.server || entry;
+	const curated = entry?.curated || server?.curated || {};
+	const meta = discoveryMeta(entry);
+	const tags = new Set();
+
+	const addTag = (value) => {
+		if (typeof value !== "string") return;
+		const trimmed = value.trim();
+		if (trimmed) tags.add(trimmed);
+	};
+
+	const addTags = (values) => {
+		if (!Array.isArray(values)) return;
+		for (const value of values) addTag(value);
+	};
+
+	if (kind === "servers") {
+		addTags(curated.categories);
+		addTags(meta.categories);
+		addTag(curated.recommendationTier);
+		addTag(meta.quality?.status);
+		addTag(firstTransport(entry?.official || server));
+		addTag(firstTransport(server));
+	} else if (kind === "clients") {
+		addTags(entry?.tags);
+		addTags(entry?.categories);
+		addTags(meta.categories);
+		addTag(entry?.category);
+		addTag(entry?.type);
+		addTag(meta.category);
+	} else {
+		addTag(entry?.signal);
+		addTag(meta.quality?.status);
+		addTag(entry?.meta);
+		addTag(meta.category);
+		addTag(meta.platform);
+		addTags(meta.categories);
+	}
+
+	return [...tags];
+}
+
+function collectCompactFilterTags(kind, entries) {
+	const tags = new Set();
+	for (const entry of entries) {
+		for (const tag of entryFilterTags(entry, kind)) {
+			tags.add(tag);
+		}
+	}
+	return [...tags].sort((left, right) =>
+		left.localeCompare(right, undefined, { sensitivity: "base" }),
+	);
+}
+
+function formatFilterTagLabel(tag) {
+	if (!tag) return "";
+	return tag
+		.split(/[\s_-]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
+function filterCompactEntries(kind, entries) {
+	const selected = getCompactFilterSelection(kind);
+	if (selected.size === 0) return entries;
+	return entries.filter((entry) => {
+		const tags = entryFilterTags(entry, kind);
+		return [...selected].some((tag) => tags.includes(tag));
+	});
+}
+
+function getPanelScrollRoot(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	const compactItems = list?.querySelector(".compact-list-items");
+	return compactItems || list?.querySelector(".compact-list") || document.getElementById("content-area");
+}
+
+function getActivePanelScrollRoot() {
+	if (activePanelName === "settings") {
+		return document.getElementById("content-area");
+	}
+	return getPanelScrollRoot(activePanelName);
+}
+
+function wireCompactListScroll(kind, compactList) {
+	if (compactList.dataset.scrollWired === "true") return;
+	compactList.dataset.scrollWired = "true";
+	compactList.addEventListener(
+		"scroll",
+		() => {
+			if (activePanelName !== kind) return;
+			maybeLoadMoreFromCompactList(kind, compactList);
+		},
+		{ passive: true },
+	);
+}
+
+function maybeLoadMoreFromCompactList(kind, compactList) {
+	const state = sectionState(kind);
+	if (!state.hasMore || state.loading) return;
+	const distance =
+		compactList.scrollHeight - compactList.scrollTop - compactList.clientHeight;
+	if (distance > 120) return;
+	loadDiscoveryPage(kind).catch(() => { });
+}
+
+function ensureCompactListStructure(compactList) {
+	let items = compactList.querySelector(".compact-list-items");
+	let footer = compactList.querySelector(".compact-list-footer");
+	if (!items) {
+		items = document.createElement("div");
+		items.className = "compact-list-items";
+		compactList.prepend(items);
+	}
+	if (!footer) {
+		footer = document.createElement("div");
+		footer.className = "compact-list-footer";
+		footer.setAttribute("aria-live", "polite");
+		compactList.appendChild(footer);
+	}
+	return { items, footer };
+}
+
+const compactBodyLayoutObservers = new WeakMap();
+
+function measureCompactListBudget(compactList) {
+	const body = compactList.closest(".compact-body");
+	if (!body) return null;
+	const filters = body.querySelector(".compact-filters");
+	const filterHeight = filters?.getBoundingClientRect().height ?? 0;
+	const bodyGap = filters ? 8 : 0;
+	return Math.max(0, body.clientHeight - filterHeight - bodyGap);
+}
+
+function measureCompactListContentHeight(compactList) {
+	const { items, footer } = ensureCompactListStructure(compactList);
+	return items.scrollHeight + footer.getBoundingClientRect().height;
+}
+
+function syncCompactListLayout(compactList) {
+	const { items } = ensureCompactListStructure(compactList);
+	const cardCount = items.querySelectorAll(".card--compact").length;
+
+	const applyLayout = () => {
+		if (!compactList.isConnected) return;
+
+		const budget = measureCompactListBudget(compactList);
+		if (budget === 0) {
+			requestAnimationFrame(applyLayout);
+			return;
+		}
+
+		compactList.classList.add("compact-list--sparse");
+		const contentHeight = measureCompactListContentHeight(compactList);
+		const fitsWithoutFill = budget === null || contentHeight <= budget + 0.5;
+
+		compactList.classList.toggle("compact-list--sparse", fitsWithoutFill);
+		compactList.classList.toggle("compact-list--single", cardCount === 1);
+	};
+
+	applyLayout();
+}
+
+function wireCompactBodyLayout(compactList) {
+	const body = compactList.closest(".compact-body");
+	if (!body || compactBodyLayoutObservers.has(body)) return;
+	const observer = new ResizeObserver(() => {
+		const list = body.querySelector(".compact-list");
+		if (list) syncCompactListLayout(list);
+	});
+	observer.observe(body);
+	compactBodyLayoutObservers.set(body, observer);
+}
+
+function renderCompactListItems(compactList, kind, entries) {
+	const { items } = ensureCompactListStructure(compactList);
+	items.replaceChildren();
+	if (entries.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "compact-list-empty";
+		empty.textContent = activeCopy.filters.empty;
+		items.appendChild(empty);
+		syncCompactListLayout(compactList);
+		return;
+	}
+	for (const entry of entries) {
+		items.appendChild(entryCompactCard(kind, entry));
+	}
+	syncCompactListLayout(compactList);
+}
+
+function syncCompactFilterBar(filterBar, kind, tags) {
+	const selected = getCompactFilterSelection(kind);
+	for (const tag of [...selected]) {
+		if (!tags.includes(tag)) selected.delete(tag);
+	}
+
+	filterBar.replaceChildren();
+
+	const allWrap = document.createElement("div");
+	allWrap.className = "compact-filters-all";
+	const allButton = document.createElement("button");
+	allButton.type = "button";
+	allButton.className = "filter-badge filter-badge--all";
+	allButton.textContent = activeCopy.filters.all;
+	allButton.dataset.filterTag = "";
+	allButton.addEventListener("click", () => {
+		selected.clear();
+		applyCompactFilters(kind);
+	});
+	allWrap.appendChild(allButton);
+	filterBar.appendChild(allWrap);
+
+	const scroll = document.createElement("div");
+	scroll.className = "compact-filters-scroll";
+	for (const tag of tags) {
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "filter-badge";
+		button.textContent = formatFilterTagLabel(tag);
+		button.dataset.filterTag = tag;
+		button.addEventListener("click", () => {
+			if (selected.has(tag)) selected.delete(tag);
+			else selected.add(tag);
+			applyCompactFilters(kind);
+		});
+		scroll.appendChild(button);
+	}
+	filterBar.appendChild(scroll);
+
+	updateFilterBarActiveStates(filterBar, kind);
+}
+
+function createCompactFilterBar(kind, tags) {
+	const bar = document.createElement("div");
+	bar.className = "compact-filters";
+	bar.setAttribute("role", "toolbar");
+	bar.setAttribute("aria-label", activeCopy.filters.label);
+	syncCompactFilterBar(bar, kind, tags);
+	return bar;
+}
+
+function updateFilterBarActiveStates(filterBar, kind) {
+	const selected = getCompactFilterSelection(kind);
+	const allButton = filterBar.querySelector(".filter-badge--all");
+	if (allButton) {
+		allButton.classList.remove("is-active");
+	}
+	for (const button of filterBar.querySelectorAll(".compact-filters-scroll .filter-badge")) {
+		button.classList.toggle("is-active", selected.has(button.dataset.filterTag));
+	}
+}
+
+function applyCompactFilters(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	const body = list?.querySelector(".compact-body");
+	if (!body) return;
+	const filterBar = body.querySelector(".compact-filters");
+	if (filterBar) updateFilterBarActiveStates(filterBar, kind);
+	const compactList = body.querySelector(".compact-list");
+	if (!compactList) return;
+	const rest = compactRestEntries(kind);
+	renderCompactListItems(compactList, kind, filterCompactEntries(kind, rest));
+}
+
+function refreshCompactSection(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	const body = list?.querySelector(".compact-body");
+	if (!body) return;
+
+	const rest = compactRestEntries(kind);
+	const tags = collectCompactFilterTags(kind, rest);
+	let filterBar = body.querySelector(".compact-filters");
+	if (tags.length === 0) {
+		filterBar?.remove();
+	} else if (!filterBar) {
+		filterBar = createCompactFilterBar(kind, tags);
+		body.insertBefore(filterBar, body.querySelector(".compact-list"));
+	} else {
+		syncCompactFilterBar(filterBar, kind, tags);
+	}
+
+	const compactList = body.querySelector(".compact-list");
+	if (!compactList) return;
+	renderCompactListItems(compactList, kind, filterCompactEntries(kind, rest));
+}
+
+function createCompactBody(kind, rest) {
+	const body = document.createElement("div");
+	body.className = "compact-body";
+	body.dataset.discoveryKind = kind;
+
+	const tags = collectCompactFilterTags(kind, rest);
+	if (tags.length > 0) {
+		body.appendChild(createCompactFilterBar(kind, tags));
+	}
+
+	const compactList = document.createElement("div");
+	compactList.className = "compact-list";
+	const items = document.createElement("div");
+	items.className = "compact-list-items";
+	const footer = document.createElement("div");
+	footer.className = "compact-list-footer";
+	footer.setAttribute("aria-live", "polite");
+	compactList.appendChild(items);
+	compactList.appendChild(footer);
+	renderCompactListItems(compactList, kind, filterCompactEntries(kind, rest));
+	wireCompactListScroll(kind, items);
+	wireCompactBodyLayout(compactList);
+	body.appendChild(compactList);
+	return body;
+}
+
 function createFeaturedCarousel(kind, entries) {
 	const carousel = document.createElement("div");
 	carousel.className = "featured-carousel";
@@ -587,7 +935,7 @@ function createFeaturedCarousel(kind, entries) {
 	track.className = "featured-carousel-track";
 
 	const buildSlide = (entry) => {
-		const cardEl = entryCard(kind, entry);
+		const cardEl = entryCard(kind, entry, { showMeta: false });
 		cardEl.classList.add("card--featured");
 		return cardEl;
 	};
@@ -758,12 +1106,7 @@ function createEntryListContent(kind, entries) {
 			fragment.appendChild(createFeaturedCarousel(kind, featured));
 		}
 		if (rest.length > 0) {
-			const compactList = document.createElement("div");
-			compactList.className = "compact-list";
-			for (const entry of rest) {
-				compactList.appendChild(entryCompactCard(kind, entry));
-			}
-			fragment.appendChild(compactList);
+			fragment.appendChild(createCompactBody(kind, rest));
 		}
 		return fragment;
 	}
@@ -818,16 +1161,11 @@ function appendCompactEntries(kind, entries, list = document.getElementById(endp
 		setSectionEntries(kind, entriesForPageRender(sectionState(kind)));
 		return;
 	}
-	let compactList = list.querySelector(".compact-list");
-	if (!compactList) {
+	if (!list.querySelector(".compact-body")) {
 		setSectionEntries(kind, entriesForPageRender(sectionState(kind)));
 		return;
 	}
-	const fragment = document.createDocumentFragment();
-	for (const entry of entries) {
-		fragment.appendChild(entryCompactCard(kind, entry));
-	}
-	compactList.appendChild(fragment);
+	refreshCompactSection(kind);
 }
 
 function discoveryEntriesSignature(kind, entries) {
@@ -839,18 +1177,18 @@ function discoveryEntriesSignature(kind, entries) {
 function restorePanelScroll(scrollTop) {
 	if (!Number.isFinite(scrollTop) || scrollTop <= 0) return;
 	requestAnimationFrame(() => {
-		const content = document.getElementById("content-area");
-		if (content) content.scrollTop = scrollTop;
+		const scrollRoot = getActivePanelScrollRoot();
+		if (scrollRoot) scrollRoot.scrollTop = scrollTop;
 	});
 }
 
 async function persistSessionSnapshot(kind) {
 	const state = sectionState(kind);
 	if (!state.loaded || state.entries.length === 0) return;
-	const content = document.getElementById("content-area");
+	const scrollRoot = getActivePanelScrollRoot();
 	await writeSessionSnapshot(discoveryContext(), kind, activeDiscoveryLocale(), {
 		state,
-		scrollTop: content?.scrollTop ?? 0,
+		scrollTop: scrollRoot?.scrollTop ?? 0,
 	});
 }
 
@@ -975,9 +1313,23 @@ function sectionLoaded(kind) {
 	return sectionState(kind).loaded;
 }
 
+function sectionFooterElement(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	return (
+		list?.querySelector(".compact-list-footer") ||
+		document.getElementById(endpointFooterId(kind))
+	);
+}
+
 function setSectionFooter(kind, text) {
-	const footer = document.getElementById(endpointFooterId(kind));
+	const footer = sectionFooterElement(kind);
 	if (footer) footer.textContent = text;
+	const compactList = document
+		.getElementById(endpointListId(kind))
+		?.querySelector(".compact-list");
+	if (compactList && footer?.classList.contains("compact-list-footer")) {
+		syncCompactListLayout(compactList);
+	}
 }
 
 function discoveryMeta(entry) {
@@ -1082,8 +1434,8 @@ function entrySource(entry) {
 	);
 }
 
-function entryCard(kind, entry) {
-	return card(entryCardProps(kind, entry));
+function entryCard(kind, entry, { showMeta = true } = {}) {
+	return card({ ...entryCardProps(kind, entry), showMeta });
 }
 
 function entryCompactCard(kind, entry) {
@@ -1161,6 +1513,7 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 
 	discoveryStates.set(kind, { ...sectionState(kind), loading: true });
 	if (reset) {
+		clearCompactFilterSelection(kind);
 		if (!renderedFromFastPath) {
 			setSectionStatus(kind, activeCopy.loading[kind]);
 			if (shouldClearEntries) {
@@ -1285,11 +1638,19 @@ function sentinelIsNearScrollEnd(sentinel, content) {
 }
 
 function loadMoreIfActiveSentinelVisible() {
-	const sentinel = activePaginationSentinel();
-	const content = document.getElementById("content-area");
-	if (!sentinel || !content) return;
-	if (!sentinelIsNearScrollEnd(sentinel, content)) return;
-	loadDiscoveryPage(activePanelName).catch(() => { });
+	const kind = activePanelName;
+	const scrollRoot = getPanelScrollRoot(kind);
+	const sentinel = document.getElementById(endpointSentinelId(kind));
+	if (!scrollRoot || !sentinel) return;
+	if (scrollRoot.classList.contains("compact-list-items")) {
+		maybeLoadMoreFromCompactList(kind, scrollRoot);
+		return;
+	}
+	const sentinelRect = sentinel.getBoundingClientRect();
+	const contentRect = scrollRoot.getBoundingClientRect();
+	if (sentinelRect.top <= contentRect.bottom + 120) {
+		loadDiscoveryPage(kind).catch(() => { });
+	}
 }
 
 function setupPaginationObserver(content) {
@@ -1338,11 +1699,12 @@ function setupPullToRefresh(content) {
 	}
 
 	content.addEventListener("pointerdown", (event) => {
+		const scrollRoot = getActivePanelScrollRoot();
 		if (
 			!shouldStartPullRefresh({
 				button: event.button,
 				pointerType: event.pointerType,
-				scrollTop: content.scrollTop,
+				scrollTop: scrollRoot?.scrollTop ?? 0,
 				panelName: activePanelName,
 				selectionType: window.getSelection()?.type,
 			})
@@ -1355,7 +1717,7 @@ function setupPullToRefresh(content) {
 	content.addEventListener(
 		"pointermove",
 		(event) => {
-			if (pointerStartY === null || content.scrollTop > 0) return;
+			if (pointerStartY === null || (getActivePanelScrollRoot()?.scrollTop ?? 0) > 0) return;
 			pullDistance = Math.max(0, event.clientY - pointerStartY);
 			if (pullDistance <= 0) return;
 			pulling = true;
@@ -1418,8 +1780,8 @@ function activatePanel(panelName) {
 	document
 		.getElementById("settings-button")
 		.classList.toggle("is-active", panelName === "settings");
-	const content = document.getElementById("content-area");
-	if (content) content.scrollTop = 0;
+	const scrollRoot = getPanelScrollRoot(panelName);
+	if (scrollRoot) scrollRoot.scrollTop = 0;
 	ensureSectionRendered(panelName).catch(() => {
 		if (panelName !== "settings") {
 			setSectionStatus(panelName, unavailableMessage(panelName));
@@ -1457,6 +1819,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	function resetDiscoveryPanelsForLocaleChange(previousLocale) {
 		for (const kind of ["portals", "servers", "clients"]) {
 			discoveryStates.delete(kind);
+			compactFilterSelection.delete(kind);
 		}
 		void clearSessionSnapshots(discoveryContext(), previousLocale);
 	}
