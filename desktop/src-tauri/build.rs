@@ -14,7 +14,6 @@ struct BackendBuildContext {
 }
 
 const SKIP_SIDECAR_BUILD_ENV: &str = "MCPMATE_SKIP_SIDECAR_BUILD";
-const TAURI_MARKET_DIAG_DEFAULT_ENV: &str = "MCPMATE_TAURI_MARKET_DIAG_DEFAULT";
 const TAURI_PREVIEW_EXPIRY_DATE_ENV: &str = "MCPMATE_TAURI_PREVIEW_EXPIRY_DATE";
 const TAURI_ENABLE_INSPECTOR_ENV: &str = "MCPMATE_TAURI_ENABLE_INSPECTOR";
 const AUTH_WORKER_BASE_ENV: &str = "MCPMATE_AUTH_WORKER_BASE";
@@ -110,17 +109,6 @@ fn main() {
     ensure_local_core_sidecar();
     ensure_bridge_sidecar();
 
-    // Allow cfg gate in sources and enable a compile-time cfg for a special diagnostic build of the market proxy.
-    println!("cargo:rustc-check-cfg=cfg(market_diag_default)");
-    // Set MCPMATE_TAURI_MARKET_DIAG_DEFAULT=1 in the environment to turn this on.
-    match env::var(TAURI_MARKET_DIAG_DEFAULT_ENV) {
-        Ok(v) if matches!(v.as_str(), "1" | "true" | "TRUE" | "True") => {
-            println!("cargo:rustc-cfg=market_diag_default");
-            println!("cargo:warning=Building with market diagnostic logging enabled by default");
-        }
-        _ => {}
-    }
-
     // Pass through select environment variables as compile-time env for runtime access.
     if let Ok(v) = env::var(TAURI_PREVIEW_EXPIRY_DATE_ENV) {
         println!("cargo:rustc-env=MCPMATE_TAURI_PREVIEW_EXPIRY_DATE={}", v);
@@ -135,7 +123,6 @@ fn main() {
 fn emit_env_rerun_hints() {
     for name in [
         SKIP_SIDECAR_BUILD_ENV,
-        TAURI_MARKET_DIAG_DEFAULT_ENV,
         TAURI_PREVIEW_EXPIRY_DATE_ENV,
         TAURI_ENABLE_INSPECTOR_ENV,
         AUTH_WORKER_BASE_ENV,
