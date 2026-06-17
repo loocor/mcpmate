@@ -475,6 +475,7 @@
 				width: 22px;
 				height: 22px;
 				display: block;
+				fill: #fff;
 			}
 			[${HOST_ATTR}="1"] .mcpmate-import-actions {
 				display: flex;

@@ -1,0 +1,9 @@
+{
+	"private": true,
+	"scripts": {
+		"build-info": "bun run scripts/write-build-info.mjs",
+		"package": "bun run scripts/package.mjs",
+		"publish": "bun run package",
+		"test": "bun test *.test.mjs scripts/*.test.mjs"
+	}
+}
