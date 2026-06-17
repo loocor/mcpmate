@@ -685,11 +685,12 @@
 		btn.className = link.className;
 		btn.textContent = "Add to MCPMate";
 		btn.style.marginLeft = "4px";
-		btn.addEventListener("click", async (event) => {
+		btn.addEventListener("click", (event) => {
 			event.preventDefault();
 			event.stopPropagation();
-			const { parseCursorMcpInstallLink } = await import("./cursor-deeplink.mjs");
-			const config = parseCursorMcpInstallLink(link.href);
+			const parseCursorMcpInstallLink =
+				globalThis.__MCPMATE_CURSOR_DEEPLINK__?.parseCursorMcpInstallLink;
+			const config = parseCursorMcpInstallLink?.(link.href) ?? null;
 			if (config) openMcpMate(config);
 		});
 
