@@ -20,7 +20,6 @@ export function MarketSearch({
 	sort,
 	onSortChange,
 	isLoading,
-	lastSyncedAt,
 	onSync,
 	isSyncing,
 }: MarketSearchProps) {
@@ -28,14 +27,6 @@ export function MarketSearch({
 	usePageTranslations("market");
 	return (
 		<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-			{lastSyncedAt ? (
-				<div className="text-xs text-slate-500 mr-2">
-					{t("market:search.lastSyncedAt", {
-						defaultValue: "Last synced: {{time}}",
-						time: new Date(lastSyncedAt).toLocaleString(),
-					})}
-				</div>
-			) : null}
 			<div className="relative flex-1 overflow-visible sm:flex-none">
 				<Input
 					value={search}

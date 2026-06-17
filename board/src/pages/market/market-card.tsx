@@ -23,6 +23,49 @@ import {
 	hasPreviewableOption,
 } from "./utils";
 
+export const MARKET_CARD_GRID_CLASS = "grid gap-4 md:grid-cols-2 xl:grid-cols-3";
+
+const MARKET_CARD_SHELL_CLASS =
+	"group flex h-full flex-col overflow-hidden border border-slate-200 dark:border-slate-700";
+
+const MARKET_CARD_SHELL_INTERACTIVE_CLASS =
+	"cursor-pointer transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5";
+
+const MARKET_CARD_DESCRIPTION_MIN_HEIGHT_CLASS = "min-h-[3.75rem]";
+
+const SKELETON_BLOCK_CLASS = "rounded bg-secondary animate-pulse dark:bg-muted";
+
+export { SKELETON_BLOCK_CLASS };
+
+export function MarketCardSkeleton({ enableBlacklist = false }: { enableBlacklist?: boolean }) {
+	return (
+		<Card className={MARKET_CARD_SHELL_CLASS} aria-hidden="true">
+			<CardHeader className="p-4">
+				<div className="flex items-start gap-3">
+					<div className={cn("h-12 w-12 shrink-0 rounded-[10px]", SKELETON_BLOCK_CLASS)} />
+					<div className="min-w-0 flex-1 space-y-1">
+						<div className={cn("h-12 w-full rounded-lg", SKELETON_BLOCK_CLASS)} />
+						<div
+							className={cn(
+								MARKET_CARD_DESCRIPTION_MIN_HEIGHT_CLASS,
+								"w-full rounded-lg",
+								SKELETON_BLOCK_CLASS,
+							)}
+						/>
+					</div>
+				</div>
+			</CardHeader>
+			<CardFooter className="mt-auto flex items-center justify-between gap-2 px-4 pb-4 pt-0">
+				<div className="flex items-center gap-3">
+					<div className="w-12" />
+					{enableBlacklist ? <div className="h-5 w-5 shrink-0" aria-hidden="true" /> : null}
+				</div>
+				<div className={cn("h-7 w-28 rounded-md", SKELETON_BLOCK_CLASS)} />
+			</CardFooter>
+		</Card>
+	);
+}
+
 export function MarketCard({
 	server,
 	isInstalled,
@@ -92,7 +135,8 @@ export function MarketCard({
 				}
 			}}
 			className={cn(
-				"group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700",
+				MARKET_CARD_SHELL_CLASS,
+				MARKET_CARD_SHELL_INTERACTIVE_CLASS,
 				supportsPreview ? "cursor-pointer" : "cursor-not-allowed opacity-95",
 			)}
 		>
@@ -138,17 +182,17 @@ export function MarketCard({
 							<span className="break-words">
 								{t("server.version", { defaultValue: "Version {{version}}", version: server.version })}
 							</span>
-						{absoluteTimestamp && (
-							<>
-								<span>•</span>
-								<span>{t("server.updated", { defaultValue: "Updated {{time}}", time: absoluteTimestamp })}</span>
-							</>
-						)}
+							{absoluteTimestamp && (
+								<>
+									<span>•</span>
+									<span>{t("server.updated", { defaultValue: "Updated {{time}}", time: absoluteTimestamp })}</span>
+								</>
+							)}
 						</div>
 
 						{/* 描述 - 与标题左对齐 */}
-						<div className="h-15 flex items-start">
-							<CardDescription className="text-sm text-slate-500 line-clamp-3 leading-5">
+						<div className={cn(MARKET_CARD_DESCRIPTION_MIN_HEIGHT_CLASS, "flex items-start")}>
+							<CardDescription className="line-clamp-3 text-sm leading-5 text-slate-500">
 								{truncate(server.description, 320) || t("server.na", { defaultValue: "N/A" })}
 							</CardDescription>
 						</div>
@@ -199,7 +243,7 @@ export function MarketCard({
 						) : (
 							<Download className="h-3 w-3 mr-1" />
 						)}
-						{isInstalled 
+						{isInstalled
 							? t("buttons.installed", { defaultValue: "Installed" })
 							: !supportsPreview && hasUnsupportedPackageOption
 								? t("buttons.unsupported", { defaultValue: "Unsupported" })

@@ -3,6 +3,10 @@ import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import { openMcpmateGithubDiscussions } from "../../lib/github-discussions";
+import {
+  isMarketDetailPath,
+  resolveMarketListReturnPath,
+} from "../../pages/market/market-list-pagination-storage";
 import { useAppStore } from "../../lib/store";
 import { websiteDocsLocale } from "../../lib/website-lang";
 import { NotificationCenter } from "../notification-center";
@@ -156,6 +160,10 @@ export function Header() {
     : location.pathname;
 
   const handleBack = () => {
+    if (isMarketDetailPath(location.pathname)) {
+      navigate(resolveMarketListReturnPath(location.pathname, location.state));
+      return;
+    }
     navigate(-1);
   };
 

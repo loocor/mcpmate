@@ -12,8 +12,10 @@ import {
   Store,
 } from "lucide-react";
 import type React from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
+import { resolveMarketListHref } from "../../pages/market/market-list-pagination-storage";
 import { useAppStore } from "../../lib/store";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -48,6 +50,11 @@ function SidebarLink({ to, icon, children }: SidebarLinkProps) {
 export function Sidebar() {
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
+  const location = useLocation();
+  const marketHref = useMemo(
+    () => resolveMarketListHref(location.pathname, location.search, location.state),
+    [location.pathname, location.search, location.state],
+  );
   const showApiDocsMenu = useAppStore(
     (state) => state.dashboardSettings.showApiDocsMenu,
   );
@@ -141,7 +148,7 @@ export function Sidebar() {
           {sidebarOpen && t("nav.servers", { defaultValue: "Servers" })}
         </SidebarLink>
 
-        <SidebarLink to="/market" icon={<Store size={20} />}>
+        <SidebarLink to={marketHref} icon={<Store size={20} />}>
           {sidebarOpen && t("nav.market", { defaultValue: "Market" })}
         </SidebarLink>
 
