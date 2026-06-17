@@ -32,7 +32,7 @@ export class McpRegistryProvider implements MarketCatalogProvider {
     // Batch-prefetch: request 2× the needed limit upfront to compensate for
     // upstream duplicates, dedup in a single pass, then top up only if needed.
     const BATCH_MULTIPLIER = 2;
-    const batchLimit = cappedLimit * BATCH_MULTIPLIER;
+    const batchLimit = Math.min(cappedLimit * BATCH_MULTIPLIER, 100);
 
     const dedup = new Map<string, CatalogEntry>();
     let nextCursor: string | undefined = cursor;
@@ -106,9 +106,17 @@ export class McpRegistryProvider implements MarketCatalogProvider {
 
     const entries = Array.from(dedup.values()).slice(0, cappedLimit);
 
+    // Suppress nextCursor when we clearly have no more data:
+    // - 0 entries means the page is empty
+    // - fewer entries than requested means upstream is exhausted
+    const effectiveCursor =
+      entries.length > 0 && entries.length >= cappedLimit
+        ? nextCursor
+        : undefined;
+
     return {
       entries,
-      nextCursor,
+      nextCursor: effectiveCursor,
       totalCount: upstreamTotalCount,
     };
   }
