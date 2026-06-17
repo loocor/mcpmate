@@ -334,7 +334,7 @@ export function ServerEditDrawer({
 	);
 
 	const handleRefreshFromRegistry = useCallback(async () => {
-		if (!server?.source_ref || !server.id) return;
+		if (!server?.source_ref?.startsWith("registry:") || !server.id) return;
 		try {
 			setIsRefreshing(true);
 			const currentDraft = formRef.current?.getCurrentDraft();
@@ -444,7 +444,7 @@ export function ServerEditDrawer({
 			onInitiateOAuth={handleInitiateOAuth}
 			allowJsonEditing={false}
 			initialDraft={initialDraft ?? undefined}
-			onRefreshFromRegistry={server?.source_ref ? handleRefreshFromRegistry : undefined}
+			onRefreshFromRegistry={server?.source_ref?.startsWith("registry:") ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}
 			extraTab={{
 				value: "unify",

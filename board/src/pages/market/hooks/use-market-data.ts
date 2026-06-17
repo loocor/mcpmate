@@ -225,13 +225,19 @@ export function useMarketData(
 				// Use stored cursor history to skip pages we already know about.
 				// Walk only from the stored page forward, not from page 1.
 				const storedHistory = restored?.history ?? [undefined];
-				const storedPage = restored?.page ?? 1;
-				const startCursor = storedHistory[storedPage - 1];
-				const startPage = storedPage;
+				let storedPage = restored?.page ?? 1;
+				let startCursor = storedHistory[storedPage - 1];
+
+				// If stored history doesn't have a valid cursor for the stored page
+				// (e.g. direct URL with no sessionStorage), fall back to page 1.
+				if (!startCursor && storedPage > 1) {
+					storedPage = 1;
+					startCursor = undefined;
+				}
 
 				const result = await walkCursorsToPage(
 					startCursor,
-					startPage,
+					storedPage,
 					targetPage,
 					(cursor) => provider.fetchPage({
 						cursor,
@@ -247,7 +253,7 @@ export function useMarketData(
 				// Merge stored history with newly walked cursors.
 				const fullHistory = [...storedHistory];
 				for (let i = 0; i < result.history.length; i++) {
-					const pageIdx = startPage + i;
+					const pageIdx = storedPage + i;
 					if (fullHistory.length < pageIdx + 1) {
 						fullHistory.push(result.history[i]);
 					} else {

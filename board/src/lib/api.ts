@@ -1183,11 +1183,12 @@ export const serversApi = {
 	refreshRegistryMetadata: async (id: string): Promise<ServerDetail> => {
 		const current = await serversApi.getServer(id);
 		const sourceRef = current.source_ref;
-		if (!sourceRef) throw new Error("Server has no source_ref");
+		if (!sourceRef?.startsWith("registry:")) {
+			throw new Error("Server has no registry: source_ref — cannot refresh from MCP Registry");
+		}
 
-		const serverName = sourceRef.includes(":")
-			? sourceRef.slice(sourceRef.indexOf(":") + 1)
-			: sourceRef;
+		const serverName = sourceRef.slice("registry:".length);
+		if (!serverName) throw new Error("source_ref has empty server name after 'registry:' prefix");
 
 		const provider = new McpRegistryProvider();
 		const entry = await provider.fetchByKey(serverName);

@@ -359,10 +359,12 @@ async fn migrate_registry_server_id_to_source_ref(pool: &Pool<Sqlite>) -> Result
 
     if has_new_column {
         // Column already renamed — ensure any bare values from an interrupted
-        // migration are namespaced (crash-safety).
+        // migration are namespaced (crash-safety). Only prefix legacy bare IDs
+        // that have no namespace delimiter ':' to avoid corrupting future
+        // non-registry providers (e.g. admin:foo, github:bar).
         sqlx::query(
             "UPDATE server_config SET source_ref = 'registry:' || source_ref \
-             WHERE source_ref IS NOT NULL AND source_ref NOT LIKE 'registry:%'",
+             WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'",
         )
         .execute(pool)
         .await?;
@@ -385,9 +387,11 @@ async fn migrate_registry_server_id_to_source_ref(pool: &Pool<Sqlite>) -> Result
             anyhow::anyhow!("Failed to rename registry_server_id column: {}", e)
         })?;
 
-    // Prefix existing bare values with "registry:" namespace
+    // Prefix existing bare values with "registry:" namespace.
+    // Only touch legacy bare IDs (no ':') — already-namespaced values
+    // (e.g. admin:foo) are left untouched.
     sqlx::query(
-        "UPDATE server_config SET source_ref = 'registry:' || source_ref WHERE source_ref IS NOT NULL AND source_ref NOT LIKE 'registry:%'"
+        "UPDATE server_config SET source_ref = 'registry:' || source_ref WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'"
     )
     .execute(pool)
     .await
