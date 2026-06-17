@@ -17,11 +17,12 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 
 - Popup discovery tabs for **Portals**, **Servers**, and **Clients**.
 - Discovery data comes from the published Public Worker discovery APIs backed by MCPMate Admin catalog data.
-- Servers and clients request the `extension` surface with paginated discovery
+- Portals, servers, and clients request the `extension` surface with paginated discovery
   queries and load more entries as the popup list is scrolled.
 - Use the popup refresh button to reload the active discovery panel; touch
   devices can also pull down from the top of the panel.
 - Discovery responses are cached locally for one hour to avoid repeated popup fetches.
+- Popup reopen uses session snapshots (scroll position and loaded pages) plus stale-while-revalidate rendering for faster first paint.
 - Language defaults to the browser language on first open (`zh` → 中文, `ja` → 日本語, otherwise English). Theme and language preferences live inside the toolbar popup settings panel.
 - The footer community button shows Feishu for Chinese and Discord for other languages.
 - Popup styling mirrors the shadcn Dashboard visual language with lightweight static HTML/CSS/JS, avoiding a React bundle inside the extension.
@@ -31,6 +32,7 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 - The snippet-to-desktop import path remains enabled through `content.js` and `mcpmate://import/server`.
 - What remains disabled is telemetry-style import submission to Admin APIs. The extension does not upload import events or usage analytics to Admin in the current phase.
 - `manifest.json` icons use PNGs (`icons/icon-{16,32,48,128}.png`) because Chromium extension UIs do not reliably show SVG there. The popup also switches to `icons/icon-dark-{16,32,48,128}.png` for dark mode so the toolbar mark remains legible.
+- **GitHub MCP page integration**: On `github.com/mcp` pages, the extension automatically injects an "Install in MCPMate" option into the Install dropdown menus for each MCP server. This provides a seamless way to import servers directly from GitHub's MCP catalog into MCPMate desktop.
 
 ## Install (store)
 
@@ -48,6 +50,26 @@ Status: Available on Chromium-based browser extension stores, including Chrome W
 5. Use the popup settings panel to choose the extension language and theme.
 6. Browse discovery sections backed by the configured discovery source.
 7. Visit any page with an MCP server snippet to use the in-page **Add to MCPMate** handoff.
+
+## Popup dev preview (Cursor / local browser)
+
+Run the popup UI in a normal browser tab (including Cursor's built-in Simple Browser) without loading the unpacked extension:
+
+```bash
+cd extension/browser
+bun run dev
+```
+
+Then open:
+
+- Mock catalog (offline, default): [http://127.0.0.1:5179/dev/popup.html?mode=mock](http://127.0.0.1:5179/dev/popup.html?mode=mock)
+- Live discovery API: [http://127.0.0.1:5179/dev/popup.html?mode=account](http://127.0.0.1:5179/dev/popup.html?mode=account)
+
+The dev page loads `dev/chrome-shim.js` to stub `chrome.runtime`, `chrome.storage`, and `chrome.tabs`, then reuses the production `popup.js` and `popup.css`. Edit those files and refresh the tab to iterate on popup layout and discovery UI.
+
+In Cursor, use **Simple Browser: Show** (`Simple Browser: Show` command) and paste the URL above.
+
+Limits: toolbar icon theming and true extension-popup sizing are approximated in a framed preview. Content-script features (`content.js`, page import buttons) still require an unpacked extension in Chrome/Edge.
 
 ## Product links
 

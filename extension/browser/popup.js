@@ -5,6 +5,17 @@ import {
 } from "./catalog-entry.mjs";
 import { communityFooterForLanguage } from "./community-links.mjs";
 import {
+	clearDiscoveryCacheForKind,
+	clearSessionSnapshots,
+	isCacheEntryFresh,
+	pruneExpiredDiscoveryCaches,
+	readDiscoveryCacheData,
+	readDiscoveryCacheEntry,
+	readSessionSnapshot,
+	writeDiscoveryCache,
+	writeSessionSnapshot,
+} from "./discovery-cache.mjs";
+import {
 	discoveryAcceptLanguage,
 	discoveryLocaleFromLanguage,
 	extensionLanguageFromBrowser,
@@ -31,14 +42,25 @@ const DISCOVERY_ENDPOINTS = {
 	servers: `${ADMIN_ORIGIN}/discovery/servers`,
 	clients: `${ADMIN_ORIGIN}/discovery/clients`,
 };
-const MOCK_DISCOVERY_ENDPOINTS = {
-	portals: chrome.runtime.getURL("mock/portals.json"),
-	servers: chrome.runtime.getURL("mock/servers.json"),
-	clients: chrome.runtime.getURL("mock/clients.json"),
-};
+
+function extensionResourceUrl(relativePath) {
+	if (typeof chrome?.runtime?.getURL === "function") {
+		return chrome.runtime.getURL(relativePath);
+	}
+	const base = globalThis.location.pathname.includes("/dev/")
+		? new URL("../", globalThis.location.href)
+		: new URL("./", globalThis.location.href);
+	return new URL(relativePath, base).href;
+}
+
+function mockDiscoveryEndpoints() {
+	return {
+		portals: extensionResourceUrl("mock/portals.json"),
+		servers: extensionResourceUrl("mock/servers.json"),
+		clients: extensionResourceUrl("mock/clients.json"),
+	};
+}
 const SETTINGS_KEY = "mcpmate.discovery.settings";
-const DISCOVERY_CACHE_TTL_MS = 60 * 60 * 1000;
-const DISCOVERY_CACHE_KEY_PREFIX = "mcpmate.discovery.cache";
 const PULL_REFRESH_THRESHOLD = 56;
 const DEFAULT_SETTINGS = {
 	language: "en",
@@ -52,7 +74,7 @@ function activeDiscoveryLocale() {
 const COPY = {
 	en: {
 		title: "MCPMate",
-		subtitle: "Curated MCP resources from MCPMate.",
+		subtitle: "Your progressive MCP management partner",
 		tabs: {
 			portals: "Portals",
 			servers: "Servers",
@@ -103,13 +125,18 @@ const COPY = {
 		pullRefresh: "Pull to refresh",
 		releaseRefresh: "Release to refresh",
 		refreshing: "Refreshing...",
+		filters: {
+			label: "Filter list",
+			all: "All",
+			empty: "No entries match the selected filters.",
+		},
 	},
 	"zh-cn": {
 		title: "MCPMate",
-		subtitle: "来自 MCPMate 的精选 MCP 资源。",
+		subtitle: "你的渐进式 MCP 管理伙伴",
 		tabs: {
 			portals: "入口",
-			servers: "服务",
+			servers: "服务器",
 			clients: "客户端",
 		},
 		footer: {
@@ -130,22 +157,22 @@ const COPY = {
 		},
 		loading: {
 			portals: "正在加载入口推荐...",
-			servers: "正在加载服务推荐...",
+			servers: "正在加载服务器推荐...",
 			clients: "正在加载客户端推荐...",
 		},
 		empty: {
 			portals: "暂未发布入口推荐。",
-			servers: "暂未发布服务推荐。",
+			servers: "暂未发布服务器推荐。",
 			clients: "暂未发布客户端推荐。",
 		},
 		unavailable: {
 			portals: "当前未提供入口目录。",
-			servers: "当前未提供服务目录。",
+			servers: "当前未提供服务器目录。",
 			clients: "当前未提供客户端目录。",
 		},
 		mockUnavailable: {
 			portals: "当前未提供模拟入口目录。",
-			servers: "当前未提供模拟服务目录。",
+			servers: "当前未提供模拟服务器目录。",
 			clients: "当前未提供模拟客户端目录。",
 		},
 		source: {
@@ -157,10 +184,15 @@ const COPY = {
 		pullRefresh: "下拉刷新",
 		releaseRefresh: "松开刷新",
 		refreshing: "正在刷新...",
+		filters: {
+			label: "筛选列表",
+			all: "全部",
+			empty: "没有符合当前筛选的条目。",
+		},
 	},
 	ja: {
 		title: "MCPMate",
-		subtitle: "MCPMate の厳選 MCP リソース。",
+		subtitle: "育てながら使う MCP 管理パートナー",
 		tabs: {
 			portals: "ポータル",
 			servers: "サーバー",
@@ -211,13 +243,18 @@ const COPY = {
 		pullRefresh: "引いて更新",
 		releaseRefresh: "離して更新",
 		refreshing: "更新中...",
+		filters: {
+			label: "リストを絞り込み",
+			all: "すべて",
+			empty: "選択した条件に一致する項目がありません。",
+		},
 	},
 };
 
 let activeCopy = COPY.en;
-let activePanelName = "portals";
+let activePanelName = "servers";
 const discoveryStates = new Map();
-const renderedSections = new Set();
+const compactFilterSelection = new Map();
 let paginationObserver = null;
 
 function openExternalUrl(url) {
@@ -253,7 +290,7 @@ function renderInlineIcons() {
 }
 
 function discoveryEndpoints() {
-	return DISCOVERY_MODE === "mock" ? MOCK_DISCOVERY_ENDPOINTS : DISCOVERY_ENDPOINTS;
+	return DISCOVERY_MODE === "mock" ? mockDiscoveryEndpoints() : DISCOVERY_ENDPOINTS;
 }
 
 function discoverySourceLabel() {
@@ -294,8 +331,8 @@ function storageArea() {
 	return chrome?.storage?.sync || chrome?.storage?.local || null;
 }
 
-function localStorageArea() {
-	return chrome?.storage?.local || null;
+function discoveryContext() {
+	return { mode: DISCOVERY_MODE, origin: ADMIN_ORIGIN };
 }
 
 function initialSettingsFromBrowser() {
@@ -336,73 +373,6 @@ async function writeSettings(settings) {
 	return normalized;
 }
 
-function discoveryCacheKey(kind, requestUrl) {
-	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
-}
-
-function discoveryCachePrefixForKind(kind) {
-	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.`;
-}
-
-async function clearDiscoveryCacheForKind(kind) {
-	const prefix = discoveryCachePrefixForKind(kind);
-	const area = localStorageArea();
-	if (area) {
-		const all = await area.get(null);
-		const keysToRemove = Object.keys(all).filter((key) => key.startsWith(prefix));
-		if (keysToRemove.length > 0) {
-			await area.remove(keysToRemove);
-		}
-		return;
-	}
-	for (let index = localStorage.length - 1; index >= 0; index -= 1) {
-		const key = localStorage.key(index);
-		if (key?.startsWith(prefix)) {
-			localStorage.removeItem(key);
-		}
-	}
-}
-
-async function readDiscoveryCache(kind, requestUrl, catalogGeneratedAt) {
-	const key = discoveryCacheKey(kind, requestUrl);
-	const area = localStorageArea();
-	let cached;
-	if (area) {
-		cached = (await area.get(key))[key];
-	} else {
-		try {
-			cached = JSON.parse(localStorage.getItem(key) || "null");
-		} catch {
-			return null;
-		}
-	}
-	if (!cached || Date.now() - cached.cachedAt > DISCOVERY_CACHE_TTL_MS) {
-		return null;
-	}
-	if (
-		catalogGeneratedAt &&
-		(!cached.catalogGeneratedAt || cached.catalogGeneratedAt !== catalogGeneratedAt)
-	) {
-		return null;
-	}
-	return cached.data || null;
-}
-
-async function writeDiscoveryCache(kind, requestUrl, data) {
-	const key = discoveryCacheKey(kind, requestUrl);
-	const cached = {
-		cachedAt: Date.now(),
-		catalogGeneratedAt: typeof data?.generatedAt === "string" ? data.generatedAt : null,
-		data,
-	};
-	const area = localStorageArea();
-	if (area) {
-		await area.set({ [key]: cached });
-		return;
-	}
-	localStorage.setItem(key, JSON.stringify(cached));
-}
-
 function resolvedTheme(theme) {
 	if (theme === "system") {
 		return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -428,6 +398,9 @@ function applyToolbarIcon(theme) {
 function applyTheme(theme) {
 	document.documentElement.dataset.theme = resolvedTheme(theme);
 	applyToolbarIcon(theme);
+	try {
+		chrome.storage?.local?.set({ "mcpmate.toolbarTheme": resolvedTheme(theme) === "dark" ? "dark" : "light" });
+	} catch { }
 }
 
 function setText(id, value) {
@@ -510,6 +483,8 @@ function renderIcon(name, iconUrl) {
 	if (iconUrl) {
 		const img = document.createElement("img");
 		img.alt = "";
+		img.loading = "lazy";
+		img.decoding = "async";
 		img.referrerPolicy = "no-referrer";
 		img.addEventListener("error", () => renderFallbackIcon(badge, name), {
 			once: true,
@@ -522,7 +497,35 @@ function renderIcon(name, iconUrl) {
 	return badge;
 }
 
-function card({ name, description, url, source, signal, meta, iconUrl }) {
+function entryCardProps(kind, entry) {
+	const metaBits = entryMeta(entry, kind);
+	return {
+		name: entryName(entry, kind),
+		description: entryDescription(entry, kind),
+		url: entryUrl(entry),
+		source: entrySource(entry),
+		signal: metaBits.signal,
+		meta: metaBits.meta,
+		iconUrl: iconUrl(entry, ADMIN_ORIGIN),
+	};
+}
+
+function createOpenButton(url) {
+	const openButton = document.createElement("button");
+	openButton.type = "button";
+	openButton.className = "open-button";
+	openButton.setAttribute("aria-label", activeCopy.visit);
+	openButton.title = activeCopy.visit;
+	const icon = document.createElement("span");
+	icon.className = "button-icon";
+	icon.dataset.icon = "external";
+	icon.innerHTML = ICONS.external;
+	openButton.appendChild(icon);
+	openButton.addEventListener("click", () => openExternalUrl(url));
+	return openButton;
+}
+
+function card({ name, description, url, source, signal, meta, iconUrl, showMeta = true }) {
 	const el = document.createElement("article");
 	el.className = "card";
 	const title = document.createElement("div");
@@ -539,38 +542,578 @@ function card({ name, description, url, source, signal, meta, iconUrl }) {
 	headingText.appendChild(label);
 	heading.appendChild(headingText);
 
-	const openButton = document.createElement("button");
-	openButton.type = "button";
-	openButton.className = "open-button";
-	openButton.setAttribute("aria-label", activeCopy.visit);
-	openButton.title = activeCopy.visit;
-	const icon = document.createElement("span");
-	icon.className = "button-icon";
-	icon.dataset.icon = "external";
-	icon.innerHTML = ICONS.external;
-	openButton.appendChild(icon);
-	openButton.addEventListener("click", () => openExternalUrl(url));
 	title.appendChild(heading);
-	title.appendChild(openButton);
+	title.appendChild(createOpenButton(url));
 
 	const body = document.createElement("p");
 	body.textContent = description;
 
-	const metaEl = document.createElement("div");
-	metaEl.className = "card-meta";
-	for (const item of [signal, meta, source].filter(Boolean)) {
-		const pill = document.createElement("span");
-		pill.className = "pill";
-		pill.textContent = item;
-		metaEl.appendChild(pill);
-	}
-
 	el.appendChild(title);
 	el.appendChild(body);
-	if (metaEl.childElementCount > 0) {
-		el.appendChild(metaEl);
+	if (showMeta) {
+		const metaEl = document.createElement("div");
+		metaEl.className = "card-meta";
+		for (const item of [signal, meta, source].filter(Boolean)) {
+			const pill = document.createElement("span");
+			pill.className = "pill";
+			pill.textContent = item;
+			metaEl.appendChild(pill);
+		}
+		if (metaEl.childElementCount > 0) {
+			el.appendChild(metaEl);
+		}
 	}
 	return el;
+}
+
+function compactCard({ name, description, url, iconUrl }) {
+	const el = document.createElement("article");
+	el.className = "card card--compact";
+	el.tabIndex = 0;
+	el.setAttribute("role", "link");
+	el.addEventListener("click", (event) => {
+		if (event.target.closest(".open-button")) return;
+		openExternalUrl(url);
+	});
+	el.addEventListener("keydown", (event) => {
+		if (event.key !== "Enter" && event.key !== " ") return;
+		event.preventDefault();
+		openExternalUrl(url);
+	});
+	el.appendChild(renderIcon(name, iconUrl));
+
+	const copy = document.createElement("div");
+	copy.className = "card-compact-copy";
+	const nameEl = document.createElement("div");
+	nameEl.className = "card-compact-name";
+	nameEl.textContent = name;
+	const descriptionEl = document.createElement("div");
+	descriptionEl.className = "card-compact-description";
+	descriptionEl.textContent = description;
+	copy.appendChild(nameEl);
+	copy.appendChild(descriptionEl);
+	el.appendChild(copy);
+	el.appendChild(createOpenButton(url));
+	return el;
+}
+
+function getCompactFilterSelection(kind) {
+	if (!compactFilterSelection.has(kind)) {
+		compactFilterSelection.set(kind, new Set());
+	}
+	return compactFilterSelection.get(kind);
+}
+
+function clearCompactFilterSelection(kind) {
+	getCompactFilterSelection(kind).clear();
+}
+
+function compactRestEntries(kind) {
+	const entries = sectionState(kind).entries;
+	return entries.length > 3 ? entries.slice(3) : [];
+}
+
+function entryFilterTags(entry, kind) {
+	const server = entry?.server || entry;
+	const curated = entry?.curated || server?.curated || {};
+	const meta = discoveryMeta(entry);
+	const tags = new Set();
+
+	const addTag = (value) => {
+		if (typeof value !== "string") return;
+		const trimmed = value.trim();
+		if (trimmed) tags.add(trimmed);
+	};
+
+	const addTags = (values) => {
+		if (!Array.isArray(values)) return;
+		for (const value of values) addTag(value);
+	};
+
+	if (kind === "servers") {
+		addTags(curated.categories);
+		addTags(meta.categories);
+		addTag(curated.recommendationTier);
+		addTag(meta.quality?.status);
+		addTag(firstTransport(entry?.official || server));
+		addTag(firstTransport(server));
+	} else if (kind === "clients") {
+		addTags(entry?.tags);
+		addTags(entry?.categories);
+		addTags(meta.categories);
+		addTag(entry?.category);
+		addTag(entry?.type);
+		addTag(meta.category);
+	} else {
+		addTag(entry?.signal);
+		addTag(meta.quality?.status);
+		addTag(entry?.meta);
+		addTag(meta.category);
+		addTag(meta.platform);
+		addTags(meta.categories);
+	}
+
+	return [...tags];
+}
+
+function collectCompactFilterTags(kind, entries) {
+	const tags = new Set();
+	for (const entry of entries) {
+		for (const tag of entryFilterTags(entry, kind)) {
+			tags.add(tag);
+		}
+	}
+	return [...tags].sort((left, right) =>
+		left.localeCompare(right, undefined, { sensitivity: "base" }),
+	);
+}
+
+function formatFilterTagLabel(tag) {
+	if (!tag) return "";
+	return tag
+		.split(/[\s_-]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
+function filterCompactEntries(kind, entries) {
+	const selected = getCompactFilterSelection(kind);
+	if (selected.size === 0) return entries;
+	return entries.filter((entry) => {
+		const tags = entryFilterTags(entry, kind);
+		return [...selected].some((tag) => tags.includes(tag));
+	});
+}
+
+function getPanelScrollRoot(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	const compactItems = list?.querySelector(".compact-list-items");
+	return compactItems || list?.querySelector(".compact-list") || document.getElementById("content-area");
+}
+
+function getActivePanelScrollRoot() {
+	if (activePanelName === "settings") {
+		return document.getElementById("content-area");
+	}
+	return getPanelScrollRoot(activePanelName);
+}
+
+function wireCompactListScroll(kind, compactList) {
+	if (compactList.dataset.scrollWired === "true") return;
+	compactList.dataset.scrollWired = "true";
+	compactList.addEventListener(
+		"scroll",
+		() => {
+			if (activePanelName !== kind) return;
+			maybeLoadMoreFromCompactList(kind, compactList);
+		},
+		{ passive: true },
+	);
+}
+
+function maybeLoadMoreFromCompactList(kind, compactList) {
+	const state = sectionState(kind);
+	if (!state.hasMore || state.loading) return;
+	const distance =
+		compactList.scrollHeight - compactList.scrollTop - compactList.clientHeight;
+	if (distance > 120) return;
+	loadDiscoveryPage(kind).catch(() => { });
+}
+
+function ensureCompactListStructure(compactList) {
+	let items = compactList.querySelector(".compact-list-items");
+	let footer = compactList.querySelector(".compact-list-footer");
+	if (!items) {
+		items = document.createElement("div");
+		items.className = "compact-list-items";
+		compactList.prepend(items);
+	}
+	if (!footer) {
+		footer = document.createElement("div");
+		footer.className = "compact-list-footer";
+		footer.setAttribute("aria-live", "polite");
+		compactList.appendChild(footer);
+	}
+	return { items, footer };
+}
+
+const compactBodyLayoutObservers = new WeakMap();
+
+function measureCompactListBudget(compactList) {
+	const body = compactList.closest(".compact-body");
+	if (!body) return null;
+	const filters = body.querySelector(".compact-filters");
+	const filterHeight = filters?.getBoundingClientRect().height ?? 0;
+	const bodyGap = filters ? 8 : 0;
+	return Math.max(0, body.clientHeight - filterHeight - bodyGap);
+}
+
+function measureCompactListContentHeight(compactList) {
+	const { items, footer } = ensureCompactListStructure(compactList);
+	return items.scrollHeight + footer.getBoundingClientRect().height;
+}
+
+function syncCompactListLayout(compactList) {
+	const { items } = ensureCompactListStructure(compactList);
+	const cardCount = items.querySelectorAll(".card--compact").length;
+
+	const applyLayout = () => {
+		if (!compactList.isConnected) return;
+
+		const budget = measureCompactListBudget(compactList);
+		if (budget === 0) {
+			requestAnimationFrame(applyLayout);
+			return;
+		}
+
+		compactList.classList.add("compact-list--sparse");
+		const contentHeight = measureCompactListContentHeight(compactList);
+		const fitsWithoutFill = budget === null || contentHeight <= budget + 0.5;
+
+		compactList.classList.toggle("compact-list--sparse", fitsWithoutFill);
+		compactList.classList.toggle("compact-list--single", cardCount === 1);
+	};
+
+	applyLayout();
+}
+
+function wireCompactBodyLayout(compactList) {
+	const body = compactList.closest(".compact-body");
+	if (!body || compactBodyLayoutObservers.has(body)) return;
+	const observer = new ResizeObserver(() => {
+		const list = body.querySelector(".compact-list");
+		if (list) syncCompactListLayout(list);
+	});
+	observer.observe(body);
+	compactBodyLayoutObservers.set(body, observer);
+}
+
+function renderCompactListItems(compactList, kind, entries) {
+	const { items } = ensureCompactListStructure(compactList);
+	items.replaceChildren();
+	if (entries.length === 0) {
+		const empty = document.createElement("div");
+		empty.className = "compact-list-empty";
+		empty.textContent = activeCopy.filters.empty;
+		items.appendChild(empty);
+		syncCompactListLayout(compactList);
+		return;
+	}
+	for (const entry of entries) {
+		items.appendChild(entryCompactCard(kind, entry));
+	}
+	syncCompactListLayout(compactList);
+}
+
+function syncCompactFilterBar(filterBar, kind, tags) {
+	const selected = getCompactFilterSelection(kind);
+	for (const tag of [...selected]) {
+		if (!tags.includes(tag)) selected.delete(tag);
+	}
+
+	filterBar.replaceChildren();
+
+	const allWrap = document.createElement("div");
+	allWrap.className = "compact-filters-all";
+	const allButton = document.createElement("button");
+	allButton.type = "button";
+	allButton.className = "filter-badge filter-badge--all";
+	allButton.textContent = activeCopy.filters.all;
+	allButton.dataset.filterTag = "";
+	allButton.addEventListener("click", () => {
+		selected.clear();
+		applyCompactFilters(kind);
+	});
+	allWrap.appendChild(allButton);
+	filterBar.appendChild(allWrap);
+
+	const scroll = document.createElement("div");
+	scroll.className = "compact-filters-scroll";
+	for (const tag of tags) {
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "filter-badge";
+		button.textContent = formatFilterTagLabel(tag);
+		button.dataset.filterTag = tag;
+		button.addEventListener("click", () => {
+			if (selected.has(tag)) selected.delete(tag);
+			else selected.add(tag);
+			applyCompactFilters(kind);
+		});
+		scroll.appendChild(button);
+	}
+	filterBar.appendChild(scroll);
+
+	updateFilterBarActiveStates(filterBar, kind);
+}
+
+function createCompactFilterBar(kind, tags) {
+	const bar = document.createElement("div");
+	bar.className = "compact-filters";
+	bar.setAttribute("role", "toolbar");
+	bar.setAttribute("aria-label", activeCopy.filters.label);
+	syncCompactFilterBar(bar, kind, tags);
+	return bar;
+}
+
+function updateFilterBarActiveStates(filterBar, kind) {
+	const selected = getCompactFilterSelection(kind);
+	const allButton = filterBar.querySelector(".filter-badge--all");
+	if (allButton) {
+		allButton.classList.remove("is-active");
+	}
+	for (const button of filterBar.querySelectorAll(".compact-filters-scroll .filter-badge")) {
+		button.classList.toggle("is-active", selected.has(button.dataset.filterTag));
+	}
+}
+
+function applyCompactFilters(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	const body = list?.querySelector(".compact-body");
+	if (!body) return;
+	const filterBar = body.querySelector(".compact-filters");
+	if (filterBar) updateFilterBarActiveStates(filterBar, kind);
+	const compactList = body.querySelector(".compact-list");
+	if (!compactList) return;
+	const rest = compactRestEntries(kind);
+	renderCompactListItems(compactList, kind, filterCompactEntries(kind, rest));
+}
+
+function refreshCompactSection(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	const body = list?.querySelector(".compact-body");
+	if (!body) return;
+
+	const rest = compactRestEntries(kind);
+	const tags = collectCompactFilterTags(kind, rest);
+	let filterBar = body.querySelector(".compact-filters");
+	if (tags.length === 0) {
+		filterBar?.remove();
+	} else if (!filterBar) {
+		filterBar = createCompactFilterBar(kind, tags);
+		body.insertBefore(filterBar, body.querySelector(".compact-list"));
+	} else {
+		syncCompactFilterBar(filterBar, kind, tags);
+	}
+
+	const compactList = body.querySelector(".compact-list");
+	if (!compactList) return;
+	renderCompactListItems(compactList, kind, filterCompactEntries(kind, rest));
+}
+
+function createCompactBody(kind, rest) {
+	const body = document.createElement("div");
+	body.className = "compact-body";
+	body.dataset.discoveryKind = kind;
+
+	const tags = collectCompactFilterTags(kind, rest);
+	if (tags.length > 0) {
+		body.appendChild(createCompactFilterBar(kind, tags));
+	}
+
+	const compactList = document.createElement("div");
+	compactList.className = "compact-list";
+	const items = document.createElement("div");
+	items.className = "compact-list-items";
+	const footer = document.createElement("div");
+	footer.className = "compact-list-footer";
+	footer.setAttribute("aria-live", "polite");
+	compactList.appendChild(items);
+	compactList.appendChild(footer);
+	renderCompactListItems(compactList, kind, filterCompactEntries(kind, rest));
+	wireCompactListScroll(kind, items);
+	wireCompactBodyLayout(compactList);
+	body.appendChild(compactList);
+	return body;
+}
+
+function createFeaturedCarousel(kind, entries) {
+	const carousel = document.createElement("div");
+	carousel.className = "featured-carousel";
+	const track = document.createElement("div");
+	track.className = "featured-carousel-track";
+
+	const buildSlide = (entry) => {
+		const cardEl = entryCard(kind, entry, { showMeta: false });
+		cardEl.classList.add("card--featured");
+		return cardEl;
+	};
+
+	const slides =
+		entries.length > 1
+			? [
+				buildSlide(entries[entries.length - 1]),
+				...entries.map((entry) => buildSlide(entry)),
+				buildSlide(entries[0]),
+			]
+			: entries.map((entry) => buildSlide(entry));
+
+	for (const slide of slides) {
+		track.appendChild(slide);
+	}
+	carousel.appendChild(track);
+
+	if (entries.length > 1) {
+		const dots = document.createElement("div");
+		dots.className = "featured-carousel-dots";
+		const realCount = entries.length;
+		let jumping = false;
+		let scrollEndTimer = null;
+
+		const slideStride = () => {
+			const slide = track.querySelector(".card--featured");
+			if (!slide) return 0;
+			const styles = getComputedStyle(track);
+			const gap = Number.parseFloat(styles.columnGap || styles.gap) || 0;
+			return slide.getBoundingClientRect().width + gap;
+		};
+
+		const getSlideIndex = () => {
+			const stride = slideStride();
+			if (!stride) return null;
+			return Math.round(track.scrollLeft / stride);
+		};
+
+		const jumpToSlideIndex = (index) => {
+			const stride = slideStride();
+			if (!stride) return;
+			track.classList.add("is-teleporting");
+			track.scrollLeft = stride * index;
+			void track.offsetHeight;
+			track.classList.remove("is-teleporting");
+		};
+
+		const goToSlideIndex = (index, smooth) => {
+			const stride = slideStride();
+			if (!stride) return;
+			track.scrollTo({
+				left: stride * index,
+				behavior: smooth ? "smooth" : "auto",
+			});
+		};
+
+		const syncDots = (realIndex) => {
+			for (const [dotIndex, dot] of [...dots.children].entries()) {
+				dot.classList.toggle("is-active", dotIndex === realIndex);
+			}
+		};
+
+		const getActiveRealIndex = () => {
+			const index = getSlideIndex();
+			if (index === null) return 0;
+			if (index <= 0) return realCount - 1;
+			if (index >= realCount + 1) return 0;
+			return index - 1;
+		};
+
+		const finishJump = (physicalIndex, realIndex) => {
+			jumping = true;
+			jumpToSlideIndex(physicalIndex);
+			syncDots(realIndex);
+			requestAnimationFrame(() => {
+				jumping = false;
+			});
+		};
+
+		const teleportIfNeeded = () => {
+			clearTimeout(scrollEndTimer);
+			scrollEndTimer = null;
+			if (jumping) return;
+			const index = getSlideIndex();
+			if (index === null) return;
+			if (index <= 0) {
+				finishJump(realCount, realCount - 1);
+				return;
+			}
+			if (index >= realCount + 1) {
+				finishJump(1, 0);
+			}
+		};
+
+		const scheduleTeleportCheck = () => {
+			clearTimeout(scrollEndTimer);
+			scrollEndTimer = setTimeout(teleportIfNeeded, 140);
+		};
+
+		const goToRealIndex = (targetRealIndex, smooth) => {
+			if (jumping) return;
+			const currentReal = getActiveRealIndex();
+			const targetPhysical = targetRealIndex + 1;
+
+			if (!smooth) {
+				jumpToSlideIndex(targetPhysical);
+				syncDots(targetRealIndex);
+				return;
+			}
+
+			if (targetRealIndex === currentReal) {
+				goToSlideIndex(targetPhysical, true);
+				return;
+			}
+
+			const forwardSteps = (targetRealIndex - currentReal + realCount) % realCount;
+			const backwardSteps = (currentReal - targetRealIndex + realCount) % realCount;
+
+			if (forwardSteps > 0 && forwardSteps < backwardSteps) {
+				goToSlideIndex(realCount + 1, true);
+				return;
+			}
+			if (backwardSteps > 0 && backwardSteps < forwardSteps) {
+				goToSlideIndex(0, true);
+				return;
+			}
+
+			goToSlideIndex(targetPhysical, true);
+		};
+
+		entries.forEach((_, index) => {
+			const dot = document.createElement("button");
+			dot.type = "button";
+			dot.className = `featured-carousel-dot${index === 0 ? " is-active" : ""}`;
+			dot.setAttribute("aria-label", `Featured slide ${index + 1}`);
+			dot.addEventListener("click", () => goToRealIndex(index, true));
+			dots.appendChild(dot);
+		});
+
+		track.addEventListener("scroll", () => {
+			if (!jumping) syncDots(getActiveRealIndex());
+			scheduleTeleportCheck();
+		}, { passive: true });
+
+		track.addEventListener("scrollend", teleportIfNeeded, { passive: true });
+
+		carousel.appendChild(dots);
+		jumping = true;
+		requestAnimationFrame(() => {
+			jumpToSlideIndex(1);
+			syncDots(0);
+			requestAnimationFrame(() => {
+				jumping = false;
+			});
+		});
+	}
+
+	return carousel;
+}
+
+function createEntryListContent(kind, entries) {
+	const fragment = document.createDocumentFragment();
+	if (isPageableDiscoveryKind(kind)) {
+		const featured = entries.slice(0, 3);
+		const rest = entries.slice(3);
+		if (featured.length > 0) {
+			fragment.appendChild(createFeaturedCarousel(kind, featured));
+		}
+		if (rest.length > 0) {
+			fragment.appendChild(createCompactBody(kind, rest));
+		}
+		return fragment;
+	}
+	for (const entry of entries) {
+		fragment.appendChild(entryCard(kind, entry));
+	}
+	return fragment;
 }
 
 function endpointStatusId(kind) {
@@ -594,15 +1137,15 @@ function setSectionStatus(kind, text) {
 }
 
 function createEntryCardsFragment(kind, entries) {
-	const fragment = document.createDocumentFragment();
-	for (const entry of entries) {
-		fragment.appendChild(entryCard(kind, entry));
-	}
-	return fragment;
+	return createEntryListContent(kind, entries);
 }
 
-function setSectionEntries(kind, entries, { append = false } = {}) {
+function setSectionEntries(kind, entries, { append = false, appendOnly = false } = {}) {
 	const list = document.getElementById(endpointListId(kind));
+	if (appendOnly) {
+		appendCompactEntries(kind, entries, list);
+		return;
+	}
 	const cards = createEntryCardsFragment(kind, entries);
 	if (append) {
 		list.appendChild(cards);
@@ -611,13 +1154,182 @@ function setSectionEntries(kind, entries, { append = false } = {}) {
 	list.replaceChildren(cards);
 }
 
-function sectionHasRenderedEntries(kind) {
-	return document.getElementById(endpointListId(kind)).childElementCount > 0;
+function appendCompactEntries(kind, entries, list = document.getElementById(endpointListId(kind))) {
+	if (!list || entries.length === 0) return;
+	const allEntries = sectionState(kind).entries;
+	if (allEntries.length <= 3) {
+		setSectionEntries(kind, entriesForPageRender(sectionState(kind)));
+		return;
+	}
+	if (!list.querySelector(".compact-body")) {
+		setSectionEntries(kind, entriesForPageRender(sectionState(kind)));
+		return;
+	}
+	refreshCompactSection(kind);
+}
+
+function discoveryEntriesSignature(kind, entries) {
+	return entries
+		.map((entry) => `${entryName(entry, kind)}:${entryUrl(entry)}`)
+		.join("|");
+}
+
+function restorePanelScroll(scrollTop) {
+	if (!Number.isFinite(scrollTop) || scrollTop <= 0) return;
+	requestAnimationFrame(() => {
+		const scrollRoot = getActivePanelScrollRoot();
+		if (scrollRoot) scrollRoot.scrollTop = scrollTop;
+	});
+}
+
+async function persistSessionSnapshot(kind) {
+	const state = sectionState(kind);
+	if (!state.loaded || state.entries.length === 0) return;
+	const scrollRoot = getActivePanelScrollRoot();
+	await writeSessionSnapshot(discoveryContext(), kind, activeDiscoveryLocale(), {
+		state,
+		scrollTop: scrollRoot?.scrollTop ?? 0,
+	});
+}
+
+function buildDiscoveryStateFromData(kind, data, { offset, limit, reset, current }) {
+	const entries = normalizeEntries(kind, data);
+	const page = discoveryPageState({
+		kind,
+		entries,
+		metadata: responseMetadata(data),
+		limit,
+		offset,
+	});
+	const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, { reset });
+	const catalogGeneratedAt =
+		typeof data?.generatedAt === "string" ? data.generatedAt : next.catalogGeneratedAt;
+	return {
+		...next,
+		catalogGeneratedAt,
+		loaded: true,
+		loading: false,
+	};
+}
+
+function renderDiscoveryState(kind, state, { appendOnlyEntries = null } = {}) {
+	if (state.entries.length === 0) {
+		setSectionStatus(kind, activeCopy.empty[kind]);
+		setSectionEntries(kind, []);
+		setSectionFooter(kind, "");
+		return;
+	}
+	setSectionStatus(kind, "");
+	if (appendOnlyEntries?.length) {
+		setSectionEntries(kind, appendOnlyEntries, { appendOnly: true });
+	} else {
+		setSectionEntries(kind, entriesForPageRender(state));
+	}
+	setSectionFooter(kind, "");
+}
+
+async function tryRenderFromSessionOrCache(kind, { limit, locale }) {
+	const session = await readSessionSnapshot(discoveryContext(), kind, locale);
+	if (session) {
+		discoveryStates.set(kind, { ...session.state, loading: false });
+		renderDiscoveryState(kind, session.state);
+		restorePanelScroll(session.scrollTop);
+		return true;
+	}
+
+	const requestUrl = discoveryRequestUrl(kind, { limit, offset: 0, locale });
+	const cached = await readDiscoveryCacheEntry(discoveryContext(), kind, requestUrl);
+	if (!isCacheEntryFresh(cached)) {
+		return false;
+	}
+
+	const state = buildDiscoveryStateFromData(kind, cached.data, {
+		offset: 0,
+		limit,
+		reset: true,
+		current: blankDiscoveryState(),
+	});
+	discoveryStates.set(kind, state);
+	renderDiscoveryState(kind, state);
+	return true;
+}
+
+async function fetchDiscoveryFromNetwork(kind, requestUrl, locale) {
+	const response = await fetch(requestUrl, {
+		credentials: "omit",
+		headers: {
+			accept: "application/json",
+			...(locale ? { "Accept-Language": discoveryAcceptLanguage(locale) } : {}),
+		},
+	});
+	if (!response.ok) {
+		throw new Error(`${kind}:${response.status}`);
+	}
+	return response.json();
+}
+
+async function prefetchDiscoveryPage(kind, { offset = 0 } = {}) {
+	if (sectionLoaded(kind) && offset === 0) return;
+	const locale = activeDiscoveryLocale();
+	const requestUrl = discoveryRequestUrl(kind, {
+		limit: DISCOVERY_PAGE_SIZE,
+		offset,
+		locale,
+	});
+	const cached = await readDiscoveryCacheEntry(discoveryContext(), kind, requestUrl);
+	if (isCacheEntryFresh(cached)) return;
+	try {
+		const data = await fetchDiscoveryFromNetwork(kind, requestUrl, locale);
+		await writeDiscoveryCache(discoveryContext(), kind, requestUrl, data);
+	} catch {
+		// Prefetch is best-effort.
+	}
+}
+
+function scheduleDiscoveryPrefetch(kind) {
+	const run = () => {
+		for (const panelKind of ["portals", "servers", "clients"]) {
+			if (panelKind === kind) continue;
+			void prefetchDiscoveryPage(panelKind);
+		}
+		const state = sectionState(kind);
+		if (state.hasMore && Number.isFinite(state.nextOffset)) {
+			void prefetchDiscoveryPage(kind, { offset: state.nextOffset });
+		}
+	};
+	if ("requestIdleCallback" in window) {
+		requestIdleCallback(run, { timeout: 2000 });
+	} else {
+		setTimeout(run, 250);
+	}
+}
+
+function saveActivePanelSnapshot() {
+	if (activePanelName === "settings" || !sectionLoaded(activePanelName)) return;
+	void persistSessionSnapshot(activePanelName);
+}
+
+function sectionLoaded(kind) {
+	return sectionState(kind).loaded;
+}
+
+function sectionFooterElement(kind) {
+	const list = document.getElementById(endpointListId(kind));
+	return (
+		list?.querySelector(".compact-list-footer") ||
+		document.getElementById(endpointFooterId(kind))
+	);
 }
 
 function setSectionFooter(kind, text) {
-	const footer = document.getElementById(endpointFooterId(kind));
+	const footer = sectionFooterElement(kind);
 	if (footer) footer.textContent = text;
+	const compactList = document
+		.getElementById(endpointListId(kind))
+		?.querySelector(".compact-list");
+	if (compactList && footer?.classList.contains("compact-list-footer")) {
+		syncCompactListLayout(compactList);
+	}
 }
 
 function discoveryMeta(entry) {
@@ -722,17 +1434,12 @@ function entrySource(entry) {
 	);
 }
 
-function entryCard(kind, entry) {
-	const metaBits = entryMeta(entry, kind);
-	return card({
-		name: entryName(entry, kind),
-		description: entryDescription(entry, kind),
-		url: entryUrl(entry),
-		source: entrySource(entry),
-		signal: metaBits.signal,
-		meta: metaBits.meta,
-		iconUrl: iconUrl(entry, ADMIN_ORIGIN),
-	});
+function entryCard(kind, entry, { showMeta = true } = {}) {
+	return card({ ...entryCardProps(kind, entry), showMeta });
+}
+
+function entryCompactCard(kind, entry) {
+	return compactCard(entryCardProps(kind, entry));
 }
 
 function discoveryRequestUrl(kind, { limit, offset, locale }) {
@@ -746,23 +1453,19 @@ function discoveryRequestUrl(kind, { limit, offset, locale }) {
 	);
 }
 
-async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false, locale, catalogGeneratedAt }) {
+async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false, locale, catalogGeneratedAt, forceNetwork = false }) {
 	const requestUrl = discoveryRequestUrl(kind, { limit, offset, locale });
-	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl, catalogGeneratedAt);
-	if (!data) {
-		const response = await fetch(requestUrl, {
-			credentials: "omit",
-			headers: {
-				accept: "application/json",
-				...(locale ? { "Accept-Language": discoveryAcceptLanguage(locale) } : {}),
-			},
-		});
-		if (!response.ok) {
-			throw new Error(`${kind}:${response.status}`);
-		}
-		data = await response.json();
-		await writeDiscoveryCache(kind, requestUrl, data);
+	if (!bypassCache && !forceNetwork) {
+		const data = await readDiscoveryCacheData(
+			discoveryContext(),
+			kind,
+			requestUrl,
+			catalogGeneratedAt,
+		);
+		if (data) return data;
 	}
+	const data = await fetchDiscoveryFromNetwork(kind, requestUrl, locale);
+	await writeDiscoveryCache(discoveryContext(), kind, requestUrl, data);
 	return data;
 }
 
@@ -784,10 +1487,6 @@ function sectionState(kind) {
 	return discoveryStates.get(kind);
 }
 
-function sectionLoaded(kind) {
-	return isPageableDiscoveryKind(kind) ? sectionState(kind).loaded : renderedSections.has(kind);
-}
-
 async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = {}) {
 	const current = sectionState(kind);
 	if (current.loading) return;
@@ -795,15 +1494,31 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 
 	const offset = reset ? 0 : current.nextOffset;
 	const limit = DISCOVERY_PAGE_SIZE;
+	const locale = activeDiscoveryLocale();
 	const shouldClearEntries = shouldClearEntriesBeforeLoad(current, { reset });
+	const previousCount = current.entries.length;
+	const previousSignature = discoveryEntriesSignature(kind, current.entries);
+
 	if (bypassCache) {
-		await clearDiscoveryCacheForKind(kind);
+		await clearDiscoveryCacheForKind(discoveryContext(), kind);
+		if (reset) {
+			await clearSessionSnapshots(discoveryContext(), locale);
+		}
 	}
-	discoveryStates.set(kind, { ...current, loading: true });
+
+	let renderedFromFastPath = false;
+	if (reset && !bypassCache) {
+		renderedFromFastPath = await tryRenderFromSessionOrCache(kind, { limit, locale });
+	}
+
+	discoveryStates.set(kind, { ...sectionState(kind), loading: true });
 	if (reset) {
-		setSectionStatus(kind, activeCopy.loading[kind]);
-		if (shouldClearEntries) {
-			setSectionEntries(kind, []);
+		clearCompactFilterSelection(kind);
+		if (!renderedFromFastPath) {
+			setSectionStatus(kind, activeCopy.loading[kind]);
+			if (shouldClearEntries) {
+				setSectionEntries(kind, []);
+			}
 		}
 		setSectionFooter(kind, "");
 	} else {
@@ -815,30 +1530,58 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 			limit,
 			offset,
 			bypassCache,
-			locale: activeDiscoveryLocale(),
+			locale,
 			catalogGeneratedAt: reset ? null : current.catalogGeneratedAt,
+			forceNetwork: reset && renderedFromFastPath,
 		});
-		const entries = normalizeEntries(kind, data);
-		const page = discoveryPageState({
-			kind,
-			entries,
-			metadata: responseMetadata(data),
-			limit,
-			offset,
-		});
-		const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, {
-			reset,
-		});
-		const catalogGeneratedAt =
-			typeof data?.generatedAt === "string" ? data.generatedAt : next.catalogGeneratedAt;
-		discoveryStates.set(kind, {
-			...next,
-			catalogGeneratedAt,
-			loaded: true,
-			loading: false,
-		});
-		const entriesToRender = entriesForPageRender(next);
 
+		if (reset && renderedFromFastPath) {
+			const freshFirstPage = buildDiscoveryStateFromData(kind, data, {
+				offset: 0,
+				limit,
+				reset: true,
+				current: blankDiscoveryState(),
+			});
+			const existing = sectionState(kind);
+			const catalogChanged =
+				Boolean(freshFirstPage.catalogGeneratedAt) &&
+				Boolean(existing.catalogGeneratedAt) &&
+				freshFirstPage.catalogGeneratedAt !== existing.catalogGeneratedAt;
+			const firstPageChanged =
+				discoveryEntriesSignature(kind, existing.entries.slice(0, limit)) !==
+				discoveryEntriesSignature(kind, freshFirstPage.entries);
+
+			if (catalogChanged || firstPageChanged) {
+				discoveryStates.set(kind, freshFirstPage);
+				renderDiscoveryState(kind, freshFirstPage);
+				await persistSessionSnapshot(kind);
+			} else {
+				discoveryStates.set(kind, {
+					...existing,
+					loading: false,
+					catalogGeneratedAt: freshFirstPage.catalogGeneratedAt || existing.catalogGeneratedAt,
+				});
+			}
+			setSectionStatus(kind, "");
+			setSectionFooter(kind, "");
+			if (activePanelName === kind) {
+				requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
+				scheduleDiscoveryPrefetch(kind);
+			}
+			return;
+		}
+
+		const next = buildDiscoveryStateFromData(kind, data, {
+			offset,
+			limit,
+			reset,
+			current: reset ? blankDiscoveryState() : current,
+		});
+		const nextSignature = discoveryEntriesSignature(kind, next.entries);
+		const appendOnlyEntries = !reset ? next.entries.slice(previousCount) : null;
+		const unchanged = nextSignature === previousSignature && !bypassCache;
+
+		discoveryStates.set(kind, next);
 		if (next.entries.length === 0) {
 			setSectionStatus(kind, activeCopy.empty[kind]);
 			setSectionEntries(kind, []);
@@ -846,14 +1589,30 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 			return;
 		}
 
-		setSectionStatus(kind, "");
-		setSectionEntries(kind, entriesToRender, { append: false });
-		setSectionFooter(kind, "");
+		if (!unchanged) {
+			if (reset) {
+				renderDiscoveryState(kind, next);
+			} else {
+				setSectionStatus(kind, "");
+				renderDiscoveryState(kind, next, { appendOnlyEntries });
+				setSectionFooter(kind, "");
+			}
+		} else {
+			setSectionStatus(kind, "");
+			setSectionFooter(kind, "");
+		}
+
+		await persistSessionSnapshot(kind);
 		if (activePanelName === kind) {
 			requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
+			if (reset) scheduleDiscoveryPrefetch(kind);
 		}
 	} catch (error) {
-		discoveryStates.set(kind, { ...current, loading: false });
+		discoveryStates.set(kind, { ...sectionState(kind), loading: false });
+		if (renderedFromFastPath && reset) {
+			setSectionFooter(kind, "");
+			return;
+		}
 		if (reset) {
 			setSectionStatus(kind, unavailableMessage(kind));
 		} else {
@@ -879,11 +1638,19 @@ function sentinelIsNearScrollEnd(sentinel, content) {
 }
 
 function loadMoreIfActiveSentinelVisible() {
-	const sentinel = activePaginationSentinel();
-	const content = document.getElementById("content-area");
-	if (!sentinel || !content) return;
-	if (!sentinelIsNearScrollEnd(sentinel, content)) return;
-	loadDiscoveryPage(activePanelName).catch(() => { });
+	const kind = activePanelName;
+	const scrollRoot = getPanelScrollRoot(kind);
+	const sentinel = document.getElementById(endpointSentinelId(kind));
+	if (!scrollRoot || !sentinel) return;
+	if (scrollRoot.classList.contains("compact-list-items")) {
+		maybeLoadMoreFromCompactList(kind, scrollRoot);
+		return;
+	}
+	const sentinelRect = sentinel.getBoundingClientRect();
+	const contentRect = scrollRoot.getBoundingClientRect();
+	if (sentinelRect.top <= contentRect.bottom + 120) {
+		loadDiscoveryPage(kind).catch(() => { });
+	}
 }
 
 function setupPaginationObserver(content) {
@@ -904,7 +1671,7 @@ function setupPaginationObserver(content) {
 			threshold: 0,
 		},
 	);
-	for (const kind of ["servers", "clients"]) {
+	for (const kind of ["portals", "servers", "clients"]) {
 		const sentinel = document.getElementById(endpointSentinelId(kind));
 		if (!sentinel) continue;
 		sentinel.dataset.paginationKind = kind;
@@ -932,11 +1699,12 @@ function setupPullToRefresh(content) {
 	}
 
 	content.addEventListener("pointerdown", (event) => {
+		const scrollRoot = getActivePanelScrollRoot();
 		if (
 			!shouldStartPullRefresh({
 				button: event.button,
 				pointerType: event.pointerType,
-				scrollTop: content.scrollTop,
+				scrollTop: scrollRoot?.scrollTop ?? 0,
 				panelName: activePanelName,
 				selectionType: window.getSelection()?.type,
 			})
@@ -949,7 +1717,7 @@ function setupPullToRefresh(content) {
 	content.addEventListener(
 		"pointermove",
 		(event) => {
-			if (pointerStartY === null || content.scrollTop > 0) return;
+			if (pointerStartY === null || (getActivePanelScrollRoot()?.scrollTop ?? 0) > 0) return;
 			pullDistance = Math.max(0, event.clientY - pointerStartY);
 			if (pullDistance <= 0) return;
 			pulling = true;
@@ -990,32 +1758,7 @@ function setupPullToRefresh(content) {
 }
 
 async function renderSection(kind, { bypassCache = false } = {}) {
-	if (isPageableDiscoveryKind(kind)) {
-		await loadDiscoveryPage(kind, { reset: true, bypassCache });
-		return;
-	}
-	const hasRenderedEntries = sectionHasRenderedEntries(kind);
-	setSectionStatus(kind, activeCopy.loading[kind]);
-	if (!hasRenderedEntries) {
-		setSectionEntries(kind, []);
-	}
-	setSectionFooter(kind, "");
-	const data = await fetchDiscoveryData(kind, {
-		limit: DISCOVERY_PAGE_SIZE,
-		offset: 0,
-		bypassCache,
-		locale: activeDiscoveryLocale(),
-	});
-	const entries = normalizeEntries(kind, data);
-	if (entries.length === 0) {
-		setSectionStatus(kind, activeCopy.empty[kind]);
-		setSectionEntries(kind, []);
-		renderedSections.add(kind);
-		return;
-	}
-	setSectionStatus(kind, "");
-	setSectionEntries(kind, entries);
-	renderedSections.add(kind);
+	await loadDiscoveryPage(kind, { reset: true, bypassCache });
 }
 
 async function ensureSectionRendered(kind, { bypassCache = false } = {}) {
@@ -1026,6 +1769,7 @@ async function ensureSectionRendered(kind, { bypassCache = false } = {}) {
 }
 
 function activatePanel(panelName) {
+	saveActivePanelSnapshot();
 	activePanelName = panelName;
 	for (const tab of document.querySelectorAll("[data-panel-target]")) {
 		tab.classList.toggle("is-active", tab.dataset.panelTarget === panelName);
@@ -1036,8 +1780,8 @@ function activatePanel(panelName) {
 	document
 		.getElementById("settings-button")
 		.classList.toggle("is-active", panelName === "settings");
-	const content = document.getElementById("content-area");
-	if (content) content.scrollTop = 0;
+	const scrollRoot = getPanelScrollRoot(panelName);
+	if (scrollRoot) scrollRoot.scrollTop = 0;
 	ensureSectionRendered(panelName).catch(() => {
 		if (panelName !== "settings") {
 			setSectionStatus(panelName, unavailableMessage(panelName));
@@ -1047,6 +1791,8 @@ function activatePanel(panelName) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+	void pruneExpiredDiscoveryCaches(discoveryContext());
+	window.addEventListener("pagehide", saveActivePanelSnapshot);
 	currentSettings = await readSettings();
 	const languageSelect = document.getElementById("language-select");
 	const themeSelect = document.getElementById("theme-select");
@@ -1070,16 +1816,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 		applyTheme(currentSettings.theme);
 	}
 
-	function resetDiscoveryPanelsForLocaleChange() {
+	function resetDiscoveryPanelsForLocaleChange(previousLocale) {
 		for (const kind of ["portals", "servers", "clients"]) {
 			discoveryStates.delete(kind);
-			renderedSections.delete(kind);
+			compactFilterSelection.delete(kind);
 		}
+		void clearSessionSnapshots(discoveryContext(), previousLocale);
 	}
 
 	languageSelect.addEventListener("change", () => {
+		const previousLocale = activeDiscoveryLocale();
 		void persist({ ...currentSettings, language: languageSelect.value }).then(() => {
-			resetDiscoveryPanelsForLocaleChange();
+			resetDiscoveryPanelsForLocaleChange(previousLocale);
 			refreshActivePanel().catch(() => { });
 		});
 	});

@@ -20,6 +20,35 @@
 			"url": "https://mcp.umate.ai",
 			"source": "Mock catalog",
 			"meta": "product site"
+		},
+		{
+			"title": "Cursor Directory",
+			"description": "Browse MCP servers and plugins for Cursor.",
+			"url": "https://cursor.directory",
+			"source": "Mock catalog",
+			"meta": "directory"
+		},
+		{
+			"title": "Smithery",
+			"description": "Discover and install MCP servers from a community registry.",
+			"url": "https://smithery.ai",
+			"source": "Mock catalog",
+			"meta": "registry"
+		},
+		{
+			"title": "Glama MCP",
+			"description": "Search MCP servers, clients, and tools in one place.",
+			"url": "https://glama.ai/mcp",
+			"source": "Mock catalog",
+			"meta": "directory"
 		}
-	]
+	],
+	"page": {
+		"total": 6,
+		"limit": 6,
+		"offset": 0,
+		"hasMore": false,
+		"nextOffset": null,
+		"mode": "page"
+	}
 }

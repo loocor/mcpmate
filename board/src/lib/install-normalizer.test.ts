@@ -196,6 +196,69 @@ describe("install normalizer", () => {
 		).toThrow();
 	});
 
+	test("splits merged stdio command when args are missing", async () => {
+		const drafts = await normalizeIngestPayload({
+			text: JSON.stringify({
+				mcpServers: {
+					"mcp-mermaid": {
+						command: "npx -y mcp-mermaid",
+					},
+				},
+			}),
+		});
+
+		expect(summarizeDrafts(drafts)).toEqual([
+			{
+				name: "mcp-mermaid",
+				command: "npx",
+				args: ["-y", "mcp-mermaid"],
+			},
+		]);
+	});
+
+	test("preserves separate command and args from cursor.directory", async () => {
+		const drafts = await normalizeIngestPayload({
+			text: JSON.stringify({
+				mcpServers: {
+					"phantom-mcp-server": {
+						command: "npx",
+						args: ["-y", "@phantom/mcp-server"],
+						env: { PHANTOM_APP_ID: "your-phantom-app-id" },
+					},
+				},
+			}),
+		});
+
+		expect(summarizeDrafts(drafts)).toEqual([
+			{
+				name: "phantom-mcp-server",
+				command: "npx",
+				args: ["-y", "@phantom/mcp-server"],
+			},
+		]);
+	});
+
+	test("splits merged command when args is an empty array", async () => {
+		const drafts = await normalizeIngestPayload({
+			text: JSON.stringify({
+				mcpServers: {
+					"mcp-mermaid": {
+						command: "npx -y mcp-mermaid",
+						args: [],
+					},
+				},
+			}),
+		});
+
+		expect(summarizeDrafts(drafts)).toEqual([
+			{
+				name: "mcp-mermaid",
+				command: "npx",
+				args: ["-y", "mcp-mermaid"],
+			},
+		]);
+	});
+
 	test("normalizes multi-file ingest payloads into drafts", async () => {
 		const drafts = await normalizeIngestPayload({
 			payloads: [

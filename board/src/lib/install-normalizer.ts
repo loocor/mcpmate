@@ -37,6 +37,26 @@ const normalizeKind = (value: unknown): ServerInstallDraft["kind"] => {
 	}
 };
 
+/** Split merged stdio command strings when `args` are absent (cursor.directory quirk).
+ *  Keep behavior aligned with `extension/browser/cursor-deeplink.mjs`. */
+const splitMergedStdioCommand = (
+	command: string | undefined,
+	args: string[] | undefined,
+): { command?: string; args?: string[] } => {
+	const trimmed = command?.trim();
+	if (!trimmed || (args && args.length > 0)) {
+		return { command: trimmed, args };
+	}
+	const parts = trimmed.split(/\s+/).filter(Boolean);
+	if (parts.length <= 1) {
+		return { command: trimmed, args };
+	}
+	return {
+		command: parts[0],
+		args: parts.slice(1),
+	};
+};
+
 const toStringArray = (value: unknown): string[] | undefined => {
 	if (!value) return undefined;
 	if (Array.isArray(value)) {
@@ -358,7 +378,7 @@ const buildDraft = (
 		typeof name === "string" && name.trim() ? name.trim() : undefined;
 	const rawKind = raw.kind ?? raw.type ?? raw.server_type;
 	let kind = normalizeKind(rawKind);
-	const command = trimmedString(raw.command ?? raw.command_path ?? raw.launch);
+	let command = trimmedString(raw.command ?? raw.command_path ?? raw.launch);
 	let url = trimmedString(
 		raw.url ??
 			(raw as any)?.httpUrl ??
@@ -398,7 +418,10 @@ const buildDraft = (
 			...(explicitParams as Record<string, string>),
 		};
 	}
-	const args = toStringArray(raw.args);
+	let args = toStringArray(raw.args);
+	const split = splitMergedStdioCommand(command, args);
+	command = split.command;
+	args = split.args ?? args;
 	const env = toEnvRecord(raw.env);
 	const headers =
 		toEnvRecord(raw.headers) ||

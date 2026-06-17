@@ -7,11 +7,20 @@
 			"source": "Mock catalog",
 			"_meta": {
 				"ai.mcpmate/discovery": {
-					"quality": { "status": "popular" },
-					"categories": ["local", "files"]
+					"quality": {
+						"status": "popular"
+					},
+					"categories": [
+						"local",
+						"files"
+					]
 				}
 			},
-			"remotes": [{ "type": "stdio" }]
+			"remotes": [
+				{
+					"type": "stdio"
+				}
+			]
 		},
 		{
 			"title": "Fetch",
@@ -20,11 +29,20 @@
 			"source": "Mock catalog",
 			"_meta": {
 				"ai.mcpmate/discovery": {
-					"quality": { "status": "curated" },
-					"categories": ["web", "http"]
+					"quality": {
+						"status": "curated"
+					},
+					"categories": [
+						"web",
+						"http"
+					]
 				}
 			},
-			"remotes": [{ "type": "stdio" }]
+			"remotes": [
+				{
+					"type": "stdio"
+				}
+			]
 		},
 		{
 			"title": "GitHub",
@@ -33,15 +51,90 @@
 			"source": "Mock catalog",
 			"_meta": {
 				"ai.mcpmate/discovery": {
-					"quality": { "status": "verified" },
-					"categories": ["git", "collaboration"]
+					"quality": {
+						"status": "verified"
+					},
+					"categories": [
+						"git",
+						"collaboration"
+					]
 				}
 			},
-			"remotes": [{ "type": "stdio" }]
+			"remotes": [
+				{
+					"type": "stdio"
+				}
+			]
+		},
+		{
+			"title": "Figma MCP Server",
+			"description": "The Figma MCP server brings Figma design context directly into your AI workflow.",
+			"url": "https://github.com/modelcontextprotocol/servers",
+			"source": "Mock catalog",
+			"_meta": {
+				"ai.mcpmate/discovery": {
+					"quality": {
+						"status": "curated"
+					},
+					"categories": [
+						"design",
+						"figma"
+					]
+				}
+			},
+			"remotes": [
+				{
+					"type": "stdio"
+				}
+			]
+		},
+		{
+			"title": "Postgres",
+			"description": "Query and inspect PostgreSQL databases through MCP.",
+			"url": "https://github.com/modelcontextprotocol/servers",
+			"source": "Mock catalog",
+			"_meta": {
+				"ai.mcpmate/discovery": {
+					"quality": {
+						"status": "verified"
+					},
+					"categories": [
+						"database",
+						"sql"
+					]
+				}
+			},
+			"remotes": [
+				{
+					"type": "stdio"
+				}
+			]
+		},
+		{
+			"title": "Slack",
+			"description": "Channel and message workflows for MCP clients.",
+			"url": "https://github.com/modelcontextprotocol/servers",
+			"source": "Mock catalog",
+			"_meta": {
+				"ai.mcpmate/discovery": {
+					"quality": {
+						"status": "popular"
+					},
+					"categories": [
+						"collaboration",
+						"messaging"
+					]
+				}
+			},
+			"remotes": [
+				{
+					"type": "stdio"
+				}
+			]
 		}
 	],
 	"page": {
-		"total": 3,
+		"total": 6,
 		"limit": 6,
 		"offset": 0,
 		"hasMore": false,
