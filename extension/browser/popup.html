@@ -1,11 +1,13 @@
 <!doctype html>
 <html lang="en">
+
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>MCPMate</title>
 		<link rel="stylesheet" href="popup.css" />
 	</head>
+
 	<body>
 		<main class="shell">
 			<button type="button" class="refresh-float-button" id="refresh-button">
@@ -23,27 +25,20 @@
 						<span id="popup-title">MCPMate</span>
 						<sup class="beta-badge">Beta</sup>
 					</h1>
-					<p id="popup-copy">Curated MCP resources from MCPMate.</p>
+					<p id="popup-copy">Your progressive MCP management partner</p>
 				</div>
 			</header>
 
 			<nav class="tabs" aria-label="Discovery sections">
-				<button type="button" class="tab is-active" data-panel-target="portals" id="tab-portals">Portals</button>
-				<button type="button" class="tab" data-panel-target="servers" id="tab-servers">Servers</button>
+				<button type="button" class="tab is-active" data-panel-target="servers" id="tab-servers">Servers</button>
 				<button type="button" class="tab" data-panel-target="clients" id="tab-clients">Clients</button>
+				<button type="button" class="tab" data-panel-target="portals" id="tab-portals">Portals</button>
 			</nav>
 
 			<div class="content" id="content-area">
 				<div class="refresh-indicator" id="refresh-indicator" aria-live="polite"></div>
 
-				<section class="panel is-active" data-panel="portals" aria-label="MCP portals">
-					<div class="status" id="portal-status">Loading portal recommendations...</div>
-					<div class="list" id="portal-list"></div>
-					<div class="list-footer" id="portal-footer"></div>
-					<div class="pagination-sentinel" id="portal-sentinel" aria-hidden="true"></div>
-				</section>
-
-				<section class="panel" data-panel="servers" aria-label="MCP servers">
+				<section class="panel is-active" data-panel="servers" aria-label="MCP servers">
 					<div class="status" id="server-status">Loading server recommendations...</div>
 					<div class="list" id="server-list"></div>
 					<div class="list-footer" id="server-footer"></div>
@@ -55,6 +50,13 @@
 					<div class="list" id="client-list"></div>
 					<div class="list-footer" id="client-footer"></div>
 					<div class="pagination-sentinel" id="client-sentinel" aria-hidden="true"></div>
+				</section>
+
+				<section class="panel" data-panel="portals" aria-label="MCP portals">
+					<div class="status" id="portal-status">Loading portal recommendations...</div>
+					<div class="list" id="portal-list"></div>
+					<div class="list-footer" id="portal-footer"></div>
+					<div class="pagination-sentinel" id="portal-sentinel" aria-hidden="true"></div>
 				</section>
 
 				<section class="panel" data-panel="settings" aria-label="Extension settings">
@@ -99,4 +101,5 @@
 		<script src="config.js"></script>
 		<script type="module" src="popup.js"></script>
 	</body>
+
 </html>

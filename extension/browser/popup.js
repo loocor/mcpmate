@@ -5,6 +5,17 @@ import {
 } from "./catalog-entry.mjs";
 import { communityFooterForLanguage } from "./community-links.mjs";
 import {
+	clearDiscoveryCacheForKind,
+	clearSessionSnapshots,
+	isCacheEntryFresh,
+	pruneExpiredDiscoveryCaches,
+	readDiscoveryCacheData,
+	readDiscoveryCacheEntry,
+	readSessionSnapshot,
+	writeDiscoveryCache,
+	writeSessionSnapshot,
+} from "./discovery-cache.mjs";
+import {
 	discoveryAcceptLanguage,
 	discoveryLocaleFromLanguage,
 	extensionLanguageFromBrowser,
@@ -31,14 +42,25 @@ const DISCOVERY_ENDPOINTS = {
 	servers: `${ADMIN_ORIGIN}/discovery/servers`,
 	clients: `${ADMIN_ORIGIN}/discovery/clients`,
 };
-const MOCK_DISCOVERY_ENDPOINTS = {
-	portals: chrome.runtime.getURL("mock/portals.json"),
-	servers: chrome.runtime.getURL("mock/servers.json"),
-	clients: chrome.runtime.getURL("mock/clients.json"),
-};
+
+function extensionResourceUrl(relativePath) {
+	if (typeof chrome?.runtime?.getURL === "function") {
+		return chrome.runtime.getURL(relativePath);
+	}
+	const base = globalThis.location.pathname.includes("/dev/")
+		? new URL("../", globalThis.location.href)
+		: new URL("./", globalThis.location.href);
+	return new URL(relativePath, base).href;
+}
+
+function mockDiscoveryEndpoints() {
+	return {
+		portals: extensionResourceUrl("mock/portals.json"),
+		servers: extensionResourceUrl("mock/servers.json"),
+		clients: extensionResourceUrl("mock/clients.json"),
+	};
+}
 const SETTINGS_KEY = "mcpmate.discovery.settings";
-const DISCOVERY_CACHE_TTL_MS = 60 * 60 * 1000;
-const DISCOVERY_CACHE_KEY_PREFIX = "mcpmate.discovery.cache";
 const PULL_REFRESH_THRESHOLD = 56;
 const DEFAULT_SETTINGS = {
 	language: "en",
@@ -52,7 +74,7 @@ function activeDiscoveryLocale() {
 const COPY = {
 	en: {
 		title: "MCPMate",
-		subtitle: "Curated MCP resources from MCPMate.",
+		subtitle: "Your progressive MCP management partner",
 		tabs: {
 			portals: "Portals",
 			servers: "Servers",
@@ -106,7 +128,7 @@ const COPY = {
 	},
 	"zh-cn": {
 		title: "MCPMate",
-		subtitle: "来自 MCPMate 的精选 MCP 资源。",
+		subtitle: "你的渐进式 MCP 管理伙伴",
 		tabs: {
 			portals: "入口",
 			servers: "服务",
@@ -160,7 +182,7 @@ const COPY = {
 	},
 	ja: {
 		title: "MCPMate",
-		subtitle: "MCPMate の厳選 MCP リソース。",
+		subtitle: "育てながら使う MCP 管理パートナー",
 		tabs: {
 			portals: "ポータル",
 			servers: "サーバー",
@@ -215,9 +237,8 @@ const COPY = {
 };
 
 let activeCopy = COPY.en;
-let activePanelName = "portals";
+let activePanelName = "servers";
 const discoveryStates = new Map();
-const renderedSections = new Set();
 let paginationObserver = null;
 
 function openExternalUrl(url) {
@@ -253,7 +274,7 @@ function renderInlineIcons() {
 }
 
 function discoveryEndpoints() {
-	return DISCOVERY_MODE === "mock" ? MOCK_DISCOVERY_ENDPOINTS : DISCOVERY_ENDPOINTS;
+	return DISCOVERY_MODE === "mock" ? mockDiscoveryEndpoints() : DISCOVERY_ENDPOINTS;
 }
 
 function discoverySourceLabel() {
@@ -294,8 +315,8 @@ function storageArea() {
 	return chrome?.storage?.sync || chrome?.storage?.local || null;
 }
 
-function localStorageArea() {
-	return chrome?.storage?.local || null;
+function discoveryContext() {
+	return { mode: DISCOVERY_MODE, origin: ADMIN_ORIGIN };
 }
 
 function initialSettingsFromBrowser() {
@@ -336,73 +357,6 @@ async function writeSettings(settings) {
 	return normalized;
 }
 
-function discoveryCacheKey(kind, requestUrl) {
-	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.${encodeURIComponent(requestUrl)}`;
-}
-
-function discoveryCachePrefixForKind(kind) {
-	return `${DISCOVERY_CACHE_KEY_PREFIX}.${DISCOVERY_MODE}.${ADMIN_ORIGIN}.${kind}.`;
-}
-
-async function clearDiscoveryCacheForKind(kind) {
-	const prefix = discoveryCachePrefixForKind(kind);
-	const area = localStorageArea();
-	if (area) {
-		const all = await area.get(null);
-		const keysToRemove = Object.keys(all).filter((key) => key.startsWith(prefix));
-		if (keysToRemove.length > 0) {
-			await area.remove(keysToRemove);
-		}
-		return;
-	}
-	for (let index = localStorage.length - 1; index >= 0; index -= 1) {
-		const key = localStorage.key(index);
-		if (key?.startsWith(prefix)) {
-			localStorage.removeItem(key);
-		}
-	}
-}
-
-async function readDiscoveryCache(kind, requestUrl, catalogGeneratedAt) {
-	const key = discoveryCacheKey(kind, requestUrl);
-	const area = localStorageArea();
-	let cached;
-	if (area) {
-		cached = (await area.get(key))[key];
-	} else {
-		try {
-			cached = JSON.parse(localStorage.getItem(key) || "null");
-		} catch {
-			return null;
-		}
-	}
-	if (!cached || Date.now() - cached.cachedAt > DISCOVERY_CACHE_TTL_MS) {
-		return null;
-	}
-	if (
-		catalogGeneratedAt &&
-		(!cached.catalogGeneratedAt || cached.catalogGeneratedAt !== catalogGeneratedAt)
-	) {
-		return null;
-	}
-	return cached.data || null;
-}
-
-async function writeDiscoveryCache(kind, requestUrl, data) {
-	const key = discoveryCacheKey(kind, requestUrl);
-	const cached = {
-		cachedAt: Date.now(),
-		catalogGeneratedAt: typeof data?.generatedAt === "string" ? data.generatedAt : null,
-		data,
-	};
-	const area = localStorageArea();
-	if (area) {
-		await area.set({ [key]: cached });
-		return;
-	}
-	localStorage.setItem(key, JSON.stringify(cached));
-}
-
 function resolvedTheme(theme) {
 	if (theme === "system") {
 		return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -430,7 +384,7 @@ function applyTheme(theme) {
 	applyToolbarIcon(theme);
 	try {
 		chrome.storage?.local?.set({ "mcpmate.toolbarTheme": resolvedTheme(theme) === "dark" ? "dark" : "light" });
-	} catch {}
+	} catch { }
 }
 
 function setText(id, value) {
@@ -513,6 +467,8 @@ function renderIcon(name, iconUrl) {
 	if (iconUrl) {
 		const img = document.createElement("img");
 		img.alt = "";
+		img.loading = "lazy";
+		img.decoding = "async";
 		img.referrerPolicy = "no-referrer";
 		img.addEventListener("error", () => renderFallbackIcon(badge, name), {
 			once: true,
@@ -523,6 +479,34 @@ function renderIcon(name, iconUrl) {
 	}
 	renderFallbackIcon(badge, name);
 	return badge;
+}
+
+function entryCardProps(kind, entry) {
+	const metaBits = entryMeta(entry, kind);
+	return {
+		name: entryName(entry, kind),
+		description: entryDescription(entry, kind),
+		url: entryUrl(entry),
+		source: entrySource(entry),
+		signal: metaBits.signal,
+		meta: metaBits.meta,
+		iconUrl: iconUrl(entry, ADMIN_ORIGIN),
+	};
+}
+
+function createOpenButton(url) {
+	const openButton = document.createElement("button");
+	openButton.type = "button";
+	openButton.className = "open-button";
+	openButton.setAttribute("aria-label", activeCopy.visit);
+	openButton.title = activeCopy.visit;
+	const icon = document.createElement("span");
+	icon.className = "button-icon";
+	icon.dataset.icon = "external";
+	icon.innerHTML = ICONS.external;
+	openButton.appendChild(icon);
+	openButton.addEventListener("click", () => openExternalUrl(url));
+	return openButton;
 }
 
 function card({ name, description, url, source, signal, meta, iconUrl }) {
@@ -542,19 +526,8 @@ function card({ name, description, url, source, signal, meta, iconUrl }) {
 	headingText.appendChild(label);
 	heading.appendChild(headingText);
 
-	const openButton = document.createElement("button");
-	openButton.type = "button";
-	openButton.className = "open-button";
-	openButton.setAttribute("aria-label", activeCopy.visit);
-	openButton.title = activeCopy.visit;
-	const icon = document.createElement("span");
-	icon.className = "button-icon";
-	icon.dataset.icon = "external";
-	icon.innerHTML = ICONS.external;
-	openButton.appendChild(icon);
-	openButton.addEventListener("click", () => openExternalUrl(url));
 	title.appendChild(heading);
-	title.appendChild(openButton);
+	title.appendChild(createOpenButton(url));
 
 	const body = document.createElement("p");
 	body.textContent = description;
@@ -574,6 +547,230 @@ function card({ name, description, url, source, signal, meta, iconUrl }) {
 		el.appendChild(metaEl);
 	}
 	return el;
+}
+
+function compactCard({ name, description, url, iconUrl }) {
+	const el = document.createElement("article");
+	el.className = "card card--compact";
+	el.tabIndex = 0;
+	el.setAttribute("role", "link");
+	el.addEventListener("click", (event) => {
+		if (event.target.closest(".open-button")) return;
+		openExternalUrl(url);
+	});
+	el.addEventListener("keydown", (event) => {
+		if (event.key !== "Enter" && event.key !== " ") return;
+		event.preventDefault();
+		openExternalUrl(url);
+	});
+	el.appendChild(renderIcon(name, iconUrl));
+
+	const copy = document.createElement("div");
+	copy.className = "card-compact-copy";
+	const nameEl = document.createElement("div");
+	nameEl.className = "card-compact-name";
+	nameEl.textContent = name;
+	const descriptionEl = document.createElement("div");
+	descriptionEl.className = "card-compact-description";
+	descriptionEl.textContent = description;
+	copy.appendChild(nameEl);
+	copy.appendChild(descriptionEl);
+	el.appendChild(copy);
+	el.appendChild(createOpenButton(url));
+	return el;
+}
+
+function createFeaturedCarousel(kind, entries) {
+	const carousel = document.createElement("div");
+	carousel.className = "featured-carousel";
+	const track = document.createElement("div");
+	track.className = "featured-carousel-track";
+
+	const buildSlide = (entry) => {
+		const cardEl = entryCard(kind, entry);
+		cardEl.classList.add("card--featured");
+		return cardEl;
+	};
+
+	const slides =
+		entries.length > 1
+			? [
+				buildSlide(entries[entries.length - 1]),
+				...entries.map((entry) => buildSlide(entry)),
+				buildSlide(entries[0]),
+			]
+			: entries.map((entry) => buildSlide(entry));
+
+	for (const slide of slides) {
+		track.appendChild(slide);
+	}
+	carousel.appendChild(track);
+
+	if (entries.length > 1) {
+		const dots = document.createElement("div");
+		dots.className = "featured-carousel-dots";
+		const realCount = entries.length;
+		let jumping = false;
+		let scrollEndTimer = null;
+
+		const slideStride = () => {
+			const slide = track.querySelector(".card--featured");
+			if (!slide) return 0;
+			const styles = getComputedStyle(track);
+			const gap = Number.parseFloat(styles.columnGap || styles.gap) || 0;
+			return slide.getBoundingClientRect().width + gap;
+		};
+
+		const getSlideIndex = () => {
+			const stride = slideStride();
+			if (!stride) return null;
+			return Math.round(track.scrollLeft / stride);
+		};
+
+		const jumpToSlideIndex = (index) => {
+			const stride = slideStride();
+			if (!stride) return;
+			track.classList.add("is-teleporting");
+			track.scrollLeft = stride * index;
+			void track.offsetHeight;
+			track.classList.remove("is-teleporting");
+		};
+
+		const goToSlideIndex = (index, smooth) => {
+			const stride = slideStride();
+			if (!stride) return;
+			track.scrollTo({
+				left: stride * index,
+				behavior: smooth ? "smooth" : "auto",
+			});
+		};
+
+		const syncDots = (realIndex) => {
+			for (const [dotIndex, dot] of [...dots.children].entries()) {
+				dot.classList.toggle("is-active", dotIndex === realIndex);
+			}
+		};
+
+		const getActiveRealIndex = () => {
+			const index = getSlideIndex();
+			if (index === null) return 0;
+			if (index <= 0) return realCount - 1;
+			if (index >= realCount + 1) return 0;
+			return index - 1;
+		};
+
+		const finishJump = (physicalIndex, realIndex) => {
+			jumping = true;
+			jumpToSlideIndex(physicalIndex);
+			syncDots(realIndex);
+			requestAnimationFrame(() => {
+				jumping = false;
+			});
+		};
+
+		const teleportIfNeeded = () => {
+			clearTimeout(scrollEndTimer);
+			scrollEndTimer = null;
+			if (jumping) return;
+			const index = getSlideIndex();
+			if (index === null) return;
+			if (index <= 0) {
+				finishJump(realCount, realCount - 1);
+				return;
+			}
+			if (index >= realCount + 1) {
+				finishJump(1, 0);
+			}
+		};
+
+		const scheduleTeleportCheck = () => {
+			clearTimeout(scrollEndTimer);
+			scrollEndTimer = setTimeout(teleportIfNeeded, 140);
+		};
+
+		const goToRealIndex = (targetRealIndex, smooth) => {
+			if (jumping) return;
+			const currentReal = getActiveRealIndex();
+			const targetPhysical = targetRealIndex + 1;
+
+			if (!smooth) {
+				jumpToSlideIndex(targetPhysical);
+				syncDots(targetRealIndex);
+				return;
+			}
+
+			if (targetRealIndex === currentReal) {
+				goToSlideIndex(targetPhysical, true);
+				return;
+			}
+
+			const forwardSteps = (targetRealIndex - currentReal + realCount) % realCount;
+			const backwardSteps = (currentReal - targetRealIndex + realCount) % realCount;
+
+			if (forwardSteps > 0 && forwardSteps < backwardSteps) {
+				goToSlideIndex(realCount + 1, true);
+				return;
+			}
+			if (backwardSteps > 0 && backwardSteps < forwardSteps) {
+				goToSlideIndex(0, true);
+				return;
+			}
+
+			goToSlideIndex(targetPhysical, true);
+		};
+
+		entries.forEach((_, index) => {
+			const dot = document.createElement("button");
+			dot.type = "button";
+			dot.className = `featured-carousel-dot${index === 0 ? " is-active" : ""}`;
+			dot.setAttribute("aria-label", `Featured slide ${index + 1}`);
+			dot.addEventListener("click", () => goToRealIndex(index, true));
+			dots.appendChild(dot);
+		});
+
+		track.addEventListener("scroll", () => {
+			if (!jumping) syncDots(getActiveRealIndex());
+			scheduleTeleportCheck();
+		}, { passive: true });
+
+		track.addEventListener("scrollend", teleportIfNeeded, { passive: true });
+
+		carousel.appendChild(dots);
+		jumping = true;
+		requestAnimationFrame(() => {
+			jumpToSlideIndex(1);
+			syncDots(0);
+			requestAnimationFrame(() => {
+				jumping = false;
+			});
+		});
+	}
+
+	return carousel;
+}
+
+function createEntryListContent(kind, entries) {
+	const fragment = document.createDocumentFragment();
+	if (isPageableDiscoveryKind(kind)) {
+		const featured = entries.slice(0, 3);
+		const rest = entries.slice(3);
+		if (featured.length > 0) {
+			fragment.appendChild(createFeaturedCarousel(kind, featured));
+		}
+		if (rest.length > 0) {
+			const compactList = document.createElement("div");
+			compactList.className = "compact-list";
+			for (const entry of rest) {
+				compactList.appendChild(entryCompactCard(kind, entry));
+			}
+			fragment.appendChild(compactList);
+		}
+		return fragment;
+	}
+	for (const entry of entries) {
+		fragment.appendChild(entryCard(kind, entry));
+	}
+	return fragment;
 }
 
 function endpointStatusId(kind) {
@@ -597,15 +794,15 @@ function setSectionStatus(kind, text) {
 }
 
 function createEntryCardsFragment(kind, entries) {
-	const fragment = document.createDocumentFragment();
-	for (const entry of entries) {
-		fragment.appendChild(entryCard(kind, entry));
-	}
-	return fragment;
+	return createEntryListContent(kind, entries);
 }
 
-function setSectionEntries(kind, entries, { append = false } = {}) {
+function setSectionEntries(kind, entries, { append = false, appendOnly = false } = {}) {
 	const list = document.getElementById(endpointListId(kind));
+	if (appendOnly) {
+		appendCompactEntries(kind, entries, list);
+		return;
+	}
 	const cards = createEntryCardsFragment(kind, entries);
 	if (append) {
 		list.appendChild(cards);
@@ -614,8 +811,168 @@ function setSectionEntries(kind, entries, { append = false } = {}) {
 	list.replaceChildren(cards);
 }
 
-function sectionHasRenderedEntries(kind) {
-	return document.getElementById(endpointListId(kind)).childElementCount > 0;
+function appendCompactEntries(kind, entries, list = document.getElementById(endpointListId(kind))) {
+	if (!list || entries.length === 0) return;
+	const allEntries = sectionState(kind).entries;
+	if (allEntries.length <= 3) {
+		setSectionEntries(kind, entriesForPageRender(sectionState(kind)));
+		return;
+	}
+	let compactList = list.querySelector(".compact-list");
+	if (!compactList) {
+		setSectionEntries(kind, entriesForPageRender(sectionState(kind)));
+		return;
+	}
+	const fragment = document.createDocumentFragment();
+	for (const entry of entries) {
+		fragment.appendChild(entryCompactCard(kind, entry));
+	}
+	compactList.appendChild(fragment);
+}
+
+function discoveryEntriesSignature(kind, entries) {
+	return entries
+		.map((entry) => `${entryName(entry, kind)}:${entryUrl(entry)}`)
+		.join("|");
+}
+
+function restorePanelScroll(scrollTop) {
+	if (!Number.isFinite(scrollTop) || scrollTop <= 0) return;
+	requestAnimationFrame(() => {
+		const content = document.getElementById("content-area");
+		if (content) content.scrollTop = scrollTop;
+	});
+}
+
+async function persistSessionSnapshot(kind) {
+	const state = sectionState(kind);
+	if (!state.loaded || state.entries.length === 0) return;
+	const content = document.getElementById("content-area");
+	await writeSessionSnapshot(discoveryContext(), kind, activeDiscoveryLocale(), {
+		state,
+		scrollTop: content?.scrollTop ?? 0,
+	});
+}
+
+function buildDiscoveryStateFromData(kind, data, { offset, limit, reset, current }) {
+	const entries = normalizeEntries(kind, data);
+	const page = discoveryPageState({
+		kind,
+		entries,
+		metadata: responseMetadata(data),
+		limit,
+		offset,
+	});
+	const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, { reset });
+	const catalogGeneratedAt =
+		typeof data?.generatedAt === "string" ? data.generatedAt : next.catalogGeneratedAt;
+	return {
+		...next,
+		catalogGeneratedAt,
+		loaded: true,
+		loading: false,
+	};
+}
+
+function renderDiscoveryState(kind, state, { appendOnlyEntries = null } = {}) {
+	if (state.entries.length === 0) {
+		setSectionStatus(kind, activeCopy.empty[kind]);
+		setSectionEntries(kind, []);
+		setSectionFooter(kind, "");
+		return;
+	}
+	setSectionStatus(kind, "");
+	if (appendOnlyEntries?.length) {
+		setSectionEntries(kind, appendOnlyEntries, { appendOnly: true });
+	} else {
+		setSectionEntries(kind, entriesForPageRender(state));
+	}
+	setSectionFooter(kind, "");
+}
+
+async function tryRenderFromSessionOrCache(kind, { limit, locale }) {
+	const session = await readSessionSnapshot(discoveryContext(), kind, locale);
+	if (session) {
+		discoveryStates.set(kind, { ...session.state, loading: false });
+		renderDiscoveryState(kind, session.state);
+		restorePanelScroll(session.scrollTop);
+		return true;
+	}
+
+	const requestUrl = discoveryRequestUrl(kind, { limit, offset: 0, locale });
+	const cached = await readDiscoveryCacheEntry(discoveryContext(), kind, requestUrl);
+	if (!isCacheEntryFresh(cached)) {
+		return false;
+	}
+
+	const state = buildDiscoveryStateFromData(kind, cached.data, {
+		offset: 0,
+		limit,
+		reset: true,
+		current: blankDiscoveryState(),
+	});
+	discoveryStates.set(kind, state);
+	renderDiscoveryState(kind, state);
+	return true;
+}
+
+async function fetchDiscoveryFromNetwork(kind, requestUrl, locale) {
+	const response = await fetch(requestUrl, {
+		credentials: "omit",
+		headers: {
+			accept: "application/json",
+			...(locale ? { "Accept-Language": discoveryAcceptLanguage(locale) } : {}),
+		},
+	});
+	if (!response.ok) {
+		throw new Error(`${kind}:${response.status}`);
+	}
+	return response.json();
+}
+
+async function prefetchDiscoveryPage(kind, { offset = 0 } = {}) {
+	if (sectionLoaded(kind) && offset === 0) return;
+	const locale = activeDiscoveryLocale();
+	const requestUrl = discoveryRequestUrl(kind, {
+		limit: DISCOVERY_PAGE_SIZE,
+		offset,
+		locale,
+	});
+	const cached = await readDiscoveryCacheEntry(discoveryContext(), kind, requestUrl);
+	if (isCacheEntryFresh(cached)) return;
+	try {
+		const data = await fetchDiscoveryFromNetwork(kind, requestUrl, locale);
+		await writeDiscoveryCache(discoveryContext(), kind, requestUrl, data);
+	} catch {
+		// Prefetch is best-effort.
+	}
+}
+
+function scheduleDiscoveryPrefetch(kind) {
+	const run = () => {
+		for (const panelKind of ["portals", "servers", "clients"]) {
+			if (panelKind === kind) continue;
+			void prefetchDiscoveryPage(panelKind);
+		}
+		const state = sectionState(kind);
+		if (state.hasMore && Number.isFinite(state.nextOffset)) {
+			void prefetchDiscoveryPage(kind, { offset: state.nextOffset });
+		}
+	};
+	if ("requestIdleCallback" in window) {
+		requestIdleCallback(run, { timeout: 2000 });
+	} else {
+		setTimeout(run, 250);
+	}
+}
+
+function saveActivePanelSnapshot() {
+	if (activePanelName === "settings" || !sectionLoaded(activePanelName)) return;
+	void persistSessionSnapshot(activePanelName);
+}
+
+function sectionLoaded(kind) {
+	return sectionState(kind).loaded;
 }
 
 function setSectionFooter(kind, text) {
@@ -726,16 +1083,11 @@ function entrySource(entry) {
 }
 
 function entryCard(kind, entry) {
-	const metaBits = entryMeta(entry, kind);
-	return card({
-		name: entryName(entry, kind),
-		description: entryDescription(entry, kind),
-		url: entryUrl(entry),
-		source: entrySource(entry),
-		signal: metaBits.signal,
-		meta: metaBits.meta,
-		iconUrl: iconUrl(entry, ADMIN_ORIGIN),
-	});
+	return card(entryCardProps(kind, entry));
+}
+
+function entryCompactCard(kind, entry) {
+	return compactCard(entryCardProps(kind, entry));
 }
 
 function discoveryRequestUrl(kind, { limit, offset, locale }) {
@@ -749,23 +1101,19 @@ function discoveryRequestUrl(kind, { limit, offset, locale }) {
 	);
 }
 
-async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false, locale, catalogGeneratedAt }) {
+async function fetchDiscoveryData(kind, { limit, offset, bypassCache = false, locale, catalogGeneratedAt, forceNetwork = false }) {
 	const requestUrl = discoveryRequestUrl(kind, { limit, offset, locale });
-	let data = bypassCache ? null : await readDiscoveryCache(kind, requestUrl, catalogGeneratedAt);
-	if (!data) {
-		const response = await fetch(requestUrl, {
-			credentials: "omit",
-			headers: {
-				accept: "application/json",
-				...(locale ? { "Accept-Language": discoveryAcceptLanguage(locale) } : {}),
-			},
-		});
-		if (!response.ok) {
-			throw new Error(`${kind}:${response.status}`);
-		}
-		data = await response.json();
-		await writeDiscoveryCache(kind, requestUrl, data);
+	if (!bypassCache && !forceNetwork) {
+		const data = await readDiscoveryCacheData(
+			discoveryContext(),
+			kind,
+			requestUrl,
+			catalogGeneratedAt,
+		);
+		if (data) return data;
 	}
+	const data = await fetchDiscoveryFromNetwork(kind, requestUrl, locale);
+	await writeDiscoveryCache(discoveryContext(), kind, requestUrl, data);
 	return data;
 }
 
@@ -787,10 +1135,6 @@ function sectionState(kind) {
 	return discoveryStates.get(kind);
 }
 
-function sectionLoaded(kind) {
-	return isPageableDiscoveryKind(kind) ? sectionState(kind).loaded : renderedSections.has(kind);
-}
-
 async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = {}) {
 	const current = sectionState(kind);
 	if (current.loading) return;
@@ -798,15 +1142,30 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 
 	const offset = reset ? 0 : current.nextOffset;
 	const limit = DISCOVERY_PAGE_SIZE;
+	const locale = activeDiscoveryLocale();
 	const shouldClearEntries = shouldClearEntriesBeforeLoad(current, { reset });
+	const previousCount = current.entries.length;
+	const previousSignature = discoveryEntriesSignature(kind, current.entries);
+
 	if (bypassCache) {
-		await clearDiscoveryCacheForKind(kind);
+		await clearDiscoveryCacheForKind(discoveryContext(), kind);
+		if (reset) {
+			await clearSessionSnapshots(discoveryContext(), locale);
+		}
 	}
-	discoveryStates.set(kind, { ...current, loading: true });
+
+	let renderedFromFastPath = false;
+	if (reset && !bypassCache) {
+		renderedFromFastPath = await tryRenderFromSessionOrCache(kind, { limit, locale });
+	}
+
+	discoveryStates.set(kind, { ...sectionState(kind), loading: true });
 	if (reset) {
-		setSectionStatus(kind, activeCopy.loading[kind]);
-		if (shouldClearEntries) {
-			setSectionEntries(kind, []);
+		if (!renderedFromFastPath) {
+			setSectionStatus(kind, activeCopy.loading[kind]);
+			if (shouldClearEntries) {
+				setSectionEntries(kind, []);
+			}
 		}
 		setSectionFooter(kind, "");
 	} else {
@@ -818,30 +1177,58 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 			limit,
 			offset,
 			bypassCache,
-			locale: activeDiscoveryLocale(),
+			locale,
 			catalogGeneratedAt: reset ? null : current.catalogGeneratedAt,
+			forceNetwork: reset && renderedFromFastPath,
 		});
-		const entries = normalizeEntries(kind, data);
-		const page = discoveryPageState({
-			kind,
-			entries,
-			metadata: responseMetadata(data),
-			limit,
-			offset,
-		});
-		const next = nextDiscoveryPageState(reset ? blankDiscoveryState() : current, page, {
-			reset,
-		});
-		const catalogGeneratedAt =
-			typeof data?.generatedAt === "string" ? data.generatedAt : next.catalogGeneratedAt;
-		discoveryStates.set(kind, {
-			...next,
-			catalogGeneratedAt,
-			loaded: true,
-			loading: false,
-		});
-		const entriesToRender = entriesForPageRender(next);
 
+		if (reset && renderedFromFastPath) {
+			const freshFirstPage = buildDiscoveryStateFromData(kind, data, {
+				offset: 0,
+				limit,
+				reset: true,
+				current: blankDiscoveryState(),
+			});
+			const existing = sectionState(kind);
+			const catalogChanged =
+				Boolean(freshFirstPage.catalogGeneratedAt) &&
+				Boolean(existing.catalogGeneratedAt) &&
+				freshFirstPage.catalogGeneratedAt !== existing.catalogGeneratedAt;
+			const firstPageChanged =
+				discoveryEntriesSignature(kind, existing.entries.slice(0, limit)) !==
+				discoveryEntriesSignature(kind, freshFirstPage.entries);
+
+			if (catalogChanged || firstPageChanged) {
+				discoveryStates.set(kind, freshFirstPage);
+				renderDiscoveryState(kind, freshFirstPage);
+				await persistSessionSnapshot(kind);
+			} else {
+				discoveryStates.set(kind, {
+					...existing,
+					loading: false,
+					catalogGeneratedAt: freshFirstPage.catalogGeneratedAt || existing.catalogGeneratedAt,
+				});
+			}
+			setSectionStatus(kind, "");
+			setSectionFooter(kind, "");
+			if (activePanelName === kind) {
+				requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
+				scheduleDiscoveryPrefetch(kind);
+			}
+			return;
+		}
+
+		const next = buildDiscoveryStateFromData(kind, data, {
+			offset,
+			limit,
+			reset,
+			current: reset ? blankDiscoveryState() : current,
+		});
+		const nextSignature = discoveryEntriesSignature(kind, next.entries);
+		const appendOnlyEntries = !reset ? next.entries.slice(previousCount) : null;
+		const unchanged = nextSignature === previousSignature && !bypassCache;
+
+		discoveryStates.set(kind, next);
 		if (next.entries.length === 0) {
 			setSectionStatus(kind, activeCopy.empty[kind]);
 			setSectionEntries(kind, []);
@@ -849,14 +1236,30 @@ async function loadDiscoveryPage(kind, { reset = false, bypassCache = false } = 
 			return;
 		}
 
-		setSectionStatus(kind, "");
-		setSectionEntries(kind, entriesToRender, { append: false });
-		setSectionFooter(kind, "");
+		if (!unchanged) {
+			if (reset) {
+				renderDiscoveryState(kind, next);
+			} else {
+				setSectionStatus(kind, "");
+				renderDiscoveryState(kind, next, { appendOnlyEntries });
+				setSectionFooter(kind, "");
+			}
+		} else {
+			setSectionStatus(kind, "");
+			setSectionFooter(kind, "");
+		}
+
+		await persistSessionSnapshot(kind);
 		if (activePanelName === kind) {
 			requestAnimationFrame(() => loadMoreIfActiveSentinelVisible());
+			if (reset) scheduleDiscoveryPrefetch(kind);
 		}
 	} catch (error) {
-		discoveryStates.set(kind, { ...current, loading: false });
+		discoveryStates.set(kind, { ...sectionState(kind), loading: false });
+		if (renderedFromFastPath && reset) {
+			setSectionFooter(kind, "");
+			return;
+		}
 		if (reset) {
 			setSectionStatus(kind, unavailableMessage(kind));
 		} else {
@@ -907,7 +1310,7 @@ function setupPaginationObserver(content) {
 			threshold: 0,
 		},
 	);
-	for (const kind of ["servers", "clients"]) {
+	for (const kind of ["portals", "servers", "clients"]) {
 		const sentinel = document.getElementById(endpointSentinelId(kind));
 		if (!sentinel) continue;
 		sentinel.dataset.paginationKind = kind;
@@ -993,32 +1396,7 @@ function setupPullToRefresh(content) {
 }
 
 async function renderSection(kind, { bypassCache = false } = {}) {
-	if (isPageableDiscoveryKind(kind)) {
-		await loadDiscoveryPage(kind, { reset: true, bypassCache });
-		return;
-	}
-	const hasRenderedEntries = sectionHasRenderedEntries(kind);
-	setSectionStatus(kind, activeCopy.loading[kind]);
-	if (!hasRenderedEntries) {
-		setSectionEntries(kind, []);
-	}
-	setSectionFooter(kind, "");
-	const data = await fetchDiscoveryData(kind, {
-		limit: DISCOVERY_PAGE_SIZE,
-		offset: 0,
-		bypassCache,
-		locale: activeDiscoveryLocale(),
-	});
-	const entries = normalizeEntries(kind, data);
-	if (entries.length === 0) {
-		setSectionStatus(kind, activeCopy.empty[kind]);
-		setSectionEntries(kind, []);
-		renderedSections.add(kind);
-		return;
-	}
-	setSectionStatus(kind, "");
-	setSectionEntries(kind, entries);
-	renderedSections.add(kind);
+	await loadDiscoveryPage(kind, { reset: true, bypassCache });
 }
 
 async function ensureSectionRendered(kind, { bypassCache = false } = {}) {
@@ -1029,6 +1407,7 @@ async function ensureSectionRendered(kind, { bypassCache = false } = {}) {
 }
 
 function activatePanel(panelName) {
+	saveActivePanelSnapshot();
 	activePanelName = panelName;
 	for (const tab of document.querySelectorAll("[data-panel-target]")) {
 		tab.classList.toggle("is-active", tab.dataset.panelTarget === panelName);
@@ -1050,6 +1429,8 @@ function activatePanel(panelName) {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+	void pruneExpiredDiscoveryCaches(discoveryContext());
+	window.addEventListener("pagehide", saveActivePanelSnapshot);
 	currentSettings = await readSettings();
 	const languageSelect = document.getElementById("language-select");
 	const themeSelect = document.getElementById("theme-select");
@@ -1073,16 +1454,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 		applyTheme(currentSettings.theme);
 	}
 
-	function resetDiscoveryPanelsForLocaleChange() {
+	function resetDiscoveryPanelsForLocaleChange(previousLocale) {
 		for (const kind of ["portals", "servers", "clients"]) {
 			discoveryStates.delete(kind);
-			renderedSections.delete(kind);
 		}
+		void clearSessionSnapshots(discoveryContext(), previousLocale);
 	}
 
 	languageSelect.addEventListener("change", () => {
+		const previousLocale = activeDiscoveryLocale();
 		void persist({ ...currentSettings, language: languageSelect.value }).then(() => {
-			resetDiscoveryPanelsForLocaleChange();
+			resetDiscoveryPanelsForLocaleChange(previousLocale);
 			refreshActivePanel().catch(() => { });
 		});
 	});
