@@ -52,13 +52,6 @@ export interface ServerGridProps {
 	onServerInstall: (server: RegistryServerEntry) => void;
 	onServerHide: (server: RegistryServerEntry) => void;
 	enableBlacklist: boolean;
-	onNextPage: () => void;
-	onPreviousPage: () => void;
-	onFirstPage: () => void;
-	onLastPage: () => Promise<void>;
-	onGoToPage: (page: number) => Promise<void>;
-	onItemsPerPageChange: (itemsPerPage: number) => void;
-	isPaginationActionLoading: boolean;
 }
 
 export interface MarketSearchProps {
@@ -67,14 +60,12 @@ export interface MarketSearchProps {
 	sort: SortOption;
 	onSortChange: (value: SortOption) => void;
 	isLoading: boolean;
-	lastSyncedAt?: string;
 	onSync: () => Promise<void>;
 	isSyncing: boolean;
 }
 
 export interface UseMarketDataReturn {
 	servers: RegistryServerEntry[];
-	sortedServers: RegistryServerEntry[];
 	isInitialLoading: boolean;
 	isPageLoading: boolean;
 	isEmpty: boolean;
@@ -94,7 +85,7 @@ export interface UseMarketDataReturn {
 	onItemsPerPageChange: (itemsPerPage: number) => void;
 	isPaginationActionLoading: boolean;
 	onRefresh: () => void;
-	lastSyncedAt?: string;
+	lastSyncedAt?: number;
 	onSync: () => Promise<void>;
 	isSyncing: boolean;
 }

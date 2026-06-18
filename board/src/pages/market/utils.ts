@@ -103,6 +103,49 @@ function compactString(value?: string | null): string | null {
 	return trimmed ? trimmed : null;
 }
 
+export function formatRegistryPackageTypeLabel(value?: string | null): string {
+	const registryType = compactString(value)?.toLowerCase();
+	if (!registryType) {
+		return "Unknown";
+	}
+	switch (registryType) {
+		case "npm":
+			return "NPM";
+		case "pypi":
+			return "PyPI";
+		case "mcpb":
+			return "MCPB";
+		case "nuget":
+			return "NuGet";
+		case "oci":
+			return "OCI";
+		default:
+			return registryType.toUpperCase();
+	}
+}
+
+export function summarizePackageDistributionTypes(
+	server: RegistryServerEntry | null,
+): string {
+	if (!server) {
+		return "—";
+	}
+
+	const types = new Set<string>();
+	for (const pkg of server.packages ?? []) {
+		if (!compactString(pkg.registryType)) {
+			continue;
+		}
+		types.add(formatRegistryPackageTypeLabel(pkg.registryType));
+	}
+
+	if (!types.size) {
+		return "—";
+	}
+
+	return Array.from(types).sort().join(" / ");
+}
+
 export function isSupportedRegistryPackageType(value?: string | null): boolean {
 	const registryType = compactString(value)?.toLowerCase();
 	return registryType === "npm" || registryType === "pypi";

@@ -9,6 +9,5 @@ pub mod initialization;
 pub mod models;
 pub mod operations;
 pub mod profile;
-pub mod registry;
 pub mod runtime;
 pub mod server;

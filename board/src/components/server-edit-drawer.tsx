@@ -195,7 +195,7 @@ const convertServerDetailToDraft = (
 		? server.args.filter((item): item is string => Boolean(item))
 		: undefined;
 	const meta = buildMetaFromServer(server);
-	const registryServerId = server.registry_server_id ?? undefined;
+	const sourceRef = server.source_ref ?? undefined;
 
 	const headersSource = server.headers ?? server.env ?? undefined;
 	const sanitizedHeaders = sanitizeRecord(headersSource ?? undefined);
@@ -208,7 +208,7 @@ const convertServerDetailToDraft = (
 			args,
 			env: sanitizeRecord(server.env ?? undefined),
 			meta,
-			registryServerId,
+			sourceRef,
 		};
 	}
 
@@ -224,7 +224,7 @@ const convertServerDetailToDraft = (
 		urlParams,
 		headers: sanitizedHeaders,
 		meta,
-		registryServerId,
+		sourceRef,
 	};
 };
 
@@ -334,7 +334,7 @@ export function ServerEditDrawer({
 	);
 
 	const handleRefreshFromRegistry = useCallback(async () => {
-		if (!server?.registry_server_id || !server.id) return;
+		if (!server?.source_ref?.startsWith("registry:") || !server.id) return;
 		try {
 			setIsRefreshing(true);
 			const currentDraft = formRef.current?.getCurrentDraft();
@@ -444,7 +444,7 @@ export function ServerEditDrawer({
 			onInitiateOAuth={handleInitiateOAuth}
 			allowJsonEditing={false}
 			initialDraft={initialDraft ?? undefined}
-			onRefreshFromRegistry={server?.registry_server_id ? handleRefreshFromRegistry : undefined}
+			onRefreshFromRegistry={server?.source_ref?.startsWith("registry:") ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}
 			extraTab={{
 				value: "unify",

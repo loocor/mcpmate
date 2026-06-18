@@ -543,7 +543,7 @@ test("onboarding imports server presets through existing backend import API", as
       mcpServers: {
         GitHub: {
           type: "stdio",
-          registry_server_id: "github",
+          source_ref: "github",
           command: "npx",
           args: ["-y", "@modelcontextprotocol/server-github"],
           env: { GITHUB_TOKEN: "${GITHUB_TOKEN}" },

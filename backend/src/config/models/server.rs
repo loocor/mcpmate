@@ -27,8 +27,8 @@ pub struct Server {
     pub command: Option<String>,
     /// URL (for sse and streamable_http servers)
     pub url: Option<String>,
-    /// Registry server id (from official registry)
-    pub registry_server_id: Option<String>,
+    /// Source reference (namespaced identifier tracking import origin, e.g. "registry:server-name")
+    pub source_ref: Option<String>,
     /// Capabilities list string (e.g., "tools,prompts,resources")
     pub capabilities: Option<String>,
     /// Whether the server is globally enabled
@@ -131,7 +131,7 @@ impl Server {
             command: None,
             url: None,
 
-            registry_server_id: None,
+            source_ref: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,
@@ -153,7 +153,7 @@ impl Server {
             command,
             url: None,
 
-            registry_server_id: None,
+            source_ref: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,
@@ -175,7 +175,7 @@ impl Server {
             command: None,
             url,
 
-            registry_server_id: None,
+            source_ref: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
@@ -197,7 +197,7 @@ impl Server {
             command: None,
             url,
 
-            registry_server_id: None,
+            source_ref: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,

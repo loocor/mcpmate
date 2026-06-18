@@ -352,6 +352,21 @@ export default defineConfig({
 	},
 	server: {
 		proxy: {
+			"^/registry-api(?:/|$)": {
+				target: "https://registry.modelcontextprotocol.io",
+				changeOrigin: true,
+				rewrite: (path: string) => path.replace(/^\/registry-api/, "/v0.1"),
+			},
+			"^/github-raw(?:/|$)": {
+				target: "https://raw.githubusercontent.com",
+				changeOrigin: true,
+				rewrite: (path: string) => path.replace(/^\/github-raw/, ""),
+			},
+			"^/github-api(?:/|$)": {
+				target: "https://api.github.com",
+				changeOrigin: true,
+				rewrite: (path: string) => path.replace(/^\/github-api/, ""),
+			},
 			"^/api(?:/|$)": {
 				target: devApiBaseUrl,
 				router: () => currentDevApiBaseUrl(),

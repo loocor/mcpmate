@@ -9,7 +9,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
+import type { Pluggable } from "unified";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { ErrorDisplay } from "../../components/error-display";
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar";
@@ -20,15 +23,28 @@ import { ServerInstallWizard } from "../../components/server-install";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import {
+	buildReadmeAssetContext,
+	fetchRepositoryReadmeMarkdown,
+	rehypeGitHubReadmeAssets,
+	rewriteReadmeAssetUrls,
+} from "../../lib/github-readme";
 import { serversApi } from "../../lib/api";
 import {
-	fetchCachedRegistryServerByKey,
-	getCanonicalRegistryServerId,
 	getOfficialMeta,
 	matchesInstalledRegistryServer,
 } from "../../lib/registry";
+import { useCatalogProvider } from "../../lib/market";
 import type { RegistryServerEntry } from "../../lib/types";
 import { cn, formatLocalDateTime } from "../../lib/utils";
+import { MarketDetailSkeleton } from "./market-detail-skeleton";
+import {
+	MARKET_DETAIL_STALE_MS,
+	MARKET_README_STALE_MS,
+	marketDetailQueryKey,
+	marketReadmeQueryKey,
+} from "./market-query-keys";
+import { resolveMarketListReturnPath } from "./market-list-pagination-storage";
 import type { RemoteOption } from "./types";
 import {
 	buildDraftFromRemoteOption,
@@ -40,6 +56,7 @@ import {
 	isSupportedRegistryPackageType,
 	normalizeRemoteKind,
 	slugifyForConfig,
+	summarizePackageDistributionTypes,
 } from "./utils";
 
 function buildRemoteOptions(server: RegistryServerEntry): RemoteOption[] {
@@ -137,53 +154,6 @@ function summarizeTransportTypes(server: RegistryServerEntry): string {
 	return Array.from(kindSet).map((kind) => getRemoteTypeLabel(kind)).join(" / ");
 }
 
-function parseGitHubRepositoryUrl(repositoryUrl: string): { owner: string; repo: string } | null {
-	const matched = repositoryUrl.match(/^https?:\/\/github\.com\/([^/]+)\/([^/#?]+)/i);
-	if (!matched) return null;
-	const owner = matched[1];
-	const repo = matched[2].replace(/\.git$/i, "");
-	if (!owner || !repo) return null;
-	return { owner, repo };
-}
-
-function decodeBase64Utf8(content: string): string {
-	const normalized = content.replace(/\n/g, "");
-	const binary = atob(normalized);
-	const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-	return new TextDecoder().decode(bytes);
-}
-
-async function fetchRepositoryReadmeMarkdown(repositoryUrl: string, subfolder?: string | null): Promise<string> {
-	const parsed = parseGitHubRepositoryUrl(repositoryUrl);
-	if (!parsed) {
-		throw new Error("unsupported-repository");
-	}
-
-	const normalizedSubfolder = (subfolder ?? "").trim().replace(/^\/+|\/+$/g, "");
-	const readmePath = normalizedSubfolder ? `${normalizedSubfolder}/README.md` : "README.md";
-	const encodedPath = readmePath
-		.split("/")
-		.map((segment) => encodeURIComponent(segment))
-		.join("/");
-	const endpoint = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}`;
-	const response = await fetch(endpoint, {
-		headers: {
-			Accept: "application/vnd.github+json",
-		},
-	});
-
-	if (!response.ok) {
-		throw new Error(`readme-fetch-failed-${response.status}`);
-	}
-
-	const payload = (await response.json()) as { content?: string; encoding?: string };
-	if (!payload.content || payload.encoding !== "base64") {
-		throw new Error("readme-content-invalid");
-	}
-
-	return decodeBase64Utf8(payload.content);
-}
-
 const MARKET_DETAIL_SPLIT_STORAGE_KEY = "marketDetail.registryReadmeSplitPct";
 
 function clampMarketDetailSplitPct(n: number): number {
@@ -206,15 +176,18 @@ export function MarketDetailPage() {
 	const { t } = useTranslation("market");
 	usePageTranslations("market");
 	const navigate = useNavigate();
+	const location = useLocation();
 	const { registryKey } = useParams();
+	const { provider } = useCatalogProvider();
 	const decodedKey = useMemo(
 		() => decodeURIComponent(registryKey ?? ""),
 		[registryKey],
 	);
 	const serverQuery = useQuery({
-		queryKey: ["market", "detail", decodedKey],
-		queryFn: () => fetchCachedRegistryServerByKey(decodedKey),
+		queryKey: marketDetailQueryKey(provider.meta.id, decodedKey),
+		queryFn: () => provider.fetchByKey(decodedKey),
 		enabled: Boolean(decodedKey),
+		staleTime: MARKET_DETAIL_STALE_MS,
 	});
 	const installedServersQuery = useQuery({
 		queryKey: ["servers"],
@@ -228,12 +201,38 @@ export function MarketDetailPage() {
 	const repositoryUrl = server?.repository?.url ?? "";
 	const repositorySubfolder = server?.repository?.subfolder ?? "";
 	const readmeQuery = useQuery({
-		queryKey: ["market", "detail", "readme", repositoryUrl, repositorySubfolder],
+		queryKey: marketReadmeQueryKey(provider.meta.id, repositoryUrl, repositorySubfolder),
 		queryFn: () => fetchRepositoryReadmeMarkdown(repositoryUrl, repositorySubfolder),
 		enabled: Boolean(repositoryUrl),
 		retry: false,
-		staleTime: 5 * 60 * 1000,
+		staleTime: MARKET_README_STALE_MS,
 	});
+
+	const readmeAssetContext = useMemo(() => {
+		return (
+			readmeQuery.data?.assetContext
+			?? buildReadmeAssetContext(repositoryUrl, repositorySubfolder)
+		);
+	}, [readmeQuery.data?.assetContext, repositoryUrl, repositorySubfolder]);
+
+	const readmeRehypePlugins = useMemo((): Pluggable[] => {
+		const plugins: Pluggable[] = [rehypeRaw];
+		if (readmeAssetContext) {
+			plugins.push(rehypeGitHubReadmeAssets(readmeAssetContext));
+		}
+		plugins.push(rehypeSanitize);
+		return plugins;
+	}, [readmeAssetContext]);
+
+	const readmeMarkdown = useMemo(() => {
+		const markdown = readmeQuery.data?.markdown?.trim() ?? "";
+		if (!markdown || !readmeAssetContext) {
+			return markdown;
+		}
+		return rewriteReadmeAssetUrls(markdown, readmeAssetContext);
+	}, [readmeAssetContext, readmeQuery.data?.markdown]);
+
+	const showReadmePanel = Boolean(readmeMarkdown);
 
 	const remoteOptions = useMemo(() => (server ? buildRemoteOptions(server) : []), [server]);
 	const hasUnsupportedPackageOption = useMemo(
@@ -250,7 +249,7 @@ export function MarketDetailPage() {
 		const draft = buildDraftFromRemoteOption(selectedRemote, slugifyForConfig(server.name));
 		return {
 			...draft,
-			registryServerId: server.name,
+			sourceRef: provider.buildSourceRef(server),
 			meta: {
 				description: server.description || "",
 				version: server.version || "",
@@ -273,7 +272,7 @@ export function MarketDetailPage() {
 				},
 			},
 		};
-	}, [selectedRemote, server]);
+	}, [selectedRemote, server, provider]);
 
 	const installPipeline = useServerInstallPipeline({
 		onImported: () => {
@@ -325,6 +324,10 @@ export function MarketDetailPage() {
 		document.addEventListener("pointerup", onUp);
 	}, [isLgLayout]);
 
+	if (serverQuery.isLoading && !server) {
+		return <MarketDetailSkeleton />;
+	}
+
 	if (serverQuery.error) {
 		return (
 			<ErrorDisplay
@@ -340,13 +343,14 @@ export function MarketDetailPage() {
 			<ErrorDisplay
 				title={t("market:detail.notFoundTitle", { defaultValue: "Registry entry not found" })}
 				error={new Error(decodedKey || "Missing registry key")}
-				onRetry={() => navigate("/market")}
+				onRetry={() =>
+					navigate(resolveMarketListReturnPath(location.pathname, location.state))
+				}
 			/>
 		);
 	}
 
 	const official = getOfficialMeta(server);
-	const canonicalRegistryId = getCanonicalRegistryServerId(server);
 	const displayName = formatServerName(server.name);
 	const installedServer =
 		installedServersQuery.data?.servers.find((item) => {
@@ -355,48 +359,47 @@ export function MarketDetailPage() {
 	const isInstalled = Boolean(installedServer);
 	const primaryIconSrc = server.icons?.[0]?.src;
 	const transportTypeSummary = summarizeTransportTypes(server);
-	const links: Array<{ label: string; url: string; icon: typeof Globe }> = [];
-	if (server.websiteUrl) {
+	const packageDistributionSummary = summarizePackageDistributionTypes(server);
+	const links: Array<{ id: string; label: string; url: string; icon: typeof Globe }> = [];
+	const websiteUrl = server.websiteUrl?.trim() ?? "";
+	if (websiteUrl) {
 		links.push({
+			id: "website",
 			label: t("market:detail.website", { defaultValue: "Website" }),
-			url: server.websiteUrl,
+			url: websiteUrl,
 			icon: Globe,
 		});
 	}
-	if (repositoryUrl) {
+	if (repositoryUrl && repositoryUrl !== websiteUrl) {
 		links.push({
+			id: "repository",
 			label: t("market:detail.repository", { defaultValue: "Repository" }),
 			url: repositoryUrl,
 			icon: Code,
 		});
 	}
-	const readmeMarkdown = readmeQuery.data?.trim() ? readmeQuery.data : "";
-	const showReadmePanel = Boolean(readmeMarkdown);
 	const splitGridStyle = isLgLayout && showReadmePanel
 		? {
-				gridTemplateColumns: `minmax(0,${leftSplitPct}fr) 8px minmax(0,${100 - leftSplitPct}fr)`,
-			}
+			gridTemplateColumns: `minmax(0,${leftSplitPct}fr) 8px minmax(0,${100 - leftSplitPct}fr)`,
+		}
 		: undefined;
 
 	return (
 		<>
 			<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-				<div className="flex shrink-0 flex-col gap-2 md:flex-row md:items-center md:justify-between">
-					<div className="flex min-w-0 items-center gap-3">
-						<h2 className="min-w-0 break-words text-3xl font-bold tracking-tight">
-							{displayName}
-						</h2>
-					</div>
+				<div className="shrink-0 py-1">
+					<h2 className="min-w-0 break-words text-3xl font-bold tracking-tight">
+						{displayName}
+					</h2>
 				</div>
-				<div className="min-h-0 flex-1 overflow-y-auto">
-					<div className="space-y-6">
-				<Card>
+
+				<Card className="shrink-0">
 					<CardContent className="relative p-4">
 						<div className="mb-3 flex flex-wrap items-center justify-end gap-2 sm:absolute sm:top-4 sm:right-4 sm:z-10 sm:mb-0">
 							{links.map((link) => {
 								const Icon = link.icon;
 								return (
-									<Button key={link.url} variant="outline" asChild>
+									<Button key={link.id} variant="outline" asChild>
 										<a href={link.url} target="_blank" rel="noopener noreferrer">
 											<Icon className="mr-2 h-4 w-4" />
 											{link.label}
@@ -475,7 +478,6 @@ export function MarketDetailPage() {
 								<MetadataGridRow
 									label={t("market:detail.type", { defaultValue: "Type" })}
 									value={transportTypeSummary}
-									valueClassName="min-w-0 break-words font-mono text-sm leading-tight"
 								/>
 								<MetadataGridRow
 									label={t("market:detail.description", { defaultValue: "Description" })}
@@ -489,15 +491,15 @@ export function MarketDetailPage() {
 				<div
 					ref={splitContainerRef}
 					className={cn(
-						"grid grid-cols-1 items-stretch gap-6",
+						"grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto lg:overflow-hidden",
 						showReadmePanel && "lg:grid-cols-none lg:items-stretch lg:gap-0",
 					)}
 					style={splitGridStyle}
 				>
 					<Card
 						className={cn(
-							"min-w-0 rounded-xl lg:h-full lg:min-h-0",
-							showReadmePanel && "lg:rounded-none lg:rounded-l-xl",
+							"min-w-0 lg:min-h-0",
+							showReadmePanel && "lg:h-full lg:overflow-y-auto lg:rounded-none lg:rounded-l-xl",
 						)}
 					>
 						<CardHeader>
@@ -517,17 +519,7 @@ export function MarketDetailPage() {
 										label={t("market:detail.repositorySubfolder", { defaultValue: "Repository subfolder" })}
 										value={server.repository?.subfolder ?? "—"}
 									/>
-									<MetadataGridRow
-										label={t("market:detail.repositoryId", { defaultValue: "Repository Entry ID (Metadata)" })}
-										value={server.repository?.id ?? "—"}
-									/>
 								</div>
-								<p className="text-xs text-slate-500 dark:text-slate-400">
-									{t("market:detail.repositoryIdHint", {
-										defaultValue:
-											"Repository Entry ID is optional repository metadata and is not used as the managed server linkage key.",
-									})}
-								</p>
 							</div>
 
 							<div className="space-y-2">
@@ -535,6 +527,12 @@ export function MarketDetailPage() {
 									{t("market:detail.registryMeta", { defaultValue: "Registry metadata" })}
 								</p>
 								<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
+									<MetadataGridRow
+										label={t("market:detail.packageDistribution", {
+											defaultValue: "Distribution",
+										})}
+										value={packageDistributionSummary !== "—" ? packageDistributionSummary : transportTypeSummary}
+									/>
 									<MetadataGridRow
 										label={t("market:detail.officialStatus", { defaultValue: "Official status" })}
 										value={official?.status ?? "—"}
@@ -551,17 +549,7 @@ export function MarketDetailPage() {
 										label={t("market:detail.versionId", { defaultValue: "Version ID" })}
 										value={official?.versionId ?? "—"}
 									/>
-									<MetadataGridRow
-										label={t("market:detail.serverId", { defaultValue: "Registry ID (Canonical Key)" })}
-										value={canonicalRegistryId}
-									/>
 								</div>
-								<p className="text-xs text-slate-500 dark:text-slate-400">
-									{t("market:detail.registryIdHint", {
-										defaultValue:
-											"MCPMate links managed servers by official server.name (official.serverId is treated as an alias only when equivalent).",
-									})}
-								</p>
 							</div>
 						</CardContent>
 					</Card>
@@ -579,14 +567,22 @@ export function MarketDetailPage() {
 								onPointerDown={onSplitPointerDown}
 							/>
 
-							<Card className="flex max-h-[70vh] min-w-0 flex-col overflow-hidden rounded-xl lg:h-[calc(100vh-18rem)] lg:max-h-none lg:min-h-0 lg:rounded-none lg:rounded-r-xl">
+							<Card className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl lg:h-full lg:rounded-none lg:rounded-r-xl">
 								<CardHeader className="shrink-0">
 									<CardTitle>{t("market:detail.readme", { defaultValue: "README" })}</CardTitle>
 								</CardHeader>
 								<CardContent className="min-h-0 flex-1 overflow-y-auto p-4">
 									<ReactMarkdown
 										remarkPlugins={[remarkGfm]}
+										rehypePlugins={readmeRehypePlugins}
 										components={{
+											img: ({ node: _node, alt, ...props }) => (
+												<img
+													{...props}
+													alt={typeof alt === "string" ? alt : ""}
+													className="max-w-full h-auto"
+												/>
+											),
 											a: ({ href, children }) => {
 												const url = href ?? "";
 												return (
@@ -612,10 +608,6 @@ export function MarketDetailPage() {
 							</Card>
 						</>
 					) : null}
-				</div>
-
-				<div className="border-t border-slate-200 dark:border-slate-800" />
-					</div>
 				</div>
 			</div>
 

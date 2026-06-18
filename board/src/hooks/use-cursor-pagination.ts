@@ -1,5 +1,11 @@
 import { useCallback, useState } from "react";
 
+interface InitialCursorPaginationState {
+	currentPage: number;
+	cursorHistory: (string | undefined)[];
+	hasNextPage?: boolean;
+}
+
 interface UseCursorPaginationOptions {
 	/**
 	 * Items per page
@@ -9,6 +15,7 @@ interface UseCursorPaginationOptions {
 	 * Callback when search/filter conditions change
 	 */
 	onReset?: () => void;
+	initialState?: InitialCursorPaginationState;
 }
 
 interface UseCursorPaginationResult {
@@ -68,12 +75,13 @@ interface UseCursorPaginationResult {
 export function useCursorPagination({
 	limit,
 	onReset,
+	initialState,
 }: UseCursorPaginationOptions): UseCursorPaginationResult {
-	const [currentPage, setCurrentPage] = useState(1);
-	const [cursorHistory, setCursorHistory] = useState<(string | undefined)[]>([
-		undefined,
-	]);
-	const [hasNextPage, setHasNextPage] = useState(false);
+	const [currentPage, setCurrentPage] = useState(initialState?.currentPage ?? 1);
+	const [cursorHistory, setCursorHistory] = useState<(string | undefined)[]>(
+		initialState?.cursorHistory ?? [undefined],
+	);
+	const [hasNextPage, setHasNextPage] = useState(initialState?.hasNextPage ?? false);
 
 	const currentCursor = cursorHistory[currentPage - 1];
 	const hasPreviousPage = currentPage > 1;
