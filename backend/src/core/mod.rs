@@ -15,6 +15,7 @@ pub mod cache;
 pub mod capability;
 pub mod events;
 pub mod foundation;
+pub mod llm;
 pub mod models;
 pub mod oauth;
 pub mod pool;

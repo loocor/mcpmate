@@ -6,6 +6,7 @@ pub mod ai;
 pub mod audit;
 pub mod client;
 pub mod inspector;
+pub mod llm;
 pub mod onboarding;
 pub mod openapi;
 pub mod profile;
@@ -273,7 +274,8 @@ async fn create_router_internal(
         .merge(runtime::routes(state.clone()))
         .merge(secrets::routes(state.clone()))
         .merge(inspector::routes(state.clone()))
-        .merge(client::routes(state.clone()));
+        .merge(client::routes(state.clone()))
+        .merge(llm::routes(state.clone()));
 
     #[cfg(feature = "ai")]
     let api_router = api_router.merge(ai::routes(state.clone()));

@@ -6,6 +6,7 @@ pub mod client;
 pub mod database;
 pub mod import;
 pub mod initialization;
+pub mod llm;
 pub mod models;
 pub mod operations;
 pub mod profile;

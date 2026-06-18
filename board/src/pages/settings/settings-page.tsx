@@ -27,6 +27,7 @@ import {
 	Store,
 	Sun,
 	Trash2,
+	Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -120,6 +121,7 @@ import {
 } from "../../lib/store";
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
+import { ProvidersSettings } from "./providers-settings";
 
 const PROVIDER_SWITCH_CONFIRMATION_PHRASE = "ROTATE SECRETS";
 
@@ -1672,6 +1674,7 @@ export function SettingsPage() {
 					"audit",
 					"develop",
 					"security",
+					"providers",
 					"system",
 					"about",
 				]
@@ -1684,6 +1687,7 @@ export function SettingsPage() {
 					"audit",
 					"develop",
 					"security",
+					"providers",
 					"system",
 				],
 		[showLicenseTab],
@@ -1765,6 +1769,12 @@ export function SettingsPage() {
 						<ShieldCheck className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.security", { defaultValue: "Security" })}
+						</span>
+					</TabsTrigger>
+					<TabsTrigger value="providers" className={tabTriggerClass}>
+						<Zap className="h-4 w-4 shrink-0" />
+						<span className="hidden md:inline truncate">
+							{t("settings:tabs.providers", { defaultValue: "Providers" })}
 						</span>
 					</TabsTrigger>
 					<TabsTrigger value="system" className={tabTriggerClass}>
@@ -2911,6 +2921,10 @@ export function SettingsPage() {
 
 							</CardContent>
 						</Card>
+					</TabsContent>
+
+					<TabsContent value="providers" className="mt-0 h-full">
+						<ProvidersSettings />
 					</TabsContent>
 
 					<TabsContent value="system" className="mt-0 h-full">

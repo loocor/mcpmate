@@ -4,11 +4,13 @@ import {
 	ChevronsUpDown,
 	Copy,
 	Eraser,
+	Loader2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	inspectorApi,
+	llmApi,
 	isInspectorSessionUnavailableError,
 	systemApi,
 } from "../lib/api";
@@ -29,6 +31,12 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ButtonGroup } from "./ui/button-group";
 import { Card, CardContent } from "./ui/card";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import {
 	Drawer,
 	DrawerContent,
@@ -1635,6 +1643,14 @@ export function InspectorDrawer({
 													>
 														{t("actions.fillMock")}
 													</Button>
+													<SmartGenerateButton
+														serverId={serverId || ""}
+														toolName={String(currentItem?.tool_name || currentItem?.name || "")}
+														onGenerated={(params: JsonObject) => {
+															setValues(params);
+															setArgsJson(JSON.stringify(params, null, 2));
+														}}
+													/>
 													<Button
 														size="sm"
 														variant="outline"
@@ -1809,7 +1825,7 @@ export function InspectorDrawer({
 					</Tabs>
 				</div>
 
-				<DrawerFooter className="shrink-0 border-t px-6 py-4">
+			<DrawerFooter className="shrink-0 border-t px-6 py-4">
 					<div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 						<Button
 							variant="outline"
@@ -1841,6 +1857,95 @@ export function InspectorDrawer({
 				</DrawerFooter>
 			</DrawerContent>
 		</Drawer>
+	);
+}
+
+const TEMPLATE_OPTIONS = [
+	{ value: "auto", label: "Auto" },
+	{ value: "test_gen_query", label: "Query" },
+	{ value: "test_gen_create", label: "Create" },
+	{ value: "test_gen_update", label: "Update" },
+	{ value: "test_gen_delete", label: "Delete" },
+	{ value: "test_gen_execute", label: "Execute" },
+	{ value: "test_gen_fileio", label: "File I/O" },
+	{ value: "test_gen_custom", label: "Custom" },
+] as const;
+
+function SmartGenerateButton({
+	serverId,
+	toolName,
+	onGenerated,
+}: {
+	serverId: string;
+	toolName: string;
+	onGenerated: (params: JsonObject) => void;
+}) {
+	const { t } = useTranslation();
+	const [isGenerating, setIsGenerating] = useState(false);
+
+	const handleGenerate = useCallback(
+		async (templateName: string) => {
+			setIsGenerating(true);
+			try {
+				// Get default provider
+				const defaultProvider = await llmApi.getDefaultProvider();
+				if (!defaultProvider) {
+					notifyError(
+						t("testGen.noProvider", "No LLM Provider"),
+						t("testGen.noProviderDesc", "Configure a default LLM provider in Settings > Providers"),
+					);
+					return;
+				}
+
+				const cases = await llmApi.generateTests({
+					provider_id: defaultProvider.id,
+					server_id: serverId,
+					tool_name: toolName,
+					template_name: templateName === "auto" ? undefined : templateName,
+					count: 1,
+				});
+
+				if (cases.length > 0) {
+					onGenerated(cases[0].params as JsonObject);
+					notifySuccess(
+						t("testGen.generated", "Generated"),
+						t("testGen.generatedDesc", "Test parameters filled"),
+					);
+				}
+			} catch (e) {
+				notifyError(
+					t("testGen.error", "Generation failed"),
+					e instanceof Error ? e.message : String(e),
+				);
+			} finally {
+				setIsGenerating(false);
+			}
+		},
+		[serverId, toolName, onGenerated, t],
+	);
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button size="sm" variant="outline" disabled={isGenerating}>
+					{isGenerating ? (
+						<Loader2 className="h-4 w-4 animate-spin" />
+					) : (
+						"✨"
+					)}
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start">
+				{TEMPLATE_OPTIONS.map((opt) => (
+					<DropdownMenuItem
+						key={opt.value}
+						onClick={() => handleGenerate(opt.value)}
+					>
+						{opt.label}
+					</DropdownMenuItem>
+				))}
+			</DropdownMenuContent>
+		</DropdownMenu>
 	);
 }
 

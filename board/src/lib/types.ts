@@ -1635,3 +1635,87 @@ export interface ClientConfigFileParseInspectResp {
   validation?: ClientConfigFileParseValidation | null;
   preview?: unknown;
 }
+
+// LLM Provider Types
+export interface LlmProviderDefaultParams {
+  temperature: number;
+  max_tokens: number;
+}
+
+export interface LlmProviderConfig {
+  id: string;
+  name: string;
+  provider_type: "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
+  base_url: string;
+  model_id: string;
+  has_api_key: boolean;
+  is_default: boolean;
+  default_params: LlmProviderDefaultParams;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface LlmProviderCreateInput {
+  name: string;
+  provider_type: "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
+  base_url: string;
+  model_id: string;
+  api_key?: string;
+  default_params?: {
+    temperature?: number;
+    max_tokens?: number;
+  };
+}
+
+export interface LlmProviderUpdateInput {
+  id: string;
+  name?: string;
+  provider_type?: string;
+  base_url?: string;
+  model_id?: string;
+  api_key?: string | null;
+  default_params?: {
+    temperature?: number;
+    max_tokens?: number;
+  };
+}
+
+export interface LlmConnectivityResult {
+  success: boolean;
+  latency_ms: number;
+  model: string;
+  error?: string | null;
+}
+
+export interface LlmTestCase {
+  id: string;
+  params: Record<string, unknown>;
+  description: string;
+  test_type: "Normal" | "Boundary" | "Error";
+  expected_behavior: string;
+}
+
+export interface LlmTestResult {
+  case_id: string;
+  params: Record<string, unknown>;
+  actual_response?: Record<string, unknown> | null;
+  latency_ms: number;
+  status: "Passed" | "Failed" | "Error" | "Timeout";
+  error_message?: string | null;
+}
+
+export interface LlmTestGenerateInput {
+  provider_id: string;
+  server_id: string;
+  tool_name: string;
+  template_name?: string;
+  custom_scenario?: string;
+  count?: number;
+}
+
+export interface LlmTestRunInput {
+  provider_id: string;
+  server_id: string;
+  tool_name: string;
+  cases: LlmTestCase[];
+}

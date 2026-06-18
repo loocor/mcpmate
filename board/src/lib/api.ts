@@ -101,6 +101,13 @@ import type {
 	TokenEstimateResponse,
 	ToolDetail,
 	UpdateConfigSuitRequest,
+	LlmProviderConfig,
+	LlmProviderCreateInput,
+	LlmProviderUpdateInput,
+	LlmConnectivityResult,
+	LlmTestCase,
+	LlmTestGenerateInput,
+	LlmTestRunInput,
 } from "./types";
 import { useMemo } from "react";
 import { isTauriEnvironmentSync } from "./platform";
@@ -2910,3 +2917,83 @@ export function useProfileTokenChartSource(
 		isError,
 	};
 }
+
+// LLM Provider API
+export const llmApi = {
+  listProviders: async (): Promise<LlmProviderConfig[]> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig[] }>("/api/llm/providers");
+    return resp.data ?? [];
+  },
+
+  createProvider: async (input: LlmProviderCreateInput): Promise<LlmProviderConfig> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>("/api/llm/providers/create", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return resp.data!;
+  },
+
+  updateProvider: async (input: LlmProviderUpdateInput): Promise<LlmProviderConfig> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>("/api/llm/providers/update", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return resp.data!;
+  },
+
+  deleteProvider: async (id: string): Promise<void> => {
+    await fetchApi("/api/llm/providers/delete", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+  },
+
+  testProvider: async (id: string): Promise<LlmConnectivityResult> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmConnectivityResult }>("/api/llm/providers/test", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+    return resp.data!;
+  },
+
+  listModels: async (id: string): Promise<string[]> => {
+    const resp = await fetchApi<{ success: boolean; data: { models: string[] } }>("/api/llm/providers/models", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+    return resp.data?.models ?? [];
+  },
+
+  generateTests: async (input: LlmTestGenerateInput): Promise<LlmTestCase[]> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmTestCase[] }>("/api/llm/test/generate", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return resp.data ?? [];
+  },
+
+  runTests: async (input: LlmTestRunInput): Promise<{ run_id: string; total_cases: number }> => {
+    const resp = await fetchApi<{ success: boolean; data: { run_id: string; total_cases: number } }>("/api/llm/test/run", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return resp.data!;
+  },
+
+  getDefaultProvider: async (): Promise<LlmProviderConfig | null> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig | null }>("/api/llm/providers/default");
+    return resp.data ?? null;
+  },
+
+  setDefaultProvider: async (id: string): Promise<void> => {
+    await fetchApi("/api/llm/providers/set-default", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    });
+  },
+
+  testEventsWsUrl: (runId: string): string => {
+    const wsBase = resolveWebSocketUrl();
+    return `${wsBase}/llm/test/events?run_id=${encodeURIComponent(runId)}`;
+  },
+};
