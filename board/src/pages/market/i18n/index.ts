@@ -65,6 +65,7 @@ export const marketTranslations = {
 			publishedAt: "Published at",
 			updatedAt: "Updated at",
 			versionId: "Version ID",
+			packageDistribution: "Package distribution",
 			serverId: "Registry ID (Canonical Key)",
 			registryIdHint:
 				"MCPMate links managed servers by official server.name (official.serverId is treated as an alias only when equivalent).",
@@ -153,6 +154,7 @@ export const marketTranslations = {
 			publishedAt: "发布时间",
 			updatedAt: "更新时间",
 			versionId: "版本 ID",
+			packageDistribution: "包分发类型",
 			serverId: "注册表 ID（主关联键）",
 			registryIdHint:
 				"MCPMate 以官方 server.name 作为托管服务器关联键（仅在等价时将 official.serverId 视为别名）。",
@@ -243,6 +245,7 @@ export const marketTranslations = {
 			publishedAt: "公開日時",
 			updatedAt: "更新日時",
 			versionId: "バージョン ID",
+			packageDistribution: "パッケージ配布形式",
 			serverId: "レジストリ ID（正規キー）",
 			registryIdHint:
 				"MCPMate は公式 server.name を関連キーとして使用し、official.serverId は同値の場合のみ別名として扱います。",

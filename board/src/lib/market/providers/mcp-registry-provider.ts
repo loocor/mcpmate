@@ -1,15 +1,22 @@
 import type { RegistryServerEntryWrapper, RegistryServerListResponse } from "../../types";
-import { getCanonicalRegistryServerId, getOfficialMeta } from "../../registry";
+import { getCanonicalRegistryServerId } from "../../registry";
 import type {
-  CatalogEntry,
-  CatalogPage,
-  CatalogQuery,
-  MarketCatalogProvider,
+	CatalogEntry,
+	CatalogPage,
+	CatalogQuery,
+	MarketCatalogProvider,
 } from "../types";
+import {
+	MCP_REGISTRY_MAX_REQUESTS,
+	mergeRegistryServerWrappers,
+	resolveCatalogPageNextCursor,
+	upstreamPageHasUnseenEntries,
+	type RegistryUpstreamPage,
+} from "./mcp-registry-pagination";
 
 const REGISTRY_API_BASE = import.meta.env.DEV
-  ? "/registry-api"
-  : "https://registry.modelcontextprotocol.io/v0.1";
+	? "/registry-api"
+	: "https://registry.modelcontextprotocol.io/v0.1";
 
 /**
  * MCP Registry provider — fetches directly from the official MCP Registry.
@@ -18,137 +25,144 @@ const REGISTRY_API_BASE = import.meta.env.DEV
  * In production builds (Tauri desktop etc.) the full URL is used directly.
  */
 export class McpRegistryProvider implements MarketCatalogProvider {
-  readonly meta = {
-    id: "mcp-registry",
-    displayName: "MCP Registry",
-    description: "Official Model Context Protocol server registry",
-    supportsSync: false,
-  } as const;
+	readonly meta = {
+		id: "mcp-registry",
+		displayName: "MCP Registry",
+		description: "Official Model Context Protocol server registry",
+		supportsSync: false,
+	} as const;
 
-  async fetchPage(query: CatalogQuery): Promise<CatalogPage> {
-    const { limit = 30, cursor, search } = query;
-    const cappedLimit = Math.max(1, Math.min(limit, 100));
+	async fetchPage(query: CatalogQuery): Promise<CatalogPage> {
+		const { limit = 30, cursor, search } = query;
+		const cappedLimit = Math.max(1, Math.min(limit, 100));
+		const trimmedSearch = search?.trim() || undefined;
 
-    // Batch-prefetch: request 2× the needed limit upfront to compensate for
-    // upstream duplicates, dedup in a single pass, then top up only if needed.
-    const BATCH_MULTIPLIER = 2;
-    const batchLimit = Math.min(cappedLimit * BATCH_MULTIPLIER, 100);
+		const dedup = new Map<string, CatalogEntry>();
+		let upstreamNextCursor: string | undefined = cursor;
+		let upstreamTotalCount: number | undefined;
 
-    const dedup = new Map<string, CatalogEntry>();
-    let nextCursor: string | undefined = cursor;
-    let upstreamTotalCount: number | undefined;
+		for (let attempt = 0; attempt < MCP_REGISTRY_MAX_REQUESTS; attempt++) {
+			const result = await this.fetchUpstreamPage({
+				cursor: upstreamNextCursor,
+				limit: cappedLimit,
+				search: trimmedSearch,
+			});
+			if (upstreamTotalCount === undefined) {
+				upstreamTotalCount = result.metadata?.count;
+			}
 
-    const MAX_REQUESTS = 5;
-    let requestsUsed = 0;
+			mergeRegistryServerWrappers(dedup, result.servers ?? []);
+			upstreamNextCursor = result.metadata?.nextCursor ?? undefined;
+			if (dedup.size >= cappedLimit || !upstreamNextCursor) {
+				break;
+			}
+		}
 
-    const upsertEntry = (wrapper: RegistryServerEntryWrapper) => {
-      const entry: CatalogEntry = {
-        ...wrapper.server,
-        _meta: wrapper._meta ?? wrapper.server._meta,
-      };
-      const key = getCanonicalRegistryServerId(entry);
-      if (!dedup.has(key)) {
-        dedup.set(key, entry);
-      } else {
-        const existing = dedup.get(key)!;
-        const existingTs = getOfficialMeta(existing)?.updatedAt;
-        const candidateTs = getOfficialMeta(entry)?.updatedAt;
-        if (
-          existingTs &&
-          candidateTs &&
-          Date.parse(candidateTs) > Date.parse(existingTs)
-        ) {
-          dedup.set(key, entry);
-        }
-      }
-    };
+		const entries = Array.from(dedup.values()).slice(0, cappedLimit);
+		const seenKeys = new Set(entries.map((entry) => getCanonicalRegistryServerId(entry)));
+		const shouldPeekAhead = entries.length === cappedLimit && Boolean(upstreamNextCursor);
+		const hasMoreUniqueEntriesAhead = shouldPeekAhead
+			? await this.hasMoreUnseenEntries(
+				upstreamNextCursor!,
+				seenKeys,
+				trimmedSearch,
+				cappedLimit,
+			)
+			: false;
 
-    const doFetch = async (fetchLimit: number): Promise<string | undefined> => {
-      const params = new URLSearchParams();
-      params.set("limit", fetchLimit.toString());
-      params.set("version", "latest");
-      if (nextCursor) params.set("cursor", nextCursor);
-      if (search?.trim()) params.set("search", search.trim());
+		return {
+			entries,
+			nextCursor: resolveCatalogPageNextCursor({
+				entries,
+				cappedLimit,
+				upstreamNextCursor,
+				hasMoreUniqueEntriesAhead,
+			}),
+			totalCount: upstreamTotalCount,
+		};
+	}
 
-      const requestUrl = `${REGISTRY_API_BASE}/servers?${params.toString()}`;
-      const response = await fetch(requestUrl, {
-        headers: { Accept: "application/json" },
-      });
+	async fetchByKey(key: string): Promise<CatalogEntry | null> {
+		const trimmed = key.trim();
+		if (!trimmed) return null;
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(
-          `Registry request failed (${response.status} ${response.statusText}): ${text}`,
-        );
-      }
+		const requestUrl = `${REGISTRY_API_BASE}/servers/${encodeURIComponent(trimmed)}/versions/latest`;
+		const response = await fetch(requestUrl, {
+			headers: { Accept: "application/json" },
+		});
 
-      const result = (await response.json()) as RegistryServerListResponse;
-      if (upstreamTotalCount === undefined) {
-        upstreamTotalCount = result.metadata?.count;
-      }
+		if (response.status === 404) {
+			return null;
+		}
 
-      for (const wrapper of result.servers ?? []) {
-        upsertEntry(wrapper);
-      }
+		if (!response.ok) {
+			const text = await response.text().catch(() => "");
+			throw new Error(
+				`Registry request failed (${response.status} ${response.statusText}): ${text}`,
+			);
+		}
 
-      return result.metadata?.nextCursor;
-    };
+		const result = (await response.json()) as RegistryServerEntryWrapper;
+		return {
+			...result.server,
+			_meta: result._meta ?? result.server._meta,
+		};
+	}
 
-    // First batch: request 2× limit to absorb duplicates in one pass.
-    nextCursor = await doFetch(batchLimit);
-    requestsUsed++;
+	buildSourceRef(entry: CatalogEntry): string {
+		return `registry:${entry.name}`;
+	}
 
-    // Top-up loop: only if the first batch didn't yield enough unique entries.
-    while (dedup.size < cappedLimit && nextCursor && requestsUsed < MAX_REQUESTS) {
-      nextCursor = await doFetch(cappedLimit);
-      requestsUsed++;
-    }
+	private async hasMoreUnseenEntries(
+		startCursor: string,
+		seenKeys: ReadonlySet<string>,
+		search: string | undefined,
+		limit: number,
+	): Promise<boolean> {
+		let cursor: string | undefined = startCursor;
 
-    const entries = Array.from(dedup.values()).slice(0, cappedLimit);
+		for (let attempt = 0; attempt < MCP_REGISTRY_MAX_REQUESTS; attempt++) {
+			const result = await this.fetchUpstreamPage({ cursor, limit, search });
+			if (upstreamPageHasUnseenEntries(result, seenKeys)) {
+				return true;
+			}
 
-    // Suppress nextCursor when we clearly have no more data:
-    // - 0 entries means the page is empty
-    // - fewer entries than requested means upstream is exhausted
-    const effectiveCursor =
-      entries.length > 0 && entries.length >= cappedLimit
-        ? nextCursor
-        : undefined;
+			cursor = result.metadata?.nextCursor ?? undefined;
+			if (!cursor) {
+				return false;
+			}
+		}
 
-    return {
-      entries,
-      nextCursor: effectiveCursor,
-      totalCount: upstreamTotalCount,
-    };
-  }
+		return false;
+	}
 
-  async fetchByKey(key: string): Promise<CatalogEntry | null> {
-    const trimmed = key.trim();
-    if (!trimmed) return null;
+	private async fetchUpstreamPage(params: {
+		cursor?: string;
+		limit: number;
+		search?: string;
+	}): Promise<RegistryUpstreamPage> {
+		const requestParams = new URLSearchParams();
+		requestParams.set("limit", params.limit.toString());
+		requestParams.set("version", "latest");
+		if (params.cursor) {
+			requestParams.set("cursor", params.cursor);
+		}
+		if (params.search) {
+			requestParams.set("search", params.search);
+		}
 
-    const requestUrl = `${REGISTRY_API_BASE}/servers/${encodeURIComponent(trimmed)}/versions/latest`;
-    const response = await fetch(requestUrl, {
-      headers: { Accept: "application/json" },
-    });
+		const requestUrl = `${REGISTRY_API_BASE}/servers?${requestParams.toString()}`;
+		const response = await fetch(requestUrl, {
+			headers: { Accept: "application/json" },
+		});
 
-    if (response.status === 404) {
-      return null;
-    }
+		if (!response.ok) {
+			const text = await response.text().catch(() => "");
+			throw new Error(
+				`Registry request failed (${response.status} ${response.statusText}): ${text}`,
+			);
+		}
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(
-        `Registry request failed (${response.status} ${response.statusText}): ${text}`,
-      );
-    }
-
-    const result = (await response.json()) as RegistryServerEntryWrapper;
-    return {
-      ...result.server,
-      _meta: result._meta ?? result.server._meta,
-    };
-  }
-
-  buildSourceRef(entry: CatalogEntry): string {
-    return `registry:${entry.name}`;
-  }
+		return (await response.json()) as RegistryServerListResponse;
+	}
 }

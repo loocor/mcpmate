@@ -27,6 +27,7 @@ import {
 	buildReadmeAssetContext,
 	fetchRepositoryReadmeMarkdown,
 	rehypeGitHubReadmeAssets,
+	rewriteReadmeAssetUrls,
 } from "../../lib/github-readme";
 import { serversApi } from "../../lib/api";
 import {
@@ -55,6 +56,7 @@ import {
 	isSupportedRegistryPackageType,
 	normalizeRemoteKind,
 	slugifyForConfig,
+	summarizePackageDistributionTypes,
 } from "./utils";
 
 function buildRemoteOptions(server: RegistryServerEntry): RemoteOption[] {
@@ -223,8 +225,12 @@ export function MarketDetailPage() {
 	}, [readmeAssetContext]);
 
 	const readmeMarkdown = useMemo(() => {
-		return readmeQuery.data?.markdown?.trim() ?? "";
-	}, [readmeQuery.data?.markdown]);
+		const markdown = readmeQuery.data?.markdown?.trim() ?? "";
+		if (!markdown || !readmeAssetContext) {
+			return markdown;
+		}
+		return rewriteReadmeAssetUrls(markdown, readmeAssetContext);
+	}, [readmeAssetContext, readmeQuery.data?.markdown]);
 
 	const showReadmePanel = Boolean(readmeMarkdown);
 
@@ -353,16 +359,20 @@ export function MarketDetailPage() {
 	const isInstalled = Boolean(installedServer);
 	const primaryIconSrc = server.icons?.[0]?.src;
 	const transportTypeSummary = summarizeTransportTypes(server);
-	const links: Array<{ label: string; url: string; icon: typeof Globe }> = [];
-	if (server.websiteUrl) {
+	const packageDistributionSummary = summarizePackageDistributionTypes(server);
+	const links: Array<{ id: string; label: string; url: string; icon: typeof Globe }> = [];
+	const websiteUrl = server.websiteUrl?.trim() ?? "";
+	if (websiteUrl) {
 		links.push({
+			id: "website",
 			label: t("market:detail.website", { defaultValue: "Website" }),
-			url: server.websiteUrl,
+			url: websiteUrl,
 			icon: Globe,
 		});
 	}
-	if (repositoryUrl) {
+	if (repositoryUrl && repositoryUrl !== websiteUrl) {
 		links.push({
+			id: "repository",
 			label: t("market:detail.repository", { defaultValue: "Repository" }),
 			url: repositoryUrl,
 			icon: Code,
@@ -389,7 +399,7 @@ export function MarketDetailPage() {
 							{links.map((link) => {
 								const Icon = link.icon;
 								return (
-									<Button key={link.url} variant="outline" asChild>
+									<Button key={link.id} variant="outline" asChild>
 										<a href={link.url} target="_blank" rel="noopener noreferrer">
 											<Icon className="mr-2 h-4 w-4" />
 											{link.label}
@@ -518,6 +528,13 @@ export function MarketDetailPage() {
 									{t("market:detail.registryMeta", { defaultValue: "Registry metadata" })}
 								</p>
 								<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
+									<MetadataGridRow
+										label={t("market:detail.packageDistribution", {
+											defaultValue: "Distribution",
+										})}
+										value={packageDistributionSummary !== "—" ? packageDistributionSummary : transportTypeSummary}
+										valueClassName="min-w-0 break-words font-mono text-sm leading-tight"
+									/>
 									<MetadataGridRow
 										label={t("market:detail.officialStatus", { defaultValue: "Official status" })}
 										value={official?.status ?? "—"}

@@ -12,8 +12,10 @@ import { useAppStore } from "../../lib/store";
 import type { RegistryServerEntry } from "../../lib/types";
 import { useUrlSearch, useUrlState } from "../../lib/hooks/use-url-state";
 import { useMarketData } from "./hooks/use-market-data";
-import { rememberMarketListReturnSearch } from "./market-list-pagination-storage";
-import { MARKET_PAGE_SIZE_OPTIONS } from "./market-list-pagination-storage";
+import {
+	MARKET_PAGE_SIZE_OPTIONS,
+	rememberMarketListReturnSearch,
+} from "./market-list-pagination-storage";
 import { MarketSearch } from "./market-search";
 import { ServerGrid } from "./server-grid";
 import type { SortOption } from "./types";
@@ -95,6 +97,12 @@ export function MarketPage() {
 		[location.search, navigate],
 	);
 
+	const showPagination =
+		pagination.hasPreviousPage ||
+		isInitialLoading ||
+		isPageLoading ||
+		!isEmpty;
+
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-3.5">
 			<div className="shrink-0 py-1">
@@ -135,7 +143,7 @@ export function MarketPage() {
 				enableBlacklist={enableMarketBlacklist}
 			/>
 
-			{!isEmpty || isInitialLoading || isPageLoading ? (
+			{showPagination ? (
 				<Pagination
 					currentPage={pagination.currentPage}
 					hasPreviousPage={pagination.hasPreviousPage}

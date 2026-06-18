@@ -104,10 +104,11 @@ export function MarketCard({
 		() => hasUnsupportedRegistryPackageOption(server),
 		[server],
 	);
+	const canOpenDetail = supportsPreview || hasUnsupportedPackageOption;
 	const installDisabled = isInstalled || !supportsPreview;
 
 	const handleCardClick = () => {
-		if (!supportsPreview) {
+		if (!canOpenDetail) {
 			notifyInfo(
 				t("notifications.previewUnavailable", { defaultValue: "Preview unavailable" }),
 				t("notifications.noPreviewableTransport", { defaultValue: "This registry entry does not expose a previewable transport option." }),
@@ -126,7 +127,7 @@ export function MarketCard({
 	return (
 		<Card
 			role="button"
-			tabIndex={supportsPreview ? 0 : -1}
+			tabIndex={canOpenDetail ? 0 : -1}
 			onClick={handleCardClick}
 			onKeyDown={(event) => {
 				if (event.key === "Enter" || event.key === " ") {
@@ -137,7 +138,7 @@ export function MarketCard({
 			className={cn(
 				MARKET_CARD_SHELL_CLASS,
 				MARKET_CARD_SHELL_INTERACTIVE_CLASS,
-				supportsPreview ? "cursor-pointer" : "cursor-not-allowed opacity-95",
+				canOpenDetail ? "cursor-pointer" : "cursor-not-allowed opacity-95",
 			)}
 		>
 			<CardHeader className="p-4">

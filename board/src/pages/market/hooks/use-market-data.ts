@@ -169,16 +169,19 @@ export function useMarketData(
 		[providerId, listQueryParams],
 	);
 
-	const registryQuery = useQuery({
-		queryKey: listQueryKey,
-		queryFn: async () => {
-			const result = await provider.fetchPage({
-				cursor: currentCursor,
+	const fetchRegistryPage = useCallback(
+		(cursor: string | undefined) =>
+			provider.fetchPage({
+				cursor,
 				search: search || undefined,
 				limit: itemsPerPage,
-			});
-			return result;
-		},
+			}),
+		[provider, search, itemsPerPage],
+	);
+
+	const registryQuery = useQuery({
+		queryKey: listQueryKey,
+		queryFn: () => fetchRegistryPage(currentCursor),
 		enabled: !isRestoringPagination,
 		staleTime: MARKET_LIST_STALE_MS,
 		gcTime: MARKET_LIST_GC_MS,
@@ -239,11 +242,12 @@ export function useMarketData(
 					startCursor,
 					storedPage,
 					targetPage,
-					(cursor) => provider.fetchPage({
-						cursor,
-						search: urlSearch || undefined,
-						limit: itemsPerPage,
-					}),
+					(cursor) =>
+						provider.fetchPage({
+							cursor,
+							search: urlSearch || undefined,
+							limit: itemsPerPage,
+						}),
 				);
 
 				if (cancelled) {
@@ -334,9 +338,13 @@ export function useMarketData(
 	}, [cursorHistory, currentPage, hasNextPage, isRestoringPagination, itemsPerPage, providerId, search]);
 
 	useEffect(() => {
-		if (registryQuery.data) {
-			setHasNextPage(Boolean(registryQuery.data.nextCursor));
+		if (!registryQuery.data) {
+			return;
 		}
+		setHasNextPage(
+			registryQuery.data.entries.length > 0 &&
+				Boolean(registryQuery.data.nextCursor),
+		);
 	}, [registryQuery.data, setHasNextPage]);
 
 	useEffect(() => {
@@ -353,20 +361,15 @@ export function useMarketData(
 				limit: itemsPerPage,
 				cursor: nextCursor,
 			}),
-			queryFn: () =>
-				provider.fetchPage({
-					cursor: nextCursor,
-					search: search || undefined,
-					limit: itemsPerPage,
-				}),
+			queryFn: () => fetchRegistryPage(nextCursor),
 			staleTime: MARKET_LIST_STALE_MS,
 			gcTime: MARKET_LIST_GC_MS,
 		});
 	}, [
 		currentPage,
+		fetchRegistryPage,
 		isRestoringPagination,
 		itemsPerPage,
-		provider,
 		providerId,
 		queryClient,
 		registryQuery.data?.nextCursor,
@@ -401,6 +404,29 @@ export function useMarketData(
 		}
 		return items;
 	}, [filtered, sort]);
+
+	useEffect(() => {
+		if (
+			isRestoringPagination ||
+			registryQuery.isFetching ||
+			!registryQuery.data ||
+			currentPage <= 1 ||
+			servers.length > 0
+		) {
+			return;
+		}
+
+		setHasNextPage(false);
+		goToPreviousPage();
+	}, [
+		currentPage,
+		goToPreviousPage,
+		isRestoringPagination,
+		registryQuery.data,
+		registryQuery.isFetching,
+		servers.length,
+		setHasNextPage,
+	]);
 
 	const isInitialLoading =
 		isRestoringPagination || (registryQuery.isLoading && !registryQuery.data);
@@ -455,11 +481,7 @@ export function useMarketData(
 				registryQuery.data.nextCursor,
 				currentPage,
 				Infinity,
-				(cursor) => provider.fetchPage({
-					cursor,
-					search: search || undefined,
-					limit: itemsPerPage,
-				}),
+				(cursor) => fetchRegistryPage(cursor),
 			);
 
 			// Prepend existing history
@@ -469,7 +491,7 @@ export function useMarketData(
 		} finally {
 			setIsPaginationActionLoading(false);
 		}
-	}, [currentPage, cursorHistory, itemsPerPage, registryQuery.data?.nextCursor, search, provider, setPaginationState]);
+	}, [currentPage, cursorHistory, registryQuery.data?.nextCursor, fetchRegistryPage, setPaginationState]);
 
 	const handleGoToPage = useCallback(
 		async (targetPage: number) => {
@@ -501,11 +523,7 @@ export function useMarketData(
 					registryQuery.data.nextCursor,
 					currentPage,
 					p,
-					(cursor) => provider.fetchPage({
-						cursor,
-						search: search || undefined,
-						limit: itemsPerPage,
-					}),
+					(cursor) => fetchRegistryPage(cursor),
 				);
 
 				const fullHistory = [...cursorHistory, ...result.history];
@@ -525,11 +543,9 @@ export function useMarketData(
 		[
 			currentPage,
 			cursorHistory,
+			fetchRegistryPage,
 			handleFirstPage,
-			itemsPerPage,
 			registryQuery.data?.nextCursor,
-			search,
-			provider,
 			setPaginationState,
 		],
 	);

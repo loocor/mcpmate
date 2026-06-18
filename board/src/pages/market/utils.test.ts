@@ -6,6 +6,7 @@ import {
 	hasUnsupportedRegistryPackageOption,
 	hasPreviewableOption,
 	isSupportedRegistryPackageType,
+	summarizePackageDistributionTypes,
 } from "./utils";
 
 function packageOption(overrides: Partial<RemoteOption> = {}): RemoteOption {
@@ -100,6 +101,7 @@ describe("market registry install resolution", () => {
 
 		expect(hasPreviewableOption(server)).toBe(false);
 		expect(hasUnsupportedRegistryPackageOption(server)).toBe(true);
+		expect(summarizePackageDistributionTypes(server)).toBe("MCPB");
 	});
 
 	test("does not mark package entries with non-stdio transport as previewable", () => {

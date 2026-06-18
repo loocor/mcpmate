@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { resolveGitHubReadmeAssetUrl, rewriteReadmeAssetUrls } from "./github-readme";
+import {
+	fetchRepositoryReadmeMarkdown,
+	resolveGitHubReadmeAssetUrl,
+	rewriteReadmeAssetUrls,
+} from "./github-readme";
 
 const context = {
 	owner: "frumu-ai",
@@ -60,5 +64,53 @@ describe("rewriteReadmeAssetUrls", () => {
 		expect(output).toContain(
 			'src="https://raw.githubusercontent.com/frumu-ai/tandem/main/.github/assets/logo.png"',
 		);
+	});
+});
+
+describe("fetchRepositoryReadmeMarkdown", () => {
+	it("uses the Contents API download URL branch for README asset context", async () => {
+		const originalFetch = globalThis.fetch;
+		const requests: string[] = [];
+
+		globalThis.fetch = ((input: string | URL | Request) => {
+			const url = String(input);
+			requests.push(url);
+
+			if (url.startsWith("https://raw.githubusercontent.com/")) {
+				return Promise.resolve(new Response("Not found", { status: 404 }));
+			}
+
+			return Promise.resolve(
+				new Response(
+					JSON.stringify({
+						content: btoa("# Server\n\n![Logo](./assets/logo.png)"),
+						download_url:
+							"https://raw.githubusercontent.com/frumu-ai/tandem/develop/packages/mcp/README.md",
+						encoding: "base64",
+					}),
+					{ status: 200, headers: { "content-type": "application/json" } },
+				),
+			);
+		}) as typeof fetch;
+
+		try {
+			const result = await fetchRepositoryReadmeMarkdown(
+				"https://github.com/frumu-ai/tandem",
+				"packages/mcp",
+			);
+
+			expect(result.assetContext.branch).toBe("develop");
+			expect(resolveGitHubReadmeAssetUrl("./assets/logo.png", result.assetContext)).toBe(
+				"https://raw.githubusercontent.com/frumu-ai/tandem/develop/packages/mcp/assets/logo.png",
+			);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+
+		expect(requests).toEqual([
+			"https://raw.githubusercontent.com/frumu-ai/tandem/main/packages/mcp/README.md",
+			"https://raw.githubusercontent.com/frumu-ai/tandem/master/packages/mcp/README.md",
+			"https://api.github.com/repos/frumu-ai/tandem/contents/packages/mcp/README.md",
+		]);
 	});
 });

@@ -78,7 +78,7 @@ async function fetchReadmeViaContentsApi(
 	owner: string,
 	repo: string,
 	readmePath: string,
-): Promise<string | null> {
+): Promise<{ markdown: string; branch: string } | null> {
 	const encodedPath = readmePath
 		.split("/")
 		.map((segment) => encodeURIComponent(segment))
@@ -94,13 +94,41 @@ async function fetchReadmeViaContentsApi(
 		return null;
 	}
 
-	const payload = (await response.json()) as { content?: string; encoding?: string };
+	const payload = (await response.json()) as {
+		content?: string;
+		download_url?: string | null;
+		encoding?: string;
+	};
 	if (!payload.content || payload.encoding !== "base64") {
 		return null;
 	}
 
 	const decoded = decodeBase64Utf8(payload.content).trim();
-	return decoded || null;
+	if (!decoded) {
+		return null;
+	}
+
+	return {
+		markdown: decoded,
+		branch: resolveBranchFromRawGitHubUrl(payload.download_url) ?? DEFAULT_BRANCHES[0],
+	};
+}
+
+function resolveBranchFromRawGitHubUrl(url: string | null | undefined): string | null {
+	if (!url) {
+		return null;
+	}
+
+	try {
+		const parsed = new URL(url);
+		if (parsed.hostname !== "raw.githubusercontent.com") {
+			return null;
+		}
+		const segments = parsed.pathname.split("/").filter(Boolean);
+		return segments[2] ? decodeURIComponent(segments[2]) : null;
+	} catch {
+		return null;
+	}
 }
 
 export function resolveGitHubReadmeAssetUrl(
@@ -169,40 +197,42 @@ export function buildReadmeAssetContext(
 }
 
 export function rehypeGitHubReadmeAssets(context: GitHubReadmeAssetContext) {
-	return (tree: Root) => {
-		const walk = (node: unknown): void => {
-			if (!node || typeof node !== "object") {
-				return;
-			}
+	return () => {
+		return (tree: Root) => {
+			const walk = (node: unknown): void => {
+				if (!node || typeof node !== "object") {
+					return;
+				}
 
-			const current = node as {
-				type?: string;
-				tagName?: string;
-				properties?: { src?: unknown };
-				children?: unknown[];
+				const current = node as {
+					type?: string;
+					tagName?: string;
+					properties?: { src?: unknown };
+					children?: unknown[];
+				};
+
+				if (
+					current.type === "element"
+					&& current.tagName === "img"
+					&& current.properties?.src != null
+				) {
+					current.properties.src = resolveGitHubReadmeAssetUrl(
+						String(current.properties.src),
+						context,
+					);
+				}
+
+				if (!Array.isArray(current.children)) {
+					return;
+				}
+
+				for (const child of current.children) {
+					walk(child);
+				}
 			};
 
-			if (
-				current.type === "element"
-				&& current.tagName === "img"
-				&& current.properties?.src != null
-			) {
-				current.properties.src = resolveGitHubReadmeAssetUrl(
-					String(current.properties.src),
-					context,
-				);
-			}
-
-			if (!Array.isArray(current.children)) {
-				return;
-			}
-
-			for (const child of current.children) {
-				walk(child);
-			}
+			walk(tree);
 		};
-
-		walk(tree);
 	};
 }
 
@@ -242,14 +272,14 @@ export async function fetchRepositoryReadmeMarkdown(
 		}
 	}
 
-	const apiContent = await fetchReadmeViaContentsApi(parsed.owner, parsed.repo, readmePath);
-	if (apiContent) {
+	const apiResult = await fetchReadmeViaContentsApi(parsed.owner, parsed.repo, readmePath);
+	if (apiResult) {
 		return {
-			markdown: apiContent,
+			markdown: apiResult.markdown,
 			assetContext: {
 				owner: parsed.owner,
 				repo: parsed.repo,
-				branch: DEFAULT_BRANCHES[0],
+				branch: apiResult.branch,
 				subfolder,
 			},
 		};
