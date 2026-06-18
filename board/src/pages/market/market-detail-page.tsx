@@ -478,7 +478,6 @@ export function MarketDetailPage() {
 								<MetadataGridRow
 									label={t("market:detail.type", { defaultValue: "Type" })}
 									value={transportTypeSummary}
-									valueClassName="min-w-0 break-words font-mono text-sm leading-tight"
 								/>
 								<MetadataGridRow
 									label={t("market:detail.description", { defaultValue: "Description" })}
@@ -533,7 +532,6 @@ export function MarketDetailPage() {
 											defaultValue: "Distribution",
 										})}
 										value={packageDistributionSummary !== "—" ? packageDistributionSummary : transportTypeSummary}
-										valueClassName="min-w-0 break-words font-mono text-sm leading-tight"
 									/>
 									<MetadataGridRow
 										label={t("market:detail.officialStatus", { defaultValue: "Official status" })}
