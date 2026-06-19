@@ -1,7 +1,7 @@
 // Server database initialization
 // Contains functions for initializing server-related database tables
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use tracing;
 
@@ -64,7 +64,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             ),
             command TEXT,
             url TEXT,
-            source_ref TEXT UNIQUE,
+            source TEXT,
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             unify_direct_exposure_eligible BOOLEAN NOT NULL DEFAULT 0,
@@ -92,7 +92,9 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
         "BOOLEAN NOT NULL DEFAULT 0",
     )
     .await?;
+    ensure_column(pool, "server_config", "source", "TEXT").await?;
     migrate_registry_server_id_to_source_ref(pool).await?;
+    migrate_source_ref_to_source(pool).await?;
     Ok(())
 }
 
@@ -361,7 +363,7 @@ async fn migrate_registry_server_id_to_source_ref(pool: &Pool<Sqlite>) -> Result
         // Column already renamed — ensure any bare values from an interrupted
         // migration are namespaced (crash-safety). Only prefix legacy bare IDs
         // that have no namespace delimiter ':' to avoid corrupting future
-        // non-registry providers (e.g. admin:foo, github:bar).
+        // non-registry providers (e.g. catalog:foo, github:bar).
         sqlx::query(
             "UPDATE server_config SET source_ref = 'registry:' || source_ref \
              WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'",
@@ -389,7 +391,7 @@ async fn migrate_registry_server_id_to_source_ref(pool: &Pool<Sqlite>) -> Result
 
     // Prefix existing bare values with "registry:" namespace.
     // Only touch legacy bare IDs (no ':') — already-namespaced values
-    // (e.g. admin:foo) are left untouched.
+    // (e.g. catalog:foo) are left untouched.
     sqlx::query(
         "UPDATE server_config SET source_ref = 'registry:' || source_ref WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'"
     )
@@ -404,11 +406,61 @@ async fn migrate_registry_server_id_to_source_ref(pool: &Pool<Sqlite>) -> Result
     Ok(())
 }
 
+/// Migrate `source_ref` column to `source` column for structured source tracking.
+/// Migrates legacy `source_ref` column values into the new `source` column.
+/// Parses existing colon-delimited values and copies them to the new column.
+/// Skips on fresh databases where `source_ref` does not exist.
+async fn migrate_source_ref_to_source(pool: &Pool<Sqlite>) -> Result<()> {
+    // Check if source_ref column exists (absent on fresh databases)
+    let has_column: bool = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM pragma_table_info('server_config') WHERE name = 'source_ref'",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .is_some();
+
+    if !has_column {
+        return Ok(());
+    }
+
+    // Parse existing source_ref into source format:
+    // "registry:google-ads" -> source = "registry:google-ads"
+    // "catalog:github"      -> source = "catalog:github"
+    // bare "google-ads"     -> source = "registry:google-ads"
+    let result = sqlx::query(
+        r#"
+        UPDATE server_config
+        SET source = CASE
+            WHEN source_ref LIKE '%:%' THEN source_ref
+            ELSE 'registry:' || source_ref
+        END,
+        source_ref = NULL
+        WHERE source_ref IS NOT NULL AND source IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await
+    .context("Failed to migrate source_ref to source")?;
+
+    if result.rows_affected() > 0 {
+        tracing::info!(
+            rows = result.rows_affected(),
+            "Migrated source_ref values to source column"
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        common::{server::ServerType, status::EnabledStatus},
+        common::{
+            server::ServerType,
+            status::EnabledStatus,
+        },
         config::{models::Server, server::crud::upsert_server},
     };
 
@@ -436,7 +488,7 @@ mod tests {
             server_type: ServerType::StreamableHttp,
             command: None,
             url: Some(format!("https://example.com/{name}")),
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,

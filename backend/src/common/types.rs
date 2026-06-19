@@ -7,6 +7,11 @@ use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
+use sqlx::{
+    Decode, Encode, Sqlite, Type, encode::IsNull, error::BoxDynError,
+    sqlite::{SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef},
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[schemars(description = "Client application category - application or extension")]
@@ -186,6 +191,134 @@ impl FromStr for RuntimeType {
             "node" => Ok(RuntimeType::Node),
             _ => Err(RuntimeError::UnsupportedRuntimeType(s.to_string())),
         }
+    }
+}
+
+/// Server source type enum
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[schemars(description = "Where a server was added from")]
+pub enum ServerSourceType {
+    Registry,
+    Catalog,
+    Browser,
+    Portal,
+    Local,
+    #[default]
+    Other,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid server source type: {0}")]
+pub struct ParseServerSourceTypeError(String);
+
+impl fmt::Display for ServerSourceType {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        match self {
+            ServerSourceType::Registry => write!(f, "registry"),
+            ServerSourceType::Catalog => write!(f, "catalog"),
+            ServerSourceType::Browser => write!(f, "browser"),
+            ServerSourceType::Portal => write!(f, "portal"),
+            ServerSourceType::Local => write!(f, "local"),
+            ServerSourceType::Other => write!(f, "other"),
+        }
+    }
+}
+
+impl FromStr for ServerSourceType {
+    type Err = ParseServerSourceTypeError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "registry" => Ok(ServerSourceType::Registry),
+            "catalog" => Ok(ServerSourceType::Catalog),
+            "browser" => Ok(ServerSourceType::Browser),
+            "portal" => Ok(ServerSourceType::Portal),
+            "local" => Ok(ServerSourceType::Local),
+            "other" => Ok(ServerSourceType::Other),
+            _ => Err(ParseServerSourceTypeError(s.to_string())),
+        }
+    }
+}
+
+/// Server source value object -- where a server was added from and its external identifier.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ServerSource {
+    #[serde(rename = "type")]
+    pub source_type: ServerSourceType,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "ref")]
+    pub ref_id: Option<String>,
+}
+
+impl ServerSource {
+    pub fn new(source_type: ServerSourceType, ref_id: Option<String>) -> Self {
+        let mut s = Self { source_type, ref_id };
+        s.normalize();
+        s
+    }
+
+    /// Normalize: empty-string ref → None; Registry without ref → Other.
+    fn normalize(&mut self) {
+        if self.ref_id.as_deref() == Some("") {
+            self.ref_id = None;
+        }
+        if self.source_type == ServerSourceType::Registry && self.ref_id.is_none() {
+            self.source_type = ServerSourceType::Other;
+        }
+    }
+}
+
+impl fmt::Display for ServerSource {
+    fn fmt(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        match &self.ref_id {
+            Some(r) => write!(f, "{}:{}", self.source_type, r),
+            None => write!(f, "{}", self.source_type),
+        }
+    }
+}
+
+impl FromStr for ServerSource {
+    type Err = ParseServerSourceTypeError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut source = if let Some(colon_pos) = s.find(':') {
+            let source_type = ServerSourceType::from_str(&s[..colon_pos])?;
+            let ref_id = s[colon_pos + 1..].trim();
+            let ref_id = if ref_id.is_empty() { None } else { Some(ref_id.to_string()) };
+            ServerSource { source_type, ref_id }
+        } else {
+            let source_type = ServerSourceType::from_str(s)?;
+            ServerSource { source_type, ref_id: None }
+        };
+        source.normalize();
+        Ok(source)
+    }
+}
+
+// sqlx traits for ServerSource (stored as TEXT via Display/FromStr)
+impl Type<Sqlite> for ServerSource {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<Sqlite>>::type_info()
+    }
+}
+
+impl<'q> Encode<'q, Sqlite> for ServerSource {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<SqliteArgumentValue<'q>>,
+    ) -> Result<IsNull, BoxDynError> {
+        <String as Encode<Sqlite>>::encode_by_ref(&self.to_string(), buf)
+    }
+}
+
+impl<'r> Decode<'r, Sqlite> for ServerSource {
+    fn decode(value: SqliteValueRef<'r>) -> Result<Self, BoxDynError> {
+        let s = <String as Decode<Sqlite>>::decode(value)?;
+        ServerSource::from_str(&s).map_err(|e| Box::new(e) as BoxDynError)
     }
 }
 

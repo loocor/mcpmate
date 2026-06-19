@@ -315,7 +315,7 @@ pub async fn create_server(
     if let Some(existing) = reusable_pending_server {
         server.id = existing.id.clone();
     }
-    server.source_ref = payload.source_ref.clone();
+    server.source = payload.source.clone();
     server.pending_import = is_pending_import;
     server.unify_direct_exposure_eligible = payload.unify_direct_exposure_eligible.unwrap_or(false);
     if server.pending_import {
@@ -426,7 +426,7 @@ pub async fn create_server(
         .ok_or_else(|| internal_error("Server record missing after creation"))?;
 
     let server_name = server_row.name.clone();
-    let source_ref = server_row.source_ref.clone();
+    let source = server_row.source.clone();
     let command = server_row.command.clone();
     let url = server_row.url.clone();
     let server_type = server_row.server_type;
@@ -447,7 +447,7 @@ pub async fn create_server(
     let response = Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: server_name,
-        source_ref,
+        source,
         enabled: effective_enabled,
         globally_enabled: details.globally_enabled,
         enabled_in_profile: details.enabled_in_profile,
@@ -569,8 +569,8 @@ pub async fn update_server(
         updated_server.url = Some(url);
     }
 
-    if let Some(registry_id) = payload.source_ref.clone() {
-        updated_server.source_ref = Some(registry_id);
+    if let Some(s) = payload.source {
+        updated_server.source = Some(s);
     }
 
     if let Some(enabled) = payload.enabled {
@@ -693,7 +693,7 @@ pub async fn update_server(
     let response = Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
         name: existing_server.name,
-        source_ref: updated_server.source_ref.clone(),
+        source: updated_server.source.clone(),
         enabled: details.globally_enabled && details.enabled_in_profile,
         globally_enabled: details.globally_enabled,
         enabled_in_profile: details.enabled_in_profile,

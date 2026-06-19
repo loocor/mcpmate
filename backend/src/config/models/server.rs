@@ -11,6 +11,7 @@ use crate::common::{
     constants::database::{columns, tables},
     server::ServerType,
     status::EnabledStatus,
+    types::ServerSource,
 };
 use crate::macros::entity::DatabaseEntity;
 
@@ -27,8 +28,8 @@ pub struct Server {
     pub command: Option<String>,
     /// URL (for sse and streamable_http servers)
     pub url: Option<String>,
-    /// Source reference (namespaced identifier tracking import origin, e.g. "registry:server-name")
-    pub source_ref: Option<String>,
+    /// Source value object (structured import origin tracking)
+    pub source: Option<ServerSource>,
     /// Capabilities list string (e.g., "tools,prompts,resources")
     pub capabilities: Option<String>,
     /// Whether the server is globally enabled
@@ -131,7 +132,7 @@ impl Server {
             command: None,
             url: None,
 
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,
@@ -153,7 +154,7 @@ impl Server {
             command,
             url: None,
 
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,
@@ -175,7 +176,7 @@ impl Server {
             command: None,
             url,
 
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
@@ -197,7 +198,7 @@ impl Server {
             command: None,
             url,
 
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,

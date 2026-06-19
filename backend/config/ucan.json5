@@ -24,12 +24,11 @@
     "server_name",
     "interaction_mode",
     "detail_hint",
-    "registry_enriched",
-    "registry_category",
+    "source",
   ],
   catalog_page_size_default: 20,
   catalog_page_size_max: 50,
-  catalog_enrich_from_registry: true,
+  catalog_enrich_from_source: true,
 
   // --- Sort weights ---
   catalog_sort_weights: {

@@ -178,7 +178,7 @@ pub mod database {
         pub const PENDING_IMPORT: &str = "pending_import";
         pub const UNIFY_DIRECT_EXPOSURE_ELIGIBLE: &str = "unify_direct_exposure_eligible";
         pub const CAPABILITIES: &str = "capabilities";
-        pub const SOURCE_REF: &str = "source_ref";
+        pub const SOURCE: &str = "source";
         pub const DESCRIPTION: &str = "description";
         pub const ARGS: &str = "args";
         pub const ENV: &str = "env";

@@ -1,6 +1,7 @@
 // Configuration import for MCPMate
 // Contains functions for importing configuration from JSON files to database
 
+use crate::common::types::{ServerSource, ServerSourceType};
 use crate::core::cache::RedbCacheManager;
 use crate::core::models::Config;
 use anyhow::{Context, Result};
@@ -41,7 +42,7 @@ async fn import_config_with_cache(
                     url: server_config.url,
                     env: server_config.env,
                     headers: None,
-                    source_ref: None,
+                    source: Some(ServerSource::new(ServerSourceType::Local, None)),
                     meta: None,
                 },
             )

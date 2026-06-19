@@ -121,7 +121,7 @@ pub async fn upsert_server_tx(
         columns::SERVER_TYPE,
         columns::COMMAND,
         columns::URL,
-        columns::SOURCE_REF,
+        columns::SOURCE,
         columns::CAPABILITIES,
         columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
         columns::PENDING_IMPORT,
@@ -132,8 +132,8 @@ pub async fn upsert_server_tx(
         columns::COMMAND,
         columns::URL,
         columns::URL,
-        columns::SOURCE_REF,
-        columns::SOURCE_REF,
+        columns::SOURCE,
+        columns::SOURCE,
         columns::CAPABILITIES,
         columns::CAPABILITIES,
         columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
@@ -147,7 +147,7 @@ pub async fn upsert_server_tx(
     .bind(server.server_type)
     .bind(&server.command)
     .bind(&server.url)
-    .bind(&server.source_ref)
+    .bind(&server.source)
     .bind(&server.capabilities)
     .bind(server.unify_direct_exposure_eligible)
     .bind(server.pending_import)
@@ -231,7 +231,7 @@ mod tests {
             server_type: ServerType::StreamableHttp,
             command: None,
             url: Some(format!("https://example.com/{name}")),
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
