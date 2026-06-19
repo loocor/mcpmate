@@ -3,6 +3,8 @@ import {
 	Download,
 	ExternalLink,
 	Globe,
+	Maximize2,
+	Minimize2,
 	ShieldCheck,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -197,6 +199,7 @@ export function MarketDetailPage() {
 
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [selectedTransportId, setSelectedTransportId] = useState("");
+	const [isReadmeExpanded, setIsReadmeExpanded] = useState(false);
 	const server = serverQuery.data ?? null;
 	const repositoryUrl = server?.repository?.url ?? "";
 	const repositorySubfolder = server?.repository?.subfolder ?? "";
@@ -233,6 +236,12 @@ export function MarketDetailPage() {
 	}, [readmeAssetContext, readmeQuery.data?.markdown]);
 
 	const showReadmePanel = Boolean(readmeMarkdown);
+
+	useEffect(() => {
+		if (!showReadmePanel && isReadmeExpanded) {
+			setIsReadmeExpanded(false);
+		}
+	}, [showReadmePanel, isReadmeExpanded]);
 
 	const remoteOptions = useMemo(() => (server ? buildRemoteOptions(server) : []), [server]);
 	const hasUnsupportedPackageOption = useMemo(
@@ -378,9 +387,9 @@ export function MarketDetailPage() {
 			icon: Code,
 		});
 	}
-	const splitGridStyle = isLgLayout && showReadmePanel
+	const splitGridStyle = isLgLayout && showReadmePanel && !isReadmeExpanded
 		? {
-			gridTemplateColumns: `minmax(0,${leftSplitPct}fr) 8px minmax(0,${100 - leftSplitPct}fr)`,
+			gridTemplateColumns: `minmax(360px,${leftSplitPct}fr) 8px minmax(0,${100 - leftSplitPct}fr)`,
 		}
 		: undefined;
 
@@ -393,6 +402,7 @@ export function MarketDetailPage() {
 					</h2>
 				</div>
 
+				{!isReadmeExpanded ? (
 				<Card className="shrink-0">
 					<CardContent className="relative p-4">
 						<div className="mb-3 flex flex-wrap items-center justify-end gap-2 sm:absolute sm:top-4 sm:right-4 sm:z-10 sm:mb-0">
@@ -487,18 +497,21 @@ export function MarketDetailPage() {
 						</div>
 					</CardContent>
 				</Card>
+				) : null}
 
 				<div
 					ref={splitContainerRef}
 					className={cn(
 						"grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto lg:overflow-hidden",
-						showReadmePanel && "lg:grid-cols-none lg:items-stretch lg:gap-0",
+						showReadmePanel && !isReadmeExpanded && "lg:grid-cols-none lg:items-stretch lg:gap-0",
+						isReadmeExpanded && "overflow-hidden lg:grid-cols-1",
 					)}
 					style={splitGridStyle}
 				>
+					{!isReadmeExpanded ? (
 					<Card
 						className={cn(
-							"min-w-0 lg:min-h-0",
+							"min-w-0 lg:min-h-0 lg:min-w-[360px]",
 							showReadmePanel && "lg:h-full lg:overflow-y-auto lg:rounded-none lg:rounded-l-xl",
 						)}
 					>
@@ -507,7 +520,7 @@ export function MarketDetailPage() {
 						</CardHeader>
 						<CardContent className="space-y-4 p-4">
 							<div className="space-y-2">
-								<p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+								<p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
 									{t("market:detail.repositorySection", { defaultValue: "Repository & Project" })}
 								</p>
 								<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
@@ -523,7 +536,7 @@ export function MarketDetailPage() {
 							</div>
 
 							<div className="space-y-2">
-								<p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+								<p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
 									{t("market:detail.registryMeta", { defaultValue: "Registry metadata" })}
 								</p>
 								<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
@@ -553,9 +566,11 @@ export function MarketDetailPage() {
 							</div>
 						</CardContent>
 					</Card>
+					) : null}
 
 					{showReadmePanel ? (
 						<>
+							{!isReadmeExpanded ? (
 							<div
 								className="hidden h-full min-h-0 w-2 shrink-0 cursor-col-resize touch-none self-stretch bg-transparent lg:block"
 								role="separator"
@@ -566,11 +581,40 @@ export function MarketDetailPage() {
 								aria-label={t("market:detail.splitResize", { defaultValue: "Resize registry and README panels" })}
 								onPointerDown={onSplitPointerDown}
 							/>
+							) : null}
 
-							<Card className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl lg:h-full lg:rounded-none lg:rounded-r-xl">
-								<CardHeader className="shrink-0">
-									<CardTitle>{t("market:detail.readme", { defaultValue: "README" })}</CardTitle>
-								</CardHeader>
+							<Card
+								className={cn(
+									"flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl lg:h-full",
+									!isReadmeExpanded && "lg:rounded-none lg:rounded-r-xl",
+								)}
+							>
+								<div className="relative flex h-14 shrink-0 items-center px-4">
+									<CardTitle className="leading-none">{t("market:detail.readme", { defaultValue: "README" })}</CardTitle>
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon"
+										className="absolute right-4 top-4 h-4 w-4 shrink-0 bg-transparent p-0 opacity-35 transition-opacity hover:bg-transparent hover:opacity-50 focus-visible:opacity-50 active:bg-transparent"
+										aria-label={
+											isReadmeExpanded
+												? t("market:detail.readmeRestore", { defaultValue: "Restore README panel" })
+												: t("market:detail.readmeExpand", { defaultValue: "Expand README panel" })
+										}
+										title={
+											isReadmeExpanded
+												? t("market:detail.readmeRestore", { defaultValue: "Restore README panel" })
+												: t("market:detail.readmeExpand", { defaultValue: "Expand README panel" })
+										}
+										onClick={() => setIsReadmeExpanded((value) => !value)}
+									>
+										{isReadmeExpanded ? (
+											<Minimize2 className="h-4 w-4" />
+										) : (
+											<Maximize2 className="h-4 w-4" />
+										)}
+									</Button>
+								</div>
 								<CardContent className="min-h-0 flex-1 overflow-y-auto p-4">
 									<ReactMarkdown
 										remarkPlugins={[remarkGfm]}
