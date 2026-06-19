@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { serversApi } from "../lib/api";
 import { notifySuccess, notifyError } from "../lib/notify";
 import { startOAuthAccessFlow } from "../lib/oauth-callback-access";
+import { isRegistrySource } from "../lib/source";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
 import type {
 	MCPServerConfig,
@@ -195,7 +196,7 @@ const convertServerDetailToDraft = (
 		? server.args.filter((item): item is string => Boolean(item))
 		: undefined;
 	const meta = buildMetaFromServer(server);
-	const sourceRef = server.source_ref ?? undefined;
+	const source = server.source ?? undefined;
 
 	const headersSource = server.headers ?? server.env ?? undefined;
 	const sanitizedHeaders = sanitizeRecord(headersSource ?? undefined);
@@ -208,7 +209,7 @@ const convertServerDetailToDraft = (
 			args,
 			env: sanitizeRecord(server.env ?? undefined),
 			meta,
-			sourceRef,
+			source,
 		};
 	}
 
@@ -224,7 +225,7 @@ const convertServerDetailToDraft = (
 		urlParams,
 		headers: sanitizedHeaders,
 		meta,
-		sourceRef,
+		source,
 	};
 };
 
@@ -305,6 +306,7 @@ export function ServerEditDrawer({
 		() => (server ? convertServerDetailToDraft(server) : null),
 		[server],
 	);
+	const canRefreshFromRegistry = isRegistrySource(server?.source);
 
 	const handleSubmit = useCallback(
 		async (draft: ServerInstallDraft) => {
@@ -334,7 +336,7 @@ export function ServerEditDrawer({
 	);
 
 	const handleRefreshFromRegistry = useCallback(async () => {
-		if (!server?.source_ref?.startsWith("registry:") || !server.id) return;
+		if (!canRefreshFromRegistry || !server?.id) return;
 		try {
 			setIsRefreshing(true);
 			const currentDraft = formRef.current?.getCurrentDraft();
@@ -361,7 +363,7 @@ export function ServerEditDrawer({
 		} finally {
 			setIsRefreshing(false);
 		}
-	}, [server, t]);
+	}, [canRefreshFromRegistry, server, t]);
 
 
 	const unifyTabContent = (
@@ -444,7 +446,7 @@ export function ServerEditDrawer({
 			onInitiateOAuth={handleInitiateOAuth}
 			allowJsonEditing={false}
 			initialDraft={initialDraft ?? undefined}
-			onRefreshFromRegistry={server?.source_ref?.startsWith("registry:") ? handleRefreshFromRegistry : undefined}
+			onRefreshFromRegistry={canRefreshFromRegistry ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}
 			extraTab={{
 				value: "unify",

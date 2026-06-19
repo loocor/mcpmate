@@ -13,7 +13,7 @@ import {
 import type { ImportStats } from "../lib/api";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
-import type { ServerMetaInfo } from "../lib/types";
+import type { ServerMetaInfo, ServerSource } from "../lib/types";
 
 export type InstallSource = "manual" | "ingest" | "market";
 export type WizardStep = "form" | "preview" | "result";
@@ -26,7 +26,7 @@ export interface ServerInstallDraft {
 	args?: string[];
 	env?: Record<string, string>;
 	url?: string;
-	sourceRef?: string;
+	source?: ServerSource;
 	headers?: Record<string, string>;
 	urlParams?: Record<string, string>;
 	meta?: ServerMetaInfo;

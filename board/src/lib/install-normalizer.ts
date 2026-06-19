@@ -6,6 +6,7 @@ import type {
 	RegistryRepositoryInfo,
 	ServerIcon,
 	ServerMetaInfo,
+	ServerSource,
 } from "./types";
 
 export type ServerIngestPayload = {
@@ -15,6 +16,8 @@ export type ServerIngestPayload = {
 		text?: string;
 		fileName?: string;
 	}>;
+	/** Fallback source for drafts that don't carry their own (e.g. deep link context). */
+	source?: ServerSource;
 };
 
 const normalizeKind = (value: unknown): ServerInstallDraft["kind"] => {
@@ -427,9 +430,8 @@ const buildDraft = (
 		toEnvRecord(raw.headers) ||
 		toEnvRecord((raw as any)?.httpHeaders) ||
 		toEnvRecord((raw as any)?.requestHeaders);
-	const registryServerId = trimmedString(
-		raw.source_ref ?? raw.registry_server_id ?? raw.registryServerId,
-	);
+	const rawSource = raw.source as ServerSource | undefined;
+	const source = rawSource?.type ? rawSource : { type: "other" as const };
 
 	const baseMeta = normalizeMeta(raw.meta);
 	let extras: Record<string, unknown> | undefined;
@@ -462,7 +464,7 @@ const buildDraft = (
 		env: envForDraft,
 		headers: headersForDraft ?? undefined,
 		...(kind !== "stdio" && urlParams ? { urlParams } : {}),
-		sourceRef: registryServerId,
+		source,
 		meta,
 	};
 };

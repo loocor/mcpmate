@@ -521,7 +521,7 @@ export function adminDiscoveryServerToOnboardingCandidate(raw: unknown): AdminDi
 	const headers = recordValue(installConfig.headers);
 	const importConfig: Record<string, unknown> = {
 		type: kind,
-		source_ref: registryId,
+		source: { type: "catalog", ref: registryId },
 	};
 
 	if (command) importConfig.command = command;

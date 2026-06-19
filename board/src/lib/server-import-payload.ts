@@ -66,8 +66,8 @@ export function buildMcpServersImportBodyFromDrafts(
 		if (item.kind !== "stdio" && item.headers && Object.keys(item.headers).length) {
 			entry.headers = item.headers;
 		}
-		if (item.sourceRef) {
-			entry.source_ref = item.sourceRef;
+		if (item.source) {
+			entry.source = item.source;
 		}
 		if (metaPayload) {
 			entry.meta = metaPayload;

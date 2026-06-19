@@ -15,6 +15,7 @@ import {
 } from "../../lib/api";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import { useAppStore } from "../../lib/store";
+import type { ServerSource } from "../../lib/types";
 import { websiteLangParam } from "../../lib/website-lang";
 import { Header } from "./header";
 import { Sidebar } from "./sidebar";
@@ -65,12 +66,16 @@ function summarizeImportServerPayload(raw: unknown): {
 		};
 	}
 	const text = typeof payload.text === "string" ? payload.text : "";
+	const source = payload.source;
 	return {
 		hasPayload: true,
 		hasText: Boolean(text.trim()),
 		textLength: text.length,
 		hasFormat: typeof payload.format === "string",
-		hasSource: typeof payload.source === "string",
+		hasSource:
+			typeof source === "string"
+				? Boolean(source.trim())
+				: Boolean(source && typeof source === "object" && "type" in source),
 	};
 }
 
@@ -110,7 +115,12 @@ function handleImportServerPayload(navigate: ReturnType<typeof useNavigate>, raw
 	}
 
 	const format = typeof payload.format === "string" ? payload.format : undefined;
-	const source = typeof payload.source === "string" ? payload.source : undefined;
+	const rawSource = payload.source;
+	const source = rawSource && typeof rawSource === "object" && "type" in rawSource
+		? rawSource as ServerSource
+		: typeof rawSource === "string" && rawSource.trim()
+			? { type: "browser" as const }
+			: undefined;
 	useAppStore.getState().setPendingServerDeepLinkImport({
 		text,
 		format,

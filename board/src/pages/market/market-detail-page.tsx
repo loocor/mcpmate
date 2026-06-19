@@ -249,7 +249,7 @@ export function MarketDetailPage() {
 		const draft = buildDraftFromRemoteOption(selectedRemote, slugifyForConfig(server.name));
 		return {
 			...draft,
-			sourceRef: provider.buildSourceRef(server),
+			source: provider.buildSource(server),
 			meta: {
 				description: server.description || "",
 				version: server.version || "",

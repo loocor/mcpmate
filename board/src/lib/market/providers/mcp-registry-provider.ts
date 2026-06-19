@@ -1,4 +1,4 @@
-import type { RegistryServerEntryWrapper, RegistryServerListResponse } from "../../types";
+import type { RegistryServerEntryWrapper, RegistryServerListResponse, ServerSource } from "../../types";
 import { getCanonicalRegistryServerId } from "../../registry";
 import type {
 	CatalogEntry,
@@ -14,15 +14,36 @@ import {
 	type RegistryUpstreamPage,
 } from "./mcp-registry-pagination";
 
+import { isTauriEnvironmentSync } from "../../platform";
+
 const REGISTRY_API_BASE = import.meta.env.DEV
 	? "/registry-api"
 	: "https://registry.modelcontextprotocol.io/v0.1";
 
+const CONFIGURED_REGISTRY_API_BASE =
+	typeof import.meta.env.VITE_MARKET_REGISTRY_BASE_URL === "string" &&
+	import.meta.env.VITE_MARKET_REGISTRY_BASE_URL.trim().length > 0
+		? import.meta.env.VITE_MARKET_REGISTRY_BASE_URL.trim()
+		: null;
+
+const EFFECTIVE_REGISTRY_API_BASE = CONFIGURED_REGISTRY_API_BASE ?? REGISTRY_API_BASE;
+
+function shouldLogRegistryTraffic(): boolean {
+	return import.meta.env.DEV || isTauriEnvironmentSync();
+}
+
+function logRegistryRequest(requestUrl: string): void {
+	if (shouldLogRegistryTraffic()) {
+		console.info("[mcp-registry-provider] requestUrl:", requestUrl);
+	}
+}
+
 /**
- * MCP Registry provider — fetches directly from the official MCP Registry.
+ * MCP Registry provider — fetches through the configured registry API base.
  *
- * In dev mode the Vite proxy rewrites /registry-api → the real API.
- * In production builds (Tauri desktop etc.) the full URL is used directly.
+ * In dev mode the Vite proxy rewrites /registry-api to the official API.
+ * Production web deployments should serve the same path through nginx, Pages,
+ * Workers, or a deployment-specific VITE_MARKET_REGISTRY_BASE_URL.
  */
 export class McpRegistryProvider implements MarketCatalogProvider {
 	readonly meta = {
@@ -86,7 +107,8 @@ export class McpRegistryProvider implements MarketCatalogProvider {
 		const trimmed = key.trim();
 		if (!trimmed) return null;
 
-		const requestUrl = `${REGISTRY_API_BASE}/servers/${encodeURIComponent(trimmed)}/versions/latest`;
+		const requestUrl = `${EFFECTIVE_REGISTRY_API_BASE}/servers/${encodeURIComponent(trimmed)}/versions/latest`;
+		logRegistryRequest(requestUrl);
 		const response = await fetch(requestUrl, {
 			headers: { Accept: "application/json" },
 		});
@@ -109,8 +131,8 @@ export class McpRegistryProvider implements MarketCatalogProvider {
 		};
 	}
 
-	buildSourceRef(entry: CatalogEntry): string {
-		return `registry:${entry.name}`;
+	buildSource(entry: CatalogEntry): ServerSource {
+		return { type: "registry", ref: entry.name };
 	}
 
 	private async hasMoreUnseenEntries(
@@ -151,7 +173,8 @@ export class McpRegistryProvider implements MarketCatalogProvider {
 			requestParams.set("search", params.search);
 		}
 
-		const requestUrl = `${REGISTRY_API_BASE}/servers?${requestParams.toString()}`;
+		const requestUrl = `${EFFECTIVE_REGISTRY_API_BASE}/servers?${requestParams.toString()}`;
+		logRegistryRequest(requestUrl);
 		const response = await fetch(requestUrl, {
 			headers: { Accept: "application/json" },
 		});

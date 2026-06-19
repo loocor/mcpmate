@@ -6,7 +6,7 @@ import {
 	isProfileTokenEstimateMethod,
 	PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
 } from "./profile-token-estimate-method";
-import type { Theme } from "./types";
+import type { ServerSource, Theme } from "./types";
 
 /** Persisted third-party market portal metadata (re-export shape for market UI). */
 export type MarketPortalMeta = MarketPortalDefinition;
@@ -62,7 +62,7 @@ export interface MarketBlacklistEntry {
 export interface PendingServerDeepLinkImport {
 	text: string;
 	format?: string;
-	source?: string;
+	source?: ServerSource;
 }
 
 interface AppState {

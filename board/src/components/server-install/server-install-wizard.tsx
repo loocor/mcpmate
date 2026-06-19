@@ -52,7 +52,7 @@ import {
 } from "../../lib/key-value-fields";
 import { useAppStore } from "../../lib/store";
 import CapabilityList from "../capability-list";
-import type { ClientInfo, MCPServerConfig, SecretOrigin } from "../../lib/types";
+import type { ClientInfo, SecretOrigin } from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 import {
 	InlineSecretCreate,
@@ -88,6 +88,7 @@ import { Input } from "../ui/input";
 import { toolbarSearchInputClassName } from "../ui/page-toolbar";
 import { Label } from "../ui/label";
 import { Segment } from "../ui/segment";
+import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import {
@@ -108,6 +109,7 @@ import {
 	buildImportValidationItems,
 	ImportValidationSummary,
 } from "./import-validation-summary";
+import { draftToServerConfig } from "./draft-to-server-config";
 import {
 	draftToFormState,
 	useFormState,
@@ -536,10 +538,12 @@ export const ServerInstallWizard = forwardRef(
 			[t],
 		);
 		const previewInFlightRef = useRef(false);
+		const importInFlightRef = useRef(false);
 		const wizardSessionEpochRef = useRef(0);
 		const pendingImportServerRef = useRef<string | null>(null);
 		const [pendingImportServerId, setPendingImportServerId] =
 			useState<string | null>(null);
+		const [isImportActionPending, setIsImportActionPending] = useState(false);
 		const [selectedAuthMode, setSelectedAuthMode] =
 			useState<"header" | "oauth">("header");
 		const suggestedAuthMode = useMemo<"header" | "oauth">(() => {
@@ -579,24 +583,6 @@ export const ServerInstallWizard = forwardRef(
 			[],
 		);
 
-		const draftToServerConfig = useCallback(
-			(
-				draft: ServerInstallDraft,
-				extra?: Partial<MCPServerConfig>,
-			): Partial<MCPServerConfig> => ({
-				name: draft.name,
-				kind: draft.kind,
-				command: draft.kind === "stdio" ? draft.command : undefined,
-				url: draft.kind === "stdio" ? undefined : draft.url,
-				args: draft.args,
-				env: draft.env,
-				headers: draft.kind === "stdio" ? undefined : draft.headers,
-				meta: draft.meta,
-				...extra,
-			}),
-			[],
-		);
-
 		const cleanupPendingImportServer = useCallback(() => {
 			const pendingId = pendingImportServerRef.current;
 			if (!pendingId) {
@@ -606,6 +592,89 @@ export const ServerInstallWizard = forwardRef(
 			setPendingImportServerId(null);
 			void serversApi.deleteServer(pendingId).catch(() => { });
 		}, []);
+
+		const clearPendingImportState = useCallback(() => {
+			const publishedServerId = pendingImportServerRef.current;
+			if (!publishedServerId) {
+				return null;
+			}
+			pendingImportServerRef.current = null;
+			setPendingImportServerId(null);
+			return publishedServerId;
+		}, []);
+
+		const resolveImportTargetProfileId = useCallback(async () => {
+			const autoAddTargetProfileId = await resolveAutoAddTargetProfileId({
+				autoAddEnabled:
+					useAppStore.getState().dashboardSettings.autoAddServerToDefaultProfile,
+			});
+			return installPipeline.state.targetProfileId ?? autoAddTargetProfileId;
+		}, [installPipeline.state.targetProfileId]);
+
+		const completePendingPublishImport = useCallback(
+			async (
+				draft: ServerInstallDraft,
+				publishedServerId: string,
+				targetProfileId: string | null,
+			) => {
+				await serversApi.updateServer(
+					publishedServerId,
+					draftToServerConfig(draft, {
+						enabled: true,
+						pending_import: false,
+						profile_ids: targetProfileId ? [targetProfileId] : undefined,
+					}),
+				);
+				await queryClient.invalidateQueries({ queryKey: ["servers"] });
+				if (targetProfileId) {
+					await queryClient.invalidateQueries({
+						queryKey: ["configSuits"],
+					});
+				}
+				installPipeline.setImportResult({
+					success: true,
+					summary: {
+						imported_count: 1,
+						skipped_count: 0,
+					},
+					servers: {
+						[draft.name]: {
+							id: publishedServerId,
+							status: "success",
+						},
+					},
+				});
+			},
+			[queryClient, installPipeline],
+		);
+
+		const runImportPipeline = useCallback(
+			async (targetProfileId: string | null) => {
+				const didSucceed = await installPipeline.confirmImport(targetProfileId);
+				if (!didSucceed) {
+					return false;
+				}
+				if (targetProfileId) {
+					await queryClient.invalidateQueries({
+						queryKey: ["configSuits"],
+					});
+				}
+				return true;
+			},
+			[installPipeline, queryClient],
+		);
+
+		const tryFinalizePublishImport = useCallback(
+			async (draft: ServerInstallDraft, targetProfileId: string | null) => {
+				const publishedServerId = clearPendingImportState();
+				if (!publishedServerId) {
+					return false;
+				}
+				await completePendingPublishImport(draft, publishedServerId, targetProfileId);
+				return true;
+			},
+			[clearPendingImportState, completePendingPublishImport],
+		);
 
 		const buildJsonPayloadFromValues = useCallback(
 			(values: ManualServerFormValues) => {
@@ -1143,7 +1212,7 @@ export const ServerInstallWizard = forwardRef(
 				return {
 					name: values.name.trim(),
 					serverId: pendingImportServerRef.current ?? undefined,
-					sourceRef: initialDraft?.sourceRef,
+					source: initialDraft?.source,
 					kind: values.kind,
 					command: values.kind === "stdio" ? trim(values.command) : undefined,
 					url: values.kind === "stdio" ? undefined : trim(values.url),
@@ -1154,7 +1223,7 @@ export const ServerInstallWizard = forwardRef(
 					meta: Object.keys(meta).length ? meta : undefined,
 				};
 			},
-			[initialDraft?.sourceRef],
+			[initialDraft?.source],
 		);
 
 		const persistActiveDraft = useCallback(() => {
@@ -1364,91 +1433,51 @@ export const ServerInstallWizard = forwardRef(
 
 		// Handle import action
 		const handleImport = useCallback(async () => {
-			// Resolve the auto-add target profile once up front so both the
-			// `pendingImport` finalization (PUT /servers/:id) and the install
-			// pipeline branch (POST /servers/import) link to the same profile
-			// atomically. Returns null when the setting is off, keeping the
-			// no-op behavior intact.
-			const autoAddTargetProfileId = await resolveAutoAddTargetProfileId({
-				autoAddEnabled:
-					useAppStore.getState().dashboardSettings
-						.autoAddServerToDefaultProfile,
-			});
-			const explicitTargetProfileId = installPipeline.state.targetProfileId;
-			const effectiveTargetProfileId =
-				explicitTargetProfileId ?? autoAddTargetProfileId;
-
-			if (pendingImportServerRef.current && !isEditMode) {
-				const formValues = getValues();
-				const draft = toDraftFromValues(formValues);
-				const publishedServerId = pendingImportServerRef.current;
-				await serversApi.updateServer(
-					publishedServerId,
-					draftToServerConfig(draft, {
-						enabled: true,
-						pending_import: false,
-						profile_ids: effectiveTargetProfileId
-							? [effectiveTargetProfileId]
-							: undefined,
-					}),
-				);
-				pendingImportServerRef.current = null;
-				setPendingImportServerId(null);
-				await queryClient.invalidateQueries({ queryKey: ["servers"] });
-				if (effectiveTargetProfileId) {
-					await queryClient.invalidateQueries({
-						queryKey: ["configSuits"],
-					});
-				}
-				installPipeline.setImportResult({
-					success: true,
-					summary: {
-						imported_count: 1,
-						skipped_count: 0,
-					},
-					servers: {
-						[draft.name]: {
-							id: publishedServerId,
-							status: "success",
-						},
-					},
-				});
+			if (importInFlightRef.current) {
 				return;
 			}
 
-			if (onImport) {
-				const formValues = getValues();
-				const draft = toDraftFromValues(formValues);
-				await Promise.resolve(onImport([draft]));
-				pendingImportServerRef.current = null;
-				setPendingImportServerId(null);
-				handleOverlayClose();
-				return;
-			}
+			importInFlightRef.current = true;
+			setIsImportActionPending(true);
 
-			// Use install pipeline for import; close drawer on success
-			const didSucceed = await installPipeline.confirmImport(
-				effectiveTargetProfileId,
-			);
-			if (didSucceed) {
-				pendingImportServerRef.current = null;
-				setPendingImportServerId(null);
-				if (effectiveTargetProfileId) {
-					await queryClient.invalidateQueries({
-						queryKey: ["configSuits"],
-					});
+			try {
+				const draft = toDraftFromValues(getValues());
+				const effectiveTargetProfileId = await resolveImportTargetProfileId();
+				if (
+					!isEditMode &&
+					(await tryFinalizePublishImport(draft, effectiveTargetProfileId))
+				) {
+					return;
 				}
+
+				if (onImport) {
+					await Promise.resolve(onImport([draft]));
+					clearPendingImportState();
+					handleOverlayClose();
+					return;
+				}
+
+				const didSucceed = await runImportPipeline(effectiveTargetProfileId);
+				if (!didSucceed) {
+					return;
+				}
+
+				clearPendingImportState();
 				handleOverlayClose();
+			} finally {
+				importInFlightRef.current = false;
+				setIsImportActionPending(false);
 			}
 		}, [
-			queryClient,
 			getValues,
 			onImport,
 			toDraftFromValues,
-			draftToServerConfig,
+			resolveImportTargetProfileId,
+			runImportPipeline,
+			tryFinalizePublishImport,
+			clearPendingImportState,
 			handleOverlayClose,
 			isEditMode,
-			installPipeline,
 		]);
 
 		// Cancel close handler (with delay for complete reset)
@@ -3069,6 +3098,33 @@ export const ServerInstallWizard = forwardRef(
 			currentStep === "form" || currentStep === "preview";
 		const detectedServerCount = installPipeline.state.drafts.length;
 		const headerPluralCount = detectedServerCount > 1 ? detectedServerCount : 1;
+		const isImportBusy =
+			isImportActionPending || installPipeline.state.isImporting;
+		const hasImportableDrafts =
+			hiddenPreviewReady ||
+			(installPipeline.state.dryRunStats?.importedCount ?? 0) > 0;
+		const isImportButtonDisabled =
+			isImportBusy ||
+			installPipeline.state.isDryRunLoading ||
+			!!installPipeline.state.dryRunError ||
+			!hasImportableDrafts;
+		const importButtonContent = isImportBusy ? (
+			<>
+				<Spinner size="sm" className="mr-2" />
+				{t("wizard.buttons.importing", {
+					defaultValue: "Importing...",
+				})}
+			</>
+		) : installPipeline.state.isDryRunLoading ? (
+			<>
+				<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+				{t("wizard.buttons.validating", {
+					defaultValue: "Validating...",
+				})}
+			</>
+		) : (
+			t("wizard.buttons.import", { defaultValue: "Import" })
+		);
 
 		return (
 			<>
@@ -3335,33 +3391,9 @@ export const ServerInstallWizard = forwardRef(
 											<Button
 												type="button"
 												onClick={handleImport}
-												disabled={
-													installPipeline.state.isImporting ||
-													installPipeline.state.isDryRunLoading ||
-													!!installPipeline.state.dryRunError ||
-													!(hiddenPreviewReady || (
-														installPipeline.state.dryRunStats &&
-														installPipeline.state.dryRunStats.importedCount > 0
-													))
-												}
+												disabled={isImportButtonDisabled}
 											>
-												{installPipeline.state.isImporting ? (
-													<>
-														<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-														{t("wizard.buttons.importing", {
-															defaultValue: "Importing...",
-														})}
-													</>
-												) : installPipeline.state.isDryRunLoading ? (
-													<>
-														<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-														{t("wizard.buttons.validating", {
-															defaultValue: "Validating...",
-														})}
-													</>
-												) : (
-													t("wizard.buttons.import", { defaultValue: "Import" })
-												)}
+												{importButtonContent}
 											</Button>
 										)}
 									{currentStep === "result" &&

@@ -1,7 +1,9 @@
 import type { RegistryServerEntry } from "../types";
 
-/** Canonical catalog entry type — all providers must return this shape. */
-export type CatalogEntry = RegistryServerEntry;
+/** Provider-neutral catalog entry shape used by Market surfaces. */
+export type CatalogEntry = Omit<RegistryServerEntry, "version"> & {
+	version?: string;
+};
 
 /** Opaque pagination cursor. */
 export type CatalogCursor = string;
@@ -48,8 +50,8 @@ export interface MarketCatalogProvider {
   sync?(): Promise<void>;
 
   /**
-   * Build a source_ref string for a catalog entry.
-   * Default pattern: "{providerId}:{entry.name}"
+   * Build a ServerSource record for a catalog entry.
+   * Default: `{ type: providerId, ref: entry.name }`
    */
-  buildSourceRef(entry: CatalogEntry): string;
+  buildSource(entry: CatalogEntry): import("../types").ServerSource;
 }
