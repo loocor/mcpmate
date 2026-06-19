@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-30T14:50:25Z",
+  "generatedAt": "2026-06-19T06:35:18Z",
   "sections": [
     {
       "id": "backend",
@@ -23,16 +23,6 @@
           "homepage": "",
           "description": "Flexible concrete Error type built on std::error::Error",
           "author": "David Tolnay <dtolnay@gmail.com>",
-          "licenseFile": ""
-        },
-        {
-          "name": "arc-swap",
-          "version": "1.7.1",
-          "license": "MIT OR Apache-2.0",
-          "repository": "https://github.com/vorner/arc-swap",
-          "homepage": "",
-          "description": "Atomically swappable Arc",
-          "author": "Michal 'vorner' Vaner <vorner@vorner.cz>",
           "licenseFile": ""
         },
         {
@@ -73,46 +63,6 @@
           "homepage": "",
           "description": "A binary serialization / deserialization strategy that uses Serde for transforming structs into bytes and vice versa!",
           "author": "Ty Overby <ty@pre-alpha.com>, Francesco Mazzoli <f@mazzo.li>, David Tolnay <dtolnay@gmail.com>, Zoey Riordan <zoey@dos.cafe>",
-          "licenseFile": ""
-        },
-        {
-          "name": "candle-core",
-          "version": "0.8.4",
-          "license": "MIT OR Apache-2.0",
-          "repository": "https://github.com/huggingface/candle",
-          "homepage": "",
-          "description": "Minimalist ML framework.",
-          "author": "",
-          "licenseFile": ""
-        },
-        {
-          "name": "candle-nn",
-          "version": "0.8.4",
-          "license": "MIT OR Apache-2.0",
-          "repository": "https://github.com/huggingface/candle",
-          "homepage": "",
-          "description": "Minimalist ML framework.",
-          "author": "",
-          "licenseFile": ""
-        },
-        {
-          "name": "candle-transformers",
-          "version": "0.8.4",
-          "license": "MIT OR Apache-2.0",
-          "repository": "https://github.com/huggingface/candle",
-          "homepage": "",
-          "description": "Minimalist ML framework.",
-          "author": "",
-          "licenseFile": ""
-        },
-        {
-          "name": "cherry-db-manager",
-          "version": "0.1.0",
-          "license": "MIT",
-          "repository": "https://github.com/loocor/cherry-db-manager",
-          "homepage": "",
-          "description": "A library for managing Cherry Studio LevelDB configurations",
-          "author": "",
           "licenseFile": ""
         },
         {
@@ -186,16 +136,6 @@
           "licenseFile": ""
         },
         {
-          "name": "hf-hub",
-          "version": "0.3.2",
-          "license": "Apache-2.0",
-          "repository": "https://github.com/huggingface/hf-hub",
-          "homepage": "https://github.com/huggingface/hf-hub",
-          "description": "This crates aims ease the interaction with [huggingface](https://huggingface.co/) \nIt aims to be compatible with [huggingface_hub](https://github.com/huggingface/huggingface_hub/) python package, but only implements a smaller subset of functions.\n",
-          "author": "",
-          "licenseFile": ""
-        },
-        {
           "name": "is-terminal",
           "version": "0.4.17",
           "license": "MIT",
@@ -223,6 +163,16 @@
           "homepage": "https://github.com/jeromefroe/lru-rs",
           "description": "A LRU cache implementation",
           "author": "Jerome Froelich <jeromefroelic@hotmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "mcpmate-secrets",
+          "version": "0.1.0",
+          "license": "AGPL-3.0-only",
+          "repository": "",
+          "homepage": "",
+          "description": "Runtime secret references and provider boundaries for MCPMate",
+          "author": "Loocor <loocor@gmail.com>",
           "licenseFile": ""
         },
         {
@@ -306,23 +256,23 @@
           "licenseFile": ""
         },
         {
+          "name": "ring",
+          "version": "0.17.14",
+          "license": "Apache-2.0 AND ISC",
+          "repository": "https://github.com/briansmith/ring",
+          "homepage": "",
+          "description": "An experiment.",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
           "name": "rmcp",
-          "version": "1.2.0",
+          "version": "1.7.0",
           "license": "Apache-2.0",
           "repository": "https://github.com/modelcontextprotocol/rust-sdk/",
           "homepage": "https://github.com/modelcontextprotocol/rust-sdk",
           "description": "Rust SDK for Model Context Protocol",
           "author": "",
-          "licenseFile": "LICENSE"
-        },
-        {
-          "name": "rusty-leveldb",
-          "version": "3.0.3",
-          "license": "MIT",
-          "repository": "https://github.com/dermesser/leveldb-rs",
-          "homepage": "https://github.com/dermesser/leveldb-rs",
-          "description": "A compatible re-implementation of LevelDB in Rust",
-          "author": "Lewin Bormann <lbo@spheniscida.de>",
           "licenseFile": ""
         },
         {
@@ -446,16 +396,6 @@
           "licenseFile": ""
         },
         {
-          "name": "tokenizers",
-          "version": "0.15.2",
-          "license": "Apache-2.0",
-          "repository": "https://github.com/huggingface/tokenizers",
-          "homepage": "https://github.com/huggingface/tokenizers",
-          "description": "Provides an implementation of today's most used tokenizers,\nwith a focus on performances and versatility.\n",
-          "author": "Anthony MOI <m.anthony.moi@gmail.com>, Nicolas Patry <patry.nicolas@protonmail.com>",
-          "licenseFile": ""
-        },
-        {
           "name": "tokio",
           "version": "1.46.1",
           "license": "MIT",
@@ -576,6 +516,16 @@
           "licenseFile": ""
         },
         {
+          "name": "windows-sys",
+          "version": "0.59.0",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/microsoft/windows-rs",
+          "homepage": "",
+          "description": "Rust for Windows",
+          "author": "Microsoft",
+          "licenseFile": ""
+        },
+        {
           "name": "zip",
           "version": "2.4.2",
           "license": "MIT",
@@ -609,6 +559,16 @@
           "homepage": "",
           "description": "Asynchronous streams using async & await notation",
           "author": "Carl Lerche <me@carllerche.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "axum",
+          "version": "0.8.4",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/axum",
+          "homepage": "https://github.com/tokio-rs/axum",
+          "description": "Web framework that focuses on ergonomics and modularity",
+          "author": "",
           "licenseFile": ""
         },
         {
@@ -702,6 +662,16 @@
           "licenseFile": ""
         },
         {
+          "name": "libc",
+          "version": "0.2.176",
+          "license": "MIT OR Apache-2.0",
+          "repository": "https://github.com/rust-lang/libc",
+          "homepage": "",
+          "description": "Raw FFI bindings to platform libraries like libc.",
+          "author": "The Rust Project Developers",
+          "licenseFile": ""
+        },
+        {
           "name": "mcpmate",
           "version": "0.1.0",
           "license": "UNKNOWN",
@@ -709,6 +679,46 @@
           "homepage": "",
           "description": "MCPMate - A comprehensive management center for Model Context Protocol (MCP) servers",
           "author": "Loocor <loocor@gmail.com>",
+          "licenseFile": ""
+        },
+        {
+          "name": "objc2-app-kit",
+          "version": "0.3.1",
+          "license": "Zlib OR Apache-2.0 OR MIT",
+          "repository": "https://github.com/madsmtm/objc2",
+          "homepage": "",
+          "description": "Bindings to the AppKit framework",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "objc2-foundation",
+          "version": "0.3.2",
+          "license": "MIT",
+          "repository": "https://github.com/madsmtm/objc2",
+          "homepage": "",
+          "description": "Bindings to the Foundation framework",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "objc2-quartz-core",
+          "version": "0.3.1",
+          "license": "Zlib OR Apache-2.0 OR MIT",
+          "repository": "https://github.com/madsmtm/objc2",
+          "homepage": "",
+          "description": "Bindings to the QuartzCore/CoreAnimation framework",
+          "author": "",
+          "licenseFile": ""
+        },
+        {
+          "name": "objc2-web-kit",
+          "version": "0.3.1",
+          "license": "Zlib OR Apache-2.0 OR MIT",
+          "repository": "https://github.com/madsmtm/objc2",
+          "homepage": "",
+          "description": "Bindings to the WebKit framework",
+          "author": "",
           "licenseFile": ""
         },
         {
@@ -793,7 +803,7 @@
         },
         {
           "name": "tauri",
-          "version": "2.8.5",
+          "version": "2.10.3",
           "license": "Apache-2.0 OR MIT",
           "repository": "https://github.com/tauri-apps/tauri",
           "homepage": "https://tauri.app/",
@@ -823,7 +833,7 @@
         },
         {
           "name": "tauri-plugin-dialog",
-          "version": "2.4.0",
+          "version": "2.7.0",
           "license": "Apache-2.0 OR MIT",
           "repository": "https://github.com/tauri-apps/plugins-workspace",
           "homepage": "",
@@ -838,6 +848,16 @@
           "repository": "https://github.com/tauri-apps/plugins-workspace",
           "homepage": "",
           "description": "Open files and URLs using their default application.",
+          "author": "Tauri Programme within The Commons Conservancy",
+          "licenseFile": ""
+        },
+        {
+          "name": "tauri-plugin-single-instance",
+          "version": "2.3.6",
+          "license": "Apache-2.0 OR MIT",
+          "repository": "https://github.com/tauri-apps/plugins-workspace",
+          "homepage": "",
+          "description": "Ensure a single instance of your tauri app is running.",
           "author": "Tauri Programme within The Commons Conservancy",
           "licenseFile": ""
         },
@@ -899,6 +919,26 @@
           "homepage": "https://tokio.rs",
           "description": "Application-level tracing for Rust.\n",
           "author": "Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tracing-appender",
+          "version": "0.2.5",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tracing",
+          "homepage": "https://tokio.rs",
+          "description": "Provides utilities for file appenders and making non-blocking writers.\n",
+          "author": "Zeki Sherif <zekshi@amazon.com>, Tokio Contributors <team@tokio.rs>",
+          "licenseFile": ""
+        },
+        {
+          "name": "tracing-subscriber",
+          "version": "0.3.20",
+          "license": "MIT",
+          "repository": "https://github.com/tokio-rs/tracing",
+          "homepage": "https://tokio.rs",
+          "description": "Utilities for implementing and composing `tracing` subscribers.\n",
+          "author": "Eliza Weisman <eliza@buoyant.io>, David Barsky <me@davidbarsky.com>, Tokio Contributors <team@tokio.rs>",
           "licenseFile": ""
         },
         {
@@ -1119,7 +1159,7 @@
         },
         {
           "name": "@tauri-apps/api",
-          "version": "2.8.0",
+          "version": "2.10.1",
           "license": "Apache-2.0 OR MIT",
           "repository": "git+https://github.com/tauri-apps/tauri.git",
           "homepage": "https://github.com/tauri-apps/tauri#readme",
@@ -1138,12 +1178,12 @@
           "licenseFile": ""
         },
         {
-          "name": "@tauri-apps/plugin-opener",
-          "version": "2.5.0",
+          "name": "@tauri-apps/plugin-dialog",
+          "version": "2.7.0",
           "license": "MIT OR Apache-2.0",
           "repository": "https://github.com/tauri-apps/plugins-workspace",
           "homepage": "",
-          "description": "Open files and URLs using their default application.",
+          "description": "",
           "author": "",
           "licenseFile": ""
         },
@@ -1258,16 +1298,6 @@
           "licenseFile": ""
         },
         {
-          "name": "jszip",
-          "version": "3.10.1",
-          "license": "(MIT OR GPL-3.0-or-later)",
-          "repository": "https://github.com/Stuk/jszip.git",
-          "homepage": "",
-          "description": "Create, read and edit .zip files with JavaScript http://stuartk.com/jszip",
-          "author": "Stuart Knightley <stuart@stuartk.com>",
-          "licenseFile": ""
-        },
-        {
           "name": "lucide-react",
           "version": "0.344.0",
           "license": "ISC",
@@ -1328,6 +1358,16 @@
           "licenseFile": ""
         },
         {
+          "name": "react-markdown",
+          "version": "10.1.0",
+          "license": "MIT",
+          "repository": "remarkjs/react-markdown",
+          "homepage": "",
+          "description": "React component to render markdown",
+          "author": "Espen Hovlandsdal <espen@hovlandsdal.com>",
+          "licenseFile": ""
+        },
+        {
           "name": "react-router-dom",
           "version": "6.30.0",
           "license": "MIT",
@@ -1345,6 +1385,36 @@
           "homepage": "https://github.com/recharts/recharts",
           "description": "React charts",
           "author": "recharts group",
+          "licenseFile": ""
+        },
+        {
+          "name": "rehype-raw",
+          "version": "7.0.0",
+          "license": "MIT",
+          "repository": "rehypejs/rehype-raw",
+          "homepage": "",
+          "description": "rehype plugin to reparse the tree (and raw nodes)",
+          "author": "Titus Wormer <tituswormer@gmail.com> (https://wooorm.com)",
+          "licenseFile": ""
+        },
+        {
+          "name": "rehype-sanitize",
+          "version": "6.0.0",
+          "license": "MIT",
+          "repository": "rehypejs/rehype-sanitize",
+          "homepage": "",
+          "description": "rehype plugin to sanitize HTML",
+          "author": "Titus Wormer <tituswormer@gmail.com> (https://wooorm.com)",
+          "licenseFile": ""
+        },
+        {
+          "name": "remark-gfm",
+          "version": "4.0.1",
+          "license": "MIT",
+          "repository": "remarkjs/remark-gfm",
+          "homepage": "",
+          "description": "remark plugin to support GFM (autolink literals, footnotes, strikethrough, tables, tasklists)",
+          "author": "Titus Wormer <tituswormer@gmail.com> (https://wooorm.com)",
           "licenseFile": ""
         },
         {

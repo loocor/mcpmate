@@ -331,6 +331,95 @@ function configureBackendProxy(
 	});
 }
 
+const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
+	[
+		"react-vendor",
+		[
+			"/node_modules/react/",
+			"/node_modules/react-dom/",
+			"/node_modules/react-router-dom/",
+			"/node_modules/scheduler/",
+		],
+	],
+	[
+		"ui-vendor",
+		[
+			"/node_modules/@radix-ui/",
+			"/node_modules/class-variance-authority/",
+			"/node_modules/clsx/",
+			"/node_modules/cmdk/",
+			"/node_modules/lucide-react/",
+			"/node_modules/tailwind-merge/",
+			"/node_modules/vaul/",
+		],
+	],
+	[
+		"data-vendor",
+		[
+			"/node_modules/@tanstack/",
+			"/node_modules/date-fns/",
+			"/node_modules/zod/",
+			"/node_modules/zustand/",
+		],
+	],
+	[
+		"chart-vendor",
+		[
+			"/node_modules/d3-",
+			"/node_modules/recharts/",
+			"/node_modules/victory-vendor/",
+		],
+	],
+	[
+		"markdown-vendor",
+		[
+			"/node_modules/hast-",
+			"/node_modules/mdast-",
+			"/node_modules/micromark",
+			"/node_modules/react-markdown/",
+			"/node_modules/rehype-",
+			"/node_modules/remark-",
+			"/node_modules/unified/",
+			"/node_modules/unist-",
+			"/node_modules/vfile",
+		],
+	],
+	[
+		"desktop-vendor",
+		[
+			"/node_modules/@tauri-apps/",
+		],
+	],
+	[
+		"tokenizer-vendor",
+		[
+			"/node_modules/gpt-tokenizer/",
+			"/node_modules/tiktoken/",
+			"/src/lib/vendor/claude-tokenizer.json",
+		],
+	],
+	[
+		"i18n-vendor",
+		[
+			"/node_modules/i18next",
+			"/node_modules/react-i18next/",
+		],
+	],
+];
+
+function manualChunks(id: string): string | undefined {
+	const normalizedId = id.split(path.sep).join("/");
+	for (const [chunkName, matches] of MANUAL_CHUNK_GROUPS) {
+		if (matches.some((match) => normalizedId.includes(match))) {
+			return chunkName;
+		}
+	}
+	if (normalizedId.includes("/node_modules/")) {
+		return "vendor";
+	}
+	return undefined;
+}
+
 export default defineConfig({
 	define: {
 		"import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
@@ -349,6 +438,14 @@ export default defineConfig({
 	},
 	optimizeDeps: {
 		exclude: ["lucide-react"],
+	},
+	build: {
+		chunkSizeWarningLimit: 5_000,
+		rollupOptions: {
+			output: {
+				manualChunks,
+			},
+		},
 	},
 	server: {
 		proxy: {
