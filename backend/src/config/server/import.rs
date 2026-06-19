@@ -12,6 +12,7 @@ use crate::clients::models::ClientConfigFileParse;
 use crate::clients::service::ClientConfigService;
 use crate::common::constants::profile_keys;
 use crate::common::server::ServerType;
+use crate::common::types::{ServerSource, ServerSourceType};
 use crate::config::models::{Server, ServerMeta};
 use crate::config::server as server_ops;
 use crate::config::server::{args, env, fingerprint, get_all_servers, upsert_server};
@@ -267,7 +268,8 @@ fn is_mcpmate_import_entry(entry: &InspectedServerEntry) -> bool {
 }
 
 pub(crate) fn build_import_plan_from_entries(
-    entries: impl IntoIterator<Item = InspectedServerEntry>
+    entries: impl IntoIterator<Item = InspectedServerEntry>,
+    client_identifier: &str,
 ) -> ClientImportPlan {
     let mut items = HashMap::new();
     let mut skipped_servers = Vec::new();
@@ -276,7 +278,7 @@ pub(crate) fn build_import_plan_from_entries(
             continue;
         }
 
-        match import_config_from_inspected_entry(entry) {
+        match import_config_from_inspected_entry(entry, client_identifier) {
             Ok((name, config)) => {
                 items.insert(name, config);
             }
@@ -288,7 +290,8 @@ pub(crate) fn build_import_plan_from_entries(
 }
 
 fn import_config_from_inspected_entry(
-    entry: InspectedServerEntry
+    entry: InspectedServerEntry,
+    client_identifier: &str,
 ) -> std::result::Result<(String, ServersImportConfig), SkippedServer> {
     let (kind, command, url) = match entry.resolved_import_transport() {
         Ok(target) => (
@@ -322,7 +325,7 @@ fn import_config_from_inspected_entry(
             url,
             env: Some(env),
             headers,
-            source_ref: None,
+            source: Some(ServerSource::new(ServerSourceType::Local, Some(client_identifier.to_string()))),
             meta: None,
         },
     ))
@@ -365,7 +368,7 @@ pub async fn plan_import_from_client_inspection(
         .filter(|entry| selected.is_empty() || selected.contains(&entry.name.trim().to_ascii_lowercase()))
         .collect();
 
-    Ok(build_import_plan_from_entries(entries))
+    Ok(build_import_plan_from_entries(entries, identifier))
 }
 
 /// Import a batch of servers with consistent deduplication and capability sync.
@@ -419,7 +422,7 @@ pub async fn import_batch(
             ServerType::Sse => Server::new_sse(name.clone(), cfg.url.clone()),
             ServerType::StreamableHttp => Server::new_streamable_http(name.clone(), cfg.url.clone()),
         };
-        server.source_ref = cfg.source_ref.clone();
+        server.source = cfg.source.clone();
         // Persist transport_type consistent with server_type to aid validation/preview paths
         // (DB accepts lowercase client-format values per Type/Encode implementation)
         // Stdio/Sse/StreamableHttp map 1:1 here via Server::new_* constructors; keep as-is.
@@ -772,7 +775,7 @@ mod tests {
                 None,
             ),
             server_entry("shadcn-mcp-server", "unclassified", None, None, None),
-        ]);
+        ], "test-client");
 
         assert!(!plan.items.contains_key("MCPMate"));
         let context7 = plan.items.get("context7").expect("context7 server entry");
@@ -788,7 +791,7 @@ mod tests {
         let plan = build_import_plan_from_entries([
             server_entry("broken", "unclassified", None, None, Some("config_invalid_entry")),
             server_entry("valid", "stdio", Some("uvx"), None, None),
-        ]);
+        ], "test-client");
 
         assert!(plan.items.contains_key("valid"));
         assert_eq!(plan.skipped_servers.len(), 1);

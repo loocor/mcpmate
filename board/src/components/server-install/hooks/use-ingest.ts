@@ -148,6 +148,14 @@ export function useIngest({
 				if (isSessionStale(epochAtStart)) {
 					return;
 				}
+				// Apply fallback source from deep link context to drafts that don't carry a specific source
+				if (payload.source) {
+					for (const draft of drafts) {
+						if (!draft.source || draft.source.type === "other") {
+							draft.source = payload.source;
+						}
+					}
+				}
 				await finalizeIngest(drafts, epochAtStart);
 			} catch (error) {
 				if (isSessionStale(epochAtStart)) {

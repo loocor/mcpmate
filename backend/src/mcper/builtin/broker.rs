@@ -377,10 +377,9 @@ struct SurfaceDirectoryItem {
     server_name: String,
     interaction_mode: &'static str,
     detail_hint: &'static str,
-    /// Whether this capability comes from a server installed from the registry
-    registry_enriched: bool,
-    /// Category from registry metadata (if available)
-    registry_category: Option<String>,
+    /// Intentionally raw string (e.g. "registry:google-ads") for LLM prompt consumption.
+    /// The structured API surface uses `ServerSource` objects instead.
+    source: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -415,8 +414,8 @@ struct UcanPromptConfig {
     catalog_sort_weights: CatalogSortWeights,
     #[serde(default)]
     workflow_hints: WorkflowHints,
-    #[serde(default = "default_catalog_enrich_from_registry")]
-    catalog_enrich_from_registry: bool,
+    #[serde(default = "default_catalog_enrich_from_source")]
+    catalog_enrich_from_source: bool,
     #[serde(default = "default_profile_get_description")]
     profile_get_description: String,
     #[serde(default = "default_profile_set_description")]
@@ -427,7 +426,7 @@ struct UcanPromptConfig {
     profile_remove_description: String,
 }
 
-fn default_catalog_enrich_from_registry() -> bool {
+fn default_catalog_enrich_from_source() -> bool {
     true
 }
 
@@ -930,10 +929,10 @@ impl BrokerService {
         .context(context)
     }
 
-    async fn fetch_registry_enrichment(
+    async fn fetch_source_enrichment(
         &self,
         server_ids: &[String],
-    ) -> Result<HashMap<String, (bool, Option<String>)>> {
+    ) -> Result<HashMap<String, Option<String>>> {
         if server_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -942,7 +941,7 @@ impl BrokerService {
         let placeholders_str = placeholders.join(",");
         let query_str = format!(
             r#"
-            SELECT sc.id, sc.source_ref
+            SELECT sc.id, sc.source
             FROM server_config sc
             WHERE sc.id IN ({})
             "#,
@@ -956,21 +955,9 @@ impl BrokerService {
         let rows = query
             .fetch_all(&self.database.pool)
             .await
-            .context("Failed to fetch registry server IDs")?;
+            .context("Failed to fetch server sources")?;
 
-        let server_registry_map: HashMap<String, Option<String>> = rows.into_iter().collect();
-
-        let mut enrichment_map: HashMap<String, (bool, Option<String>)> = HashMap::new();
-
-        for server_id in server_ids {
-            let has_source_ref = server_registry_map
-                .get(server_id)
-                .and_then(|r| r.as_ref())
-                .is_some();
-            enrichment_map.insert(server_id.clone(), (has_source_ref, None));
-        }
-
-        Ok(enrichment_map)
+        Ok(rows.into_iter().collect())
     }
 
     async fn tool_catalog(
@@ -982,7 +969,7 @@ impl BrokerService {
         kind_filter: Option<&[String]>,
     ) -> Result<CallToolResult> {
         let prompt_config = self.ucan_prompt_config().await;
-        let enrich_enabled = prompt_config.catalog_enrich_from_registry;
+        let enrich_enabled = prompt_config.catalog_enrich_from_source;
 
         let tools = self.visible_tools(context).await?;
         let prompts = self.visible_prompts(context).await?;
@@ -1007,19 +994,19 @@ impl BrokerService {
         };
 
         let enrichment_map = if enrich_enabled {
-            self.fetch_registry_enrichment(&all_server_ids).await?
+            self.fetch_source_enrichment(&all_server_ids).await?
         } else {
             HashMap::new()
         };
 
-        let get_enrichment = |server_id: &str| -> (bool, Option<String>) {
-            enrichment_map.get(server_id).cloned().unwrap_or((false, None))
+        let get_enrichment = |server_id: &str| -> Option<String> {
+            enrichment_map.get(server_id).cloned().unwrap_or(None)
         };
 
         let mut summaries: Vec<SurfaceDirectoryItem> = tools
             .into_iter()
             .map(|entry| {
-                let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
+                let source = get_enrichment(&entry.server_id);
                 SurfaceDirectoryItem {
                     capability_name: entry.tool.name.to_string(),
                     capability_kind: SurfaceKind::Tool,
@@ -1030,15 +1017,14 @@ impl BrokerService {
                     server_name: entry.server_name,
                     interaction_mode: "model_controlled",
                     detail_hint: "Use mcpmate_ucan_details with detail_level=summary first; switch to full before constructing arguments if needed.",
-                    registry_enriched,
-                    registry_category,
+                    source,
                 }
             })
             .collect();
 
         summaries.extend(
             prompts.into_iter().map(|entry| {
-                let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
+                let source = get_enrichment(&entry.server_id);
                 SurfaceDirectoryItem {
                     capability_name: entry.prompt.name.to_string(),
                     capability_kind: SurfaceKind::Prompt,
@@ -1049,14 +1035,13 @@ impl BrokerService {
                     server_name: entry.server_name,
                     interaction_mode: "user_controlled_template",
                     detail_hint: "Prompt results are brokered through mcpmate_ucan_call; inspect arguments with mcpmate_ucan_details first.",
-                    registry_enriched,
-                    registry_category,
+                    source,
                 }
             }),
         );
 
         summaries.extend(resources.into_iter().map(|entry| {
-            let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
+            let source = get_enrichment(&entry.server_id);
             SurfaceDirectoryItem {
                 capability_name: entry.resource.uri.to_string(),
                     capability_kind: SurfaceKind::Resource,
@@ -1067,14 +1052,13 @@ impl BrokerService {
                     server_name: entry.server_name,
                     interaction_mode: "application_context",
                     detail_hint: "Inspect resource details first, then call mcpmate_ucan_call with capability_kind=resource and arguments={}",
-                    registry_enriched,
-                    registry_category,
+                    source,
                 }
         }));
 
         summaries.extend(
             resource_templates.into_iter().map(|entry| {
-                let (registry_enriched, registry_category) = get_enrichment(&entry.server_id);
+                let source = get_enrichment(&entry.server_id);
                 SurfaceDirectoryItem {
                     capability_name: entry.resource_template.name.to_string(),
                     capability_kind: SurfaceKind::ResourceTemplate,
@@ -1085,8 +1069,7 @@ impl BrokerService {
                     server_name: entry.server_name,
                     interaction_mode: "application_context_template",
                     detail_hint: "Inspect template rules first. Template-derived URIs are only callable if they appear as concrete resources in catalog.",
-                    registry_enriched,
-                    registry_category,
+                    source,
                 }
             }),
         );
@@ -1127,8 +1110,7 @@ impl BrokerService {
                         server_name: prof.name.clone(),
                         interaction_mode: "scope_managed",
                         detail_hint: "Use this surface item's capability_kind and capability_name with mcpmate_ucan_details to see all surface items in this profile. Activate via mcpmate_profile_set(profile_ids=[profile_id]).",
-                        registry_enriched: false,
-                        registry_category: None,
+                        source: None,
                     });
                 }
             }
@@ -1208,8 +1190,7 @@ impl BrokerService {
                     "server_name".to_string(),
                     "interaction_mode".to_string(),
                     "detail_hint".to_string(),
-                    "registry_enriched".to_string(),
-                    "registry_category".to_string(),
+                    "source".to_string(),
                 ]
             } else {
                 prompt_config.catalog_format.clone()
@@ -2599,14 +2580,13 @@ fn default_ucan_prompt_config() -> UcanPromptConfig {
             "server_name".to_string(),
             "interaction_mode".to_string(),
             "detail_hint".to_string(),
-            "registry_enriched".to_string(),
-            "registry_category".to_string(),
+            "source".to_string(),
         ],
         catalog_page_size_default: 20,
         catalog_page_size_max: 50,
         catalog_sort_weights: CatalogSortWeights::default(),
         workflow_hints: WorkflowHints::default(),
-        catalog_enrich_from_registry: true,
+        catalog_enrich_from_source: true,
         profile_get_description: default_profile_get_description(),
         profile_set_description: default_profile_set_description(),
         profile_add_description: default_profile_add_description(),
@@ -3902,8 +3882,7 @@ mod tests {
                 server_name: "filesystem".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "Use details first.",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
             SurfaceDirectoryItem {
                 capability_name: "write_file".to_string(),
@@ -3915,8 +3894,7 @@ mod tests {
                 server_name: "filesystem".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "Use details first.",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
             SurfaceDirectoryItem {
                 capability_name: "list_directory".to_string(),
@@ -3928,8 +3906,7 @@ mod tests {
                 server_name: "filesystem".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "Use details first.",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
         ];
 
@@ -3968,8 +3945,7 @@ mod tests {
                 server_name: "shell".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "Use details first.",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
             SurfaceDirectoryItem {
                 capability_name: "get_weather".to_string(),
@@ -3981,8 +3957,7 @@ mod tests {
                 server_name: "weather".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "Use details first.",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
         ];
 
@@ -4020,8 +3995,7 @@ mod tests {
                 server_name: "server".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
             SurfaceDirectoryItem {
                 capability_name: "prompt_one".to_string(),
@@ -4033,8 +4007,7 @@ mod tests {
                 server_name: "server".to_string(),
                 interaction_mode: "user_controlled_template",
                 detail_hint: "",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
             SurfaceDirectoryItem {
                 capability_name: "resource_one".to_string(),
@@ -4046,8 +4019,7 @@ mod tests {
                 server_name: "server".to_string(),
                 interaction_mode: "application_context",
                 detail_hint: "",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
             SurfaceDirectoryItem {
                 capability_name: "template_one".to_string(),
@@ -4059,8 +4031,7 @@ mod tests {
                 server_name: "server".to_string(),
                 interaction_mode: "application_context_template",
                 detail_hint: "",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
         ];
 
@@ -4105,8 +4076,7 @@ mod tests {
                 server_name: "server".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
             SurfaceDirectoryItem {
                 capability_name: "tool_b".to_string(),
@@ -4118,8 +4088,7 @@ mod tests {
                 server_name: "server".to_string(),
                 interaction_mode: "model_controlled",
                 detail_hint: "",
-                registry_enriched: false,
-                registry_category: None,
+                source: None,
             },
         ];
 
@@ -4159,8 +4128,7 @@ mod tests {
             server_name: "server".to_string(),
             interaction_mode: "model_controlled",
             detail_hint: "",
-            registry_enriched: false,
-            registry_category: None,
+            source: None,
         }];
 
         let search_lower = "FILE".to_lowercase();
@@ -4429,24 +4397,20 @@ mod tests {
         use super::{SurfaceDirectoryItem, SurfaceKind};
 
         let summary_with_enrichment = SurfaceDirectoryItem {
-            capability_name: "registry_tool".to_string(),
+            capability_name: "source_tool".to_string(),
             capability_kind: SurfaceKind::Tool,
-            summary: Some("A tool from registry".to_string()),
+            summary: Some("A tool from a source-linked server".to_string()),
             action: "inspect_first",
             next_step: "details",
             server_id: "server-1".to_string(),
-            server_name: "registry-server".to_string(),
+            server_name: "source-linked-server".to_string(),
             interaction_mode: "model_controlled",
             detail_hint: "Use details first.",
-            registry_enriched: true,
-            registry_category: Some("filesystem".to_string()),
+            source: Some("registry:filesystem".to_string()),
         };
 
-        assert!(summary_with_enrichment.registry_enriched);
-        assert_eq!(
-            summary_with_enrichment.registry_category,
-            Some("filesystem".to_string())
-        );
+        assert!(summary_with_enrichment.source.is_some());
+        assert_eq!(summary_with_enrichment.source.as_deref(), Some("registry:filesystem"));
 
         let summary_without_enrichment = SurfaceDirectoryItem {
             capability_name: "local_tool".to_string(),
@@ -4458,18 +4422,16 @@ mod tests {
             server_name: "local-server".to_string(),
             interaction_mode: "model_controlled",
             detail_hint: "Use details first.",
-            registry_enriched: false,
-            registry_category: None,
+            source: None,
         };
 
-        assert!(!summary_without_enrichment.registry_enriched);
-        assert!(summary_without_enrichment.registry_category.is_none());
+        assert!(summary_without_enrichment.source.is_none());
     }
 
     #[test]
     fn test_catalog_enrichment_config_default() {
-        use super::default_catalog_enrich_from_registry;
+        use super::default_catalog_enrich_from_source;
 
-        assert!(default_catalog_enrich_from_registry());
+        assert!(default_catalog_enrich_from_source());
     }
 }

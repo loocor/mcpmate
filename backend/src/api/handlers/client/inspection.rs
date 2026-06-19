@@ -173,7 +173,7 @@ pub(super) async fn mark_configured_server_managed_status(
     db_pool: &sqlx::SqlitePool,
     entries: &mut [ServerEntryData],
 ) -> anyhow::Result<()> {
-    let plan = build_import_plan_from_entries(entries.iter().cloned().map(Into::into));
+    let plan = build_import_plan_from_entries(entries.iter().cloned().map(Into::into), "");
     let conflicts = find_import_conflicts(
         db_pool,
         &plan.items,

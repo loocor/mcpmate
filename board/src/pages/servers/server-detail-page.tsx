@@ -1378,9 +1378,7 @@ export function ServerDetailPage() {
 																	defaultValue: "Type",
 																})}
 															>
-																<span className="break-words font-mono">
-																	{server.server_type}
-																</span>
+																{server.server_type}
 															</OverviewMetadataRow>
 															{server.auth_mode ? (
 																<OverviewMetadataRow

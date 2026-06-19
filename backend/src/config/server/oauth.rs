@@ -214,7 +214,7 @@ mod tests {
             server_type: ServerType::StreamableHttp,
             command: None,
             url: Some("https://example.com/mcp".to_string()),
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,

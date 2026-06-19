@@ -72,6 +72,7 @@ import type {
 	ServerListResp,
 	ServerListResponse,
 	ServerMetaInfo,
+	ServerSource,
 	SecretDeleteResp,
 	SecretKind,
 	SecretListResp,
@@ -103,7 +104,7 @@ import type {
 } from "./types";
 import { useMemo } from "react";
 import { isTauriEnvironmentSync } from "./platform";
-import { McpRegistryProvider } from "./market/providers/mcp-registry-provider";
+import { fetchCatalogEntryForSource } from "./market/refresh";
 import { useQuery } from "@tanstack/react-query";
 
 // Base API configuration
@@ -369,11 +370,6 @@ function profileRowToConfigSuit(p: ProfileApiRow): ConfigSuit {
 }
 
 function asOptionalString(v: unknown): string | undefined {
-	return typeof v === "string" ? v : undefined;
-}
-
-function asStringOrNull(v: unknown): string | null | undefined {
-	if (v === null) return null;
 	return typeof v === "string" ? v : undefined;
 }
 
@@ -723,9 +719,7 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 		: [];
 
 	const detailRecord = enhanced as Record<string, unknown>;
-	const registryServerId = asStringOrNull(
-		detailRecord.source_ref ?? detailRecord.registry_server_id ?? detailRecord.registryServerId,
-	);
+	const source = detailRecord.source as ServerSource | undefined;
 
 	const serverType =
 		toTrimmedString(detailRecord.server_type as string | undefined) ??
@@ -739,7 +733,7 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 		status:
 			(typeof enhanced?.status === "string" && enhanced.status) || "unknown",
 		server_type: serverType,
-		source_ref: registryServerId,
+		source,
 		enabled: enabledValue,
 		unify_direct_exposure_eligible:
 			typeof enhanced?.unify_direct_exposure_eligible === "boolean"
@@ -1058,11 +1052,7 @@ export const serversApi = {
 				const rec = server as unknown as Record<string, unknown>;
 				const enhanced = enrichServerRecord(rec);
 				const er = enhanced as Record<string, unknown>;
-				const registryServerId =
-					(er.source_ref as string | null | undefined) ??
-					(er.registry_server_id as string | null | undefined) ??
-					(er.registryServerId as string | null | undefined) ??
-					null;
+				const source = er.source as ServerSource | undefined;
 				const serverType =
 					toTrimmedString(er.server_type as string | undefined) ??
 					toTrimmedString(er.serverType as string | undefined) ??
@@ -1070,7 +1060,7 @@ export const serversApi = {
 				return {
 					...enhanced,
 					server_type: serverType,
-					source_ref: registryServerId,
+					source,
 					auth_mode: asOptionalString(er.auth_mode) ?? null,
 					...normalizeOAuthSummary(er),
 				} as ServerSummary;
@@ -1182,17 +1172,22 @@ export const serversApi = {
 
 	refreshRegistryMetadata: async (id: string): Promise<ServerDetail> => {
 		const current = await serversApi.getServer(id);
-		const sourceRef = current.source_ref;
-		if (!sourceRef?.startsWith("registry:")) {
-			throw new Error("Server has no registry: source_ref — cannot refresh from MCP Registry");
+		if (!current.source || current.source.type !== "registry") {
+			throw new Error(
+				`Cannot refresh metadata: server '${current.name}' does not have a registry source`,
+			);
 		}
-
-		const serverName = sourceRef.slice("registry:".length);
-		if (!serverName) throw new Error("source_ref has empty server name after 'registry:' prefix");
-
-		const provider = new McpRegistryProvider();
-		const entry = await provider.fetchByKey(serverName);
-		if (!entry) throw new Error(`Server '${serverName}' not found in registry`);
+		if (!current.source.ref) {
+			throw new Error(
+				`Cannot refresh metadata: registry source for '${current.name}' has no identifier`,
+			);
+		}
+		const entry = await fetchCatalogEntryForSource(current.source);
+		if (!entry) {
+			throw new Error(
+				`Server '${current.source.ref}' was not found in the registry catalog`,
+			);
+		}
 
 		const officialMeta = entry._meta?.["io.modelcontextprotocol.registry/official"];
 
@@ -1347,6 +1342,7 @@ export const serversApi = {
 			unify_direct_exposure_eligible:
 				sc.unify_direct_exposure_eligible ?? undefined,
 			profile_ids: serverConfig.profile_ids ?? undefined,
+			source: serverConfig.source ?? undefined,
 		};
 		if (serverType === "stdio") {
 			base.command = serverConfig.command ?? undefined;
@@ -1393,6 +1389,7 @@ export const serversApi = {
 			unify_direct_exposure_eligible:
 				sc.unify_direct_exposure_eligible ?? undefined,
 			profile_ids: serverConfig.profile_ids ?? undefined,
+			source: serverConfig.source ?? undefined,
 		};
 		if (serverConfig.pending_import !== undefined) {
 			body.pending_import = serverConfig.pending_import;

@@ -196,6 +196,23 @@ describe("install normalizer", () => {
 		).toThrow();
 	});
 
+	test("ignores legacy registry_server_id field", async () => {
+		const drafts = await normalizeIngestPayload({
+			text: JSON.stringify({
+				mcpServers: {
+					"google-ads": {
+						command: "npx",
+						args: ["-y", "@google-ads/mcp"],
+						registry_server_id: "google-ads",
+					},
+				},
+			}),
+		});
+
+		expect(drafts).toHaveLength(1);
+		expect(drafts[0]?.source).toEqual({ type: "other" });
+	});
+
 	test("splits merged stdio command when args are missing", async () => {
 		const drafts = await normalizeIngestPayload({
 			text: JSON.stringify({

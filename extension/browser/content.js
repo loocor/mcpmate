@@ -549,11 +549,24 @@
 		return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 	}
 
-	function openMcpMate(text) {
+	function detectSource() {
+		if (location.hostname === "github.com") {
+			const path = location.pathname;
+			if (path === "/mcp" || path.startsWith("/mcp/")) {
+				return { type: "portal", ref: "github-mcp-registry" };
+			}
+		}
+		if (location.hostname === "cursor.directory" || location.hostname.endsWith(".cursor.directory")) {
+			return { type: "portal", ref: "cursor-directory" };
+		}
+		return { type: "browser" };
+	}
+
+	function openMcpMate(text, sourceOverride) {
 		const payload = {
 			text,
 			format: inferFormat(text),
-			source: typeof location?.href === "string" ? location.href : "",
+			source: sourceOverride ?? detectSource(),
 		};
 		const p = utf8ToBase64Url(payload);
 		const url = `${SCHEME_URL}?p=${encodeURIComponent(p)}`;
@@ -691,7 +704,7 @@
 			const parseCursorMcpInstallLink =
 				globalThis.__MCPMATE_CURSOR_DEEPLINK__?.parseCursorMcpInstallLink;
 			const config = parseCursorMcpInstallLink?.(link.href) ?? null;
-			if (config) openMcpMate(config);
+			if (config) openMcpMate(config, { type: "portal", ref: "cursor-directory" });
 		});
 
 		container.appendChild(btn);

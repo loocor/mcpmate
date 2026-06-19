@@ -13,7 +13,7 @@ import {
 import type { ImportStats } from "../lib/api";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
-import type { ServerMetaInfo } from "../lib/types";
+import type { ServerMetaInfo, ServerSource } from "../lib/types";
 
 export type InstallSource = "manual" | "ingest" | "market";
 export type WizardStep = "form" | "preview" | "result";
@@ -26,10 +26,17 @@ export interface ServerInstallDraft {
 	args?: string[];
 	env?: Record<string, string>;
 	url?: string;
-	sourceRef?: string;
+	source?: ServerSource;
 	headers?: Record<string, string>;
 	urlParams?: Record<string, string>;
 	meta?: ServerMetaInfo;
+}
+
+export interface WizardImportResult {
+	success: boolean;
+	summary?: { imported_count: number; skipped_count: number };
+	servers?: Record<string, { id: string; status: string }>;
+	error?: string;
 }
 
 interface UseServerInstallPipelineOptions {
@@ -57,7 +64,7 @@ export function useServerInstallPipeline(
 	const [previewError, setPreviewError] = useState<string | null>(null);
 	const [isImporting, setImporting] = useState(false);
 	const [currentStep, setCurrentStep] = useState<WizardStep>("form");
-	const [importResult, setImportResult] = useState<ServersImportResponse | null>(
+	const [importResult, setImportResult] = useState<WizardImportResult | null>(
 		null,
 	);
 	const [targetProfileId, setTargetProfileId] = useState<string | null>(null);
@@ -334,7 +341,10 @@ export function useServerInstallPipeline(
 					targetProfileId: effectiveTargetProfileId,
 				});
 				const result = await serversApi.importServers(requestBody);
-				setImportResult(result);
+				setImportResult({
+					success: result.success,
+					error: typeof result.error === "string" ? result.error : undefined,
+				});
 
 				const didSucceed =
 					typeof result?.success === "boolean"

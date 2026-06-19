@@ -64,7 +64,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
             ),
             command TEXT,
             url TEXT,
-            source_ref TEXT UNIQUE,
+            source TEXT,
             capabilities TEXT,
             enabled BOOLEAN NOT NULL DEFAULT 1,
             unify_direct_exposure_eligible BOOLEAN NOT NULL DEFAULT 0,
@@ -92,7 +92,7 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
         "BOOLEAN NOT NULL DEFAULT 0",
     )
     .await?;
-    migrate_registry_server_id_to_source_ref(pool).await?;
+    ensure_column(pool, "server_config", "source", "TEXT").await?;
     Ok(())
 }
 
@@ -345,70 +345,14 @@ async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     Ok(())
 }
 
-/// Migrate `registry_server_id` column to `source_ref` for existing databases.
-/// Renames the column and prefixes existing bare values with `registry:` namespace.
-async fn migrate_registry_server_id_to_source_ref(pool: &Pool<Sqlite>) -> Result<()> {
-    // Check if the old column still exists by querying its info
-    let columns: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM pragma_table_info('server_config')")
-            .fetch_all(pool)
-            .await?;
-
-    let has_old_column = columns.iter().any(|(name,)| name == "registry_server_id");
-    let has_new_column = columns.iter().any(|(name,)| name == "source_ref");
-
-    if has_new_column {
-        // Column already renamed — ensure any bare values from an interrupted
-        // migration are namespaced (crash-safety). Only prefix legacy bare IDs
-        // that have no namespace delimiter ':' to avoid corrupting future
-        // non-registry providers (e.g. admin:foo, github:bar).
-        sqlx::query(
-            "UPDATE server_config SET source_ref = 'registry:' || source_ref \
-             WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'",
-        )
-        .execute(pool)
-        .await?;
-        return Ok(());
-    }
-
-    if !has_old_column {
-        // Fresh database — nothing to migrate
-        return Ok(());
-    }
-
-    tracing::info!("Migrating server_config.registry_server_id -> source_ref");
-
-    // Rename column (SQLite 3.25+)
-    sqlx::query("ALTER TABLE server_config RENAME COLUMN registry_server_id TO source_ref")
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to rename registry_server_id column: {}", e);
-            anyhow::anyhow!("Failed to rename registry_server_id column: {}", e)
-        })?;
-
-    // Prefix existing bare values with "registry:" namespace.
-    // Only touch legacy bare IDs (no ':') — already-namespaced values
-    // (e.g. admin:foo) are left untouched.
-    sqlx::query(
-        "UPDATE server_config SET source_ref = 'registry:' || source_ref WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'"
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to prefix source_ref values: {}", e);
-        anyhow::anyhow!("Failed to prefix source_ref values: {}", e)
-    })?;
-
-    tracing::info!("Migration registry_server_id -> source_ref completed");
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        common::{server::ServerType, status::EnabledStatus},
+        common::{
+            server::ServerType,
+            status::EnabledStatus,
+        },
         config::{models::Server, server::crud::upsert_server},
     };
 
@@ -436,7 +380,7 @@ mod tests {
             server_type: ServerType::StreamableHttp,
             command: None,
             url: Some(format!("https://example.com/{name}")),
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,

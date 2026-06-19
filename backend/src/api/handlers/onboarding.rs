@@ -164,7 +164,7 @@ pub async fn server_scan(
                 .inspect_config_path_for_import(&descriptor.state, config_path, parse_rule_owned.as_ref())
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(build_import_plan_from_entries(inspected.inspection.entries))
+            Ok(build_import_plan_from_entries(inspected.inspection.entries, &client_name))
         }
         .await;
 

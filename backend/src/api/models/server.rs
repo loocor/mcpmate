@@ -1,7 +1,7 @@
 // MCP Proxy API models for MCP server management
 // Contains data models for MCP server endpoints
 
-use crate::common::server::ServerType;
+use crate::common::{server::ServerType, types::ServerSource};
 use crate::config::server::import::{SkipReason, SkippedServer};
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
@@ -301,8 +301,9 @@ pub struct ServerDetailsData {
     pub id: Option<String>,
     /// Server name
     pub name: String,
-    /// Source reference (namespaced identifier tracking import origin)
-    pub source_ref: Option<String>,
+    /// Source value object (structured import origin tracking)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<ServerSource>,
     /// Is enabled in configuration (combined global and profile status)
     pub enabled: bool,
     /// Is globally enabled (server_config.enabled)
@@ -736,11 +737,9 @@ pub struct ServerCreateReq {
     #[schemars(description = "Whether this server is a hidden pre-import record")]
     pub pending_import: Option<bool>,
 
-    #[schemars(
-        description = "Source reference (namespaced identifier tracking import origin, e.g. \"registry:server-name\")"
-    )]
-    #[serde(alias = "registry_server_id")]
-    pub source_ref: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Source value object (structured import origin tracking)")]
+    pub source: Option<ServerSource>,
 
     /// Optional metadata block for this server
     #[serde(default)]
@@ -807,11 +806,9 @@ pub struct ServerUpdateReq {
     #[schemars(description = "Whether this server is a hidden pre-import record")]
     pub pending_import: Option<bool>,
 
-    #[schemars(
-        description = "Source reference (namespaced identifier tracking import origin, e.g. \"registry:server-name\")"
-    )]
-    #[serde(alias = "registry_server_id")]
-    pub source_ref: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Source value object (structured import origin tracking)")]
+    pub source: Option<ServerSource>,
 
     /// Optional metadata update payload
     #[serde(default)]
@@ -866,11 +863,9 @@ pub struct ServersImportConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
 
-    #[schemars(
-        description = "Source reference (namespaced identifier tracking import origin, e.g. \"registry:server-name\")"
-    )]
-    #[serde(alias = "registry_server_id")]
-    pub source_ref: Option<String>,
+    #[serde(default)]
+    #[schemars(description = "Source value object (structured import origin tracking)")]
+    pub source: Option<ServerSource>,
     /// Optional metadata payload aligned with registry schema
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<ServerMetaPayload>,

@@ -26,9 +26,14 @@ import {
 } from "../../components/bulk-selection";
 import CapabilityList from "../../components/capability-list";
 import {
+	CAPABILITY_SCROLL_CARD_CLASS,
+	CapabilityScrollCardContent,
+} from "../../components/capability-scroll-card-layout";
+import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
+import { CapsuleStripeRowBody } from "../../components/capsule-stripe-row";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
 import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
 import { ProfileTokenUsageChart } from "./components/profile-token-usage-chart";
@@ -1267,7 +1272,7 @@ export function ProfileDetailPage() {
 					</TabsContent>
 
 					<TabsContent value="servers" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
 							<CardHeader className="shrink-0">
 								{isLoadingServers ? (
 									<div>
@@ -1349,7 +1354,7 @@ export function ProfileDetailPage() {
 									/>
 								)}
 							</CardHeader>
-							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+							<CapabilityScrollCardContent>
 								<CardListScrollBody>
 									{isLoadingServers ? (
 										<div className="space-y-4">
@@ -1390,7 +1395,7 @@ export function ProfileDetailPage() {
 													<CapsuleStripeListItem
 														key={server.id}
 														interactive={serverBulk.isBulkMode}
-														className={`group relative transition-colors ${bulkSelected
+														className={`group relative px-3 transition-colors ${bulkSelected
 															? "bg-primary/10 ring-1 ring-primary/40"
 															: ""
 															}`}
@@ -1407,110 +1412,115 @@ export function ProfileDetailPage() {
 															}
 														}}
 													>
-														<div className="flex w-full items-center justify-between gap-4">
-															<div className="flex flex-1 items-center gap-3">
-																<BulkSelectionCheckbox
-																	visible={serverBulk.isBulkMode}
-																	checked={bulkSelected}
-																	onToggle={() =>
-																		serverBulk.toggleItem(server.id)
-																	}
-																	ariaLabel={t(
-																		"profiles:detail.bulk.selectItem",
-																		{
-																			name: server.name,
-																			defaultValue: "Select {{name}}",
-																		},
-																	)}
-																/>
-																<CachedAvatar
-																	src={globalIcon}
-																	alt={iconAlt ? `${iconAlt} icon` : undefined}
-																	fallback={avatarFallback}
-																	size="sm"
-																	shape="rounded"
-																	className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
-																/>
-																<div className="min-w-0">
-																	<h3 className="font-medium text-slate-900 dark:text-slate-100">
-																		{server.name}
-																	</h3>
-																	<p className="text-sm text-slate-500">
-																		ID: {server.id}
-																	</p>
-																	{globalDescription ? (
-																		<p className="text-xs text-slate-500 line-clamp-2">
-																			{globalDescription}
-																		</p>
-																	) : null}
+														<CapsuleStripeRowBody
+															lead={
+																<div className={`flex items-center ${serverBulk.isBulkMode ? "gap-3" : "gap-0"}`}>
+																	<BulkSelectionCheckbox
+																		visible={serverBulk.isBulkMode}
+																		checked={bulkSelected}
+																		onToggle={() =>
+																			serverBulk.toggleItem(server.id)
+																		}
+																		ariaLabel={t(
+																			"profiles:detail.bulk.selectItem",
+																			{
+																				name: server.name,
+																				defaultValue: "Select {{name}}",
+																			},
+																		)}
+																	/>
+																	<CachedAvatar
+																		src={globalIcon}
+																		alt={iconAlt ? `${iconAlt} icon` : undefined}
+																		fallback={avatarFallback}
+																		size="sm"
+																		shape="rounded"
+																		className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
+																	/>
 																</div>
-															</div>
-															<div className="ml-auto flex items-center gap-2">
-																{/* Hover actions: Browse (left) + Inspect (right) */}
-																{enableServerDebug && (
-																	<>
-																		<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-																			<button
-																				type="button"
-																				onClick={(ev) => {
-																					ev.stopPropagation();
-																					openBrowse(server.id);
-																				}}
-																				aria-label={t("profiles:detail.labels.browseServer", { defaultValue: "Browse server" })}
-																				className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-																			>
-																				<Eye size={20} />
-																			</button>
-																		</div>
-																		<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-																			<button
-																				type="button"
-																				onClick={(ev) => {
-																					ev.stopPropagation();
-																					openDebug(
-																						server.id,
-																						server.enabled ? "proxy" : "native",
-																					);
-																				}}
-																				aria-label={t("profiles:detail.labels.debugServer", { defaultValue: "Inspect server" })}
-																				className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-																			>
-																				<Bug size={20} />
-																			</button>
-																		</div>
-																	</>
-																)}
+															}
+															trailing={
+																<>
+																	{/* Hover actions: Browse (left) + Inspect (right) */}
+																	{enableServerDebug && (
+																		<>
+																			<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+																				<button
+																					type="button"
+																					onClick={(ev) => {
+																						ev.stopPropagation();
+																						openBrowse(server.id);
+																					}}
+																					aria-label={t("profiles:detail.labels.browseServer", { defaultValue: "Browse server" })}
+																					className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+																				>
+																					<Eye size={20} />
+																				</button>
+																			</div>
+																			<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+																				<button
+																					type="button"
+																					onClick={(ev) => {
+																						ev.stopPropagation();
+																						openDebug(
+																							server.id,
+																							server.enabled ? "proxy" : "native",
+																						);
+																					}}
+																					aria-label={t("profiles:detail.labels.debugServer", { defaultValue: "Inspect server" })}
+																					className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
+																				>
+																					<Bug size={20} />
+																				</button>
+																			</div>
+																		</>
+																	)}
 
-																{/* Global status badges and switch - positioned on the right */}
-																{globallyEnabled !== undefined &&
-																	(globallyEnabled ? (
-																		<Badge>
-																			{t("profiles:detail.globalStatus.enabled", {
-																				defaultValue: "Global Enabled",
-																			})}
-																		</Badge>
-																	) : (
-																		<Badge variant="outline">
-																			{t("profiles:detail.globalStatus.disabled", {
-																				defaultValue: "Global Disabled",
-																			})}
-																		</Badge>
-																	))}
+																	{/* Global status badges and switch - positioned on the right */}
+																	{globallyEnabled !== undefined &&
+																		(globallyEnabled ? (
+																			<Badge>
+																				{t("profiles:detail.globalStatus.enabled", {
+																					defaultValue: "Global Enabled",
+																				})}
+																			</Badge>
+																		) : (
+																			<Badge variant="outline">
+																				{t("profiles:detail.globalStatus.disabled", {
+																					defaultValue: "Global Disabled",
+																				})}
+																			</Badge>
+																		))}
 
-																{/* Always show switch */}
-																<Switch
-																	checked={server.enabled}
-																	onClick={(e) => e.stopPropagation()}
-																	onCheckedChange={(enabled) =>
-																		serverToggleMutation.mutate({
-																			serverId: server.id,
-																			enable: enabled,
-																		})
-																	}
-																	disabled={serverToggleMutation.isPending}
-																/>
+																	{/* Always show switch */}
+																	<Switch
+																		checked={server.enabled}
+																		onClick={(e) => e.stopPropagation()}
+																		onCheckedChange={(enabled) =>
+																			serverToggleMutation.mutate({
+																				serverId: server.id,
+																				enable: enabled,
+																			})
+																		}
+																		disabled={serverToggleMutation.isPending}
+																	/>
+																</>
+															}
+														>
+															<div className="min-w-0">
+																<h3 className="font-medium text-slate-900 dark:text-slate-100">
+																	{server.name}
+																</h3>
+																<p className="text-sm text-slate-500">
+																	ID: {server.id}
+																</p>
+																{globalDescription ? (
+																	<p className="text-xs text-slate-500 line-clamp-2">
+																		{globalDescription}
+																	</p>
+																) : null}
 															</div>
-														</div>
+														</CapsuleStripeRowBody>
 													</CapsuleStripeListItem>
 												);
 											})}
@@ -1523,12 +1533,12 @@ export function ProfileDetailPage() {
 										</p>
 									)}
 								</CardListScrollBody>
-							</CardContent>
+							</CapabilityScrollCardContent>
 						</Card>
 					</TabsContent>
 
 					<TabsContent value="tools" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
 							<CardHeader className="shrink-0">
 								{isLoadingTools ? (
 									<div>
@@ -1637,7 +1647,7 @@ export function ProfileDetailPage() {
 									/>
 								)}
 							</CardHeader>
-							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+							<CapabilityScrollCardContent>
 								<CapabilityList
 									asCard={false}
 									scrollContainedBody
@@ -1659,12 +1669,12 @@ export function ProfileDetailPage() {
 									onSelectToggle={(id) => toolBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
-							</CardContent>
+							</CapabilityScrollCardContent>
 						</Card>
 					</TabsContent>
 
 					<TabsContent value="prompts" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
 							<CardHeader className="shrink-0">
 								{isLoadingPrompts ? (
 									<div>
@@ -1773,7 +1783,7 @@ export function ProfileDetailPage() {
 									/>
 								)}
 							</CardHeader>
-							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+							<CapabilityScrollCardContent>
 								<CapabilityList
 									asCard={false}
 									scrollContainedBody
@@ -1795,12 +1805,12 @@ export function ProfileDetailPage() {
 									onSelectToggle={(id) => promptBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
-							</CardContent>
+							</CapabilityScrollCardContent>
 						</Card>
 					</TabsContent>
 
 					<TabsContent value="resources" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
 							<CardHeader className="shrink-0">
 								{isLoadingResources ? (
 									<div>
@@ -1909,7 +1919,7 @@ export function ProfileDetailPage() {
 									/>
 								)}
 							</CardHeader>
-							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+							<CapabilityScrollCardContent>
 								<CapabilityList
 									asCard={false}
 									scrollContainedBody
@@ -1934,12 +1944,12 @@ export function ProfileDetailPage() {
 									onSelectToggle={(id) => resourceBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
-							</CardContent>
+							</CapabilityScrollCardContent>
 						</Card>
 					</TabsContent>
 
 					<TabsContent value="templates" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
 							<CardHeader className="shrink-0">
 								{isLoadingTemplates ? (
 									<div>
@@ -2049,7 +2059,7 @@ export function ProfileDetailPage() {
 									/>
 								)}
 							</CardHeader>
-							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
+							<CapabilityScrollCardContent>
 								<CapabilityList
 									asCard={false}
 									scrollContainedBody
@@ -2069,7 +2079,7 @@ export function ProfileDetailPage() {
 									onSelectToggle={(id) => templateBulk.toggleItem(id)}
 									renderAction={undefined}
 								/>
-							</CardContent>
+							</CapabilityScrollCardContent>
 						</Card>
 					</TabsContent>
 				</Tabs>

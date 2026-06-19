@@ -50,6 +50,21 @@ export interface ServerMetaInfo {
   icons?: ServerIcon[];
 }
 
+/** Discriminated source type for a server's origin. */
+export type ServerSourceType =
+  | "registry"
+  | "catalog"
+  | "browser"
+  | "portal"
+  | "local"
+  | "other";
+
+/** Structured origin record attached to a server. */
+export interface ServerSource {
+  type: ServerSourceType;
+  ref?: string;
+}
+
 export interface ServerSummary {
   id: string;
   name: string;
@@ -62,7 +77,7 @@ export interface ServerSummary {
   globally_enabled?: boolean;
   enabled_in_suits?: boolean;
   enabled_in_profile?: boolean;
-  source_ref?: string | null;
+  source?: ServerSource;
   instance_count?: number;
   instances?: InstanceSummary[];
   meta?: ServerMetaInfo;
@@ -583,6 +598,7 @@ export interface MCPServerConfig {
   profile_ids?: string[];
   enabled?: boolean;
   unify_direct_exposure_eligible?: boolean;
+  source?: ServerSource;
 
   /** Whether this server is a hidden pre-import record */
   pending_import?: boolean;

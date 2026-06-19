@@ -10,6 +10,7 @@ export const marketTranslations = {
 			manage: "Manage",
 			reinstall: "Reinstall",
 			unsupported: "Unsupported",
+			retry: "Retry",
 		},
 		search: {
 			placeholder: "Search by server name",
@@ -37,8 +38,10 @@ export const marketTranslations = {
 			na: "N/A",
 		},
 		emptyState: {
+			noEntriesTitle: "No servers found",
 			noEntriesMatched:
 				"No entries matched your filters. Try another name or clear the search above.",
+			clearSearch: "Clear search",
 			loading: "Loading...",
 		},
 		thirdParty: {
@@ -86,6 +89,8 @@ export const marketTranslations = {
 			readmeUnsupported: "README preview currently supports GitHub repositories only.",
 			readmeFetchFailed: "Failed to load README content.",
 			readmeEmpty: "README content is empty.",
+			readmeExpand: "Expand README panel",
+			readmeRestore: "Restore README panel",
 			splitResize: "Resize registry and README panels",
 		},
 	},
@@ -100,6 +105,7 @@ export const marketTranslations = {
 			manage: "管理",
 			reinstall: "重新安装",
 			unsupported: "暂不支持",
+			retry: "重试",
 		},
 		search: {
 			placeholder: "按服务器名称搜索",
@@ -126,8 +132,10 @@ export const marketTranslations = {
 			na: "无",
 		},
 		emptyState: {
+			noEntriesTitle: "未找到服务器",
 			noEntriesMatched:
 				"没有条目匹配您的筛选条件。请尝试其他名称或清除上面的搜索。",
+			clearSearch: "清除搜索",
 			loading: "加载中...",
 		},
 		thirdParty: {
@@ -175,6 +183,8 @@ export const marketTranslations = {
 			readmeUnsupported: "README 预览当前仅支持 GitHub 仓库。",
 			readmeFetchFailed: "加载 README 内容失败。",
 			readmeEmpty: "README 内容为空。",
+			readmeExpand: "展开 README 面板",
+			readmeRestore: "还原 README 面板",
 			splitResize: "左右拖动调整仓库信息与 README 区域宽度",
 		},
 	},
@@ -189,6 +199,7 @@ export const marketTranslations = {
 			manage: "管理",
 			reinstall: "再インストール",
 			unsupported: "未対応",
+			retry: "再試行",
 		},
 		search: {
 			placeholder: "サーバー名で検索",
@@ -216,8 +227,10 @@ export const marketTranslations = {
 			na: "N/A",
 		},
 		emptyState: {
+			noEntriesTitle: "サーバーが見つかりません",
 			noEntriesMatched:
 				"フィルターに一致するエントリがありません。別の名前を試すか、上記の検索をクリアしてください。",
+			clearSearch: "検索をクリア",
 			loading: "読み込み中...",
 		},
 		thirdParty: {
@@ -266,6 +279,8 @@ export const marketTranslations = {
 			readmeUnsupported: "README プレビューは現在 GitHub リポジトリのみ対応しています。",
 			readmeFetchFailed: "README の読み込みに失敗しました。",
 			readmeEmpty: "README の内容が空です。",
+			readmeExpand: "README パネルを拡大",
+			readmeRestore: "README パネルを元に戻す",
 			splitResize: "ドラッグしてレジストリ情報と README の幅を調整",
 		},
 	},

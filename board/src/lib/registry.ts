@@ -3,6 +3,7 @@ import type {
   RegistryServerEntry,
   ServerSummary,
 } from "./types";
+import { registryRef } from "./source";
 
 export function getOfficialMeta(
   server: RegistryServerEntry,
@@ -77,7 +78,7 @@ export function matchesInstalledRegistryServer(
     | RegistryOfficialMeta
     | undefined;
   const installedCandidates = collectRegistryCandidates([
-    installedServer.source_ref,
+    registryRef(installedServer.source),
     installedServer.name,
     installedOfficialMeta?.serverId,
   ]);

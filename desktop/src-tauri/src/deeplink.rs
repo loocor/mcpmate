@@ -42,7 +42,7 @@ pub struct ImportServerDeepLinkPayload {
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
-    pub source: Option<String>,
+    pub source: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

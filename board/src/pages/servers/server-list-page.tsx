@@ -143,7 +143,7 @@ export function ServerListPage() {
 		if (!pendingServerDeepLinkImport) {
 			return;
 		}
-		const { text, format } = pendingServerDeepLinkImport;
+		const { text, format, source } = pendingServerDeepLinkImport;
 		setPendingServerDeepLinkImport(null);
 		const fileName =
 			format === "json"
@@ -151,7 +151,7 @@ export function ServerListPage() {
 				: format === "toml"
 					? "snippet.toml"
 					: "snippet.txt";
-		openManualIngest({ text, fileName });
+		openManualIngest({ text, fileName, source });
 		notifyInfo(
 			t("notifications.deepLinkImport.title", {
 				defaultValue: "Configuration received",

@@ -701,7 +701,7 @@ describe("admin discovery adapter", () => {
 			source_client_ids: [],
 			import_config: {
 				type: "stdio",
-				source_ref: "github",
+				source: { type: "catalog", ref: "github" },
 				command: "npx",
 				args: ["-y", "@modelcontextprotocol/server-github"],
 				env: {

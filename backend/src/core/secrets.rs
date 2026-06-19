@@ -523,7 +523,7 @@ mod tests {
             server_type: ServerType::StreamableHttp,
             command: None,
             url: Some(format!("https://example.com/{name}/[[secret:url-token]]")),
-            source_ref: None,
+            source: None,
             capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,

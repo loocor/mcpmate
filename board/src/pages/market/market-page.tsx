@@ -2,7 +2,6 @@ import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ErrorDisplay } from "../../components/error-display";
 import { Pagination } from "../../components/pagination";
 import { serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
@@ -97,11 +96,16 @@ export function MarketPage() {
 		[location.search, navigate],
 	);
 
+	const handleClearSearch = useCallback(() => {
+		setSearch("");
+	}, [setSearch]);
+
 	const showPagination =
-		pagination.hasPreviousPage ||
-		isInitialLoading ||
-		isPageLoading ||
-		!isEmpty;
+		!fetchError &&
+		(pagination.hasPreviousPage ||
+			isInitialLoading ||
+			isPageLoading ||
+			!isEmpty);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-3.5">
@@ -122,21 +126,17 @@ export function MarketPage() {
 				</div>
 			</div>
 
-			<ErrorDisplay
-				title={t("market:errors.failedToLoadRegistry", {
-					defaultValue: "Failed to load registry",
-				})}
-				error={fetchError ?? null}
-				onRetry={onRefresh}
-			/>
-
 			<ServerGrid
 				servers={servers}
 				installedRegistryServerKeys={installedRegistryServerKeys}
 				isInitialLoading={isInitialLoading}
 				isPageLoading={isPageLoading}
 				isEmpty={isEmpty}
+				fetchError={fetchError}
+				hasActiveSearch={search.trim().length > 0}
 				pagination={pagination}
+				onRetry={onRefresh}
+				onClearSearch={handleClearSearch}
 				onServerPreview={handleOpenDetailPage}
 				onServerInstall={handleOpenDetailPage}
 				onServerHide={handleHideServer}
