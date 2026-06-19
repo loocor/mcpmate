@@ -105,6 +105,7 @@ function App() {
 						}}
 					>
 						<DesktopFullBoardPathBridge>
+							<BackspaceNavigationGuard />
 							<DesktopDropNavigationGuard />
 							<Routes>
 								<Route path="oauth/callback" element={<OAuthCallbackPage />} />
@@ -175,6 +176,50 @@ function App() {
 			</BackendReadinessGate>
 		</QueryClientProvider>
 	);
+}
+
+function isEditableBackspaceTarget(target: EventTarget | null): boolean {
+	if (!(target instanceof HTMLElement)) {
+		return false;
+	}
+	if (target.isContentEditable) {
+		return true;
+	}
+	const tagName = target.tagName.toLowerCase();
+	if (tagName === "textarea") {
+		return true;
+	}
+	if (tagName !== "input") {
+		return false;
+	}
+	const input = target as HTMLInputElement;
+	return !input.readOnly && !input.disabled;
+}
+
+function shouldPreventBackspaceNavigation(event: KeyboardEvent): boolean {
+	return (
+		!event.defaultPrevented &&
+		event.key === "Backspace" &&
+		!event.metaKey &&
+		!event.ctrlKey &&
+		!event.altKey &&
+		!isEditableBackspaceTarget(event.target)
+	);
+}
+
+function BackspaceNavigationGuard() {
+	useEffect(() => {
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (shouldPreventBackspaceNavigation(event)) {
+				event.preventDefault();
+			}
+		};
+
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, []);
+
+	return null;
 }
 
 function toFullBoardPath(raw: unknown): string | undefined {

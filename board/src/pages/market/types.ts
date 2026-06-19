@@ -41,6 +41,8 @@ export interface ServerGridProps {
 	isInitialLoading: boolean;
 	isPageLoading: boolean;
 	isEmpty: boolean;
+	fetchError: Error | undefined;
+	hasActiveSearch: boolean;
 	pagination: {
 		currentPage: number;
 		hasPreviousPage: boolean;
@@ -48,6 +50,8 @@ export interface ServerGridProps {
 		itemsPerPage: number;
 		totalPages: number | null;
 	};
+	onRetry: () => void;
+	onClearSearch: () => void;
 	onServerPreview: (server: RegistryServerEntry) => void;
 	onServerInstall: (server: RegistryServerEntry) => void;
 	onServerHide: (server: RegistryServerEntry) => void;

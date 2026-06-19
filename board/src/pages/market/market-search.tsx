@@ -1,4 +1,11 @@
 import { RefreshCw } from "lucide-react";
+import {
+	useEffect,
+	useRef,
+	useState,
+	type ChangeEvent,
+	type CompositionEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -25,12 +32,44 @@ export function MarketSearch({
 }: MarketSearchProps) {
 	const { t } = useTranslation();
 	usePageTranslations("market");
+	const [inputValue, setInputValue] = useState(search);
+	const isComposingRef = useRef(false);
+
+	useEffect(() => {
+		if (!isComposingRef.current) {
+			setInputValue(search);
+		}
+	}, [search]);
+
+	function handleSearchInputChange(event: ChangeEvent<HTMLInputElement>) {
+		const nextValue = event.target.value;
+		setInputValue(nextValue);
+		if (!isComposingRef.current) {
+			onSearchChange(nextValue);
+		}
+	}
+
+	function handleSearchCompositionStart() {
+		isComposingRef.current = true;
+	}
+
+	function handleSearchCompositionEnd(
+		event: CompositionEvent<HTMLInputElement>,
+	) {
+		isComposingRef.current = false;
+		const nextValue = event.currentTarget.value;
+		setInputValue(nextValue);
+		onSearchChange(nextValue);
+	}
+
 	return (
 		<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
 			<div className="relative flex-1 overflow-visible sm:flex-none">
 				<Input
-					value={search}
-					onChange={(event) => onSearchChange(event.target.value)}
+					value={inputValue}
+					onChange={handleSearchInputChange}
+					onCompositionStart={handleSearchCompositionStart}
+					onCompositionEnd={handleSearchCompositionEnd}
 					placeholder={t("market:search.placeholder", {
 						defaultValue: "Search by server name",
 					})}

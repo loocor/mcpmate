@@ -10,6 +10,7 @@ export const marketTranslations = {
 			manage: "Manage",
 			reinstall: "Reinstall",
 			unsupported: "Unsupported",
+			retry: "Retry",
 		},
 		search: {
 			placeholder: "Search by server name",
@@ -37,8 +38,10 @@ export const marketTranslations = {
 			na: "N/A",
 		},
 		emptyState: {
+			noEntriesTitle: "No servers found",
 			noEntriesMatched:
 				"No entries matched your filters. Try another name or clear the search above.",
+			clearSearch: "Clear search",
 			loading: "Loading...",
 		},
 		thirdParty: {
@@ -102,6 +105,7 @@ export const marketTranslations = {
 			manage: "管理",
 			reinstall: "重新安装",
 			unsupported: "暂不支持",
+			retry: "重试",
 		},
 		search: {
 			placeholder: "按服务器名称搜索",
@@ -128,8 +132,10 @@ export const marketTranslations = {
 			na: "无",
 		},
 		emptyState: {
+			noEntriesTitle: "未找到服务器",
 			noEntriesMatched:
 				"没有条目匹配您的筛选条件。请尝试其他名称或清除上面的搜索。",
+			clearSearch: "清除搜索",
 			loading: "加载中...",
 		},
 		thirdParty: {
@@ -193,6 +199,7 @@ export const marketTranslations = {
 			manage: "管理",
 			reinstall: "再インストール",
 			unsupported: "未対応",
+			retry: "再試行",
 		},
 		search: {
 			placeholder: "サーバー名で検索",
@@ -220,8 +227,10 @@ export const marketTranslations = {
 			na: "N/A",
 		},
 		emptyState: {
+			noEntriesTitle: "サーバーが見つかりません",
 			noEntriesMatched:
 				"フィルターに一致するエントリがありません。別の名前を試すか、上記の検索をクリアしてください。",
+			clearSearch: "検索をクリア",
 			loading: "読み込み中...",
 		},
 		thirdParty: {
