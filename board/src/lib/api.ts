@@ -1172,9 +1172,21 @@ export const serversApi = {
 
 	refreshRegistryMetadata: async (id: string): Promise<ServerDetail> => {
 		const current = await serversApi.getServer(id);
+		if (!current.source || current.source.type !== "registry") {
+			throw new Error(
+				`Cannot refresh metadata: server '${current.name}' does not have a registry source`,
+			);
+		}
+		if (!current.source.ref) {
+			throw new Error(
+				`Cannot refresh metadata: registry source for '${current.name}' has no identifier`,
+			);
+		}
 		const entry = await fetchCatalogEntryForSource(current.source);
 		if (!entry) {
-			throw new Error(`Server '${current.source?.ref ?? current.source?.type}' not found in catalog`);
+			throw new Error(
+				`Server '${current.source.ref}' was not found in the registry catalog`,
+			);
 		}
 
 		const officialMeta = entry._meta?.["io.modelcontextprotocol.registry/official"];

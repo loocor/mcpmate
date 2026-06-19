@@ -666,14 +666,21 @@ export const ServerInstallWizard = forwardRef(
 
 		const tryFinalizePublishImport = useCallback(
 			async (draft: ServerInstallDraft, targetProfileId: string | null) => {
-				const publishedServerId = clearPendingImportState();
+				const publishedServerId = pendingImportServerRef.current;
 				if (!publishedServerId) {
 					return false;
 				}
-				await completePendingPublishImport(draft, publishedServerId, targetProfileId);
+				try {
+					await completePendingPublishImport(draft, publishedServerId, targetProfileId);
+					clearPendingImportState();
+				} catch (error) {
+					pendingImportServerRef.current = publishedServerId;
+					setPendingImportServerId(publishedServerId);
+					throw error;
+				}
 				return true;
 			},
-			[clearPendingImportState, completePendingPublishImport],
+			[completePendingPublishImport, clearPendingImportState],
 		);
 
 		const buildJsonPayloadFromValues = useCallback(
@@ -855,7 +862,6 @@ export const ServerInstallWizard = forwardRef(
 			ingestError,
 			setIngestError,
 			isIngestSuccess,
-			setIsIngestSuccess,
 			isDropZoneCollapsed,
 			isDragOver,
 			setIsDragOver,
@@ -2712,9 +2718,6 @@ export const ServerInstallWizard = forwardRef(
 			// Determine if we can proceed with import based on dry-run
 			const dryRunImportableCount = dryRunStats?.importedCount ?? 0;
 			const dryRunSkippedCount = dryRunStats?.skippedCount ?? 0;
-			const effectiveImportableCount = hiddenPreviewReady
-				? Math.max(dryRunImportableCount, state.selectedDrafts.length || 1)
-				: dryRunImportableCount;
 			const effectiveSkippedCount = hiddenPreviewReady ? 0 : dryRunSkippedCount;
 			const canProceedWithImport =
 				hiddenPreviewReady ||

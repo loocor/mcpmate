@@ -51,7 +51,7 @@ export interface MarketCatalogProvider {
 
   /**
    * Build a ServerSource record for a catalog entry.
-   * Default: `{ type: providerId, ref: entry.name }`
+   * Default: `{ type: "registry", ref: entry.name }`
    */
   buildSource(entry: CatalogEntry): import("../types").ServerSource;
 }

@@ -1,7 +1,7 @@
 // Server database initialization
 // Contains functions for initializing server-related database tables
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 use tracing;
 
@@ -93,8 +93,6 @@ async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
     )
     .await?;
     ensure_column(pool, "server_config", "source", "TEXT").await?;
-    migrate_registry_server_id_to_source_ref(pool).await?;
-    migrate_source_ref_to_source(pool).await?;
     Ok(())
 }
 
@@ -342,112 +340,6 @@ async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
         })?;
 
         tracing::debug!("Verified {} table exists", table);
-    }
-
-    Ok(())
-}
-
-/// Migrate `registry_server_id` column to `source_ref` for existing databases.
-/// Renames the column and prefixes existing bare values with `registry:` namespace.
-async fn migrate_registry_server_id_to_source_ref(pool: &Pool<Sqlite>) -> Result<()> {
-    // Check if the old column still exists by querying its info
-    let columns: Vec<(String,)> =
-        sqlx::query_as("SELECT name FROM pragma_table_info('server_config')")
-            .fetch_all(pool)
-            .await?;
-
-    let has_old_column = columns.iter().any(|(name,)| name == "registry_server_id");
-    let has_new_column = columns.iter().any(|(name,)| name == "source_ref");
-
-    if has_new_column {
-        // Column already renamed — ensure any bare values from an interrupted
-        // migration are namespaced (crash-safety). Only prefix legacy bare IDs
-        // that have no namespace delimiter ':' to avoid corrupting future
-        // non-registry providers (e.g. catalog:foo, github:bar).
-        sqlx::query(
-            "UPDATE server_config SET source_ref = 'registry:' || source_ref \
-             WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'",
-        )
-        .execute(pool)
-        .await?;
-        return Ok(());
-    }
-
-    if !has_old_column {
-        // Fresh database — nothing to migrate
-        return Ok(());
-    }
-
-    tracing::info!("Migrating server_config.registry_server_id -> source_ref");
-
-    // Rename column (SQLite 3.25+)
-    sqlx::query("ALTER TABLE server_config RENAME COLUMN registry_server_id TO source_ref")
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to rename registry_server_id column: {}", e);
-            anyhow::anyhow!("Failed to rename registry_server_id column: {}", e)
-        })?;
-
-    // Prefix existing bare values with "registry:" namespace.
-    // Only touch legacy bare IDs (no ':') — already-namespaced values
-    // (e.g. catalog:foo) are left untouched.
-    sqlx::query(
-        "UPDATE server_config SET source_ref = 'registry:' || source_ref WHERE source_ref IS NOT NULL AND source_ref NOT LIKE '%:%'"
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to prefix source_ref values: {}", e);
-        anyhow::anyhow!("Failed to prefix source_ref values: {}", e)
-    })?;
-
-    tracing::info!("Migration registry_server_id -> source_ref completed");
-    Ok(())
-}
-
-/// Migrate `source_ref` column to `source` column for structured source tracking.
-/// Migrates legacy `source_ref` column values into the new `source` column.
-/// Parses existing colon-delimited values and copies them to the new column.
-/// Skips on fresh databases where `source_ref` does not exist.
-async fn migrate_source_ref_to_source(pool: &Pool<Sqlite>) -> Result<()> {
-    // Check if source_ref column exists (absent on fresh databases)
-    let has_column: bool = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM pragma_table_info('server_config') WHERE name = 'source_ref'",
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None)
-    .is_some();
-
-    if !has_column {
-        return Ok(());
-    }
-
-    // Parse existing source_ref into source format:
-    // "registry:google-ads" -> source = "registry:google-ads"
-    // "catalog:github"      -> source = "catalog:github"
-    // bare "google-ads"     -> source = "registry:google-ads"
-    let result = sqlx::query(
-        r#"
-        UPDATE server_config
-        SET source = CASE
-            WHEN source_ref LIKE '%:%' THEN source_ref
-            ELSE 'registry:' || source_ref
-        END,
-        source_ref = NULL
-        WHERE source_ref IS NOT NULL AND source IS NULL
-        "#,
-    )
-    .execute(pool)
-    .await
-    .context("Failed to migrate source_ref to source")?;
-
-    if result.rows_affected() > 0 {
-        tracing::info!(
-            rows = result.rows_affected(),
-            "Migrated source_ref values to source column"
-        );
     }
 
     Ok(())

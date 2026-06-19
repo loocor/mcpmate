@@ -15,9 +15,7 @@ import { cn } from "../lib/utils";
 
 export type CapabilityKind = "tool" | "prompt" | "resource" | "template";
 
-export interface CapabilityRecordLike {
-  [key: string]: unknown;
-}
+export interface CapabilityRecordLike {}
 
 export interface CapabilityComboboxProps<T extends CapabilityRecordLike = CapabilityRecordLike> {
   kind: CapabilityKind;

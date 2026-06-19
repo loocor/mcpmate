@@ -32,6 +32,13 @@ export interface ServerInstallDraft {
 	meta?: ServerMetaInfo;
 }
 
+export interface WizardImportResult {
+	success: boolean;
+	summary?: { imported_count: number; skipped_count: number };
+	servers?: Record<string, { id: string; status: string }>;
+	error?: string;
+}
+
 interface UseServerInstallPipelineOptions {
 	onImported?: () => void;
 }
@@ -57,7 +64,7 @@ export function useServerInstallPipeline(
 	const [previewError, setPreviewError] = useState<string | null>(null);
 	const [isImporting, setImporting] = useState(false);
 	const [currentStep, setCurrentStep] = useState<WizardStep>("form");
-	const [importResult, setImportResult] = useState<ServersImportResponse | null>(
+	const [importResult, setImportResult] = useState<WizardImportResult | null>(
 		null,
 	);
 	const [targetProfileId, setTargetProfileId] = useState<string | null>(null);
@@ -334,7 +341,10 @@ export function useServerInstallPipeline(
 					targetProfileId: effectiveTargetProfileId,
 				});
 				const result = await serversApi.importServers(requestBody);
-				setImportResult(result);
+				setImportResult({
+					success: result.success,
+					error: typeof result.error === "string" ? result.error : undefined,
+				});
 
 				const didSucceed =
 					typeof result?.success === "boolean"

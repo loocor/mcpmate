@@ -238,6 +238,10 @@ export function MarketDetailPage() {
 	const showReadmePanel = Boolean(readmeMarkdown);
 
 	useEffect(() => {
+		setIsReadmeExpanded(false);
+	}, [decodedKey]);
+
+	useEffect(() => {
 		if (!showReadmePanel && isReadmeExpanded) {
 			setIsReadmeExpanded(false);
 		}

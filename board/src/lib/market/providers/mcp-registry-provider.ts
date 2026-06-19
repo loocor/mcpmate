@@ -23,7 +23,7 @@ const REGISTRY_API_BASE = import.meta.env.DEV
 const CONFIGURED_REGISTRY_API_BASE =
 	typeof import.meta.env.VITE_MARKET_REGISTRY_BASE_URL === "string" &&
 	import.meta.env.VITE_MARKET_REGISTRY_BASE_URL.trim().length > 0
-		? import.meta.env.VITE_MARKET_REGISTRY_BASE_URL.trim()
+		? import.meta.env.VITE_MARKET_REGISTRY_BASE_URL.trim().replace(/\/+$/, "")
 		: null;
 
 const EFFECTIVE_REGISTRY_API_BASE = CONFIGURED_REGISTRY_API_BASE ?? REGISTRY_API_BASE;

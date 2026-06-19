@@ -318,7 +318,10 @@ impl<'q> Encode<'q, Sqlite> for ServerSource {
 impl<'r> Decode<'r, Sqlite> for ServerSource {
     fn decode(value: SqliteValueRef<'r>) -> Result<Self, BoxDynError> {
         let s = <String as Decode<Sqlite>>::decode(value)?;
-        ServerSource::from_str(&s).map_err(|e| Box::new(e) as BoxDynError)
+        Ok(ServerSource::from_str(&s).unwrap_or_else(|_| {
+            tracing::warn!(raw = %s, "Unrecognized source column value, falling back to Other");
+            ServerSource::new(ServerSourceType::Other, Some(s))
+        }))
     }
 }
 
