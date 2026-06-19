@@ -1,5 +1,4 @@
 import {
-	Check,
 	Database,
 	LayoutTemplate,
 	MessageSquare,
@@ -9,6 +8,7 @@ import {
 import { type KeyboardEvent, type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../lib/store";
+import { BulkSelectionCheckbox } from "./bulk-selection";
 import type {
 	CapabilityArgument,
 	CapabilityMapItem,
@@ -23,7 +23,12 @@ import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
 } from "./capsule-stripe-list";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { CapsuleStripeRowBody } from "./capsule-stripe-row";
+import {
+	CAPABILITY_SCROLL_CARD_CLASS,
+	CapabilityScrollCardContent,
+} from "./capability-scroll-card-layout";
+import { Card, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { SchemaTable } from "./schema-table";
@@ -367,10 +372,6 @@ export function CapabilityList<T = CapabilityRecord>({
 			return false;
 		};
 
-		const indicatorClass = isSelected
-			? "border-primary bg-primary text-white shadow-sm"
-			: "border-slate-300 text-transparent group-hover:border-primary/50 group-hover:text-primary/60 dark:border-slate-700 dark:group-hover:border-primary/50";
-
 		const titleClasses =
 			context === "profile" && isSelected
 				? "font-medium text-primary"
@@ -511,7 +512,7 @@ export function CapabilityList<T = CapabilityRecord>({
 		);
 
 		const leftSection = (
-			<div className="flex flex-1 items-start gap-3">
+			<div className={`flex flex-1 gap-3 ${context === "profile" ? "items-center" : "items-start"}`}>
 				{leadingNode}
 				{infoBlock}
 			</div>
@@ -554,20 +555,30 @@ export function CapabilityList<T = CapabilityRecord>({
 				<CapsuleStripeListItem
 					key={id}
 					interactive={!!selectable}
-					className={`group relative transition-colors ${isSelected ? "bg-primary/10 ring-1 ring-primary/40" : ""
+					className={`group relative px-3 transition-colors ${isSelected ? "bg-primary/10 ring-1 ring-primary/40" : ""
 						}`}
 					onClick={selectable ? handleSelect : undefined}
 					onKeyDown={selectable ? handleKeyDown : undefined}
 				>
-					<div className="flex w-full items-center gap-3">
-						<div
-							className={`flex h-6 w-6 items-center justify-center rounded-full border text-[0px] transition-all duration-200 ${indicatorClass}`}
-						>
-							<Check className="h-3 w-3" />
-						</div>
-						{leftSection}
-						{actionSection}
-					</div>
+					<CapsuleStripeRowBody
+						lead={
+							<div className={`flex items-center ${selectable ? "gap-3" : "gap-0"}`}>
+								<BulkSelectionCheckbox
+									visible={!!selectable}
+									checked={isSelected}
+									onToggle={handleSelect}
+									ariaLabel={t("profiles:detail.bulk.selectItem", {
+										name: mapped.title,
+										defaultValue: "Select {{name}}",
+									})}
+								/>
+								{leadingNode}
+							</div>
+						}
+						trailing={actions}
+					>
+						{infoBlock}
+					</CapsuleStripeRowBody>
 				</CapsuleStripeListItem>
 			);
 		}
@@ -697,7 +708,7 @@ export function CapabilityList<T = CapabilityRecord>({
 		<Card
 			className={
 				scrollContainedBody
-					? "flex min-h-0 flex-1 flex-col overflow-hidden"
+					? CAPABILITY_SCROLL_CARD_CLASS
 					: undefined
 			}
 		>
@@ -719,15 +730,11 @@ export function CapabilityList<T = CapabilityRecord>({
 					) : null}
 				</div>
 			</CardHeader>
-			<CardContent
-				className={
-					scrollContainedBody
-						? "flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2"
-						: undefined
-				}
-			>
-				{body}
-			</CardContent>
+			{scrollContainedBody ? (
+				<CapabilityScrollCardContent>{body}</CapabilityScrollCardContent>
+			) : (
+				body
+			)}
 		</Card>
 	);
 }
