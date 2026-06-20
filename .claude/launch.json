@@ -1,0 +1,82 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "run",
+        "--"
+      ],
+      "cwd": "backend",
+      "port": 8080
+    },
+    {
+      "name": "board",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--host",
+        "127.0.0.1"
+      ],
+      "cwd": "board",
+      "port": 5173
+    },
+    {
+      "name": "website",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5174"
+      ],
+      "cwd": "website",
+      "port": 5174
+    },
+    {
+      "name": "admin-admin",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "cwd": "admin/admin",
+      "port": 3000
+    },
+    {
+      "name": "admin-auth",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "cwd": "admin",
+      "port": 8787
+    },
+    {
+      "name": "admin-public",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "dev:public"
+      ],
+      "cwd": "admin",
+      "port": 8788
+    },
+    {
+      "name": "desktop",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "tauri",
+        "dev",
+        "--verbose"
+      ],
+      "cwd": "desktop",
+      "port": 5173
+    }
+  ]
+}

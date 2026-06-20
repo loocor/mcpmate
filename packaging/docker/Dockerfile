@@ -1,14 +1,13 @@
-ARG NODE_IMAGE=node:20-bookworm-slim
 ARG RUST_IMAGE=rust:1-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 
-FROM ${NODE_IMAGE} AS board-builder
+FROM oven/bun:1 AS board-builder
 
 WORKDIR /workspace/board
-COPY board/package.json board/package-lock.json ./
-RUN npm ci
+COPY board/package.json board/bun.lock ./
+RUN bun install --frozen-lockfile
 COPY board ./
-RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
+RUN NODE_OPTIONS=--max-old-space-size=4096 bun run build
 
 FROM ${RUST_IMAGE} AS builder
 
