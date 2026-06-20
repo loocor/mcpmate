@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -9,9 +9,6 @@ import {
 	Loader2,
 	CheckCircle,
 	XCircle,
-	AlertCircle,
-	Eye,
-	EyeOff,
 	Star,
 } from "lucide-react";
 
@@ -310,14 +307,17 @@ function ProviderDrawer({
 	const [baseUrl, setBaseUrl] = useState("");
 	const [modelId, setModelId] = useState("");
 	const [apiKey, setApiKey] = useState("");
-	const [showApiKey, setShowApiKey] = useState(false);
 	const [temperature, setTemperature] = useState("0.7");
 	const [maxTokens, setMaxTokens] = useState("4096");
-	const [testResult, setTestResult] = useState<{
-		success: boolean;
-		latency_ms: number;
-		error?: string | null;
-	} | null>(null);
+	const [testState, setTestState] = useState<"idle" | "loading" | "success" | "error">("idle");
+	const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Clean up timer on unmount
+	useEffect(() => {
+		return () => {
+			if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+		};
+	}, []);
 
 	useEffect(() => {
 		if (open) {
@@ -331,7 +331,6 @@ function ProviderDrawer({
 				setBaseUrl(provider.base_url);
 				setModelId(provider.model_id);
 				setApiKey("");
-				setShowApiKey(false);
 				setTemperature(String(provider.default_params.temperature));
 				setMaxTokens(String(provider.default_params.max_tokens));
 			} else {
@@ -340,11 +339,11 @@ function ProviderDrawer({
 				setBaseUrl(DEFAULT_BASE_URLS.openai_chat);
 				setModelId("");
 				setApiKey("");
-				setShowApiKey(false);
 				setTemperature("0.7");
 				setMaxTokens("4096");
 			}
-			setTestResult(null);
+			setTestState("idle");
+			if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
 		}
 	}, [open, provider]);
 
@@ -359,19 +358,17 @@ function ProviderDrawer({
 	});
 
 	const handleTest = useCallback(async () => {
-		if (!provider?.id) return;
-		setTestResult(null);
+		if (!provider?.id || testState === "loading") return;
+		setTestState("loading");
 		try {
-			const result = await llmApi.testProvider(provider.id);
-			setTestResult(result);
-		} catch (e) {
-			setTestResult({
-				success: false,
-				latency_ms: 0,
-				error: e instanceof Error ? e.message : String(e),
-			});
+			await llmApi.testProvider(provider.id);
+			setTestState("success");
+		} catch {
+			setTestState("error");
 		}
-	}, [provider]);
+		// Reset to idle after 2 seconds
+		resetTimerRef.current = setTimeout(() => setTestState("idle"), 2000);
+	}, [provider, testState]);
 
 	const handleSubmit = useCallback(() => {
 		const temp = parseFloat(temperature) || 0.7;
@@ -416,26 +413,26 @@ function ProviderDrawer({
 
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange}>
-			<DrawerContent>
-				<DrawerHeader className="text-left">
-					<DrawerTitle>
+			<DrawerContent className="flex h-full flex-col overflow-hidden">
+				<DrawerHeader className="shrink-0 pb-2 text-left">
+					<DrawerTitle className="text-left">
 						{isEditing
 							? t("settings.providers.editTitle", "Edit Provider")
 							: t("settings.providers.addTitle", "Add Provider")}
 					</DrawerTitle>
-					<DrawerDescription>
+					<DrawerDescription className="text-left">
 						{t(
 							"settings.providers.dialogDescription",
 							"Configure an LLM provider for intelligent test generation",
 						)}
 					</DrawerDescription>
 				</DrawerHeader>
-				<div className="px-4 pb-4 overflow-y-auto max-h-[60vh]">
-					<div className="grid gap-4">
-						<div className="grid gap-2">
-							<Label htmlFor="name">
-								{t("settings.providers.name", "Name")}
-							</Label>
+				<div className="flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto px-6 pb-4 pt-2">
+					<div className="flex items-center gap-4">
+						<Label htmlFor="name" className="w-20 shrink-0 text-right">
+							{t("settings.providers.name", "Name")}
+						</Label>
+						<div className="flex-1">
 							<Input
 								id="name"
 								value={name}
@@ -446,9 +443,13 @@ function ProviderDrawer({
 								)}
 							/>
 						</div>
+					</div>
 
-						<div className="grid gap-2">
-							<Label>{t("settings.providers.type", "API Type")}</Label>
+					<div className="flex items-center gap-4">
+						<Label className="w-20 shrink-0 text-right">
+							{t("settings.providers.type", "API Type")}
+						</Label>
+						<div className="flex-1">
 							<Select
 								value={providerType}
 								onValueChange={(v) => setProviderType(v as ProviderType)}
@@ -459,22 +460,19 @@ function ProviderDrawer({
 								<SelectContent>
 									{PROVIDER_TYPE_OPTIONS.map((opt) => (
 										<SelectItem key={opt.value} value={opt.value}>
-											<div className="flex flex-col">
-												<span>{opt.label}</span>
-												<span className="text-xs text-muted-foreground">
-													{opt.desc}
-												</span>
-											</div>
+											<span>{opt.label}</span>
 										</SelectItem>
 									))}
 								</SelectContent>
 							</Select>
 						</div>
+					</div>
 
-						<div className="grid gap-2">
-							<Label htmlFor="baseUrl">
-								{t("settings.providers.baseUrl", "Base URL")}
-							</Label>
+					<div className="flex items-center gap-4">
+						<Label htmlFor="baseUrl" className="w-20 shrink-0 text-right">
+							{t("settings.providers.baseUrl", "Base URL")}
+						</Label>
+						<div className="flex-1">
 							<Input
 								id="baseUrl"
 								value={baseUrl}
@@ -482,46 +480,35 @@ function ProviderDrawer({
 								placeholder={DEFAULT_BASE_URLS[providerType]}
 							/>
 						</div>
+					</div>
 
-						<div className="grid gap-2">
-							<Label htmlFor="apiKey">
-								{t("settings.providers.apiKey", "API Key")}
-							</Label>
-							<div className="relative">
-								<Input
-									id="apiKey"
-									type={showApiKey ? "text" : "password"}
-									value={apiKey}
-									onChange={(e) => setApiKey(e.target.value)}
-									placeholder={
-										isEditing
-											? t(
-													"settings.providers.apiKeyEditPlaceholder",
-													"Leave empty to keep current key",
-												)
-											: "sk-..."
-									}
-								/>
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									className="absolute right-0 top-0 h-full px-3"
-									onClick={() => setShowApiKey(!showApiKey)}
-								>
-									{showApiKey ? (
-										<EyeOff className="h-4 w-4" />
-									) : (
-										<Eye className="h-4 w-4" />
-									)}
-								</Button>
-							</div>
+					<div className="flex items-center gap-4">
+						<Label htmlFor="apiKey" className="w-20 shrink-0 text-right">
+							{t("settings.providers.apiKey", "API Key")}
+						</Label>
+						<div className="flex-1">
+							<Input
+								id="apiKey"
+								type="password"
+								value={apiKey}
+								onChange={(e) => setApiKey(e.target.value)}
+								placeholder={
+									isEditing
+										? t(
+												"settings.providers.apiKeyEditPlaceholder",
+												"Leave empty to keep current key",
+											)
+										: "sk-..."
+								}
+							/>
 						</div>
+					</div>
 
-						<div className="grid gap-2">
-							<Label htmlFor="modelId">
-								{t("settings.providers.model", "Model")}
-							</Label>
+					<div className="flex items-center gap-4">
+						<Label htmlFor="modelId" className="w-20 shrink-0 text-right">
+							{t("settings.providers.model", "Model")}
+						</Label>
+						<div className="flex-1">
 							<Input
 								id="modelId"
 								value={modelId}
@@ -533,81 +520,86 @@ function ProviderDrawer({
 								}
 							/>
 						</div>
+					</div>
 
-						<div className="grid grid-cols-2 gap-4">
-							<div className="grid gap-2">
-								<Label htmlFor="temperature">
-									{t("settings.providers.temperature", "Temperature")}
-								</Label>
-								<Input
-									id="temperature"
-									type="number"
-									min="0"
-									max="2"
-									step="0.1"
-									value={temperature}
-									onChange={(e) => setTemperature(e.target.value)}
-								/>
-							</div>
-							<div className="grid gap-2">
-								<Label htmlFor="maxTokens">
-									{t("settings.providers.maxTokens", "Max Tokens")}
-								</Label>
-								<Input
-									id="maxTokens"
-									type="number"
-									min="1"
-									max="128000"
-									value={maxTokens}
-									onChange={(e) => setMaxTokens(e.target.value)}
-								/>
-							</div>
+					<div className="flex items-center gap-4">
+						<Label className="w-20 shrink-0 text-right">
+							{t("settings.providers.temperature", "Temperature")}
+						</Label>
+						<div className="flex-1">
+							<Input
+								type="number"
+								min="0"
+								max="2"
+								step="0.1"
+								value={temperature}
+								onChange={(e) => setTemperature(e.target.value)}
+							/>
 						</div>
+					</div>
 
-						{isEditing && (
-							<div className="flex items-center gap-2 pt-2">
+					<div className="flex items-center gap-4">
+						<Label className="w-20 shrink-0 text-right">
+							{t("settings.providers.maxTokens", "Max Tokens")}
+						</Label>
+						<div className="flex-1">
+							<Input
+								type="number"
+								min="1"
+								max="128000"
+								value={maxTokens}
+								onChange={(e) => setMaxTokens(e.target.value)}
+							/>
+						</div>
+					</div>
+
+					</div>
+					<DrawerFooter className="mt-auto shrink-0 border-t px-6 py-4">
+					<div className="flex w-full items-center justify-between gap-3">
+						<DrawerClose asChild>
+							<Button variant="outline">{t("common.cancel", "Cancel")}</Button>
+						</DrawerClose>
+						<div className="flex items-center gap-3">
+							{isEditing && (
 								<Button
 									variant="outline"
 									size="sm"
 									onClick={handleTest}
+									disabled={testState === "loading"}
+									className={
+										testState === "success"
+											? "border-green-500 text-green-600"
+											: testState === "error"
+												? "border-red-500 text-red-600"
+												: ""
+									}
 								>
-									<Zap className="mr-2 h-4 w-4" />
-									{t("settings.providers.testConnection", "Test Connection")}
+									{testState === "loading" ? (
+										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									) : testState === "success" ? (
+										<CheckCircle className="mr-2 h-4 w-4" />
+									) : testState === "error" ? (
+										<XCircle className="mr-2 h-4 w-4" />
+									) : (
+										<Zap className="mr-2 h-4 w-4" />
+									)}
+									{testState === "loading"
+										? t("settings.providers.testing", "Testing…")
+										: testState === "success"
+											? t("settings.providers.connected", "Connected")
+											: testState === "error"
+												? t("settings.providers.failed", "Failed")
+												: t("settings.providers.testConnection", "Test")}
 								</Button>
-								{testResult && (
-									<div className="flex items-center gap-1.5 text-sm">
-										{testResult.success ? (
-											<>
-												<CheckCircle className="h-4 w-4 text-green-500" />
-												<span className="text-green-600">
-													{t("settings.providers.connected", "Connected")}
-													({testResult.latency_ms}ms)
-												</span>
-											</>
-										) : (
-											<>
-												<AlertCircle className="h-4 w-4 text-red-500" />
-												<span className="text-red-600 truncate max-w-[200px]">
-													{testResult.error || t("settings.providers.failed", "Failed")}
-												</span>
-											</>
-										)}
-									</div>
-								)}
-							</div>
-						)}
+							)}
+							<Button onClick={handleSubmit} disabled={isPending || !canSubmit}>
+								{isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+								{isEditing
+									? t("common.save", "Save")
+									: t("common.create", "Create")}
+							</Button>
+						</div>
 					</div>
-				</div>
-				<DrawerFooter className="pt-2">
-					<Button onClick={handleSubmit} disabled={isPending || !canSubmit}>
-						{isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-						{isEditing
-							? t("common.save", "Save")
-							: t("common.create", "Create")}
-					</Button>
-					<DrawerClose asChild>
-						<Button variant="outline">{t("common.cancel", "Cancel")}</Button>
-					</DrawerClose>
 				</DrawerFooter>
 			</DrawerContent>
 		</Drawer>
