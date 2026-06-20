@@ -348,6 +348,12 @@ function configureBackendProxy(
 // to run before react-vendor exported React (forwardRef crash / white screen).
 // Also avoid a catch-all vendor chunk or separate data-vendor: Rollup then creates
 // react-vendor <-> vendor cycles through shared helpers.
+//
+// tiktoken WASM is intentionally excluded from the manual chunk groups above.
+// It is loaded via dynamic import() in claude-token-count.ts so the WASM fetch
+// never blocks the main module graph. If the WASM fails to load (e.g. inside
+// Tauri's custom protocol webview), countClaudeTokens gracefully falls back to
+// gpt-tokenizer (cl100k_base) so token estimates still work.
 const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 	[
 		"react-vendor",
@@ -393,7 +399,6 @@ const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 		"tokenizer-vendor",
 		[
 			"/node_modules/gpt-tokenizer/",
-			"/node_modules/tiktoken/",
 			"/src/lib/vendor/claude-tokenizer.json",
 		],
 	],
@@ -430,7 +435,7 @@ export default defineConfig({
 		exclude: ["lucide-react"],
 	},
 	build: {
-		target: "esnext",
+		target: "es2022",
 		chunkSizeWarningLimit: 5_000,
 		rollupOptions: {
 			output: {

@@ -1,39 +1,57 @@
 /**
- * Claude token counts using tiktoken/lite (ESM) + Anthropic's published BPE data.
- * Same algorithm as @anthropic-ai/tokenizer, without its CJS `require("tiktoken/lite")`
- * which breaks Vite/esbuild dev pre-bundling (WASM + top-level await).
+ * Claude token count using Anthropic's published BPE via tiktoken/lite.
  *
- * BPE data: Apache-2.0, from anthropics/anthropic-tokenizer-typescript (claude.json).
+ * tiktoken is loaded via dynamic import() so the WASM fetch never blocks the
+ * main module graph. If the WASM fails to load (e.g. inside Tauri's custom
+ * protocol webview on macOS/Linux), countClaudeTokens gracefully falls back
+ * to gpt-tokenizer (cl100k_base) so token estimates still work.
  */
 
-import { Tiktoken } from "tiktoken/lite";
-
+import { encode as encodeCl100k } from "gpt-tokenizer";
+import type { Tiktoken } from "tiktoken/lite";
 import claudeTokenizerData from "./vendor/claude-tokenizer.json";
 
-type ClaudeTokenizerJson = {
-	pat_str: string;
-	special_tokens: Record<string, number>;
-	bpe_ranks: string;
-};
+let claudeEncoder: Tiktoken | null = null;
+let initialized = false;
 
-const data = claudeTokenizerData as ClaudeTokenizerJson;
+/**
+ * Lazily initialize the Claude tiktoken encoder in the background.
+ * This is fire-and-forget: it never throws and never blocks the caller.
+ */
+function initClaudeTokenizer(): void {
+	if (initialized) return;
+	initialized = true;
 
-let tokenizer: Tiktoken | null = null;
-
-function getTokenizer(): Tiktoken {
-	if (!tokenizer) {
-		tokenizer = new Tiktoken(data.bpe_ranks, data.special_tokens, data.pat_str);
-	}
-	return tokenizer;
+	import("tiktoken/lite")
+		.then(({ Tiktoken: TiktokenCls }) => {
+			claudeEncoder = new TiktokenCls(
+				claudeTokenizerData.bpe_ranks,
+				claudeTokenizerData.special_tokens as Record<string, number>,
+				claudeTokenizerData.pat_str,
+			);
+		})
+		.catch(() => {
+			// WASM unavailable (e.g. Tauri webview) – fall back to gpt-tokenizer silently.
+		});
 }
 
-/** Count tokens the way Claude tokenization expects (NFKC + tiktoken encode). */
+// Kick off background initialization as soon as this module is loaded.
+initClaudeTokenizer();
+
+/**
+ * Count tokens for Claude content.
+ *
+ * Returns Anthropic BPE tokens when the WASM encoder is ready, otherwise
+ * falls back to cl100k_base (gpt-tokenizer) which provides a credible estimate.
+ */
 export function countClaudeTokens(text: string | null | undefined): number {
 	if (!text) return 0;
+	const normalized = text.normalize("NFKC");
 	try {
-		const t = getTokenizer();
-		const encoded = t.encode(text.normalize("NFKC"), "all");
-		return encoded.length;
+		if (claudeEncoder) {
+			return claudeEncoder.encode(normalized, "all").length;
+		}
+		return encodeCl100k(normalized).length;
 	} catch {
 		return Math.ceil(text.length / 4);
 	}
