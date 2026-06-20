@@ -3,7 +3,6 @@ import type { ClientRequest, IncomingMessage } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
-import topLevelAwait from "vite-plugin-top-level-await";
 import wasm from "vite-plugin-wasm";
 import { defineConfig, type Plugin } from "vite";
 
@@ -429,7 +428,6 @@ export default defineConfig({
 		compressedBackendReadinessProxyPlugin(),
 		react(),
 		wasm(),
-		topLevelAwait(),
 	],
 	resolve: {
 		alias: {
@@ -440,6 +438,7 @@ export default defineConfig({
 		exclude: ["lucide-react"],
 	},
 	build: {
+		target: "esnext",
 		chunkSizeWarningLimit: 5_000,
 		rollupOptions: {
 			output: {
