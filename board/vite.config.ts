@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 
 const packageJson = JSON.parse(
 	readFileSync(new URL("./package.json", import.meta.url), "utf8"),
@@ -111,8 +111,16 @@ type HttpProxyServer = {
 			res: HttpProxyResponse | undefined,
 		) => void,
 	): void;
-	on(event: string, listener: (...args: unknown[]) => void): void;
 };
+
+// http-proxy supports `router` at runtime; Vite's ProxyOptions omits it.
+type DynamicRouterProxyOptions = ProxyOptions & {
+	router?: () => string;
+};
+
+function dynamicRouterProxy(options: DynamicRouterProxyOptions): ProxyOptions {
+	return options as ProxyOptions;
+}
 
 const BACKEND_READINESS_PROXY_LOG_INTERVAL_MS = 5_000;
 const DEV_CORE_SOURCE_PATH = "/__mcpmate/dev-core-source";
@@ -325,11 +333,21 @@ function configureBackendProxy(
 	event: "proxyReq" | "proxyReqWs",
 ): void {
 	attachBackendStartupProxyHandler(proxy);
-	proxy.on(event, (proxyReq: ClientRequest) => {
+	const removeOrigin = (proxyReq: ClientRequest) => {
 		removeOriginHeader(proxyReq);
-	});
+	};
+	if (event === "proxyReq") {
+		proxy.on("proxyReq", removeOrigin);
+		return;
+	}
+	proxy.on("proxyReqWs", removeOrigin);
 }
 
+// Keep React and libraries that call React APIs at module scope in one chunk.
+// Splitting @radix-ui into a separate ui-vendor chunk caused parallel chunk init
+// to run before react-vendor exported React (forwardRef crash / white screen).
+// Also avoid a catch-all vendor chunk or separate data-vendor: Rollup then creates
+// react-vendor <-> vendor cycles through shared helpers.
 const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 	[
 		"react-vendor",
@@ -338,11 +356,7 @@ const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 			"/node_modules/react-dom/",
 			"/node_modules/react-router-dom/",
 			"/node_modules/scheduler/",
-		],
-	],
-	[
-		"ui-vendor",
-		[
+			"/node_modules/@tanstack/",
 			"/node_modules/@radix-ui/",
 			"/node_modules/class-variance-authority/",
 			"/node_modules/clsx/",
@@ -350,28 +364,14 @@ const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 			"/node_modules/lucide-react/",
 			"/node_modules/tailwind-merge/",
 			"/node_modules/vaul/",
-		],
-	],
-	[
-		"data-vendor",
-		[
-			"/node_modules/@tanstack/",
+			"/node_modules/i18next",
+			"/node_modules/react-i18next/",
 			"/node_modules/date-fns/",
 			"/node_modules/zod/",
 			"/node_modules/zustand/",
-		],
-	],
-	[
-		"chart-vendor",
-		[
 			"/node_modules/d3-",
 			"/node_modules/recharts/",
 			"/node_modules/victory-vendor/",
-		],
-	],
-	[
-		"markdown-vendor",
-		[
 			"/node_modules/hast-",
 			"/node_modules/mdast-",
 			"/node_modules/micromark",
@@ -397,13 +397,6 @@ const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 			"/src/lib/vendor/claude-tokenizer.json",
 		],
 	],
-	[
-		"i18n-vendor",
-		[
-			"/node_modules/i18next",
-			"/node_modules/react-i18next/",
-		],
-	],
 ];
 
 function manualChunks(id: string): string | undefined {
@@ -413,9 +406,8 @@ function manualChunks(id: string): string | undefined {
 			return chunkName;
 		}
 	}
-	if (normalizedId.includes("/node_modules/")) {
-		return "vendor";
-	}
+	// Do not catch-all node_modules into a shared vendor chunk. Forcing one
+	// creates circular chunk imports (react-vendor <-> vendor) and breaks startup.
 	return undefined;
 }
 
@@ -463,35 +455,35 @@ export default defineConfig({
 				changeOrigin: true,
 				rewrite: (path: string) => path.replace(/^\/github-api/, ""),
 			},
-			"^/api(?:/|$)": {
+			"^/api(?:/|$)": dynamicRouterProxy({
 				target: devApiBaseUrl,
 				router: () => currentDevApiBaseUrl(),
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
-			},
-			"^/docs(?:/|$)": {
+			}),
+			"^/docs(?:/|$)": dynamicRouterProxy({
 				target: devApiBaseUrl,
 				router: () => currentDevApiBaseUrl(),
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
-			},
-			"^/openapi\\.json$": {
+			}),
+			"^/openapi\\.json$": dynamicRouterProxy({
 				target: devApiBaseUrl,
 				router: () => currentDevApiBaseUrl(),
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
-			},
-			"^/ws(?:/|$)": {
+			}),
+			"^/ws(?:/|$)": dynamicRouterProxy({
 				target: devWsBaseUrl,
 				router: () => currentDevWsBaseUrl(),
 				ws: true,
 				changeOrigin: true,
 				secure: false,
 				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReqWs"),
-			},
+			}),
 		},
 	},
 });
