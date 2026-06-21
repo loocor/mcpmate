@@ -1,10 +1,15 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{Read, Write},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
-    thread,
+    sync::Arc,
     time::Instant,
+};
+
+#[cfg(debug_assertions)]
+use std::{
+    io::{Read, Write},
+    sync::Mutex,
+    thread,
 };
 
 #[cfg(target_os = "windows")]
