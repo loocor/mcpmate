@@ -2,14 +2,6 @@ import type { ProfileTokenEstimateMethod } from "./profile-token-estimate-method
 import { PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT } from "./profile-token-estimate-method";
 import type { CapabilityTokenLedgerRow } from "./types";
 
-async function countLedgerPayloadTokens(
-	text: string,
-	estimateMethod: ProfileTokenEstimateMethod,
-): Promise<number> {
-	const { countTokensForProfileEstimate } = await import("./token-utils");
-	return countTokensForProfileEstimate(text, estimateMethod);
-}
-
 function extractLedgerPayloadBody(payloadJson: string): Record<string, unknown> | null {
 	try {
 		const parsed = JSON.parse(payloadJson) as unknown;
@@ -48,9 +40,10 @@ async function computeLedgerTokens(
 
 	let totalTokens = 0;
 	let visibleTokens = 0;
+	const { countTokensForProfileEstimate } = await import("./token-utils");
 
 	for (const row of ledger) {
-		const rowTokens = await countLedgerPayloadTokens(
+		const rowTokens = countTokensForProfileEstimate(
 			row.payload_json,
 			estimateMethod,
 		);

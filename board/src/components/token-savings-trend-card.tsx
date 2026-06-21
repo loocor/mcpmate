@@ -28,10 +28,11 @@ import {
   OPERATOR_CAROUSEL_LINE_CHART_MARGIN,
 } from "./dashboard-chart-area";
 import { auditApi, capabilityTokenLedgerApi, configSuitsApi } from "../lib/api";
+import type { ProfileTokenEstimateMethod } from "../lib/profile-token-estimate-method";
 import { computeProfileLedgerTokens } from "../lib/profile-token-ledger";
 import { useAppStore } from "../lib/store";
 import { formatTokenCount } from "../lib/token-format";
-import type { CapabilityTokenLedgerRow } from "../lib/types";
+import type { CapabilityTokenLedgerRow, ConfigSuit } from "../lib/types";
 
 const LINE_COLORS = {
   before: "#3b82f6",
@@ -80,6 +81,18 @@ interface ProfileTokenSnapshot {
   totalTokens: number;
   visibleTokens: number;
   savedTokens: number;
+}
+
+interface ProfileLedgerQuerySnapshot {
+  items: CapabilityTokenLedgerRow[] | undefined;
+  isPending: boolean;
+  isError: boolean;
+}
+
+interface ProfileLedgerQueryResult {
+  data?: { items?: CapabilityTokenLedgerRow[] };
+  isPending: boolean;
+  isError: boolean;
 }
 
 function parseStoredHistory(raw: string | null): HistoryPoint[] {
@@ -155,6 +168,57 @@ function areProfileTokenSnapshotsEqual(
   });
 }
 
+function toProfileLedgerQuerySnapshot(
+  result: ProfileLedgerQueryResult,
+): ProfileLedgerQuerySnapshot {
+  return {
+    items: result.data?.items,
+    isPending: result.isPending,
+    isError: result.isError,
+  };
+}
+
+function hasPendingProfileLedgerQuery(
+  results: ProfileLedgerQuerySnapshot[],
+): boolean {
+  return results.some((result) => result.isPending);
+}
+
+function hasErroredProfileLedgerQuery(
+  results: ProfileLedgerQuerySnapshot[],
+): boolean {
+  return results.some((result) => result.isError);
+}
+
+async function computeProfileTokenSnapshots(
+  profiles: ConfigSuit[],
+  ledgerResults: ProfileLedgerQuerySnapshot[],
+  estimateMethod: ProfileTokenEstimateMethod,
+): Promise<ProfileTokenSnapshot[]> {
+  return Promise.all(
+    profiles.map(async (profile, index) => {
+      const ledgerItems = ledgerResults[index]?.items;
+      const { totalTokens, visibleTokens } = await computeProfileLedgerTokens(
+        ledgerItems,
+        estimateMethod,
+      );
+      return {
+        profileId: profile.id,
+        totalTokens,
+        visibleTokens,
+        savedTokens: Math.max(0, totalTokens - visibleTokens),
+      };
+    }),
+  );
+}
+
+function displayedSavedTokens(stats: GlobalSavingsStats): number {
+  if (stats.cumulativeSavings > 0) {
+    return stats.cumulativeSavings;
+  }
+  return stats.savedTokens;
+}
+
 export function TokenSavingsTrendCard({
   className,
   hideHeader = false,
@@ -204,43 +268,55 @@ export function TokenSavingsTrendCard({
     [activeProfiles],
   );
 
-  const combineProfileLedgerItems = useCallback(
-    (results: Array<{ data?: { items?: CapabilityTokenLedgerRow[] } }>) =>
-      results.map((result) => result.data?.items),
+  const combineProfileLedgerResults = useCallback(
+    (results: ProfileLedgerQueryResult[]): ProfileLedgerQuerySnapshot[] =>
+      results.map(toProfileLedgerQuerySnapshot),
     [],
   );
 
-  const profileLedgerItemsByIndex = useQueries({
+  const profileLedgerResultsByIndex = useQueries({
     queries: profileLedgerQueries,
-    combine: combineProfileLedgerItems,
+    combine: combineProfileLedgerResults,
   });
 
   const [profileTokenSnapshots, setProfileTokenSnapshots] = useState<ProfileTokenSnapshot[]>([]);
+  const [profileTokenComputeError, setProfileTokenComputeError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function computeSnapshots() {
-      const snapshots = await Promise.all(
-        activeProfiles.map(async (profile, index) => {
-          const ledgerItems = profileLedgerItemsByIndex[index];
-          const { totalTokens, visibleTokens } = await computeProfileLedgerTokens(
-            ledgerItems,
-            profileTokenEstimateMethod,
-          );
-          return {
-            profileId: profile.id,
-            totalTokens,
-            visibleTokens,
-            savedTokens: Math.max(0, totalTokens - visibleTokens),
-          };
-        }),
-      );
+      if (hasPendingProfileLedgerQuery(profileLedgerResultsByIndex)) {
+        if (!cancelled) {
+          setProfileTokenComputeError(false);
+        }
+        return;
+      }
 
-      if (!cancelled) {
-        setProfileTokenSnapshots((current) =>
-          areProfileTokenSnapshotsEqual(current, snapshots) ? current : snapshots,
+      if (hasErroredProfileLedgerQuery(profileLedgerResultsByIndex)) {
+        if (!cancelled) {
+          setProfileTokenComputeError(true);
+        }
+        return;
+      }
+
+      try {
+        const snapshots = await computeProfileTokenSnapshots(
+          activeProfiles,
+          profileLedgerResultsByIndex,
+          profileTokenEstimateMethod,
         );
+
+        if (!cancelled) {
+          setProfileTokenComputeError(false);
+          setProfileTokenSnapshots((current) =>
+            areProfileTokenSnapshotsEqual(current, snapshots) ? current : snapshots,
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setProfileTokenComputeError(true);
+        }
       }
     }
 
@@ -249,7 +325,7 @@ export function TokenSavingsTrendCard({
     return () => {
       cancelled = true;
     };
-  }, [activeProfiles, profileLedgerItemsByIndex, profileTokenEstimateMethod]);
+  }, [activeProfiles, profileLedgerResultsByIndex, profileTokenEstimateMethod]);
 
   const savingsStats = useMemo<GlobalSavingsStats | null>(() => {
     const profiles = profilesResponse?.suits ?? [];
@@ -332,12 +408,13 @@ export function TokenSavingsTrendCard({
     });
   }, [savingsStats]);
 
-  const hasPendingLedgerQuery =
-    activeProfiles.length > 0 &&
-    !profileLedgerItemsByIndex.every((item) => item !== undefined);
+  const hasPendingLedgerQuery = hasPendingProfileLedgerQuery(profileLedgerResultsByIndex);
+  const hasLedgerError =
+    profileTokenComputeError ||
+    hasErroredProfileLedgerQuery(profileLedgerResultsByIndex);
   const isStatsPending = isLoadingProfiles || hasPendingLedgerQuery;
   const hasCachedSeries = history.length > 1;
-  const isEmptyAfterLoad = !isStatsPending && savingsStats === null;
+  const isEmptyAfterLoad = !isStatsPending && !hasLedgerError && savingsStats === null;
 
   const renderTooltip = ({ active, payload, label }: TooltipProps<number, string>) => {
     if (!active || !payload || payload.length === 0) return null;
@@ -383,11 +460,7 @@ export function TokenSavingsTrendCard({
   };
 
   const totalSavedDisplay = savingsStats
-    ? formatTokenCount(
-      savingsStats.cumulativeSavings > 0
-        ? savingsStats.cumulativeSavings
-        : savingsStats.savedTokens,
-    )
+    ? formatTokenCount(displayedSavedTokens(savingsStats))
     : undefined;
 
   const infoLines = [
@@ -414,6 +487,21 @@ export function TokenSavingsTrendCard({
       ? OPERATOR_CAROUSEL_LINE_CHART_MARGIN
       : DASHBOARD_LINE_CHART_MARGIN;
 
+    if (isStatsPending) {
+      return <DashboardChartSkeleton className={viewportClass} />;
+    }
+    if (hasLedgerError) {
+      return (
+        <DashboardChartPlaceholder className={viewportClass}>
+          <Info className={isCompact ? "h-5 w-5 text-amber-500/80" : "h-8 w-8 text-amber-500/80"} aria-hidden />
+          <p className={isCompact ? "text-xs font-medium text-slate-700 dark:text-slate-200" : "text-sm font-medium text-slate-700 dark:text-slate-200"}>
+            {t("tokenSavings.estimateError", {
+              defaultValue: "Token estimates could not be computed.",
+            })}
+          </p>
+        </DashboardChartPlaceholder>
+      );
+    }
     if (hasCachedSeries) {
       return (
         <div className={viewportClass}>
@@ -468,9 +556,6 @@ export function TokenSavingsTrendCard({
           </ResponsiveContainer>
         </div>
       );
-    }
-    if (isStatsPending) {
-      return <DashboardChartSkeleton className={viewportClass} />;
     }
     if (isEmptyAfterLoad) {
       return (
