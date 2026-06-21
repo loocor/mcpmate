@@ -520,34 +520,33 @@ async fn handle_localhost_source_transition(
     previous: &DesktopCoreSourceConfig,
     config: &DesktopCoreSourceConfig,
 ) -> Result<(), String> {
-    let runtime_mode_changed = previous.selected_source == DesktopCoreSourceKind::Localhost
-        && config.selected_source == DesktopCoreSourceKind::Localhost
-        && previous.localhost_runtime_mode != config.localhost_runtime_mode;
+    let staying_localhost = previous.selected_source == DesktopCoreSourceKind::Localhost
+        && config.selected_source == DesktopCoreSourceKind::Localhost;
 
-    if runtime_mode_changed {
+    // Runtime mode changed between Service and DesktopManaged
+    if staying_localhost && previous.localhost_runtime_mode != config.localhost_runtime_mode {
         stop_localhost_runtime(managed_state, previous).await?;
         return Ok(());
     }
 
-    let localhost_ports_changed = previous.selected_source == DesktopCoreSourceKind::Localhost
-        && config.selected_source == DesktopCoreSourceKind::Localhost
+    // DesktopManaged ports changed while staying in DesktopManaged mode
+    if staying_localhost
         && previous.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
         && config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
         && (previous.localhost.api_port != config.localhost.api_port
-            || previous.localhost.mcp_port != config.localhost.mcp_port);
-
-    if localhost_ports_changed {
+            || previous.localhost.mcp_port != config.localhost.mcp_port)
+    {
         stop_desktop_managed_core(managed_state, previous)
             .await
             .map_err(|err| err.to_string())?;
         return Ok(());
     }
 
-    let leaving_desktop_managed = previous.selected_source == DesktopCoreSourceKind::Localhost
+    // Leaving localhost entirely from DesktopManaged mode
+    if previous.selected_source == DesktopCoreSourceKind::Localhost
         && previous.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
-        && config.selected_source != DesktopCoreSourceKind::Localhost;
-
-    if leaving_desktop_managed {
+        && config.selected_source != DesktopCoreSourceKind::Localhost
+    {
         stop_desktop_managed_core(managed_state, previous)
             .await
             .map_err(|err| err.to_string())?;
