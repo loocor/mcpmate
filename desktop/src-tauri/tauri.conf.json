@@ -13,7 +13,7 @@
 		},
 		"beforeBuildCommand": {
 			"cwd": "../../board",
-			"script": "(command -v bun >/dev/null 2>&1 && bun run build || npm run build)"
+			"script": "bun run build --mode tauri"
 		}
 	},
 	"app": {

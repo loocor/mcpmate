@@ -325,8 +325,8 @@ function configureBackendProxy(
 	event: "proxyReq" | "proxyReqWs",
 ): void {
 	attachBackendStartupProxyHandler(proxy);
-	proxy.on(event, (proxyReq: ClientRequest) => {
-		removeOriginHeader(proxyReq);
+	proxy.on(event, (proxyReq) => {
+		removeOriginHeader(proxyReq as ClientRequest);
 	});
 }
 
@@ -336,19 +336,31 @@ const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 		[
 			"/node_modules/react/",
 			"/node_modules/react-dom/",
-			"/node_modules/react-router-dom/",
 			"/node_modules/scheduler/",
+		],
+	],
+	[
+		"router-vendor",
+		[
+			"/node_modules/@remix-run/router/",
+			"/node_modules/react-router/",
+			"/node_modules/react-router-dom/",
+		],
+	],
+	[
+		"utility-vendor",
+		[
+			"/node_modules/class-variance-authority/",
+			"/node_modules/clsx/",
+			"/node_modules/tailwind-merge/",
 		],
 	],
 	[
 		"ui-vendor",
 		[
 			"/node_modules/@radix-ui/",
-			"/node_modules/class-variance-authority/",
-			"/node_modules/clsx/",
 			"/node_modules/cmdk/",
 			"/node_modules/lucide-react/",
-			"/node_modules/tailwind-merge/",
 			"/node_modules/vaul/",
 		],
 	],
@@ -408,90 +420,95 @@ const MANUAL_CHUNK_GROUPS: Array<[string, string[]]> = [
 
 function manualChunks(id: string): string | undefined {
 	const normalizedId = id.split(path.sep).join("/");
+	if (normalizedId.includes("commonjsHelpers.js")) {
+		return "utility-vendor";
+	}
 	for (const [chunkName, matches] of MANUAL_CHUNK_GROUPS) {
 		if (matches.some((match) => normalizedId.includes(match))) {
 			return chunkName;
 		}
 	}
-	if (normalizedId.includes("/node_modules/")) {
-		return "vendor";
-	}
 	return undefined;
 }
 
-export default defineConfig({
-	define: {
-		"import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
-	},
-	plugins: [
-		devCoreSourcePlugin(),
-		compressedBackendReadinessProxyPlugin(),
-		react(),
-		wasm(),
-	],
-	resolve: {
-		alias: {
-			"@": path.resolve(__dirname, "./src"),
+export default defineConfig(({ mode }) => {
+	const isTauriBuild = mode === "tauri";
+
+	return {
+		base: isTauriBuild ? "./" : "/",
+		define: {
+			"import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
 		},
-	},
-	optimizeDeps: {
-		exclude: ["lucide-react"],
-	},
-	build: {
-		target: "esnext",
-		chunkSizeWarningLimit: 5_000,
-		rollupOptions: {
-			output: {
-				manualChunks,
+		plugins: [
+			devCoreSourcePlugin(),
+			compressedBackendReadinessProxyPlugin(),
+			react(),
+			wasm(),
+		],
+		resolve: {
+			alias: {
+				"@": path.resolve(__dirname, "./src"),
 			},
 		},
-	},
-	server: {
-		proxy: {
-			"^/registry-api(?:/|$)": {
-				target: "https://registry.modelcontextprotocol.io",
-				changeOrigin: true,
-				rewrite: (path: string) => path.replace(/^\/registry-api/, "/v0.1"),
-			},
-			"^/github-raw(?:/|$)": {
-				target: "https://raw.githubusercontent.com",
-				changeOrigin: true,
-				rewrite: (path: string) => path.replace(/^\/github-raw/, ""),
-			},
-			"^/github-api(?:/|$)": {
-				target: "https://api.github.com",
-				changeOrigin: true,
-				rewrite: (path: string) => path.replace(/^\/github-api/, ""),
-			},
-			"^/api(?:/|$)": {
-				target: devApiBaseUrl,
-				router: () => currentDevApiBaseUrl(),
-				changeOrigin: true,
-				secure: false,
-				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
-			},
-			"^/docs(?:/|$)": {
-				target: devApiBaseUrl,
-				router: () => currentDevApiBaseUrl(),
-				changeOrigin: true,
-				secure: false,
-				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
-			},
-			"^/openapi\\.json$": {
-				target: devApiBaseUrl,
-				router: () => currentDevApiBaseUrl(),
-				changeOrigin: true,
-				secure: false,
-				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
-			},
-			"^/ws(?:/|$)": {
-				target: devWsBaseUrl,
-				router: () => currentDevWsBaseUrl(),
-				ws: true,
-				changeOrigin: true,
-				secure: false,
-				configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReqWs"),
+		optimizeDeps: {
+			exclude: ["lucide-react"],
+		},
+		build: {
+			target: "esnext",
+			chunkSizeWarningLimit: 5_000,
+			rollupOptions: {
+				output: {
+					manualChunks,
+				},
 			},
 		},
-	},
+		server: {
+			proxy: {
+				"^/registry-api(?:/|$)": {
+					target: "https://registry.modelcontextprotocol.io",
+					changeOrigin: true,
+					rewrite: (path: string) => path.replace(/^\/registry-api/, "/v0.1"),
+				},
+				"^/github-raw(?:/|$)": {
+					target: "https://raw.githubusercontent.com",
+					changeOrigin: true,
+					rewrite: (path: string) => path.replace(/^\/github-raw/, ""),
+				},
+				"^/github-api(?:/|$)": {
+					target: "https://api.github.com",
+					changeOrigin: true,
+					rewrite: (path: string) => path.replace(/^\/github-api/, ""),
+				},
+				"^/api(?:/|$)": {
+					target: devApiBaseUrl,
+					router: () => currentDevApiBaseUrl(),
+					changeOrigin: true,
+					secure: false,
+					configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
+				},
+				"^/docs(?:/|$)": {
+					target: devApiBaseUrl,
+					router: () => currentDevApiBaseUrl(),
+					changeOrigin: true,
+					secure: false,
+					configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
+				},
+				"^/openapi\\.json$": {
+					target: devApiBaseUrl,
+					router: () => currentDevApiBaseUrl(),
+					changeOrigin: true,
+					secure: false,
+					configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReq"),
+				},
+				"^/ws(?:/|$)": {
+					target: devWsBaseUrl,
+					router: () => currentDevWsBaseUrl(),
+					ws: true,
+					changeOrigin: true,
+					secure: false,
+					configure: (proxy: HttpProxyServer) => configureBackendProxy(proxy, "proxyReqWs"),
+				},
+			},
+		},
+	};
 });

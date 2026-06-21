@@ -1,7 +1,14 @@
 import type { ProfileTokenEstimateMethod } from "./profile-token-estimate-method";
 import { PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT } from "./profile-token-estimate-method";
-import { countTokensForProfileEstimate } from "./token-utils";
 import type { CapabilityTokenLedgerRow } from "./types";
+
+async function countLedgerPayloadTokens(
+	text: string,
+	estimateMethod: ProfileTokenEstimateMethod,
+): Promise<number> {
+	const { countTokensForProfileEstimate } = await import("./token-utils");
+	return countTokensForProfileEstimate(text, estimateMethod);
+}
 
 function extractLedgerPayloadBody(payloadJson: string): Record<string, unknown> | null {
 	try {
@@ -30,11 +37,11 @@ function isLedgerRowEnabled(row: CapabilityTokenLedgerRow): boolean {
 	return typeof payload?.enabled === "boolean" ? payload.enabled : false;
 }
 
-function computeLedgerTokens(
+async function computeLedgerTokens(
 	ledger: CapabilityTokenLedgerRow[] | undefined,
 	isRowVisible: (row: CapabilityTokenLedgerRow) => boolean,
 	estimateMethod: ProfileTokenEstimateMethod,
-): { totalTokens: number; visibleTokens: number } {
+): Promise<{ totalTokens: number; visibleTokens: number }> {
 	if (!ledger?.length) {
 		return { totalTokens: 0, visibleTokens: 0 };
 	}
@@ -43,7 +50,7 @@ function computeLedgerTokens(
 	let visibleTokens = 0;
 
 	for (const row of ledger) {
-		const rowTokens = countTokensForProfileEstimate(
+		const rowTokens = await countLedgerPayloadTokens(
 			row.payload_json,
 			estimateMethod,
 		);
@@ -64,7 +71,7 @@ function computeLedgerTokens(
 export function computeProfileLedgerTokens(
 	ledger: CapabilityTokenLedgerRow[] | undefined,
 	estimateMethod: ProfileTokenEstimateMethod = PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
-): { totalTokens: number; visibleTokens: number } {
+): Promise<{ totalTokens: number; visibleTokens: number }> {
 	return computeLedgerTokens(
 		ledger,
 		(row) => row.server_enabled_in_profile && isLedgerRowEnabled(row),
@@ -80,7 +87,7 @@ export function computeProfileTrimTokens(
 	ledger: CapabilityTokenLedgerRow[] | undefined,
 	enabledByComponentId: ReadonlyMap<string, boolean>,
 	estimateMethod: ProfileTokenEstimateMethod = PROFILE_TOKEN_ESTIMATE_METHOD_DEFAULT,
-): { totalTokens: number; visibleTokens: number } {
+): Promise<{ totalTokens: number; visibleTokens: number }> {
 	return computeLedgerTokens(
 		ledger,
 		(row) => {
