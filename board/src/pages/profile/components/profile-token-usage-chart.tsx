@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Cell, Pie, PieChart } from "recharts";
 import { Spinner } from "../../../components/ui/spinner";
@@ -79,23 +79,54 @@ export function ProfileTokenUsageChart({
 	const centerPercentClass =
 		chartSizePx <= 56 ? "text-[10px]" : "text-[11px]";
 
-	const noServersInProfile =
-		typeof profileServerCount === "number" && profileServerCount === 0;
+	const noServersInProfile = profileServerCount === 0;
 
-	const { totalTokens, visibleTokens } = useMemo(() => {
+	const [tokenTotals, setTokenTotals] = useState({
+		totalTokens: 0,
+		visibleTokens: 0,
+	});
+	const [tokenComputeError, setTokenComputeError] = useState(false);
+
+	useEffect(() => {
+		let cancelled = false;
+
 		if (fallbackEstimate) {
-			return {
+			setTokenTotals({
 				totalTokens: fallbackEstimate.total_available_tokens,
 				visibleTokens: fallbackEstimate.visible_tokens,
+			});
+			setTokenComputeError(false);
+			return () => {
+				cancelled = true;
 			};
 		}
-		return computeProfileTrimTokens(
-			ledgerItems,
-			enabledByComponentId,
-			estimateMethod,
-		);
+
+		async function computeTotals() {
+			try {
+				const totals = await computeProfileTrimTokens(
+					ledgerItems,
+					enabledByComponentId,
+					estimateMethod,
+				);
+				if (!cancelled) {
+					setTokenTotals(totals);
+					setTokenComputeError(false);
+				}
+			} catch {
+				if (!cancelled) {
+					setTokenComputeError(true);
+				}
+			}
+		}
+
+		void computeTotals();
+
+		return () => {
+			cancelled = true;
+		};
 	}, [fallbackEstimate, ledgerItems, enabledByComponentId, estimateMethod]);
 
+	const { totalTokens, visibleTokens } = tokenTotals;
 	const disabledTokens = Math.max(0, totalTokens - visibleTokens);
 	const visiblePercent =
 		totalTokens > 0 ? Math.round((visibleTokens / totalTokens) * 100) : 0;
@@ -281,7 +312,7 @@ export function ProfileTokenUsageChart({
 				</div>
 			);
 		}
-		if (isError) {
+		if (isError || tokenComputeError) {
 			return (
 				<span
 					className={cn(
