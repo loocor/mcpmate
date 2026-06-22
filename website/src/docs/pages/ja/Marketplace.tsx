@@ -12,7 +12,7 @@ export default function Marketplace() {
 			}}
 		>
 			<P>
-				このページは、マーケットでレジストリカードを選んだ後の流れを説明します。MCPMate は手動インポートと同じインストールウィザードを開き、保存前にトランスポート、正規化済みマニフェスト、後続のプロファイル配置先を確認できるようにします。
+				このページは、マーケットでレジストリカードを選んだ後の流れを説明します。MCPMate は手動インポートと同じインストールウィザードを開き、保存前にトランスポート、README context、source metadata、正規化済みマニフェスト、後続のプロファイル配置先を確認できるようにします。
 			</P>
 
 			<DocScreenshot
@@ -28,6 +28,9 @@ export default function Marketplace() {
 				</li>
 				<li>
 					<strong>正規化プレビュー:</strong> 保存前にトランスポートとマニフェストの詳細を確認できます
+				</li>
+				<li>
+					<strong>ソース文脈:</strong> 評価中も GitHub README、transport、distribution details を確認できます
 				</li>
 				<li>
 					<strong>制御されたロールアウト:</strong> 先にサーバーを追加し、その後どのプロファイルに公開するかを決めます
@@ -49,7 +52,7 @@ export default function Marketplace() {
 
 			<H3>MCPサーバー追加ウィザード</H3>
 			<P>
-				レジストリカードからインストールすると、ガイド付きフローが開きます。トランスポートを設定し、正規化されたマニフェストを確認してサーバーを保存し、その後 Servers または Profiles ページで公開先プロファイルを決めます。
+				レジストリカードからインストールすると、ガイド付きフローが開きます。トランスポートを設定し、README-backed context と正規化されたマニフェストを確認してサーバーを保存し、その後 Servers または Profiles ページで公開先プロファイルを決めます。
 			</P>
 			<DocScreenshot
 				lightSrc="/screenshot/market-add-server-light.png"

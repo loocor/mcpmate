@@ -2,9 +2,9 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
-		title: "安全上手链路收尾",
+		title: "发现到安装链路打磨",
 		description:
-			"0.3.0 已经带来 Secure Store 与批量导入基础，接下来会继续打磨 OAuth 凭证归属、secret 生命周期清理，以及剩余的服务器字段绑定细节。",
+			"浏览器发现、GitHub MCP 导入、Cursor.directory 交接、服务源 README 展示和来源元数据已经落地，接下来会继续把评估与导入体验打磨得更可预期。",
 	},
 	{
 		title: "桌面发布链路",
@@ -19,7 +19,7 @@ const inProgress = [
 	{
 		title: "客户端治理与投放安全",
 		description:
-			"针对已检测客户端的发布流程、可写目标校验、attach / detach 路径，以及能力批量调整，我们还在持续优化，让托管式变更更容易信任。",
+			"针对已检测客户端的发布流程、可写目标校验、attach / detach 路径、能力批量调整和凭证就绪状态，我们还在持续优化，让托管式变更更容易信任。",
 	},
 	{
 		title: "文档与引导对齐",
@@ -72,7 +72,7 @@ const Roadmap = () => {
 			<div className="space-y-6">
 				<h2>进行中</h2>
 				<p>
-					0.3.0 beta 基础落地后，当前最贴近用户体验的工作是安全上手链路打磨、发布交付、平台成熟度、客户端投放安全，以及更清晰的上手路径。
+					0.3.3 beta 发布后，当前最贴近用户体验的工作是发现到安装链路打磨、发布交付、平台成熟度、客户端投放安全，以及更清晰的上手路径。
 				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
@@ -86,7 +86,16 @@ const Roadmap = () => {
 						Secure Store 现在会把敏感服务器参数移出明文配置文件，在运行时解析加密 secret 记录，并在仪表盘中提供保护与使用位置相关流程。
 					</li>
 					<li>
+						OAuth access token、refresh token 与客户端密钥现在进入 Secure Store 托管，并提供生命周期视图、降级状态提示、重连提示和更安全的清理控制。
+					</li>
+					<li>
 						Server 安装流程现在可以接收类似 <code>mcp-servers.json</code> 的多服务器配置包，并让用户逐项查看草稿、预览服务器、执行 dry-run 校验，再导入选中的配置。
+					</li>
+					<li>
+						浏览器扩展现在提供 Servers、Clients、Portals 标签页、Discovery 缓存、GitHub MCP 页面导入，以及 Cursor.directory 到桌面导入流程的交接。
+					</li>
+					<li>
+						服务源详情页现在可以展示关联的 GitHub README，保留分页浏览位置，并把来源、传输与分发信息持续绑定到受管服务器。
 					</li>
 					<li>
 						配置集现在支持对服务器、工具、资源、提示和资源模板进行批量 include / exclude。

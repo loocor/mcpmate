@@ -8,7 +8,8 @@ export default function MarketZH() {
 	return (
 		<DocLayout meta={{ title: "服务源", description: "浏览与管理社区服务器" }}>
 			<P>
-				服务源接入的是官方 MCP 注册中心。你可以在这里搜索条目、预览元数据、隐藏噪声项，并把候选服务器直接送入安装向导。
+				服务源接入的是官方 MCP 注册中心。你可以在这里搜索条目、阅读关联的
+				GitHub README 上下文、预览来源元数据、隐藏噪声项，并把候选服务器直接送入安装向导。
 			</P>
 
 			<DocScreenshot
@@ -20,7 +21,7 @@ export default function MarketZH() {
 			<H2>数据与导入</H2>
 			<Ul>
 				<Li>
-					<strong>官方</strong> 注册表支持搜索（带 300ms 防抖）与排序（最近、字母序），翻页追加加载。
+					<strong>官方</strong> 注册表支持搜索（带 300ms 防抖）与排序（最近、字母序），翻页追加加载；控制台会保留分页位置，方便打开详情后回到原来的浏览位置。
 				</Li>
 				<Li>
 					在任意网页导入 MCP 配置片段可使用浏览器扩展（仓库内{" "}
@@ -50,8 +51,8 @@ export default function MarketZH() {
 			<H3>预览抽屉</H3>
 			<P>
 				点击服务器卡片打开预览抽屉，可查看描述、能力统计、传输类型、必要的
-				Header 或环境变量。按下“导入”会启动 Uni-Import
-				向导并预填草稿，方便在保存前调整别名。
+				Header 或环境变量、来源与分发元数据、图标，以及可用时关联的 GitHub README。
+				按下“导入”会启动 Uni-Import 向导并预填草稿，方便在保存前调整别名。
 			</P>
 
 			<H3>支持 OAuth 的上游服务器</H3>

@@ -2,9 +2,9 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
-		title: "Secure setup follow-through",
+		title: "Discovery-to-install polish",
 		description:
-			"With 0.3.0 now carrying Secure Store and batch import foundations, the next work is polishing OAuth custody, secret lifecycle cleanup, and remaining server-field binding details.",
+			"With browser discovery, GitHub MCP import, Cursor.directory handoff, Market README rendering, and source metadata now shipped, the next work is making evaluation and import feel even more predictable.",
 	},
 	{
 		title: "Desktop release pipeline",
@@ -19,7 +19,7 @@ const inProgress = [
 	{
 		title: "Client governance and rollout safety",
 		description:
-			"Detected-client rollout, writable target validation, attach or detach flows, and capability bulk edits are being refined so managed client changes are easier to trust.",
+			"Detected-client rollout, writable target validation, attach or detach flows, capability bulk edits, and credential readiness states are being refined so managed client changes are easier to trust.",
 	},
 	{
 		title: "Docs and onboarding alignment",
@@ -72,9 +72,9 @@ const Roadmap = () => {
 			<div className="space-y-6">
 				<h2>In Progress</h2>
 				<p>
-					After the 0.3.0 beta foundation, the work closest to users is
-					secure-setup polish, release delivery, platform maturity, client
-					rollout safety, and clearer onboarding.
+					After the 0.3.3 beta release, the work closest to users is
+					discovery-to-install polish, release delivery, platform maturity,
+					client rollout safety, and clearer onboarding.
 				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
@@ -90,10 +90,25 @@ const Roadmap = () => {
 						and exposes protection and usage flows in the dashboard.
 					</li>
 					<li>
+						OAuth access tokens, refresh tokens, and client secrets now move
+						through Secure Store custody with lifecycle views, degraded-state
+						guidance, reconnect prompts, and safer cleanup controls.
+					</li>
+					<li>
 						Server install now accepts multi-server config bundles such as
 						<code>mcp-servers.json</code>, then lets users review drafts,
 						preview each server, run dry-run validation, and import the
 						selected set.
+					</li>
+					<li>
+						The browser extension now has dedicated Servers, Clients, and
+						Portals tabs, cached discovery, GitHub MCP page import, and
+						Cursor.directory import handoff into the same desktop flow.
+					</li>
+					<li>
+						Market detail pages now render linked GitHub README content,
+						preserve pagination state, and keep source, transport, and
+						distribution context attached to managed servers.
 					</li>
 					<li>
 						Profiles now support bulk include and exclude actions across

@@ -14,8 +14,8 @@ export default function Marketplace() {
 			<P>
 				This flow explains what happens after you choose a registry card in the
 				Market. MCPMate opens the same install wizard used by manual imports so
-				you can review transport, normalize the manifest, and decide where the
-				server belongs before saving.
+				you can review transport, README context, source metadata, the normalized
+				manifest, and where the server belongs before saving.
 			</P>
 
 			<DocScreenshot
@@ -31,6 +31,9 @@ export default function Marketplace() {
 				</li>
 				<li>
 					<strong>Normalized preview:</strong> Review transport and manifest details before saving
+				</li>
+				<li>
+					<strong>Source context:</strong> Keep GitHub README, transport, and distribution details visible while evaluating a server
 				</li>
 				<li>
 					<strong>Controlled rollout:</strong> Add the server first, then decide which profiles should expose it
@@ -56,8 +59,9 @@ export default function Marketplace() {
 			<H3>Add MCP Server wizard</H3>
 			<P>
 				Installing from a registry card opens the guided flow: configure
-				transport, preview the normalized manifest, save the server, then add it
-				to the desired profiles from the Servers or Profiles pages.
+				transport, review the README-backed context and normalized manifest,
+				save the server, then add it to the desired profiles from the Servers or
+				Profiles pages.
 			</P>
 			<DocScreenshot
 				lightSrc="/screenshot/market-add-server-light.png"

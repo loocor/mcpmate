@@ -33,6 +33,7 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 - What remains disabled is telemetry-style import submission to Admin APIs. The extension does not upload import events or usage analytics to Admin in the current phase.
 - `manifest.json` icons use PNGs (`icons/icon-{16,32,48,128}.png`) because Chromium extension UIs do not reliably show SVG there. The popup also switches to `icons/icon-dark-{16,32,48,128}.png` for dark mode so the toolbar mark remains legible.
 - **GitHub MCP page integration**: On `github.com/mcp` pages, the extension automatically injects an "Install in MCPMate" option into the Install dropdown menus for each MCP server. This provides a seamless way to import servers directly from GitHub's MCP catalog into MCPMate desktop.
+- **Cursor.directory integration**: Cursor.directory install snippets can be sent into MCPMate, and merged stdio command strings are normalized before they reach the desktop import draft.
 
 ## Install (store)
 

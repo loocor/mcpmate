@@ -14,7 +14,8 @@ export default function BrowserExtensionZH() {
 			<P>
 				MCPMate 的 Chrome / Edge 扩展把发现入口放到 MCP Server 常出现的网页旁边。
 				工具栏弹窗会展示来自 MCPMate Public Discovery 的 Portals、Servers 与
-				Clients；页面脚本则可以把识别到的 MCP 片段发送到桌面端。
+				Clients；页面脚本则可以把识别到的 MCP 片段、GitHub MCP 目录条目和
+				Cursor.directory 条目发送到桌面端。
 			</P>
 
 			<H2>Discovery 标签页</H2>
@@ -38,6 +39,16 @@ export default function BrowserExtensionZH() {
 				和来源 URL。随后 MCPMate 会继续进入 Servers 页面同一套 Uni-Import
 				预览与校验流程。
 			</P>
+			<Ul>
+				<Li>
+					在 <strong>GitHub MCP</strong> 目录页面中，扩展会把 Install in MCPMate
+					入口加入服务器安装菜单。
+				</Li>
+				<Li>
+					在 <strong>Cursor.directory</strong> 页面中，合并的 stdio command
+					字符串会先被归一化，再进入桌面端导入草稿。
+				</Li>
+			</Ul>
 
 			<H2>目录加载</H2>
 			<Ul>

@@ -15,7 +15,8 @@ export default function BrowserExtensionJA() {
 				MCPMate の Chrome / Edge 拡張は、MCP Server が見つかる Web ページの近くに
 				発見入口を置きます。ツールバーのポップアップには MCPMate Public
 				Discovery 由来の Portals、Servers、Clients が表示され、ページ上の
-				MCP スニペットもデスクトップアプリへ送れます。
+				MCP スニペット、GitHub MCP catalog entry、Cursor.directory entry も
+				デスクトップアプリへ送れます。
 			</P>
 
 			<H2>Discovery タブ</H2>
@@ -39,6 +40,16 @@ export default function BrowserExtensionJA() {
 				推定フォーマット、参照元 URL を渡します。その後は Servers ページと同じ
 				Uni-Import のプレビューと検証フローに進みます。
 			</P>
+			<Ul>
+				<Li>
+					<strong>GitHub MCP</strong> catalog page では、server install menu に
+					Install in MCPMate の入口を追加します。
+				</Li>
+				<Li>
+					<strong>Cursor.directory</strong> page では、merged stdio command string
+					を正規化してから desktop import draft へ渡します。
+				</Li>
+			</Ul>
 
 			<H2>カタログ読み込み</H2>
 			<Ul>

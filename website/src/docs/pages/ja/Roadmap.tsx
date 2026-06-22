@@ -2,9 +2,9 @@ import DocLayout from "../../layout/DocLayout";
 
 const inProgress = [
 	{
-		title: "安全なセットアップ導線の仕上げ",
+		title: "発見からインストールまでの磨き込み",
 		description:
-			"0.3.0 で Secure Store と一括インポートの基盤が入ったため、次は OAuth custody、secret lifecycle cleanup、残りの server-field binding の細部を磨いていきます。",
+			"ブラウザー発見、GitHub MCP import、Cursor.directory handoff、Market README 表示、source metadata はすでに入りました。次は評価とインポートをさらに予測しやすくします。",
 	},
 	{
 		title: "デスクトップ配布パイプライン",
@@ -19,7 +19,7 @@ const inProgress = [
 	{
 		title: "クライアント統制と展開の安全性",
 		description:
-			"検出済みクライアントへの展開、書き込み可能ターゲットの検証、attach / detach 経路、能力の一括編集を改善し、管理された変更をより信頼しやすくしています。",
+			"検出済みクライアントへの展開、書き込み可能ターゲットの検証、attach / detach 経路、能力の一括編集、credential readiness state を改善し、管理された変更をより信頼しやすくしています。",
 	},
 	{
 		title: "ドキュメントと導線の同期",
@@ -72,7 +72,7 @@ const Roadmap = () => {
 			<div className="space-y-6">
 				<h2>進行中</h2>
 				<p>
-					0.3.0 beta の基盤を受けて、いま最もユーザー体験に近い作業は、安全なセットアップ導線、配布、プラットフォーム成熟度、クライアント展開の安全性、そして分かりやすい導線です。
+					0.3.3 beta の後、いま最もユーザー体験に近い作業は、発見からインストールまでの磨き込み、配布、プラットフォーム成熟度、クライアント展開の安全性、そして分かりやすい導線です。
 				</p>
 				<ul className="space-y-2">
 					{inProgress.map((item) => (
@@ -86,7 +86,16 @@ const Roadmap = () => {
 						Secure Store は、機密性の高いサーバーパラメータを平文設定ファイルから外し、暗号化された secret record を runtime で解決し、保護と使用状況の流れをダッシュボードで扱えるようにしました。
 					</li>
 					<li>
+						OAuth access token、refresh token、client secret は Secure Store custody に入り、lifecycle view、degraded-state guidance、reconnect prompt、より安全な cleanup control を扱えるようになりました。
+					</li>
+					<li>
 						Server インストールは <code>mcp-servers.json</code> のような複数サーバー設定 bundle を受け取り、draft の確認、サーバープレビュー、dry-run 検証、選択した設定のインポートを行えるようになりました。
+					</li>
+					<li>
+						ブラウザー拡張は Servers、Clients、Portals タブ、Discovery cache、GitHub MCP page import、Cursor.directory から desktop import flow への handoff に対応しました。
+					</li>
+					<li>
+						Market detail page は linked GitHub README を表示し、pagination state を保持し、source、transport、distribution context を managed server に結びつけます。
 					</li>
 					<li>
 						Profiles は servers、tools、resources、prompts、resource templates の一括 include / exclude に対応しました。

@@ -14,8 +14,9 @@ export default function MarketEN() {
 		>
 			<P>
 				The Market connects MCPMate to the official MCP Registry. From here you
-				can browse listings, preview metadata, hide noisy entries, and send
-				candidates straight into the install wizard.
+				can browse listings, read linked GitHub README context, preview source
+				metadata, hide noisy entries, and send candidates straight into the
+				install wizard.
 			</P>
 
 			<DocScreenshot
@@ -29,7 +30,9 @@ export default function MarketEN() {
 				<Li>
 					The Market lists the official MCP Registry. Search (with debounced
 					input) and sorting (Recent, Alphabetical) run client-side against
-					cached pages while the app streams additional pages on demand.
+					cached pages while the app streams additional pages on demand. The
+					dashboard preserves pagination state so you can open details and return
+					to the same browsing position.
 				</Li>
 				<Li>
 					To import server snippets from arbitrary websites, use the{" "}
@@ -65,9 +68,10 @@ export default function MarketEN() {
 			<H3>Preview drawer</H3>
 			<P>
 				Select a server card to open the preview drawer. It shows description,
-				capability counts, transport types, environment variables, and bundled
-				icons. A secondary button launches the Uni-Import wizard with the server
-				pre-filled so you can tweak aliases before saving.
+				capability counts, transport types, source and distribution metadata,
+				environment variables, bundled icons, and linked GitHub README content
+				when available. A secondary button launches the Uni-Import wizard with
+				the server pre-filled so you can tweak aliases before saving.
 			</P>
 
 			<H3>OAuth-enabled upstream servers</H3>
