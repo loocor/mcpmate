@@ -113,7 +113,7 @@ const Roadmap = () => {
 							to="/docs/ja/changelog"
 							className="font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300"
 						>
-							changelog
+							変更履歴
 						</Link>
 						を確認してください。そこにはすでに着地した内容が反映され、このページにはいま形を整えている方向性が反映されます。
 					</p>
