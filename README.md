@@ -87,7 +87,7 @@ flowchart LR
         direction TB
         UP["Upstream Mgmt<br/><small>Connection Pool · OAuth 2.0 + PKCE</small>"]
         PROF["Profile Engine<br/><small>Scene · App · Dynamic</small>"]
-        SEC["Event Logs &amp; Security<br/><small>Structured Logs · redb Cache</small>"]
+        SEC["Event Logs &amp; Security<br/><small>Secure Store · Structured Logs · redb Cache</small>"]
         UP --> PROF --> SEC
     end
 
@@ -141,12 +141,13 @@ MCPMate sits between your AI clients and MCP servers. To each app it looks like 
 | **Profile-Based Trimming**    | Organize MCP servers into scene, app, and dynamic profiles. Switch instantly without restarting services.                               |
 | **Multi-Client Support**      | Detect, configure, and manage Claude Desktop, Cursor, Zed, Codex, and user-defined clients.                                             |
 | **Dynamic Client Governance** | Database-first governance with Allow/Deny policies. No static template files. Verified config targets required for writes.              |
-| **Market Integration**        | Browse and install from the official MCP registry without leaving the app. OAuth-capable servers supported with callback authorization. |
+| **Market Integration**        | Browse and install from the official MCP registry without leaving the app. Detail views can show GitHub README context, source metadata, and OAuth authorization. |
 | **Runtime Manager**           | Installs and manages Node.js, uv (Python), and Bun runtimes used by local MCP servers.                                                  |
-| **OAuth 2.0 Upstream (PKCE)** | Supports upstream OAuth 2.0 flows with PKCE for Streamable HTTP MCP servers, including metadata discovery and callback handling.        |
+| **Secure Store & OAuth Custody** | Keeps local secrets, OAuth tokens, and client secrets in encrypted custody with lifecycle cleanup and degraded-state guidance.        |
+| **OAuth 2.0 Upstream (PKCE)** | Supports upstream OAuth 2.0 flows with PKCE for Streamable HTTP MCP servers, including metadata discovery, callback handling, and reconnect flows. |
 | **Built-in redb Cache**       | L2 embedded cache for capability snapshots and frequently accessed proxy state.                                                         |
 | **Structured Logs**           | Dedicated Logs page with cursor-based pagination, actor/target/action metadata, and REST API access.                                    |
-| **Browser Extension**         | Chrome/Edge extension detects `mcpServers` snippets on web pages and imports them via `mcpmate://import/server`.                        |
+| **Browser Extension**         | Chrome/Edge extension browses Servers, Clients, and Portals, then imports MCP snippets, GitHub MCP entries, and Cursor.directory entries via `mcpmate://import/server`. |
 | **Tool Inspector**            | Run quick tool calls against connected servers and inspect structured responses from the console.                                       |
 
 ## 🛠️ Core Components
@@ -253,9 +254,9 @@ See [AGENTS.md](./AGENTS.md) for development guidelines, coding standards, and c
 
 ## 🗺️ Roadmap
 
-1. **Account-based configuration backup & restore**
-2. **Skills-mode packaged profiles**
-3. **Downstream MCP client OAuth authorization management**
+1. **Discovery-to-install polish** — tighter browser extension, Market, README, and source-metadata flows
+2. **Account-based configuration backup & restore**
+3. **Skills-mode packaged profiles**
 4. **Cross-platform release readiness** — desktop OS stability, container-based deployment, and Homebrew installation support
 
 ## 🤝 Contributing

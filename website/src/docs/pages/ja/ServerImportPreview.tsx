@@ -26,13 +26,14 @@ export default function ServerImportPreview() {
 				<Li>サーバーページの追加ボタンからインストールウィザードを開きます。</Li>
 				<Li>同じボタンは、ユニインポートのドラッグアンドドロップのターゲットとしても機能します。</Li>
 				<Li>ブラウザー拡張機能は、ウェブ上の互換性のあるMCPスニペットをキャプチャし、ワンクリックでMCPMateに送信できます。</Li>
+				<Li>GitHub MCP ページと Cursor.directory の項目も、構造化されたサーバードラフトを同じウィザードへ渡せます。</Li>
 				<Li>Discovery Server 項目は、カタログメタデータから同じウィザードを開けます。</Li>
 				<Li>ウィザードは、設定、プレビュー、およびインポートとプロファイルの3つのステップに従います。</Li>
 			</Ul>
 
 			<H2>ブラウザ拡張機能のキャプチャ</H2>
 			<P>
-				MCPMateのChromeおよびEdge拡張機能は、同じユニインポートフローへのアップストリームエントリとして設計されています。ポップアップには Public Discovery を使う Portal、Servers、Clients タブがあります。ウェブページにMCP設定ブロックらしき内容がある場合、<strong>MCPMateに追加</strong>アクションを追加し、スニペットテキスト、推測される形式、およびソースページURLとともに<code>mcpmate://import/server</code>ディープリンクを介してデスクトップアプリを開きます。
+				MCPMateのChromeおよびEdge拡張機能は、同じユニインポートフローへのアップストリームエントリとして設計されています。ポップアップには Public Discovery を使う Portal、Servers、Clients タブがあります。ウェブページにMCP設定ブロックらしき内容がある場合、<strong>MCPMateに追加</strong>アクションを追加し、スニペットテキスト、推測される形式、およびソースページURLとともに<code>mcpmate://import/server</code>ディープリンクを介してデスクトップアプリを開きます。GitHub MCP のインストールメニューと Cursor.directory ページも同じ受け渡し経路を使い、コマンド文字列は確認画面へ進む前に正規化されます。
 			</P>
 
 			<Callout type="info" title="拡張機能が重要な理由">

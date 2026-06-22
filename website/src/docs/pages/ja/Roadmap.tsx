@@ -1,63 +1,68 @@
+import { Link } from "react-router-dom";
+
 import DocLayout from "../../layout/DocLayout";
 
-const inProgress = [
+const currentFocus = [
 	{
-		title: "安全なセットアップ導線の仕上げ",
+		title: "MCP Server の採用をより安全にする",
 		description:
-			"0.3.0 で Secure Store と一括インポートの基盤が入ったため、次は OAuth custody、secret lifecycle cleanup、残りの server-field binding の細部を磨いていきます。",
+			"ユーザーが Server を見つけ、出どころを理解し、公開される能力を確認し、設定を信頼してよいか判断してからインポートできる状態を目指します。",
 	},
 	{
-		title: "デスクトップ配布パイプライン",
+		title: "クライアント展開を制御下に置く",
 		description:
-			"GitHub Releases を起点にした配布経路について、自動更新の振る舞い、プレリリース処理、macOS / Windows / Linux 間の梱包整合性を引き続き磨いています。",
+			"MCPMate は、どのクライアントにどの Server、tool、resource、prompt を渡すかを明確にし、ローカル MCP の変更が複数の設定ファイルへ散らばらないようにします。",
 	},
 	{
-		title: "プラットフォーム成熟度の底上げ",
+		title: "セットアップを観測可能なワークフローにする",
 		description:
-			"macOS、Windows、Linux のデスクトップビルドはいずれも Beta として扱いながら、インストーラの挙動、ランタイム検出、デスクトップ体験の一貫性を引き続き高めています。",
-	},
-	{
-		title: "クライアント統制と展開の安全性",
-		description:
-			"検出済みクライアントへの展開、書き込み可能ターゲットの検証、attach / detach 経路、能力の一括編集を改善し、管理された変更をより信頼しやすくしています。",
-	},
-	{
-		title: "ドキュメントと導線の同期",
-		description:
-			"website、クイックスタート、ブラウザー拡張のインストール導線、ダッシュボードの文言を実際に出荷済みの挙動へ合わせ続け、配布フローの変化で案内が古くならないようにしています。",
+			"変更の前後で、読みやすい source context、dry-run checks、credential readiness、runtime state、support-friendly diagnostics を確認できる状態にします。",
 	},
 ];
 
-const exploringNext = [
+const nextBets = [
 	{
-		title: "内蔵自動更新の磨き込み",
+		title: "再利用できるチームワークフロー",
 		description:
-			"最初の配布パイプラインが形になった今、次はデスクトップ更新をもっと自然で日常的な体験にする段階です。",
+			"Profiles と capability sets を共有、レビュー、再利用しやすくし、チームが検証済みの MCP setup から始められるようにします。",
 	},
 	{
-		title: "プロファイル共有",
+		title: "リモートと分離運用",
 		description:
-			"チームが実績あるプロファイルの束を再利用できるようにし、毎回同じ能力セットを作り直さなくて済む形を目指しています。",
+			"Core Server、dashboard、将来の remote entry points を、単一ローカルデスクトップを超える利用者にも分かりやすい運用モデルへ整理します。",
 	},
 	{
-		title: "コンテナと分離デプロイの磨き込み",
+		title: "より強いガバナンス信号",
 		description:
-			"Core Server と UI はすでに分離運用できます。今後はリモート、コンテナ、複数マシンでの運用をよりパッケージしやすく、説明しやすい形にしていきます。",
+			"Logs、audit evidence、permission boundaries、高リスク tool controls により、何が変わり、誰または何が使え、いつ介入すべきかを把握しやすくします。",
 	},
 	{
-		title: "軽量なアカウント層",
+		title: "より賢いワークフロー支援",
 		description:
-			"任意のアカウント連携や軽量なクラウド同期は引き続き魅力的ですが、MCPMate の local-first な境界は明示的に保つ方針です。",
-	},
-	{
-		title: "より安全なサンドボックス",
-		description:
-			"高リスクツールを公開する際に、より細かなガードレールや隔離手段を持たせる方向を検討しています。",
+			"Inspector-driven checks、skill-like workflows、prompt や provider helpers は、説明可能で operator の制御下にある限り、手動セットアップを減らせます。",
 	},
 	{
 		title: "利用量とコストの可視化",
 		description:
-			"より長期的には、サーバー単位の利用パターンやトークンコストの判断材料を運用者へ分かりやすく届けたいと考えています。",
+			"より長期的には、サーバー単位の利用パターンや token cost の判断材料を見えるようにし、tool exposure を自信を持って調整できるようにします。",
+	},
+];
+
+const shippedFoundation = [
+	{
+		title: "インポートと発見の基盤",
+		description:
+			"ブラウザー発見、GitHub MCP import、Cursor.directory handoff、Market README 表示、source metadata、multi-server import preview、dry-run validation が、最初の end-to-end adoption path になりました。",
+	},
+	{
+		title: "Credential と OAuth の custody",
+		description:
+			"Secure Store、OAuth token custody、lifecycle views、degraded-state guidance、reconnect prompts、cleanup controls により、機密性の高い Server state を平文設定ファイルから外しました。",
+	},
+	{
+		title: "管理されたクライアント設定",
+		description:
+			"Profiles、bulk include / exclude controls、backend-maintained compatibility standards、diagnostics export、改善された Inspector lifecycle handling により、MCP changes をレビューしやすく、サポートしやすくしました。",
 	},
 ];
 
@@ -70,50 +75,32 @@ const Roadmap = () => {
 	return (
 		<DocLayout meta={meta}>
 			<div className="space-y-6">
-				<h2>進行中</h2>
+				<h2>現在の重点</h2>
 				<p>
-					0.3.0 beta の基盤を受けて、いま最もユーザー体験に近い作業は、安全なセットアップ導線、配布、プラットフォーム成熟度、クライアント展開の安全性、そして分かりやすい導線です。
+					MCPMate は、MCP の採用を複数クライアント設定ファイルの手作業編集ではなく、管理されたワークフローに近づけます。利用可能な能力を見つけ、変更内容を検証し、適切な能力を適切なクライアントへ公開します。
 				</p>
 				<ul className="space-y-2">
-					{inProgress.map((item) => (
+					{currentFocus.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
 				</ul>
 
-				<h2>最近届けたもの</h2>
-				<ul className="space-y-2">
-					<li>
-						Secure Store は、機密性の高いサーバーパラメータを平文設定ファイルから外し、暗号化された secret record を runtime で解決し、保護と使用状況の流れをダッシュボードで扱えるようにしました。
-					</li>
-					<li>
-						Server インストールは <code>mcp-servers.json</code> のような複数サーバー設定 bundle を受け取り、draft の確認、サーバープレビュー、dry-run 検証、選択した設定のインポートを行えるようになりました。
-					</li>
-					<li>
-						Profiles は servers、tools、resources、prompts、resource templates の一括 include / exclude に対応しました。
-					</li>
-					<li>
-						Onboarding と新規クライアント設定は、バックエンドが管理する互換標準を使うようになり、より新しく適切なクライアント設定を受け取れるようになりました。
-					</li>
-					<li>
-						自動更新の基盤が強化され、認可済みの Streamable HTTP サーバー向け OAuth token 更新にも対応しました。
-					</li>
-					<li>
-						デスクトップ診断エクスポートにより、サポート調査が必要なときに整理されたローカルフィードバックを共有しやすくなりました。
-					</li>
-					<li>
-						Inspector のライフサイクル管理と Registry インストール処理を強化し、繰り返し作業、分かりにくい状態表示、壊れたインストールドラフトを減らしました。
-					</li>
-					<li>
-						ブラウザー拡張、Onboarding、website ドキュメントを更新し、インストールとアップグレードの流れを追いやすくしました。
-					</li>
-				</ul>
-
-				<h2>次の候補として見ているもの</h2>
+				<h2>次の方向性</h2>
 				<p>
-					ここにあるのは有力候補であって、固定された約束ではありません。実際のフィードバックと展開上の制約を見ながら順序を決めていきます。
+					ここにあるのは戦略的な方向であり、特定リリースの約束ではありません。実際の利用、サポート上のシグナル、展開上の制約を見ながら順序を決めます。
 				</p>
 				<ul className="space-y-2">
-					{exploringNext.map((item) => (
+					{nextBets.map((item) => (
+						<li key={item.title}>{`${item.title} ${item.description}`}</li>
+					))}
+				</ul>
+
+				<h2>最近できた基盤</h2>
+				<p>
+					0.3.x はこのワークフローの基盤づくりに集中してきました。詳細なリリース記録は changelog に残し、このページでは product-level の building blocks だけを扱います。
+				</p>
+				<ul className="space-y-2">
+					{shippedFoundation.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
 				</ul>
@@ -121,7 +108,14 @@ const Roadmap = () => {
 				<div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
 					<h4>いちばん新しい動きを追うには</h4>
 					<p className="text-sm text-slate-600 dark:text-slate-300">
-						最も新鮮なシグナルを見たい場合は、まず GitHub Releases と changelog を確認してください。そこにはすでに着地した内容が反映され、このページにはいま形を整えている方向性が反映されます。
+						最も新しい出荷済みの記録を見るには、サイト内の{" "}
+						<Link
+							to="/docs/ja/changelog"
+							className="font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300"
+						>
+							変更履歴
+						</Link>
+						を確認してください。そこにはすでに着地した内容が反映され、このページにはいま形を整えている方向性が反映されます。
 					</p>
 				</div>
 			</div>

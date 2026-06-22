@@ -1,5 +1,88 @@
 [
 	{
+		"version": "0.3.3",
+		"date": "2026-06-22",
+		"highlights": [
+			"MCPMate v0.3.3-beta improves how users discover, evaluate, and carry MCP server context from the web into a managed local setup. The browser extension now makes import-ready discovery faster, while the dashboard keeps more source context and makes Market browsing easier to resume."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "The browser extension popup was rebuilt around Servers, Clients, and Portals tabs, cached discovery data, compact browsing, and direct import paths from GitHub MCP pages and Cursor.directory pages."
+			},
+			{
+				"type": "feat",
+				"text": "Market detail pages can now render linked GitHub README content, giving users package context and setup notes before they start an install."
+			},
+			{
+				"type": "feat",
+				"text": "Market pagination now preserves browsing position across round-trips, making it easier to compare multiple servers without restarting from the first page."
+			},
+			{
+				"type": "ref",
+				"text": "Imported and managed servers now keep clearer structured source, transport, and distribution metadata across Market, server details, and follow-up edits."
+			},
+			{
+				"type": "chore",
+				"text": "The board build pipeline now uses Bun consistently and no longer carries npm lockfiles for the board and website packages."
+			}
+		]
+	},
+	{
+		"version": "0.3.2",
+		"date": "2026-06-16",
+		"highlights": [
+			"MCPMate v0.3.2-beta extends the Secure Store foundation with OAuth credential custody and operator-facing lifecycle management. Sensitive OAuth tokens and client secrets now move into the encrypted store, while new UI surfaces let operators audit, filter, and clean up secrets by lifecycle state."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "OAuth access tokens, refresh tokens, and client secrets now use Secure Store custody, with custody badges and reconnect prompts when credentials cannot be decrypted."
+			},
+			{
+				"type": "feat",
+				"text": "The Secrets page now supports lifecycle cleanup views for active, cleanup-available, unused, and OAuth-managed records, including safer deletion checks for runtime bindings."
+			},
+			{
+				"type": "feat",
+				"text": "Secure Store degraded-state alerts now appear across Secrets and Settings so keychain, read-lock, and provider availability issues surface with recovery guidance."
+			},
+			{
+				"type": "fix",
+				"text": "Server install drag, drop, and extension-driven import are more reliable because programmatic ingest waits for the install drawer to open and reset."
+			},
+			{
+				"type": "fix",
+				"text": "Desktop startup remains available when OAuth secrets are unreadable, and broken credentials can still be revoked or reconnected from management flows."
+			},
+			{
+				"type": "fix",
+				"text": "Secure Store provider rotation is now handled atomically with preflight decrypt verification, transactional rewrap, post-rotation verification, and explicit confirmation."
+			}
+		]
+	},
+	{
+		"version": "0.3.1",
+		"date": "2026-06-10",
+		"highlights": [
+			"MCPMate v0.3.1-beta is an emergency desktop stability release for the server import flow. It prevents dropped local files from navigating the Tauri WebView away from MCPMate and makes server import entry points behave more consistently."
+		],
+		"changes": [
+			{
+				"type": "fix",
+				"text": "Dropped local files no longer navigate the Tauri WebView away from MCPMate, avoiding a desktop state that required a process restart to recover."
+			},
+			{
+				"type": "fix",
+				"text": "The top-right create button and empty-state create button can now accept server configuration drops, matching the Uni-Import drawer behavior."
+			},
+			{
+				"type": "docs",
+				"text": "The v0.3.0 beta changelog was synchronized after the Secure Store and bulk import release."
+			}
+		]
+	},
+	{
 		"version": "0.3.0",
 		"date": "2026-06-09",
 		"highlights": [

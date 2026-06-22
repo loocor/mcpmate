@@ -26,13 +26,14 @@ export default function ServerImportPreviewZH() {
 				<Li>Servers 页面右上角的新增按钮会打开安装向导。</Li>
 				<Li>这个按钮本身同时也是 Uni-Import 的拖拽目标区域。</Li>
 				<Li>Chrome / Edge 扩展可以从网页一键捕获兼容 MCP 配置片段，并送回 MCPMate。</Li>
+				<Li>GitHub MCP 页面和 Cursor.directory 条目也可以把结构化 server 草稿送入同一个向导。</Li>
 				<Li>Discovery Server 条目也可以从目录元数据进入同一个向导。</Li>
 				<Li>整个向导分成三个步骤：Configuration、Preview、Import &amp; Profile。</Li>
 			</Ul>
 
 			<H2>浏览器扩展入口</H2>
 			<P>
-				MCPMate 的 Chrome / Edge 扩展是这条 Uni-Import 流程的上游入口。扩展弹窗提供 Portal、Servers、Clients 三个标签页，并由 Public Discovery 提供目录数据。当网页中存在疑似 MCP 配置代码块时，扩展会显示 <strong>Add to MCPMate</strong> 操作，并通过 <code>mcpmate://import/server</code> 深链把片段文本、推断格式和来源页面 URL 一起送回桌面端。
+				MCPMate 的 Chrome / Edge 扩展是这条 Uni-Import 流程的上游入口。扩展弹窗提供 Portal、Servers、Clients 三个标签页，并由 Public Discovery 提供目录数据。当网页中存在疑似 MCP 配置代码块时，扩展会显示 <strong>Add to MCPMate</strong> 操作，并通过 <code>mcpmate://import/server</code> 深链把片段文本、推断格式和来源页面 URL 一起送回桌面端。GitHub MCP 安装菜单和 Cursor.directory 页面使用同一条交接链路，并会在进入审阅前归一化 command 字符串。
 			</P>
 
 			<Callout type="info" title="为什么扩展入口很重要">

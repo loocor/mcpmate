@@ -15,7 +15,8 @@ export default function BrowserExtension() {
 				The MCPMate Chrome and Edge extension keeps discovery close to the web pages
 				where MCP servers are usually found. The toolbar popup shows curated
 				Portals, Servers, and Clients from MCPMate Public Discovery, while the
-				content script can send detected MCP snippets into the desktop app.
+				content script can send detected MCP snippets, GitHub MCP catalog entries,
+				and Cursor.directory entries into the desktop app.
 			</P>
 
 			<H2>Discovery tabs</H2>
@@ -42,6 +43,16 @@ export default function BrowserExtension() {
 				text, inferred format, and source URL. MCPMate then continues through the
 				same Uni-Import preview and validation flow used by the Servers page.
 			</P>
+			<Ul>
+				<Li>
+					On <strong>GitHub MCP</strong> catalog pages, the extension adds an
+					Install in MCPMate option to server install menus.
+				</Li>
+				<Li>
+					On <strong>Cursor.directory</strong> pages, merged stdio command strings
+					are normalized before the draft reaches the desktop import flow.
+				</Li>
+			</Ul>
 
 			<H2>Catalog loading</H2>
 			<Ul>

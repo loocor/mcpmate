@@ -11,7 +11,7 @@ export default function Marketplace() {
 			}}
 		>
 			<P>
-				本页说明你在服务源中选中一个注册中心卡片后会发生什么。MCPMate 会打开与手动导入共用的安装向导，让你在保存前检查传输方式、规范化清单，以及服务器后续应加入哪些配置集。
+				本页说明你在服务源中选中一个注册中心卡片后会发生什么。MCPMate 会打开与手动导入共用的安装向导，让你在保存前检查传输方式、README 上下文、来源元数据、规范化清单，以及服务器后续应加入哪些配置集。
 			</P>
 
 			<DocScreenshot
@@ -27,6 +27,9 @@ export default function Marketplace() {
 				</li>
 				<li>
 					<strong>规范化预览：</strong>在保存前确认传输方式与清单细节
+				</li>
+				<li>
+					<strong>来源上下文：</strong>评估服务器时保留 GitHub README、传输与分发信息
 				</li>
 				<li>
 					<strong>受控投放：</strong>先把服务器加入工作区，再决定哪些配置集需要暴露它
@@ -48,7 +51,7 @@ export default function Marketplace() {
 
 			<H3>新增 MCP 服务器向导</H3>
 			<P>
-				从注册卡片安装时会打开引导流程：配置传输方式、预览规范化后的清单、保存服务器，然后再从“服务器”或“配置集”页面决定它应该加入哪些配置集。
+				从注册卡片安装时会打开引导流程：配置传输方式、查看 README 支撑的上下文与规范化后的清单、保存服务器，然后再从“服务器”或“配置集”页面决定它应该加入哪些配置集。
 			</P>
 			<DocScreenshot
 				lightSrc="/screenshot/market-add-server-light.png"

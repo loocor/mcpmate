@@ -87,7 +87,7 @@ flowchart LR
         direction TB
         UP["上游管理<br/><small>连接池 · OAuth 2.0 + PKCE</small>"]
         PROF["配置集引擎<br/><small>场景 · 应用 · 动态</small>"]
-        SEC["事件日志与安全<br/><small>结构化日志 · redb 缓存</small>"]
+        SEC["事件日志与安全<br/><small>Secure Store · 结构化日志 · redb 缓存</small>"]
         UP --> PROF --> SEC
     end
 
@@ -141,12 +141,13 @@ MCPMate 位于 AI 客户端与 MCP 服务器之间。对应用侧而言，它就
 | **配置集裁剪**            | 将 MCP 服务器组织为场景、应用和动态配置集，即时切换无需重启。                             |
 | **多客户端支持**          | 检测、配置和管理 Claude Desktop、Cursor、Zed、Codex 及自定义客户端。                      |
 | **动态客户端治理**        | 数据库优先的 Allow/Deny 治理策略，无静态模板文件，写入需已验证的配置目标。                |
-| **MCP 市场集成**          | 应用内浏览并安装官方 MCP 注册中心的服务器，支持 OAuth 回调授权。                          |
+| **MCP 市场集成**          | 应用内浏览并安装官方 MCP 注册中心的服务器，详情页可展示 GitHub README、来源元数据与 OAuth 授权信息。 |
 | **运行时管理器**          | 安装和管理本地 MCP 服务器使用的 Node.js、uv (Python)、Bun 运行时。                        |
-| **上游 OAuth 2.0 (PKCE)** | 支持 Streamable HTTP MCP 服务器的 OAuth 2.0 流程（含 PKCE），含元数据发现和回调处理。     |
+| **Secure Store 与 OAuth 托管** | 将本地 secret、OAuth token 和客户端密钥放入加密托管，并提供生命周期清理与降级状态提示。 |
+| **上游 OAuth 2.0 (PKCE)** | 支持 Streamable HTTP MCP 服务器的 OAuth 2.0 流程（含 PKCE），含元数据发现、回调处理与重连路径。 |
 | **内建 redb 缓存**        | 面向能力快照与高频代理状态的 L2 嵌入式缓存。                                              |
 | **结构化日志**            | 独立日志页面，支持游标分页、actor/target/action 元数据和 REST API 查询。                  |
-| **浏览器扩展**            | Chrome/Edge 扩展检测网页中的 `mcpServers` 配置片段并通过 `mcpmate://import/server` 导入。 |
+| **浏览器扩展**            | Chrome/Edge 扩展可浏览 Servers、Clients、Portals，并通过 `mcpmate://import/server` 导入 MCP 片段、GitHub MCP 条目和 Cursor.directory 条目。 |
 | **工具检视器**            | 对已连接服务器快速发起工具调用，查看结构化返回结果。                                      |
 
 ## 🛠️ 核心组件
@@ -253,9 +254,9 @@ Coming soon。线上环境将允许你在无需本地部署的情况下，探索
 
 ## 🗺️ 路线图
 
-1. **基于账户体系的配置数据备份与恢复**
-2. **以 Skills 模式封装的配置集**
-3. **下游 MCP 客户端 OAuth 授权管理**
+1. **发现到安装链路打磨** — 继续收紧浏览器扩展、服务源、README 与来源元数据流程
+2. **基于账户体系的配置数据备份与恢复**
+3. **以 Skills 模式封装的配置集**
 4. **跨平台发布就绪** — 覆盖主要桌面操作系统稳定性、容器化部署与 Homebrew 安装支持
 
 ## 🤝 贡献

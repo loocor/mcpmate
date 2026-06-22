@@ -1,5 +1,88 @@
 [
 	{
+		"version": "0.3.3",
+		"date": "2026-06-22",
+		"highlights": [
+			"MCPMate v0.3.3-beta 改进了从网页发现、评估并带入 MCP Server 上下文的完整路径。浏览器扩展让可导入发现更快进入 MCPMate，控制台则保留更多来源信息，并让服务源浏览更容易接着之前的位置继续。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "浏览器扩展弹窗重构为 Servers、Clients、Portals 标签页，加入 Discovery 缓存、紧凑浏览体验，并支持从 GitHub MCP 页面和 Cursor.directory 页面直接进入导入流程。"
+			},
+			{
+				"type": "feat",
+				"text": "服务源详情页现在可以展示关联的 GitHub README 内容，让用户在安装前看到包说明和设置提示。"
+			},
+			{
+				"type": "feat",
+				"text": "服务源分页会保留浏览位置，用户在查看详情后可以继续比较多个服务器，不必从第一页重新开始。"
+			},
+			{
+				"type": "ref",
+				"text": "导入和托管后的服务器会保留更清晰的结构化来源、传输与分发信息，并在服务源、服务器详情和后续编辑中保持一致。"
+			},
+			{
+				"type": "chore",
+				"text": "Board 构建链路已统一使用 Bun，并移除 board 与 website 包中的 npm lockfile。"
+			}
+		]
+	},
+	{
+		"version": "0.3.2",
+		"date": "2026-06-16",
+		"highlights": [
+			"MCPMate v0.3.2-beta 在 Secure Store 基础上加入 OAuth 凭证归属和面向操作者的生命周期管理。敏感 OAuth Token 与客户端密钥进入加密存储，同时新增界面让操作者可以按生命周期状态审计、筛选和清理 secret。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "OAuth access token、refresh token 与客户端密钥现在进入 Secure Store 托管，并通过归属状态徽标与重连提示展示无法解密的凭证。"
+			},
+			{
+				"type": "feat",
+				"text": "Secrets 页面新增 active、cleanup-available、unused、OAuth-managed 等生命周期视图，并在删除前检查运行时绑定，降低误删风险。"
+			},
+			{
+				"type": "feat",
+				"text": "Secure Store 降级状态提示已接入 Secrets 与 Settings 页面，keychain、读锁和 provider 可用性问题会显示恢复指引。"
+			},
+			{
+				"type": "fix",
+				"text": "Server 安装流程中的拖拽、文件投放和扩展驱动导入更可靠，程序化导入会等待安装抽屉打开并完成重置后再执行。"
+			},
+			{
+				"type": "fix",
+				"text": "当 OAuth secret 无法读取时，桌面启动仍能继续，并且用户仍可在管理流程中撤销或重新连接损坏凭证。"
+			},
+			{
+				"type": "fix",
+				"text": "Secure Store provider 切换现在以原子方式执行，包含预先解密校验、事务式 rewrap、切换后校验和显式确认。"
+			}
+		]
+	},
+	{
+		"version": "0.3.1",
+		"date": "2026-06-10",
+		"highlights": [
+			"MCPMate v0.3.1-beta 是一次面向 Server 导入流程的桌面端紧急稳定性版本。它阻止本地文件拖入后把 Tauri WebView 导航离开 MCPMate，并让各个 Server 创建入口的导入行为更一致。"
+		],
+		"changes": [
+			{
+				"type": "fix",
+				"text": "本地文件拖入后不再把 Tauri WebView 导航离开 MCPMate，避免桌面端进入必须重启进程才能恢复的状态。"
+			},
+			{
+				"type": "fix",
+				"text": "右上角创建按钮和空状态创建按钮现在也可以接收服务器配置拖拽，行为与 Uni-Import 抽屉保持一致。"
+			},
+			{
+				"type": "docs",
+				"text": "同步 v0.3.0 beta changelog，补齐 Secure Store 与批量导入发布后的站内记录。"
+			}
+		]
+	},
+	{
 		"version": "0.3.0",
 		"date": "2026-06-09",
 		"highlights": [

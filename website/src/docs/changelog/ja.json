@@ -1,5 +1,88 @@
 [
 	{
+		"version": "0.3.3",
+		"date": "2026-06-22",
+		"highlights": [
+			"MCPMate v0.3.3-beta は、Web 上で見つけた MCP Server の文脈を発見、評価し、ローカル管理へ持ち込む流れを改善します。ブラウザー拡張はインポート可能な発見をより速くし、ダッシュボードはソース文脈を保ちながら Market の閲覧を再開しやすくします。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "ブラウザー拡張のポップアップを Servers、Clients、Portals タブ中心に再構成し、Discovery キャッシュ、コンパクトな閲覧、GitHub MCP ページと Cursor.directory ページからの直接インポートに対応しました。"
+			},
+			{
+				"type": "feat",
+				"text": "Market の詳細ページで関連する GitHub README を表示できるようになり、インストール前にパッケージの文脈やセットアップ情報を確認できます。"
+			},
+			{
+				"type": "feat",
+				"text": "Market のページング状態が保持されるため、詳細から戻ったあとも複数サーバーの比較を最初のページからやり直す必要が少なくなりました。"
+			},
+			{
+				"type": "ref",
+				"text": "インポート済みおよび管理対象のサーバーは、ソース、トランスポート、配布方法の構造化メタデータを Market、サーバー詳細、後続編集でより明確に保ちます。"
+			},
+			{
+				"type": "chore",
+				"text": "Board のビルドパイプラインは Bun に統一され、board と website package の npm lockfile を削除しました。"
+			}
+		]
+	},
+	{
+		"version": "0.3.2",
+		"date": "2026-06-16",
+		"highlights": [
+			"MCPMate v0.3.2-beta は Secure Store の基盤を OAuth credential custody と運用者向け lifecycle management へ広げました。機密性の高い OAuth token と client secret は暗号化ストアに移り、運用者は lifecycle state ごとに secret を監査、フィルター、クリーンアップできます。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "OAuth access token、refresh token、client secret は Secure Store custody に入り、復号できない credential には custody badge と再接続の案内が表示されます。"
+			},
+			{
+				"type": "feat",
+				"text": "Secrets ページで active、cleanup-available、unused、OAuth-managed の lifecycle view を扱えるようになり、runtime binding を確認してから削除できます。"
+			},
+			{
+				"type": "feat",
+				"text": "Secure Store の degraded-state alert が Secrets と Settings に入り、keychain、read-lock、provider availability の問題に recovery guidance を表示します。"
+			},
+			{
+				"type": "fix",
+				"text": "Server install のドラッグ、ドロップ、拡張経由インポートは、install drawer が開いて reset されるまで待つことで安定しました。"
+			},
+			{
+				"type": "fix",
+				"text": "OAuth secret を読めない場合でもデスクトップ起動を維持し、壊れた credential の revoke や reconnect を管理フローから続けられるようにしました。"
+			},
+			{
+				"type": "fix",
+				"text": "Secure Store provider rotation は、事前復号確認、transactional rewrap、rotation 後の確認、明示的な confirmation を伴う atomic な処理になりました。"
+			}
+		]
+	},
+	{
+		"version": "0.3.1",
+		"date": "2026-06-10",
+		"highlights": [
+			"MCPMate v0.3.1-beta は Server import flow のための緊急 desktop stability release です。ローカルファイルのドロップで Tauri WebView が MCPMate から離れてしまう問題を防ぎ、Server import の入口ごとの挙動をより一貫させました。"
+		],
+		"changes": [
+			{
+				"type": "fix",
+				"text": "ドロップしたローカルファイルで Tauri WebView が MCPMate から離れてしまうことを防ぎ、復旧にプロセス再起動が必要な状態を避けます。"
+			},
+			{
+				"type": "fix",
+				"text": "右上の create button と empty-state create button でも server configuration drop を受け付け、Uni-Import drawer と同じ挙動になりました。"
+			},
+			{
+				"type": "docs",
+				"text": "Secure Store と bulk import release 後の v0.3.0 beta changelog を同期しました。"
+			}
+		]
+	},
+	{
 		"version": "0.3.0",
 		"date": "2026-06-09",
 		"highlights": [

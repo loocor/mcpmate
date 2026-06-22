@@ -29,6 +29,7 @@ export default function ServerImportPreview() {
 				<Li>The Add button on the Servers page opens the install wizard.</Li>
 				<Li>The same button also acts as a drag-and-drop target for Uni-Import.</Li>
 				<Li>The browser extension can capture compatible MCP snippets from the web and send them into MCPMate with one click.</Li>
+				<Li>GitHub MCP pages and Cursor.directory entries can hand structured server drafts into the same wizard.</Li>
 				<Li>Discovery Server entries can open the same wizard from curated catalog metadata.</Li>
 				<Li>The wizard follows three steps: Configuration, Preview, and Import &amp; Profile.</Li>
 			</Ul>
@@ -41,7 +42,9 @@ export default function ServerImportPreview() {
 				configuration block, the extension adds an <strong>Add to MCPMate</strong>
 				action and opens the desktop app through the{" "}
 				<code>mcpmate://import/server</code> deep link with the snippet text,
-				inferred format, and source page URL.
+				inferred format, and source page URL. GitHub MCP install menus and
+				Cursor.directory pages use the same handoff, with command strings
+				normalized before the draft reaches review.
 			</P>
 
 			<Callout type="info" title="Why the extension matters">

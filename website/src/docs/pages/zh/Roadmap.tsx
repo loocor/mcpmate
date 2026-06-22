@@ -1,63 +1,68 @@
+import { Link } from "react-router-dom";
+
 import DocLayout from "../../layout/DocLayout";
 
-const inProgress = [
+const currentFocus = [
 	{
-		title: "安全上手链路收尾",
+		title: "让 MCP Server 采用过程更安全",
 		description:
-			"0.3.0 已经带来 Secure Store 与批量导入基础，接下来会继续打磨 OAuth 凭证归属、secret 生命周期清理，以及剩余的服务器字段绑定细节。",
+			"用户应该能发现一个 Server、看懂它来自哪里、预览它会暴露什么能力，并在导入前判断这份配置是否值得信任。",
 	},
 	{
-		title: "桌面发布链路",
+		title: "让客户端投放保持可控",
 		description:
-			"我们正在继续打磨以 GitHub Releases 为起点的交付路径，包括自动更新行为、预发布处理，以及 macOS、Windows、Linux 三端的打包一致性。",
+			"MCPMate 会继续明确哪些客户端获得哪些 Server、工具、资源与提示词，让本地 MCP 变更不再散落在多个配置文件里。",
 	},
 	{
-		title: "平台成熟度补齐",
+		title: "把上手流程变成可观察的工作流",
 		description:
-			"macOS、Windows 与 Linux 桌面构建目前均按 Beta 呈现；接下来的重点，是继续统一三端的安装包行为、运行时检测和桌面体验细节。",
-	},
-	{
-		title: "客户端治理与投放安全",
-		description:
-			"针对已检测客户端的发布流程、可写目标校验、attach / detach 路径，以及能力批量调整，我们还在持续优化，让托管式变更更容易信任。",
-	},
-	{
-		title: "文档与引导对齐",
-		description:
-			"网站、快速开始、浏览器扩展安装路径和控制台文案会继续随着真实已交付行为保持同步，避免发布链路变化后出现过时引导。",
+			"一次配置变更前后都应该有足够证据：可读的来源上下文、dry-run 校验、凭证就绪状态、运行时状态，以及便于支持排障的诊断材料。",
 	},
 ];
 
-const exploringNext = [
+const nextBets = [
 	{
-		title: "内置自动更新体验",
+		title: "可复用的团队工作流",
 		description:
-			"在首条发布链路已经成形之后，下一步是把桌面更新做得更顺手、更接近日常习惯。",
+			"配置集与能力组合应该更容易共享、审阅和复用，让团队可以从验证过的 MCP 设置开始，而不是反复重建同一套操作模型。",
 	},
 	{
-		title: "配置集共享",
+		title: "远程与分离式运行",
 		description:
-			"我们希望团队可以复用已经验证过的配置集组合，而不是每次都重新搭一遍能力集合。",
+			"Core Server、控制台和未来远程入口需要形成更清晰的运行模型，服务那些已经超出单机桌面工作流的使用场景。",
 	},
 	{
-		title: "容器与分离部署打磨",
+		title: "更强的治理信号",
 		description:
-			"Core Server 与 UI 已经可以分离运行；后续会继续让远程、容器和多机部署更容易打包、解释与使用。",
+			"日志、审计证据、权限边界和高风险工具控制，需要帮助操作者理解发生了什么变化、谁或什么可以使用它，以及什么时候需要介入。",
 	},
 	{
-		title: "轻量账户层",
+		title: "更聪明的工作流辅助",
 		description:
-			"可选的账户关联能力与轻量云同步仍然值得探索，但前提是继续保持 MCPMate 的本地优先边界。",
-	},
-	{
-		title: "更安全的沙箱控制",
-		description:
-			"对于高风险工具，我们在评估更细的隔离与审批护栏，让能力暴露更可控。",
+			"Inspector 驱动的检查、类似 Skills 的工作流，以及 Prompt 或 Provider 辅助能力，可以减少手动配置，但必须保持可解释并受操作者控制。",
 	},
 	{
 		title: "用量与成本可见性",
 		description:
-			"更长期来看，我们希望让运维侧更容易看清服务器级别的使用模式与 Token 成本权衡。",
+			"更长期来看，MCPMate 应该让 Server 级别的使用模式与 Token 成本权衡足够可见，帮助操作者更有信心地调整能力暴露范围。",
+	},
+];
+
+const shippedFoundation = [
+	{
+		title: "导入与发现基础",
+		description:
+			"浏览器发现、GitHub MCP 导入、Cursor.directory 交接、Market README 展示、来源元数据、多 Server 导入预览和 dry-run 校验，已经组成第一条端到端采用路径。",
+	},
+	{
+		title: "凭证与 OAuth 托管",
+		description:
+			"Secure Store、OAuth Token 托管、生命周期视图、降级状态提示、重连提醒和清理控制，已经把敏感 Server 状态从明文配置文件中移出。",
+	},
+	{
+		title: "托管式客户端配置",
+		description:
+			"配置集、批量 include / exclude、后端维护的兼容标准、诊断导出和更稳的 Inspector 生命周期，让 MCP 变更更容易审阅和支持。",
 	},
 ];
 
@@ -70,50 +75,32 @@ const Roadmap = () => {
 	return (
 		<DocLayout meta={meta}>
 			<div className="space-y-6">
-				<h2>进行中</h2>
+				<h2>当前重点</h2>
 				<p>
-					0.3.0 beta 基础落地后，当前最贴近用户体验的工作是安全上手链路打磨、发布交付、平台成熟度、客户端投放安全，以及更清晰的上手路径。
+					MCPMate 当前关注的是让 MCP 采用不再像手动编辑分散的客户端配置文件，而更像一个受管理的工作流：发现可用能力、验证即将发生的变化，并把合适能力暴露给合适客户端。
 				</p>
 				<ul className="space-y-2">
-					{inProgress.map((item) => (
+					{currentFocus.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
 				</ul>
 
-				<h2>近期已交付</h2>
-				<ul className="space-y-2">
-					<li>
-						Secure Store 现在会把敏感服务器参数移出明文配置文件，在运行时解析加密 secret 记录，并在仪表盘中提供保护与使用位置相关流程。
-					</li>
-					<li>
-						Server 安装流程现在可以接收类似 <code>mcp-servers.json</code> 的多服务器配置包，并让用户逐项查看草稿、预览服务器、执行 dry-run 校验，再导入选中的配置。
-					</li>
-					<li>
-						配置集现在支持对服务器、工具、资源、提示和资源模板进行批量 include / exclude。
-					</li>
-					<li>
-						首次使用与新增客户端流程现在使用后端维护的兼容标准，让用户可以拿到更新、更匹配的客户端配置。
-					</li>
-					<li>
-						自动刷新基础能力已进一步增强，包括面向已授权 Streamable HTTP 服务器的 OAuth Token 刷新。
-					</li>
-					<li>
-						桌面端诊断导出让用户在需要支持排障时，可以用更干净的方式提供本地反馈材料。
-					</li>
-					<li>
-						检视器生命周期管理与注册中心安装处理已经加固，减少重复执行、状态误导和错误安装草稿。
-					</li>
-					<li>
-						浏览器扩展、首次使用与网站文档已经更新，让安装和升级路径更容易跟随。
-					</li>
-				</ul>
-
-				<h2>继续评估中的方向</h2>
+				<h2>下一阶段方向</h2>
 				<p>
-					下面这些更像明确的候选方向，而不是硬性承诺。我们会结合真实反馈与发布约束来决定先后顺序。
+					这些是战略方向，不是具体版本承诺。我们会结合真实使用、支持反馈与发布约束来决定优先级。
 				</p>
 				<ul className="space-y-2">
-					{exploringNext.map((item) => (
+					{nextBets.map((item) => (
+						<li key={item.title}>{`${item.title} ${item.description}`}</li>
+					))}
+				</ul>
+
+				<h2>近期已形成的基础</h2>
+				<p>
+					0.3.x 的重点是为这条工作流打基础。更新日志仍然保留完整版本记录；本页只保留产品层面的关键积木。
+				</p>
+				<ul className="space-y-2">
+					{shippedFoundation.map((item) => (
 						<li key={item.title}>{`${item.title} ${item.description}`}</li>
 					))}
 				</ul>
@@ -121,7 +108,14 @@ const Roadmap = () => {
 				<div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
 					<h4>跟踪最新进展</h4>
 					<p className="text-sm text-slate-600 dark:text-slate-300">
-						如果你想看最接近真实落地状态的信号，优先关注 GitHub Releases 与更新日志；那里反映的是已经交付的内容，而本页更多描述的是我们正在塑形的方向。
+						如果你想看最接近真实落地状态的信号，优先查看站内{" "}
+						<Link
+							to="/docs/zh/changelog"
+							className="font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300"
+						>
+							更新日志
+						</Link>
+						；那里反映的是已经交付的内容，而本页更多描述的是我们正在塑形的方向。
 					</p>
 				</div>
 			</div>
