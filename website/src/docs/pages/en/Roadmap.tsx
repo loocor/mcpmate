@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import DocLayout from "../../layout/DocLayout";
 
 const currentFocus = [
@@ -112,9 +114,15 @@ const Roadmap = () => {
 				<div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
 					<h4>Follow the moving pieces</h4>
 					<p className="text-sm text-slate-600 dark:text-slate-300">
-						If you want the freshest signal, watch GitHub Releases and the
-						changelog first. They reflect what has already landed, while this
-						page captures the direction we are actively shaping.
+						For the freshest shipped record, use the{" "}
+						<Link
+							to="/docs/en/changelog"
+							className="font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300"
+						>
+							changelog
+						</Link>
+						. It reflects what has already landed, while this page captures the
+						direction we are actively shaping.
 					</p>
 				</div>
 			</div>

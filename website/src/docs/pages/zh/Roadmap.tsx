@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import DocLayout from "../../layout/DocLayout";
 
 const currentFocus = [
@@ -106,7 +108,14 @@ const Roadmap = () => {
 				<div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
 					<h4>跟踪最新进展</h4>
 					<p className="text-sm text-slate-600 dark:text-slate-300">
-						如果你想看最接近真实落地状态的信号，优先关注 GitHub Releases 与更新日志；那里反映的是已经交付的内容，而本页更多描述的是我们正在塑形的方向。
+						如果你想看最接近真实落地状态的信号，优先查看站内{" "}
+						<Link
+							to="/docs/zh/changelog"
+							className="font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300"
+						>
+							更新日志
+						</Link>
+						；那里反映的是已经交付的内容，而本页更多描述的是我们正在塑形的方向。
 					</p>
 				</div>
 			</div>

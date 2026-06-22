@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import DocLayout from "../../layout/DocLayout";
 
 const currentFocus = [
@@ -106,7 +108,14 @@ const Roadmap = () => {
 				<div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
 					<h4>いちばん新しい動きを追うには</h4>
 					<p className="text-sm text-slate-600 dark:text-slate-300">
-						最も新鮮なシグナルを見たい場合は、まず GitHub Releases と changelog を確認してください。そこにはすでに着地した内容が反映され、このページにはいま形を整えている方向性が反映されます。
+						最も新しい出荷済みの記録を見るには、サイト内の{" "}
+						<Link
+							to="/docs/ja/changelog"
+							className="font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300"
+						>
+							changelog
+						</Link>
+						を確認してください。そこにはすでに着地した内容が反映され、このページにはいま形を整えている方向性が反映されます。
 					</p>
 				</div>
 			</div>
