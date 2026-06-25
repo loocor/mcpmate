@@ -106,6 +106,8 @@ import { useMemo } from "react";
 import { isTauriEnvironmentSync } from "./platform";
 import { fetchCatalogEntryForSource } from "./market/refresh";
 import { useQuery } from "@tanstack/react-query";
+import { handleDemoApiRequest } from "./demo-api";
+import { isBoardDemoMode } from "./demo-mode";
 
 // Base API configuration
 // Prefer VITE_API_BASE_URL; otherwise infer from runtime context with sane fallbacks.
@@ -778,6 +780,10 @@ type FetchApiOptions = RequestInit & {
 
 // Core API request function
 async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
+	if (isBoardDemoMode()) {
+		return handleDemoApiRequest<T>(endpoint, options);
+	}
+
 	const url = resolveApiUrl(endpoint);
 	const { logFailure = true, ...requestOptions } = options ?? {};
 	const headers =
