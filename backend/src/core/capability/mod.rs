@@ -3,6 +3,7 @@
 //! Complete MCP capability management including tools, resources, prompts, and unified query services.
 //! Integrates the former protocol layer for a cohesive capability-centric architecture.
 
+pub mod descriptions;
 pub mod domain;
 pub mod facade;
 pub mod integration;

@@ -51,9 +51,15 @@ import {
 	shouldAppendKeyValueRow,
 } from "../../lib/key-value-fields";
 import { useAppStore } from "../../lib/store";
-import CapabilityList from "../capability-list";
 import type { ClientInfo, SecretOrigin } from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
+import CapabilityList from "../capability-list";
+import { CapabilityToolbar } from "../capability-toolbar";
+import {
+	CapabilityPreviewList,
+	type CapabilityPreviewFlatItem,
+	type CapabilityPreviewKind,
+} from "../capability-preview-list";
 import {
 	InlineSecretCreate,
 	useInlineSecretCreateField,
@@ -67,7 +73,6 @@ import {
 } from "../bulk-selection";
 import CapabilityCombobox from "../capability-combobox";
 import { CachedAvatar } from "../cached-avatar";
-import { CapabilityListSkeleton } from "../capability-list-skeleton";
 import { CardListScrollBody } from "../card-list-scroll-body";
 import {
 	CapsuleStripeList,
@@ -85,7 +90,6 @@ import {
 	DrawerTitle,
 } from "../ui/drawer";
 import { Input } from "../ui/input";
-import { toolbarSearchInputClassName } from "../ui/page-toolbar";
 import { Label } from "../ui/label";
 import { Segment } from "../ui/segment";
 import { Spinner } from "../ui/spinner";
@@ -142,13 +146,59 @@ const STEP_ORDER: WizardStep[] = ["form", "preview", "result"];
 
 type BulkDraftView = "list" | "detail";
 
-type PreviewCapabilityKind = "tools" | "resources" | "prompts" | "templates";
+type ImportPreviewFlatCapabilityItem = CapabilityRecord & {
+	__importCapabilityKind: CapabilityPreviewKind;
+};
+
+type ImportPreviewCapabilityGroup = {
+	items?: unknown[];
+};
+
+type ImportPreviewItem = {
+	name?: unknown;
+	ok?: boolean;
+	error?: unknown;
+	tools?: ImportPreviewCapabilityGroup;
+	resources?: ImportPreviewCapabilityGroup;
+	resource_templates?: ImportPreviewCapabilityGroup;
+	prompts?: ImportPreviewCapabilityGroup;
+};
+
+const IMPORT_PREVIEW_KIND_ORDER: CapabilityPreviewKind[] = [
+	"tools",
+	"resources",
+	"templates",
+	"prompts",
+];
+
+function importPreviewKindDefaultLabel(kind: CapabilityPreviewKind): string {
+	if (kind === "templates") {
+		return "Resource Templates";
+	}
+	return toTitleCase(kind);
+}
 
 function draftEndpointSummary(draft: ServerInstallDraft): string {
 	if (draft.kind === "stdio") {
 		return [draft.command, ...(draft.args ?? [])].filter(Boolean).join(" ");
 	}
 	return draft.url ?? "";
+}
+
+function importPreviewCapabilityItemId(
+	item: ImportPreviewFlatCapabilityItem,
+): string {
+	const record = item as CapabilityRecord;
+	const identifier =
+		record.unique_name ??
+		record.tool_name ??
+		record.prompt_name ??
+		record.resource_uri ??
+		record.uri ??
+		record.uriTemplate ??
+		record.uri_template ??
+		record.name;
+	return `${item.__importCapabilityKind}:${String(identifier ?? "capability")}`;
 }
 
 function draftListAvatar(draft: ServerInstallDraft) {
@@ -168,38 +218,6 @@ function draftListAvatar(draft: ServerInstallDraft) {
 
 function clientHasScannableConfig(client: ClientInfo): boolean {
 	return Boolean(client.detected && client.config_path?.trim());
-}
-
-function fuzzyTextMatches(value: string, query: string): boolean {
-	const haystack = value.toLowerCase();
-	const needle = query.trim().toLowerCase();
-	if (!needle) return true;
-	if (haystack.includes(needle)) return true;
-	const normalizedHaystack = haystack.replace(/[^a-z0-9]+/g, " ");
-	const tokens = needle.split(/[^a-z0-9]+/).filter(Boolean);
-	if (tokens.length && tokens.every((token) => normalizedHaystack.includes(token))) {
-		return true;
-	}
-	const compactHaystack = haystack.replace(/[^a-z0-9]+/g, "");
-	const compactNeedle = needle.replace(/[^a-z0-9]+/g, "");
-	return Boolean(compactNeedle && compactHaystack.includes(compactNeedle));
-}
-
-function capabilityMatchesSearch(item: Record<string, unknown>, query: string): boolean {
-	if (!query.trim()) return true;
-	const fields = [
-		item.name,
-		item.tool_name,
-		item.prompt_name,
-		item.resource_uri,
-		item.uri,
-		item.uriTemplate,
-		item.uri_template,
-		item.description,
-	]
-		.filter((value): value is string => typeof value === "string")
-		.join(" ");
-	return fuzzyTextMatches(fields, query);
 }
 
 interface ServerInstallWizardProps {
@@ -265,6 +283,9 @@ export const ServerInstallWizard = forwardRef(
 		}, [bulkSelection]);
 
 		const [capabilitySearch, setCapabilitySearch] = useState("");
+		const [capabilityKindFilters, setCapabilityKindFilters] = useState<
+			CapabilityPreviewKind[]
+		>([]);
 		const steps = useMemo(
 			() =>
 				STEP_ORDER.map((id) => ({
@@ -1771,7 +1792,7 @@ export const ServerInstallWizard = forwardRef(
 					className={cn(
 						"group relative transition-colors",
 						(bulkSelected || options.isActive) &&
-						"bg-primary/10 ring-1 ring-primary/40",
+							"bg-primary/10 ring-1 ring-slate-200/80 dark:ring-slate-700/60",
 					)}
 					onClick={handleRowActivate}
 					onKeyDown={(event) => {
@@ -2401,16 +2422,19 @@ export const ServerInstallWizard = forwardRef(
 			);
 		};
 
-		// Preview items by name mapping (moved outside render function)
 		const previewItemsByName = useMemo(() => {
-			const map = new Map<string, Record<string, unknown>>();
-			const items = (installPipeline.state.previewState as any)?.data?.items;
+			const map = new Map<string, ImportPreviewItem>();
+			const previewData = installPipeline.state.previewState as
+				| { data?: { items?: unknown[] } }
+				| null;
+			const items = previewData?.data?.items;
 			if (Array.isArray(items)) {
 				for (const entry of items) {
 					if (entry && typeof entry === "object" && "name" in entry) {
-						const name = (entry as { name?: unknown }).name;
+						const previewItem = entry as ImportPreviewItem;
+						const name = previewItem.name;
 						if (typeof name === "string") {
-							map.set(name, entry as Record<string, unknown>);
+							map.set(name, previewItem);
 						}
 					}
 				}
@@ -2430,35 +2454,6 @@ export const ServerInstallWizard = forwardRef(
 			const { state } = installPipeline;
 			const { drafts, previewState, previewError, isPreviewLoading } = state;
 
-			// Capability rendering helper
-			const renderCapabilitySection = (
-				kind: PreviewCapabilityKind,
-				items: Record<string, unknown>[],
-			) => {
-				if (!items.length) return null;
-				const kindLabel = t(`detail.capabilityList.labels.${kind}`, {
-					defaultValue:
-						kind === "templates"
-							? "Resource Templates"
-							: kind.charAt(0).toUpperCase() + kind.slice(1),
-				});
-				return (
-					<div className="space-y-3">
-						<div className="text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">
-							{kindLabel}
-						</div>
-						<CapabilityList
-							asCard={false}
-							kind={kind}
-							context="server"
-							items={items as CapabilityRecord[]}
-							clickToToggleDetails
-						/>
-					</div>
-				);
-			};
-
-			// Helper to convert items to record list
 			const asRecordList = (
 				items: unknown[] | undefined,
 			): Record<string, unknown>[] => {
@@ -2466,6 +2461,71 @@ export const ServerInstallWizard = forwardRef(
 				return items.filter(
 					(item): item is Record<string, unknown> =>
 						item !== null && typeof item === "object",
+				);
+			};
+			const capabilityKindSet = new Set(capabilityKindFilters);
+			const isCapabilityKindVisible = (kind: CapabilityPreviewKind): boolean =>
+				capabilityKindSet.size === 0 || capabilityKindSet.has(kind);
+			const capabilityKindOptions = IMPORT_PREVIEW_KIND_ORDER.map((kind) => ({
+				value: kind,
+				label: t(`detail.filters.kind.${kind}`, {
+					defaultValue: importPreviewKindDefaultLabel(kind),
+				}),
+			}));
+			const allCapabilityKindsLabel = t("detail.filters.kind.all", {
+				defaultValue: "All Types",
+			});
+			let capabilityKindLabel = allCapabilityKindsLabel;
+			if (capabilityKindFilters.length === 1) {
+				capabilityKindLabel =
+					capabilityKindOptions.find(
+						(option) => option.value === capabilityKindFilters[0],
+					)?.label ?? allCapabilityKindsLabel;
+			} else if (capabilityKindFilters.length > 1) {
+				capabilityKindLabel = t("detail.filters.kind.selected", {
+					count: capabilityKindFilters.length,
+					defaultValue: "{{count}} Types",
+				});
+			}
+			const toggleCapabilityKindFilter = (
+				value: string,
+				checked: boolean,
+			) => {
+				setCapabilityKindFilters((current) => {
+					const next = new Set(current);
+					if (checked) {
+						next.add(value as CapabilityPreviewKind);
+					} else {
+						next.delete(value as CapabilityPreviewKind);
+					}
+					return IMPORT_PREVIEW_KIND_ORDER.filter((kind) => next.has(kind));
+				});
+			};
+			const renderImportFlatCapabilityList = (
+				items: CapabilityPreviewFlatItem[],
+			) => {
+				const flatItems: ImportPreviewFlatCapabilityItem[] = items.map(
+					({ kind, item }) => ({
+						...item,
+						__importCapabilityKind: kind,
+					}),
+				);
+
+				return (
+					<CapabilityList<ImportPreviewFlatCapabilityItem>
+						asCard={false}
+						kind="tools"
+						getKind={(item) => item.__importCapabilityKind}
+						context="server"
+						leadingIcon="kind"
+						items={flatItems}
+						clickToToggleDetails
+						scrollContainedBody
+						getId={importPreviewCapabilityItemId}
+						emptyText={t("wizard.preview.emptyCapabilityFilters", {
+							defaultValue: "No capabilities match the selected filters.",
+						})}
+					/>
 				);
 			};
 
@@ -2493,138 +2553,66 @@ export const ServerInstallWizard = forwardRef(
 
 						{(() => {
 							const renderPreviewCard = (draft: ServerInstallDraft) => {
-								const item = previewItemsByName.get(draft.name) as any;
+								const item = previewItemsByName.get(draft.name);
 								const ok = item?.ok !== false;
-								const tools = asRecordList(item?.tools?.items as any);
-								const resources = asRecordList(item?.resources?.items as any);
-								const templates = asRecordList(
-									item?.resource_templates?.items as any,
-								);
-								const prompts = asRecordList(item?.prompts?.items as any);
-								const searchQuery = capabilitySearch.trim();
-								const filteredTools = tools.filter((entry) =>
-									capabilityMatchesSearch(entry, searchQuery),
-								);
-								const filteredResources = resources.filter((entry) =>
-									capabilityMatchesSearch(entry, searchQuery),
-								);
-								const filteredTemplates = templates.filter((entry) =>
-									capabilityMatchesSearch(entry, searchQuery),
-								);
-								const filteredPrompts = prompts.filter((entry) =>
-									capabilityMatchesSearch(entry, searchQuery),
-								);
-								const visibleTools = searchQuery ? filteredTools : tools;
-								const visibleResources = searchQuery
-									? filteredResources
-									: resources;
-								const visibleTemplates = searchQuery
-									? filteredTemplates
-									: templates;
-								const visiblePrompts = searchQuery ? filteredPrompts : prompts;
-								const summaryParts = [] as string[];
-								if (visibleTools.length)
-									summaryParts.push(
-										`${visibleTools.length} ${visibleTools.length === 1 ? t("wizard.preview.capabilities.tool", { defaultValue: "tool" }) : t("wizard.preview.capabilities.tools", { defaultValue: "tools" })}`,
-									);
-								if (visibleResources.length)
-									summaryParts.push(
-										`${visibleResources.length} ${visibleResources.length === 1 ? t("wizard.preview.capabilities.resource", { defaultValue: "resource" }) : t("wizard.preview.capabilities.resources", { defaultValue: "resources" })}`,
-									);
-								if (visibleTemplates.length)
-									summaryParts.push(
-										`${visibleTemplates.length} ${visibleTemplates.length === 1 ? t("wizard.preview.capabilities.template", { defaultValue: "template" }) : t("wizard.preview.capabilities.templates", { defaultValue: "templates" })}`,
-									);
-								if (visiblePrompts.length)
-									summaryParts.push(
-										`${visiblePrompts.length} ${visiblePrompts.length === 1 ? t("wizard.preview.capabilities.prompt", { defaultValue: "prompt" }) : t("wizard.preview.capabilities.prompts", { defaultValue: "prompts" })}`,
-									);
-								const summaryText = summaryParts.join(" · ");
-								const hasCapabilities =
-									tools.length +
-									resources.length +
-									templates.length +
-									prompts.length >
-									0;
-								const capabilitiesHeading = isPreviewLoading
-									? t("wizard.preview.capabilitiesTitle", {
-										defaultValue: "Capabilities",
-									})
-									: summaryText
-										? t("wizard.preview.capabilitiesSummary", {
-											summary: summaryText,
-											defaultValue: "Capabilities · {{summary}}",
-										})
-										: t("wizard.preview.capabilitiesTitle", {
-											defaultValue: "Capabilities",
-										});
+								const tools = asRecordList(item?.tools?.items);
+								const resources = asRecordList(item?.resources?.items);
+								const templates = asRecordList(item?.resource_templates?.items);
+								const prompts = asRecordList(item?.prompts?.items);
 								return (
-									<CardListScrollBody key={draft.name}>
-										<div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-slate-200/80 bg-background/95 px-4 py-3 backdrop-blur-sm dark:border-slate-700/80">
-											<div
-												className="min-w-0 truncate font-medium text-sm"
-												title={capabilitiesHeading}
-											>
-												{capabilitiesHeading}
-											</div>
-											<div className="shrink-0">
-												<Input
-													type="search"
-													value={capabilitySearch}
-													onChange={(event) =>
-														setCapabilitySearch(event.target.value)
-													}
-													placeholder={t("wizard.preview.filterCapabilities", {
-														defaultValue: "Filter capabilities...",
-													})}
-													className={cn(toolbarSearchInputClassName, "h-8 w-48")}
-												/>
-											</div>
+									<div
+										key={draft.name}
+										className="flex min-h-0 flex-1 flex-col overflow-hidden"
+									>
+										<div className="shrink-0 pb-3">
+											<CapabilityToolbar
+												searchValue={capabilitySearch}
+												onSearchChange={setCapabilitySearch}
+												searchPlaceholder={t(
+													"wizard.preview.filterCapabilities",
+													{ defaultValue: "Filter capabilities..." },
+												)}
+												kindFilter={{
+													label: capabilityKindLabel,
+													allLabel: allCapabilityKindsLabel,
+													options: capabilityKindOptions,
+													selectedValues: capabilityKindFilters,
+													onClear: () => setCapabilityKindFilters([]),
+													onToggle: toggleCapabilityKindFilter,
+												}}
+												containedFocus
+											/>
 										</div>
-
-										{isPreviewLoading ? (
-											<CapabilityListSkeleton showSectionLabel />
-										) : !ok && item?.error ? (
-											<div className="overflow-hidden break-words px-4 py-3 text-xs text-red-500">
-												{String(item.error)}
-											</div>
-										) : !item ? (
-											<div className="px-4 py-3 text-xs text-slate-500">
-												{t("wizard.preview.selectServerHint", {
-													defaultValue:
-														"Select this server from the list to generate its capability preview.",
-												})}
-											</div>
-										) : !hasCapabilities ? (
-											<div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-												{t("wizard.preview.emptyCapabilities", {
-													defaultValue:
-														"No capabilities discovered for this server.",
-												})}
-											</div>
-										) : searchQuery &&
-											visibleTools.length +
-											visibleResources.length +
-											visibleTemplates.length +
-											visiblePrompts.length ===
-											0 ? (
-											<div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-												{t("wizard.preview.emptyCapabilitySearch", {
-													defaultValue:
-														"No capabilities match this search.",
-												})}
-											</div>
-										) : (
-											<div className="p-3">
-												<div className="space-y-5">
-													{renderCapabilitySection("tools", visibleTools)}
-													{renderCapabilitySection("resources", visibleResources)}
-													{renderCapabilitySection("templates", visibleTemplates)}
-													{renderCapabilitySection("prompts", visiblePrompts)}
-												</div>
-											</div>
-										)}
-									</CardListScrollBody>
+										<CapabilityPreviewList
+											className="min-h-0 flex-1"
+											contentClassName="flex min-h-0 flex-1 flex-col p-0"
+											framed={false}
+											showHeader={false}
+											tools={isCapabilityKindVisible("tools") ? tools : []}
+											resources={
+												isCapabilityKindVisible("resources") ? resources : []
+											}
+											templates={
+												isCapabilityKindVisible("templates") ? templates : []
+											}
+											prompts={
+												isCapabilityKindVisible("prompts") ? prompts : []
+											}
+											hasSource={Boolean(item)}
+											isLoading={isPreviewLoading}
+											error={!ok && item?.error ? String(item.error) : null}
+											searchValue={capabilitySearch}
+											emptyText={
+												capabilityKindFilters.length
+													? t("wizard.preview.emptyCapabilityFilters", {
+															defaultValue:
+																"No capabilities match the selected filters.",
+														})
+													: undefined
+											}
+											renderFlatList={renderImportFlatCapabilityList}
+										/>
+									</div>
 								);
 							};
 
@@ -2694,7 +2682,6 @@ export const ServerInstallWizard = forwardRef(
 				dryRunResult,
 				isDryRunLoading,
 				dryRunError,
-				dryRunWarning,
 				dryRunStats,
 				selectedDraftNames,
 			} = state;
@@ -2925,11 +2912,6 @@ export const ServerInstallWizard = forwardRef(
 									return (
 										<div className="flex flex-col gap-20">
 											<div className="space-y-3">
-												{dryRunWarning && !dryRunError ? (
-													<p className="text-sm text-amber-700 dark:text-amber-300">
-														{dryRunWarning}
-													</p>
-												) : null}
 												{hasPerServerBreakdown && showValidationSummary ? (
 													<ImportValidationSummary
 														items={validationItems}
@@ -3236,13 +3218,11 @@ export const ServerInstallWizard = forwardRef(
 														}
 													}}
 												>
-													<RefreshCw
-														className={cn(
-															"h-4 w-4",
-															installPipeline.state.isPreviewLoading &&
-															"animate-spin",
-														)}
-													/>
+													{installPipeline.state.isPreviewLoading ? (
+														<Loader2 className="h-4 w-4 motion-safe:animate-spin" />
+													) : (
+														<RefreshCw className="h-4 w-4" />
+													)}
 												</Button>
 											</TooltipTrigger>
 											<TooltipContent side="bottom" align="end" className="max-w-xs">

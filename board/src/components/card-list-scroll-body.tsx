@@ -5,6 +5,8 @@ import { cn } from "../lib/utils";
 type CardListScrollBodyProps = {
 	children: ReactNode;
 	className?: string;
+	/** Disable scrolling while loading placeholders are shown. */
+	scrollLocked?: boolean;
 };
 
 const SCROLL_SHADE_HIDE_MS = 280;
@@ -14,7 +16,7 @@ const frameClass =
 	"relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-slate-200/80 bg-clip-padding dark:border-slate-700/80";
 
 const scrollClass =
-	"relative z-0 min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain";
+	"relative z-0 min-h-0 flex-1 overflow-x-hidden overscroll-contain";
 
 const insetShadeBaseClass =
 	"pointer-events-none absolute inset-0 z-[1] rounded-[10px] transition-[opacity,box-shadow] duration-200 ease-out";
@@ -29,7 +31,11 @@ const insetShadeIdleClass = "opacity-0 shadow-none";
  * Scrolls children in a pane with full corner radius and border aligned to list content (`CapsuleStripeList`).
  * Inset shade appears only while the user is scrolling (and briefly after), so the panel stays flat at rest.
  */
-export function CardListScrollBody({ children, className }: CardListScrollBodyProps) {
+export function CardListScrollBody({
+	children,
+	className,
+	scrollLocked = false,
+}: CardListScrollBodyProps) {
 	const [shadeFromScroll, setShadeFromScroll] = useState(false);
 	const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -54,7 +60,13 @@ export function CardListScrollBody({ children, className }: CardListScrollBodyPr
 	return (
 		<div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", className)}>
 			<div className={frameClass}>
-				<div className={scrollClass} onScroll={handleScroll}>
+				<div
+					className={cn(
+						scrollClass,
+						scrollLocked ? "overflow-hidden" : "overflow-y-auto",
+					)}
+					onScroll={scrollLocked ? undefined : handleScroll}
+				>
 					{children}
 				</div>
 				<div

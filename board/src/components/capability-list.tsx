@@ -5,9 +5,17 @@ import {
 	Wrench,
 	type LucideIcon,
 } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, useMemo, useState } from "react";
+import {
+	type KeyboardEvent,
+	type MouseEvent,
+	type ReactNode,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../lib/store";
+import { cn } from "../lib/utils";
 import { BulkSelectionCheckbox } from "./bulk-selection";
 import type {
 	CapabilityArgument,
@@ -23,7 +31,6 @@ import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
 } from "./capsule-stripe-list";
-import { CapsuleStripeRowBody } from "./capsule-stripe-row";
 import {
 	CAPABILITY_SCROLL_CARD_CLASS,
 	CapabilityScrollCardContent,
@@ -31,14 +38,22 @@ import {
 import { Card, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
+import {
+	TooltipProvider,
+} from "./ui/tooltip";
 import { SchemaTable } from "./schema-table";
+import { TruncatedText } from "./truncated-text";
 import {
 	CAPABILITY_DETAILS_CLASS,
 	CAPABILITY_SUMMARY_CLASS,
 } from "./capability-disclosure-classes";
 
-type CapabilityKind = "tools" | "resources" | "prompts" | "templates";
+export type CapabilityKind = "tools" | "resources" | "prompts" | "templates";
 type ContextType = "server" | "profile";
+type CapabilityDetailsLoader<T> = (
+	item: T,
+	kind: CapabilityKind,
+) => Promise<CapabilityRecord | null | undefined>;
 
 const CAPABILITY_KIND_ICONS: Record<CapabilityKind, LucideIcon> = {
 	tools: Wrench,
@@ -50,6 +65,7 @@ const CAPABILITY_KIND_ICONS: Record<CapabilityKind, LucideIcon> = {
 export interface CapabilityListProps<T = CapabilityRecord> {
 	title?: string;
 	kind: CapabilityKind;
+	getKind?: (item: T) => CapabilityKind;
 	context?: ContextType;
 	items: T[];
 	loading?: boolean;
@@ -64,6 +80,7 @@ export interface CapabilityListProps<T = CapabilityRecord> {
 	selectedIds?: string[];
 	onSelectToggle?: (id: string, item: T) => void;
 	asCard?: boolean;
+	leadingIcon?: "source" | "kind";
 	/** Dense spacing between list items (space-y-2). */
 	dense?: boolean;
 	/** Render using CapsuleStripeList visual style. */
@@ -72,7 +89,10 @@ export interface CapabilityListProps<T = CapabilityRecord> {
 	hoverActions?: boolean;
 	/** Clicking an item toggles the details block (if present). */
 	clickToToggleDetails?: boolean;
+	loadDetails?: CapabilityDetailsLoader<T>;
+	detailsCacheScope?: string | number | null;
 	renderAction?: (mapped: CapabilityMapItem<T>, item: T) => ReactNode;
+	scrollBodyClassName?: string;
 	/**
 	 * When `asCard` is false and the list sits in a flex `Card` body, scroll inside this component so
 	 * the host card keeps rounded corners (see `CardListScrollBody`).
@@ -241,11 +261,12 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 	// Templates: show concise row like other capabilities, with server only
 	const uriTemplate = asString(record.uriTemplate) ?? asString(record.uri_template);
 	const title = uriTemplate || asString(record.name) || "Template";
+	const description = normalizeMultiline(asString(record.description));
 	return {
 		title,
 		subtitle: undefined,
 		server: asString(record.server_name),
-		description: undefined,
+		description,
 		raw: item,
 		icon: extractIconSrc(record),
 	};
@@ -266,9 +287,36 @@ function matchText<T>(obj: CapabilityMapItem<T>, needle: string): boolean {
 	}
 }
 
+const INTERACTIVE_TARGET_SELECTOR =
+	"button, a, input, textarea, select, [role=button]";
+
+function hasActiveTextSelection(): boolean {
+	const selection = typeof window !== "undefined" ? window.getSelection() : null;
+	return Boolean(selection?.toString().trim());
+}
+
+function isNestedInteractiveTarget(
+	target: HTMLElement | null,
+	boundary: HTMLElement,
+): boolean {
+	let current: HTMLElement | null = target;
+	while (current && current !== boundary) {
+		if (current.matches?.(INTERACTIVE_TARGET_SELECTOR)) {
+			return true;
+		}
+		current = current.parentElement;
+	}
+	return false;
+}
+
+function isDetailsTarget(target: HTMLElement): boolean {
+	return Boolean(target.closest("summary") || target.closest("details"));
+}
+
 export function CapabilityList<T = CapabilityRecord>({
 	title,
 	kind,
+	getKind,
 	context = "server",
 	items,
 	loading,
@@ -283,15 +331,22 @@ export function CapabilityList<T = CapabilityRecord>({
 	selectedIds,
 	onSelectToggle,
 	asCard,
+	leadingIcon = "source",
 	dense,
 	capsule,
 	hoverActions,
 	clickToToggleDetails,
+	loadDetails,
+	detailsCacheScope,
 	renderAction,
+	scrollBodyClassName,
 	scrollContainedBody,
 }: CapabilityListProps<T>) {
 	const [internalFilter, setInternalFilter] = useState("");
 	const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+	const [lazyDetailsById, setLazyDetailsById] = useState<Record<string, CapabilityRecord | null>>({});
+	const [lazyDetailsLoadingById, setLazyDetailsLoadingById] = useState<Record<string, boolean>>({});
+	const [lazyDetailsErrorById, setLazyDetailsErrorById] = useState<Record<string, string | null>>({});
 	const search = filterText ?? internalFilter;
 	const showRawJson = useAppStore(
 		(state) => state.dashboardSettings.showRawCapabilityJson,
@@ -299,15 +354,30 @@ export function CapabilityList<T = CapabilityRecord>({
 	const { t } = useTranslation();
 
 	const useCapsule = capsule ?? (context === "server");
+	const shouldClickToToggleDetails = clickToToggleDetails ?? true;
+
+	useEffect(() => {
+		setOpenMap({});
+		setLazyDetailsById({});
+		setLazyDetailsLoadingById({});
+		setLazyDetailsErrorById({});
+	}, [detailsCacheScope]);
 
 	const mappedItems = useMemo(
-		() => (items || []).map((it) => mapItem(kind, it)),
-		[items, kind],
+		() =>
+			(items || []).map((it) => {
+				const itemKind = getKind ? getKind(it) : kind;
+				return {
+					kind: itemKind,
+					mapped: mapItem(itemKind, it),
+				};
+			}),
+		[items, kind, getKind],
 	);
 	const data = useMemo(
 		() => mappedItems
-			.filter((m) => matchText(m, search))
-			.sort((a, b) => a.title.localeCompare(b.title)),
+			.filter(({ mapped }) => matchText(mapped, search))
+			.sort((a, b) => a.mapped.title.localeCompare(b.mapped.title)),
 		[mappedItems, search],
 	);
 	const selectedIdSet = useMemo(
@@ -319,6 +389,7 @@ export function CapabilityList<T = CapabilityRecord>({
 	const skeleton = useStripeSkeleton ? (
 		<CapabilityListSkeleton
 			className={scrollContainedBody ? "p-0" : undefined}
+			fillContainer={scrollContainedBody}
 		/>
 	) : (
 		<div className="space-y-2">
@@ -331,11 +402,48 @@ export function CapabilityList<T = CapabilityRecord>({
 		</div>
 	);
 
-	const renderedItems = data.map((mapped, idx) => {
+	const renderedItems = data.map(({ kind: itemKind, mapped }, idx) => {
 		const item = mapped.raw;
 		const id = getId ? getId(item) : String(idx);
 		const isSelected = !!(selectable && selectedIdSet?.has(id));
 		const isEnabled = getEnabled ? !!getEnabled(item) : undefined;
+		const hasLazyDetails = Object.prototype.hasOwnProperty.call(
+			lazyDetailsById,
+			id,
+		);
+		const lazyDetails = lazyDetailsById[id];
+		const lazyDetailsLoading = !!lazyDetailsLoadingById[id];
+		const lazyDetailsError = lazyDetailsErrorById[id];
+		const mergedDetailsRecord = lazyDetails
+			? ({
+				...(toCapabilityRecord(item) ?? {}),
+				...lazyDetails,
+			} as CapabilityRecord)
+			: null;
+		const detailsMapped = mergedDetailsRecord
+			? mapItem(itemKind, mergedDetailsRecord as T)
+			: mapped;
+
+		const ensureLazyDetails = () => {
+			if (!loadDetails || hasLazyDetails || lazyDetailsLoading) {
+				return;
+			}
+			setLazyDetailsLoadingById((prev) => ({ ...prev, [id]: true }));
+			setLazyDetailsErrorById((prev) => ({ ...prev, [id]: null }));
+			void loadDetails(item, itemKind)
+				.then((details) => {
+					setLazyDetailsById((prev) => ({ ...prev, [id]: details ?? null }));
+				})
+				.catch((error: unknown) => {
+					setLazyDetailsErrorById((prev) => ({
+						...prev,
+						[id]: error instanceof Error ? error.message : String(error),
+					}));
+				})
+				.finally(() => {
+					setLazyDetailsLoadingById((prev) => ({ ...prev, [id]: false }));
+				});
+		};
 
 		const handleSelect = () => {
 			if (selectable && onSelectToggle) onSelectToggle(id, item);
@@ -349,54 +457,85 @@ export function CapabilityList<T = CapabilityRecord>({
 			}
 		};
 
-		const schemaEntries = mapped.schema?.properties
-			? Object.entries(mapped.schema.properties)
+		const schemaEntries = detailsMapped.schema?.properties
+			? Object.entries(detailsMapped.schema.properties)
 			: [];
-		const outputSchemaEntries = mapped.outputSchema?.properties
-			? Object.entries(mapped.outputSchema.properties)
+		const outputSchemaEntries = detailsMapped.outputSchema?.properties
+			? Object.entries(detailsMapped.outputSchema.properties)
 			: [];
-		const hasArgs = Boolean(mapped.args?.length);
+		const hasArgs = Boolean(detailsMapped.args?.length);
 		const hasSchema = schemaEntries.length > 0;
 		const hasOutSchema = outputSchemaEntries.length > 0;
-		const hasRaw = showRawJson && mapped.raw != null;
-		const hasDetails = hasArgs || hasSchema || hasOutSchema || hasRaw;
+		const hasRaw = showRawJson && detailsMapped.raw != null;
+		const hasLoadedDetails = hasArgs || hasSchema || hasOutSchema || hasRaw;
+		const hasDetails = hasLoadedDetails || Boolean(loadDetails);
+		const isBulkSelectionMode = !!(selectable && onSelectToggle);
 
-		const isInteractiveTarget = (el: HTMLElement | null): boolean => {
-			if (!el) return false;
-			const selector = "button, a, input, textarea, select, [role=button]";
-			let cur: HTMLElement | null = el;
-			while (cur && cur !== (document.body as HTMLElement)) {
-				if (cur.matches?.(selector)) return true;
-				cur = cur.parentElement as HTMLElement | null;
+		const toggleDetails = () => {
+			if (!shouldClickToToggleDetails || !hasDetails) return;
+			const nextOpen = !openMap[id];
+			setOpenMap((prev) => ({ ...prev, [id]: nextOpen }));
+			if (nextOpen) {
+				ensureLazyDetails();
 			}
-			return false;
 		};
+
+		const handleItemClick = (e: MouseEvent<HTMLElement>) => {
+			const target = e.target as HTMLElement;
+			if (hasActiveTextSelection()) return;
+			if (isNestedInteractiveTarget(target, e.currentTarget)) return;
+			if (isDetailsTarget(target)) return;
+			if (isBulkSelectionMode) {
+				handleSelect();
+				return;
+			}
+			if (!shouldClickToToggleDetails || !hasDetails) return;
+			toggleDetails();
+		};
+
+		const handleDetailsKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+			const target = e.target as HTMLElement;
+			if (isNestedInteractiveTarget(target, e.currentTarget)) return;
+			if (isBulkSelectionMode) {
+				handleKeyDown(e);
+				return;
+			}
+			if (!shouldClickToToggleDetails || !hasDetails) return;
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				toggleDetails();
+			}
+		};
+		const isRowInteractive = hasDetails || isBulkSelectionMode;
 
 		const titleClasses =
 			context === "profile" && isSelected
 				? "font-medium text-primary"
 				: "font-medium";
 
-		const KindIcon = CAPABILITY_KIND_ICONS[kind];
+		const KindIcon = CAPABILITY_KIND_ICONS[itemKind];
 		const leadingNode =
-			context === "server" ? (
+			context === "server" || leadingIcon === "kind" ? (
 				<KindIcon
-					className="mt-0.5 h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400"
+					className={cn(
+						"h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400",
+						onSelectToggle == null && "mt-0.5",
+					)}
 					aria-hidden
 				/>
 			) : (
 				<CachedAvatar
 					src={mapped.icon}
-					fallback={mapped.title || kind}
+					fallback={mapped.title || itemKind}
 					size="sm"
 					className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
 				/>
 			);
 
 		const descriptionBlock = mapped.description ? (
-			<div className="mt-1 whitespace-pre-wrap break-words text-xs text-slate-600 dark:text-slate-300">
+			<TruncatedText className="mt-1 text-xs text-slate-600 dark:text-slate-300">
 				{mapped.description}
-			</div>
+			</TruncatedText>
 		) : null;
 
 		const detailsBlock = hasDetails ? (
@@ -406,6 +545,9 @@ export function CapabilityList<T = CapabilityRecord>({
 				onToggle={(e) => {
 					const isOpen = (e.currentTarget as HTMLDetailsElement).open;
 					setOpenMap((prev) => ({ ...prev, [id]: isOpen }));
+					if (isOpen) {
+						ensureLazyDetails();
+					}
 				}}
 			>
 				<summary className={CAPABILITY_SUMMARY_CLASS}>
@@ -437,7 +579,7 @@ export function CapabilityList<T = CapabilityRecord>({
 									</tr>
 								</thead>
 								<tbody>
-									{mapped.args?.map((arg, argIdx) => (
+									{detailsMapped.args?.map((arg, argIdx) => (
 										<tr key={`${arg.name ?? `arg_${argIdx}`}-${argIdx}`}>
 											<td className="border-b py-1 pr-2 font-mono">
 												{arg.name ?? `arg_${argIdx}`}
@@ -468,7 +610,7 @@ export function CapabilityList<T = CapabilityRecord>({
 									defaultValue: "Input Schema",
 								})}
 							</div>
-							<SchemaTable schema={mapped.schema as JsonSchema} />
+							<SchemaTable schema={detailsMapped.schema as JsonSchema} />
 						</div>
 					) : null}
 
@@ -479,20 +621,56 @@ export function CapabilityList<T = CapabilityRecord>({
 									defaultValue: "Output Schema",
 								})}
 							</div>
-							<SchemaTable schema={mapped.outputSchema as JsonSchema} />
+							<SchemaTable schema={detailsMapped.outputSchema as JsonSchema} />
 						</div>
 					) : null}
 
 					{hasRaw ? (
-						<JsonCodeBlock code={JSON.stringify(mapped.raw, null, 2)} />
+						<JsonCodeBlock code={JSON.stringify(detailsMapped.raw, null, 2)} />
+					) : null}
+					{lazyDetailsLoading ? (
+						<div className="text-xs text-slate-500 dark:text-slate-400">
+							{t("servers:capabilityList.loadingDetails", {
+								defaultValue: "Loading details...",
+							})}
+						</div>
+					) : null}
+					{lazyDetailsError ? (
+						<div className="text-xs text-red-600 dark:text-red-400">
+							{t("servers:capabilityList.detailsLoadFailed", {
+								defaultValue: "Failed to load details.",
+							})}{" "}
+							{lazyDetailsError}
+						</div>
+					) : null}
+					{loadDetails &&
+					hasLazyDetails &&
+					!lazyDetails &&
+					!lazyDetailsLoading &&
+					!hasLoadedDetails ? (
+						<div className="text-xs text-slate-500 dark:text-slate-400">
+							{t("servers:capabilityList.noDetails", {
+								defaultValue: "No additional details available.",
+							})}
+						</div>
 					) : null}
 				</div>
 			</details>
 		) : null;
 
 		const infoBlock = (
-			<div className="min-w-0 flex-1 select-text">
-				<div className={titleClasses}>
+			<div className="min-w-0 flex-1 overflow-hidden select-text">
+				<div
+					className={titleClasses}
+					title={
+						mapped.server
+							? t("profiles:detail.labels.capabilityServerTooltip", {
+								server: mapped.server,
+								defaultValue: "Server: {{server}}",
+							})
+							: undefined
+					}
+				>
 					{mapped.title}
 					{mapped.subtitle ? (
 						<span className="ml-2 text-xs text-slate-500">
@@ -503,22 +681,42 @@ export function CapabilityList<T = CapabilityRecord>({
 				{mapped.mime ? (
 					<div className="text-sm text-slate-500">Mime: {mapped.mime}</div>
 				) : null}
-				{mapped.server ? (
-					<div className="text-sm text-slate-500">Server: {mapped.server}</div>
-				) : null}
 				{descriptionBlock}
 				{detailsBlock}
 			</div>
 		);
 
+		const selectionNode = onSelectToggle ? (
+			<BulkSelectionCheckbox
+				visible={!!selectable}
+				checked={isSelected}
+				onToggle={handleSelect}
+				ariaLabel={t("profiles:detail.bulk.selectItem", {
+					name: mapped.title,
+					defaultValue: "Select {{name}}",
+				})}
+			/>
+		) : null;
+
+		const leadGroup =
+			onSelectToggle != null ? (
+				<div
+					className={`flex shrink-0 items-center ${selectable ? "gap-3" : "gap-0"}`}
+				>
+					{selectionNode}
+					{leadingNode}
+				</div>
+			) : (
+				leadingNode
+			);
+
 		const leftSection = (
-			<div className={`flex flex-1 gap-3 ${context === "profile" ? "items-center" : "items-start"}`}>
-				{leadingNode}
+			<div className="flex min-w-0 flex-1 items-start gap-3">
+				{leadGroup}
 				{infoBlock}
 			</div>
 		);
 
-		// Build actions node - always show switch for profile context
 		const actions = (
 			<>
 				{context === "profile" && enableToggle && getEnabled && onToggle ? (
@@ -546,39 +744,30 @@ export function CapabilityList<T = CapabilityRecord>({
 		);
 
 		const actionSection = (
-			<div className={`ml-auto flex items-start gap-2 ${hoverActions ? "opacity-0 group-hover:opacity-100 transition-opacity" : ""
-				}`}>{actions}</div>
+			<div
+				className={`ml-auto flex items-start gap-2 ${hoverActions ? "opacity-0 group-hover:opacity-100 transition-opacity" : ""
+					}`}
+			>
+				{actions}
+			</div>
 		);
 
 		if (context === "profile") {
 			return (
 				<CapsuleStripeListItem
 					key={id}
-					interactive={!!selectable}
-					className={`group relative px-3 transition-colors ${isSelected ? "bg-primary/10 ring-1 ring-primary/40" : ""
+					interactive={isRowInteractive}
+					className={`group relative px-3 transition-colors ${isSelected
+						? "bg-primary/10 ring-1 ring-slate-200/80 dark:ring-slate-700/60"
+						: ""
 						}`}
-					onClick={selectable ? handleSelect : undefined}
-					onKeyDown={selectable ? handleKeyDown : undefined}
+					onClick={handleItemClick}
+					onKeyDown={handleDetailsKeyDown}
 				>
-					<CapsuleStripeRowBody
-						lead={
-							<div className={`flex items-center ${selectable ? "gap-3" : "gap-0"}`}>
-								<BulkSelectionCheckbox
-									visible={!!selectable}
-									checked={isSelected}
-									onToggle={handleSelect}
-									ariaLabel={t("profiles:detail.bulk.selectItem", {
-										name: mapped.title,
-										defaultValue: "Select {{name}}",
-									})}
-								/>
-								{leadingNode}
-							</div>
-						}
-						trailing={actions}
-					>
-						{infoBlock}
-					</CapsuleStripeRowBody>
+					<div className="flex w-full min-w-0 items-start justify-between gap-3 overflow-hidden">
+						{leftSection}
+						{actionSection}
+					</div>
 				</CapsuleStripeListItem>
 			);
 		}
@@ -587,34 +776,12 @@ export function CapabilityList<T = CapabilityRecord>({
 			return (
 				<CapsuleStripeListItem
 					key={id}
-					interactive={false}
+					interactive={isRowInteractive}
 					className="group"
-					onClick={(e) => {
-						if (!clickToToggleDetails) return;
-						const sel = typeof window !== "undefined" ? window.getSelection()?.toString() : "";
-						if (sel && sel.trim().length > 0) return;
-						if (isInteractiveTarget(e.target as HTMLElement)) return;
-						const tgt = e.target as HTMLElement;
-						if (tgt.closest('summary') || tgt.closest('details')) return;
-						const detailsEl = (e.currentTarget as HTMLElement).querySelector("details") as HTMLDetailsElement | null;
-						if (detailsEl) {
-							detailsEl.open = !detailsEl.open;
-							setOpenMap((prev) => ({ ...prev, [id]: detailsEl.open }));
-						}
-					}}
-					onKeyDown={(e) => {
-						if (!clickToToggleDetails) return;
-						if (e.key === "Enter" || e.key === " ") {
-							e.preventDefault();
-							const detailsEl = (e.currentTarget as HTMLElement).querySelector("details") as HTMLDetailsElement | null;
-							if (detailsEl) {
-								detailsEl.open = !detailsEl.open;
-								setOpenMap((prev) => ({ ...prev, [id]: detailsEl.open }));
-							}
-						}
-					}}
+					onClick={handleItemClick}
+					onKeyDown={handleDetailsKeyDown}
 				>
-					<div className="flex w-full items-start justify-between gap-3">
+					<div className="flex w-full min-w-0 items-start justify-between gap-3 overflow-hidden">
 						{leftSection}
 						{actionSection}
 					</div>
@@ -625,11 +792,11 @@ export function CapabilityList<T = CapabilityRecord>({
 		return (
 			<li
 				key={id}
-				className={`rounded border p-3 ${isSelected ? "bg-accent/50 ring-1 ring-primary/40" : ""}`}
-				role={selectable ? "button" : undefined}
-				tabIndex={selectable ? 0 : undefined}
-				onClick={handleSelect}
-				onKeyDown={handleKeyDown}
+				className={`rounded border p-3 ${isSelected ? "bg-accent/50 ring-1 ring-slate-200/80 dark:ring-slate-700/60" : ""}`}
+				role={isRowInteractive ? "button" : undefined}
+				tabIndex={isRowInteractive ? 0 : undefined}
+				onClick={handleItemClick}
+				onKeyDown={handleDetailsKeyDown}
 			>
 				<div className="flex items-start justify-between gap-3">
 					{leftSection}
@@ -639,22 +806,27 @@ export function CapabilityList<T = CapabilityRecord>({
 		);
 	});
 
-	const listContent =
-		context === "profile" || useCapsule ? (
-			<CapsuleStripeList
-				className={
-					scrollContainedBody
-						? "rounded-none border-0 overflow-visible"
-						: undefined
-				}
-			>
-				{renderedItems}
-			</CapsuleStripeList>
-		) : (
-			<ul className={`${dense || asCard === false ? "space-y-2" : "space-y-4"} text-sm`}>
-				{renderedItems}
-			</ul>
-		);
+	const listContent = (
+		<TooltipProvider delayDuration={200} disableHoverableContent={false}>
+			{context === "profile" || useCapsule ? (
+				<CapsuleStripeList
+					className={
+						scrollContainedBody
+							? "rounded-none border-0 overflow-visible"
+							: undefined
+					}
+				>
+					{renderedItems}
+				</CapsuleStripeList>
+			) : (
+				<ul
+					className={`${dense || asCard === false ? "space-y-2" : "space-y-4"} text-sm`}
+				>
+					{renderedItems}
+				</ul>
+			)}
+		</TooltipProvider>
+	);
 
 	const isEmpty = !loading && renderedItems.length === 0;
 
@@ -663,7 +835,9 @@ export function CapabilityList<T = CapabilityRecord>({
 			className={
 				isEmpty
 					? "flex min-h-full w-full flex-col items-center justify-center px-4 py-8 text-center"
-					: undefined
+					: loading && scrollContainedBody
+						? "min-h-full"
+						: undefined
 			}
 		>
 			{loading ? (
@@ -683,7 +857,14 @@ export function CapabilityList<T = CapabilityRecord>({
 
 	if (asCard === false) {
 		if (scrollContainedBody) {
-			return <CardListScrollBody>{list}</CardListScrollBody>;
+			return (
+				<CardListScrollBody
+					className={scrollBodyClassName}
+					scrollLocked={loading}
+				>
+					{list}
+				</CardListScrollBody>
+			);
 		}
 		return list;
 	}
@@ -699,7 +880,12 @@ export function CapabilityList<T = CapabilityRecord>({
 	});
 
 	const body = scrollContainedBody ? (
-		<CardListScrollBody>{list}</CardListScrollBody>
+		<CardListScrollBody
+			className={scrollBodyClassName}
+			scrollLocked={loading}
+		>
+			{list}
+		</CardListScrollBody>
 	) : (
 		list
 	);
