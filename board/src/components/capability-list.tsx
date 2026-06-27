@@ -494,6 +494,8 @@ export function CapabilityList<T = CapabilityRecord>({
 		};
 
 		const handleDetailsKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+			const target = e.target as HTMLElement;
+			if (isNestedInteractiveTarget(target, e.currentTarget)) return;
 			if (isBulkSelectionMode) {
 				handleKeyDown(e);
 				return;

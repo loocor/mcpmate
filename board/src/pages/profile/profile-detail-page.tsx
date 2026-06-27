@@ -184,7 +184,7 @@ const splitCapabilityKey = (
 };
 
 export function ProfileDetailPage() {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	usePageTranslations("profiles");
 	const { profileId } = useParams<{ profileId: string }>();
 	const [searchParams] = useSearchParams();
@@ -1151,7 +1151,7 @@ export function ProfileDetailPage() {
 			count: capabilityServerFilters.length,
 			defaultValue: "{{count}} Servers",
 		});
-	}, [capabilityServerFilters, t, visibleServers]);
+	}, [capabilityServerFilters, i18n.language, t, visibleServers]);
 
 	const capabilityKindFilterLabel = useMemo(() => {
 		if (capabilityKindFilters.length === 0) {
@@ -1180,7 +1180,7 @@ export function ProfileDetailPage() {
 			count: capabilityKindFilters.length,
 			defaultValue: "{{count}} Types",
 		});
-	}, [capabilityKindFilters, t]);
+	}, [capabilityKindFilters, i18n.language, t]);
 
 	const capabilityStatusLabel = useMemo(() => {
 		if (capabilityStatus === "enabled") {
@@ -1196,7 +1196,7 @@ export function ProfileDetailPage() {
 		return t("profiles:detail.filters.status.all", {
 			defaultValue: "All",
 		});
-	}, [capabilityStatus, t]);
+	}, [capabilityStatus, i18n.language, t]);
 
 	const serverStatusLabel = useMemo(() => {
 		if (serverStatus === "enabled") {
@@ -1212,7 +1212,7 @@ export function ProfileDetailPage() {
 		return t("profiles:detail.filters.status.all", {
 			defaultValue: "All",
 		});
-	}, [serverStatus, t]);
+	}, [i18n.language, serverStatus, t]);
 
 	const toggleCapabilityServerFilter = useCallback(
 		(serverId: string, checked: boolean) => {
