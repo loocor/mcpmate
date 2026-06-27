@@ -1,31 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	AlertTriangle,
-	Bug,
-	Copy,
 	Edit3,
-	Eye,
 	Loader2,
 	Play,
 	Power,
 	PowerOff,
 	RefreshCw,
-	ShieldAlert,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
+import { CapabilityToolbar } from "../../components/capability-toolbar";
+import {
+	CapabilityPreviewList,
+	type CapabilityPreviewFlatItem,
+	type CapabilityPreviewKind,
+} from "../../components/capability-preview-list";
 import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
-import InspectorDrawer, {
-	type InspectorLogEntry,
-} from "../../components/inspector-drawer";
+import InspectorDrawer from "../../components/inspector-drawer";
 import { ServerAuthBadge } from "../../components/server-auth-badge";
 import {
 	getOAuthReadinessActionTarget,
@@ -54,8 +53,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../../components/ui/card";
-import { JsonCodeBlock } from "../../components/json-code-block";
-import { Input } from "../../components/ui/input";
 import {
 	Tabs,
 	TabsContent,
@@ -64,20 +61,14 @@ import {
 } from "../../components/ui/tabs";
 import {
 	auditApi,
-	configSuitsApi,
-	inspectorApi,
-	isInspectorSessionUnavailableError,
 	serversApi,
 } from "../../lib/api";
-import { smartFormat } from "../../lib/format";
-import { writeClipboardText } from "../../lib/clipboard";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import type {
-	InspectorSessionOpenData,
 	ServerCapabilitySummary,
 	ServerDetail,
 } from "../../lib/types";
@@ -111,85 +102,128 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
 }
 
-interface InspectorListResponse {
-	success?: boolean;
-	data?: {
-		tools?: CapabilityRecord[];
-		resources?: CapabilityRecord[];
-		prompts?: CapabilityRecord[];
-		templates?: CapabilityRecord[];
-		items?: CapabilityRecord[];
-		meta?: unknown;
-		state?: string;
-	} | null;
-	error?: unknown;
-}
-
-interface InspectorListParams {
-	server_id: string;
-	server_name?: string;
-	session_id?: string;
-	mode: InspectorChannel;
-	refresh: boolean;
-}
-
 interface CapabilityListResponse {
 	items: CapabilityRecord[];
 	meta?: unknown;
 	state?: string;
 }
 
-const VIEW_MODES = {
-	browse: "browse" as const,
-	debug: "debug" as const,
-};
-const INSPECT_SESSION_GRACE_MS = 30_000;
-
-type InspectorChannel = "proxy" | "native";
-type DebugKind = "tools" | "resources" | "prompts";
-
 type InspectorTarget = {
 	kind: "tool" | "resource" | "prompt" | "template";
 	item: CapabilityRecord | null;
+	capabilityOptions?: CapabilityRecord[];
 };
 
-function getInitialInspectorChannel(): InspectorChannel {
-	try {
-		if (typeof window !== "undefined") {
-			const saved = window.localStorage.getItem("mcp_inspector_channel");
-			if (saved === "proxy" || saved === "native") {
-				return saved;
-			}
+type ServerFlatCapabilityItem = CapabilityRecord & {
+	__serverCapabilityKind: CapabilityPreviewKind;
+};
+
+const SERVER_CAPABILITY_KINDS: CapabilityPreviewKind[] = [
+	"tools",
+	"resources",
+	"templates",
+	"prompts",
+];
+
+const readCapabilityIdentifier = (value: unknown): string | undefined => {
+	if (typeof value === "string" && value.trim()) return value;
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	return undefined;
+};
+
+const serverCapabilityItemId = (item: ServerFlatCapabilityItem): string => {
+	const key =
+		readCapabilityIdentifier(item.id) ??
+		readCapabilityIdentifier(item.unique_name) ??
+		readCapabilityIdentifier(item.tool_name) ??
+		readCapabilityIdentifier(item.prompt_name) ??
+		readCapabilityIdentifier(item.resource_uri) ??
+		readCapabilityIdentifier(item.uri) ??
+		readCapabilityIdentifier(item.uriTemplate) ??
+		readCapabilityIdentifier(item.uri_template) ??
+		readCapabilityIdentifier(item.name) ??
+		"unknown";
+	return `${item.__serverCapabilityKind}:${key}`;
+};
+
+function firstCapabilityString(
+	item: CapabilityRecord,
+	keys: Array<keyof CapabilityRecord | string>,
+) {
+	for (const key of keys) {
+		const value = item[key];
+		if (typeof value === "string" && value.trim()) {
+			return value;
 		}
-	} catch {
-		/* noop */
 	}
-	return "native";
+	return undefined;
 }
 
-interface DebugState {
-	items: CapabilityRecord[];
-	loading: boolean;
-	error: string | null;
-	fetched: boolean;
-	lastFetched?: number;
+function serverCapabilityDetailKey(
+	item: CapabilityRecord,
+	kind: CapabilityPreviewKind,
+) {
+	if (kind === "tools") {
+		return firstCapabilityString(item, ["tool_name", "name", "unique_name"]);
+	}
+	if (kind === "resources") {
+		return firstCapabilityString(item, ["resource_uri", "uri", "name", "unique_uri"]);
+	}
+	if (kind === "prompts") {
+		return firstCapabilityString(item, ["prompt_name", "name", "unique_name"]);
+	}
+	return firstCapabilityString(item, [
+		"uri_template",
+		"uriTemplate",
+		"uri",
+		"name",
+		"unique_uri_template",
+	]);
 }
 
-const createDebugState = (): DebugState => ({
-	items: [],
-	loading: false,
-	error: null,
-	fetched: false,
-});
+function toCapabilityPreviewKind(
+	kind: InspectorTarget["kind"],
+): CapabilityPreviewKind {
+	if (kind === "tool") return "tools";
+	if (kind === "resource") return "resources";
+	if (kind === "prompt") return "prompts";
+	return "templates";
+}
 
-function makeLogId() {
-	if (
-		typeof crypto !== "undefined" &&
-		typeof crypto.randomUUID === "function"
-	) {
-		return crypto.randomUUID();
+function toInspectorKind(kind: CapabilityPreviewKind): InspectorTarget["kind"] {
+	if (kind === "tools") return "tool";
+	if (kind === "resources") return "resource";
+	if (kind === "prompts") return "prompt";
+	return "template";
+}
+
+function normalizeCapabilityListResponse(response: {
+	items?: unknown;
+	meta?: unknown;
+	state?: unknown;
+}): CapabilityListResponse {
+	return {
+		items: Array.isArray(response.items)
+			? (response.items as CapabilityRecord[])
+			: [],
+		meta: response.meta,
+		state: typeof response.state === "string" ? response.state : undefined,
+	};
+}
+
+function capabilityKindLabel(
+	kind: CapabilityPreviewKind,
+	t: ReturnType<typeof useTranslation>["t"],
+): string {
+	if (kind === "templates") {
+		return t("detail.capabilityList.labels.templates", {
+			defaultValue: "Resource Templates",
+		});
 	}
-	return `log_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+
+	return t(`detail.capabilityList.labels.${kind}`, {
+		defaultValue: kind.charAt(0).toUpperCase() + kind.slice(1),
+	});
 }
 
 const overviewMetadataGridClass =
@@ -227,8 +261,6 @@ export function ServerDetailPage() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const queryClient = useQueryClient();
-	const viewMode = useAppStore((state) => state.inspectorViewMode);
-	const setViewMode = useAppStore((state) => state.setInspectorViewMode);
 	const enableServerDebug = useAppStore(
 		(state) => state.dashboardSettings.enableServerDebug,
 	);
@@ -239,32 +271,29 @@ export function ServerDetailPage() {
 		(state) => state.dashboardSettings.showServerLevelLogs,
 	);
 
-	const initialChannel = useMemo(() => getInitialInspectorChannel(), []);
-	const [requestedChannel, setRequestedChannel] =
-		useState<InspectorChannel>(initialChannel);
-	const [channel, setChannel] = useState<InspectorChannel>(initialChannel);
-	const ignoreLocationChange = useRef(false);
-	const isUserAction = useRef(false);
-	const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 	const [isEditOpen, setIsEditOpen] = useState(false);
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 	const [inspector, setInspector] = useState<InspectorTarget | null>(null);
-	const [logs, setLogs] = useState<InspectorLogEntry[]>([]);
-	const [debugData, setDebugData] = useState<
-		Record<DebugKind | "templates", DebugState>
-	>({
-		tools: createDebugState(),
-		resources: createDebugState(),
-		prompts: createDebugState(),
-		templates: createDebugState(),
-	});
-	const [inspectSession, setInspectSession] =
-		useState<InspectorSessionOpenData | null>(null);
-	const inspectSessionRef = useRef<InspectorSessionOpenData | null>(null);
-	const inspectSessionCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(
-		null,
-	);
-	const mountedRef = useRef(true);
+
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		let changed = false;
+		if (params.has("view")) {
+			params.delete("view");
+			changed = true;
+		}
+		if (params.has("channel")) {
+			params.delete("channel");
+			changed = true;
+		}
+		if (!changed) {
+			return;
+		}
+		navigate(
+			{ pathname: location.pathname, search: params.toString() },
+			{ replace: true },
+		);
+	}, [location.pathname, location.search, navigate]);
 
 	const {
 		data: server,
@@ -441,525 +470,39 @@ export function ServerDetailPage() {
 			),
 	});
 
-	const activeProfilesQ = useQuery({
-		queryKey: ["inspector-proxy-profiles", serverId],
-		enabled:
-			!!serverId &&
-			viewMode === VIEW_MODES.debug &&
-			requestedChannel === "proxy",
-		queryFn: async () => {
-			const suitsResp = await configSuitsApi.getAll();
-			const active = suitsResp.suits.filter((s) => s.is_active);
-			const enabled: string[] = [];
-			await Promise.all(
-				active.map(async (suit) => {
-					try {
-						const res = await configSuitsApi.getServers(suit.id);
-						const match = (res.servers || []).find(
-							(srv) => srv.id === serverId && srv.enabled,
-						);
-						if (match) enabled.push(suit.name || suit.id);
-					} catch (error) {
-						console.error("Failed to load servers for suit", suit.id, error);
-					}
-				}),
-			);
-			return {
-				activeNames: active.map((s) => s.name || s.id),
-				enabledNames: enabled,
-			};
-		},
-	});
-
-	const rawProxyAvailable =
-		(activeProfilesQ.data?.enabledNames?.length ?? 0) > 0;
-	const isProxyChecking =
-		viewMode === VIEW_MODES.debug &&
-		activeProfilesQ.isFetching &&
-		!activeProfilesQ.isFetched;
-	const [proxyAvailable, setProxyAvailable] = useState(rawProxyAvailable);
-
-	useEffect(() => {
-		const timer = setTimeout(() => {
-			setProxyAvailable(rawProxyAvailable);
-		}, 180);
-		return () => clearTimeout(timer);
-	}, [rawProxyAvailable]);
-
-	useEffect(() => {
-		if (ignoreLocationChange.current) {
-			ignoreLocationChange.current = false;
-			return;
-		}
-
-		// Skip if this is a user action to prevent loops
-		if (isUserAction.current) {
-			isUserAction.current = false;
-			return;
-		}
-
-		const params = new URLSearchParams(location.search);
-		const viewParam = params.get("view");
-
-		// Only update viewMode if URL parameter is different and valid
-		if (viewParam === VIEW_MODES.debug || viewParam === VIEW_MODES.browse) {
-			if (viewParam !== viewMode) {
-				setViewMode(viewParam);
-			}
-		} else if (viewParam === null && viewMode !== VIEW_MODES.browse) {
-			// Only set to browse if there's no view parameter and current mode is not browse
-			setViewMode(VIEW_MODES.browse);
-		}
-
-		const channelParam = params.get("channel");
-		if (channelParam === "proxy" || channelParam === "native") {
-			if (channelParam !== requestedChannel) {
-				setRequestedChannel(channelParam);
-			}
-		} else if (requestedChannel !== "native") {
-			setRequestedChannel("native");
-		}
-	}, [location.search, setViewMode, viewMode, requestedChannel]);
-
-	useEffect(() => {
-		if (viewMode !== VIEW_MODES.debug) {
-			if (channel !== "native") {
-				setChannel("native");
-			}
-			return;
-		}
-
-		// Skip channel adjustment if this is a user action to prevent loops
-		if (isUserAction.current) {
-			return;
-		}
-
-		const desiredChannel: InspectorChannel =
-			requestedChannel === "proxy"
-				? proxyAvailable
-					? "proxy"
-					: "native"
-				: "native";
-
-		if (channel !== desiredChannel) {
-			setChannel(desiredChannel);
-		}
-	}, [channel, proxyAvailable, requestedChannel, viewMode]);
-
-	useEffect(() => {
-		// Skip if we're currently ignoring location changes to prevent loops
-		if (ignoreLocationChange.current) {
-			return;
-		}
-
-		// Clear any existing debounce timer
-		if (debounceTimer.current) {
-			clearTimeout(debounceTimer.current);
-		}
-
-		// Debounce the URL update to prevent rapid changes
-		debounceTimer.current = setTimeout(() => {
-			const params = new URLSearchParams(location.search);
-			let changed = false;
-
-			// Only update URL if the current URL doesn't match the state
-			const currentView = params.get("view");
-			if (currentView !== viewMode) {
-				params.set("view", viewMode);
-				changed = true;
-			}
-
-			const currentChannel = params.get("channel");
-			if (currentChannel !== requestedChannel) {
-				params.set("channel", requestedChannel);
-				changed = true;
-			}
-
-			if (changed) {
-				ignoreLocationChange.current = true;
-				navigate(
-					{ pathname: location.pathname, search: params.toString() },
-					{ replace: true },
-				);
-			}
-		}, 50); // 50ms debounce
-
-		// Cleanup function
-		return () => {
-			if (debounceTimer.current) {
-				clearTimeout(debounceTimer.current);
-			}
-		};
-	}, [
-		viewMode,
-		requestedChannel,
-		location.pathname,
-		location.search,
-		navigate,
-	]);
-
-	useEffect(() => {
-		try {
-			if (typeof window !== "undefined") {
-				window.localStorage.setItem("mcp_inspector_channel", requestedChannel);
-			}
-		} catch {
-			/* noop */
-		}
-	}, [requestedChannel]);
-
-	const pushLog = useCallback((entry: InspectorLogEntry) => {
-		setLogs((prev) => {
-			const next = [...prev, entry];
-			if (next.length > 200) next.shift();
-			return next;
-		});
-	}, []);
-
-	useEffect(() => {
-		inspectSessionRef.current = inspectSession;
-	}, [inspectSession]);
-
-	useEffect(() => {
-		mountedRef.current = true;
-		return () => {
-			mountedRef.current = false;
-		};
-	}, []);
-
-	const clearInspectSessionCloseTimer = useCallback(() => {
-		if (inspectSessionCloseTimer.current) {
-			clearTimeout(inspectSessionCloseTimer.current);
-			inspectSessionCloseTimer.current = null;
-		}
-	}, []);
-
-	const closeInspectSession = useCallback(
-		async (session: InspectorSessionOpenData) => {
-			try {
-				await inspectorApi.sessionClose({ session_id: session.session_id });
-			} catch (error) {
-				console.warn("Failed to close inspector session", error);
-			}
-			if (
-				mountedRef.current &&
-				inspectSessionRef.current?.session_id === session.session_id
-			) {
-				setInspectSession(null);
-				inspectSessionRef.current = null;
-			}
-		},
-		[],
-	);
-
-	const invalidateInspectSession = useCallback(() => {
-		clearInspectSessionCloseTimer();
-		const current = inspectSessionRef.current;
-		inspectSessionRef.current = null;
-		if (mountedRef.current) {
-			setInspectSession(null);
-		}
-		if (current) {
-			void closeInspectSession(current);
-		}
-	}, [clearInspectSessionCloseTimer, closeInspectSession]);
-
-	const scheduleInspectSessionClose = useCallback(
-		(session: InspectorSessionOpenData) => {
-			clearInspectSessionCloseTimer();
-			inspectSessionCloseTimer.current = setTimeout(() => {
-				void closeInspectSession(session);
-			}, INSPECT_SESSION_GRACE_MS);
-		},
-		[clearInspectSessionCloseTimer, closeInspectSession],
-	);
-
-	const ensureInspectSession = useCallback(async (): Promise<
-		string | undefined
-	> => {
-		if (viewMode !== VIEW_MODES.debug || channel !== "native" || !serverId) {
-			return undefined;
-		}
-		clearInspectSessionCloseTimer();
-
-		const current = inspectSessionRef.current;
-		if (current?.mode === "native" && current.server_id === serverId) {
-			return current.session_id;
-		}
-
-		if (current) {
-			await closeInspectSession(current);
-		}
-
-		const response = await inspectorApi.sessionOpen({
-			mode: "native",
-			server_id: serverId,
-			server_name: server?.name,
-		});
-		if (!response?.success || !response.data) {
-			throw new Error(
-				response?.error ? String(response.error) : "Failed to open inspector session",
-			);
-		}
-
-		if (mountedRef.current) {
-			setInspectSession(response.data);
-		}
-		inspectSessionRef.current = response.data;
-		return response.data.session_id;
-	}, [
-		channel,
-		clearInspectSessionCloseTimer,
-		closeInspectSession,
-		server?.name,
-		serverId,
-		viewMode,
-	]);
-
-	useEffect(() => {
-		const current = inspectSessionRef.current;
-		if (!current) {
-			return;
-		}
-
-		const shouldKeepInspectSession =
-			viewMode === VIEW_MODES.debug &&
-			channel === "native" &&
-			current.server_id === serverId;
-
-		if (shouldKeepInspectSession) {
-			clearInspectSessionCloseTimer();
-			return;
-		}
-
-		scheduleInspectSessionClose(current);
-	}, [
-		channel,
-		clearInspectSessionCloseTimer,
-		scheduleInspectSessionClose,
-		serverId,
-		viewMode,
-	]);
-
-	useEffect(() => {
-		return () => {
-			const current = inspectSessionRef.current;
-			if (current) {
-				scheduleInspectSessionClose(current);
-			}
-		};
-	}, [scheduleInspectSessionClose]);
-
-	const clearLogsByPrefix = useCallback((prefix: string) => {
-		setLogs((prev) => prev.filter((entry) => !entry.method.startsWith(prefix)));
-	}, []);
-
-	const updateDebugState = useCallback(
-		(kind: DebugKind | "templates", patch: Partial<DebugState>) => {
-			setDebugData((prev) => ({
-				...prev,
-				[kind]: {
-					...prev[kind],
-					...patch,
-				},
-			}));
-		},
-		[],
-	);
-
-	const runList = useCallback(
-		async (kind: DebugKind | "templates") => {
-			if (!serverId) return;
-			if (channel === "proxy" && !proxyAvailable) {
-				updateDebugState(kind, {
-					error: t("detail.debug.proxyUnavailable", {
-						defaultValue:
-							"Proxy mode unavailable: server not enabled in any active profile.",
-					}),
-				});
-				return;
-			}
-			const method =
-				kind === "tools"
-					? "tools/list"
-					: kind === "resources"
-						? "resources/list"
-						: kind === "prompts"
-							? "prompts/list"
-							: "templates/list";
-
-			const buildRequestPayload = (
-				nextSessionId?: string,
-			): InspectorListParams => {
-				const payload: InspectorListParams = {
-					server_id: serverId,
-					mode: channel,
-					refresh: true,
-				};
-				if (server?.name) payload.server_name = server.name;
-				if (nextSessionId) payload.session_id = nextSessionId;
-				return payload;
-			};
-
-			const requestList = async (
-				payload: InspectorListParams,
-			): Promise<CapabilityRecord[]> => {
-				let resp: InspectorListResponse | undefined;
-				if (kind === "tools") {
-					resp = (await inspectorApi.toolsList(payload)) as InspectorListResponse;
-				} else if (kind === "resources") {
-					resp = (await inspectorApi.resourcesList(
-						payload,
-					)) as InspectorListResponse;
-				} else if (kind === "prompts") {
-					resp = (await inspectorApi.promptsList(
-						payload,
-					)) as InspectorListResponse;
-				} else {
-					resp = (await inspectorApi.templatesList(
-						payload,
-					)) as InspectorListResponse;
-				}
-
-				if (!resp?.success) {
-					throw new Error(
-						resp?.error ? String(resp.error) : "Inspector list failed",
-					);
-				}
-
-				const data = resp.data ?? {};
-				return Array.isArray(data.items)
-					? data.items
-					: Array.isArray(data.tools)
-						? data.tools
-						: Array.isArray(data.resources)
-							? data.resources
-							: Array.isArray(data.prompts)
-								? data.prompts
-								: Array.isArray(data.templates)
-									? data.templates
-									: [];
-			};
-
-			const pushRequestLog = (payload: InspectorListParams) => {
-				pushLog({
-					id: makeLogId(),
-					timestamp: Date.now(),
-					channel: "inspector",
-					event: "request",
-					method,
-					mode: channel,
-					payload,
-				});
-			};
-
-			const commitSuccess = (list: CapabilityRecord[]) => {
-				updateDebugState(kind, {
-					loading: false,
-					error: null,
-					fetched: true,
-					items: list,
-					lastFetched: Date.now(),
-				});
-				pushLog({
-					id: makeLogId(),
-					timestamp: Date.now(),
-					channel: "inspector",
-					event: "success",
-					method,
-					mode: channel,
-					payload: { count: list.length },
-				});
-			};
-
-			const commitError = (error: unknown) => {
-				const message = error instanceof Error ? error.message : String(error);
-				updateDebugState(kind, { loading: false, error: message });
-				pushLog({
-					id: makeLogId(),
-					timestamp: Date.now(),
-					channel: "inspector",
-					event: "error",
-					method,
-					mode: channel,
-					message,
-					payload: error,
-				});
-			};
-
-			updateDebugState(kind, { loading: true, error: null });
-
-			let sessionId: string | undefined;
-			if (channel === "native") {
-				try {
-					sessionId = await ensureInspectSession();
-				} catch (error) {
-					commitError(error);
-					return;
-				}
-			}
-			let requestPayload = buildRequestPayload(sessionId);
-
-			pushRequestLog(requestPayload);
-
-			try {
-				commitSuccess(await requestList(requestPayload));
-			} catch (error) {
-				if (
-					channel === "native" &&
-					sessionId &&
-					isInspectorSessionUnavailableError(error)
-				) {
-					invalidateInspectSession();
-					try {
-						sessionId = await ensureInspectSession();
-						requestPayload = buildRequestPayload(sessionId);
-						pushRequestLog(requestPayload);
-						commitSuccess(await requestList(requestPayload));
-						return;
-					} catch (retryError) {
-						commitError(retryError);
-						return;
-					}
-				}
-				commitError(error);
-			}
-		},
-		[
-			channel,
-			ensureInspectSession,
-			invalidateInspectSession,
-			proxyAvailable,
-			pushLog,
-			server?.name,
-			serverId,
-			t,
-			updateDebugState,
-		],
-	);
-
 	const handleInspect = useCallback(
-		(kind: InspectorTarget["kind"], item: CapabilityRecord | null) => {
-			setInspector({ kind, item });
+		async (
+			kind: InspectorTarget["kind"],
+			item: CapabilityRecord | null,
+			capabilityOptions?: CapabilityRecord[],
+		) => {
+			let detailItem = item;
+			if (item && serverId) {
+				const detailKind = toCapabilityPreviewKind(kind);
+				const key = serverCapabilityDetailKey(item, detailKind);
+				if (key) {
+					try {
+						const detail = await serversApi.getCapabilityDetail(
+							serverId,
+							detailKind,
+							key,
+						);
+						detailItem = (detail.item ?? item) as CapabilityRecord;
+					} catch (error) {
+						notifyError(
+							t("detail.inspector.messages.detailLoadFailed", {
+								defaultValue: "Capability details failed to load",
+							}),
+							error instanceof Error ? error.message : String(error),
+						);
+						return;
+					}
+				}
+			}
+			setInspector({ kind, item: detailItem, capabilityOptions });
 		},
-		[],
+		[serverId, t],
 	);
-
-	const inspectorCapabilityOptions = useMemo<CapabilityRecord[] | undefined>(() => {
-		if (!inspector || viewMode !== VIEW_MODES.debug) {
-			return undefined;
-		}
-		if (inspector.kind === "tool") {
-			return debugData.tools.fetched ? debugData.tools.items : undefined;
-		}
-		if (inspector.kind === "resource") {
-			return debugData.resources.fetched ? debugData.resources.items : undefined;
-		}
-		if (inspector.kind === "prompt") {
-			return debugData.prompts.fetched ? debugData.prompts.items : undefined;
-		}
-		return debugData.templates.fetched ? debugData.templates.items : undefined;
-	}, [debugData, inspector, viewMode]);
 
 	const handleServerLogsNextPage = () => {
 		if (!serverLogsQuery.data?.next_cursor) return;
@@ -1027,11 +570,8 @@ export function ServerDetailPage() {
 		server?.protocol_version ?? readLegacyString(server, "protocolVersion");
 	const serverVersion =
 		server?.server_version ?? readLegacyString(server, "serverVersion");
-	const defaultTab = viewMode === VIEW_MODES.debug ? "tools" : "overview";
-	const capabilityTabs = ["tools", "prompts", "resources", "templates"] as const;
-	const validTabs = viewMode === VIEW_MODES.browse
-		? ["overview", ...capabilityTabs]
-		: [...capabilityTabs];
+	const defaultTab = "overview";
+	const validTabs = ["overview", "capabilities"];
 	const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } = useUrlTab({
 		paramName: "tab",
 		defaultTab,
@@ -1165,36 +705,6 @@ export function ServerDetailPage() {
 						/>
 					) : null}
 				</div>
-				{enableServerDebug && (
-					<div className="inline-flex rounded-md border bg-white dark:bg-slate-900 self-start">
-						<Button
-							type="button"
-							size="sm"
-							variant={viewMode === VIEW_MODES.browse ? "default" : "ghost"}
-							onClick={() => {
-								isUserAction.current = true;
-								setViewMode(VIEW_MODES.browse);
-							}}
-							className="gap-1 rounded-l-md rounded-r-none"
-						>
-							<Eye className="h-4 w-4" />
-							{t("detail.viewModes.browse", { defaultValue: "Browse" })}
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							variant={viewMode === VIEW_MODES.debug ? "default" : "ghost"}
-							onClick={() => {
-								isUserAction.current = true;
-								setViewMode(VIEW_MODES.debug);
-							}}
-							className="gap-1 rounded-r-md rounded-l-none"
-						>
-							<Bug className="h-4 w-4" />
-							{t("detail.viewModes.debug", { defaultValue: "Inspect" })}
-						</Button>
-					</div>
-				)}
 			</div>
 
 			{server && (
@@ -1254,60 +764,42 @@ export function ServerDetailPage() {
 					className="flex min-h-0 flex-1 flex-col gap-4"
 				>
 					<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-						<ServerCapabilityTabsHeader
-							serverId={serverId}
-							viewMode={viewMode}
-						/>
-						{viewMode === VIEW_MODES.browse ? (
-							<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-								<Button
-									size="sm"
-									variant="outline"
-									onClick={() => {
-										refreshCapabilitiesMutation.mutate();
-									}}
-									disabled={isOverviewRefreshing}
-									className={overviewActionButtonClass}
-								>
-									<RefreshCw
-										className={`h-4 w-4 ${isOverviewRefreshing ? "animate-spin" : ""}`}
-									/>
-									{t("detail.actions.refresh", {
-										defaultValue: "Refresh",
-									})}
-								</Button>
-								<Button
-									size="sm"
-									variant="outline"
-									onClick={() => setIsEditOpen(true)}
-									className={overviewActionButtonClass}
-								>
-									<Edit3 className="h-4 w-4" />
-									{t("detail.actions.edit", {
-										defaultValue: "Edit",
-									})}
-								</Button>
-							</ButtonGroup>
-						) : viewMode === VIEW_MODES.debug ? (
-							<InspectorChannelControls
-								selected={requestedChannel}
-								active={channel}
-								proxyAvailable={proxyAvailable}
-								isChecking={isProxyChecking}
-								onSelect={setRequestedChannel}
-								onOpenProfiles={() => navigate("/profiles")}
-								onUserAction={() => {
-									isUserAction.current = true;
+						<ServerCapabilityTabsHeader serverId={serverId} />
+						<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => {
+									refreshCapabilitiesMutation.mutate();
 								}}
-							/>
-						) : null}
+								disabled={isOverviewRefreshing}
+								className={overviewActionButtonClass}
+							>
+								<RefreshCw
+									className={`h-4 w-4 ${isOverviewRefreshing ? "animate-spin" : ""}`}
+								/>
+								{t("detail.actions.refresh", {
+									defaultValue: "Refresh",
+								})}
+							</Button>
+							<Button
+								size="sm"
+								variant="outline"
+								onClick={() => setIsEditOpen(true)}
+								className={overviewActionButtonClass}
+							>
+								<Edit3 className="h-4 w-4" />
+								{t("detail.actions.edit", {
+									defaultValue: "Edit",
+								})}
+							</Button>
+						</ButtonGroup>
 					</div>
 
-					{viewMode === VIEW_MODES.browse ? (
-						<TabsContent
-							value="overview"
-							className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
-						>
+					<TabsContent
+						value="overview"
+						className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
+					>
 							{isLoading ? (
 								<Card>
 									<CardContent className="p-4">
@@ -1525,48 +1017,46 @@ export function ServerDetailPage() {
 										</CardContent>
 									</Card>
 
-									{viewMode === VIEW_MODES.browse ? (
-										<Card>
-											<CardHeader>
-												<CardTitle>
-													{t("detail.instances.title", {
-														count: server.instances?.length || 0,
-														defaultValue: "Instances ({{count}})",
+									<Card>
+										<CardHeader>
+											<CardTitle>
+												{t("detail.instances.title", {
+													count: server.instances?.length || 0,
+													defaultValue: "Instances ({{count}})",
+												})}
+											</CardTitle>
+										</CardHeader>
+										<CardContent>
+											{server.instances?.length ? (
+												<CapsuleStripeList>
+													{server.instances.map((i) => (
+														<CapsuleStripeListItem
+															key={i.id}
+															interactive
+															onClick={() =>
+																navigate(
+																	`/servers/${encodeURIComponent(serverId)}/instances/${encodeURIComponent(i.id)}`,
+																)
+															}
+														>
+															<div className="font-mono truncate">{i.id}</div>
+															<StatusBadge
+																status={i.status}
+																className="text-xs"
+															/>
+														</CapsuleStripeListItem>
+													))}
+												</CapsuleStripeList>
+											) : (
+												<div className="text-slate-500">
+													{t("detail.instances.empty", {
+														defaultValue: "No instances.",
 													})}
-												</CardTitle>
-											</CardHeader>
-											<CardContent>
-												{server.instances?.length ? (
-													<CapsuleStripeList>
-														{server.instances.map((i) => (
-															<CapsuleStripeListItem
-																key={i.id}
-																interactive
-																onClick={() =>
-																	navigate(
-																		`/servers/${encodeURIComponent(serverId)}/instances/${encodeURIComponent(i.id)}`,
-																	)
-																}
-															>
-																<div className="font-mono truncate">{i.id}</div>
-																<StatusBadge
-																	status={i.status}
-																	className="text-xs"
-																/>
-															</CapsuleStripeListItem>
-														))}
-													</CapsuleStripeList>
-												) : (
-													<div className="text-slate-500">
-														{t("detail.instances.empty", {
-															defaultValue: "No instances.",
-														})}
-													</div>
-												)}
-											</CardContent>
-										</Card>
-									) : null}
-									{showServerLevelLogs && viewMode === VIEW_MODES.browse ? (
+												</div>
+											)}
+										</CardContent>
+									</Card>
+									{showServerLevelLogs ? (
 										<AuditLogsPanel
 											title={t("detail.logs.title", { defaultValue: "Logs" })}
 											description={t("detail.logs.description", {
@@ -1625,83 +1115,16 @@ export function ServerDetailPage() {
 									) : null}
 								</div>
 							)}
-						</TabsContent>
-					) : null}
-
-					<TabsContent value="tools" className={DETAIL_TAB_CONTENT_CLASS}>
-						{viewMode === VIEW_MODES.browse ? (
-							<ServerCapabilityList kind="tools" serverId={serverId} />
-						) : (
-							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-								<InspectorDebugSection
-									kind="tools"
-									state={debugData.tools}
-									disabled={channel === "proxy" && !proxyAvailable}
-									onFetch={() => runList("tools")}
-									onInspect={(item) => handleInspect("tool", item)}
-									logs={logs}
-									onClearLogs={() => clearLogsByPrefix("tools/")}
-									showLogs={showServerLevelLogs}
-								/>
-							</div>
-						)}
 					</TabsContent>
 
-					<TabsContent value="prompts" className={DETAIL_TAB_CONTENT_CLASS}>
-						{viewMode === VIEW_MODES.browse ? (
-							<ServerCapabilityList kind="prompts" serverId={serverId} />
-						) : (
-							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-								<InspectorDebugSection
-									kind="prompts"
-									state={debugData.prompts}
-									disabled={channel === "proxy" && !proxyAvailable}
-									onFetch={() => runList("prompts")}
-									onInspect={(item) => handleInspect("prompt", item)}
-									logs={logs}
-									onClearLogs={() => clearLogsByPrefix("prompts/")}
-									showLogs={showServerLevelLogs}
-								/>
-							</div>
-						)}
-					</TabsContent>
-
-					<TabsContent value="resources" className={DETAIL_TAB_CONTENT_CLASS}>
-						{viewMode === VIEW_MODES.browse ? (
-							<ServerCapabilityList kind="resources" serverId={serverId} />
-						) : (
-							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-								<InspectorDebugSection
-									kind="resources"
-									state={debugData.resources}
-									disabled={channel === "proxy" && !proxyAvailable}
-									onFetch={() => runList("resources")}
-									onInspect={(item) => handleInspect("resource", item)}
-									logs={logs}
-									onClearLogs={() => clearLogsByPrefix("resources/")}
-									showLogs={showServerLevelLogs}
-								/>
-							</div>
-						)}
-					</TabsContent>
-
-					<TabsContent value="templates" className={DETAIL_TAB_CONTENT_CLASS}>
-						{viewMode === VIEW_MODES.browse ? (
-							<ServerCapabilityList kind="templates" serverId={serverId} />
-						) : (
-							<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-								<InspectorDebugSection
-									kind="templates"
-									state={debugData.templates}
-									disabled={channel === "proxy" && !proxyAvailable}
-									onFetch={() => runList("templates")}
-									onInspect={(item) => handleInspect("template", item)}
-									logs={logs}
-									onClearLogs={() => clearLogsByPrefix("templates/")}
-									showLogs={showServerLevelLogs}
-								/>
-							</div>
-						)}
+					<TabsContent value="capabilities" className={DETAIL_TAB_CONTENT_CLASS}>
+						<ServerCapabilitiesPanel
+							serverId={serverId}
+							enableInspect={enableServerDebug}
+							onInspect={(kind, item, capabilityOptions) =>
+								handleInspect(kind, item, capabilityOptions)
+							}
+						/>
 					</TabsContent>
 				</Tabs>
 			)}
@@ -1714,28 +1137,16 @@ export function ServerDetailPage() {
 				serverName={server?.name}
 				kind={inspector?.kind ?? "tool"}
 				item={inspector?.item ?? null}
-				mode={channel}
-				sessionId={channel === "native" ? inspectSession?.session_id : undefined}
-				sessionExpiresAtEpochMs={
-					channel === "native" ? inspectSession?.expires_at_epoch_ms : undefined
-				}
-				capabilityOptions={inspectorCapabilityOptions}
-				onLog={pushLog}
-				onEnsureSession={ensureInspectSession}
-				onSessionUnavailable={invalidateInspectSession}
+				capabilityOptions={inspector?.capabilityOptions}
 			/>
 		</div>
 	);
 }
 
-type HeaderKinds = "tools" | "resources" | "prompts" | "templates";
-
 function ServerCapabilityTabsHeader({
 	serverId,
-	viewMode,
 }: {
 	serverId: string;
-	viewMode: keyof typeof VIEW_MODES;
 }) {
 	const { t } = useTranslation("servers");
 	const toolsQ = useQuery({
@@ -1759,629 +1170,240 @@ function ServerCapabilityTabsHeader({
 	const resourcesCount = resQ.data?.items?.length ?? 0;
 	const promptsCount = prmQ.data?.items?.length ?? 0;
 	const templatesCount = tmpQ.data?.items?.length ?? 0;
-	const disableEmpty = false;
-
+	const totalCount =
+		toolsCount + resourcesCount + promptsCount + templatesCount;
 	return (
 		<TabsList className="flex flex-wrap gap-2">
-			{viewMode === VIEW_MODES.browse ? (
-				<TabsTrigger value="overview">
-					{t("detail.tabs.overview", { defaultValue: "Overview" })}
-				</TabsTrigger>
-			) : null}
-			<TabsTrigger value="tools" disabled={disableEmpty && toolsCount === 0}>
-				{t("detail.tabs.tools", {
-					count: toolsCount,
-					defaultValue: "Tools ({{count}})",
-				})}
+			<TabsTrigger value="overview">
+				{t("detail.tabs.overview", { defaultValue: "Overview" })}
 			</TabsTrigger>
-			<TabsTrigger
-				value="prompts"
-				disabled={disableEmpty && promptsCount === 0}
-			>
-				{t("detail.tabs.prompts", {
-					count: promptsCount,
-					defaultValue: "Prompts ({{count}})",
-				})}
-			</TabsTrigger>
-			<TabsTrigger
-				value="resources"
-				disabled={disableEmpty && resourcesCount === 0}
-			>
-				{t("detail.tabs.resources", {
-					count: resourcesCount,
-					defaultValue: "Resources ({{count}})",
-				})}
-			</TabsTrigger>
-			<TabsTrigger
-				value="templates"
-				disabled={disableEmpty && templatesCount === 0}
-			>
-				{t("detail.tabs.templates", {
-					count: templatesCount,
-					defaultValue: "Resource Templates ({{count}})",
+			<TabsTrigger value="capabilities">
+				{t("detail.tabs.capabilities", {
+					count: totalCount,
+					defaultValue: "Capabilities ({{count}})",
 				})}
 			</TabsTrigger>
 		</TabsList>
 	);
 }
 
-function ServerCapabilityList({
-	kind,
+function ServerCapabilitiesPanel({
 	serverId,
-}: {
-	kind: "tools" | "resources" | "prompts" | "templates";
-	serverId: string;
-}) {
+	enableInspect = false,
+	onInspect,
+	}: {
+		serverId: string;
+		enableInspect?: boolean;
+		onInspect: (
+			kind: InspectorTarget["kind"],
+			item: CapabilityRecord | null,
+			capabilityOptions?: CapabilityRecord[],
+		) => void | Promise<void>;
+	}) {
 	const [search, setSearch] = useState("");
+	const [kindFilters, setKindFilters] = useState<CapabilityPreviewKind[]>([]);
 	const { t } = useTranslation("servers");
 	const capabilityQueryOptions = {
 		staleTime: 0,
 		refetchOnMount: "always" as const,
 	};
-	const queryMap = {
-		tools: useQuery<CapabilityListResponse>({
-			queryKey: ["server-cap", "tools", serverId],
-			queryFn: async () => {
-				const response = await serversApi.listTools(serverId);
-				return {
-					items: Array.isArray(response.items)
-						? (response.items as CapabilityRecord[])
-						: [],
-					meta: response.meta,
-					state: response.state,
-				};
-			},
-			...capabilityQueryOptions,
-		}),
-		resources: useQuery<CapabilityListResponse>({
-			queryKey: ["server-cap", "resources", serverId],
-			queryFn: async () => {
-				const response = await serversApi.listResources(serverId);
-				return {
-					items: Array.isArray(response.items)
-						? (response.items as CapabilityRecord[])
-						: [],
-					meta: response.meta,
-					state: response.state,
-				};
-			},
-			...capabilityQueryOptions,
-		}),
-		prompts: useQuery<CapabilityListResponse>({
-			queryKey: ["server-cap", "prompts", serverId],
-			queryFn: async () => {
-				const response = await serversApi.listPrompts(serverId);
-				return {
-					items: Array.isArray(response.items)
-						? (response.items as CapabilityRecord[])
-						: [],
-					meta: response.meta,
-					state: response.state,
-				};
-			},
-			...capabilityQueryOptions,
-		}),
-		templates: useQuery<CapabilityListResponse>({
-			queryKey: ["server-cap", "templates", serverId],
-			queryFn: async () => {
-				const response = await serversApi.listResourceTemplates(serverId);
-				return {
-					items: Array.isArray(response.items)
-						? (response.items as CapabilityRecord[])
-						: [],
-					meta: response.meta,
-					state: response.state,
-				};
-			},
-			...capabilityQueryOptions,
-		}),
-	} as const;
-	const q = queryMap[kind];
-	const labelMap: Record<HeaderKinds, string> = {
-		tools: t("detail.capabilityList.labels.tools", { defaultValue: "Tools" }),
-		resources: t("detail.capabilityList.labels.resources", {
-			defaultValue: "Resources",
-		}),
-		prompts: t("detail.capabilityList.labels.prompts", {
-			defaultValue: "Prompts",
-		}),
-		templates: t("detail.capabilityList.labels.templates", {
-			defaultValue: "Resource Templates",
-		}),
+	const toolsQ = useQuery<CapabilityListResponse>({
+		queryKey: ["server-cap", "tools", serverId],
+		queryFn: async () => {
+			const response = await serversApi.listTools(serverId);
+			return normalizeCapabilityListResponse(response);
+		},
+		...capabilityQueryOptions,
+	});
+	const resourcesQ = useQuery<CapabilityListResponse>({
+		queryKey: ["server-cap", "resources", serverId],
+		queryFn: async () => {
+			const response = await serversApi.listResources(serverId);
+			return normalizeCapabilityListResponse(response);
+		},
+		...capabilityQueryOptions,
+	});
+	const promptsQ = useQuery<CapabilityListResponse>({
+		queryKey: ["server-cap", "prompts", serverId],
+		queryFn: async () => {
+			const response = await serversApi.listPrompts(serverId);
+			return normalizeCapabilityListResponse(response);
+		},
+		...capabilityQueryOptions,
+	});
+	const templatesQ = useQuery<CapabilityListResponse>({
+		queryKey: ["server-cap", "templates", serverId],
+		queryFn: async () => {
+			const response = await serversApi.listResourceTemplates(serverId);
+			return normalizeCapabilityListResponse(response);
+		},
+		...capabilityQueryOptions,
+	});
+	const kindFilterOptions = useMemo(
+		() =>
+			SERVER_CAPABILITY_KINDS.map((kind) => ({
+				value: kind,
+				label: capabilityKindLabel(kind, t),
+			})),
+		[t],
+	);
+	const kindFilterLabel = useMemo(() => {
+		if (kindFilters.length === 0) {
+			return t("detail.filters.kind.all", { defaultValue: "All Types" });
+		}
+		if (kindFilters.length === 1) {
+			const [kind] = kindFilters;
+			return capabilityKindLabel(kind, t);
+		}
+		return t("detail.filters.kind.selected", {
+			count: kindFilters.length,
+			defaultValue: "{{count}} Types",
+		});
+	}, [kindFilters, t]);
+	const kindMatches = (kind: CapabilityPreviewKind) =>
+		kindFilters.length === 0 || kindFilters.includes(kind);
+	const toggleKindFilter = (kind: CapabilityPreviewKind, checked: boolean) => {
+		setKindFilters((current) => {
+			if (checked) {
+				return current.includes(kind) ? current : [...current, kind];
+			}
+			return current.filter((value) => value !== kind);
+		});
 	};
-	const label = labelMap[kind];
+	const resolveVisibleItems = (
+		kind: CapabilityPreviewKind,
+		cachedItems: CapabilityRecord[] | undefined,
+	): CapabilityRecord[] => {
+		if (!kindMatches(kind)) return [];
+		return cachedItems ?? [];
+	};
+	const renderInspectAction = (
+		_mapped: unknown,
+		item: ServerFlatCapabilityItem,
+	): ReactNode => {
+		const inspectorKind = toInspectorKind(item.__serverCapabilityKind);
+		const capabilityOptions =
+			item.__serverCapabilityKind === "tools"
+				? toolsQ.data?.items
+				: item.__serverCapabilityKind === "resources"
+					? resourcesQ.data?.items
+					: item.__serverCapabilityKind === "prompts"
+						? promptsQ.data?.items
+						: templatesQ.data?.items;
 
-	return (
-		<CapabilityList
-			title={t("detail.capabilityList.title", {
-				label,
-				count: q.data?.items?.length ?? 0,
-				defaultValue: "{{label}} ({{count}})",
+			return (
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					className="gap-1"
+					onClick={() =>
+						void onInspect(inspectorKind, item, capabilityOptions ?? [])
+					}
+				>
+				<Play className="h-3.5 w-3.5" />
+				{t("detail.inspector.actions.inspect", {
+					defaultValue: "Inspect",
+				})}
+			</Button>
+		);
+	};
+	const showInspectActions = enableInspect;
+	const renderAction = showInspectActions ? renderInspectAction : undefined;
+	const browseCapabilitiesLoading =
+		toolsQ.isLoading ||
+		resourcesQ.isLoading ||
+		promptsQ.isLoading ||
+		templatesQ.isLoading;
+	const tools = resolveVisibleItems("tools", toolsQ.data?.items);
+	const resources = resolveVisibleItems("resources", resourcesQ.data?.items);
+	const prompts = resolveVisibleItems("prompts", promptsQ.data?.items);
+	const templates = resolveVisibleItems("templates", templatesQ.data?.items);
+	const emptyText = t("detail.capabilityList.emptyAll", {
+		defaultValue: "No capabilities from this server",
+	});
+	const loadServerCapabilityDetails = useCallback(
+		async (
+			item: ServerFlatCapabilityItem,
+			kind: CapabilityPreviewKind,
+		): Promise<CapabilityRecord | null> => {
+			const key = serverCapabilityDetailKey(item, kind);
+			if (!key) {
+				return null;
+			}
+			const detail = await serversApi.getCapabilityDetail(serverId, kind, key);
+			return (detail.item ?? null) as CapabilityRecord | null;
+		},
+		[serverId],
+	);
+	const renderServerFlatCapabilityList = (
+		items: CapabilityPreviewFlatItem[],
+	): ReactNode => {
+		const flatItems: ServerFlatCapabilityItem[] = items.map(({ kind, item }) => ({
+			...item,
+			__serverCapabilityKind: kind,
+		}));
+
+		return (
+			<CapabilityList<ServerFlatCapabilityItem>
+				asCard={false}
+				kind="tools"
+				getKind={(item) => item.__serverCapabilityKind}
+				context="server"
+					leadingIcon="kind"
+					items={flatItems}
+					hoverActions={showInspectActions}
+					clickToToggleDetails
+					scrollContainedBody
+					loadDetails={loadServerCapabilityDetails}
+					getId={serverCapabilityItemId}
+					renderAction={renderAction}
+				emptyText={t("detail.capabilityList.emptyAll", {
+					defaultValue: "No capabilities from this server",
+				})}
+			/>
+		);
+	};
+	const toolbar = (
+		<CapabilityToolbar
+			searchValue={search}
+			onSearchChange={setSearch}
+			searchPlaceholder={t("wizard.preview.filterCapabilities", {
+				defaultValue: "Filter capabilities...",
 			})}
-			kind={kind}
-			context="server"
-			items={q.data?.items ?? []}
-			loading={q.isLoading}
-			filterText={search}
-			onFilterTextChange={setSearch}
-			dense
-			hoverActions
-			clickToToggleDetails
-			scrollContainedBody
-			emptyText={t("detail.capabilityList.empty", {
-				label: label.toLowerCase(),
-				defaultValue: "No {{label}} from this server",
-			})}
+			kindFilter={{
+				label: kindFilterLabel,
+				allLabel: t("detail.filters.kind.all", { defaultValue: "All Types" }),
+				options: kindFilterOptions,
+				selectedValues: kindFilters,
+				onClear: () => setKindFilters([]),
+				onToggle: (value, checked) =>
+					toggleKindFilter(value as CapabilityPreviewKind, checked),
+			}}
 		/>
 	);
-}
-
-interface InspectorDebugSectionProps {
-	kind: DebugKind | "templates";
-	state: DebugState;
-	disabled?: boolean;
-	onFetch: () => void;
-	onInspect: (item: CapabilityRecord | null) => void;
-	logs: InspectorLogEntry[];
-	onClearLogs: () => void;
-	showLogs: boolean;
-}
-
-interface InspectorChannelControlsProps {
-	selected: InspectorChannel;
-	active: InspectorChannel;
-	proxyAvailable: boolean;
-	isChecking?: boolean;
-	onSelect: (channel: InspectorChannel) => void;
-	onOpenProfiles: () => void;
-	onUserAction: () => void;
-}
-
-function InspectorChannelControls({
-	selected,
-	active,
-	proxyAvailable,
-	isChecking,
-	onSelect,
-	onOpenProfiles,
-	onUserAction,
-}: InspectorChannelControlsProps) {
-	const [hintVisible, setHintVisible] = useState(false);
-	const containerRef = useRef<HTMLDivElement | null>(null);
-	const { t } = useTranslation("servers");
-
-	useEffect(() => {
-		if (proxyAvailable) {
-			setHintVisible(false);
-		}
-	}, [proxyAvailable]);
-
-	useEffect(() => {
-		if (isChecking) {
-			setHintVisible(false);
-		}
-	}, [isChecking]);
-
-	useEffect(() => {
-		if (selected !== "proxy") {
-			setHintVisible(false);
-		}
-	}, [selected]);
-
-	useEffect(() => {
-		if (!hintVisible) return;
-		const handler = (event: PointerEvent) => {
-			if (containerRef.current?.contains(event.target as Node)) {
-				return;
-			}
-			setHintVisible(false);
-		};
-		window.addEventListener("pointerdown", handler, { capture: true });
-		return () =>
-			window.removeEventListener("pointerdown", handler, { capture: true });
-	}, [hintVisible]);
-
-	const handleProxy = () => {
-		onUserAction();
-		onSelect("proxy");
-		if (proxyAvailable && !isChecking) {
-			setHintVisible(false);
-		} else {
-			setHintVisible(true);
-		}
-	};
-
-	const handleNative = () => {
-		onUserAction();
-		onSelect("native");
-		setHintVisible(false);
-	};
 
 	return (
-		<div ref={containerRef} className="relative inline-flex items-center gap-2">
-			{selected === "proxy" && active !== "proxy" && !isChecking ? (
-				<span className="text-xs text-amber-600 dark:text-amber-400 mr-2">
-					{t("detail.inspector.channel.fallback", {
-						defaultValue: "Fallback to native until proxy is available",
-					})}
-				</span>
-			) : null}
-			<div className="inline-flex rounded-md border bg-white dark:bg-slate-900">
-				<Button
-					type="button"
-					size="sm"
-					variant={selected === "proxy" ? "default" : "ghost"}
-					className="gap-1 h-8 px-3 text-xs rounded-l-md rounded-r-none"
-					disabled={isChecking}
-					onClick={handleProxy}
-				>
-					{isChecking ? (
-						<Loader2 className="h-3.5 w-3.5 animate-spin" />
-					) : (
-						<ShieldAlert className="h-4 w-4" />
-					)}
-					{t("detail.inspector.channel.proxy", { defaultValue: "Proxy" })}
-				</Button>
-				<Button
-					type="button"
-					size="sm"
-					variant={selected === "native" ? "default" : "ghost"}
-					className="gap-1 h-8 px-3 text-xs rounded-r-md rounded-l-none"
-					onClick={handleNative}
-				>
-					<AlertTriangle className="h-4 w-4" />
-					{t("detail.inspector.channel.native", { defaultValue: "Native" })}
-				</Button>
-			</div>
-			{!proxyAvailable && !isChecking && hintVisible ? (
-				<div className="absolute right-0 top-full mt-1 w-64 rounded-md border bg-white dark:bg-slate-900 p-3 text-xs shadow-lg z-10">
-					<p className="font-medium text-slate-700 dark:text-slate-200 mb-1">
-						{t("detail.inspector.channel.hintTitle", {
-							defaultValue: "Proxy unavailable",
-						})}
-					</p>
-					<p className="text-slate-600 dark:text-slate-300 mb-2">
-						{t("detail.inspector.channel.hintDescription", {
-							defaultValue:
-								"Enable this server in an active profile to exercise proxy mode.",
-						})}
-					</p>
-					<Button
-						size="sm"
-						variant="outline"
-						className="text-xs"
-						onClick={onOpenProfiles}
-					>
-						{t("detail.inspector.channel.openProfiles", {
-							defaultValue: "Open Profiles",
-						})}
-					</Button>
-				</div>
-			) : null}
-		</div>
+		<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+			<CardContent className="flex min-h-0 flex-1 flex-col p-4">
+				<div className="shrink-0 pb-3">{toolbar}</div>
+				<CapabilityPreviewList
+					className="min-h-0 flex-1"
+					contentClassName="flex min-h-0 flex-1 flex-col p-0"
+					framed={false}
+					showHeader={false}
+					tools={tools}
+					resources={resources}
+					prompts={prompts}
+					templates={templates}
+					isLoading={browseCapabilitiesLoading}
+					searchValue={search}
+					emptyText={emptyText}
+					renderFlatList={renderServerFlatCapabilityList}
+				/>
+			</CardContent>
+		</Card>
 	);
-}
-
-function InspectorDebugSection({
-	kind,
-	state,
-	disabled,
-	onFetch,
-	onInspect,
-	logs,
-	onClearLogs,
-	showLogs,
-}: InspectorDebugSectionProps) {
-	const [filter, setFilter] = useState("");
-	const [logFilter, setLogFilter] = useState("");
-	const [tab, setTab] = useState<"results" | "logs">("results");
-	const { t } = useTranslation("servers");
-
-	useEffect(() => {
-		if (!showLogs && tab === "logs") {
-			setTab("results");
-		}
-	}, [showLogs, tab]);
-
-	const title = useMemo(() => {
-		if (kind === "tools") {
-			return t("detail.inspector.labels.tools", { defaultValue: "Tools" });
-		}
-		if (kind === "resources") {
-			return t("detail.inspector.labels.resources", {
-				defaultValue: "Resources",
-			});
-		}
-		if (kind === "prompts") {
-			return t("detail.inspector.labels.prompts", {
-				defaultValue: "Prompts",
-			});
-		}
-		return t("detail.inspector.labels.templates", {
-			defaultValue: "Resource Templates",
-		});
-	}, [kind, t]);
-
-	const sectionLogs = useMemo(() => {
-		const prefix =
-			kind === "tools"
-				? "tools/"
-				: kind === "resources"
-					? "resources/"
-					: kind === "prompts"
-						? "prompts/"
-						: "templates/";
-		let filteredLogs = logs.filter((entry) => entry.method.startsWith(prefix));
-
-		// Apply log filter if provided
-		if (logFilter.trim()) {
-			const searchTerm = logFilter.toLowerCase();
-			filteredLogs = filteredLogs.filter((entry) => {
-				return (
-					entry.method.toLowerCase().includes(searchTerm) ||
-					entry.event.toLowerCase().includes(searchTerm) ||
-					entry.mode.toLowerCase().includes(searchTerm) ||
-					entry.message?.toLowerCase().includes(searchTerm) ||
-					(entry.payload &&
-						safeLog(entry.payload).toLowerCase().includes(searchTerm))
-				);
-			});
-		}
-
-		return filteredLogs;
-	}, [logs, kind, logFilter]);
-
-	return (
-		<Tabs
-			value={tab}
-			onValueChange={(v) => setTab(v as "results" | "logs")}
-			className="flex w-full min-h-0 flex-1 flex-col gap-4"
-		>
-			<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-				<TabsList className="flex flex-wrap gap-2">
-					<TabsTrigger value="results">
-						{t("detail.inspector.tabs.results", {
-							count: state.items.length,
-							defaultValue: "Results ({{count}})",
-						})}
-					</TabsTrigger>
-					{showLogs ? (
-						<TabsTrigger value="logs">
-							{t("detail.inspector.tabs.logs", {
-								count: sectionLogs.length,
-								defaultValue: "Logs ({{count}})",
-							})}
-						</TabsTrigger>
-					) : null}
-				</TabsList>
-				{tab === "results" ? (
-					<div className="flex items-center gap-2 flex-wrap">
-						<Input
-							placeholder={t("detail.inspector.filterPlaceholder", {
-								label: title,
-								defaultValue: "Filter {{label}}...",
-							})}
-							value={filter}
-							onChange={(e) => setFilter(e.target.value)}
-							className="h-8 w-48"
-						/>
-						<Button
-							size="sm"
-							onClick={onFetch}
-							disabled={disabled || state.loading}
-							className="h-8 gap-2"
-						>
-							{state.loading ? (
-								<Loader2 className="h-4 w-4 animate-spin" />
-							) : (
-								<RefreshCw className="h-4 w-4" />
-							)}
-							{state.fetched
-								? t("detail.inspector.actions.refresh", {
-									defaultValue: "Refresh",
-								})
-								: t("detail.inspector.actions.list", {
-									defaultValue: "List",
-								})}
-						</Button>
-					</div>
-				) : (
-					<div className="flex items-center gap-2 flex-wrap">
-						<Input
-							placeholder={t("detail.inspector.logs.search", {
-								defaultValue: "Search logs...",
-							})}
-							value={logFilter}
-							onChange={(e) => setLogFilter(e.target.value)}
-							className="h-8 w-48"
-						/>
-						<Button
-							size="sm"
-							variant="outline"
-							className="h-8"
-							onClick={onClearLogs}
-							disabled={!sectionLogs.length}
-						>
-							{t("detail.inspector.logs.clear", {
-								defaultValue: "Clear Logs",
-							})}
-						</Button>
-					</div>
-				)}
-			</div>
-
-			<TabsContent
-				value="results"
-				className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
-			>
-				<Card className="flex min-h-[220px] flex-1 flex-col overflow-hidden">
-					{state.error ? (
-						<CardHeader className="shrink-0 pl-4 pt-4 pr-0 pb-0">
-							<p className="text-xs text-red-500 mt-1">{state.error}</p>
-						</CardHeader>
-					) : null}
-					<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">
-						<CapabilityList
-							asCard={false}
-							scrollContainedBody
-							title={undefined}
-							kind={kind}
-							context="server"
-							items={state.fetched ? state.items : []}
-							loading={state.loading}
-							filterText={filter}
-							hoverActions
-							clickToToggleDetails
-							emptyText={
-								state.fetched
-									? t("detail.inspector.results.emptyFetched", {
-										label: title,
-										defaultValue: "No {{label}} returned.",
-									})
-									: t("detail.inspector.results.emptyPrompt", {
-										label: title,
-										defaultValue: "Run {{label}} list to fetch live data.",
-									})
-							}
-							renderAction={(_, item) => (
-								<Button
-									type="button"
-									size="sm"
-									variant="outline"
-									className="gap-1"
-									onClick={() => onInspect(item)}
-								>
-									<Play className="w-3.5 h-3.5" />
-									{t("detail.inspector.actions.inspect", {
-										defaultValue: "Inspect",
-									})}
-								</Button>
-							)}
-						/>
-					</CardContent>
-				</Card>
-			</TabsContent>
-
-			{showLogs ? (
-				<TabsContent
-					value="logs"
-					className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
-				>
-					<Card className="flex min-h-[220px] flex-1 flex-col overflow-hidden">
-						<CardContent className="flex max-h-[60vh] min-h-0 flex-1 flex-col overflow-y-auto p-4">
-							{sectionLogs.length === 0 ? (
-								<div className="flex min-h-full w-full flex-col items-center justify-center px-4 py-8 text-center">
-									<p className="text-sm text-slate-500 dark:text-slate-400">
-										{t("detail.inspector.logs.empty", {
-											defaultValue: "No inspector events yet.",
-										})}
-									</p>
-								</div>
-							) : (
-								<div className="space-y-2">
-									<CapsuleStripeList>
-										{sectionLogs.map((entry) => {
-											const logText =
-												entry.payload !== undefined ? safeLog(entry.payload) : "";
-
-											return (
-												<CapsuleStripeListItem
-													key={entry.id}
-													className="group items-start text-xs"
-												>
-													{/* Error message */}
-													{entry.message ? (
-														<p className="text-red-500 mb-1">{entry.message}</p>
-													) : null}
-
-													{/* Log content: hover info at bottom-right of text area */}
-													{entry.payload !== undefined ? (
-														<div className="relative group w-full">
-															<JsonCodeBlock
-																code={logText}
-																language={inspectorLogPrismLanguage(logText)}
-																className="bg-transparent dark:bg-transparent border-0 rounded-none p-0 shadow-none max-h-48 overflow-auto pr-8"
-															/>
-															{/* Copy button (top-right, shown on hover) */}
-															<Button
-																size="sm"
-																variant="outline"
-																className="absolute top-0 right-0 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-																onClick={() => {
-																	void writeClipboardText(logText);
-																}}
-															>
-																<Copy className="h-3 w-3" />
-															</Button>
-															{/* Bottom-right: timestamp, Action, Mode, Event badges (shown on hover) */}
-															<div className="absolute bottom-0 right-0 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-																<Badge
-																	variant="secondary"
-																	className="text-[10px] font-mono pointer-events-none"
-																>
-																	{new Date(entry.timestamp).toLocaleTimeString()}
-																</Badge>
-																<Badge
-																	variant="outline"
-																	className="text-[10px] font-mono pointer-events-none"
-																>
-																	{entry.method}
-																</Badge>
-																<Badge
-																	variant="outline"
-																	className="text-[10px] uppercase pointer-events-none"
-																>
-																	{t(
-																		`detail.inspector.logs.status.mode.${entry.mode}`,
-																		{
-																			defaultValue: entry.mode.toUpperCase(),
-																		},
-																	)}
-																</Badge>
-																<Badge
-																	variant={
-																		entry.event === "error"
-																			? "destructive"
-																			: entry.event === "success"
-																				? "success"
-																				: "secondary"
-																	}
-																	className="text-[10px] uppercase pointer-events-none"
-																>
-																	{t(
-																		`detail.inspector.logs.status.event.${entry.event}`,
-																		{
-																			defaultValue: entry.event.toUpperCase(),
-																		},
-																	)}
-																</Badge>
-															</div>
-														</div>
-													) : null}
-												</CapsuleStripeListItem>
-											);
-										})}
-									</CapsuleStripeList>
-								</div>
-							)}
-						</CardContent>
-					</Card>
-				</TabsContent>
-			) : null}
-		</Tabs>
-	);
-}
-
-function inspectorLogPrismLanguage(text: string): "json" | "plaintext" {
-	const t = text.trim();
-	if (t.startsWith("{") || t.startsWith("[")) {
-		return "json";
-	}
-	return "plaintext";
-}
-
-function safeLog(value: unknown) {
-	return smartFormat(value);
 }
 
 export default ServerDetailPage;

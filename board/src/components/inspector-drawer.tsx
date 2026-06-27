@@ -1,13 +1,19 @@
 import {
 	AlertCircle,
+	AlertTriangle,
 	CheckCircle2,
 	ChevronsUpDown,
 	Copy,
 	Eraser,
+	Loader2,
+	RefreshCw,
+	ShieldAlert,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	configSuitsApi,
 	inspectorApi,
 	isInspectorSessionUnavailableError,
 	systemApi,
@@ -16,19 +22,19 @@ import { writeClipboardText } from "../lib/clipboard";
 import { smartFormat } from "../lib/format";
 import { usePageTranslations } from "../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../lib/notify";
-import type { InspectorSseEvent } from "../lib/types";
+import type { InspectorSessionOpenData, InspectorSseEvent } from "../lib/types";
 import type {
 	CapabilityArgument,
 	CapabilityRecord,
 } from "../types/capabilities";
 import type { JsonObject, JsonSchema, JsonValue } from "../types/json";
 import CapabilityCombobox from "./capability-combobox";
+import { CardListScrollBody } from "./card-list-scroll-body";
 import { SchemaForm } from "./schema-form";
 import { defaultFromSchema } from "./schema-form-utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ButtonGroup } from "./ui/button-group";
-import { Card, CardContent } from "./ui/card";
 import {
 	Drawer,
 	DrawerContent,
@@ -52,6 +58,7 @@ import {
 } from "./ui/tooltip";
 
 type InspectorKind = "tool" | "resource" | "prompt" | "template";
+type InspectorMode = "proxy" | "native";
 
 export interface InspectorDrawerProps {
 	open: boolean;
@@ -60,13 +67,8 @@ export interface InspectorDrawerProps {
 	serverName?: string;
 	kind: InspectorKind;
 	item: CapabilityRecord | null;
-	mode: "proxy" | "native";
-	sessionId?: string;
-	sessionExpiresAtEpochMs?: number;
 	capabilityOptions?: CapabilityRecord[];
 	onLog?: (entry: InspectorLogEntry) => void;
-	onEnsureSession?: () => Promise<string | undefined>;
-	onSessionUnavailable?: () => void;
 }
 
 type Field = {
@@ -75,6 +77,7 @@ type Field = {
 	required?: boolean;
 	description?: string;
 	enum?: string[];
+	default?: JsonValue;
 };
 
 export interface InspectorLogEntry {
@@ -83,7 +86,7 @@ export interface InspectorLogEntry {
 	channel: "inspector";
 	event: "request" | "success" | "error" | "progress" | "log" | "cancelled";
 	method: string;
-	mode: "proxy" | "native";
+	mode: InspectorMode;
 	payload?: unknown;
 	message?: string;
 }
@@ -109,6 +112,11 @@ const isJsonObjectValue = (value: unknown): value is JsonObject =>
 const toJsonObject = (value: JsonValue | undefined): JsonObject =>
 	isJsonObjectValue(value) ? value : {};
 
+const getDefaultValue = (record: CapabilityRecord): JsonValue | undefined =>
+	Object.prototype.hasOwnProperty.call(record, "default")
+		? (record.default as JsonValue)
+		: undefined;
+
 const toSchema = (value: unknown): JsonSchema | null => {
 	const record = toCapabilityRecord(value);
 	if (!record) return null;
@@ -128,6 +136,7 @@ const normalizeArguments = (value: unknown): CapabilityArgument[] => {
 			name: toStringValue(record.name) ?? `arg_${index}`,
 			type: toStringValue(record.type) ?? "string",
 			description: toStringValue(record.description),
+			default: getDefaultValue(record),
 			required:
 				typeof record.required === "boolean" ? record.required : undefined,
 		};
@@ -143,6 +152,9 @@ const buildSchemaFromArguments = (args: CapabilityArgument[]): JsonSchema => {
 			type: arg.type ?? "string",
 			description: arg.description,
 		};
+		if (arg.default !== undefined) {
+			properties[name].default = arg.default;
+		}
 		if (arg.required) {
 			required.push(name);
 		}
@@ -163,6 +175,9 @@ const buildSchemaFromFields = (fields: Field[]): JsonSchema => {
 			description: field.description,
 			enum: field.enum,
 		};
+		if (field.default !== undefined) {
+			properties[field.name].default = field.default;
+		}
 		if (field.required) {
 			required.push(field.name);
 		}
@@ -183,6 +198,12 @@ type InspectorResponse<T = unknown> = {
 type InspectorEventEntry = {
 	data: InspectorSseEvent;
 	timestamp: number;
+};
+
+type InspectorFormSnapshot = {
+	argsJson: string;
+	useRaw: boolean;
+	values: JsonObject;
 };
 
 const TOOL_KIND_KEYS: Array<keyof CapabilityRecord> = [
@@ -208,6 +229,8 @@ const TEMPLATE_KIND_KEYS: Array<keyof CapabilityRecord> = [
 	"uri_template",
 	"name",
 ];
+
+const INSPECT_SESSION_GRACE_MS = 30_000;
 
 function computeRecordKey(
 	record: CapabilityRecord | null,
@@ -308,7 +331,7 @@ function badgeVariantForEvent(
 
 function pickToolNameForMode(
 	source: CapabilityRecord | null,
-	mode: "proxy" | "native",
+	mode: InspectorMode,
 ): string {
 	if (!source) return "";
 	const uniqueName = toStringValue(source.unique_name);
@@ -320,6 +343,59 @@ function pickToolNameForMode(
 	return toolName || rawName || uniqueName || "";
 }
 
+function pickPromptNameForMode(
+	source: CapabilityRecord | null,
+	mode: InspectorMode,
+): string {
+	if (!source) return "";
+	const uniqueName = toStringValue(source.unique_name);
+	const promptName = toStringValue(source.prompt_name);
+	const rawName = toStringValue(source.name);
+	if (mode === "proxy") {
+		return uniqueName || promptName || rawName || "";
+	}
+	return promptName || rawName || uniqueName || "";
+}
+
+function pickTemplateName(source: CapabilityRecord | null): string {
+	return (
+		toStringValue(source?.uriTemplate) ??
+		toStringValue(source?.uri_template) ??
+		toStringValue(source?.name) ??
+		""
+	);
+}
+
+function pickResourceUri(source: CapabilityRecord | null): string {
+	return (
+		toStringValue(source?.resource_uri) ??
+		toStringValue(source?.uri) ??
+		toStringValue(source?.name) ??
+		""
+	);
+}
+
+function normalizeCapabilityOptions(
+	resp: InspectorResponse<any> | undefined,
+	kind: InspectorKind,
+): CapabilityRecord[] {
+	const data = resp?.data;
+	const rawList =
+		kind === "tool"
+			? data?.tools
+			: kind === "prompt"
+				? data?.prompts
+				: kind === "resource"
+					? data?.resources
+					: data?.templates;
+
+	return Array.isArray(rawList)
+		? rawList
+			.map((entry: unknown) => toCapabilityRecord(entry))
+			.filter(Boolean) as CapabilityRecord[]
+		: [];
+}
+
 export function InspectorDrawer({
 	open,
 	onOpenChange,
@@ -327,17 +403,13 @@ export function InspectorDrawer({
 	serverName,
 	kind,
 	item,
-	mode,
-	sessionId,
-	sessionExpiresAtEpochMs,
 	capabilityOptions,
 	onLog,
-	onEnsureSession,
-	onSessionUnavailable,
 }: InspectorDrawerProps) {
 	const { t } = useTranslation("inspector");
 	usePageTranslations("inspector");
 	const drawerContentRef = useRef<HTMLDivElement | null>(null);
+	const [mode, setMode] = useState<InspectorMode>("native");
 	const [timeoutMs, setTimeoutMs] = useState<number>(8000);
 	const [timeoutInitialized, setTimeoutInitialized] = useState(false);
 
@@ -354,11 +426,20 @@ export function InspectorDrawer({
 				});
 		}
 	}, [open, timeoutInitialized]);
+
 	const [argsJson, setArgsJson] = useState<string>("{}");
 	const [useRaw, setUseRaw] = useState(false);
+	const rawArgumentRows = useMemo(() => {
+		const lineCount = argsJson.split(/\r\n|\r|\n/).length;
+		return Math.max(3, lineCount);
+	}, [argsJson]);
 	const [fields, setFields] = useState<Field[]>([]);
 	const [values, setValues] = useState<JsonObject>({});
 	const [schemaObj, setSchemaObj] = useState<JsonSchema | null>(null);
+	const formSnapshotsRef = useRef<Map<string, InspectorFormSnapshot>>(
+		new Map(),
+	);
+	const initializedFormKeyRef = useRef<string>("");
 	const [overrideItem, setOverrideItem] = useState<CapabilityRecord | null>(
 		null,
 	);
@@ -378,6 +459,10 @@ export function InspectorDrawer({
 	const [submitting, setSubmitting] = useState(false);
 	const [cancelling, setCancelling] = useState(false);
 	const [result, setResult] = useState<unknown>(null);
+	const [responseActionsHidden, setResponseActionsHidden] = useState(false);
+	const responseActionsHideTimer = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 	const [events, setEvents] = useState<InspectorEventEntry[]>([]);
 	const eventsEndRef = useRef<HTMLDivElement | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
@@ -386,22 +471,199 @@ export function InspectorDrawer({
 	const [capOptions, setCapOptions] = useState<CapabilityRecord[]>([]);
 	const [capOptionsLoading, setCapOptionsLoading] = useState(false);
 	const [capOptionsError, setCapOptionsError] = useState<string | null>(null);
-	const [ensuredSessionId, setEnsuredSessionId] = useState<string | undefined>(
-		undefined,
+	const [listedOptionKeys, setListedOptionKeys] = useState<Set<string>>(
+		() => new Set(),
 	);
+	const [nativeSession, setNativeSession] =
+		useState<InspectorSessionOpenData | null>(null);
+	const nativeSessionRef = useRef<InspectorSessionOpenData | null>(null);
+	const nativeSessionCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+	const mountedRef = useRef(true);
 	const [view, setView] = useState<"response" | "events">("response");
 
 	// combobox open/width is handled in CapabilityCombobox
 	const [formCollapsed, setFormCollapsed] = useState(false);
 
 	// Combobox state is managed directly by Popover component
+	const activeProfilesQ = useQuery({
+		queryKey: ["inspector-proxy-profiles", serverId],
+		enabled: open && mode === "proxy" && Boolean(serverId),
+		queryFn: async () => {
+			const suitsResp = await configSuitsApi.getAll();
+			const active = suitsResp.suits.filter((suit) => suit.is_active);
+			const enabled: string[] = [];
+			await Promise.all(
+				active.map(async (suit) => {
+					try {
+						const res = await configSuitsApi.getServers(suit.id);
+						const match = (res.servers || []).find(
+							(server) => server.id === serverId && server.enabled,
+						);
+						if (match) {
+							enabled.push(suit.name || suit.id);
+						}
+					} catch (error) {
+						console.error("Failed to load servers for suit", suit.id, error);
+					}
+				}),
+			);
+			return enabled;
+		},
+	});
+	const proxyAvailable = (activeProfilesQ.data?.length ?? 0) > 0;
+	const isProxyChecking =
+		mode === "proxy" && activeProfilesQ.isFetching && !activeProfilesQ.isFetched;
+	const canUseCurrentMode = mode === "native" || proxyAvailable;
+	const proxyUnavailable = mode === "proxy" && !isProxyChecking && !proxyAvailable;
+	const optionListKey = `${mode}:${kind}`;
+	const hasListedOptions = listedOptionKeys.has(optionListKey);
+	const hasProvidedOptions = capabilityOptions !== undefined;
 	const propItemKey = useMemo(() => computeRecordKey(item, kind), [item, kind]);
 	const currentItemKey = useMemo(
 		() => computeRecordKey(currentItem, kind),
 		[currentItem, kind],
 	);
+	const formStateKey = useMemo(
+		() => (currentItemKey ? `${kind}:${currentItemKey}` : ""),
+		[currentItemKey, kind],
+	);
 	const lastPropKeyRef = useRef<string>(propItemKey);
 	const wasOpenRef = useRef<boolean>(false);
+
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+		};
+	}, []);
+
+	useEffect(() => {
+		nativeSessionRef.current = nativeSession;
+	}, [nativeSession]);
+
+	const clearNativeSessionCloseTimer = useCallback(() => {
+		if (nativeSessionCloseTimer.current) {
+			clearTimeout(nativeSessionCloseTimer.current);
+			nativeSessionCloseTimer.current = null;
+		}
+	}, []);
+
+	const closeNativeSession = useCallback(
+		async (session: InspectorSessionOpenData) => {
+			try {
+				await inspectorApi.sessionClose({ session_id: session.session_id });
+			} catch (error) {
+				console.warn("Failed to close inspector session", error);
+			}
+			if (
+				mountedRef.current &&
+				nativeSessionRef.current?.session_id === session.session_id
+			) {
+				setNativeSession(null);
+				nativeSessionRef.current = null;
+			}
+		},
+		[],
+	);
+
+	const invalidateNativeSession = useCallback(() => {
+		clearNativeSessionCloseTimer();
+		const current = nativeSessionRef.current;
+		nativeSessionRef.current = null;
+		if (mountedRef.current) {
+			setNativeSession(null);
+		}
+		if (current) {
+			void closeNativeSession(current);
+		}
+	}, [clearNativeSessionCloseTimer, closeNativeSession]);
+
+	const scheduleNativeSessionClose = useCallback(
+		(session: InspectorSessionOpenData) => {
+			clearNativeSessionCloseTimer();
+			nativeSessionCloseTimer.current = setTimeout(() => {
+				void closeNativeSession(session);
+			}, INSPECT_SESSION_GRACE_MS);
+		},
+		[clearNativeSessionCloseTimer, closeNativeSession],
+	);
+
+	const ensureNativeSession = useCallback(async (): Promise<
+		string | undefined
+	> => {
+		if (!serverId) {
+			return undefined;
+		}
+		clearNativeSessionCloseTimer();
+
+		const current = nativeSessionRef.current;
+		if (current?.mode === "native" && current.server_id === serverId) {
+			return current.session_id;
+		}
+
+		if (current) {
+			await closeNativeSession(current);
+		}
+
+		const response = await inspectorApi.sessionOpen({
+			mode: "native",
+			server_id: serverId,
+			server_name: serverName,
+		});
+		if (!response?.success || !response.data) {
+			throw new Error(
+				response?.error ? String(response.error) : "Failed to open inspector session",
+			);
+		}
+
+		if (mountedRef.current) {
+			setNativeSession(response.data);
+		}
+		nativeSessionRef.current = response.data;
+		return response.data.session_id;
+	}, [
+		clearNativeSessionCloseTimer,
+		closeNativeSession,
+		serverId,
+		serverName,
+	]);
+
+	useEffect(() => {
+		const current = nativeSessionRef.current;
+		if (!current) {
+			return;
+		}
+
+		if (open && mode === "native" && current.server_id === serverId) {
+			clearNativeSessionCloseTimer();
+			return;
+		}
+
+		scheduleNativeSessionClose(current);
+	}, [clearNativeSessionCloseTimer, mode, open, scheduleNativeSessionClose, serverId]);
+
+	useEffect(() => {
+		if (!open || mode !== "native") {
+			return;
+		}
+		void ensureNativeSession().catch((error) => {
+			notifyError(
+				t("notifications.failed"),
+				error instanceof Error ? error.message : String(error ?? ""),
+			);
+		});
+	}, [ensureNativeSession, mode, open, t]);
+
+	useEffect(() => {
+		return () => {
+			const current = nativeSessionRef.current;
+			if (current) {
+				scheduleNativeSessionClose(current);
+			}
+		};
+	}, [scheduleNativeSessionClose]);
 
 	useEffect(() => {
 		if (propItemKey !== lastPropKeyRef.current) {
@@ -412,6 +674,7 @@ export function InspectorDrawer({
 
 	useEffect(() => {
 		if (open && !wasOpenRef.current) {
+			setMode("native");
 			setResult(null);
 			setEvents([]);
 			setView("response");
@@ -420,6 +683,8 @@ export function InspectorDrawer({
 		}
 		if (!open && wasOpenRef.current) {
 			setOverrideItem(null);
+			formSnapshotsRef.current.clear();
+			initializedFormKeyRef.current = "";
 			setEvents([]);
 			setActiveCallId(null);
 			activeCallIdRef.current = null;
@@ -449,7 +714,7 @@ export function InspectorDrawer({
 			wsRef.current = null;
 		}
 		setFormCollapsed(false);
-	}, [open, currentItemKey, mode, kind]);
+	}, [open, currentItemKey, kind]);
 
 	useEffect(() => {
 		eventsEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -459,113 +724,28 @@ export function InspectorDrawer({
 		if (!open) {
 			return;
 		}
-		if (capabilityOptions !== undefined) {
-			setCapOptions(capabilityOptions);
-			setCapOptionsLoading(false);
-			setCapOptionsError(null);
-			return;
-		}
-		// Reset when missing server context
-		if (!serverId && !serverName) {
-			setCapOptions([]);
-			setCapOptionsLoading(false);
-			setCapOptionsError(null);
-			return;
-		}
-		if (mode === "native" && !sessionId) {
-			setCapOptions([]);
-			setCapOptionsLoading(true);
-			setCapOptionsError(null);
-			return;
-		}
-		let cancelled = false;
-		setCapOptionsLoading(true);
+		setCapOptions(capabilityOptions ?? (item ? [item] : []));
+		setCapOptionsLoading(false);
 		setCapOptionsError(null);
-		(async () => {
-			try {
-				const commonPayload = {
-					server_id: serverId,
-					server_name: serverName,
-					mode,
-					session_id: mode === "native" ? sessionId : undefined,
-				};
-				let resp: InspectorResponse<any> | undefined;
-				if (kind === "tool") {
-					resp = (await inspectorApi.toolsList(commonPayload)) as
-						InspectorResponse<{ tools?: unknown[] }> | undefined;
-					const rawList = Array.isArray(resp?.data?.tools)
-						? resp?.data?.tools
-						: [];
-					const normalized = rawList
-						.map((entry: unknown) => toCapabilityRecord(entry))
-						.filter(Boolean) as CapabilityRecord[];
-					if (!cancelled) setCapOptions(normalized);
-				} else if (kind === "prompt") {
-					resp = (await inspectorApi.promptsList(commonPayload)) as
-						InspectorResponse<{ prompts?: unknown[] }> | undefined;
-					const rawList = Array.isArray(resp?.data?.prompts)
-						? resp?.data?.prompts
-						: [];
-					const normalized = rawList
-						.map((entry: unknown) => toCapabilityRecord(entry))
-						.filter(Boolean) as CapabilityRecord[];
-					if (!cancelled) setCapOptions(normalized);
-				} else if (kind === "resource") {
-					resp = (await inspectorApi.resourcesList(commonPayload)) as
-						InspectorResponse<{ resources?: unknown[] }> | undefined;
-					const rawList = Array.isArray(resp?.data?.resources)
-						? resp?.data?.resources
-						: [];
-					const normalized = rawList
-						.map((entry: unknown) => toCapabilityRecord(entry))
-						.filter(Boolean) as CapabilityRecord[];
-					if (!cancelled) setCapOptions(normalized);
-				} else {
-					resp = (await inspectorApi.templatesList(commonPayload)) as
-						InspectorResponse<{ templates?: unknown[] }> | undefined;
-					const rawList = Array.isArray(resp?.data?.templates)
-						? resp?.data?.templates
-						: [];
-					const normalized = rawList
-						.map((entry: unknown) => toCapabilityRecord(entry))
-						.filter(Boolean) as CapabilityRecord[];
-					if (!cancelled) setCapOptions(normalized);
-				}
-			} catch (error) {
-				if (!cancelled) {
-					setCapOptionsError(
-						error instanceof Error ? error.message : String(error ?? ""),
-					);
-				}
-			} finally {
-				if (!cancelled) {
-					setCapOptionsLoading(false);
-				}
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, [
-		capabilityOptions,
-		kind,
-		mode,
-		open,
-		propItemKey,
-		serverId,
-		serverName,
-		sessionId,
-	]);
+	}, [capabilityOptions, item, kind, mode, open, propItemKey]);
 
 	useEffect(() => {
 		activeCallIdRef.current = activeCallId;
 	}, [activeCallId]);
 
 	useEffect(() => {
-		if (mode !== "native" || sessionId) {
-			setEnsuredSessionId(undefined);
+		if (!open || !formStateKey) {
+			return;
 		}
-	}, [mode, sessionId]);
+		if (initializedFormKeyRef.current !== formStateKey) {
+			return;
+		}
+		formSnapshotsRef.current.set(formStateKey, {
+			argsJson,
+			useRaw,
+			values,
+		});
+	}, [argsJson, formStateKey, open, useRaw, values]);
 
 	useEffect(() => {
 		if (!open && wsRef.current) {
@@ -632,6 +812,7 @@ export function InspectorDrawer({
 							required: required.includes(k),
 							description: p.description,
 							enum: en,
+							default: p.default,
 						};
 					});
 				}
@@ -642,6 +823,7 @@ export function InspectorDrawer({
 						type: arg.type ?? "string",
 						required: Boolean(arg.required),
 						description: arg.description,
+						default: arg.default,
 					}));
 				}
 				return list;
@@ -652,6 +834,7 @@ export function InspectorDrawer({
 					type: arg.type ?? "string",
 					required: Boolean(arg.required),
 					description: arg.description,
+					default: arg.default,
 				}));
 			}
 			if (kind === "template") {
@@ -678,7 +861,8 @@ export function InspectorDrawer({
 	function fillMock(fs: Field[]): JsonObject {
 		const acc: JsonObject = {};
 		fs.forEach((f) => {
-			if (f.enum && f.enum.length) acc[f.name] = f.enum[0];
+			if (f.default !== undefined) acc[f.name] = f.default;
+			else if (f.enum && f.enum.length) acc[f.name] = f.enum[0];
 			else acc[f.name] = mockOfType(f.type);
 		});
 		return acc;
@@ -689,6 +873,21 @@ export function InspectorDrawer({
 			return;
 		}
 		const source = currentItem ?? null;
+		const savedState = formStateKey
+			? formSnapshotsRef.current.get(formStateKey)
+			: undefined;
+		initializedFormKeyRef.current = formStateKey;
+		const applyArguments = (nextValues: JsonObject) => {
+			if (savedState) {
+				setValues(savedState.values);
+				setArgsJson(savedState.argsJson);
+				setUseRaw(savedState.useRaw);
+				return;
+			}
+			setValues(nextValues);
+			setArgsJson(JSON.stringify(nextValues, null, 2));
+			setUseRaw(false);
+		};
 		let schema: JsonSchema | null = null;
 		if (kind === "tool") {
 			schema = extractToolSchema(source);
@@ -704,7 +903,6 @@ export function InspectorDrawer({
 				schema = buildSchemaFromArguments(args);
 			}
 		} else if (kind === "template") {
-			// For templates, derive fields from uriTemplate placeholders
 			const fs = deriveFields(source);
 			if (fs.length > 0) {
 				schema = buildSchemaFromFields(fs);
@@ -719,8 +917,7 @@ export function InspectorDrawer({
 		) {
 			setSchemaObj(schema);
 			const mock = toJsonObject(defaultFromSchema(schema));
-			setValues(mock);
-			setArgsJson(JSON.stringify(mock, null, 2));
+			applyArguments(mock);
 			setFields([]);
 		} else {
 			const fs = deriveFields(source);
@@ -729,46 +926,32 @@ export function InspectorDrawer({
 				const generatedSchema = buildSchemaFromFields(fs);
 				setSchemaObj(generatedSchema);
 				const mock = toJsonObject(defaultFromSchema(generatedSchema));
-				setValues(mock);
-				setArgsJson(JSON.stringify(mock, null, 2));
+				applyArguments(mock);
 			} else {
 				setSchemaObj(null);
 				const mock = fillMock(fs);
-				setValues(mock);
-				setArgsJson(JSON.stringify(mock, null, 2));
-				setUseRaw(false);
+				applyArguments(mock);
 			}
 		}
+		// Maintaining manual dependency list because schema helpers are stable
+		// within this component lifecycle.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open, currentItem, kind, formStateKey]);
 
+	useEffect(() => {
+		if (!open) {
+			return;
+		}
+		const source = currentItem ?? null;
 		if (kind === "tool") {
 			setName(pickToolNameForMode(source, mode));
 		} else if (kind === "prompt") {
-			const promptName =
-				(mode === "proxy"
-					? (toStringValue(source?.unique_name) ??
-						toStringValue(source?.prompt_name) ??
-						toStringValue(source?.name))
-					: (toStringValue(source?.prompt_name) ??
-						toStringValue(source?.name) ??
-						toStringValue(source?.unique_name))) ?? "";
-			setName(promptName);
+			setName(pickPromptNameForMode(source, mode));
 		} else if (kind === "resource") {
-			const resourceUri =
-				toStringValue(source?.resource_uri) ??
-				toStringValue(source?.uri) ??
-				toStringValue(source?.name) ??
-				"";
-			setUri(resourceUri);
+			setUri(pickResourceUri(source));
 		} else if (kind === "template") {
-			const templateName =
-				toStringValue(source?.uriTemplate) ??
-				toStringValue(source?.uri_template) ??
-				toStringValue(source?.name) ??
-				"";
-			setName(templateName);
+			setName(pickTemplateName(source));
 		}
-		// Maintaining manual dependency list—internal helpers are stable within this component lifecycle.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open, currentItem, kind, mode]);
 
 	function parseArgs(): JsonObject | undefined {
@@ -825,6 +1008,85 @@ export function InspectorDrawer({
 		return map;
 	}, [capOptions, kind]);
 
+	const refreshCapabilityOptions = useCallback(async () => {
+		if (!serverId && !serverName) {
+			setCapOptionsError(t("errors.sessionMissing"));
+			return;
+		}
+		if (mode === "proxy" && !proxyAvailable) {
+			setCapOptionsError(
+				t("proxy.unavailable", {
+					defaultValue:
+						"Proxy mode is unavailable because this server is not enabled in any active profile.",
+				}),
+			);
+			return;
+		}
+
+		setCapOptionsLoading(true);
+		setCapOptionsError(null);
+		try {
+			const sessionId =
+				mode === "native" ? await ensureNativeSession() : undefined;
+			if (mode === "native" && !sessionId) {
+				throw new Error(t("errors.sessionMissing"));
+			}
+			const commonPayload = {
+				server_id: serverId,
+				server_name: serverName,
+				mode,
+				session_id: sessionId,
+				refresh: true,
+			};
+			let resp: InspectorResponse<any> | undefined;
+			if (kind === "tool") {
+				resp = (await inspectorApi.toolsList(commonPayload)) as
+					| InspectorResponse<{ tools?: unknown[] }>
+					| undefined;
+			} else if (kind === "prompt") {
+				resp = (await inspectorApi.promptsList(commonPayload)) as
+					| InspectorResponse<{ prompts?: unknown[] }>
+					| undefined;
+			} else if (kind === "resource") {
+				resp = (await inspectorApi.resourcesList(commonPayload)) as
+					| InspectorResponse<{ resources?: unknown[] }>
+					| undefined;
+			} else {
+				resp = (await inspectorApi.templatesList(commonPayload)) as
+					| InspectorResponse<{ templates?: unknown[] }>
+					| undefined;
+			}
+			if (!resp?.success) {
+				throw new Error(resp?.error ? String(resp.error) : "Inspector list failed");
+			}
+			setCapOptions(normalizeCapabilityOptions(resp, kind));
+			setListedOptionKeys((current) => {
+				const next = new Set(current);
+				next.add(optionListKey);
+				return next;
+			});
+		} catch (error) {
+			if (mode === "native" && isInspectorSessionUnavailableError(error)) {
+				invalidateNativeSession();
+			}
+			setCapOptionsError(
+				error instanceof Error ? error.message : String(error ?? ""),
+			);
+		} finally {
+			setCapOptionsLoading(false);
+		}
+	}, [
+		ensureNativeSession,
+		invalidateNativeSession,
+		kind,
+		mode,
+		optionListKey,
+		proxyAvailable,
+		serverId,
+		serverName,
+		t,
+	]);
+
 	const handleCapabilitySelect = useCallback(
 		(value: string) => {
 			setResult(null);
@@ -838,29 +1100,11 @@ export function InspectorDrawer({
 				setOverrideItem(match);
 				if (kind === "tool") setName(pickToolNameForMode(match, mode));
 				else if (kind === "prompt") {
-					const promptName =
-						mode === "proxy"
-							? toStringValue((match as any).unique_name) ||
-							toStringValue((match as any).prompt_name) ||
-							toStringValue((match as any).name)
-							: toStringValue((match as any).prompt_name) ||
-							toStringValue((match as any).name) ||
-							toStringValue((match as any).unique_name);
-					setName(promptName ?? "");
+					setName(pickPromptNameForMode(match, mode));
 				} else if (kind === "resource") {
-					const resourceUri =
-						toStringValue((match as any).resource_uri) ||
-						toStringValue((match as any).uri) ||
-						toStringValue((match as any).name) ||
-						"";
-					setUri(resourceUri);
+					setUri(pickResourceUri(match));
 				} else if (kind === "template") {
-					const templateName =
-						toStringValue((match as any).uriTemplate) ||
-						toStringValue((match as any).uri_template) ||
-						toStringValue((match as any).name) ||
-						"";
-					setName(templateName);
+					setName(pickTemplateName(match));
 				}
 			} else {
 				setOverrideItem(null);
@@ -898,6 +1142,35 @@ export function InspectorDrawer({
 		setView("response");
 	}, []);
 
+	const clearResponseActionsHideTimer = useCallback(() => {
+		if (responseActionsHideTimer.current != null) {
+			clearTimeout(responseActionsHideTimer.current);
+			responseActionsHideTimer.current = null;
+		}
+	}, []);
+
+	const scheduleResponseActionsHide = useCallback(() => {
+		clearResponseActionsHideTimer();
+		responseActionsHideTimer.current = setTimeout(() => {
+			setResponseActionsHidden(true);
+			responseActionsHideTimer.current = null;
+		}, 450);
+	}, [clearResponseActionsHideTimer]);
+
+	const resetResponseActions = useCallback(() => {
+		clearResponseActionsHideTimer();
+		setResponseActionsHidden(false);
+	}, [clearResponseActionsHideTimer]);
+
+	useEffect(() => {
+		clearResponseActionsHideTimer();
+		setResponseActionsHidden(false);
+	}, [clearResponseActionsHideTimer, result]);
+
+	useEffect(() => () => clearResponseActionsHideTimer(), [
+		clearResponseActionsHideTimer,
+	]);
+
 	const hasSchemaInputs =
 		schemaObj &&
 		schemaObj.properties &&
@@ -906,7 +1179,7 @@ export function InspectorDrawer({
 	const expectsArguments =
 		kind !== "resource" && (hasSchemaInputs || hasFieldInputs);
 	const sessionExpiry = (() => {
-		const ms = Number(sessionExpiresAtEpochMs ?? NaN);
+		const ms = Number(nativeSession?.expires_at_epoch_ms ?? NaN);
 		if (!Number.isFinite(ms)) return null;
 		return new Date(ms).toLocaleTimeString([], {
 			hour: "2-digit",
@@ -1102,13 +1375,18 @@ export function InspectorDrawer({
 				channel: "inspector" as const,
 				mode,
 			};
+			if (mode === "proxy" && !proxyAvailable) {
+				throw new Error(
+					t("proxy.unavailable", {
+						defaultValue:
+							"Proxy mode is unavailable because this server is not enabled in any active profile.",
+					}),
+				);
+			}
 			const effectiveSessionId =
-				mode === "native" ? sessionId ?? (await onEnsureSession?.()) : undefined;
+				mode === "native" ? await ensureNativeSession() : undefined;
 			if (mode === "native" && !effectiveSessionId) {
 				throw new Error(t("errors.sessionMissing"));
-			}
-			if (mode === "native" && effectiveSessionId && !sessionId) {
-				setEnsuredSessionId(effectiveSessionId);
 			}
 			if (kind === "tool") {
 				const args = expectsArguments
@@ -1116,7 +1394,10 @@ export function InspectorDrawer({
 						? parseArgs()
 						: values
 					: undefined;
-				if (expectsArguments && args === undefined) return;
+				if (expectsArguments && args === undefined) {
+					setSubmitting(false);
+					return;
+				}
 
 				const effectiveServerId = serverId;
 				if (!effectiveServerId && !serverName) {
@@ -1294,8 +1575,7 @@ export function InspectorDrawer({
 			}
 		} catch (e) {
 			if (mode === "native" && isInspectorSessionUnavailableError(e)) {
-				setEnsuredSessionId(undefined);
-				onSessionUnavailable?.();
+				invalidateNativeSession();
 			}
 			onLog?.({
 				id: newLogId(),
@@ -1337,18 +1617,20 @@ export function InspectorDrawer({
 				t("notifications.copySuccess"),
 				t("notifications.copySuccessMessage"),
 			);
+			scheduleResponseActionsHide();
 		} catch (err) {
 			notifyError(
 				t("notifications.copyFailed"),
 				err instanceof Error ? err.message : String(err),
 			);
 		}
-	}, [result, t]);
+	}, [result, scheduleResponseActionsHide, t]);
 
-	const displaySessionId = sessionId ?? ensuredSessionId;
+	const displaySessionId =
+		mode === "native" ? nativeSession?.session_id : undefined;
 	const sessionActive = Boolean(displaySessionId);
 	const sessionIndicator =
-		kind === "tool" ? (
+		kind === "tool" && mode === "native" ? (
 			<TooltipProvider delayDuration={150}>
 				<Tooltip>
 					<TooltipTrigger asChild>
@@ -1386,11 +1668,10 @@ export function InspectorDrawer({
 			</TooltipProvider>
 		) : null;
 
-	const handleCollapseFormClick = useCallback(
+	const handleToggleFormClick = useCallback(
 		(event: React.MouseEvent<HTMLDivElement>) => {
-			if (formCollapsed) return;
 			const target = event.target as HTMLElement;
-			// Ignore clicks on interactive elements (buttons, links, popovers) to avoid accidental collapse
+			// Ignore interactive controls so output clicks are the only input toggle target.
 			if (
 				target.closest("button") ||
 				target.closest("a") ||
@@ -1399,10 +1680,35 @@ export function InspectorDrawer({
 			) {
 				return;
 			}
-			setFormCollapsed(true);
+			setFormCollapsed((collapsed) => !collapsed);
 		},
-		[formCollapsed],
+		[],
 	);
+
+	const listButton = (
+		<Button
+			type="button"
+			variant="default"
+			onClick={() => void refreshCapabilityOptions()}
+			disabled={
+				capOptionsLoading || submitting || isProxyChecking || !canUseCurrentMode
+			}
+			className="h-9 shrink-0 gap-2 px-3"
+		>
+			{capOptionsLoading || isProxyChecking ? (
+				<Loader2 className="h-4 w-4 animate-spin" />
+			) : (
+				<RefreshCw className="h-4 w-4" />
+			)}
+			{hasProvidedOptions || hasListedOptions
+				? t("actions.refresh", { defaultValue: "Refresh" })
+				: t("actions.list", { defaultValue: "List" })}
+		</Button>
+	);
+	const proxyUnavailableText = t("proxy.unavailable", {
+		defaultValue:
+			"Proxy mode is unavailable because this server is not enabled in any active profile.",
+	});
 
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange}>
@@ -1429,7 +1735,7 @@ export function InspectorDrawer({
 					</div>
 				</DrawerHeader>
 
-				<div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+				<div className="flex min-h-0 flex-1 flex-col space-y-3 overflow-y-auto px-4 py-3">
 					<div
 						className={`transition-all duration-300 ease-in-out ${formCollapsed ? "max-h-12 overflow-hidden" : "max-h-[800px]"
 							}`}
@@ -1458,26 +1764,72 @@ export function InspectorDrawer({
 								/>
 							</div>
 						) : (
-							<div className="space-y-4">
-								<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+							<div className="space-y-3">
+								<div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
 									<div className="space-y-1">
 										<Label>{t("form.mode")}</Label>
-										<Input value={mode} disabled className="font-mono" />
+										<ButtonGroup className="flex w-full">
+											<Button
+												type="button"
+												variant={mode === "native" ? "default" : "outline"}
+												className="h-9 flex-1 rounded-r-none gap-2 px-3"
+												onClick={() => setMode("native")}
+											>
+												<AlertTriangle className="h-4 w-4" />
+												{t("form.native", { defaultValue: "Native" })}
+											</Button>
+											<TooltipProvider delayDuration={200}>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<Button
+															type="button"
+															variant={mode === "proxy" ? "default" : "outline"}
+															className="h-9 flex-1 rounded-l-none gap-2 px-3"
+															onClick={() => setMode("proxy")}
+														>
+															{isProxyChecking ? (
+																<Loader2 className="h-4 w-4 animate-spin" />
+															) : (
+																<ShieldAlert
+																	className={`h-4 w-4 ${proxyUnavailable ? "text-amber-300" : ""}`}
+																/>
+															)}
+															<span
+																className={
+																	proxyUnavailable ? "text-amber-300" : undefined
+																}
+															>
+																{t("form.proxy", { defaultValue: "Proxy" })}
+															</span>
+														</Button>
+													</TooltipTrigger>
+													{proxyUnavailable ? (
+														<TooltipPortal>
+															<TooltipContent side="top" align="start">
+																<p className="max-w-xs text-xs leading-relaxed">
+																	{proxyUnavailableText}
+																</p>
+																<TooltipArrow />
+															</TooltipContent>
+														</TooltipPortal>
+													) : null}
+												</Tooltip>
+											</TooltipProvider>
+										</ButtonGroup>
 									</div>
-									{kind === "tool" ? (
-										<div className="space-y-1">
-											<Label>{t("form.timeout")}</Label>
-											<Input
-												type="number"
-												min={1000}
-												step={500}
-												value={timeoutMs}
-												onChange={(e) =>
-													setTimeoutMs(parseInt(e.target.value, 10) || 8000)
-												}
-											/>
-										</div>
-									) : null}
+									<div className="space-y-1">
+										<Label>{t("form.timeout")}</Label>
+										<Input
+											type="number"
+											min={1000}
+											step={1000}
+											className="h-9"
+											value={timeoutMs}
+											onChange={(e) =>
+												setTimeoutMs(parseInt(e.target.value, 10) || 8000)
+											}
+										/>
+									</div>
 									<div className="space-y-1">
 										<Label>{t("form.server")}</Label>
 										<TooltipProvider delayDuration={200}>
@@ -1486,6 +1838,7 @@ export function InspectorDrawer({
 													<Input
 														value={serverName || serverId || "-"}
 														disabled
+														className="h-9"
 													/>
 												</TooltipTrigger>
 												{serverName && serverId ? (
@@ -1508,46 +1861,53 @@ export function InspectorDrawer({
 												? t("form.resourceUri")
 												: t("form.template")}
 										</Label>
-										<CapabilityCombobox
-											kind={kind as any}
-											items={capOptions}
-											value={currentItemKey || undefined}
-											onChange={(key) => handleCapabilitySelect(key)}
-											loading={capOptionsLoading}
-											error={capOptionsError}
-											container={drawerContentRef.current}
-											placeholder={
-												kind === "resource"
-													? (t("form.selectResource", {
-														defaultValue: "Select resource",
-													}) as string)
-													: (t("form.selectTemplate", {
-														defaultValue: "Select template",
-													}) as string)
-											}
-											getKey={(it) =>
-												computeRecordKey(it as CapabilityRecord, kind)
-											}
-											getLabel={(it) => {
-												const entry = it as CapabilityRecord;
-												if (kind === "template") {
-													return (toStringValue((entry as any).uriTemplate) ||
-														toStringValue((entry as any).uri_template) ||
-														toStringValue((entry as any).name) ||
-														computeRecordKey(entry, kind)) as string;
-												}
-												return (toStringValue((entry as any).resource_uri) ||
-													toStringValue((entry as any).uri) ||
-													toStringValue((entry as any).name) ||
-													computeRecordKey(entry, kind)) as string;
-											}}
-											getDescription={(it) => {
-												const entry = it as CapabilityRecord;
-												return (
-													toStringValue((entry as any).description) || undefined
-												);
-											}}
-										/>
+										<div className="flex min-w-0 gap-2">
+											<div className="min-w-0 flex-1">
+												<CapabilityCombobox
+													kind={kind as any}
+													items={capOptions}
+													value={currentItemKey || undefined}
+													onChange={(key) => handleCapabilitySelect(key)}
+													loading={capOptionsLoading}
+													error={capOptionsError}
+													container={drawerContentRef.current}
+													triggerClassName="h-9"
+													placeholder={
+														kind === "resource"
+															? (t("form.selectResource", {
+																defaultValue: "Select resource",
+															}) as string)
+															: (t("form.selectTemplate", {
+																defaultValue: "Select template",
+															}) as string)
+													}
+													getKey={(it) =>
+														computeRecordKey(it as CapabilityRecord, kind)
+													}
+													getLabel={(it) => {
+														const entry = it as CapabilityRecord;
+														if (kind === "template") {
+															return (toStringValue((entry as any).uriTemplate) ||
+																toStringValue((entry as any).uri_template) ||
+																toStringValue((entry as any).name) ||
+																computeRecordKey(entry, kind)) as string;
+														}
+														return (toStringValue((entry as any).resource_uri) ||
+															toStringValue((entry as any).uri) ||
+															toStringValue((entry as any).name) ||
+															computeRecordKey(entry, kind)) as string;
+													}}
+													getDescription={(it) => {
+														const entry = it as CapabilityRecord;
+														return (
+															toStringValue((entry as any).description) ||
+															undefined
+														);
+													}}
+												/>
+											</div>
+											{listButton}
+										</div>
 									</div>
 								) : (
 									<div className="space-y-2">
@@ -1555,70 +1915,79 @@ export function InspectorDrawer({
 											<Label>
 												{kind === "tool" ? t("form.tool") : t("form.prompt")}
 											</Label>
-											<CapabilityCombobox
-												kind={kind as any}
-												items={capOptions}
-												value={currentItemKey || undefined}
-												onChange={(key) => handleCapabilitySelect(key)}
-												loading={capOptionsLoading}
-												error={capOptionsError}
-												container={drawerContentRef.current}
-												placeholder={
-													kind === "tool"
-														? (t("form.selectTool", {
-															defaultValue: "Select tool",
-														}) as string)
-														: (t("form.selectPrompt", {
-															defaultValue: "Select prompt",
-														}) as string)
-												}
-												getKey={(it) =>
-													computeRecordKey(it as CapabilityRecord, kind)
-												}
-												getLabel={(it) => {
-													const entry = it as CapabilityRecord;
-													if (kind === "tool") {
-														return (
-															pickToolNameForMode(entry, mode) ||
-															computeRecordKey(entry, kind)
-														);
-													} else {
-														const uniqueName = toStringValue(
-															(entry as any).unique_name,
-														);
-														const promptName = toStringValue(
-															(entry as any).prompt_name,
-														);
-														const rawName = toStringValue((entry as any).name);
-														return (
-															(mode === "proxy"
-																? uniqueName || promptName || rawName
-																: promptName || rawName || uniqueName) ||
-															computeRecordKey(entry, kind)
-														);
-													}
-												}}
-												getDescription={(it) => {
-													const entry = it as CapabilityRecord;
-													return (
-														toStringValue((entry as any).description) ||
-														undefined
-													);
-												}}
-											/>
+											<div className="flex min-w-0 gap-2">
+												<div className="min-w-0 flex-1">
+													<CapabilityCombobox
+														kind={kind as any}
+														items={capOptions}
+														value={currentItemKey || undefined}
+														onChange={(key) => handleCapabilitySelect(key)}
+														loading={capOptionsLoading}
+														error={capOptionsError}
+														container={drawerContentRef.current}
+														triggerClassName="h-9"
+														placeholder={
+															kind === "tool"
+																? (t("form.selectTool", {
+																	defaultValue: "Select tool",
+																}) as string)
+																: (t("form.selectPrompt", {
+																	defaultValue: "Select prompt",
+																}) as string)
+														}
+														getKey={(it) =>
+															computeRecordKey(it as CapabilityRecord, kind)
+														}
+														getLabel={(it) => {
+															const entry = it as CapabilityRecord;
+															if (kind === "tool") {
+																return (
+																	pickToolNameForMode(entry, mode) ||
+																	computeRecordKey(entry, kind)
+																);
+															} else {
+																const uniqueName = toStringValue(
+																	(entry as any).unique_name,
+																);
+																const promptName = toStringValue(
+																	(entry as any).prompt_name,
+																);
+																const rawName = toStringValue(
+																	(entry as any).name,
+																);
+																return (
+																	(mode === "proxy"
+																		? uniqueName || promptName || rawName
+																		: promptName || rawName || uniqueName) ||
+																	computeRecordKey(entry, kind)
+																);
+															}
+														}}
+														getDescription={(it) => {
+															const entry = it as CapabilityRecord;
+															return (
+																toStringValue(entry.description) ||
+																undefined
+															);
+														}}
+													/>
+												</div>
+												{listButton}
+											</div>
 										</div>
 									</div>
 								)}
 
 								{kind !== "resource" ? (
 									expectsArguments ? (
-										<div className="space-y-4">
-											<div className="flex items-center justify-between">
-												<Label>{t("form.parameters")}</Label>
-												<ButtonGroup>
+										<div className="space-y-3">
+											<div className="flex items-end justify-between">
+												<Label className="pb-1">{t("form.parameters")}</Label>
+												<ButtonGroup className="overflow-hidden rounded-md border border-input text-xs divide-x divide-input">
 													<Button
 														size="sm"
-														variant="outline"
+														variant="ghost"
+														className="h-auto px-2 py-1 text-xs font-medium"
 														onClick={() => {
 															if (schemaObj) {
 																const mock = toJsonObject(
@@ -1637,8 +2006,12 @@ export function InspectorDrawer({
 													</Button>
 													<Button
 														size="sm"
-														variant="outline"
+														variant="ghost"
+														className="h-auto px-2 py-1 text-xs font-medium"
 														onClick={() => {
+															if (formStateKey) {
+																formSnapshotsRef.current.delete(formStateKey);
+															}
 															setValues({});
 															setArgsJson("{}");
 														}}
@@ -1647,7 +2020,8 @@ export function InspectorDrawer({
 													</Button>
 													<Button
 														size="sm"
-														variant={useRaw ? "default" : "outline"}
+														variant={useRaw ? "default" : "ghost"}
+														className="h-auto px-2 py-1 text-xs font-medium"
 														onClick={() => setUseRaw((v) => !v)}
 													>
 														{useRaw ? t("actions.form") : t("actions.json")}
@@ -1655,33 +2029,42 @@ export function InspectorDrawer({
 												</ButtonGroup>
 											</div>
 											{useRaw ? (
-												<Textarea
-													rows={8}
-													className="font-mono text-xs"
-													value={argsJson}
-													onChange={(e) => setArgsJson(e.target.value)}
-												/>
+												<CardListScrollBody className="max-h-[230px] flex-none">
+													<div className="p-3">
+														<Textarea
+															rows={rawArgumentRows}
+															className="min-h-0 resize-none border-0 bg-transparent p-0 font-mono text-xs shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+															value={argsJson}
+															onChange={(e) => setArgsJson(e.target.value)}
+														/>
+													</div>
+												</CardListScrollBody>
 											) : schemaObj ? (
-												<Card>
-													<CardContent className="p-4">
+												<CardListScrollBody className="max-h-[230px] flex-none">
+													<div className="p-3">
 														<SchemaForm
 															schema={schemaObj}
 															value={values}
+															compact
 															onChange={(v) => {
 																const next = toJsonObject(v);
 																setValues(next);
 																setArgsJson(JSON.stringify(next, null, 2));
 															}}
 														/>
-													</CardContent>
-												</Card>
+													</div>
+												</CardListScrollBody>
 											) : (
-												<Textarea
-													rows={6}
-													className="font-mono text-xs"
-													value={argsJson}
-													onChange={(e) => setArgsJson(e.target.value)}
-												/>
+												<CardListScrollBody className="max-h-[260px] flex-none">
+													<div className="p-3">
+														<Textarea
+															rows={5}
+															className="min-h-[220px] resize-none font-mono text-xs"
+															value={argsJson}
+															onChange={(e) => setArgsJson(e.target.value)}
+														/>
+													</div>
+												</CardListScrollBody>
 											)}
 										</div>
 									) : (
@@ -1697,7 +2080,7 @@ export function InspectorDrawer({
 					<Tabs
 						value={view}
 						onValueChange={(val) => setView(val as "response" | "events")}
-						className="space-y-3"
+						className="flex min-h-[220px] flex-1 flex-col space-y-3"
 					>
 						<TabsList className="grid w-full grid-cols-2 text-sm">
 							<TabsTrigger value="response">{t("tabs.response")}</TabsTrigger>
@@ -1705,106 +2088,120 @@ export function InspectorDrawer({
 						</TabsList>
 						<TabsContent
 							value="response"
-							className="space-y-2"
-							onClick={handleCollapseFormClick}
+							className="min-h-0 flex-1 flex-col data-[state=active]:flex"
+							onClick={handleToggleFormClick}
 						>
-							<div className="flex items-center justify-between gap-2 text-sm mb-2">
-								<Label>{t("tabs.response")}</Label>
-							</div>
-							<div className="group relative max-h-[40vh] overflow-auto rounded border border-slate-200 bg-white font-mono text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200">
-								{result ? (
-									<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
-										<ButtonGroup className="pointer-events-auto bg-white/95 backdrop-blur-sm opacity-0 shadow-sm transition-opacity group-hover:opacity-100 dark:bg-slate-900/95">
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												className="h-7 w-7 p-0"
-												onClick={(event) => {
-													event.stopPropagation();
-													handleCopy();
-												}}
-												data-prevent-collapse="true"
-												title={t("actions.copy")}
+							<CardListScrollBody>
+								<div
+									className="group relative min-h-full text-xs text-slate-700 dark:text-slate-200"
+									onMouseLeave={resetResponseActions}
+								>
+									{result ? (
+										<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
+											<ButtonGroup
+												className={`pointer-events-auto bg-white/95 opacity-0 backdrop-blur-sm shadow-sm transition-opacity dark:bg-slate-900/95 ${
+													responseActionsHidden
+														? ""
+														: "group-hover:opacity-100"
+												}`}
 											>
-												<Copy className="h-3.5 w-3.5" />
-											</Button>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												className="h-7 w-7 p-0"
-												onClick={(event) => {
-													event.stopPropagation();
-													clearOutput();
-												}}
-												data-prevent-collapse="true"
-												title={t("actions.clear")}
-											>
-												<Eraser className="h-3.5 w-3.5" />
-											</Button>
-										</ButtonGroup>
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													className="h-7 w-7 p-0"
+													onClick={(event) => {
+														event.stopPropagation();
+														handleCopy();
+													}}
+													data-prevent-collapse="true"
+													title={t("actions.copy")}
+												>
+													<Copy className="h-3.5 w-3.5" />
+												</Button>
+												<Button
+													type="button"
+													variant="outline"
+													size="sm"
+													className="h-7 w-7 p-0"
+													onClick={(event) => {
+														event.stopPropagation();
+														scheduleResponseActionsHide();
+														clearOutput();
+													}}
+													data-prevent-collapse="true"
+													title={t("actions.clear")}
+												>
+													<Eraser className="h-3.5 w-3.5" />
+												</Button>
+											</ButtonGroup>
+										</div>
+									) : null}
+									<div
+										className={
+											result
+												? "whitespace-pre-wrap break-words p-3 font-mono"
+												: "whitespace-pre-wrap break-words p-3 text-xs text-slate-500 dark:text-slate-300"
+										}
+									>
+										{result
+											? (extractHumanText(result) ?? pretty(result))
+											: t("response.placeholder")}
 									</div>
-								) : null}
-								<div className="p-3 whitespace-pre-wrap break-words">
-									{result
-										? (extractHumanText(result) ?? pretty(result))
-										: t("response.placeholder")}
 								</div>
-							</div>
+							</CardListScrollBody>
 						</TabsContent>
 						<TabsContent
 							value="events"
-							className="space-y-2"
-							onClick={handleCollapseFormClick}
+							className="min-h-0 flex-1 flex-col data-[state=active]:flex"
+							onClick={handleToggleFormClick}
 						>
-							<div className="flex items-center justify-between">
-								<Label>{t("events.title")}</Label>
-							</div>
-							{events.length === 0 ? (
-								<div className="rounded border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
-									{t("events.placeholder")}
-								</div>
-							) : (
-								<ScrollArea className="max-h-[32vh]">
-									<ul className="space-y-2">
-										{events.map((entry, index) => {
-											const label = formatEventLabel(entry, t);
-											const detail = formatEventDetails(entry, t);
-											const key = `${entry.data.event}-${entry.timestamp}-${index}`;
-											return (
-												<li
-													key={key}
-													className="rounded border border-slate-200 bg-white p-3 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/50"
-												>
-													<div className="flex items-center justify-between gap-2">
-														<div className="flex items-center gap-2">
-															<Badge
-																variant={badgeVariantForEvent(entry.data.event)}
-																className="uppercase"
-															>
-																{entry.data.event}
-															</Badge>
-															<span className="font-medium text-slate-700 dark:text-slate-100">
-																{label}
+							<CardListScrollBody>
+								{events.length === 0 ? (
+									<div className="min-h-full p-3 text-xs text-slate-500 dark:text-slate-300">
+										{t("events.placeholder")}
+									</div>
+								) : (
+									<>
+										<ul className="space-y-2 p-3">
+											{events.map((entry, index) => {
+												const label = formatEventLabel(entry, t);
+												const detail = formatEventDetails(entry, t);
+												const key = `${entry.data.event}-${entry.timestamp}-${index}`;
+												return (
+													<li
+														key={key}
+														className="rounded border border-slate-200 bg-white p-3 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/50"
+													>
+														<div className="flex items-center justify-between gap-2">
+															<div className="flex items-center gap-2">
+																<Badge
+																	variant={badgeVariantForEvent(entry.data.event)}
+																	className="uppercase"
+																>
+																	{entry.data.event}
+																</Badge>
+																<span className="font-medium text-slate-700 dark:text-slate-100">
+																	{label}
+																</span>
+															</div>
+															<span className="text-[11px] text-slate-500 dark:text-slate-300">
+																{formatTimestamp(entry.timestamp)}
 															</span>
 														</div>
-														<span className="text-[11px] text-slate-500 dark:text-slate-300">
-															{formatTimestamp(entry.timestamp)}
-														</span>
-													</div>
-													{detail ? (
-														<pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-600 dark:text-slate-300">
-															{detail}
-														</pre>
-													) : null}
-												</li>
-											);
-										})}
-									</ul>
-									<div ref={eventsEndRef} />
-								</ScrollArea>
-							)}
+														{detail ? (
+															<pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-600 dark:text-slate-300">
+																{detail}
+															</pre>
+														) : null}
+													</li>
+												);
+											})}
+										</ul>
+										<div ref={eventsEndRef} />
+									</>
+								)}
+							</CardListScrollBody>
 						</TabsContent>
 					</Tabs>
 				</div>
@@ -1831,7 +2228,7 @@ export function InspectorDrawer({
 							) : null}
 							<Button
 								onClick={onSubmit}
-								disabled={submitting}
+								disabled={submitting || isProxyChecking || !canUseCurrentMode}
 								className="w-full sm:w-auto"
 							>
 								{submitting ? t("actions.running") : t("actions.run")}

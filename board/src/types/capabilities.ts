@@ -1,10 +1,11 @@
-import type { JsonSchema } from "./json";
+import type { JsonSchema, JsonValue } from "./json";
 
 export interface CapabilityArgument {
 	name?: string;
 	type?: string;
 	description?: string;
 	required?: boolean;
+	default?: JsonValue;
 }
 
 export type CapabilityRecord = Record<string, unknown> & {
