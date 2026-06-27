@@ -23,9 +23,7 @@ use crate::core::models::MCPServerConfig;
 /// Uses the unified resolver (managed → enriched PATH) to find the
 /// executable.  For python commands, adds a transport-specific UV
 /// Python fallback as a last resort.
-async fn prepare_server_command(
-    server_config: &MCPServerConfig,
-) -> Result<(tokio::process::Command, String)> {
+async fn prepare_server_command(server_config: &MCPServerConfig) -> Result<(tokio::process::Command, String)> {
     let command = server_config
         .command
         .as_ref()
@@ -86,6 +84,8 @@ async fn setup_command_environment(
             cmd.env(key, value);
         }
     }
+
+    crate::common::env::sanitize_ambient_network_environment(cmd);
 
     // Prepare environment variables based on runtime configuration
     if let Err(e) = crate::config::runtime::prepare_command_env_with_db(cmd, transformed_command, database_pool).await {
@@ -218,7 +218,10 @@ pub async fn connect_stdio_server(
     setup_command_environment(&mut cmd, server_config, &transformed_command, database_pool).await?;
 
     // Determine appropriate timeouts
-    let command = server_config.command.as_ref().expect("command already validated in prepare_server_command");
+    let command = server_config
+        .command
+        .as_ref()
+        .expect("command already validated in prepare_server_command");
     let connection_timeout = get_connection_timeout(command);
     let tools_timeout = get_tools_timeout(command);
 

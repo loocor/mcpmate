@@ -83,13 +83,21 @@ type FieldProps = {
 	required?: boolean;
 	value: JsonValue | undefined;
 	onChange: (v: JsonValue | undefined) => void;
+	compact?: boolean;
 };
 
 function sanitizeId(input: string) {
 	return input.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-function Field({ name, schema, required, value, onChange }: FieldProps) {
+function Field({
+	name,
+	schema,
+	required,
+	value,
+	onChange,
+	compact,
+}: FieldProps) {
 	const type = Array.isArray(schema?.type) ? schema.type[0] : schema?.type;
 	const enumVals = Array.isArray(schema?.enum) ? schema.enum : undefined;
 	const labelText = `${name}${required ? " *" : ""}`;
@@ -130,9 +138,15 @@ function Field({ name, schema, required, value, onChange }: FieldProps) {
 	);
 
 	const renderField = (control: React.ReactNode) => (
-		<div className="grid grid-cols-[minmax(140px,200px)_1fr] items-start gap-3">
-			<div className="pt-2">{labelNode}</div>
-			<div className="space-y-2" aria-labelledby={labelId}>
+		<div
+			className={
+				compact
+					? "grid grid-cols-[minmax(120px,180px)_1fr] items-start gap-2"
+					: "grid grid-cols-[minmax(140px,200px)_1fr] items-start gap-3"
+			}
+		>
+			<div className={compact ? "pt-1.5" : "pt-2"}>{labelNode}</div>
+			<div className={compact ? "space-y-1.5" : "space-y-2"} aria-labelledby={labelId}>
 				{control}
 			</div>
 		</div>
@@ -144,7 +158,11 @@ function Field({ name, schema, required, value, onChange }: FieldProps) {
 				value={String(value ?? enumVals[0])}
 				onValueChange={(v) => onChange(v)}
 			>
-				<SelectTrigger id={fieldId} aria-labelledby={labelId}>
+				<SelectTrigger
+					id={fieldId}
+					aria-labelledby={labelId}
+					className={compact ? "h-9" : undefined}
+				>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
@@ -160,7 +178,7 @@ function Field({ name, schema, required, value, onChange }: FieldProps) {
 
 	if (type === "boolean") {
 		return renderField(
-			<div className="flex items-center gap-2">
+			<div className="flex h-9 items-center gap-2">
 				<Switch
 					id={fieldId}
 					aria-labelledby={labelId}
@@ -177,6 +195,7 @@ function Field({ name, schema, required, value, onChange }: FieldProps) {
 			<Input
 				id={fieldId}
 				type="number"
+				className={compact ? "h-9" : undefined}
 				value={value ?? ""}
 				onChange={(e) =>
 					onChange(
@@ -196,7 +215,7 @@ function Field({ name, schema, required, value, onChange }: FieldProps) {
 		const arr = Array.isArray(value) ? (value as JsonValue[]) : [];
 
 		return renderField(
-			<div className="space-y-2">
+			<div className={compact ? "space-y-1.5" : "space-y-2"}>
 				{arr.map((v, idx) => (
 					<ArrayItemRow
 						key={`${name}-${idx}`}
@@ -249,6 +268,7 @@ function Field({ name, schema, required, value, onChange }: FieldProps) {
 						required={req.includes(k)}
 						value={obj[k]}
 						onChange={(nv) => onChange({ ...obj, [k]: nv })}
+						compact={compact}
 					/>
 				))}
 			</div>,
@@ -260,13 +280,15 @@ function Field({ name, schema, required, value, onChange }: FieldProps) {
 		schema?.format === "textarea" ? (
 			<Textarea
 				id={fieldId}
-				rows={4}
+				rows={compact ? 3 : 4}
+				className={compact ? "text-sm" : undefined}
 				value={value ?? ""}
 				onChange={(e) => onChange(e.target.value)}
 			/>
 		) : (
 			<Input
 				id={fieldId}
+				className={compact ? "h-9" : undefined}
 				value={value ?? ""}
 				onChange={(e) => onChange(e.target.value)}
 			/>
@@ -278,17 +300,19 @@ export function SchemaForm({
 	schema,
 	value,
 	onChange,
+	compact,
 }: {
 	schema: JsonSchema;
 	value: JsonValue | undefined;
 	onChange: (v: JsonValue | undefined) => void;
+	compact?: boolean;
 }) {
 	const props = schema?.properties || {};
 	const req: string[] = Array.isArray(schema?.required) ? schema.required : [];
 	const keys = Object.keys(props);
 	const obj = isJsonObject(value) ? value : {};
 	return (
-		<div className="grid grid-cols-1 gap-3">
+		<div className={compact ? "grid grid-cols-1 gap-2" : "grid grid-cols-1 gap-3"}>
 			{keys.map((k) => (
 				<Field
 					key={k}
@@ -297,6 +321,7 @@ export function SchemaForm({
 					required={req.includes(k)}
 					value={obj[k]}
 					onChange={(nv) => onChange({ ...obj, [k]: nv })}
+					compact={compact}
 				/>
 			))}
 		</div>
