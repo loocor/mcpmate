@@ -11,10 +11,11 @@ use crate::api::models::{
     },
     server::{
         InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq,
-        InstanceListResp, InstanceManageReq, ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq,
-        ServerDetailsResp, ServerListReq, ServerListResp, ServerManageReq, ServerOperationResp, ServerPreviewReq,
-        ServerPreviewResp, ServerPromptsResp, ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp,
-        ServerUpdateReq, ServersImportReq, ServersImportResp,
+        InstanceListResp, InstanceManageReq, ServerCapabilityDetailReq, ServerCapabilityDetailResp,
+        ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp, ServerListReq,
+        ServerListResp, ServerManageReq, ServerOperationResp, ServerPreviewReq, ServerPreviewResp, ServerPromptsResp,
+        ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq, ServersImportReq,
+        ServersImportResp,
     },
 };
 use crate::{aide_wrapper, aide_wrapper_payload, aide_wrapper_query};
@@ -73,6 +74,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/servers/prompts",
             get_with(server_prompts_aide, server_prompts_docs),
+        )
+        .api_route(
+            "/mcp/servers/capability/detail",
+            get_with(server_capability_detail_aide, server_capability_detail_docs),
         )
         .api_route(
             "/mcp/servers/oauth/config",
@@ -188,6 +193,13 @@ aide_wrapper_query!(
     ServerCapabilityReq,
     ServerPromptsResp,
     "List all prompts for a specific server"
+);
+
+aide_wrapper_query!(
+    server::server_capability_detail,
+    ServerCapabilityDetailReq,
+    ServerCapabilityDetailResp,
+    "Get one cached capability detail for a specific server"
 );
 
 aide_wrapper_payload!(

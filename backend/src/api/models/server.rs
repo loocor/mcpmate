@@ -120,6 +120,20 @@ pub struct ServerCapabilityReq {
     pub refresh: Option<ServerRefreshStrategy>,
 }
 
+/// Request for a single cached server capability detail.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Request for a single cached server capability detail")]
+pub struct ServerCapabilityDetailReq {
+    #[schemars(description = "Server ID")]
+    pub id: String,
+
+    #[schemars(description = "Capability kind: tools|resources|prompts|templates")]
+    pub kind: String,
+
+    #[schemars(description = "Capability key such as tool name, resource URI, prompt name, or template URI")]
+    pub key: String,
+}
+
 /// Server refresh strategy enum
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy)]
 #[schemars(description = "Server refresh strategy enum")]
@@ -622,6 +636,18 @@ pub struct ServerPromptsData {
     pub meta: ServerCapabilityMeta,
 }
 
+/// Single server capability detail response.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Single server capability detail response")]
+pub struct ServerCapabilityDetailData {
+    /// Capability item, when found in cache
+    pub item: Option<serde_json::Value>,
+    /// Response state
+    pub state: String,
+    /// Metadata about the response
+    pub meta: ServerCapabilityMeta,
+}
+
 /// Server prompt arguments response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server prompt arguments response")]
@@ -948,6 +974,11 @@ api_resp!(
     "Server resources API response"
 );
 api_resp!(ServerPromptsResp, ServerPromptsData, "Server prompts API response");
+api_resp!(
+    ServerCapabilityDetailResp,
+    ServerCapabilityDetailData,
+    "Server capability detail API response"
+);
 api_resp!(ServersImportResp, ServersImportData, "Import servers API response");
 api_resp!(
     ServerOperationResp,

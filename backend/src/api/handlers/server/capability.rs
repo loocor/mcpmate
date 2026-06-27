@@ -22,14 +22,20 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::api::handlers::ApiError;
 use crate::api::handlers::server::common::{
-    InspectParams, RefreshStrategy, ServerIdentification, get_database_from_state,
+    InspectParams, InspectQuery, RefreshStrategy, ServerIdentification, get_database_from_state,
+    get_server_info_for_inspect,
 };
 use crate::api::models::cache::{
     CacheDetailsData, CacheDetailsReq, CacheDetailsResp, CacheKeyItem, CacheMetricsStats, CacheResetData,
     CacheResetResp, CacheStorageStats, CacheTablesCount, CacheViewType,
 };
+use crate::api::models::server::{
+    ServerCapabilityDetailData, ServerCapabilityDetailReq, ServerCapabilityDetailResp, ServerCapabilityMeta,
+};
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditStatus};
+use crate::core::cache::{CacheQuery, CacheScope, FreshnessLevel};
+use crate::core::capability::naming::{NamingKind, generate_unique_name};
 
 #[derive(Debug, Clone, Copy)]
 pub enum CapabilityType {
@@ -189,6 +195,168 @@ pub async fn server_cache_reset(State(state): State<Arc<AppState>>) -> Result<Js
     .await;
 
     result.map(Json)
+}
+
+struct CapabilityDetailLookup {
+    item: Option<serde_json::Value>,
+    cache_hit: bool,
+    source: String,
+}
+
+/// Return a single capability item for lazy detail expansion.
+pub async fn server_capability_detail(
+    State(state): State<Arc<AppState>>,
+    Query(request): Query<ServerCapabilityDetailReq>,
+) -> Result<Json<ServerCapabilityDetailResp>, StatusCode> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let query = InspectQuery {
+        refresh: None,
+        format: None,
+        include_meta: None,
+        timeout: None,
+    };
+    let (db, server_info, _) = get_server_info_for_inspect(&state, &request.id, &query).await?;
+    let capability_type = parse_capability_detail_type(&request.kind)?;
+    let lookup = match cached_capability_detail_item(&state, &server_info, capability_type, key).await {
+        Ok(lookup) => lookup,
+        Err(error) => {
+            tracing::error!(
+                server_id = %server_info.server_id,
+                kind = %request.kind,
+                key = %key,
+                error = %error,
+                "Cached capability detail lookup failed"
+            );
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let item = if let Some(item) = lookup.item {
+        enrich_capability_items(capability_type, &db.pool, &server_info.server_id, vec![item])
+            .await
+            .into_iter()
+            .next()
+    } else {
+        None
+    };
+
+    let state_name = if item.is_some() { "ok" } else { "missing" };
+    Ok(Json(ServerCapabilityDetailResp::success(ServerCapabilityDetailData {
+        item,
+        state: state_name.to_string(),
+        meta: ServerCapabilityMeta {
+            cache_hit: lookup.cache_hit,
+            strategy: "cache".to_string(),
+            source: lookup.source,
+        },
+    })))
+}
+
+async fn cached_capability_detail_item(
+    state: &Arc<AppState>,
+    server_info: &ServerIdentification,
+    capability_type: CapabilityType,
+    key: &str,
+) -> Result<CapabilityDetailLookup, crate::core::cache::CacheError> {
+    let query = CacheQuery {
+        server_id: server_info.server_id.clone(),
+        freshness_level: FreshnessLevel::Cached,
+        include_disabled: true,
+        scope: CacheScope::shared_raw(),
+    };
+    let cached = state.redb_cache.get_server_data(&query).await?;
+
+    let Some(data) = cached.data else {
+        return Ok(CapabilityDetailLookup {
+            item: None,
+            cache_hit: false,
+            source: "cache".to_string(),
+        });
+    };
+
+    let server_name = data.server_name.as_str();
+    let item = match capability_type {
+        CapabilityType::Tools => data
+            .tools
+            .into_iter()
+            .find(|tool| {
+                capability_key_matches(&tool.name, key, server_name, capability_type)
+                    || tool.unique_name.as_deref().is_some_and(|unique_name| {
+                        capability_key_matches(unique_name, key, server_name, capability_type)
+                    })
+            })
+            .map(|tool| tool_json_from_cached(&tool)),
+        CapabilityType::Resources => data
+            .resources
+            .into_iter()
+            .find(|resource| {
+                capability_key_matches(&resource.uri, key, server_name, capability_type)
+                    || resource
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| capability_key_matches(name, key, server_name, capability_type))
+            })
+            .map(resource_json_from_cached),
+        CapabilityType::Prompts => data
+            .prompts
+            .into_iter()
+            .find(|prompt| capability_key_matches(&prompt.name, key, server_name, capability_type))
+            .map(prompt_json_from_cached),
+        CapabilityType::ResourceTemplates => data
+            .resource_templates
+            .into_iter()
+            .find(|template| {
+                capability_key_matches(&template.uri_template, key, server_name, capability_type)
+                    || template
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| capability_key_matches(name, key, server_name, capability_type))
+            })
+            .map(resource_template_json_from_cached),
+    };
+
+    Ok(CapabilityDetailLookup {
+        item,
+        cache_hit: true,
+        source: "cache".to_string(),
+    })
+}
+
+fn parse_capability_detail_type(kind: &str) -> Result<CapabilityType, StatusCode> {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "tool" | "tools" => Ok(CapabilityType::Tools),
+        "resource" | "resources" => Ok(CapabilityType::Resources),
+        "prompt" | "prompts" => Ok(CapabilityType::Prompts),
+        "template" | "templates" | "resource_template" | "resource_templates" => Ok(CapabilityType::ResourceTemplates),
+        _ => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+fn capability_key_matches(
+    candidate: &str,
+    key: &str,
+    server_name: &str,
+    capability_type: CapabilityType,
+) -> bool {
+    let candidate = candidate.trim();
+    let key = key.trim();
+    if candidate == key {
+        return true;
+    }
+
+    let naming_kind = match capability_type {
+        CapabilityType::Tools => NamingKind::Tool,
+        CapabilityType::Prompts => NamingKind::Prompt,
+        CapabilityType::Resources => return false,
+        CapabilityType::ResourceTemplates => NamingKind::ResourceTemplate,
+    };
+
+    generate_unique_name(naming_kind, server_name, candidate) == key
+        || candidate == generate_unique_name(naming_kind, server_name, key)
 }
 
 const DEFAULT_LIMIT: usize = 50;

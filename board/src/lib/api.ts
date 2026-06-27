@@ -290,6 +290,13 @@ type CapabilityListResult = {
 	degraded_reason?: string;
 };
 
+type CapabilityDetailResult = {
+	item?: unknown | null;
+	meta?: unknown;
+	state?: string;
+	degraded_reason?: string;
+};
+
 function normalizeCapabilityListPayload(
 	resp: { success: boolean; data?: CapabilityListResult | null; error?: unknown | null } | null | undefined,
 ): CapabilityListResult {
@@ -327,6 +334,27 @@ async function fetchCapabilityList(
 	} catch {
 		return capabilityTransportErrorResult();
 	}
+}
+
+async function fetchCapabilityDetail(
+	serverId: string,
+	kind: "tools" | "resources" | "prompts" | "templates",
+	key: string,
+): Promise<CapabilityDetailResult> {
+	const q = new URLSearchParams({ id: serverId, kind, key });
+	const resp = await fetchApi<{
+		success: boolean;
+		data?: CapabilityDetailResult | null;
+		error?: unknown | null;
+	}>(`/api/mcp/servers/capability/detail?${q}`);
+	if (!resp?.data) {
+		return {
+			item: null,
+			state: "empty_data",
+			degraded_reason: "empty_payload",
+		};
+	}
+	return resp.data;
 }
 
 async function fetchConfigSuitCapabilityList(
@@ -1439,6 +1467,7 @@ export const serversApi = {
 		refresh: "auto" | "force" | "cache" = "auto",
 	): Promise<CapabilityListResult> =>
 		fetchCapabilityList("/api/mcp/servers/resources/templates", serverId, refresh),
+	getCapabilityDetail: fetchCapabilityDetail,
 
 	// Import servers from JSON-like configuration object, or from a registered client's config
 	importServers: async (payload: {

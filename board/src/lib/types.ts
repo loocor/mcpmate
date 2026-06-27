@@ -878,6 +878,7 @@ export interface ConfigSuitTool {
   server_name: string;
   tool_name: string;
   unique_name?: string;
+  description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
 }
@@ -893,6 +894,7 @@ export interface ConfigSuitResource {
   server_id: string;
   server_name: string;
   resource_uri: string;
+  description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
 }
@@ -908,6 +910,7 @@ export interface ConfigSuitResourceTemplate {
   server_id: string;
   server_name: string;
   uri_template: string;
+  description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
 }
@@ -923,6 +926,7 @@ export interface ConfigSuitPrompt {
   server_id: string;
   server_name: string;
   prompt_name: string;
+  description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
 }

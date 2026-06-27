@@ -24,6 +24,8 @@ export function BulkSelectionHeader({
 	className,
 }: BulkSelectionHeaderProps) {
 	const { modeToggleLabel, modeExitLabel } = useBulkSelectionLabels();
+	const descriptionTitle =
+		typeof description === "string" ? description : undefined;
 	return (
 		<div
 			className={cn(
@@ -35,7 +37,10 @@ export function BulkSelectionHeader({
 				<div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
 					{title}
 				</div>
-				<div className="text-xs text-slate-500 dark:text-slate-400">
+				<div
+					className="truncate text-xs text-slate-500 dark:text-slate-400"
+					title={descriptionTitle}
+				>
 					{description}
 				</div>
 			</div>
