@@ -200,8 +200,20 @@ fn command_has_explicit_env(
     command: &Command,
     key: &str,
 ) -> bool {
-    let key = OsStr::new(key);
-    command.as_std().get_envs().any(|(name, _)| name == key)
+    let key = normalize_env_key(OsStr::new(key));
+    command
+        .as_std()
+        .get_envs()
+        .any(|(name, _)| normalize_env_key(name) == key)
+}
+
+fn normalize_env_key(key: &OsStr) -> String {
+    let key = key.to_string_lossy();
+    if cfg!(windows) {
+        key.to_ascii_uppercase()
+    } else {
+        key.into_owned()
+    }
 }
 
 fn set_command_env_if_absent(
@@ -641,6 +653,20 @@ mod tests {
         assert_eq!(
             command_env_value(&command, "ALL_PROXY"),
             Some("socks5://127.0.0.1:1080".to_string())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ambient_network_sanitizer_preserves_explicit_proxy_env_case_insensitively() {
+        let mut command = Command::new("echo");
+        command.env("HTTP_PROXY", "http://127.0.0.1:8080");
+
+        sanitize_ambient_network_environment(&mut command);
+
+        assert_eq!(
+            command_env_value(&command, "HTTP_PROXY"),
+            Some("http://127.0.0.1:8080".to_string())
         );
     }
 }

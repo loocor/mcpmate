@@ -1291,16 +1291,16 @@ function ServerCapabilitiesPanel({
 						? promptsQ.data?.items
 						: templatesQ.data?.items;
 
-			return (
-				<Button
-					type="button"
-					size="sm"
-					variant="outline"
-					className="gap-1"
-					onClick={() =>
-						void onInspect(inspectorKind, item, capabilityOptions ?? [])
-					}
-				>
+		return (
+			<Button
+				type="button"
+				size="sm"
+				variant="outline"
+				className="gap-1"
+				onClick={() =>
+					void onInspect(inspectorKind, item, capabilityOptions ?? [])
+				}
+			>
 				<Play className="h-3.5 w-3.5" />
 				{t("detail.inspector.actions.inspect", {
 					defaultValue: "Inspect",
@@ -1310,11 +1310,19 @@ function ServerCapabilitiesPanel({
 	};
 	const showInspectActions = enableInspect;
 	const renderAction = showInspectActions ? renderInspectAction : undefined;
-	const browseCapabilitiesLoading =
+	const anyCapabilitiesLoading =
 		toolsQ.isLoading ||
 		resourcesQ.isLoading ||
 		promptsQ.isLoading ||
 		templatesQ.isLoading;
+	const hasLoadedCapabilityItems = Boolean(
+		toolsQ.data?.items.length ||
+			resourcesQ.data?.items.length ||
+			promptsQ.data?.items.length ||
+			templatesQ.data?.items.length,
+	);
+	const initialCapabilitiesLoading =
+		anyCapabilitiesLoading && !hasLoadedCapabilityItems;
 	const tools = resolveVisibleItems("tools", toolsQ.data?.items);
 	const resources = resolveVisibleItems("resources", resourcesQ.data?.items);
 	const prompts = resolveVisibleItems("prompts", promptsQ.data?.items);
@@ -1350,14 +1358,15 @@ function ServerCapabilitiesPanel({
 				kind="tools"
 				getKind={(item) => item.__serverCapabilityKind}
 				context="server"
-					leadingIcon="kind"
-					items={flatItems}
-					hoverActions={showInspectActions}
-					clickToToggleDetails
-					scrollContainedBody
-					loadDetails={loadServerCapabilityDetails}
-					getId={serverCapabilityItemId}
-					renderAction={renderAction}
+				leadingIcon="kind"
+				items={flatItems}
+				hoverActions={showInspectActions}
+				clickToToggleDetails
+				scrollContainedBody
+				loadDetails={loadServerCapabilityDetails}
+				detailsCacheScope={serverId}
+				getId={serverCapabilityItemId}
+				renderAction={renderAction}
 				emptyText={t("detail.capabilityList.emptyAll", {
 					defaultValue: "No capabilities from this server",
 				})}
@@ -1396,7 +1405,7 @@ function ServerCapabilitiesPanel({
 					resources={resources}
 					prompts={prompts}
 					templates={templates}
-					isLoading={browseCapabilitiesLoading}
+					isLoading={initialCapabilitiesLoading}
 					searchValue={search}
 					emptyText={emptyText}
 					renderFlatList={renderServerFlatCapabilityList}

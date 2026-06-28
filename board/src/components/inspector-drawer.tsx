@@ -477,6 +477,10 @@ export function InspectorDrawer({
 	const [nativeSession, setNativeSession] =
 		useState<InspectorSessionOpenData | null>(null);
 	const nativeSessionRef = useRef<InspectorSessionOpenData | null>(null);
+	const pendingNativeSessionRef = useRef<{
+		serverId: string;
+		promise: Promise<InspectorSessionOpenData>;
+	} | null>(null);
 	const nativeSessionCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
@@ -517,7 +521,7 @@ export function InspectorDrawer({
 		mode === "proxy" && activeProfilesQ.isFetching && !activeProfilesQ.isFetched;
 	const canUseCurrentMode = mode === "native" || proxyAvailable;
 	const proxyUnavailable = mode === "proxy" && !isProxyChecking && !proxyAvailable;
-	const optionListKey = `${mode}:${kind}`;
+	const optionListKey = `${serverId || serverName || "unknown"}:${mode}:${kind}`;
 	const hasListedOptions = listedOptionKeys.has(optionListKey);
 	const hasProvidedOptions = capabilityOptions !== undefined;
 	const propItemKey = useMemo(() => computeRecordKey(item, kind), [item, kind]);
@@ -570,6 +574,7 @@ export function InspectorDrawer({
 
 	const invalidateNativeSession = useCallback(() => {
 		clearNativeSessionCloseTimer();
+		pendingNativeSessionRef.current = null;
 		const current = nativeSessionRef.current;
 		nativeSessionRef.current = null;
 		if (mountedRef.current) {
@@ -603,26 +608,55 @@ export function InspectorDrawer({
 			return current.session_id;
 		}
 
+		const pending = pendingNativeSessionRef.current;
+		if (pending?.serverId === serverId) {
+			const session = await pending.promise;
+			return session.session_id;
+		}
+
 		if (current) {
 			await closeNativeSession(current);
 		}
 
-		const response = await inspectorApi.sessionOpen({
-			mode: "native",
-			server_id: serverId,
-			server_name: serverName,
-		});
-		if (!response?.success || !response.data) {
-			throw new Error(
-				response?.error ? String(response.error) : "Failed to open inspector session",
-			);
-		}
+		const pendingPromise = inspectorApi
+			.sessionOpen({
+				mode: "native",
+				server_id: serverId,
+				server_name: serverName,
+			})
+			.then((response) => {
+				if (!response?.success || !response.data) {
+					throw new Error(
+						response?.error
+							? String(response.error)
+							: "Failed to open inspector session",
+					);
+				}
+				return response.data;
+			});
+		pendingNativeSessionRef.current = {
+			serverId,
+			promise: pendingPromise,
+		};
 
-		if (mountedRef.current) {
-			setNativeSession(response.data);
+		try {
+			const session = await pendingPromise;
+			if (pendingNativeSessionRef.current?.promise !== pendingPromise) {
+				void closeNativeSession(session);
+				return undefined;
+			}
+			pendingNativeSessionRef.current = null;
+			if (mountedRef.current) {
+				setNativeSession(session);
+			}
+			nativeSessionRef.current = session;
+			return session.session_id;
+		} catch (error) {
+			if (pendingNativeSessionRef.current?.promise === pendingPromise) {
+				pendingNativeSessionRef.current = null;
+			}
+			throw error;
 		}
-		nativeSessionRef.current = response.data;
-		return response.data.session_id;
 	}, [
 		clearNativeSessionCloseTimer,
 		closeNativeSession,
@@ -679,6 +713,8 @@ export function InspectorDrawer({
 			setEvents([]);
 			setView("response");
 			setOverrideItem(null);
+			setListedOptionKeys(new Set());
+			setCapOptionsError(null);
 			setFormCollapsed(false);
 		}
 		if (!open && wasOpenRef.current) {
