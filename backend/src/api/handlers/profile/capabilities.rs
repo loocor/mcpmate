@@ -9,6 +9,7 @@ use crate::api::models::profile::{
     ProfileResourcesListData, ProfileResourcesListResp, ProfileServerManageData, ProfileServerManageResp,
     ProfileToolData, ProfileToolsListData, ProfileToolsListResp,
 };
+use crate::core::capability::descriptions::load_cached_capability_descriptions;
 use serde_json::{Map, Value};
 
 type CapabilityAuditDetails = Value;
@@ -61,17 +62,24 @@ pub async fn prompts_list(
     let prompt_configs = crate::config::profile::get_prompts_for_profile(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile prompts: {e}")))?;
+    let descriptions = load_cached_capability_descriptions(
+        state.redb_cache.as_ref(),
+        prompt_configs.iter().map(|config| config.server_id.clone()),
+    )
+    .await;
 
     // Convert to response format
     let mut prompts = Vec::new();
     for config in prompt_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
+        let description = descriptions.prompt(&config.server_id, &config.prompt_name);
 
         prompts.push(ProfilePromptData {
             id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             prompt_name: config.prompt_name.clone(),
+            description,
             enabled: config.enabled,
             allowed_operations,
         });
@@ -109,17 +117,24 @@ pub async fn resources_list(
     let resource_configs = crate::config::profile::get_resources_for_profile(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile resources: {e}")))?;
+    let descriptions = load_cached_capability_descriptions(
+        state.redb_cache.as_ref(),
+        resource_configs.iter().map(|config| config.server_id.clone()),
+    )
+    .await;
 
     // Convert to response format
     let mut resources = Vec::new();
     for config in resource_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
+        let description = descriptions.resource(&config.server_id, &config.resource_uri);
 
         resources.push(ProfileResourceData {
             id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             resource_uri: config.resource_uri.clone(),
+            description,
             enabled: config.enabled,
             allowed_operations,
         });
@@ -204,14 +219,22 @@ pub async fn resource_templates_list(
         }
     }
 
+    let descriptions = load_cached_capability_descriptions(
+        state.redb_cache.as_ref(),
+        template_configs.iter().map(|config| config.server_id.clone()),
+    )
+    .await;
+
     let mut templates = Vec::new();
     for config in template_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
+        let description = descriptions.template(&config.server_id, &config.resource_uri);
         templates.push(ProfileResourceTemplateData {
             id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             uri_template: config.resource_uri.clone(),
+            description,
             enabled: config.enabled,
             allowed_operations,
         });
@@ -248,18 +271,27 @@ pub async fn tools_list(
     let tool_configs = crate::config::profile::get_profile_tools(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile tools: {e}")))?;
+    let descriptions = load_cached_capability_descriptions(
+        state.redb_cache.as_ref(),
+        tool_configs.iter().map(|tool| tool.server_id.clone()),
+    )
+    .await;
 
     // Convert to response format
     let mut tools = Vec::new();
     for tool_config in tool_configs {
         // Get server details to include server name
         if let Ok(Some(server)) = crate::config::server::get_server_by_id(&db.pool, &tool_config.server_id).await {
+            let description = descriptions
+                .tool(&tool_config.server_id, &tool_config.tool_name)
+                .or_else(|| tool_config.description.clone());
             tools.push(ProfileToolData {
                 id: tool_config.id.clone(),
                 server_id: tool_config.server_id.clone(),
                 server_name: server.name,
                 tool_name: tool_config.tool_name.clone(),
                 unique_name: Some(tool_config.unique_name.clone()),
+                description,
                 enabled: tool_config.enabled,
                 allowed_operations: vec!["enable".to_string(), "disable".to_string()],
             });

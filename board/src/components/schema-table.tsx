@@ -116,9 +116,7 @@ function SchemaRow({ name, schema, required, labels, level = 0 }: SchemaRowProps
                   <ChevronRight className="h-3 w-3" />
                 )}
               </button>
-            ) : (
-              <span className="inline-block w-4" />
-            )}
+            ) : null}
             <span className="font-mono">{name}</span>
           </div>
         </td>

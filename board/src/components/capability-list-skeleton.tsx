@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
@@ -8,16 +9,56 @@ type CapabilityListSkeletonProps = {
 	rows?: number;
 	showSectionLabel?: boolean;
 	className?: string;
+	/** When true, grow to the scroll body height and derive row count from available space. */
+	fillContainer?: boolean;
 };
 
+const ROW_HEIGHT_PX = 56;
+const SECTION_LABEL_HEIGHT_PX = 24;
+const MIN_ROWS = 3;
+const EXTRA_ROWS = 1;
+
 export function CapabilityListSkeleton({
-	rows = 5,
+	rows,
 	showSectionLabel = false,
 	className,
+	fillContainer = false,
 }: CapabilityListSkeletonProps) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const [autoRowCount, setAutoRowCount] = useState(MIN_ROWS + EXTRA_ROWS);
+
+	const useAutoFill = fillContainer && rows == null;
+
+	useEffect(() => {
+		if (!useAutoFill) return;
+		const container = containerRef.current;
+		const scrollHost = container?.parentElement;
+		if (!container || !scrollHost) return;
+
+		const updateRowCount = () => {
+			const reserved = showSectionLabel ? SECTION_LABEL_HEIGHT_PX : 0;
+			const available = scrollHost.clientHeight - reserved;
+			const nextCount =
+				Math.max(MIN_ROWS, Math.floor(available / ROW_HEIGHT_PX)) + EXTRA_ROWS;
+			setAutoRowCount((current) => (current === nextCount ? current : nextCount));
+		};
+
+		updateRowCount();
+		const observer = new ResizeObserver(updateRowCount);
+		observer.observe(scrollHost);
+		return () => observer.disconnect();
+	}, [showSectionLabel, useAutoFill]);
+
+	const rowCount = rows ?? (fillContainer ? autoRowCount : 5);
+
 	return (
 		<div
-			className={cn("p-3", className)}
+			ref={containerRef}
+			className={cn(
+				"p-3",
+				fillContainer && "h-full min-h-0 overflow-hidden",
+				className,
+			)}
 			aria-busy="true"
 			aria-live="polite"
 		>
@@ -25,7 +66,7 @@ export function CapabilityListSkeleton({
 				<div className="mb-3 h-3 w-12 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
 			) : null}
 			<CapsuleStripeList className="rounded-none border-0 overflow-visible">
-				{Array.from({ length: rows }, (_, index) => (
+				{Array.from({ length: rowCount }, (_, index) => (
 					<CapsuleStripeListItem
 						key={`capability-list-skeleton-${index}`}
 						className="items-start"

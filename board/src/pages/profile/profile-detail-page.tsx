@@ -1,21 +1,27 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	Bug,
 	Check,
 	Edit3,
 	Eye,
+	GripVertical,
 	Play,
 	RefreshCw,
 	Square,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+	type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { capabilityRecordMatchesSearch } from "../../lib/capability-search";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
-import { CardListScrollBody } from "../../components/card-list-scroll-body";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import {
 	BulkSelectionCheckbox,
@@ -24,11 +30,16 @@ import {
 	useBulkSelectionLabels,
 	useEnableDisableBulkActions,
 } from "../../components/bulk-selection";
-import CapabilityList from "../../components/capability-list";
+import CapabilityList, {
+	type CapabilityKind,
+} from "../../components/capability-list";
 import {
-	CAPABILITY_SCROLL_CARD_CLASS,
-	CapabilityScrollCardContent,
-} from "../../components/capability-scroll-card-layout";
+	CapabilityPreviewList,
+	type CapabilityPreviewFlatItem,
+} from "../../components/capability-preview-list";
+import { CapabilityToolbar } from "../../components/capability-toolbar";
+import { CardListScrollBody } from "../../components/card-list-scroll-body";
+import { CAPABILITY_SCROLL_CARD_CLASS } from "../../components/capability-scroll-card-layout";
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
@@ -54,7 +65,6 @@ import { ButtonGroup } from "../../components/ui/button-group";
 import {
 	Card,
 	CardContent,
-	CardDescription,
 	CardHeader,
 	CardTitle,
 } from "../../components/ui/card";
@@ -81,9 +91,79 @@ import { toTitleCase } from "../../lib/utils";
 import type {
 	ConfigSuitPrompt,
 	ConfigSuitResource,
+	ConfigSuitResourceTemplate,
 	ConfigSuitServer,
 	ConfigSuitTool,
 } from "../../lib/types";
+import type { CapabilityRecord } from "../../types/capabilities";
+
+const PROFILE_DETAIL_TABS = [
+	"overview",
+	"capabilities",
+];
+
+const ALL_CAPABILITY_SERVERS_ID = "__all_servers__";
+
+type ProfileFlatCapabilityItem = CapabilityRecord & {
+	__profileCapabilityKind: CapabilityKind;
+};
+
+function capabilityDetailsCacheToken(items: ProfileFlatCapabilityItem[]) {
+	return items
+		.map((item) =>
+			[
+				item.__profileCapabilityKind,
+				item.id,
+				item.server_id ?? "",
+				item.enabled ? "1" : "0",
+				item.description ?? "",
+			].join(":"),
+		)
+		.join("|");
+}
+
+function firstCapabilityString(
+	item: CapabilityRecord,
+	keys: Array<keyof CapabilityRecord | string>,
+) {
+	for (const key of keys) {
+		const value = item[key];
+		if (typeof value === "string" && value.trim()) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+function profileCapabilityDetailKey(
+	item: ProfileFlatCapabilityItem,
+	kind: CapabilityKind,
+) {
+	if (kind === "tools") {
+		return firstCapabilityString(item, ["tool_name", "name", "unique_name"]);
+	}
+	if (kind === "resources") {
+		return firstCapabilityString(item, ["resource_uri", "uri", "name", "unique_uri"]);
+	}
+	if (kind === "prompts") {
+		return firstCapabilityString(item, ["prompt_name", "name", "unique_name"]);
+	}
+	return firstCapabilityString(item, [
+		"uri_template",
+		"uriTemplate",
+		"uri",
+		"name",
+		"unique_uri_template",
+	]);
+}
+
+type ProfileGlobalServerSummary = {
+	name?: string;
+	icons?: Array<{ src?: string }>;
+};
+
+const compactSelectTriggerClass =
+	"relative h-9 w-full min-w-9 px-2 pr-8 [&>span]:min-w-0 [&>span]:truncate [&>svg]:pointer-events-none [&>svg]:absolute [&>svg]:right-2.5 [&>svg]:top-1/2 [&>svg]:-translate-y-1/2";
 
 const formatProfileTypeLabel = (value?: string | null) =>
 	value
@@ -91,22 +171,32 @@ const formatProfileTypeLabel = (value?: string | null) =>
 		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 		.join(" ") ?? "";
 
-const PROFILE_DETAIL_TABS = [
-	"overview",
-	"servers",
-	"tools",
-	"prompts",
-	"resources",
-	"templates",
-];
+const capabilityKey = (type: string, id: string) => `${type}:${id}`;
+
+const splitCapabilityKey = (
+	key: string,
+): { capability_type: CapabilityKind; capability_id: string } => {
+	const separator = key.indexOf(":");
+	return {
+		capability_type: key.slice(0, separator) as CapabilityKind,
+		capability_id: key.slice(separator + 1),
+	};
+};
 
 export function ProfileDetailPage() {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	usePageTranslations("profiles");
 	const { profileId } = useParams<{ profileId: string }>();
 	const [searchParams] = useSearchParams();
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
+
+	const openServerDetail = useCallback(
+		(targetServerId: string) => {
+			navigate(`/servers/${encodeURIComponent(targetServerId)}`);
+		},
+		[navigate],
+	);
 
 	/** Refetch capability JSON payloads when server membership or live MCP definitions may have changed. */
 	const invalidateProfileCapabilityLedger = useCallback(() => {
@@ -130,37 +220,6 @@ export function ProfileDetailPage() {
 
 	const mode = searchParams.get("mode");
 
-	// Developer toggles
-	const enableServerDebug = useAppStore(
-		(state) => state.dashboardSettings.enableServerDebug,
-	);
-	const openDebugInNewWindow = useAppStore(
-		(state) => state.dashboardSettings.openDebugInNewWindow,
-	);
-
-	const openDebug = (
-		targetServerId: string,
-		channel: "proxy" | "native" = "proxy",
-	) => {
-		const url = `/servers/${encodeURIComponent(targetServerId)}?view=debug&channel=${channel}`;
-		if (openDebugInNewWindow) {
-			if (typeof window !== "undefined") {
-				window.open(url, "_blank", "noopener,noreferrer");
-			}
-			return;
-		}
-		navigate(url);
-	};
-	const openBrowse = (targetServerId: string) => {
-		const url = `/servers/${encodeURIComponent(targetServerId)}?view=browse`;
-		if (openDebugInNewWindow) {
-			if (typeof window !== "undefined") {
-				window.open(url, "_blank", "noopener,noreferrer");
-			}
-			return;
-		}
-		navigate(url);
-	};
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 	// Filters: servers
@@ -168,30 +227,23 @@ export function ProfileDetailPage() {
 	const [serverStatus, setServerStatus] = useState<
 		"all" | "enabled" | "disabled"
 	>("all");
-	// Filters: tools
-	const [toolQuery, setToolQuery] = useState("");
-	const [toolStatus, setToolStatus] = useState<"all" | "enabled" | "disabled">(
-		"all",
-	);
-	const [toolServer, setToolServer] = useState<string>("all");
-	// Filters: resources
-	const [resourceQuery, setResourceQuery] = useState("");
-	const [resourceStatus, setResourceStatus] = useState<
+	const [selectedCapabilityServerId, setSelectedCapabilityServerId] = useState<
+		string
+	>(ALL_CAPABILITY_SERVERS_ID);
+	const [serverColumnWidth, setServerColumnWidth] = useState(300);
+	const [capabilityQuery, setCapabilityQuery] = useState("");
+	const [capabilityServerFilters, setCapabilityServerFilters] = useState<
+		string[]
+	>([]);
+	const [capabilityKindFilters, setCapabilityKindFilters] = useState<
+		CapabilityKind[]
+	>([]);
+	const [capabilityStatus, setCapabilityStatus] = useState<
 		"all" | "enabled" | "disabled"
 	>("all");
-	const [resourceServer, setResourceServer] = useState<string>("all");
-	// Filters: prompts
-	const [promptQuery, setPromptQuery] = useState("");
-	const [promptStatus, setPromptStatus] = useState<
-		"all" | "enabled" | "disabled"
-	>("all");
-	const [promptServer, setPromptServer] = useState<string>("all");
 	const { bulkModeDescription } = useBulkSelectionLabels();
 	const serverBulk = useBulkSelection<string>();
-	const toolBulk = useBulkSelection<string>();
-	const resourceBulk = useBulkSelection<string>();
-	const promptBulk = useBulkSelection<string>();
-	const templateBulk = useBulkSelection<string>();
+	const capabilityBulk = useBulkSelection<string>();
 	const [logFilter, setLogFilter] = useState("");
 	const [logPageSize, setLogPageSize] = useState<number>(10);
 	const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
@@ -291,91 +343,75 @@ export function ProfileDetailPage() {
 		}
 	};
 
-	// Bulk mutations using server-side batch manage to improve reliability
-	const bulkToolsM = useMutation({
-		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
-			configSuitsApi.bulkTools(
-				profileId!,
-				ids,
-				enable ? "enable" : "disable",
-			),
+	const bulkCapabilitiesM = useMutation({
+		mutationFn: async ({
+			enable,
+			ids,
+		}: {
+			enable: boolean;
+			ids: string[];
+		}) => {
+			const grouped = ids.reduce(
+				(acc, key) => {
+					const capability = splitCapabilityKey(key);
+					if (capability.capability_type === "tools") {
+						acc.tools.push(capability.capability_id);
+					} else if (capability.capability_type === "resources") {
+						acc.resources.push(capability.capability_id);
+					} else if (capability.capability_type === "prompts") {
+						acc.prompts.push(capability.capability_id);
+					} else if (capability.capability_type === "templates") {
+						acc.templates.push(capability.capability_id);
+					}
+					return acc;
+				},
+				{
+					tools: [] as string[],
+					resources: [] as string[],
+					prompts: [] as string[],
+					templates: [] as string[],
+				},
+			);
+			const action = enable ? "enable" : "disable";
+			await Promise.all([
+				grouped.tools.length
+					? configSuitsApi.bulkTools(profileId!, grouped.tools, action)
+					: Promise.resolve(),
+				grouped.resources.length
+					? configSuitsApi.bulkResources(profileId!, grouped.resources, action)
+					: Promise.resolve(),
+				grouped.prompts.length
+					? configSuitsApi.bulkPrompts(profileId!, grouped.prompts, action)
+					: Promise.resolve(),
+				grouped.templates.length
+					? configSuitsApi.bulkResourceTemplates(
+							profileId!,
+							grouped.templates,
+							action,
+						)
+					: Promise.resolve(),
+			]);
+		},
 		onSuccess: () => {
-			toolBulk.clearSelection();
-			toolBulk.exitBulkMode();
-			refetchTools();
+			capabilityBulk.clearSelection();
+			capabilityBulk.exitBulkMode();
+			refreshProfileCapabilitySurface();
 			notifySuccess(
-				t("profiles:detail.messages.toolsUpdated", { defaultValue: "Tools updated" }),
-				t("profiles:detail.messages.bulkOperationCompleted", { defaultValue: "Bulk operation completed" })
+				t("profiles:detail.messages.capabilitiesUpdated", {
+					defaultValue: "Capabilities updated",
+				}),
+				t("profiles:detail.messages.bulkOperationCompleted", {
+					defaultValue: "Bulk operation completed",
+				}),
 			);
 		},
-		onError: (e) => notifyError(
-			t("profiles:detail.messages.toolsUpdateFailed", { defaultValue: "Tools update failed" }),
-			String(e)
-		),
-	});
-	const bulkResourcesM = useMutation({
-		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
-			configSuitsApi.bulkResources(
-				profileId!,
-				ids,
-				enable ? "enable" : "disable",
+		onError: (e) =>
+			notifyError(
+				t("profiles:detail.messages.capabilitiesUpdateFailed", {
+					defaultValue: "Capabilities update failed",
+				}),
+				String(e),
 			),
-		onSuccess: () => {
-			resourceBulk.clearSelection();
-			resourceBulk.exitBulkMode();
-			refetchResources();
-			notifySuccess(
-				t("profiles:detail.messages.resourcesUpdated", { defaultValue: "Resources updated" }),
-				t("profiles:detail.messages.bulkOperationCompleted", { defaultValue: "Bulk operation completed" })
-			);
-		},
-		onError: (e) => notifyError(
-			t("profiles:detail.messages.resourcesUpdateFailed", { defaultValue: "Resources update failed" }),
-			String(e)
-		),
-	});
-	const bulkPromptsM = useMutation({
-		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
-			configSuitsApi.bulkPrompts(
-				profileId!,
-				ids,
-				enable ? "enable" : "disable",
-			),
-		onSuccess: () => {
-			promptBulk.clearSelection();
-			promptBulk.exitBulkMode();
-			refetchPrompts();
-			notifySuccess(
-				t("profiles:detail.messages.promptsUpdated", { defaultValue: "Prompts updated" }),
-				t("profiles:detail.messages.bulkOperationCompleted", { defaultValue: "Bulk operation completed" })
-			);
-		},
-		onError: (e) => notifyError(
-			t("profiles:detail.messages.promptsUpdateFailed", { defaultValue: "Prompts update failed" }),
-			String(e)
-		),
-	});
-
-	const bulkTemplatesM = useMutation({
-		mutationFn: ({ enable, ids }: { enable: boolean; ids: string[] }) =>
-			configSuitsApi.bulkResourceTemplates(
-				profileId!,
-				ids,
-				enable ? "enable" : "disable",
-			),
-		onSuccess: () => {
-			templateBulk.clearSelection();
-			templateBulk.exitBulkMode();
-			refetchTemplates();
-			notifySuccess(
-				t("profiles:detail.messages.templatesUpdated", { defaultValue: "Templates updated" }),
-				t("profiles:detail.messages.bulkOperationCompleted", { defaultValue: "Bulk operation completed" })
-			);
-		},
-		onError: (e) => notifyError(
-			t("profiles:detail.messages.templatesUpdateFailed", { defaultValue: "Templates update failed" }),
-			String(e)
-		),
 	});
 
 	const bulkServersM = useMutation({
@@ -388,8 +424,7 @@ export function ProfileDetailPage() {
 		onSuccess: () => {
 			serverBulk.clearSelection();
 			serverBulk.exitBulkMode();
-			invalidateProfileCapabilityLedger();
-			refetchServers();
+			refreshProfileCapabilitySurface();
 			notifySuccess(
 				t("profiles:detail.messages.serversUpdated", { defaultValue: "Servers updated" }),
 				t("profiles:detail.messages.bulkOperationCompleted", { defaultValue: "Bulk operation completed" })
@@ -531,6 +566,27 @@ export function ProfileDetailPage() {
 		retry: 1,
 	});
 
+	const refreshProfileCapabilitySurface = useCallback((): void => {
+		invalidateProfileCapabilityLedger();
+		void refetchServers();
+		void refetchTools();
+		void refetchResources();
+		void refetchPrompts();
+		void refetchTemplates();
+		void queryClient.invalidateQueries({
+			queryKey: ["configSuitStats", profileId],
+		});
+	}, [
+		invalidateProfileCapabilityLedger,
+		profileId,
+		queryClient,
+		refetchPrompts,
+		refetchResources,
+		refetchServers,
+		refetchTemplates,
+		refetchTools,
+	]);
+
 	// Activation/deactivation mutations
 	const activateSuitMutation = useMutation({
 		mutationFn: () => configSuitsApi.activateSuit(profileId!),
@@ -605,18 +661,7 @@ export function ProfileDetailPage() {
 				: configSuitsApi.disableServer(profileId!, serverId);
 		},
 		onSuccess: () => {
-			invalidateProfileCapabilityLedger();
-			// Refetch all capability data to update counts in tabs
-			refetchServers();
-			refetchTools();
-			refetchResources();
-			refetchPrompts();
-			refetchTemplates();
-
-			// Invalidate profile statistics cache for config page
-			queryClient.invalidateQueries({
-				queryKey: ["configSuitStats", profileId],
-			});
+			refreshProfileCapabilitySurface();
 
 			notifySuccess(
 				t("profiles:detail.messages.serverUpdated", { defaultValue: "Server updated" }),
@@ -639,8 +684,7 @@ export function ProfileDetailPage() {
 				: configSuitsApi.disableTool(profileId!, toolId);
 		},
 		onSuccess: () => {
-			refetchTools();
-			refetchTemplates();
+			refreshProfileCapabilitySurface();
 			notifySuccess(
 				t("profiles:detail.messages.toolUpdated", { defaultValue: "Tool updated" }),
 				"Tool status has been updated"
@@ -668,8 +712,7 @@ export function ProfileDetailPage() {
 				: configSuitsApi.disableResource(profileId!, resourceId);
 		},
 		onSuccess: () => {
-			refetchResources();
-			refetchTemplates();
+			refreshProfileCapabilitySurface();
 			notifySuccess(
 				t("profiles:detail.messages.resourceUpdated", { defaultValue: "Resource updated" }),
 				"Resource status has been updated"
@@ -697,8 +740,7 @@ export function ProfileDetailPage() {
 				: configSuitsApi.disablePrompt(profileId!, promptId);
 		},
 		onSuccess: () => {
-			refetchPrompts();
-			refetchTemplates();
+			refreshProfileCapabilitySurface();
 			notifySuccess(
 				t("profiles:detail.messages.promptUpdated", { defaultValue: "Prompt updated" }),
 				"Prompt status has been updated"
@@ -729,13 +771,8 @@ export function ProfileDetailPage() {
 	};
 
 	const handleRefreshAll = () => {
-		refetchSuit();
-		refetchServers();
-		refetchTools();
-		refetchResources();
-		refetchPrompts();
-		refetchTemplates();
-		invalidateProfileCapabilityLedger();
+		void refetchSuit();
+		refreshProfileCapabilitySurface();
 	};
 	const overviewActionButtonClass =
 		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
@@ -744,11 +781,26 @@ export function ProfileDetailPage() {
 		setIsEditDialogOpen(open);
 	};
 
-	const servers = (serversResponse?.servers ?? []) as ConfigSuitServer[];
-	const tools = (toolsResponse?.tools ?? []) as ConfigSuitTool[];
-	const resources = (resourcesResponse?.resources ?? []) as ConfigSuitResource[];
-	const prompts = (promptsResponse?.prompts ?? []) as ConfigSuitPrompt[];
-	const templates = (templatesResponse?.templates ?? []) as any[];
+	const servers = useMemo(
+		() => (serversResponse?.servers ?? []) as ConfigSuitServer[],
+		[serversResponse],
+	);
+	const tools = useMemo(
+		() => (toolsResponse?.tools ?? []) as ConfigSuitTool[],
+		[toolsResponse],
+	);
+	const resources = useMemo(
+		() => (resourcesResponse?.resources ?? []) as ConfigSuitResource[],
+		[resourcesResponse],
+	);
+	const prompts = useMemo(
+		() => (promptsResponse?.prompts ?? []) as ConfigSuitPrompt[],
+		[promptsResponse],
+	);
+	const templates = useMemo(
+		() => (templatesResponse?.templates ?? []) as ConfigSuitResourceTemplate[],
+		[templatesResponse],
+	);
 
 	const enabledServers = servers.filter((s: ConfigSuitServer) => s.enabled);
 	const enabledTools = tools.filter((t: ConfigSuitTool) => t.enabled);
@@ -756,7 +808,6 @@ export function ProfileDetailPage() {
 		(r: ConfigSuitResource) => r.enabled,
 	);
 	const enabledPrompts = prompts.filter((p: ConfigSuitPrompt) => p.enabled);
-	const enabledTemplates = templates.filter((t: any) => t.enabled);
 
 	const enabledByComponentId = useMemo(() => {
 		const m = new Map<string, boolean>();
@@ -790,107 +841,412 @@ export function ProfileDetailPage() {
 	// For profile counts, available = total in this profile (not global state)
 	const availableServersInProfile = servers;
 
-	// Derived server name options for filters
-	const serverNameOptions = Array.from(
-		new Set(
-			[
-				...servers.map((s: ConfigSuitServer) => s.name),
-				...tools.map((t: ConfigSuitTool) => t.server_name),
-				...resources.map((r: ConfigSuitResource) => r.server_name),
-				...prompts.map((p: ConfigSuitPrompt) => p.server_name),
-				...templates.map((r: any) => r.server_name),
-			].filter(Boolean),
-		),
-	).sort();
-
 	// Filtered datasets
-	const visibleServers = servers.filter((s: ConfigSuitServer) => {
-		const queryPass =
-			serverQuery.trim() === "" ||
-			s.name.toLowerCase().includes(serverQuery.toLowerCase());
-		const statusPass =
-			serverStatus === "all" ||
-			(serverStatus === "enabled" ? s.enabled : !s.enabled);
-		return queryPass && statusPass;
-	});
+	const visibleServers = useMemo(
+		() =>
+			servers.filter((s: ConfigSuitServer) => {
+				const queryPass =
+					serverQuery.trim() === "" ||
+					s.name.toLowerCase().includes(serverQuery.toLowerCase());
+				const statusPass =
+					serverStatus === "all" ||
+					(serverStatus === "enabled" ? s.enabled : !s.enabled);
+				return queryPass && statusPass;
+			}),
+		[serverQuery, serverStatus, servers],
+	);
 
-	const visibleTools = tools.filter((t: ConfigSuitTool) => {
-		const text =
-			`${t.tool_name ?? ""} ${t.unique_name ?? ""} ${t.server_name ?? ""}`.toLowerCase();
-		const queryPass =
-			toolQuery.trim() === "" || text.includes(toolQuery.toLowerCase());
-		const statusPass =
-			toolStatus === "all" ||
-			(toolStatus === "enabled" ? t.enabled : !t.enabled);
-		const serverPass = toolServer === "all" || t.server_name === toolServer;
-		return queryPass && statusPass && serverPass;
-	});
+	const capabilityCountsByServerId = useMemo(() => {
+		const createCounts = () => ({
+			tools: 0,
+			resources: 0,
+			prompts: 0,
+			templates: 0,
+			enabled: 0,
+			total: 0,
+		});
+		const counts = new Map<string, ReturnType<typeof createCounts>>();
+		const ensure = (serverId: string) => {
+			const current = counts.get(serverId);
+			if (current) return current;
+			const next = createCounts();
+			counts.set(serverId, next);
+			return next;
+		};
+		for (const tool of tools) {
+			const entry = ensure(tool.server_id);
+			entry.tools += 1;
+			entry.total += 1;
+			if (tool.enabled) entry.enabled += 1;
+		}
+		for (const resource of resources) {
+			const entry = ensure(resource.server_id);
+			entry.resources += 1;
+			entry.total += 1;
+			if (resource.enabled) entry.enabled += 1;
+		}
+		for (const prompt of prompts) {
+			const entry = ensure(prompt.server_id);
+			entry.prompts += 1;
+			entry.total += 1;
+			if (prompt.enabled) entry.enabled += 1;
+		}
+		for (const template of templates) {
+			const entry = ensure(template.server_id);
+			entry.templates += 1;
+			entry.total += 1;
+			if (template.enabled) entry.enabled += 1;
+		}
+		return counts;
+	}, [prompts, resources, templates, tools]);
 
-	const visibleResources = resources.filter((r: ConfigSuitResource) => {
-		const text = `${r.resource_uri ?? ""} ${r.server_name ?? ""}`.toLowerCase();
-		const queryPass =
-			resourceQuery.trim() === "" || text.includes(resourceQuery.toLowerCase());
-		const statusPass =
-			resourceStatus === "all" ||
-			(resourceStatus === "enabled" ? r.enabled : !r.enabled);
-		const serverPass =
-			resourceServer === "all" || r.server_name === resourceServer;
-		return queryPass && statusPass && serverPass;
-	});
+	const isAllCapabilityServersSelected =
+		selectedCapabilityServerId === ALL_CAPABILITY_SERVERS_ID;
 
-	const visiblePrompts = prompts.filter((p: ConfigSuitPrompt) => {
-		const text = `${p.prompt_name ?? ""} ${p.server_name ?? ""}`.toLowerCase();
-		const queryPass =
-			promptQuery.trim() === "" || text.includes(promptQuery.toLowerCase());
-		const statusPass =
-			promptStatus === "all" ||
-			(promptStatus === "enabled" ? p.enabled : !p.enabled);
-		const serverPass = promptServer === "all" || p.server_name === promptServer;
-		return queryPass && statusPass && serverPass;
-	});
+	const selectedCapabilityServer = useMemo(() => {
+		if (isAllCapabilityServersSelected) return null;
+		const candidates = visibleServers.length ? visibleServers : servers;
+		return (
+			candidates.find((server) => server.id === selectedCapabilityServerId) ??
+			null
+		);
+	}, [isAllCapabilityServersSelected, selectedCapabilityServerId, servers, visibleServers]);
 
-	// Filters: templates
-	const [templateQuery, setTemplateQuery] = useState("");
-	const [templateStatus, setTemplateStatus] = useState<
-		"all" | "enabled" | "disabled"
-	>("all");
-	const [templateServer, setTemplateServer] = useState<string>("all");
+	useEffect(() => {
+		if (isAllCapabilityServersSelected) {
+			return;
+		}
+		const stillVisible = visibleServers.some(
+			(server) => server.id === selectedCapabilityServerId,
+		);
+		if (!stillVisible) {
+			setSelectedCapabilityServerId(ALL_CAPABILITY_SERVERS_ID);
+		}
+	}, [isAllCapabilityServersSelected, selectedCapabilityServerId, visibleServers]);
 
-	const visibleTemplates = templates.filter((r: any) => {
-		const text = `${r.uri_template ?? ""} ${r.server_name ?? ""}`.toLowerCase();
-		const queryPass =
-			templateQuery.trim() === "" || text.includes(templateQuery.toLowerCase());
-		const statusPass =
-			templateStatus === "all" ||
-			(templateStatus === "enabled" ? r.enabled : !r.enabled);
-		const serverPass = templateServer === "all" || r.server_name === templateServer;
-		return queryPass && statusPass && serverPass;
-	});
+	useEffect(() => {
+		if (!isAllCapabilityServersSelected) {
+			if (capabilityServerFilters.length > 0) {
+				setCapabilityServerFilters([]);
+			}
+			return;
+		}
+		const visibleServerIds = new Set(visibleServers.map((server) => server.id));
+		const nextFilters = capabilityServerFilters.filter((serverId) =>
+			visibleServerIds.has(serverId),
+		);
+		if (
+			nextFilters.length !== capabilityServerFilters.length ||
+			nextFilters.length === visibleServers.length
+		) {
+			if (
+				nextFilters.length === 0 &&
+				capabilityServerFilters.length === 0
+			) {
+				return;
+			}
+			setCapabilityServerFilters(
+				nextFilters.length === visibleServers.length ? [] : nextFilters,
+			);
+		}
+	}, [
+		capabilityServerFilters,
+		isAllCapabilityServersSelected,
+		visibleServers,
+	]);
+
+	const selectedCapabilityServerIds = useMemo(() => {
+		if (isAllCapabilityServersSelected) {
+			if (capabilityServerFilters.length > 0) {
+				return new Set(capabilityServerFilters);
+			}
+			return new Set(visibleServers.map((server) => server.id));
+		}
+		return new Set(selectedCapabilityServer ? [selectedCapabilityServer.id] : []);
+	}, [
+		capabilityServerFilters,
+		isAllCapabilityServersSelected,
+		selectedCapabilityServer,
+		visibleServers,
+	]);
+	const visibleServerCapabilityCounts = useMemo(
+		() =>
+			visibleServers.reduce(
+				(acc, server) => {
+					const counts = capabilityCountsByServerId.get(server.id);
+					if (!counts) {
+						return acc;
+					}
+					acc.enabled += counts.enabled;
+					acc.total += counts.total;
+					return acc;
+				},
+				{ enabled: 0, total: 0 },
+			),
+		[capabilityCountsByServerId, visibleServers],
+	);
+
+	const capabilityStatusFilter = useCallback(
+		(item: { enabled: boolean }) =>
+			capabilityStatus === "all" ||
+			(capabilityStatus === "enabled" ? item.enabled : !item.enabled),
+		[capabilityStatus],
+	);
+
+	const capabilityKindMatches = useCallback(
+		(kind: CapabilityKind) =>
+			capabilityKindFilters.length === 0 ||
+			capabilityKindFilters.includes(kind),
+		[capabilityKindFilters],
+	);
+
+	const hasCapabilitySelection =
+		isAllCapabilityServersSelected || selectedCapabilityServer !== null;
+
+	const selectedServerTools = useMemo(
+		() =>
+			hasCapabilitySelection
+				? tools.filter(
+						(tool) =>
+							selectedCapabilityServerIds.has(tool.server_id) &&
+							capabilityStatusFilter(tool),
+					)
+				: [],
+		[
+			capabilityStatusFilter,
+			hasCapabilitySelection,
+			selectedCapabilityServerIds,
+			tools,
+		],
+	);
+	const selectedServerResources = useMemo(
+		() =>
+			hasCapabilitySelection
+				? resources.filter(
+						(resource) =>
+							selectedCapabilityServerIds.has(resource.server_id) &&
+							capabilityStatusFilter(resource),
+					)
+				: [],
+		[
+			capabilityStatusFilter,
+			hasCapabilitySelection,
+			resources,
+			selectedCapabilityServerIds,
+		],
+	);
+	const selectedServerPrompts = useMemo(
+		() =>
+			hasCapabilitySelection
+				? prompts.filter(
+						(prompt) =>
+							selectedCapabilityServerIds.has(prompt.server_id) &&
+							capabilityStatusFilter(prompt),
+					)
+				: [],
+		[
+			capabilityStatusFilter,
+			hasCapabilitySelection,
+			prompts,
+			selectedCapabilityServerIds,
+		],
+	);
+	const selectedServerTemplates = useMemo(
+		() =>
+			hasCapabilitySelection
+				? templates.filter(
+						(template) =>
+							selectedCapabilityServerIds.has(template.server_id) &&
+							capabilityStatusFilter(template),
+					)
+				: [],
+		[
+			capabilityStatusFilter,
+			hasCapabilitySelection,
+			selectedCapabilityServerIds,
+			templates,
+		],
+	);
+
+	const showToolsSection =
+		capabilityKindMatches("tools") &&
+		(isLoadingTools || selectedServerTools.length > 0);
+	const showResourcesSection =
+		capabilityKindMatches("resources") &&
+		(isLoadingResources || selectedServerResources.length > 0);
+	const showPromptsSection =
+		capabilityKindMatches("prompts") &&
+		(isLoadingPrompts || selectedServerPrompts.length > 0);
+	const showTemplatesSection =
+		capabilityKindMatches("templates") &&
+		(isLoadingTemplates || selectedServerTemplates.length > 0);
+
+	const visibleCapabilityKeys = useMemo(
+		() => [
+			...(capabilityKindMatches("tools")
+				? selectedServerTools
+						.filter((tool) =>
+							capabilityRecordMatchesSearch(
+								tool as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((tool) => capabilityKey("tools", tool.id))
+				: []),
+			...(capabilityKindMatches("resources")
+				? selectedServerResources
+						.filter((resource) =>
+							capabilityRecordMatchesSearch(
+								resource as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((resource) => capabilityKey("resources", resource.id))
+				: []),
+			...(capabilityKindMatches("prompts")
+				? selectedServerPrompts
+						.filter((prompt) =>
+							capabilityRecordMatchesSearch(
+								prompt as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((prompt) => capabilityKey("prompts", prompt.id))
+				: []),
+			...(capabilityKindMatches("templates")
+				? selectedServerTemplates
+						.filter((template) =>
+							capabilityRecordMatchesSearch(
+								template as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((template) => capabilityKey("templates", template.id))
+				: []),
+		],
+		[
+			capabilityQuery,
+			capabilityKindMatches,
+			selectedServerPrompts,
+			selectedServerResources,
+			selectedServerTemplates,
+			selectedServerTools,
+		],
+	);
+
+	const capabilityServerFilterLabel = useMemo(() => {
+		if (capabilityServerFilters.length === 0) {
+			return t("profiles:detail.filters.server.all", {
+				defaultValue: "All Servers",
+			});
+		}
+		if (capabilityServerFilters.length === 1) {
+			return (
+				visibleServers.find((server) => server.id === capabilityServerFilters[0])
+					?.name ??
+				t("profiles:detail.placeholders.server", { defaultValue: "Server" })
+			);
+		}
+		return t("profiles:detail.filters.server.selected", {
+			count: capabilityServerFilters.length,
+			defaultValue: "{{count}} Servers",
+		});
+	}, [capabilityServerFilters, i18n.language, t, visibleServers]);
+
+	const capabilityKindFilterLabel = useMemo(() => {
+		if (capabilityKindFilters.length === 0) {
+			return t("profiles:detail.filters.kind.all", {
+				defaultValue: "All Types",
+			});
+		}
+		if (capabilityKindFilters.length === 1) {
+			const [kind] = capabilityKindFilters;
+			if (kind === "tools") {
+				return t("profiles:detail.labels.tools", { defaultValue: "Tools" });
+			}
+			if (kind === "resources") {
+				return t("profiles:detail.labels.resources", {
+					defaultValue: "Resources",
+				});
+			}
+			if (kind === "prompts") {
+				return t("profiles:detail.labels.prompts", { defaultValue: "Prompts" });
+			}
+			return t("profiles:detail.labels.templates", {
+				defaultValue: "Resource Templates",
+			});
+		}
+		return t("profiles:detail.filters.kind.selected", {
+			count: capabilityKindFilters.length,
+			defaultValue: "{{count}} Types",
+		});
+	}, [capabilityKindFilters, i18n.language, t]);
+
+	const capabilityStatusLabel = useMemo(() => {
+		if (capabilityStatus === "enabled") {
+			return t("profiles:detail.filters.status.enabled", {
+				defaultValue: "Enabled",
+			});
+		}
+		if (capabilityStatus === "disabled") {
+			return t("profiles:detail.filters.status.disabled", {
+				defaultValue: "Disabled",
+			});
+		}
+		return t("profiles:detail.filters.status.all", {
+			defaultValue: "All",
+		});
+	}, [capabilityStatus, i18n.language, t]);
+
+	const serverStatusLabel = useMemo(() => {
+		if (serverStatus === "enabled") {
+			return t("profiles:detail.filters.status.enabled", {
+				defaultValue: "Enabled",
+			});
+		}
+		if (serverStatus === "disabled") {
+			return t("profiles:detail.filters.status.disabled", {
+				defaultValue: "Disabled",
+			});
+		}
+		return t("profiles:detail.filters.status.all", {
+			defaultValue: "All",
+		});
+	}, [i18n.language, serverStatus, t]);
+
+	const toggleCapabilityServerFilter = useCallback(
+		(serverId: string, checked: boolean) => {
+			setCapabilityServerFilters((current) => {
+				if (checked) {
+					return current.includes(serverId) ? current : [...current, serverId];
+				}
+				return current.filter((value) => value !== serverId);
+			});
+		},
+		[],
+	);
+
+	const toggleCapabilityKindFilter = useCallback(
+		(kind: CapabilityKind, checked: boolean) => {
+			setCapabilityKindFilters((current) => {
+				if (checked) {
+					return current.includes(kind) ? current : [...current, kind];
+				}
+				return current.filter((value) => value !== kind);
+			});
+		},
+		[],
+	);
 
 	const serverBulkActions = useEnableDisableBulkActions(
 		serverBulk,
 		visibleServers.map((server) => server.id),
 		bulkServersM,
 	);
-	const toolBulkActions = useEnableDisableBulkActions(
-		toolBulk,
-		visibleTools.map((tool) => tool.id),
-		bulkToolsM,
-	);
-	const promptBulkActions = useEnableDisableBulkActions(
-		promptBulk,
-		visiblePrompts.map((prompt) => prompt.id),
-		bulkPromptsM,
-	);
-	const resourceBulkActions = useEnableDisableBulkActions(
-		resourceBulk,
-		visibleResources.map((resource) => resource.id),
-		bulkResourcesM,
-	);
-	const templateBulkActions = useEnableDisableBulkActions(
-		templateBulk,
-		visibleTemplates.map((template) => template.id),
-		bulkTemplatesM,
+	const capabilityBulkActions = useEnableDisableBulkActions(
+		capabilityBulk,
+		visibleCapabilityKeys,
+		bulkCapabilitiesM,
 	);
 
 	// Template toggle mutations
@@ -900,7 +1256,7 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableResourceTemplate(profileId!, templateId)
 				: configSuitsApi.disableResourceTemplate(profileId!, templateId),
 		onSuccess: () => {
-			refetchTemplates();
+			refreshProfileCapabilitySurface();
 			notifySuccess(
 				t("profiles:detail.messages.templateUpdated", { defaultValue: "Template updated" }),
 				"Template status has been updated",
@@ -913,6 +1269,122 @@ export function ProfileDetailPage() {
 			);
 		},
 	});
+
+	const handleCapabilityDividerPointerDown = useCallback(
+		(event: ReactPointerEvent<HTMLButtonElement>) => {
+			event.preventDefault();
+			const startX = event.clientX;
+			const startWidth = serverColumnWidth;
+			const handlePointerMove = (moveEvent: PointerEvent) => {
+				const nextWidth = startWidth + moveEvent.clientX - startX;
+				setServerColumnWidth(Math.min(460, Math.max(240, nextWidth)));
+			};
+			const handlePointerUp = () => {
+				window.removeEventListener("pointermove", handlePointerMove);
+				window.removeEventListener("pointerup", handlePointerUp);
+			};
+			window.addEventListener("pointermove", handlePointerMove);
+			window.addEventListener("pointerup", handlePointerUp);
+		},
+		[serverColumnWidth],
+	);
+
+	const loadProfileCapabilityDetails = useCallback(
+		async (
+			item: ProfileFlatCapabilityItem,
+			kind: CapabilityKind,
+		): Promise<CapabilityRecord | null> => {
+			const serverId =
+				typeof item.server_id === "string" ? item.server_id : undefined;
+			if (!serverId) {
+				return null;
+			}
+
+			const key = profileCapabilityDetailKey(item, kind);
+			if (!key) {
+				return null;
+			}
+
+			const detail = await serversApi.getCapabilityDetail(
+				serverId,
+				kind,
+				key,
+			);
+			return (detail.item ?? null) as CapabilityRecord | null;
+		},
+		[],
+	);
+
+	const renderProfileFlatCapabilityList = useCallback(
+		(items: CapabilityPreviewFlatItem[]) => {
+			const flatItems: ProfileFlatCapabilityItem[] = items.map(
+				({ kind, item }) => ({
+					...item,
+					__profileCapabilityKind: kind,
+				}),
+			);
+
+			return (
+				<CapabilityList<ProfileFlatCapabilityItem>
+					asCard={false}
+					kind="tools"
+					getKind={(item) => item.__profileCapabilityKind}
+					context="profile"
+					leadingIcon="kind"
+					items={flatItems}
+					scrollContainedBody
+					enableToggle
+					getId={(item) => capabilityKey(item.__profileCapabilityKind, item.id)}
+					getEnabled={(item) => !!item.enabled}
+					onToggle={(_, next, item) => {
+						if (item.__profileCapabilityKind === "tools") {
+							toolToggleMutation.mutate({
+								toolId: item.id,
+								enable: next,
+							});
+							return;
+						}
+						if (item.__profileCapabilityKind === "resources") {
+							resourceToggleMutation.mutate({
+								resourceId: item.id,
+								enable: next,
+							});
+							return;
+						}
+						if (item.__profileCapabilityKind === "prompts") {
+							promptToggleMutation.mutate({
+								promptId: item.id,
+								enable: next,
+							});
+							return;
+						}
+						templateToggleMutation.mutate({
+							templateId: item.id,
+							enable: next,
+						});
+					}}
+					emptyText={t("profiles:detail.emptyStates.noCapabilitiesForSelection", {
+						defaultValue:
+							"No capabilities match the current server and status selection.",
+					})}
+					selectable={capabilityBulk.isBulkMode}
+					selectedIds={capabilityBulk.selectedIds}
+					onSelectToggle={(id) => capabilityBulk.toggleItem(id)}
+					loadDetails={loadProfileCapabilityDetails}
+					detailsCacheScope={capabilityDetailsCacheToken(flatItems)}
+				/>
+			);
+		},
+		[
+			capabilityBulk,
+			loadProfileCapabilityDetails,
+			promptToggleMutation,
+			resourceToggleMutation,
+			t,
+			templateToggleMutation,
+			toolToggleMutation,
+		],
+	);
 
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
@@ -940,11 +1412,6 @@ export function ProfileDetailPage() {
 										<Badge variant="outline">{t("profiles:badges.inDefault", { defaultValue: "In Default" })}</Badge>
 									) : null}
 								</div>
-								{suit.description && (
-									<p className="text-sm text-muted-foreground mt-1">
-										{suit.description}
-									</p>
-								)}
 							</div>
 						</div>
 					)}
@@ -989,20 +1456,8 @@ export function ProfileDetailPage() {
 					<div className="flex shrink-0 items-center justify-between">
 						<TabsList className="flex items-center gap-2">
 							<TabsTrigger value="overview">{t("profiles:detail.tabs.overview", { defaultValue: "Overview" })}</TabsTrigger>
-							<TabsTrigger value="servers">
-								{t("profiles:detail.tabs.servers", { defaultValue: "Servers" })} ({enabledServers.length}/{servers.length})
-							</TabsTrigger>
-							<TabsTrigger value="tools">
-								{t("profiles:detail.tabs.tools", { defaultValue: "Tools" })} ({enabledTools.length}/{tools.length})
-							</TabsTrigger>
-							<TabsTrigger value="prompts">
-								{t("profiles:detail.tabs.prompts", { defaultValue: "Prompts" })} ({enabledPrompts.length}/{prompts.length})
-							</TabsTrigger>
-							<TabsTrigger value="resources">
-								{t("profiles:detail.tabs.resources", { defaultValue: "Resources" })} ({enabledResources.length}/{resources.length})
-							</TabsTrigger>
-							<TabsTrigger value="templates">
-								{t("profiles:detail.tabs.templates", { defaultValue: "Templates" })} ({enabledTemplates.length}/{templates.length})
+							<TabsTrigger value="capabilities">
+								{t("profiles:detail.tabs.capabilities", { defaultValue: "Capabilities" })}
 							</TabsTrigger>
 						</TabsList>
 						<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
@@ -1130,7 +1585,7 @@ export function ProfileDetailPage() {
 								<Card className="h-full">
 									<CardHeader
 										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("servers")}
+										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
 											{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
@@ -1150,7 +1605,7 @@ export function ProfileDetailPage() {
 								<Card className="h-full">
 									<CardHeader
 										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("tools")}
+										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
 											{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
@@ -1170,7 +1625,7 @@ export function ProfileDetailPage() {
 								<Card className="h-full">
 									<CardHeader
 										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("resources")}
+										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
 											{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
@@ -1190,7 +1645,7 @@ export function ProfileDetailPage() {
 								<Card className="h-full">
 									<CardHeader
 										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("prompts")}
+										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
 											{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
@@ -1271,817 +1726,514 @@ export function ProfileDetailPage() {
 						</div>
 					</TabsContent>
 
-					<TabsContent value="servers" className={DETAIL_TAB_CONTENT_CLASS}>
+					<TabsContent value="capabilities" className={DETAIL_TAB_CONTENT_CLASS}>
 						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
-							<CardHeader className="shrink-0">
-								{isLoadingServers ? (
-									<div>
-										<CardTitle>
-											{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
-										</CardTitle>
-										<CardDescription>
-											{t("profiles:detail.descriptions.servers", {
-												defaultValue: "Manage servers included in this profile",
-											})}
-										</CardDescription>
-									</div>
-								) : (
-									<BulkSelectionHeader
-										className="mb-0"
-										title={t("profiles:detail.labels.servers", {
-											defaultValue: "Servers",
-										})}
-										description={
-											serverBulk.isBulkMode
-												? bulkModeDescription(serverBulk.selectedCount)
-												: t("profiles:detail.descriptions.servers", {
-													defaultValue:
-														"Manage servers included in this profile",
-												})
-										}
-										isBulkMode={serverBulk.isBulkMode}
-										onToggleBulkMode={serverBulk.toggleMode}
-										actions={serverBulkActions}
-										trailing={
-											<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t(
-														"profiles:detail.placeholders.searchServers",
-														{ defaultValue: "Search servers..." },
-													)}
-													value={serverQuery}
-													onChange={(e) => setServerQuery(e.target.value)}
-													className="h-9 w-48"
-												/>
-												<div className="hidden xl:block">
-													<Select
-														value={serverStatus}
-														onValueChange={(v) =>
-															setServerStatus(
-																v as "all" | "enabled" | "disabled",
-															)
-														}
-													>
-														<SelectTrigger className="h-9 w-36">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.status",
-																	{ defaultValue: "Status" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", {
-																	defaultValue: "All",
-																})}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", {
-																	defaultValue: "Enabled",
-																})}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", {
-																	defaultValue: "Disabled",
-																})}
-															</SelectItem>
-														</SelectContent>
-													</Select>
-												</div>
-											</div>
-										}
-									/>
-								)}
-							</CardHeader>
-							<CapabilityScrollCardContent>
-								<CardListScrollBody>
-									{isLoadingServers ? (
-										<div className="space-y-4">
-											{["s1", "s2", "s3"].map((id) => (
-												<div
-													key={`servers-skel-${id}`}
-													className="flex items-center justify-between rounded-lg border p-4"
-												>
-													<div className="h-5 w-32 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-													<div className="h-6 w-12 animate-pulse rounded bg-slate-200 dark:bg-slate-800"></div>
-												</div>
-											))}
-										</div>
-									) : visibleServers.length > 0 ? (
-										<CapsuleStripeList className="rounded-none border-0 overflow-visible">
-											{visibleServers.map((server) => {
-												const global = (globalServers as any[]).find(
-													(gs: any) => gs.name === server.name,
-												);
-												const globallyEnabled: boolean | undefined =
-													global?.enabled;
-												const globalIcon = global?.icons?.[0]?.src;
-												const avatarFallback = (server.name || server.id || "S")
-													.slice(0, 1)
-													.toUpperCase();
-												const iconAlt = global?.name || server.name || server.id;
-												const globalDescription =
-													global?.meta?.description?.trim();
-												const bulkSelected =
-													serverBulk.isBulkMode &&
-													serverBulk.selectedIdSet.has(server.id);
-												const handleServerRowActivate = () => {
-													if (serverBulk.isBulkMode) {
-														serverBulk.toggleItem(server.id);
+							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+								<div
+									className="grid min-h-0 flex-1 overflow-hidden"
+									style={{
+										gridTemplateColumns: `${serverColumnWidth}px 8px minmax(0, 1fr)`,
+									}}
+								>
+									<div className="flex min-h-0 flex-col">
+										<div className="shrink-0 p-3">
+											<BulkSelectionHeader
+												className="mb-3"
+												title={t("profiles:detail.labels.servers", {
+													defaultValue: "Servers",
+												})}
+												description={
+													serverBulk.isBulkMode
+														? bulkModeDescription(serverBulk.selectedCount)
+														: t("profiles:detail.descriptions.capabilityServers", {
+															defaultValue:
+																"Select a server to manage its profile capabilities.",
+														})
+												}
+												isBulkMode={serverBulk.isBulkMode}
+												onToggleBulkMode={serverBulk.toggleMode}
+												actions={serverBulkActions}
+											/>
+												<div className="grid min-w-0 grid-cols-[minmax(0,3fr)_minmax(2.25rem,1fr)] gap-2">
+													<Input
+														placeholder={t(
+															"profiles:detail.placeholders.searchServers",
+															{ defaultValue: "Search servers..." },
+														)}
+														value={serverQuery}
+														onChange={(e) => setServerQuery(e.target.value)}
+														className="h-9 min-w-0"
+													/>
+												<Select
+													value={serverStatus}
+													onValueChange={(v) =>
+														setServerStatus(v as "all" | "enabled" | "disabled")
 													}
-												};
-												return (
-													<CapsuleStripeListItem
-														key={server.id}
-														interactive={serverBulk.isBulkMode}
-														className={`group relative px-3 transition-colors ${bulkSelected
-															? "bg-primary/10 ring-1 ring-primary/40"
-															: ""
+												>
+														<SelectTrigger
+															title={serverStatusLabel}
+															className={compactSelectTriggerClass}
+														>
+														<SelectValue
+															placeholder={t(
+																"profiles:detail.placeholders.status",
+																{ defaultValue: "Status" },
+															)}
+														/>
+													</SelectTrigger>
+													<SelectContent>
+														<SelectItem value="all">
+															{t("profiles:detail.filters.status.all", {
+																defaultValue: "All",
+															})}
+														</SelectItem>
+														<SelectItem value="enabled">
+															{t("profiles:detail.filters.status.enabled", {
+																defaultValue: "Enabled",
+															})}
+														</SelectItem>
+														<SelectItem value="disabled">
+															{t("profiles:detail.filters.status.disabled", {
+																defaultValue: "Disabled",
+															})}
+														</SelectItem>
+													</SelectContent>
+												</Select>
+											</div>
+										</div>
+										<CardListScrollBody className="mx-3 mb-3 mt-0">
+											{isLoadingServers ? (
+												<div className="space-y-3">
+													{["s1", "s2", "s3"].map((id) => (
+														<div
+															key={`capabilities-server-skel-${id}`}
+															className="h-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800"
+														/>
+													))}
+												</div>
+											) : visibleServers.length > 0 ? (
+													<CapsuleStripeList className="rounded-none border-0 overflow-visible">
+														<CapsuleStripeListItem
+															key={ALL_CAPABILITY_SERVERS_ID}
+															interactive
+															className={`group relative px-3 transition-colors ${
+																isAllCapabilityServersSelected
+																	? "bg-primary/10"
+																	: ""
 															}`}
-														onClick={
-															serverBulk.isBulkMode
-																? handleServerRowActivate
-																: undefined
-														}
-														onKeyDown={(e) => {
-															if (!serverBulk.isBulkMode) return;
-															if (e.key === "Enter" || e.key === " ") {
-																e.preventDefault();
-																handleServerRowActivate();
+															onClick={() =>
+																setSelectedCapabilityServerId(
+																	ALL_CAPABILITY_SERVERS_ID,
+																)
 															}
-														}}
-													>
-														<CapsuleStripeRowBody
-															lead={
-																<div className={`flex items-center ${serverBulk.isBulkMode ? "gap-3" : "gap-0"}`}>
-																	<BulkSelectionCheckbox
-																		visible={serverBulk.isBulkMode}
-																		checked={bulkSelected}
-																		onToggle={() =>
-																			serverBulk.toggleItem(server.id)
-																		}
-																		ariaLabel={t(
-																			"profiles:detail.bulk.selectItem",
+															onKeyDown={(event) => {
+																if (event.key === "Enter" || event.key === " ") {
+																	event.preventDefault();
+																	setSelectedCapabilityServerId(
+																		ALL_CAPABILITY_SERVERS_ID,
+																	);
+																}
+															}}
+														>
+															<CapsuleStripeRowBody
+																lead={
+																	<div className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-[10px] font-semibold uppercase text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+																		{t("profiles:detail.labels.allServersShort", {
+																			defaultValue: "All",
+																		})}
+																	</div>
+																}
+																trailing={
+																	<Badge variant="outline">
+																		{visibleServers.length}
+																	</Badge>
+																}
+															>
+																<div className="min-w-0">
+																	<div
+																		className="truncate font-medium text-slate-900 dark:text-slate-100"
+																		title={t("profiles:detail.labels.allServers", {
+																			defaultValue: "All servers",
+																		})}
+																	>
+																		{t("profiles:detail.labels.allServers", {
+																			defaultValue: "All servers",
+																		})}
+																	</div>
+																	<div
+																		className="mt-1 truncate text-xs text-slate-500"
+																		title={`${visibleServerCapabilityCounts.enabled}/${visibleServerCapabilityCounts.total} ${t(
+																			"profiles:detail.labels.enabledCapabilities",
 																			{
-																				name: server.name,
-																				defaultValue: "Select {{name}}",
+																				defaultValue: "enabled capabilities",
+																			},
+																		)}`}
+																	>
+																		{visibleServerCapabilityCounts.enabled}/
+																		{visibleServerCapabilityCounts.total}{" "}
+																		{t(
+																			"profiles:detail.labels.enabledCapabilities",
+																			{
+																				defaultValue: "enabled capabilities",
 																			},
 																		)}
-																	/>
-																	<CachedAvatar
-																		src={globalIcon}
-																		alt={iconAlt ? `${iconAlt} icon` : undefined}
-																		fallback={avatarFallback}
-																		size="sm"
-																		shape="rounded"
-																		className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
-																	/>
+																	</div>
 																</div>
+															</CapsuleStripeRowBody>
+														</CapsuleStripeListItem>
+														{visibleServers.map((server) => {
+															const global = (
+																globalServers as ProfileGlobalServerSummary[]
+															).find(
+																(gs) => gs.name === server.name,
+															);
+															const globalIcon = global?.icons?.[0]?.src;
+															const iconAlt =
+																global?.name || server.name || server.id;
+															const avatarFallback = (server.name || server.id || "S")
+																.slice(0, 1)
+																.toUpperCase();
+															const counts =
+																capabilityCountsByServerId.get(server.id) ?? {
+																	enabled: 0,
+																	prompts: 0,
+																	resources: 0,
+																	templates: 0,
+																	tools: 0,
+																	total: 0,
+																};
+															const isSelected =
+																selectedCapabilityServer?.id === server.id;
+															const bulkSelected =
+																serverBulk.isBulkMode &&
+																serverBulk.selectedIdSet.has(server.id);
+															let serverItemStateClass = "";
+															if (isSelected) {
+																serverItemStateClass = "bg-primary/10";
+															} else if (bulkSelected) {
+																serverItemStateClass = "bg-accent/40";
 															}
-															trailing={
-																<>
-																	{/* Hover actions: Browse (left) + Inspect (right) */}
-																	{enableServerDebug && (
-																		<>
-																			<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-																				<button
-																					type="button"
-																					onClick={(ev) => {
-																						ev.stopPropagation();
-																						openBrowse(server.id);
-																					}}
-																					aria-label={t("profiles:detail.labels.browseServer", { defaultValue: "Browse server" })}
-																					className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-																				>
-																					<Eye size={20} />
-																				</button>
-																			</div>
-																			<div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-																				<button
-																					type="button"
-																					onClick={(ev) => {
-																						ev.stopPropagation();
-																						openDebug(
-																							server.id,
-																							server.enabled ? "proxy" : "native",
-																						);
-																					}}
-																					aria-label={t("profiles:detail.labels.debugServer", { defaultValue: "Inspect server" })}
-																					className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors"
-																				>
-																					<Bug size={20} />
-																				</button>
-																			</div>
-																		</>
-																	)}
+															const serverLeadClassName = serverBulk.isBulkMode
+																? "flex items-center gap-3"
+																: "flex items-center gap-0";
 
-																	{/* Global status badges and switch - positioned on the right */}
-																	{globallyEnabled !== undefined &&
-																		(globallyEnabled ? (
-																			<Badge>
-																				{t("profiles:detail.globalStatus.enabled", {
-																					defaultValue: "Global Enabled",
-																				})}
-																			</Badge>
-																		) : (
-																			<Badge variant="outline">
-																				{t("profiles:detail.globalStatus.disabled", {
-																					defaultValue: "Global Disabled",
-																				})}
-																			</Badge>
-																		))}
-
-																	{/* Always show switch */}
-																	<Switch
-																		checked={server.enabled}
-																		onClick={(e) => e.stopPropagation()}
-																		onCheckedChange={(enabled) =>
-																			serverToggleMutation.mutate({
-																				serverId: server.id,
-																				enable: enabled,
-																			})
+															return (
+																<CapsuleStripeListItem
+																	key={server.id}
+																	interactive
+																	className={`group relative px-3 transition-colors ${serverItemStateClass}`}
+																	onClick={() => setSelectedCapabilityServerId(server.id)}
+																	onKeyDown={(event) => {
+																		if (event.key === "Enter" || event.key === " ") {
+																			event.preventDefault();
+																			setSelectedCapabilityServerId(server.id);
 																		}
-																		disabled={serverToggleMutation.isPending}
-																	/>
-																</>
+																	}}
+																>
+																	<CapsuleStripeRowBody
+																		lead={
+																			<div className={serverLeadClassName}>
+																				<BulkSelectionCheckbox
+																					visible={serverBulk.isBulkMode}
+																					checked={bulkSelected}
+																					onToggle={() =>
+																						serverBulk.toggleItem(server.id)
+																					}
+																					ariaLabel={t(
+																						"profiles:detail.bulk.selectItem",
+																						{
+																							name: server.name,
+																							defaultValue: "Select {{name}}",
+																						},
+																					)}
+																				/>
+																				<CachedAvatar
+																					src={globalIcon}
+																					alt={
+																						iconAlt ? `${iconAlt} icon` : undefined
+																					}
+																					fallback={avatarFallback}
+																					size="sm"
+																					shape="rounded"
+																					className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
+																				/>
+																			</div>
+																		}
+																		trailing={
+																			<div className="flex w-[4.25rem] shrink-0 items-center justify-end gap-1">
+																				{!serverBulk.isBulkMode ? (
+																					<button
+																						type="button"
+																						className="flex h-7 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground opacity-0 shadow-none transition-[color,opacity] hover:bg-transparent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 group-hover:opacity-100"
+																						onClick={(event) => {
+																							event.stopPropagation();
+																							openServerDetail(server.id);
+																						}}
+																						aria-label={t(
+																							"profiles:detail.labels.browseServer",
+																							{ defaultValue: "Browse server" },
+																						)}
+																					>
+																						<Eye className="h-4 w-4" />
+																					</button>
+																				) : null}
+																				<Switch
+																					checked={server.enabled}
+																					onClick={(e) => e.stopPropagation()}
+																					onCheckedChange={(enabled) =>
+																						serverToggleMutation.mutate({
+																							serverId: server.id,
+																							enable: enabled,
+																						})
+																					}
+																					disabled={serverToggleMutation.isPending}
+																				/>
+																			</div>
+																		}
+																>
+																	<div className="min-w-0">
+																		<div
+																			className="truncate font-medium text-slate-900 dark:text-slate-100"
+																			title={server.name}
+																		>
+																			{server.name}
+																		</div>
+																		<div
+																			className="mt-1 truncate text-xs text-slate-500"
+																			title={`${counts.enabled}/${counts.total} ${t(
+																				"profiles:detail.labels.enabledCapabilities",
+																				{
+																					defaultValue: "enabled capabilities",
+																				},
+																			)}`}
+																		>
+																			{counts.enabled}/{counts.total}{" "}
+																			{t("profiles:detail.labels.enabledCapabilities", {
+																				defaultValue: "enabled capabilities",
+																			})}
+																		</div>
+																	</div>
+																</CapsuleStripeRowBody>
+															</CapsuleStripeListItem>
+														);
+													})}
+												</CapsuleStripeList>
+											) : (
+												<div className="flex min-h-full items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
+													{t("profiles:detail.emptyStates.noServers", {
+														defaultValue: "No servers found in this profile",
+													})}
+												</div>
+											)}
+										</CardListScrollBody>
+									</div>
+
+									<button
+										type="button"
+										aria-label={t("profiles:detail.labels.resizeCapabilityColumns", {
+											defaultValue: "Resize capability columns",
+										})}
+										className="group flex cursor-col-resize items-center justify-center border-x border-border bg-muted/20 text-muted-foreground transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										onPointerDown={handleCapabilityDividerPointerDown}
+									>
+										<GripVertical className="h-4 w-4 opacity-50 group-hover:opacity-80" />
+									</button>
+
+									<div className="flex min-h-0 flex-col">
+										<div className="shrink-0 p-3">
+											<BulkSelectionHeader
+												className="mb-3"
+												title={
+													isAllCapabilityServersSelected
+														? t("profiles:detail.labels.allServers", {
+																defaultValue: "All servers",
+															})
+														: selectedCapabilityServer
+															? selectedCapabilityServer.name
+															: t("profiles:detail.labels.capabilities", {
+																	defaultValue: "Capabilities",
+																})
+												}
+												description={
+													isAllCapabilityServersSelected
+														? t("profiles:detail.descriptions.allCapabilityGroups", {
+																defaultValue:
+																	"Manage tools, resources, prompts, and resource templates across the visible servers.",
+															})
+														: selectedCapabilityServer
+															? t("profiles:detail.descriptions.capabilityGroups", {
+																	defaultValue:
+																		"Manage tools, resources, prompts, and resource templates for the selected server.",
+																})
+															: t("profiles:detail.emptyStates.selectServer", {
+																	defaultValue:
+																		"Select a server to inspect its capabilities.",
+																})
+												}
+												isBulkMode={capabilityBulk.isBulkMode}
+												onToggleBulkMode={capabilityBulk.toggleMode}
+												actions={capabilityBulkActions}
+											/>
+											<CapabilityToolbar
+												searchValue={capabilityQuery}
+												onSearchChange={setCapabilityQuery}
+												searchPlaceholder={t(
+													"profiles:detail.placeholders.searchCapabilities",
+													{ defaultValue: "Search capabilities..." },
+												)}
+												serverFilter={
+													isAllCapabilityServersSelected
+														? {
+																label: capabilityServerFilterLabel,
+																allLabel: t(
+																	"profiles:detail.filters.server.all",
+																	{ defaultValue: "All Servers" },
+																),
+																options: visibleServers.map((server) => ({
+																	value: server.id,
+																	label: server.name,
+																	title: server.name,
+																})),
+																selectedValues: capabilityServerFilters,
+																onClear: () => setCapabilityServerFilters([]),
+																onToggle: toggleCapabilityServerFilter,
 															}
-														>
-															<div className="min-w-0">
-																<h3 className="font-medium text-slate-900 dark:text-slate-100">
-																	{server.name}
-																</h3>
-																<p className="text-sm text-slate-500">
-																	ID: {server.id}
-																</p>
-																{globalDescription ? (
-																	<p className="text-xs text-slate-500 line-clamp-2">
-																		{globalDescription}
-																	</p>
-																) : null}
-															</div>
-														</CapsuleStripeRowBody>
-													</CapsuleStripeListItem>
-												);
+														: undefined
+												}
+												kindFilter={{
+													label: capabilityKindFilterLabel,
+													allLabel: t("profiles:detail.filters.kind.all", {
+														defaultValue: "All Types",
+													}),
+													options: [
+														{
+															value: "tools",
+															label: t("profiles:detail.labels.tools", {
+																defaultValue: "Tools",
+															}),
+														},
+														{
+															value: "resources",
+															label: t("profiles:detail.labels.resources", {
+																defaultValue: "Resources",
+															}),
+														},
+														{
+															value: "prompts",
+															label: t("profiles:detail.labels.prompts", {
+																defaultValue: "Prompts",
+															}),
+														},
+														{
+															value: "templates",
+															label: t("profiles:detail.labels.templates", {
+																defaultValue: "Resource Templates",
+															}),
+														},
+													],
+													selectedValues: capabilityKindFilters,
+													onClear: () => setCapabilityKindFilters([]),
+													onToggle: (value, checked) =>
+														toggleCapabilityKindFilter(
+															value as CapabilityKind,
+															checked,
+														),
+												}}
+												statusFilter={{
+													label: capabilityStatusLabel,
+													value: capabilityStatus,
+													placeholder: t(
+														"profiles:detail.placeholders.status",
+														{ defaultValue: "Status" },
+													),
+													options: [
+														{
+															value: "all",
+															label: t("profiles:detail.filters.status.all", {
+																defaultValue: "All",
+															}),
+														},
+														{
+															value: "enabled",
+															label: t(
+																"profiles:detail.filters.status.enabled",
+																{ defaultValue: "Enabled" },
+															),
+														},
+														{
+															value: "disabled",
+															label: t(
+																"profiles:detail.filters.status.disabled",
+																{ defaultValue: "Disabled" },
+															),
+														},
+													],
+													onValueChange: (value) =>
+														setCapabilityStatus(
+															value as "all" | "enabled" | "disabled",
+														),
+												}}
+											/>
+										</div>
+										<CapabilityPreviewList
+											className="mx-3 mb-3 mt-0"
+											contentClassName="flex min-h-0 flex-1 flex-col p-0"
+											framed={false}
+											showHeader={false}
+											hasSource={hasCapabilitySelection}
+											isLoading={
+												isLoadingTools ||
+												isLoadingResources ||
+												isLoadingPrompts ||
+												isLoadingTemplates
+											}
+											searchValue={capabilityQuery}
+											tools={
+												showToolsSection
+													? (selectedServerTools as CapabilityRecord[])
+													: []
+											}
+											resources={
+												showResourcesSection
+													? (selectedServerResources as CapabilityRecord[])
+													: []
+											}
+											prompts={
+												showPromptsSection
+													? (selectedServerPrompts as CapabilityRecord[])
+													: []
+											}
+											templates={
+												showTemplatesSection
+													? (selectedServerTemplates as CapabilityRecord[])
+													: []
+											}
+											selectHintText={t("profiles:detail.emptyStates.selectServer", {
+												defaultValue: "Select a server to inspect its capabilities.",
 											})}
-										</CapsuleStripeList>
-									) : (
-										<p className="text-center text-slate-500 py-8">
-											{t("profiles:detail.emptyStates.noServers", {
-												defaultValue: "No servers found in this profile",
-											})}
-										</p>
-									)}
-								</CardListScrollBody>
-							</CapabilityScrollCardContent>
+											emptyText={t(
+												"profiles:detail.emptyStates.noCapabilitiesForSelection",
+												{
+													defaultValue:
+														"No capabilities match the current server and status selection.",
+												},
+											)}
+											emptySearchText={t(
+												"profiles:detail.emptyStates.noCapabilitiesForSelection",
+												{
+													defaultValue:
+														"No capabilities match the current server and status selection.",
+												},
+											)}
+											renderFlatList={renderProfileFlatCapabilityList}
+										/>
+									</div>
+								</div>
+							</CardContent>
 						</Card>
 					</TabsContent>
 
-					<TabsContent value="tools" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
-							<CardHeader className="shrink-0">
-								{isLoadingTools ? (
-									<div>
-										<CardTitle>
-											{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
-										</CardTitle>
-										<CardDescription>
-											{t("profiles:detail.descriptions.tools", {
-												defaultValue: "Manage tools included in this profile",
-											})}
-										</CardDescription>
-									</div>
-								) : (
-									<BulkSelectionHeader
-										className="mb-0"
-										title={t("profiles:detail.labels.tools", {
-											defaultValue: "Tools",
-										})}
-										description={
-											toolBulk.isBulkMode
-												? bulkModeDescription(toolBulk.selectedCount)
-												: t("profiles:detail.descriptions.tools", {
-													defaultValue:
-														"Manage tools included in this profile",
-												})
-										}
-										isBulkMode={toolBulk.isBulkMode}
-										onToggleBulkMode={toolBulk.toggleMode}
-										actions={toolBulkActions}
-										trailing={
-											<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t(
-														"profiles:detail.placeholders.searchTools",
-														{ defaultValue: "Search tools..." },
-													)}
-													value={toolQuery}
-													onChange={(e) => setToolQuery(e.target.value)}
-													className="h-9 w-48"
-												/>
-												<div className="hidden xl:block">
-													<Select
-														value={toolStatus}
-														onValueChange={(v) =>
-															setToolStatus(
-																v as "all" | "enabled" | "disabled",
-															)
-														}
-													>
-														<SelectTrigger className="h-9 w-36">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.status",
-																	{ defaultValue: "Status" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", {
-																	defaultValue: "All",
-																})}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", {
-																	defaultValue: "Enabled",
-																})}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", {
-																	defaultValue: "Disabled",
-																})}
-															</SelectItem>
-														</SelectContent>
-													</Select>
-												</div>
-												<div className="hidden xl:block">
-													<Select
-														value={toolServer}
-														onValueChange={(v) => setToolServer(v)}
-													>
-														<SelectTrigger className="h-9 w-40">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.server",
-																	{ defaultValue: "Server" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.server.all", {
-																	defaultValue: "All Servers",
-																})}
-															</SelectItem>
-															{serverNameOptions.map((name) => (
-																<SelectItem key={`tool-sel-${name}`} value={name}>
-																	{name}
-																</SelectItem>
-															))}
-														</SelectContent>
-													</Select>
-												</div>
-											</div>
-										}
-									/>
-								)}
-							</CardHeader>
-							<CapabilityScrollCardContent>
-								<CapabilityList
-									asCard={false}
-									scrollContainedBody
-									title={t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
-									kind="tools"
-									context="profile"
-									items={visibleTools as any}
-									loading={isLoadingTools}
-									enableToggle
-									getId={(t: any) => t.id}
-									getEnabled={(t: any) => !!t.enabled}
-									onToggle={(id, next) =>
-										toolToggleMutation.mutate({ toolId: id, enable: next })
-									}
-									emptyText={t("profiles:detail.emptyStates.noTools", { defaultValue: "No tools found in this profile" })}
-									filterText={toolQuery}
-									selectable={toolBulk.isBulkMode}
-									selectedIds={toolBulk.selectedIds}
-									onSelectToggle={(id) => toolBulk.toggleItem(id)}
-									renderAction={undefined}
-								/>
-							</CapabilityScrollCardContent>
-						</Card>
-					</TabsContent>
 
-					<TabsContent value="prompts" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
-							<CardHeader className="shrink-0">
-								{isLoadingPrompts ? (
-									<div>
-										<CardTitle>
-											{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
-										</CardTitle>
-										<CardDescription>
-											{t("profiles:detail.descriptions.prompts", {
-												defaultValue: "Manage prompts included in this profile",
-											})}
-										</CardDescription>
-									</div>
-								) : (
-									<BulkSelectionHeader
-										className="mb-0"
-										title={t("profiles:detail.labels.prompts", {
-											defaultValue: "Prompts",
-										})}
-										description={
-											promptBulk.isBulkMode
-												? bulkModeDescription(promptBulk.selectedCount)
-												: t("profiles:detail.descriptions.prompts", {
-													defaultValue:
-														"Manage prompts included in this profile",
-												})
-										}
-										isBulkMode={promptBulk.isBulkMode}
-										onToggleBulkMode={promptBulk.toggleMode}
-										actions={promptBulkActions}
-										trailing={
-											<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t(
-														"profiles:detail.placeholders.searchPrompts",
-														{ defaultValue: "Search prompts..." },
-													)}
-													value={promptQuery}
-													onChange={(e) => setPromptQuery(e.target.value)}
-													className="h-9 w-48"
-												/>
-												<div className="hidden xl:block">
-													<Select
-														value={promptStatus}
-														onValueChange={(v) =>
-															setPromptStatus(
-																v as "all" | "enabled" | "disabled",
-															)
-														}
-													>
-														<SelectTrigger className="h-9 w-36">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.status",
-																	{ defaultValue: "Status" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", {
-																	defaultValue: "All",
-																})}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", {
-																	defaultValue: "Enabled",
-																})}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", {
-																	defaultValue: "Disabled",
-																})}
-															</SelectItem>
-														</SelectContent>
-													</Select>
-												</div>
-												<div className="hidden xl:block">
-													<Select
-														value={promptServer}
-														onValueChange={(v) => setPromptServer(v)}
-													>
-														<SelectTrigger className="h-9 w-40">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.server",
-																	{ defaultValue: "Server" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.server.all", {
-																	defaultValue: "All Servers",
-																})}
-															</SelectItem>
-															{serverNameOptions.map((name) => (
-																<SelectItem key={`prm-sel-${name}`} value={name}>
-																	{name}
-																</SelectItem>
-															))}
-														</SelectContent>
-													</Select>
-												</div>
-											</div>
-										}
-									/>
-								)}
-							</CardHeader>
-							<CapabilityScrollCardContent>
-								<CapabilityList
-									asCard={false}
-									scrollContainedBody
-									title={t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
-									kind="prompts"
-									context="profile"
-									items={visiblePrompts as any}
-									loading={isLoadingPrompts}
-									enableToggle
-									getId={(p: any) => p.id}
-									getEnabled={(p: any) => !!p.enabled}
-									onToggle={(id, next) =>
-										promptToggleMutation.mutate({ promptId: id, enable: next })
-									}
-									emptyText={t("profiles:detail.emptyStates.noPrompts", { defaultValue: "No prompts found in this profile" })}
-									filterText={promptQuery}
-									selectable={promptBulk.isBulkMode}
-									selectedIds={promptBulk.selectedIds}
-									onSelectToggle={(id) => promptBulk.toggleItem(id)}
-									renderAction={undefined}
-								/>
-							</CapabilityScrollCardContent>
-						</Card>
-					</TabsContent>
-
-					<TabsContent value="resources" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
-							<CardHeader className="shrink-0">
-								{isLoadingResources ? (
-									<div>
-										<CardTitle>
-											{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
-										</CardTitle>
-										<CardDescription>
-											{t("profiles:detail.descriptions.resources", {
-												defaultValue: "Manage resources included in this profile",
-											})}
-										</CardDescription>
-									</div>
-								) : (
-									<BulkSelectionHeader
-										className="mb-0"
-										title={t("profiles:detail.labels.resources", {
-											defaultValue: "Resources",
-										})}
-										description={
-											resourceBulk.isBulkMode
-												? bulkModeDescription(resourceBulk.selectedCount)
-												: t("profiles:detail.descriptions.resources", {
-													defaultValue:
-														"Manage resources included in this profile",
-												})
-										}
-										isBulkMode={resourceBulk.isBulkMode}
-										onToggleBulkMode={resourceBulk.toggleMode}
-										actions={resourceBulkActions}
-										trailing={
-											<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t(
-														"profiles:detail.placeholders.searchResources",
-														{ defaultValue: "Search resources..." },
-													)}
-													value={resourceQuery}
-													onChange={(e) => setResourceQuery(e.target.value)}
-													className="h-9 w-48"
-												/>
-												<div className="hidden xl:block">
-													<Select
-														value={resourceStatus}
-														onValueChange={(v) =>
-															setResourceStatus(
-																v as "all" | "enabled" | "disabled",
-															)
-														}
-													>
-														<SelectTrigger className="h-9 w-36">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.status",
-																	{ defaultValue: "Status" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", {
-																	defaultValue: "All",
-																})}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", {
-																	defaultValue: "Enabled",
-																})}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", {
-																	defaultValue: "Disabled",
-																})}
-															</SelectItem>
-														</SelectContent>
-													</Select>
-												</div>
-												<div className="hidden xl:block">
-													<Select
-														value={resourceServer}
-														onValueChange={(v) => setResourceServer(v)}
-													>
-														<SelectTrigger className="h-9 w-40">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.server",
-																	{ defaultValue: "Server" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.server.all", {
-																	defaultValue: "All Servers",
-																})}
-															</SelectItem>
-															{serverNameOptions.map((name) => (
-																<SelectItem key={`res-sel-${name}`} value={name}>
-																	{name}
-																</SelectItem>
-															))}
-														</SelectContent>
-													</Select>
-												</div>
-											</div>
-										}
-									/>
-								)}
-							</CardHeader>
-							<CapabilityScrollCardContent>
-								<CapabilityList
-									asCard={false}
-									scrollContainedBody
-									title={t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
-									kind="resources"
-									context="profile"
-									items={visibleResources as any}
-									loading={isLoadingResources}
-									enableToggle
-									getId={(r: any) => r.id}
-									getEnabled={(r: any) => !!r.enabled}
-									onToggle={(id, next) =>
-										resourceToggleMutation.mutate({
-											resourceId: id,
-											enable: next,
-										})
-									}
-									emptyText={t("profiles:detail.emptyStates.noResources", { defaultValue: "No resources found in this profile" })}
-									filterText={resourceQuery}
-									selectable={resourceBulk.isBulkMode}
-									selectedIds={resourceBulk.selectedIds}
-									onSelectToggle={(id) => resourceBulk.toggleItem(id)}
-									renderAction={undefined}
-								/>
-							</CapabilityScrollCardContent>
-						</Card>
-					</TabsContent>
-
-					<TabsContent value="templates" className={DETAIL_TAB_CONTENT_CLASS}>
-						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
-							<CardHeader className="shrink-0">
-								{isLoadingTemplates ? (
-									<div>
-										<CardTitle>
-											{t("profiles:detail.labels.templates", { defaultValue: "Templates" })}
-										</CardTitle>
-										<CardDescription>
-											{t("profiles:detail.descriptions.templates", {
-												defaultValue:
-													"Manage resource templates included in this profile",
-											})}
-										</CardDescription>
-									</div>
-								) : (
-									<BulkSelectionHeader
-										className="mb-0"
-										title={t("profiles:detail.labels.templates", {
-											defaultValue: "Templates",
-										})}
-										description={
-											templateBulk.isBulkMode
-												? bulkModeDescription(templateBulk.selectedCount)
-												: t("profiles:detail.descriptions.templates", {
-													defaultValue:
-														"Manage resource templates included in this profile",
-												})
-										}
-										isBulkMode={templateBulk.isBulkMode}
-										onToggleBulkMode={templateBulk.toggleMode}
-										actions={templateBulkActions}
-										trailing={
-											<div className="flex flex-wrap items-center gap-2">
-												<Input
-													placeholder={t(
-														"profiles:detail.placeholders.searchTemplates",
-														{ defaultValue: "Search templates..." },
-													)}
-													value={templateQuery}
-													onChange={(e) => setTemplateQuery(e.target.value)}
-													className="h-9 w-48"
-												/>
-												<div className="hidden xl:block">
-													<Select
-														value={templateStatus}
-														onValueChange={(v) =>
-															setTemplateStatus(
-																v as "all" | "enabled" | "disabled",
-															)
-														}
-													>
-														<SelectTrigger className="h-9 w-36">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.status",
-																	{ defaultValue: "Status" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.status.all", {
-																	defaultValue: "All",
-																})}
-															</SelectItem>
-															<SelectItem value="enabled">
-																{t("profiles:detail.filters.status.enabled", {
-																	defaultValue: "Enabled",
-																})}
-															</SelectItem>
-															<SelectItem value="disabled">
-																{t("profiles:detail.filters.status.disabled", {
-																	defaultValue: "Disabled",
-																})}
-															</SelectItem>
-														</SelectContent>
-													</Select>
-												</div>
-												<div className="hidden xl:block">
-													<Select
-														value={templateServer}
-														onValueChange={(v) => setTemplateServer(v)}
-													>
-														<SelectTrigger className="h-9 w-40">
-															<SelectValue
-																placeholder={t(
-																	"profiles:detail.placeholders.server",
-																	{ defaultValue: "Server" },
-																)}
-															/>
-														</SelectTrigger>
-														<SelectContent>
-															<SelectItem value="all">
-																{t("profiles:detail.filters.server.all", {
-																	defaultValue: "All Servers",
-																})}
-															</SelectItem>
-															{serverNameOptions.map((name) => (
-																<SelectItem key={`tpl-sel-${name}`} value={name}>
-																	{name}
-																</SelectItem>
-															))}
-														</SelectContent>
-													</Select>
-												</div>
-											</div>
-										}
-									/>
-								)}
-							</CardHeader>
-							<CapabilityScrollCardContent>
-								<CapabilityList
-									asCard={false}
-									scrollContainedBody
-									title={t("profiles:detail.labels.templates", { defaultValue: "Templates" })}
-									kind="templates"
-									context="profile"
-									items={visibleTemplates as any}
-									loading={isLoadingTemplates}
-									enableToggle
-									getId={(p: any) => p.id}
-									getEnabled={(p: any) => !!p.enabled}
-									onToggle={(id, next) => templateToggleMutation.mutate({ templateId: id, enable: next })}
-									emptyText={t("profiles:detail.emptyStates.noTemplates", { defaultValue: "No templates found in this profile" })}
-									filterText={templateQuery}
-									selectable={templateBulk.isBulkMode}
-									selectedIds={templateBulk.selectedIds}
-									onSelectToggle={(id) => templateBulk.toggleItem(id)}
-									renderAction={undefined}
-								/>
-							</CapabilityScrollCardContent>
-						</Card>
-					</TabsContent>
 				</Tabs>
 			) : (
 				<Card>
