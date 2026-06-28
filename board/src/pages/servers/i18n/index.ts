@@ -220,7 +220,14 @@ export const serversTranslations = {
 				prompts: "Prompts ({{count}})",
 				resources: "Resources ({{count}})",
 				templates: "Resource Templates ({{count}})",
+				capabilities: "Capabilities ({{count}})",
 				logs: "Logs",
+			},
+			filters: {
+				kind: {
+					all: "All Types",
+					selected: "{{count}} Types",
+				},
 			},
 			logs: {
 				title: "Logs",
@@ -248,6 +255,7 @@ export const serversTranslations = {
 				},
 				title: "{{label}} ({{count}})",
 				empty: "No {{label}} from this server",
+				emptyAll: "No capabilities from this server",
 			},
 			debug: {
 				proxyUnavailable:
@@ -761,6 +769,7 @@ export const serversTranslations = {
 				generating: "Generating capability preview…",
 				serverPickerLabel: "Server",
 				selectServer: "Select server",
+				filterCapabilities: "Filter capabilities...",
 				capabilitiesTitle: "Capabilities",
 				capabilitiesSummary: "Capabilities · {{summary}}",
 				emptyCapabilities:
@@ -1131,7 +1140,14 @@ export const serversTranslations = {
 				prompts: "提示 ({{count}})",
 				resources: "资源 ({{count}})",
 				templates: "模板 ({{count}})",
+				capabilities: "能力 ({{count}})",
 				logs: "日志",
+			},
+			filters: {
+				kind: {
+					all: "全部类型",
+					selected: "{{count}} 种类型",
+				},
 			},
 			logs: {
 				title: "日志",
@@ -1159,6 +1175,7 @@ export const serversTranslations = {
 				},
 				title: "{{label}} ({{count}})",
 				empty: "该服务器无 {{label}}",
+				emptyAll: "该服务器暂无能力",
 			},
 			debug: {
 				proxyUnavailable: "代理模式不可用：该服务器未在任何激活的配置中启用。",
@@ -1649,6 +1666,7 @@ export const serversTranslations = {
 				generating: "正在生成能力预览…",
 				serverPickerLabel: "服务器",
 				selectServer: "选择服务器",
+				filterCapabilities: "筛选能力...",
 				capabilitiesTitle: "能力",
 				capabilitiesSummary: "能力 · {{summary}}",
 				emptyCapabilities: "未发现该服务器的能力。",
@@ -1999,7 +2017,14 @@ export const serversTranslations = {
 				prompts: "プロンプト ({{count}})",
 				resources: "リソース ({{count}})",
 				templates: "テンプレート ({{count}})",
+				capabilities: "機能 ({{count}})",
 				logs: "ログ",
+			},
+			filters: {
+				kind: {
+					all: "すべての種類",
+					selected: "{{count}} 種類",
+				},
 			},
 			logs: {
 				title: "ログ",
@@ -2027,6 +2052,7 @@ export const serversTranslations = {
 				},
 				title: "{{label}} ({{count}})",
 				empty: "このサーバーには {{label}} がありません",
+				emptyAll: "このサーバーには機能がありません",
 			},
 			debug: {
 				proxyUnavailable:
@@ -2542,6 +2568,7 @@ export const serversTranslations = {
 				generating: "機能プレビューを生成中…",
 				serverPickerLabel: "サーバー",
 				selectServer: "サーバーを選択",
+				filterCapabilities: "機能をフィルタ...",
 				capabilitiesTitle: "機能",
 				capabilitiesSummary: "機能 · {{summary}}",
 				emptyCapabilities:

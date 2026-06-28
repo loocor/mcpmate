@@ -833,7 +833,15 @@ async fn destroy_validation_session(
 }
 
 fn map_anyhow(e: anyhow::Error) -> ApiError {
-    ApiError::InternalError(e.to_string())
+    let mut message = e.to_string();
+    for cause in e.chain().skip(1) {
+        let cause = cause.to_string();
+        if !cause.is_empty() && !message.contains(&cause) {
+            message.push_str(": ");
+            message.push_str(&cause);
+        }
+    }
+    ApiError::InternalError(message)
 }
 
 fn meta_success(

@@ -11,6 +11,8 @@ export const inspectorTranslations = {
 		},
 		form: {
 			mode: "Mode",
+			native: "Native",
+			proxy: "Proxy",
 			timeout: "Timeout (ms)",
 			server: "Server",
 			resourceUri: "Resource URI",
@@ -20,6 +22,8 @@ export const inspectorTranslations = {
 			parameters: "Parameters",
 			parametersCollapsedHint: "Click to expand tool input",
 			selectTool: "Select tool to execute",
+			selectResource: "Select resource",
+			selectPrompt: "Select prompt",
 			selectTemplate: "Select resource template",
 			searchTools: "Search tools...",
 			loadingTools: "Loading tools...",
@@ -33,10 +37,16 @@ export const inspectorTranslations = {
 			copy: "Copy",
 			clear: "Clear",
 			close: "Close",
+			refresh: "Refresh",
+			list: "List",
 			run: "Run",
 			running: "Running...",
 			cancel: "Cancel",
 			cancelling: "Cancelling...",
+		},
+		proxy: {
+			unavailable:
+				"Proxy mode is unavailable because this server is not enabled in any active profile.",
 		},
 		tabs: {
 			response: "Response",
@@ -112,6 +122,8 @@ export const inspectorTranslations = {
 		},
 		form: {
 			mode: "模式",
+			native: "本地",
+			proxy: "代理",
 			timeout: "超时时间（毫秒）",
 			server: "服务器",
 			resourceUri: "资源 URI",
@@ -121,6 +133,8 @@ export const inspectorTranslations = {
 			parameters: "参数",
 			parametersCollapsedHint: "点击展开工具调用输入框",
 			selectTool: "选择需要执行的工具",
+			selectResource: "选择资源",
+			selectPrompt: "选择提示",
 			selectTemplate: "选择资源模板",
 			searchTools: "搜索工具...",
 			loadingTools: "正在加载工具...",
@@ -134,10 +148,15 @@ export const inspectorTranslations = {
 			copy: "复制",
 			clear: "清空",
 			close: "关闭",
+			refresh: "刷新",
+			list: "列出",
 			run: "运行",
 			running: "运行中...",
 			cancel: "取消",
 			cancelling: "取消中...",
+		},
+		proxy: {
+			unavailable: "代理模式不可用，因为该服务器未在任何激活的配置中启用。",
 		},
 		tabs: {
 			response: "响应",
@@ -212,6 +231,8 @@ export const inspectorTranslations = {
 		},
 		form: {
 			mode: "モード",
+			native: "ネイティブ",
+			proxy: "プロキシ",
 			timeout: "タイムアウト（ミリ秒）",
 			server: "サーバー",
 			resourceUri: "リソース URI",
@@ -221,6 +242,8 @@ export const inspectorTranslations = {
 			parameters: "パラメータ",
 			parametersCollapsedHint: "クリックしてツール入力を展開",
 			selectTool: "実行するツールを選択",
+			selectResource: "リソースを選択",
+			selectPrompt: "プロンプトを選択",
 			selectTemplate: "リソーステンプレートを選択",
 			searchTools: "ツールを検索...",
 			loadingTools: "ツールを読み込み中...",
@@ -234,10 +257,16 @@ export const inspectorTranslations = {
 			copy: "コピー",
 			clear: "クリア",
 			close: "閉じる",
+			refresh: "更新",
+			list: "一覧",
 			run: "実行",
 			running: "実行中...",
 			cancel: "キャンセル",
 			cancelling: "キャンセル中...",
+		},
+		proxy: {
+			unavailable:
+				"このサーバーが有効なプロファイルで有効化されていないため、プロキシモードは利用できません。",
 		},
 		tabs: {
 			response: "レスポンス",

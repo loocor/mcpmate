@@ -8,6 +8,7 @@ use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::ffi::OsStr;
 use std::path::Path;
 use tokio::process::Command;
 
@@ -16,6 +17,17 @@ use super::{paths::global_paths, types::RuntimeType};
 // Re-export constants from the central constants module
 pub use super::constants::env_vars as constants;
 pub use super::constants::separators::get_path_separator;
+
+const AMBIENT_PROXY_ENV_VARS: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
 
 /// System environment information (from runtime/detection.rs)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,7 +180,7 @@ impl EnvironmentManager {
         command: &mut Command,
     ) {
         for (key, value) in &self.base_env {
-            command.env(key, value);
+            set_command_env_if_absent(command, key, value);
         }
     }
 
@@ -182,6 +194,92 @@ impl Default for EnvironmentManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn command_has_explicit_env(
+    command: &Command,
+    key: &str,
+) -> bool {
+    let key = normalize_env_key(OsStr::new(key));
+    command
+        .as_std()
+        .get_envs()
+        .any(|(name, _)| normalize_env_key(name) == key)
+}
+
+fn normalize_env_key(key: &OsStr) -> String {
+    let key = key.to_string_lossy();
+    if cfg!(windows) {
+        key.to_ascii_uppercase()
+    } else {
+        key.into_owned()
+    }
+}
+
+fn set_command_env_if_absent(
+    command: &mut Command,
+    key: &str,
+    value: impl AsRef<OsStr>,
+) {
+    if command_has_explicit_env(command, key) {
+        tracing::debug!("Preserving explicitly configured environment variable: {}", key);
+        return;
+    }
+
+    command.env(key, value);
+}
+
+/// Remove inherited proxy settings from child process environments.
+///
+/// Server-level env values remain authoritative. This prevents desktop or
+/// shell proxy settings from silently changing stdio server behavior.
+pub fn sanitize_ambient_network_environment(command: &mut Command) {
+    for key in AMBIENT_PROXY_ENV_VARS {
+        if command_has_explicit_env(command, key) {
+            tracing::debug!("Preserving explicitly configured proxy environment variable: {}", key);
+            continue;
+        }
+
+        command.env_remove(key);
+        tracing::debug!(
+            "Removed inherited proxy environment variable from child process: {}",
+            key
+        );
+    }
+}
+
+/// Apply MCPMate-owned cache directories to any child process.
+///
+/// Stdio servers can cross-call package managers internally, so cache
+/// directories are process baselines rather than entry-runtime settings.
+pub fn apply_default_runtime_cache_environment(command: &mut Command) -> Result<()> {
+    let paths = global_paths();
+    let cache_vars = [
+        (
+            constants::UV_CACHE_DIR,
+            paths.runtime_cache_dir(RuntimeType::Uv.as_str()),
+        ),
+        (
+            constants::BUN_INSTALL_CACHE_DIR,
+            paths.runtime_cache_dir(RuntimeType::Bun.as_str()),
+        ),
+        (
+            constants::NPM_CONFIG_CACHE,
+            paths.runtime_cache_dir(RuntimeType::Node.as_str()),
+        ),
+    ];
+
+    for (key, cache_dir) in cache_vars {
+        std::fs::create_dir_all(&cache_dir)?;
+        set_command_env_if_absent(command, key, cache_dir.as_os_str());
+        tracing::debug!(
+            "Prepared default runtime cache environment {}={}",
+            key,
+            cache_dir.display()
+        );
+    }
+
+    Ok(())
 }
 
 /// Create runtime-specific environment for uv
@@ -307,6 +405,7 @@ pub fn prepare_command_environment(
     runtime_type: &str,
     bin_path: &Path,
 ) -> Result<()> {
+    apply_default_runtime_cache_environment(command)?;
     let env = create_runtime_environment(runtime_type, bin_path)?;
     env.apply_to_command(command);
     Ok(())
@@ -463,7 +562,32 @@ pub async fn origin_guard_middleware(
 
 #[cfg(test)]
 mod tests {
-    use super::AllowedOrigins;
+    use super::{AllowedOrigins, EnvironmentManager, constants, sanitize_ambient_network_environment};
+    use std::ffi::OsStr;
+    use tokio::process::Command;
+
+    fn command_env_value(
+        command: &Command,
+        key: &str,
+    ) -> Option<String> {
+        let key = OsStr::new(key);
+        command
+            .as_std()
+            .get_envs()
+            .find_map(|(name, value)| (name == key).then_some(value).flatten())
+            .map(|value| value.to_string_lossy().to_string())
+    }
+
+    fn command_env_setting(
+        command: &Command,
+        key: &str,
+    ) -> Option<Option<String>> {
+        let key = OsStr::new(key);
+        command
+            .as_std()
+            .get_envs()
+            .find_map(|(name, value)| (name == key).then(|| value.map(|value| value.to_string_lossy().to_string())))
+    }
 
     #[test]
     fn default_allowed_origins_include_desktop_shell_origins() {
@@ -478,5 +602,71 @@ mod tests {
         let origins = AllowedOrigins::load_from_env();
 
         assert!(!origins.is_allowed("http://rejected-origin.invalid"));
+    }
+
+    #[test]
+    fn environment_manager_preserves_explicit_command_env() {
+        let mut command = Command::new("echo");
+        command.env(constants::NPM_CONFIG_CACHE, "/custom/npm-cache");
+
+        let mut env = EnvironmentManager::new();
+        env.set_var(constants::NPM_CONFIG_CACHE, "/mcpmate/npm-cache");
+        env.apply_to_command(&mut command);
+
+        assert_eq!(
+            command_env_value(&command, constants::NPM_CONFIG_CACHE),
+            Some("/custom/npm-cache".to_string())
+        );
+    }
+
+    #[test]
+    fn environment_manager_applies_missing_command_env() {
+        let mut command = Command::new("echo");
+
+        let mut env = EnvironmentManager::new();
+        env.set_var(constants::UV_CACHE_DIR, "/mcpmate/uv-cache");
+        env.apply_to_command(&mut command);
+
+        assert_eq!(
+            command_env_value(&command, constants::UV_CACHE_DIR),
+            Some("/mcpmate/uv-cache".to_string())
+        );
+    }
+
+    #[test]
+    fn ambient_network_sanitizer_removes_inherited_proxy_env() {
+        let mut command = Command::new("echo");
+
+        sanitize_ambient_network_environment(&mut command);
+
+        assert_eq!(command_env_setting(&command, "ALL_PROXY"), Some(None));
+        assert_eq!(command_env_setting(&command, "all_proxy"), Some(None));
+    }
+
+    #[test]
+    fn ambient_network_sanitizer_preserves_explicit_proxy_env() {
+        let mut command = Command::new("echo");
+        command.env("ALL_PROXY", "socks5://127.0.0.1:1080");
+
+        sanitize_ambient_network_environment(&mut command);
+
+        assert_eq!(
+            command_env_value(&command, "ALL_PROXY"),
+            Some("socks5://127.0.0.1:1080".to_string())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ambient_network_sanitizer_preserves_explicit_proxy_env_case_insensitively() {
+        let mut command = Command::new("echo");
+        command.env("HTTP_PROXY", "http://127.0.0.1:8080");
+
+        sanitize_ambient_network_environment(&mut command);
+
+        assert_eq!(
+            command_env_value(&command, "HTTP_PROXY"),
+            Some("http://127.0.0.1:8080".to_string())
+        );
     }
 }
