@@ -8,6 +8,7 @@ export function secretUsageLabel(usage: SecretUsage, t: TFunction<"secrets">): s
 			stdio_command: "stdioCommand",
 			streamable_http_url: "httpUrl",
 			oauth_token: "oauthToken",
+			llm_provider_api_key: "llmProviderApiKey",
 		};
 		return t(`usage.location.${keyMap[location] ?? location}`, {
 			defaultValue: location,
@@ -42,6 +43,11 @@ export function secretUsageLabel(usage: SecretUsage, t: TFunction<"secrets">): s
 	}
 	if ("oauth_token" in location) {
 		return t("usage.location.oauthToken", { defaultValue: "oauth token" });
+	}
+	if ("llm_provider_api_key" in location) {
+		return t("usage.location.llmProviderApiKey", {
+			defaultValue: "LLM provider API key",
+		});
 	}
 	return JSON.stringify(location);
 }
