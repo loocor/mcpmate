@@ -171,11 +171,11 @@ export function SchemaTable({ schema }: SchemaTableProps) {
     <table className="w-full border-collapse text-xs">
       <thead>
         <tr className="text-left text-slate-500">
-          <th className="border-b py-1 pr-2">{t("servers:capabilityList.table.property", { defaultValue: "Property" })}</th>
-          <th className="border-b py-1 pr-2">{t("servers:capabilityList.table.type", { defaultValue: "Type" })}</th>
-          <th className="border-b py-1 pr-2">{t("servers:capabilityList.table.required", { defaultValue: "Required" })}</th>
-          <th className="border-b py-1 pr-2">{t("servers:capabilityList.table.description", { defaultValue: "Description" })}</th>
-          <th className="border-b py-1 pr-2">{t("servers:capabilityList.table.details", { defaultValue: "Details" })}</th>
+          <th className="whitespace-nowrap border-b py-1 pr-2">{t("servers:capabilityList.table.property", { defaultValue: "Property" })}</th>
+          <th className="whitespace-nowrap border-b py-1 pr-2">{t("servers:capabilityList.table.type", { defaultValue: "Type" })}</th>
+          <th className="whitespace-nowrap border-b py-1 pr-2">{t("servers:capabilityList.table.required", { defaultValue: "Required" })}</th>
+          <th className="whitespace-nowrap border-b py-1 pr-2">{t("servers:capabilityList.table.description", { defaultValue: "Description" })}</th>
+          <th className="whitespace-nowrap border-b py-1 pr-2">{t("servers:capabilityList.table.details", { defaultValue: "Details" })}</th>
         </tr>
       </thead>
       <tbody>

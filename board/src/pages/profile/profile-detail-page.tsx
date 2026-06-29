@@ -157,6 +157,20 @@ function profileCapabilityDetailKey(
 	]);
 }
 
+function profileCapabilityKindLabel(
+	t: ReturnType<typeof useTranslation>["t"],
+	kind: CapabilityKind,
+) {
+	if (kind === "templates") {
+		return t("servers:detail.capabilityList.labels.templates", {
+			defaultValue: "Resource Templates",
+		});
+	}
+	return t(`servers:detail.capabilityList.labels.${kind}`, {
+		defaultValue: toTitleCase(kind),
+	});
+}
+
 type ProfileGlobalServerSummary = {
 	name?: string;
 	icons?: Array<{ src?: string }>;
@@ -186,6 +200,7 @@ const splitCapabilityKey = (
 export function ProfileDetailPage() {
 	const { t, i18n } = useTranslation();
 	usePageTranslations("profiles");
+	usePageTranslations("servers");
 	const { profileId } = useParams<{ profileId: string }>();
 	const [searchParams] = useSearchParams();
 	const queryClient = useQueryClient();
@@ -1155,28 +1170,15 @@ export function ProfileDetailPage() {
 
 	const capabilityKindFilterLabel = useMemo(() => {
 		if (capabilityKindFilters.length === 0) {
-			return t("profiles:detail.filters.kind.all", {
+			return t("servers:detail.filters.kind.all", {
 				defaultValue: "All Types",
 			});
 		}
 		if (capabilityKindFilters.length === 1) {
 			const [kind] = capabilityKindFilters;
-			if (kind === "tools") {
-				return t("profiles:detail.labels.tools", { defaultValue: "Tools" });
-			}
-			if (kind === "resources") {
-				return t("profiles:detail.labels.resources", {
-					defaultValue: "Resources",
-				});
-			}
-			if (kind === "prompts") {
-				return t("profiles:detail.labels.prompts", { defaultValue: "Prompts" });
-			}
-			return t("profiles:detail.labels.templates", {
-				defaultValue: "Resource Templates",
-			});
+			return profileCapabilityKindLabel(t, kind);
 		}
-		return t("profiles:detail.filters.kind.selected", {
+		return t("servers:detail.filters.kind.selected", {
 			count: capabilityKindFilters.length,
 			defaultValue: "{{count}} Types",
 		});
@@ -1184,32 +1186,32 @@ export function ProfileDetailPage() {
 
 	const capabilityStatusLabel = useMemo(() => {
 		if (capabilityStatus === "enabled") {
-			return t("profiles:detail.filters.status.enabled", {
+			return t("servers:detail.filters.status.enabled", {
 				defaultValue: "Enabled",
 			});
 		}
 		if (capabilityStatus === "disabled") {
-			return t("profiles:detail.filters.status.disabled", {
+			return t("servers:detail.filters.status.disabled", {
 				defaultValue: "Disabled",
 			});
 		}
-		return t("profiles:detail.filters.status.all", {
+		return t("servers:detail.filters.status.all", {
 			defaultValue: "All",
 		});
 	}, [capabilityStatus, i18n.language, t]);
 
 	const serverStatusLabel = useMemo(() => {
 		if (serverStatus === "enabled") {
-			return t("profiles:detail.filters.status.enabled", {
+			return t("servers:detail.filters.status.enabled", {
 				defaultValue: "Enabled",
 			});
 		}
 		if (serverStatus === "disabled") {
-			return t("profiles:detail.filters.status.disabled", {
+			return t("servers:detail.filters.status.disabled", {
 				defaultValue: "Disabled",
 			});
 		}
-		return t("profiles:detail.filters.status.all", {
+		return t("servers:detail.filters.status.all", {
 			defaultValue: "All",
 		});
 	}, [i18n.language, serverStatus, t]);
@@ -1363,9 +1365,8 @@ export function ProfileDetailPage() {
 							enable: next,
 						});
 					}}
-					emptyText={t("profiles:detail.emptyStates.noCapabilitiesForSelection", {
-						defaultValue:
-							"No capabilities match the current server and status selection.",
+					emptyText={t("servers:detail.capabilityList.emptyAll", {
+						defaultValue: "No capabilities from this server",
 					})}
 					selectable={capabilityBulk.isBulkMode}
 					selectedIds={capabilityBulk.selectedIds}
@@ -1608,7 +1609,7 @@ export function ProfileDetailPage() {
 										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
-											{t("profiles:detail.labels.tools", { defaultValue: "Tools" })}
+											{profileCapabilityKindLabel(t, "tools")}
 										</CardTitle>
 									</CardHeader>
 									<CardContent>
@@ -1628,7 +1629,7 @@ export function ProfileDetailPage() {
 										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
-											{t("profiles:detail.labels.resources", { defaultValue: "Resources" })}
+											{profileCapabilityKindLabel(t, "resources")}
 										</CardTitle>
 									</CardHeader>
 									<CardContent>
@@ -1648,7 +1649,7 @@ export function ProfileDetailPage() {
 										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
-											{t("profiles:detail.labels.prompts", { defaultValue: "Prompts" })}
+											{profileCapabilityKindLabel(t, "prompts")}
 										</CardTitle>
 									</CardHeader>
 									<CardContent>
@@ -1783,17 +1784,17 @@ export function ProfileDetailPage() {
 													</SelectTrigger>
 													<SelectContent>
 														<SelectItem value="all">
-															{t("profiles:detail.filters.status.all", {
+															{t("servers:detail.filters.status.all", {
 																defaultValue: "All",
 															})}
 														</SelectItem>
 														<SelectItem value="enabled">
-															{t("profiles:detail.filters.status.enabled", {
+															{t("servers:detail.filters.status.enabled", {
 																defaultValue: "Enabled",
 															})}
 														</SelectItem>
 														<SelectItem value="disabled">
-															{t("profiles:detail.filters.status.disabled", {
+															{t("servers:detail.filters.status.disabled", {
 																defaultValue: "Disabled",
 															})}
 														</SelectItem>
@@ -2050,7 +2051,7 @@ export function ProfileDetailPage() {
 															})
 														: selectedCapabilityServer
 															? selectedCapabilityServer.name
-															: t("profiles:detail.labels.capabilities", {
+															: t("servers:detail.overview.labels.capabilities", {
 																	defaultValue: "Capabilities",
 																})
 												}
@@ -2078,8 +2079,8 @@ export function ProfileDetailPage() {
 												searchValue={capabilityQuery}
 												onSearchChange={setCapabilityQuery}
 												searchPlaceholder={t(
-													"profiles:detail.placeholders.searchCapabilities",
-													{ defaultValue: "Search capabilities..." },
+													"servers:wizard.preview.filterCapabilities",
+													{ defaultValue: "Filter capabilities..." },
 												)}
 												serverFilter={
 													isAllCapabilityServersSelected
@@ -2102,33 +2103,25 @@ export function ProfileDetailPage() {
 												}
 												kindFilter={{
 													label: capabilityKindFilterLabel,
-													allLabel: t("profiles:detail.filters.kind.all", {
+													allLabel: t("servers:detail.filters.kind.all", {
 														defaultValue: "All Types",
 													}),
 													options: [
 														{
 															value: "tools",
-															label: t("profiles:detail.labels.tools", {
-																defaultValue: "Tools",
-															}),
+															label: profileCapabilityKindLabel(t, "tools"),
 														},
 														{
 															value: "resources",
-															label: t("profiles:detail.labels.resources", {
-																defaultValue: "Resources",
-															}),
+															label: profileCapabilityKindLabel(t, "resources"),
 														},
 														{
 															value: "prompts",
-															label: t("profiles:detail.labels.prompts", {
-																defaultValue: "Prompts",
-															}),
+															label: profileCapabilityKindLabel(t, "prompts"),
 														},
 														{
 															value: "templates",
-															label: t("profiles:detail.labels.templates", {
-																defaultValue: "Resource Templates",
-															}),
+															label: profileCapabilityKindLabel(t, "templates"),
 														},
 													],
 													selectedValues: capabilityKindFilters,
@@ -2149,21 +2142,21 @@ export function ProfileDetailPage() {
 													options: [
 														{
 															value: "all",
-															label: t("profiles:detail.filters.status.all", {
+															label: t("servers:detail.filters.status.all", {
 																defaultValue: "All",
 															}),
 														},
 														{
 															value: "enabled",
 															label: t(
-																"profiles:detail.filters.status.enabled",
+																"servers:detail.filters.status.enabled",
 																{ defaultValue: "Enabled" },
 															),
 														},
 														{
 															value: "disabled",
 															label: t(
-																"profiles:detail.filters.status.disabled",
+																"servers:detail.filters.status.disabled",
 																{ defaultValue: "Disabled" },
 															),
 														},
@@ -2212,17 +2205,17 @@ export function ProfileDetailPage() {
 												defaultValue: "Select a server to inspect its capabilities.",
 											})}
 											emptyText={t(
-												"profiles:detail.emptyStates.noCapabilitiesForSelection",
+												"servers:detail.capabilityList.emptyAll",
 												{
 													defaultValue:
-														"No capabilities match the current server and status selection.",
+														"No capabilities from this server",
 												},
 											)}
 											emptySearchText={t(
-												"profiles:detail.emptyStates.noCapabilitiesForSelection",
+												"servers:detail.capabilityList.emptyAll",
 												{
 													defaultValue:
-														"No capabilities match the current server and status selection.",
+														"No capabilities from this server",
 												},
 											)}
 											renderFlatList={renderProfileFlatCapabilityList}
