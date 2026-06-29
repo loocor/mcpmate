@@ -7,6 +7,7 @@ export type SupportedTransportValue = (typeof SUPPORTED_TRANSPORT_VALUES)[number
 export const CONFIG_PARSE_FORMAT_VALUES = ["json", "json5", "toml", "yaml"] as const;
 export type ConfigParseFormatValue = (typeof CONFIG_PARSE_FORMAT_VALUES)[number];
 export const CONFIG_PARSE_CONTAINER_TYPE_VALUES = ["standard", "array"] as const;
+export const CLIENT_IDENTIFIER_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export function createClientFormSchema(t: TFunction) {
 	return z
@@ -14,6 +15,11 @@ export function createClientFormSchema(t: TFunction) {
 			identifier: z.string().min(1, {
 				message: t("detail.form.validation.identifierRequired", {
 					defaultValue: "Client ID is required.",
+				}),
+			}).regex(CLIENT_IDENTIFIER_PATTERN, {
+				message: t("detail.form.validation.identifierFormat", {
+					defaultValue:
+						"Client ID can only use lowercase English letters, numbers, and hyphens.",
 				}),
 			}),
 			displayName: z.string().min(1, {

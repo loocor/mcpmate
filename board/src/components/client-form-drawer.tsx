@@ -7,6 +7,7 @@ import {
 	ChevronDown,
 	ChevronsUpDown,
 	Code2,
+	Copy,
 	FolderOpen,
 	Info,
 	ImageIcon,
@@ -23,8 +24,9 @@ import {
 	type AdminDiscoveryClientCandidate,
 	fetchAdminDiscoveryClientCatalog,
 } from "../lib/admin-discovery";
-import { clientsApi } from "../lib/api";
+import { clientsApi, systemApi } from "../lib/api";
 import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-policy";
+import { writeClipboardText } from "../lib/clipboard";
 import { readAdminDiscoveryPlatform } from "../lib/desktop-platform";
 import {
 	applyClientConfigWithResolvedSelection,
@@ -47,6 +49,7 @@ import type {
 import { cn } from "../lib/utils";
 import {
 	CONFIG_PARSE_FORMAT_VALUES,
+	CLIENT_IDENTIFIER_PATTERN,
 	SUPPORTED_TRANSPORT_VALUES,
 	createClientFormSchema,
 	type ClientConfigFileChoice,
@@ -407,6 +410,7 @@ function filterCurrentTransportPayload(
 }
 
 const CLIENT_FORM_ROW_LABEL_CLASS = "w-20 shrink-0 text-right";
+const COPY_FEEDBACK_MS = 2000;
 
 function logoUrlIsPreviewable(value: string): boolean {
 	const trimmed = value.trim();
@@ -473,7 +477,23 @@ function LogoUrlFieldWithPreview({
 }
 
 function normalizeIdentifier(value: string): string {
-	return value.trim().toLowerCase().replace(/\s+/g, "-");
+	return value
+		.trim()
+		.toLowerCase()
+		.replace(/[\s_]+/g, "-")
+		.replace(/[^a-z0-9-]+/g, "")
+		.replace(/-+/g, "-")
+		.replace(/^-+|-+$/g, "");
+}
+
+function sanitizeIdentifierInput(value: string): string {
+	return value
+		.trimStart()
+		.toLowerCase()
+		.replace(/[\s_]+/g, "-")
+		.replace(/[^a-z0-9-]+/g, "")
+		.replace(/-+/g, "-")
+		.replace(/^-+/, "");
 }
 
 function resolveConfigFileChoice(
@@ -556,6 +576,26 @@ function inspectionPreviewText(preview: unknown): string {
 	} catch {
 		return String(preview ?? "");
 	}
+}
+
+function buildClientMcpEndpoint(endpointUrl: string, clientId: string): string {
+	const separator = endpointUrl.includes("?") ? "&" : "?";
+	return `${endpointUrl}${separator}client_id=${encodeURIComponent(clientId)}`;
+}
+
+function buildManualMcpConfigSnippet(endpointUrl: string, clientId: string): string {
+	return JSON.stringify(
+		{
+			mcpServers: {
+				MCPMate: {
+					type: "streamable_http",
+					url: buildClientMcpEndpoint(endpointUrl, clientId),
+				},
+			},
+		},
+		null,
+		2,
+	);
 }
 
 function getTransportSupportLabel(
@@ -664,21 +704,51 @@ function TextInputRow({
 	placeholder,
 	field,
 	disabled,
+	inputRef,
+	inputClassName,
+	labelClassName,
+	hideMessage,
 }: {
 	label: string;
 	placeholder: string;
 	field: ControllerRenderProps<ClientRecordFormValues>;
 	disabled?: boolean;
+	inputRef?: React.Ref<HTMLInputElement>;
+	inputClassName?: string;
+	labelClassName?: string;
+	hideMessage?: boolean;
 }) {
+	const setInputRef = useCallback(
+		(node: HTMLInputElement | null) => {
+			field.ref(node);
+			if (typeof inputRef === "function") {
+				inputRef(node);
+				return;
+			}
+			if (inputRef && "current" in inputRef) {
+				inputRef.current = node;
+			}
+		},
+		[field, inputRef],
+	);
+
 	return (
 		<FormItem className="space-y-0">
 			<div className="flex items-center gap-4">
-				<FormLabel className={CLIENT_FORM_ROW_LABEL_CLASS}>{label}</FormLabel>
+				<FormLabel className={cn(CLIENT_FORM_ROW_LABEL_CLASS, labelClassName)}>
+					{label}
+				</FormLabel>
 				<div className="min-w-0 flex-1">
 					<FormControl>
-						<Input {...field} disabled={disabled} placeholder={placeholder} />
+						<Input
+							{...field}
+							ref={setInputRef}
+							disabled={disabled}
+							placeholder={placeholder}
+							className={inputClassName}
+						/>
 					</FormControl>
-					<FormMessage />
+					{hideMessage ? null : <FormMessage />}
 				</div>
 			</div>
 		</FormItem>
@@ -831,6 +901,7 @@ export function ClientFormDrawer({
 		transportRuleEditorsFromClient(client),
 	);
 	const [selectedTransportTab, setSelectedTransportTab] = useState<SupportedTransportValue | "">("");
+	const [manualConfigCopied, setManualConfigCopied] = useState(false);
 	const previousSupportedTransportsRef = useRef<SupportedTransportValue[]>([]);
 	const initialSupportedTransportsRef = useRef<SupportedTransportValue[]>(
 		defaultValues(client).supportedTransports,
@@ -838,6 +909,8 @@ export function ClientFormDrawer({
 	const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
 	const drawerContentRef = useRef<HTMLDivElement | null>(null);
 	const configPathFileInputRef = useRef<HTMLInputElement>(null);
+	const identifierInputRef = useRef<HTMLInputElement | null>(null);
+	const manualCopyResetTimerRef = useRef<number | null>(null);
 	const autoAppliedInferenceRef = useRef<string | null>(null);
 	const lastParseInspectionSignatureRef = useRef<string | null>(null);
 
@@ -848,6 +921,7 @@ export function ClientFormDrawer({
 
 	const configFileChoice = form.watch("configFileChoice");
 	const identifier = form.watch("identifier");
+	const displayName = form.watch("displayName");
 	const configPath = form.watch("configPath");
 	const configFileParseFormat = form.watch("configFileParseFormat");
 	const configFileParseContainerType = form.watch("configFileParseContainerType");
@@ -858,6 +932,8 @@ export function ClientFormDrawer({
 		form.formState.dirtyFields.configFileParseContainerType ||
 		form.formState.dirtyFields.configFileParseContainerKeysText,
 	);
+	const identifierDirty = Boolean(form.formState.dirtyFields.identifier);
+	const identifierTouched = Boolean(form.formState.touchedFields.identifier);
 	const parseDraft = useMemo(
 		() =>
 			parseDraftFromValues({
@@ -885,6 +961,13 @@ export function ClientFormDrawer({
 		staleTime: Infinity,
 		retry: false,
 	});
+	const systemSettingsQuery = useQuery({
+		queryKey: ["systemSettings"],
+		queryFn: systemApi.getSettings,
+		enabled: open,
+		staleTime: 60_000,
+		retry: false,
+	});
 	const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
 	const adminCatalogQuery = useQuery({
 		queryKey: ["adminDiscoveryClients", "drawer", adminDiscoveryPlatform ?? "web", i18n.language],
@@ -908,6 +991,33 @@ export function ClientFormDrawer({
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
 		: t("detail.form.adminCatalog.empty", { defaultValue: "No supported client presets found." });
 	const adminCatalogBusy = adminDiscoveryPlatformQuery.isLoading || adminCatalogQuery.isLoading;
+	const manualClientId = useMemo(() => sanitizeIdentifierInput(identifier ?? ""), [identifier]);
+	const identifierMatchesPattern = CLIENT_IDENTIFIER_PATTERN.test(manualClientId);
+	const manualClientIdReady = manualClientId.length > 0 && identifierMatchesPattern;
+	const manualMcpEndpointUrl = systemSettingsQuery.data?.mcp_http_url?.trim() ?? "";
+	const manualMcpEndpointReady = systemSettingsQuery.isSuccess && manualMcpEndpointUrl.length > 0;
+	const manualConfigSnippet = useMemo(
+		() =>
+			manualClientIdReady && manualMcpEndpointReady
+				? buildManualMcpConfigSnippet(manualMcpEndpointUrl, manualClientId)
+				: "",
+		[manualClientId, manualClientIdReady, manualMcpEndpointReady, manualMcpEndpointUrl],
+	);
+	const manualMissingClientIdMessage = t("detail.form.configFile.manual.missingClientId", {
+		defaultValue: "Enter a Client ID to generate the MCPMate configuration snippet.",
+	});
+	const manualEndpointLoadingMessage = t("detail.form.configFile.manual.endpointLoading", {
+		defaultValue: "Loading MCPMate service endpoint...",
+	});
+	const manualEndpointUnavailableMessage = t("detail.form.configFile.manual.endpointUnavailable", {
+		defaultValue: "MCPMate service endpoint is unavailable. Try again after settings load.",
+	});
+	let manualConfigUnavailableMessage = manualEndpointUnavailableMessage;
+	if (!manualClientIdReady) {
+		manualConfigUnavailableMessage = manualMissingClientIdMessage;
+	} else if (systemSettingsQuery.isLoading) {
+		manualConfigUnavailableMessage = manualEndpointLoadingMessage;
+	}
 
 	const applyAdminClientCandidate = useCallback(
 		(candidate: AdminDiscoveryClientCandidate) => {
@@ -959,6 +1069,11 @@ export function ClientFormDrawer({
 		lastParseInspectionSignatureRef.current = null;
 		setSelectedAdminClient(null);
 		setIsAdminCatalogOpen(false);
+		setManualConfigCopied(false);
+		if (manualCopyResetTimerRef.current != null) {
+			window.clearTimeout(manualCopyResetTimerRef.current);
+			manualCopyResetTimerRef.current = null;
+		}
 		setTransportRuleEditors(transportRuleEditorsFromClient(client));
 		setSelectedTransportTab("");
 		initialSupportedTransportsRef.current = defaultValues(client).supportedTransports;
@@ -966,6 +1081,14 @@ export function ClientFormDrawer({
 		form.reset(defaultValues(client));
 		setIsHydrating(false);
 	}, [open, client, mode, form]);
+
+	useEffect(() => {
+		return () => {
+			if (manualCopyResetTimerRef.current != null) {
+				window.clearTimeout(manualCopyResetTimerRef.current);
+			}
+		};
+	}, []);
 
 	useEffect(() => {
 		if (!open || mode !== "edit" || selectedAdminClient || adminCatalogOptions.length === 0) return;
@@ -1025,16 +1148,59 @@ export function ClientFormDrawer({
 
 	useEffect(() => {
 		if (isHydrating || mode !== "create") return;
-		const normalized = normalizeIdentifier(identifier ?? "");
-		if (normalized && normalized !== identifier) {
-			form.setValue("identifier", normalized, { shouldDirty: true });
+		if (identifierDirty) return;
+		const generated = normalizeIdentifier(displayName ?? "");
+		if (generated && generated !== identifier) {
+			form.setValue("identifier", generated, {
+				shouldDirty: false,
+				shouldTouch: false,
+				shouldValidate: true,
+			});
+		}
+	}, [displayName, form, identifier, identifierDirty, isHydrating, mode]);
+
+	useEffect(() => {
+		setManualConfigCopied(false);
+		if (manualCopyResetTimerRef.current != null) {
+			window.clearTimeout(manualCopyResetTimerRef.current);
+			manualCopyResetTimerRef.current = null;
+		}
+	}, [manualConfigSnippet]);
+
+	useEffect(() => {
+		if (!identifierMatchesPattern) return;
+		const identifierState = form.getFieldState("identifier");
+		if (identifierState.error) {
+			form.clearErrors("identifier");
+		}
+	}, [form, identifierMatchesPattern]);
+
+	useEffect(() => {
+		if (isHydrating || mode !== "create") return;
+		const identifierState = form.getFieldState("identifier");
+		const shouldShowFieldError =
+			!identifierMatchesPattern &&
+			(identifierDirty || identifierTouched || identifierState.error?.type === "manual");
+		if (shouldShowFieldError && !identifierState.error) {
+			form.setError("identifier", {
+				type: "manual",
+				message: "",
+			});
+		}
+	}, [form, identifierDirty, identifierMatchesPattern, identifierTouched, isHydrating, mode]);
+
+	useEffect(() => {
+		if (isHydrating || mode !== "create") return;
+		const sanitized = sanitizeIdentifierInput(identifier ?? "");
+		if (sanitized !== identifier) {
+			form.setValue("identifier", sanitized, { shouldDirty: true });
 		}
 	}, [identifier, form, isHydrating, mode]);
 
 	const configFileOptions: SegmentOption[] = useMemo(
 		() => [
-			{ value: "with_config_file", label: t("detail.form.configFile.options.withConfigFile", { defaultValue: "With config file" }) },
-			{ value: "without_config_file", label: t("detail.form.configFile.options.withoutConfigFile", { defaultValue: "Without config file" }) },
+			{ value: "with_config_file", label: t("detail.form.configFile.options.withConfigFile", { defaultValue: "Auto" }) },
+			{ value: "without_config_file", label: t("detail.form.configFile.options.withoutConfigFile", { defaultValue: "Manual" }) },
 		],
 		[t],
 	);
@@ -1273,6 +1439,41 @@ export function ClientFormDrawer({
 		configPathFileInputRef.current?.click();
 	}, [handleConfigPathBrowse, isTauriShell]);
 
+	const handleCopyManualConfigSnippet = useCallback(async () => {
+		if (!manualConfigSnippet) {
+			if (!manualClientIdReady) {
+				form.setError(
+					"identifier",
+					{
+						type: "manual",
+						message: "",
+					},
+					{ shouldFocus: true },
+				);
+				identifierInputRef.current?.focus();
+			}
+			return;
+		}
+		try {
+			await writeClipboardText(manualConfigSnippet);
+			setManualConfigCopied(true);
+			if (manualCopyResetTimerRef.current != null) {
+				window.clearTimeout(manualCopyResetTimerRef.current);
+			}
+			manualCopyResetTimerRef.current = window.setTimeout(() => {
+				setManualConfigCopied(false);
+				manualCopyResetTimerRef.current = null;
+			}, COPY_FEEDBACK_MS);
+		} catch (error) {
+			notifyError(
+				t("detail.form.configFile.manual.copyFailedTitle", {
+					defaultValue: "Copy failed",
+				}),
+				extractErrorMessage(error),
+			);
+		}
+	}, [form, manualClientIdReady, manualConfigSnippet, t]);
+
 	const saveMutation = useMutation({
 		mutationFn: async () => {
 			const values = form.getValues();
@@ -1445,6 +1646,33 @@ export function ClientFormDrawer({
 		},
 	});
 
+	const manualCopyButtonDisabled = !manualConfigSnippet || manualConfigCopied || saveMutation.isPending;
+	const configFileChoiceDescription =
+		configFileChoice === "with_config_file"
+			? t("detail.form.configFile.autoDescription", {
+					defaultValue:
+						"Complete the form below to update configuration automatically.",
+				})
+			: t("detail.form.configFile.manual.description", {
+					defaultValue:
+						"Copy the service snippet below and paste it into the target client's MCP server configuration page.",
+				});
+	const manualCopyButtonLabel = manualConfigCopied
+		? t("detail.form.configFile.manual.copiedButton", {
+				defaultValue: "Copied",
+			})
+		: t("detail.form.configFile.manual.copyButton", {
+				defaultValue: "Copy service snippet",
+			});
+	let manualCopyTooltip: string | null = null;
+	if (!manualConfigSnippet) {
+		manualCopyTooltip = manualConfigUnavailableMessage;
+	} else if (manualConfigCopied) {
+		manualCopyTooltip = t("detail.form.configFile.manual.copyCooldown", {
+			defaultValue: "Copied. You can copy again in a moment.",
+		});
+	}
+
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange}>
 			<DrawerContent ref={drawerContentRef}>
@@ -1568,8 +1796,17 @@ export function ClientFormDrawer({
 											</div>
 										</FormItem>
 									)} />
-									<FormField control={form.control} name="identifier" render={({ field }) => (
-										<TextInputRow label={t("detail.form.fields.identifier.label", { defaultValue: "Client ID" })} placeholder={t("detail.form.fields.identifier.placeholder", { defaultValue: "cursor-desktop" })} field={field} disabled={mode !== "create"} />
+									<FormField control={form.control} name="identifier" render={({ field, fieldState }) => (
+										<TextInputRow
+											label={t("detail.form.fields.identifier.label", { defaultValue: "Client ID" })}
+											placeholder={t("detail.form.fields.identifier.placeholder", { defaultValue: "cursor-desktop" })}
+											field={field}
+											disabled={mode !== "create"}
+											inputRef={identifierInputRef}
+											labelClassName="text-foreground"
+											inputClassName={fieldState.invalid ? "border-destructive focus-visible:ring-destructive" : undefined}
+											hideMessage={fieldState.invalid}
+										/>
 									)} />
 									<FormField control={form.control} name="clientVersion" render={({ field }) => (
 										<TextInputRow label={t("detail.form.fields.clientVersion.label", { defaultValue: "Client Version" })} placeholder={t("detail.form.fields.clientVersion.placeholder", { defaultValue: "optional" })} field={field} />
@@ -1589,20 +1826,63 @@ export function ClientFormDrawer({
 									<FormItem className="space-y-0">
 										<div className="flex items-start gap-4">
 											<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>
-												{t("detail.form.configFile.label", { defaultValue: "Configuration File" })}
+												{t("detail.form.configFile.label", { defaultValue: "Configuration Method" })}
 											</FormLabel>
 											<div className="min-w-0 flex-1">
 												<FormControl>
 													<Segment value={field.value} onValueChange={field.onChange} options={configFileOptions} showDots={false} />
 												</FormControl>
-												<FormDescription>
-													{t("detail.form.configFile.description", { defaultValue: "Choose whether MCPMate should manage this client through a writable local config file." })}
-												</FormDescription>
+												<FormDescription>{configFileChoiceDescription}</FormDescription>
 												<FormMessage />
 											</div>
 										</div>
 									</FormItem>
 								)} />
+
+								{configFileChoice === "without_config_file" ? (
+									<div className="ml-24 space-y-2 rounded-lg border border-dashed bg-muted/20 p-3">
+											<div className="space-y-2">
+											<pre className="max-h-44 select-text overflow-auto rounded-md bg-background px-3 py-2 text-xs whitespace-pre-wrap break-words">
+												{manualConfigSnippet || manualConfigUnavailableMessage}
+											</pre>
+											<TooltipProvider delayDuration={200}>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<span
+															className="inline-flex"
+															onClick={!manualClientIdReady ? handleCopyManualConfigSnippet : undefined}
+														>
+															<Button
+																type="button"
+																variant="outline"
+																size="sm"
+																className={cn(
+																	"gap-2",
+																	manualCopyButtonDisabled && "pointer-events-none",
+																	manualConfigCopied && "border-emerald-200 text-emerald-700",
+																)}
+																disabled={manualCopyButtonDisabled}
+																onClick={handleCopyManualConfigSnippet}
+															>
+																{manualConfigCopied ? (
+																	<Check className="h-4 w-4" aria-hidden />
+																) : (
+																	<Copy className="h-4 w-4" aria-hidden />
+																)}
+																{manualCopyButtonLabel}
+															</Button>
+														</span>
+													</TooltipTrigger>
+													{manualCopyTooltip ? (
+														<TooltipContent side="top" align="start" className="max-w-xs">
+															{manualCopyTooltip}
+														</TooltipContent>
+													) : null}
+												</Tooltip>
+											</TooltipProvider>
+										</div>
+									</div>
+								) : null}
 
 								{configFileChoice === "with_config_file" ? (
 									<FormField control={form.control} name="supportedTransports" render={({ field }) => (
