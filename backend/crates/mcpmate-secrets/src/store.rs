@@ -170,12 +170,21 @@ impl LocalSecretStore {
         alias: &str,
         force: bool,
     ) -> Result<()> {
-        let usages = self.list_usages(alias).await?;
-        if !force && !usages.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Secret '{alias}' is in use by {} runtime location(s)",
-                usages.len()
-            ));
+        if !force {
+            let usages = self.list_usages(alias).await?;
+            if !usages.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Secret '{alias}' is in use by {} runtime location(s)",
+                    usages.len()
+                ));
+            }
+
+            let unsupported_count = self.count_unsupported_usages_for_alias(alias).await?;
+            if unsupported_count > 0 {
+                return Err(anyhow::anyhow!(
+                    "Secret '{alias}' is in use by {unsupported_count} unsupported runtime location(s)"
+                ));
+            }
         }
 
         database::delete_secret(&self.pool, alias).await?;
@@ -921,6 +930,66 @@ mod tests {
             .await
             .expect("count unknown usages");
         assert_eq!(unknown_counts.get("provider/api-key"), Some(&1));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn delete_secret_without_force_blocks_unknown_location_rows() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        let store = LocalSecretStore::initialize_with_development_root_key(
+            db_pool,
+            temp_dir.path().join("secrets").join("local-root.key"),
+        )
+        .await
+        .expect("initialize store");
+
+        store
+            .create_secret(SecretCreateInput {
+                alias: "provider/future-only".to_string(),
+                kind: SecretKindInput::ApiKey,
+                value: "secret".to_string(),
+                label: None,
+                origin: None,
+            })
+            .await
+            .expect("create secret");
+
+        sqlx::query(
+            r#"
+            INSERT INTO secure_store_usages (
+                id, alias, server_id, location_kind, location_name, location_index
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+        )
+        .bind("future-only-location-row")
+        .bind("provider/future-only")
+        .bind("LLMPROVFuture")
+        .bind("llm_provider_api_key")
+        .bind(Option::<String>::None)
+        .bind(Option::<i64>::None)
+        .execute(&store.pool())
+        .await
+        .expect("insert unknown usage row");
+
+        let usages = store.list_usages("provider/future-only").await.expect("list usages");
+        assert!(usages.is_empty());
+
+        let err = store
+            .delete_secret("provider/future-only", false)
+            .await
+            .expect_err("unknown usage must block non-force delete");
+        assert!(err.to_string().contains("unsupported runtime location"));
+
+        store
+            .delete_secret("provider/future-only", true)
+            .await
+            .expect("force delete should allow unknown usage cleanup");
     }
 
     #[tokio::test]

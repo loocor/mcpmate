@@ -48,8 +48,13 @@ import type {
 } from "../lib/types";
 import { cn } from "../lib/utils";
 import {
-	CONFIG_PARSE_FORMAT_VALUES,
 	CLIENT_IDENTIFIER_PATTERN,
+	normalizeClientIdentifier,
+	resolveClientIdentifierForSave,
+	sanitizeClientIdentifierInput,
+} from "./client-form-identifiers";
+import {
+	CONFIG_PARSE_FORMAT_VALUES,
 	SUPPORTED_TRANSPORT_VALUES,
 	createClientFormSchema,
 	type ClientConfigFileChoice,
@@ -479,26 +484,6 @@ function LogoUrlFieldWithPreview({
 	);
 }
 
-function normalizeIdentifier(value: string): string {
-	return value
-		.trim()
-		.toLowerCase()
-		.replace(/[\s_]+/g, "-")
-		.replace(/[^a-z0-9-]+/g, "")
-		.replace(/-+/g, "-")
-		.replace(/^-+|-+$/g, "");
-}
-
-function sanitizeIdentifierInput(value: string): string {
-	return value
-		.trimStart()
-		.toLowerCase()
-		.replace(/[\s_]+/g, "-")
-		.replace(/[^a-z0-9-]+/g, "")
-		.replace(/-+/g, "-")
-		.replace(/^-+/, "");
-}
-
 function resolveConfigFileChoice(
 	configFileState?: ClientInfo["config_file_state"],
 	configPath?: string | null,
@@ -888,7 +873,7 @@ export function ClientFormDrawer({
 	const { t, i18n } = useTranslation("clients");
 	const dashboardSettings = useAppStore((state) => state.dashboardSettings);
 	const qc = useQueryClient();
-	const formSchema = useMemo(() => createClientFormSchema(t), [t]);
+	const formSchema = useMemo(() => createClientFormSchema(t, mode), [mode, t]);
 	const [isHydrating, setIsHydrating] = useState(false);
 	const [formError, setFormError] = useState<string | null>(null);
 	const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -994,7 +979,7 @@ export function ClientFormDrawer({
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
 		: t("detail.form.adminCatalog.empty", { defaultValue: "No supported client presets found." });
 	const adminCatalogBusy = adminDiscoveryPlatformQuery.isLoading || adminCatalogQuery.isLoading;
-	const manualClientId = useMemo(() => sanitizeIdentifierInput(identifier ?? ""), [identifier]);
+	const manualClientId = useMemo(() => sanitizeClientIdentifierInput(identifier ?? ""), [identifier]);
 	const identifierMatchesPattern = CLIENT_IDENTIFIER_PATTERN.test(manualClientId);
 	const manualClientIdReady = manualClientId.length > 0 && identifierMatchesPattern;
 	const manualMcpEndpointUrl = systemSettingsQuery.data?.mcp_http_url?.trim() ?? "";
@@ -1095,9 +1080,9 @@ export function ClientFormDrawer({
 
 	useEffect(() => {
 		if (!open || mode !== "edit" || selectedAdminClient || adminCatalogOptions.length === 0) return;
-		const currentIdentifier = normalizeIdentifier(client?.identifier ?? identifier);
+		const currentIdentifier = normalizeClientIdentifier(client?.identifier ?? identifier);
 		const matchingClient = adminCatalogOptions.find(
-			(candidate) => normalizeIdentifier(candidate.identifier) === currentIdentifier,
+			(candidate) => normalizeClientIdentifier(candidate.identifier) === currentIdentifier,
 		);
 		if (matchingClient) {
 			setSelectedAdminClient(matchingClient);
@@ -1152,7 +1137,7 @@ export function ClientFormDrawer({
 	useEffect(() => {
 		if (isHydrating || mode !== "create") return;
 		if (identifierDirty) return;
-		const generated = normalizeIdentifier(displayName ?? "");
+		const generated = normalizeClientIdentifier(displayName ?? "");
 		if (generated && generated !== identifier) {
 			form.setValue("identifier", generated, {
 				shouldDirty: false,
@@ -1194,7 +1179,7 @@ export function ClientFormDrawer({
 
 	useEffect(() => {
 		if (isHydrating || mode !== "create") return;
-		const sanitized = sanitizeIdentifierInput(identifier ?? "");
+		const sanitized = sanitizeClientIdentifierInput(identifier ?? "");
 		if (sanitized !== identifier) {
 			form.setValue("identifier", sanitized, { shouldDirty: true });
 		}
@@ -1480,7 +1465,11 @@ export function ClientFormDrawer({
 	const saveMutation = useMutation({
 		mutationFn: async () => {
 			const values = form.getValues();
-			const normalizedIdentifier = normalizeIdentifier(values.identifier);
+			const savedIdentifier = resolveClientIdentifierForSave(
+				mode,
+				values.identifier,
+				client?.identifier,
+			);
 			const parseForSave = parseDraftFromValues(values);
 			const hasWritableRules = hasWritableConfig(values);
 			const clearConfigFileOnSave = values.configFileChoice === "without_config_file";
@@ -1519,7 +1508,7 @@ export function ClientFormDrawer({
 			}
 
 			await clientsApi.update({
-				identifier: normalizedIdentifier,
+				identifier: savedIdentifier,
 				display_name: values.displayName || undefined,
 				config_file_state: values.configFileChoice,
 				config_path: hasWritableRules ? values.configPath?.trim() || undefined : undefined,
@@ -1542,7 +1531,7 @@ export function ClientFormDrawer({
 					values.supportedTransports,
 				)
 			) {
-				const details = await clientsApi.configDetails(normalizedIdentifier, false);
+				const details = await clientsApi.configDetails(savedIdentifier, false);
 				const configMode = resolveClientConfigMode(
 					details?.config_mode ?? client?.config_mode,
 				);
@@ -1556,7 +1545,7 @@ export function ClientFormDrawer({
 				) {
 					try {
 						await applyClientConfigWithResolvedSelection({
-							identifier: normalizedIdentifier,
+							identifier: savedIdentifier,
 							mode: configMode,
 							backupPolicy: mapDashboardSettingsToClientBackupPolicy(
 								dashboardSettings,
@@ -1576,7 +1565,7 @@ export function ClientFormDrawer({
 			if (mode === "create") {
 				try {
 					await clientsApi.setBackupPolicy({
-						identifier: normalizedIdentifier,
+						identifier: savedIdentifier,
 						policy: mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
 					});
 				} catch {
@@ -1590,7 +1579,7 @@ export function ClientFormDrawer({
 				}
 			}
 
-			return normalizedIdentifier;
+			return savedIdentifier;
 		},
 		// transportRuleEditors is outside react-hook-form and must participate explicitly
 		// in mutation closure updates.
