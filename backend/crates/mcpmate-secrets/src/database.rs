@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
-use sqlx::{Pool, Row, Sqlite};
+use sqlx::{Pool, Row, Sqlite, sqlite::SqliteRow};
+use tracing::warn;
 
 use crate::{
     SecretReference,
@@ -526,20 +529,7 @@ pub(crate) async fn list_usages(
     .await
     .with_context(|| format!("list usages for secret '{alias}'"))?;
 
-    rows.iter()
-        .map(|row| {
-            let alias: String = row.try_get("alias")?;
-            let server_id: String = row.try_get("server_id")?;
-            let location_kind: String = row.try_get("location_kind")?;
-            let location_name: Option<String> = row.try_get("location_name")?;
-            let location_index: Option<i64> = row.try_get("location_index")?;
-            Ok(SecretUsageView {
-                alias,
-                server_id,
-                location: SecretUsageLocationInput::from_parts(&location_kind, location_name, location_index)?,
-            })
-        })
-        .collect()
+    parse_usage_rows(rows)
 }
 
 pub(crate) async fn list_all_usages(pool: &Pool<Sqlite>) -> Result<Vec<SecretUsageView>> {
@@ -554,20 +544,97 @@ pub(crate) async fn list_all_usages(pool: &Pool<Sqlite>) -> Result<Vec<SecretUsa
     .await
     .context("list all secret usages")?;
 
-    rows.iter()
-        .map(|row| {
-            let alias: String = row.try_get("alias")?;
-            let server_id: String = row.try_get("server_id")?;
-            let location_kind: String = row.try_get("location_kind")?;
-            let location_name: Option<String> = row.try_get("location_name")?;
-            let location_index: Option<i64> = row.try_get("location_index")?;
-            Ok(SecretUsageView {
-                alias,
-                server_id,
-                location: SecretUsageLocationInput::from_parts(&location_kind, location_name, location_index)?,
-            })
-        })
-        .collect()
+    parse_usage_rows(rows)
+}
+
+pub(crate) async fn count_unsupported_usages_by_alias(pool: &Pool<Sqlite>) -> Result<HashMap<String, u64>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT alias, location_kind, location_name, location_index
+        FROM secure_store_usages
+        ORDER BY alias ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("list secret usage locations")?;
+
+    let mut counts = HashMap::new();
+    for row in rows {
+        if let Some(alias) = unsupported_usage_alias(&row)? {
+            *counts.entry(alias).or_insert(0) += 1;
+        }
+    }
+    Ok(counts)
+}
+
+pub(crate) async fn count_unsupported_usages_for_alias(
+    pool: &Pool<Sqlite>,
+    alias: &str,
+) -> Result<u64> {
+    let rows = sqlx::query(
+        r#"
+        SELECT alias, location_kind, location_name, location_index
+        FROM secure_store_usages
+        WHERE alias = ?1
+        ORDER BY alias ASC
+        "#,
+    )
+    .bind(alias)
+    .fetch_all(pool)
+    .await
+    .with_context(|| format!("list secret usage locations for secret '{alias}'"))?;
+
+    let mut count = 0;
+    for row in rows {
+        if unsupported_usage_alias(&row)?.is_some() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn parse_usage_rows(rows: Vec<SqliteRow>) -> Result<Vec<SecretUsageView>> {
+    let mut usages = Vec::with_capacity(rows.len());
+    for row in rows {
+        let alias: String = row.try_get("alias")?;
+        let server_id: String = row.try_get("server_id")?;
+        let location_kind: String = row.try_get("location_kind")?;
+        let location_name: Option<String> = row.try_get("location_name")?;
+        let location_index: Option<i64> = row.try_get("location_index")?;
+        let location = match SecretUsageLocationInput::from_parts(&location_kind, location_name, location_index) {
+            Ok(location) => location,
+            Err(error) => {
+                warn!(
+                    alias = %alias,
+                    server_id = %server_id,
+                    location_kind = %location_kind,
+                    error = %error,
+                    "Skipping unsupported secret usage location"
+                );
+                continue;
+            }
+        };
+        usages.push(SecretUsageView {
+            alias,
+            server_id,
+            location,
+        });
+    }
+    Ok(usages)
+}
+
+fn unsupported_usage_alias(row: &SqliteRow) -> Result<Option<String>> {
+    let alias: String = row.try_get("alias")?;
+    let location_kind: String = row.try_get("location_kind")?;
+    let location_name: Option<String> = row.try_get("location_name")?;
+    let location_index: Option<i64> = row.try_get("location_index")?;
+
+    if SecretUsageLocationInput::from_parts(&location_kind, location_name, location_index).is_err() {
+        return Ok(Some(alias));
+    }
+
+    Ok(None)
 }
 
 pub(crate) async fn load_encrypted_secrets(pool: &Pool<Sqlite>) -> Result<Vec<EncryptedSecret>> {

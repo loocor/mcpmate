@@ -44,11 +44,14 @@ export const secretsTranslations = {
 			state: {
 				all: "All lifecycle states",
 				active: "Active",
+				unknown: "Uncertain",
 				unused: "Unused",
 				oauth_managed: "OAuth managed",
 			},
 			description: {
 				active: "Currently referenced by at least one server.",
+				unknown:
+					"Some stored usage references cannot be classified by this version.",
 				unused: "Not currently referenced by any server.",
 				oauth_managed: "Owned by OAuth and cleaned up with OAuth lifecycle actions.",
 			},
@@ -122,6 +125,8 @@ export const secretsTranslations = {
 					"Cannot delete: secret is actively used by {{count}} location(s)",
 				deleteDisabledOAuthTooltip:
 					"OAuth-managed credentials are removed by OAuth revoke or server deletion.",
+				deleteDisabledUnknownTooltip:
+					"Cannot delete: some usage references cannot be classified by this version.",
 			},
 		},
 		usage: {
@@ -133,10 +138,17 @@ export const secretsTranslations = {
 			summary: {
 				active: "Active {{count}}",
 				historical: "Historical {{count}}",
+				unknown:
+					"Some stored usage references were created by another version and cannot be classified here.",
 				canDelete: "No active runtime binding is using this secret.",
 				blocked: "Remove active bindings before deleting this secret.",
 				oauthManaged:
 					"OAuth credentials are cleaned up by OAuth revoke or server deletion.",
+			},
+			unknown: {
+				title: "Usage is partially unknown",
+				description:
+					"Some stored usage references were created by another version and cannot be shown here.",
 			},
 			sections: {
 				active: "Active bindings",
@@ -172,6 +184,8 @@ export const secretsTranslations = {
 				"This removes the encrypted value only when no active usage is recorded.",
 			descriptionActive:
 				"This secret is still actively used. Remove active bindings before deleting it.",
+			descriptionUnknown:
+				"Some usage references cannot be classified by this version. Review logs before deleting.",
 			descriptionUnused:
 				"This removes the encrypted value. No active usage is recorded.",
 			descriptionOAuth:
@@ -262,6 +276,7 @@ export const secretsTranslations = {
 			unused: {
 				title: "Unused",
 				description: "not linked",
+				unknownDescription: "{{count}} uncertain",
 			},
 			store: {
 				title: "Secure Store",
@@ -320,11 +335,13 @@ export const secretsTranslations = {
 			state: {
 				all: "全部生命周期状态",
 				active: "使用中",
+				unknown: "不确定",
 				unused: "未使用",
 				oauth_managed: "OAuth 托管",
 			},
 			description: {
 				active: "当前至少被一个服务器引用。",
+				unknown: "存在当前版本无法识别的历史引用。",
 				unused: "当前没有被任何服务器引用。",
 				oauth_managed: "由 OAuth 拥有，并随 OAuth 生命周期动作清理。",
 			},
@@ -394,6 +411,8 @@ export const secretsTranslations = {
 					"无法删除：该安全记录仍被 {{count}} 处活跃使用引用",
 				deleteDisabledOAuthTooltip:
 					"OAuth 托管凭据请通过撤销 OAuth 或删除服务器来移除。",
+				deleteDisabledUnknownTooltip:
+					"无法删除：部分使用引用无法由当前版本识别。",
 			},
 		},
 		usage: {
@@ -404,9 +423,14 @@ export const secretsTranslations = {
 			summary: {
 				active: "活跃 {{count}}",
 				historical: "历史 {{count}}",
+				unknown: "存在由其他版本创建、当前版本无法归类的安全记录引用。",
 				canDelete: "当前没有运行时绑定正在使用此安全记录。",
 				blocked: "删除此安全记录前，需要先移除活跃绑定。",
 				oauthManaged: "OAuth 凭据会随 OAuth 撤销或服务器删除自动清理。",
+			},
+			unknown: {
+				title: "使用状态不完整",
+				description: "存在由其他版本创建、当前版本无法显示的安全记录引用。",
 			},
 			sections: {
 				active: "生效中的引用",
@@ -438,6 +462,8 @@ export const secretsTranslations = {
 			title: "删除安全记录？",
 			description: "仅当没有活跃使用记录时，才会移除加密值。",
 			descriptionActive: "此安全记录仍在使用中。删除前请先移除活跃绑定。",
+			descriptionUnknown:
+				"存在当前版本无法归类的引用。删除前建议先查看日志确认。",
 			descriptionUnused: "这会移除加密值。当前没有活跃使用记录。",
 			descriptionOAuth:
 				"OAuth 托管凭据通常会通过 OAuth 撤销或服务器删除自动移除。仅删除孤立的 OAuth 记录。",
@@ -524,6 +550,7 @@ export const secretsTranslations = {
 			unused: {
 				title: "未使用",
 				description: "未关联",
+				unknownDescription: "{{count}} 条不确定",
 			},
 			store: {
 				title: "安全存储",
@@ -582,11 +609,14 @@ export const secretsTranslations = {
 			state: {
 				all: "すべてのライフサイクル状態",
 				active: "使用中",
+				unknown: "不明",
 				unused: "未使用",
 				oauth_managed: "OAuth 管理",
 			},
 			description: {
 				active: "少なくとも 1 つのサーバーから現在参照されています。",
+				unknown:
+					"このバージョンでは分類できない保存済み参照があります。",
 				unused: "現在どのサーバーからも参照されていません。",
 				oauth_managed: "OAuth が所有し、OAuth ライフサイクル操作で削除されます。",
 			},
@@ -659,6 +689,8 @@ export const secretsTranslations = {
 					"削除できません：このシークレットは {{count}} 件の有効な使用箇所で参照されています",
 				deleteDisabledOAuthTooltip:
 					"OAuth 管理の認証情報は、OAuth の取り消しまたはサーバー削除で削除されます。",
+				deleteDisabledUnknownTooltip:
+					"削除できません：一部の使用参照をこのバージョンで分類できません。",
 			},
 		},
 		usage: {
@@ -670,10 +702,17 @@ export const secretsTranslations = {
 			summary: {
 				active: "有効 {{count}}",
 				historical: "履歴 {{count}}",
+				unknown:
+					"別バージョンで作成され、このバージョンでは分類できない参照があります。",
 				canDelete: "このシークレットを使用中のランタイムバインディングはありません。",
 				blocked: "削除する前に有効なバインディングを削除してください。",
 				oauthManaged:
 					"OAuth 認証情報は OAuth の取り消しまたはサーバー削除で自動削除されます。",
+			},
+			unknown: {
+				title: "使用状況の一部が不明です",
+				description:
+					"別バージョンで作成され、このバージョンでは表示できない参照があります。",
 			},
 			sections: {
 				active: "有効な参照",
@@ -708,6 +747,8 @@ export const secretsTranslations = {
 				"アクティブな使用記録がない場合のみ、暗号化された値を削除します。",
 			descriptionActive:
 				"このシークレットはまだ使用中です。削除する前に有効なバインディングを削除してください。",
+			descriptionUnknown:
+				"このバージョンでは分類できない参照があります。削除前にログを確認してください。",
 			descriptionUnused:
 				"暗号化された値を削除します。有効な使用記録はありません。",
 			descriptionOAuth:
@@ -798,6 +839,7 @@ export const secretsTranslations = {
 			unused: {
 				title: "未使用",
 				description: "未リンク",
+				unknownDescription: "{{count}} 件不明",
 			},
 			store: {
 				title: "セキュアストア",

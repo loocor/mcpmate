@@ -236,6 +236,17 @@ impl LocalSecretStore {
         database::list_all_usages(&self.pool).await
     }
 
+    pub async fn count_unsupported_usages_by_alias(&self) -> Result<HashMap<String, u64>> {
+        database::count_unsupported_usages_by_alias(&self.pool).await
+    }
+
+    pub async fn count_unsupported_usages_for_alias(
+        &self,
+        alias: &str,
+    ) -> Result<u64> {
+        database::count_unsupported_usages_for_alias(&self.pool, alias).await
+    }
+
     async fn reload_cache(&self) -> Result<()> {
         let rows = database::load_encrypted_secrets(&self.pool).await?;
         let mut cache = self
@@ -827,6 +838,82 @@ mod tests {
                 field_path: Some("headers[0].value".to_string()),
             })
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn list_usages_skips_unknown_location_rows() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        let store = LocalSecretStore::initialize_with_development_root_key(
+            db_pool,
+            temp_dir.path().join("secrets").join("local-root.key"),
+        )
+        .await
+        .expect("initialize store");
+
+        store
+            .create_secret(SecretCreateInput {
+                alias: "provider/api-key".to_string(),
+                kind: SecretKindInput::ApiKey,
+                value: "secret".to_string(),
+                label: None,
+                origin: None,
+            })
+            .await
+            .expect("create secret");
+        store
+            .upsert_usage(SecretUsageUpsertInput {
+                alias: "provider/api-key".to_string(),
+                server_id: "known-server".to_string(),
+                location: SecretUsageLocationInput::StdioEnv {
+                    name: "API_KEY".to_string(),
+                },
+            })
+            .await
+            .expect("record known usage");
+
+        sqlx::query(
+            r#"
+            INSERT INTO secure_store_usages (
+                id, alias, server_id, location_kind, location_name, location_index
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+        )
+        .bind("future-location-row")
+        .bind("provider/api-key")
+        .bind("LLMPROVFuture")
+        .bind("llm_provider_api_key")
+        .bind(Option::<String>::None)
+        .bind(Option::<i64>::None)
+        .execute(&store.pool())
+        .await
+        .expect("insert unknown usage row");
+
+        let usages = store.list_usages("provider/api-key").await.expect("list usages");
+        assert_eq!(usages.len(), 1);
+        assert_eq!(usages[0].server_id, "known-server");
+        assert_eq!(
+            usages[0].location,
+            SecretUsageLocationInput::StdioEnv {
+                name: "API_KEY".to_string()
+            }
+        );
+
+        let all_usages = store.list_all_usages().await.expect("list all usages");
+        assert_eq!(all_usages.len(), 1);
+        assert_eq!(all_usages[0].server_id, "known-server");
+
+        let unknown_counts = store
+            .count_unsupported_usages_by_alias()
+            .await
+            .expect("count unknown usages");
+        assert_eq!(unknown_counts.get("provider/api-key"), Some(&1));
     }
 
     #[tokio::test]
