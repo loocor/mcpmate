@@ -411,6 +411,9 @@ function filterCurrentTransportPayload(
 
 const CLIENT_FORM_ROW_LABEL_CLASS = "w-20 shrink-0 text-right";
 const COPY_FEEDBACK_MS = 2000;
+type TextInputRef =
+	| ((node: HTMLInputElement | null) => void)
+	| React.MutableRefObject<HTMLInputElement | null>;
 
 function logoUrlIsPreviewable(value: string): boolean {
 	const trimmed = value.trim();
@@ -713,7 +716,7 @@ function TextInputRow({
 	placeholder: string;
 	field: ControllerRenderProps<ClientRecordFormValues>;
 	disabled?: boolean;
-	inputRef?: React.Ref<HTMLInputElement>;
+	inputRef?: TextInputRef;
 	inputClassName?: string;
 	labelClassName?: string;
 	hideMessage?: boolean;
@@ -1805,7 +1808,7 @@ export function ClientFormDrawer({
 											inputRef={identifierInputRef}
 											labelClassName="text-foreground"
 											inputClassName={fieldState.invalid ? "border-destructive focus-visible:ring-destructive" : undefined}
-											hideMessage={fieldState.invalid}
+											hideMessage={fieldState.error?.message === ""}
 										/>
 									)} />
 									<FormField control={form.control} name="clientVersion" render={({ field }) => (

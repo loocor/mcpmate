@@ -75,9 +75,8 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
             .insert(binding_key);
     }
 
-    let all_indexed = store.list_all_usages().await.map_err(map_secret_store_error)?;
-    let mut unknown_count_by_alias = store
-        .count_unsupported_usages_by_alias()
+    let (all_indexed, mut unknown_count_by_alias) = store
+        .list_all_usages_with_unsupported_counts()
         .await
         .map_err(map_secret_store_error)?;
     let mut indexed_by_alias: HashMap<String, Vec<SecretUsageView>> = HashMap::new();

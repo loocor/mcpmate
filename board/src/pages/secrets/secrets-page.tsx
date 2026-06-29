@@ -214,6 +214,10 @@ export function SecretsPage() {
 			usage: t("list.stats.usage", { defaultValue: "Usage" }),
 			history: t("list.stats.history", { defaultValue: "History" }),
 			version: t("list.stats.version", { defaultValue: "Version" }),
+			unknownUsageTitle: t("usage.unknown.description", {
+				defaultValue:
+					"Some stored usage references were created by another version and cannot be shown here.",
+			}),
 		}),
 		[t, i18n.language],
 	);

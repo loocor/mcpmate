@@ -137,7 +137,9 @@ export const secretsTranslations = {
 				"This secret has no active or historical server binding.",
 			summary: {
 				active: "Active {{count}}",
+				activeValue: "Active {{value}}",
 				historical: "Historical {{count}}",
+				historicalValue: "Historical {{value}}",
 				unknown:
 					"Some stored usage references were created by another version and cannot be classified here.",
 				canDelete: "No active runtime binding is using this secret.",
@@ -422,7 +424,9 @@ export const secretsTranslations = {
 			emptyDescription: "此安全记录没有活跃或历史服务器绑定。",
 			summary: {
 				active: "活跃 {{count}}",
+				activeValue: "活跃 {{value}}",
 				historical: "历史 {{count}}",
+				historicalValue: "历史 {{value}}",
 				unknown: "存在由其他版本创建、当前版本无法归类的安全记录引用。",
 				canDelete: "当前没有运行时绑定正在使用此安全记录。",
 				blocked: "删除此安全记录前，需要先移除活跃绑定。",
@@ -701,7 +705,9 @@ export const secretsTranslations = {
 				"このシークレットには有効または履歴のサーバーバインディングがありません。",
 			summary: {
 				active: "有効 {{count}}",
+				activeValue: "有効 {{value}}",
 				historical: "履歴 {{count}}",
+				historicalValue: "履歴 {{value}}",
 				unknown:
 					"別バージョンで作成され、このバージョンでは分類できない参照があります。",
 				canDelete: "このシークレットを使用中のランタイムバインディングはありません。",

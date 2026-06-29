@@ -236,6 +236,13 @@ impl LocalSecretStore {
         database::list_all_usages(&self.pool).await
     }
 
+    pub async fn list_all_usages_with_unsupported_counts(
+        &self
+    ) -> Result<(Vec<SecretUsageView>, HashMap<String, u64>)> {
+        let rows = database::list_all_usage_rows(&self.pool).await?;
+        Ok((rows.usages, rows.unsupported_count_by_alias))
+    }
+
     pub async fn count_unsupported_usages_by_alias(&self) -> Result<HashMap<String, u64>> {
         database::count_unsupported_usages_by_alias(&self.pool).await
     }

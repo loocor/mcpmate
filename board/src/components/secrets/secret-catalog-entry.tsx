@@ -18,6 +18,7 @@ export type SecretCatalogStatsLabels = {
 	usage: string;
 	history: string;
 	version: string;
+	unknownUsageTitle: string;
 };
 
 type SecretCatalogEntryBaseProps = {
@@ -69,9 +70,7 @@ function buildStats(
 	providerNeedsAttention: boolean,
 ) {
 	const hasUnknownUsage = (secret.unknown_usage_count ?? 0) > 0;
-	const unknownTitle = hasUnknownUsage
-		? `${secret.unknown_usage_count} unsupported usage reference(s)`
-		: undefined;
+	const unknownTitle = hasUnknownUsage ? statsLabels.unknownUsageTitle : undefined;
 	return [
 		{
 			label: statsLabels.provider,

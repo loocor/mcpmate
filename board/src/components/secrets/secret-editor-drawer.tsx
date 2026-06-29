@@ -226,10 +226,18 @@ export function SecretEditorDrawer({
 	const valueInputDisplay = showStoredValueMask
 		? STORED_SECRET_VALUE_MASK
 		: activeEditor.value;
-	const activeUsageSummaryCount = hasUnknownUsage ? "—" : activeUsageCount;
-	const historicalUsageSummaryCount = hasUnknownUsage
+	const activeUsageSummaryValue = hasUnknownUsage ? "—" : activeUsageCount;
+	const historicalUsageSummaryValue = hasUnknownUsage
 		? "—"
 		: historicalUsageCount;
+	const activeUsageSummaryLabel = t("usage.summary.activeValue", {
+		defaultValue: "Active {{value}}",
+		value: activeUsageSummaryValue,
+	});
+	const historicalUsageSummaryLabel = t("usage.summary.historicalValue", {
+		defaultValue: "Historical {{value}}",
+		value: historicalUsageSummaryValue,
+	});
 	const copyPlaceholderLabel = t("editor.actions.copyPlaceholder", {
 		defaultValue: "Copy placeholder",
 	});
@@ -492,21 +500,15 @@ export function SecretEditorDrawer({
 							</TabsContent>
 							<TabsContent value="usage" className="space-y-4 pt-4">
 								<div className="rounded-lg border bg-muted/30 p-3">
-									<div className="flex flex-wrap items-center gap-2">
-										<Badge variant={activeUsageCount > 0 ? "success" : "outline"}>
-											{t("usage.summary.active", {
-												defaultValue: "Active {{count}}",
-												count: activeUsageSummaryCount,
-											})}
-										</Badge>
-										<Badge
-											variant={historicalUsageCount > 0 ? "warning" : "outline"}
-										>
-											{t("usage.summary.historical", {
-												defaultValue: "Historical {{count}}",
-												count: historicalUsageSummaryCount,
-											})}
-										</Badge>
+										<div className="flex flex-wrap items-center gap-2">
+											<Badge variant={activeUsageCount > 0 ? "success" : "outline"}>
+												{activeUsageSummaryLabel}
+											</Badge>
+											<Badge
+												variant={historicalUsageCount > 0 ? "warning" : "outline"}
+											>
+												{historicalUsageSummaryLabel}
+											</Badge>
 									</div>
 									<p className="mt-2 text-xs text-muted-foreground">
 										{usageSummaryDescription}
