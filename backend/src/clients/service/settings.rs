@@ -562,6 +562,10 @@ impl ClientConfigService {
                 .await?;
         }
 
+        if !clear_config_artifacts && matches!(resolved_connection_mode.as_deref(), Some("local_config_detected")) {
+            self.ensure_local_config_target_metadata(identifier).await?;
+        }
+
         let new_effective_mode = self
             .resolve_effective_mode_from_explicit(
                 requested_config_mode.as_deref().or(Some(old_effective_mode.as_str())),
