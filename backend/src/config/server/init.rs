@@ -285,7 +285,7 @@ async fn create_server_oauth_tokens_table(pool: &Pool<Sqlite>) -> Result<()> {
     Ok(())
 }
 
-async fn ensure_column(
+pub async fn ensure_column(
     pool: &Pool<Sqlite>,
     table: &str,
     column: &str,

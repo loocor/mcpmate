@@ -805,6 +805,7 @@ fn secret_usage_location_data(location: SecretUsageLocationInput) -> SecretUsage
             SecretUsageLocationData::StreamableHttpHeader { name }
         }
         SecretUsageLocationInput::OAuthToken => SecretUsageLocationData::OAuthToken,
+        SecretUsageLocationInput::LlmProviderApiKey => SecretUsageLocationData::LlmProviderApiKey,
     }
 }
 

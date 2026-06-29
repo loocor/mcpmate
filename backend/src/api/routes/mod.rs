@@ -1,11 +1,10 @@
 // MCP Proxy API routes module
 // Contains route definitions for the API server
 
-#[cfg(feature = "ai")]
-pub mod ai;
 pub mod audit;
 pub mod client;
 pub mod inspector;
+pub mod llm;
 pub mod onboarding;
 pub mod openapi;
 pub mod profile;
@@ -273,10 +272,8 @@ async fn create_router_internal(
         .merge(runtime::routes(state.clone()))
         .merge(secrets::routes(state.clone()))
         .merge(inspector::routes(state.clone()))
-        .merge(client::routes(state.clone()));
-
-    #[cfg(feature = "ai")]
-    let api_router = api_router.merge(ai::routes(state.clone()));
+        .merge(client::routes(state.clone()))
+        .merge(llm::routes(state.clone()));
 
     let api_router = api_router
         .finish_api_with(&mut api, openapi::api_docs)

@@ -158,6 +158,7 @@ pub mod database {
         pub const SERVER_RESOURCE_TEMPLATES: &str = "server_resource_templates";
         pub const SERVER_RESOURCES: &str = "server_resources";
         pub const SERVER_TOOLS: &str = "server_tools";
+        pub const LLM_PROVIDER: &str = "llm_provider";
     }
 
     /// Database column name constants
@@ -184,6 +185,11 @@ pub mod database {
         pub const ENV: &str = "env";
         pub const VALUE: &str = "value";
         pub const PROFILE_ID: &str = "profile_id";
+        pub const PROVIDER_TYPE: &str = "provider_type";
+        pub const BASE_URL: &str = "base_url";
+        pub const MODEL_ID: &str = "model_id";
+        pub const SECRET_ALIAS: &str = "secret_alias";
+        pub const DEFAULT_PARAMS_JSON: &str = "default_params_json";
     }
 }
 

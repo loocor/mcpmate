@@ -2,6 +2,7 @@
 // Coordinates initialization of all database modules
 
 use crate::config::client::init::{initialize_client_table, initialize_system_settings};
+use crate::config::llm::init::initialize_llm_tables;
 use crate::config::profile::init::initialize_profile_tables;
 use crate::config::server::init::initialize_server_tables;
 use anyhow::Result;
@@ -27,6 +28,10 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     // Initialize profile-related tables
     tracing::debug!("Initializing profile-related tables");
     initialize_profile_tables(pool).await?;
+
+    // Initialize LLM provider tables
+    tracing::debug!("Initializing LLM provider tables");
+    initialize_llm_tables(pool).await?;
 
     tracing::info!("Database initialization completed successfully");
     Ok(())

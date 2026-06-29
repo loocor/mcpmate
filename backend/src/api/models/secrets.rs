@@ -106,6 +106,7 @@ pub enum SecretUsageLocationData {
     StreamableHttpUrl,
     StreamableHttpHeader { name: String },
     OAuthToken,
+    LlmProviderApiKey,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
