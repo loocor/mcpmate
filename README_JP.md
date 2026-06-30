@@ -17,7 +17,7 @@
   <a href="https://github.com/loocor/MCPMate/releases"><img src="https://img.shields.io/github/downloads/loocor/MCPMate/total" alt="Downloads"></a>
   <a href="https://github.com/loocor/MCPMate/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
-  <img src="https://img.shields.io/badge/Rust-1.75%2B-orange" alt="Rust">
+  <img src="https://img.shields.io/badge/Rust-1.85%2B-orange" alt="Rust">
   <a href="https://modelcontextprotocol.io/specification/2025-11-25"><img src="https://img.shields.io/badge/MCP-2025--11--25-purple" alt="MCP Spec"></a>
 </p>
 
@@ -47,7 +47,7 @@ MCPMate は AI アプリと MCP サーバーの間に入り、接続を一か所
   - [🤔 なぜ MCPMate？](#-なぜ-mcpmate)
   - [🔄 仕組み](#-仕組み)
   - [🚀 主な機能](#-主な機能)
-  - [🛠️ コアコンポーネント](#️-コアコンポーネント)
+  - [🛠️ コアコンポーネント](#-コアコンポーネント)
     - [Proxy](#proxy)
     - [Bridge](#bridge)
     - [Runtime Manager](#runtime-manager)
@@ -60,7 +60,7 @@ MCPMate は AI アプリと MCP サーバーの間に入り、接続を一か所
   - [🧰 技術スタック](#-技術スタック)
   - [🚢 デプロイモード](#-デプロイモード)
   - [🔧 開発](#-開発)
-  - [🗺️ ロードマップ](#️-ロードマップ)
+  - [🗺️ ロードマップ](#-ロードマップ)
   - [🤝 コントリビュート](#-コントリビュート)
   - [📄 ライセンス](#-ライセンス)
 
@@ -192,7 +192,7 @@ MCP proxy activity のための構造化運用ログです。MCP 操作と管理
 
 ### Option B: ソースからビルド
 
-**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) 1.75+、[Node.js](https://nodejs.org/) 18+ または [Bun](https://bun.sh/)、SQLite 3
+**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) 1.85+、[Node.js](https://nodejs.org/) 18+ または [Bun](https://bun.sh/)、SQLite 3
 
 **1. Clone & Build the Backend**
 

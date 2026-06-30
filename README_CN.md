@@ -17,7 +17,7 @@
   <a href="https://github.com/loocor/MCPMate/releases"><img src="https://img.shields.io/github/downloads/loocor/MCPMate/total" alt="Downloads"></a>
   <a href="https://github.com/loocor/MCPMate/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
-  <img src="https://img.shields.io/badge/Rust-1.75%2B-orange" alt="Rust">
+  <img src="https://img.shields.io/badge/Rust-1.85%2B-orange" alt="Rust">
   <a href="https://modelcontextprotocol.io/specification/2025-11-25"><img src="https://img.shields.io/badge/MCP-2025--11--25-purple" alt="MCP Spec"></a>
 </p>
 
@@ -192,7 +192,7 @@ runtime list           # 列出已安装的运行时
 
 ### 方式二：从源码构建
 
-**前置要求**：[Rust](https://www.rust-lang.org/tools/install) 工具链 1.75+、[Node.js](https://nodejs.org/) 18+ 或 [Bun](https://bun.sh/)、SQLite 3
+**前置要求**：[Rust](https://www.rust-lang.org/tools/install) 工具链 1.85+、[Node.js](https://nodejs.org/) 18+ 或 [Bun](https://bun.sh/)、SQLite 3
 
 **1. 克隆并构建后端**
 

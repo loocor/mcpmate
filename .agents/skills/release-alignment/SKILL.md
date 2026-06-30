@@ -96,7 +96,7 @@ Each release entry should keep this structure:
 
 - `version`: public version without the `v` prefix.
 - `date`: release date in `YYYY-MM-DD`.
-- `highlights`: one concise paragraph describing the release theme.
+- `highlights`: an array containing one concise paragraph string describing the release theme.
 - `changes`: 4-6 durable change records with `type` and user-readable `text`.
 
 Rules:
