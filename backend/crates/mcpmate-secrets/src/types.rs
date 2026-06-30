@@ -113,6 +113,7 @@ pub enum SecretUsageLocationInput {
     StreamableHttpUrl,
     StreamableHttpHeader { name: String },
     OAuthToken,
+    LlmProviderApiKey,
 }
 
 impl SecretUsageLocationInput {
@@ -138,6 +139,7 @@ impl SecretUsageLocationInput {
             Self::StreamableHttpUrl => ("streamable_http_url", None, None),
             Self::StreamableHttpHeader { name } => ("streamable_http_header", Some(name.as_str()), None),
             Self::OAuthToken => ("oauth_token", None, None),
+            Self::LlmProviderApiKey => ("llm_provider_api_key", None, None),
         }
     }
 
@@ -159,6 +161,7 @@ impl SecretUsageLocationInput {
                 name: name.unwrap_or_default(),
             }),
             "oauth_token" => Ok(Self::OAuthToken),
+            "llm_provider_api_key" => Ok(Self::LlmProviderApiKey),
             other => Err(anyhow::anyhow!("Unsupported secret usage location '{other}'")),
         }
     }

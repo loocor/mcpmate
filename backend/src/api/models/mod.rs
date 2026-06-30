@@ -5,6 +5,7 @@ pub mod audit;
 pub mod cache;
 pub mod client;
 pub mod inspector;
+pub mod llm;
 pub mod oauth;
 pub mod onboarding;
 pub mod profile;

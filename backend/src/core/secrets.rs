@@ -150,7 +150,7 @@ pub fn is_usage_active_in_config(
             .headers
             .as_ref()
             .and_then(|h| h.get(name.as_str()).map(|s| s.as_str())),
-        SecretUsageLocationInput::OAuthToken => return Ok(false),
+        SecretUsageLocationInput::OAuthToken | SecretUsageLocationInput::LlmProviderApiKey => return Ok(false),
     };
 
     let Some(value) = value else {
@@ -393,6 +393,7 @@ async fn discover_active_secret_usages_filtered(
     let servers = get_all_servers(pool).await?;
     let mut usages = discover_config_usages_with_servers(pool, &servers, alias_filter).await?;
     usages.extend(discover_oauth_usages_with_servers(pool, &servers, alias_filter).await?);
+    usages.extend(discover_llm_provider_usages(pool, alias_filter).await?);
     dedup_secret_usage_views(&mut usages);
     Ok(usages)
 }
@@ -482,6 +483,33 @@ fn push_oauth_usages_from_value(
         });
     }
     Ok(())
+}
+
+async fn discover_llm_provider_usages(
+    pool: &sqlx::SqlitePool,
+    alias_filter: Option<&str>,
+) -> anyhow::Result<Vec<SecretUsageView>> {
+    use crate::config::llm::crud::get_all_providers;
+
+    let providers = get_all_providers(pool).await?;
+    let mut usages = Vec::new();
+    for provider in providers {
+        let Some(alias) = provider.secret_alias else {
+            continue;
+        };
+        if alias_filter.is_some_and(|filter| alias != filter) {
+            continue;
+        }
+        let Some(provider_id) = provider.id else {
+            continue;
+        };
+        usages.push(SecretUsageView {
+            alias,
+            server_id: provider_id,
+            location: SecretUsageLocationInput::LlmProviderApiKey,
+        });
+    }
+    Ok(usages)
 }
 
 fn dedup_secret_usage_views(usages: &mut Vec<SecretUsageView>) {

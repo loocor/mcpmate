@@ -9,8 +9,6 @@
 //! - protocol: protocol handling
 //! - proxy: proxy core
 
-#[cfg(feature = "ai")]
-pub mod ai;
 pub mod cache;
 pub mod capability;
 pub mod events;
@@ -24,8 +22,6 @@ pub mod secrets;
 pub mod token_estimate;
 pub mod transport;
 
-#[cfg(feature = "ai")]
-pub use ai::{AiConfig, TextMcpExtractor, default_model_path, extract_mcp_config};
 pub use events::{
     Event, EventBus, EventHandlers, EventReceiver, init as init_events,
     init_with_handlers as init_events_with_handlers, needs_transport_ready_wait, wait_for_transport_ready,

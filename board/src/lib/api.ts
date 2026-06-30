@@ -101,6 +101,11 @@ import type {
 	TokenEstimateResponse,
 	ToolDetail,
 	UpdateConfigSuitRequest,
+	LlmProviderConfig,
+	LlmProviderCreateInput,
+	LlmProviderModelPreviewInput,
+	LlmProviderUpdateInput,
+	LlmConnectivityResult,
 } from "./types";
 import { useMemo } from "react";
 import { isTauriEnvironmentSync } from "./platform";
@@ -2939,3 +2944,70 @@ export function useProfileTokenChartSource(
 		isError,
 	};
 }
+
+// LLM Provider API
+export const llmApi = {
+	listProviders: async (): Promise<LlmProviderConfig[]> => {
+		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig[] }>("/api/llm/providers");
+		return resp.data ?? [];
+	},
+
+	createProvider: async (input: LlmProviderCreateInput): Promise<LlmProviderConfig> => {
+		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>("/api/llm/providers/create", {
+			method: "POST",
+			body: JSON.stringify(input),
+		});
+		return resp.data!;
+	},
+
+	updateProvider: async (input: LlmProviderUpdateInput): Promise<LlmProviderConfig> => {
+		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>("/api/llm/providers/update", {
+			method: "POST",
+			body: JSON.stringify(input),
+		});
+		return resp.data!;
+	},
+
+	deleteProvider: async (id: string): Promise<void> => {
+		await fetchApi("/api/llm/providers/delete", {
+			method: "POST",
+			body: JSON.stringify({ id }),
+		});
+	},
+
+	testProvider: async (id: string): Promise<LlmConnectivityResult> => {
+		const resp = await fetchApi<{ success: boolean; data: LlmConnectivityResult }>("/api/llm/providers/test", {
+			method: "POST",
+			body: JSON.stringify({ id }),
+		});
+		return resp.data!;
+	},
+
+	listModels: async (id: string): Promise<string[]> => {
+		const resp = await fetchApi<{ success: boolean; data: { models: string[] } }>("/api/llm/providers/models", {
+			method: "POST",
+			body: JSON.stringify({ id }),
+		});
+		return resp.data?.models ?? [];
+	},
+
+	listModelsForConfig: async (input: LlmProviderModelPreviewInput): Promise<string[]> => {
+		const resp = await fetchApi<{ success: boolean; data: { models: string[] } }>("/api/llm/providers/models/preview", {
+			method: "POST",
+			body: JSON.stringify(input),
+		});
+		return resp.data?.models ?? [];
+	},
+
+	getDefaultProvider: async (): Promise<LlmProviderConfig | null> => {
+		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig | null }>("/api/llm/providers/default");
+		return resp.data ?? null;
+	},
+
+	setDefaultProvider: async (id: string): Promise<void> => {
+		await fetchApi("/api/llm/providers/set-default", {
+			method: "POST",
+			body: JSON.stringify({ id }),
+		});
+	},
+};

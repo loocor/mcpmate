@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use mcpmate_secrets::{SecretError, SecretResolver, parse_placeholder};
+use mcpmate_secrets::{SecretError, SecretResolver, SecretStoreDeleteError, parse_placeholder};
 use reqwest::Url;
 use reqwest::header::WWW_AUTHENTICATE;
 use serde::Deserialize;
@@ -309,8 +309,8 @@ impl OAuthManager {
         let alias = oauth_secret_alias(server_id, slot);
         match store.delete_secret(&alias, true).await {
             Ok(()) => Ok(()),
-            Err(err) if err.to_string().contains("was not found") => Ok(()),
-            Err(err) => Err(err),
+            Err(SecretStoreDeleteError::NotFound { .. }) => Ok(()),
+            Err(err) => Err(err.into()),
         }
     }
 
@@ -1274,6 +1274,7 @@ mod tests {
     use crate::{
         common::{server::ServerType, status::EnabledStatus},
         config::{
+            llm::init::initialize_llm_tables,
             models::Server,
             server::{crud::upsert_server, init::initialize_server_tables},
         },
@@ -1297,6 +1298,7 @@ mod tests {
             .await
             .expect("enable foreign keys");
         initialize_server_tables(&pool).await.expect("init tables");
+        initialize_llm_tables(&pool).await.expect("init llm tables");
         OAuthManager::new(pool)
     }
 
@@ -1312,6 +1314,7 @@ mod tests {
             .await
             .expect("enable foreign keys");
         initialize_server_tables(&pool).await.expect("init tables");
+        initialize_llm_tables(&pool).await.expect("init llm tables");
         let store = Arc::new(
             LocalSecretStore::initialize_with_development_root_key(
                 pool.clone(),

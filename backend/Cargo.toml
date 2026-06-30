@@ -38,6 +38,7 @@ windows-sys = { version = "0.59.0", features = ["Win32_Foundation", "Win32_Stora
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+mcpmate-llm = { path = "crates/mcpmate-llm" }
 mcpmate-secrets = { path = "crates/mcpmate-secrets" }
 is-terminal = "0.4"
 clap = { version = "4.5", features = ["derive"] }
@@ -116,22 +117,7 @@ aide = { version = "0.15", features = [
 ] }
 schemars = { version = "0.9", features = ["chrono04", "derive"] }
 paste = "1.0"
-uuid = { version = "1", features = ["v5"] }
-
-# AI module dependencies (optional; exploratory path disabled by default in Cleanup Foundation)
-tokenizers = { version = "0.15", optional = true }
-hf-hub = { version = "0.3", optional = true }
-arc-swap = { version = "1.7.1", optional = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-candle-core = { version = "0.8", features = ["metal"], optional = true }
-candle-transformers = { version = "0.8", features = ["metal"], optional = true }
-candle-nn = { version = "0.8", features = ["metal"], optional = true }
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-candle-core = { version = "0.8", optional = true }
-candle-transformers = { version = "0.8", optional = true }
-candle-nn = { version = "0.8", optional = true }
+uuid = { version = "1", features = ["v4", "v5"] }
 
 # Build Targets
 [[bin]]
@@ -141,8 +127,6 @@ path = "src/bin/bridge.rs"
 # Feature Flags
 [features]
 default = []
-# Keep AI opt-in until runtime contract and product scope are intentionally revisited.
-ai = ["dep:candle-core", "dep:candle-transformers", "dep:candle-nn", "dep:tokenizers", "dep:hf-hub", "dep:arc-swap"]
 interop = []
 standalone = []
 

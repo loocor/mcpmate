@@ -450,18 +450,14 @@ pub(crate) async fn list_secret_metadata(pool: &Pool<Sqlite>) -> Result<Vec<Secr
 pub(crate) async fn delete_secret(
     pool: &Pool<Sqlite>,
     alias: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let result = sqlx::query("DELETE FROM secure_store_secrets WHERE alias = ?1")
         .bind(alias)
         .execute(pool)
         .await
         .with_context(|| format!("delete secret '{alias}'"))?;
 
-    if result.rows_affected() == 0 {
-        bail!("Secret '{alias}' was not found");
-    }
-
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 pub(crate) async fn upsert_usage(

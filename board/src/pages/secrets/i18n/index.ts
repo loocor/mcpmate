@@ -178,6 +178,7 @@ export const secretsTranslations = {
 				stdioCommand: "stdio command",
 				httpUrl: "http url",
 				oauthToken: "oauth token",
+				llmProviderApiKey: "LLM provider API key",
 			},
 		},
 		delete: {
@@ -460,6 +461,7 @@ export const secretsTranslations = {
 				stdioCommand: "stdio 命令",
 				httpUrl: "http url",
 				oauthToken: "oauth token",
+				llmProviderApiKey: "LLM provider API key",
 			},
 		},
 		delete: {
@@ -745,6 +747,7 @@ export const secretsTranslations = {
 				stdioCommand: "stdio command",
 				httpUrl: "http url",
 				oauthToken: "oauth token",
+				llmProviderApiKey: "LLM provider API key",
 			},
 		},
 		delete: {

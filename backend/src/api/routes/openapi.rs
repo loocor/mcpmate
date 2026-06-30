@@ -72,8 +72,8 @@ pub fn api_docs(api: TransformOpenApi) -> TransformOpenApi {
             ..Default::default()
         })
         .tag(Tag {
-            name: "ai".into(),
-            description: Some("AI configuration management endpoints".into()),
+            name: "llm".into(),
+            description: Some("LLM provider management endpoints".into()),
             ..Default::default()
         })
 }
