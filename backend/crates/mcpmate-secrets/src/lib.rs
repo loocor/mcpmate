@@ -22,4 +22,4 @@ pub use root_key::{
     PassphraseRootKeyProvider, RootKeyProviderMetadata, RootKeyProviderMode, RootKeySecurityLevel, SecretRootKey,
     SecretRootKeyError, SecretRootKeyProvider, StagedSecretRootKeyMaterial, default_root_key_provider,
 };
-pub use store::SecretStoreRotationError;
+pub use store::{SecretStoreDeleteError, SecretStoreRotationError};

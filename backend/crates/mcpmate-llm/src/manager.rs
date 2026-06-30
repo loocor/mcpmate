@@ -75,14 +75,12 @@ where
             }
         };
 
-        if let Err(err) = self
-            .credentials
-            .replace_provider_usage(&provider.id, secret_alias.as_deref())
-            .await
-        {
-            self.rollback_created_provider(&provider.id, prepared_credential.as_ref())
-                .await;
-            return Err(err);
+        if let Some(alias) = secret_alias.as_deref() {
+            if let Err(err) = self.credentials.replace_provider_usage(&provider.id, Some(alias)).await {
+                self.rollback_created_provider(&provider.id, prepared_credential.as_ref())
+                    .await;
+                return Err(err);
+            }
         }
 
         self.events
@@ -110,12 +108,16 @@ where
         let mut next_secret_alias = existing.secret_alias.clone();
         let mut old_alias_to_delete: Option<String> = None;
         let mut created_next_credential: Option<PreparedLlmCredential> = None;
+        let mut should_sync_usage = false;
 
         if let Some(api_key_update) = input.api_key.as_ref() {
             match api_key_update.as_deref().map(str::trim) {
                 Some("") | None => {
-                    old_alias_to_delete = existing.secret_alias.clone();
-                    next_secret_alias = None;
+                    if existing.secret_alias.is_some() {
+                        old_alias_to_delete = existing.secret_alias.clone();
+                        next_secret_alias = None;
+                        should_sync_usage = true;
+                    }
                 }
                 Some(api_key) => {
                     let provider_name = input.name.as_deref().unwrap_or(&existing.name);
@@ -123,6 +125,7 @@ where
                     if existing.secret_alias.as_deref() != Some(credential.alias.as_str()) {
                         old_alias_to_delete = existing.secret_alias.clone();
                         next_secret_alias = Some(credential.alias.clone());
+                        should_sync_usage = true;
                     }
                     if credential.created_owned {
                         created_next_credential = Some(credential);
@@ -169,14 +172,16 @@ where
             }
         };
 
-        if let Err(err) = self
-            .credentials
-            .replace_provider_usage(&input.id, provider.secret_alias.as_deref())
-            .await
-        {
-            self.rollback_updated_provider(&input.id, &existing, created_next_credential.as_ref())
-                .await;
-            return Err(err);
+        if should_sync_usage {
+            if let Err(err) = self
+                .credentials
+                .replace_provider_usage(&input.id, provider.secret_alias.as_deref())
+                .await
+            {
+                self.rollback_updated_provider(&input.id, &existing, created_next_credential.as_ref())
+                    .await;
+                return Err(err);
+            }
         }
 
         if let Some(old_alias) = old_alias_to_delete.filter(|alias| provider.secret_alias.as_deref() != Some(alias)) {
@@ -692,4 +697,249 @@ fn normalized_base_url(url: &str) -> LlmResult<String> {
     let mut parsed = url::Url::parse(url).map_err(|_| LlmError::bad_request("Invalid base URL"))?;
     parsed.set_fragment(None);
     Ok(parsed.to_string().trim_end_matches('/').to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::credentials::LlmCredentialStore;
+    use crate::events::NoopLlmProviderEventSink;
+    use crate::repository::{
+        CreateLlmProviderRecord, LlmProviderRepository, StoredLlmProvider, UpdateLlmProviderRecord,
+    };
+
+    #[derive(Clone, Default)]
+    struct FakeRepository {
+        providers: Arc<Mutex<HashMap<String, StoredLlmProvider>>>,
+        deleted: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FakeRepository {
+        fn with_provider(provider: StoredLlmProvider) -> Self {
+            let repository = Self::default();
+            repository
+                .providers
+                .lock()
+                .expect("providers lock")
+                .insert(provider.id.clone(), provider);
+            repository
+        }
+    }
+
+    #[async_trait]
+    impl LlmProviderRepository for FakeRepository {
+        async fn list_providers(&self) -> LlmResult<Vec<StoredLlmProvider>> {
+            Ok(self
+                .providers
+                .lock()
+                .expect("providers lock")
+                .values()
+                .cloned()
+                .collect())
+        }
+
+        async fn get_provider(
+            &self,
+            id: &str,
+        ) -> LlmResult<Option<StoredLlmProvider>> {
+            Ok(self.providers.lock().expect("providers lock").get(id).cloned())
+        }
+
+        async fn create_provider(
+            &self,
+            record: CreateLlmProviderRecord,
+        ) -> LlmResult<StoredLlmProvider> {
+            let provider = StoredLlmProvider {
+                id: "provider-1".to_string(),
+                name: record.name,
+                provider_type: record.provider_type,
+                base_url: record.base_url,
+                model_id: record.model_id,
+                secret_alias: record.secret_alias,
+                default_params_json: record.default_params_json,
+                is_default: false,
+                created_at: None,
+                updated_at: None,
+            };
+            self.providers
+                .lock()
+                .expect("providers lock")
+                .insert(provider.id.clone(), provider.clone());
+            Ok(provider)
+        }
+
+        async fn update_provider(
+            &self,
+            id: &str,
+            record: UpdateLlmProviderRecord,
+        ) -> LlmResult<Option<StoredLlmProvider>> {
+            let mut providers = self.providers.lock().expect("providers lock");
+            let Some(provider) = providers.get_mut(id) else {
+                return Ok(None);
+            };
+            if let Some(name) = record.name {
+                provider.name = name;
+            }
+            if let Some(provider_type) = record.provider_type {
+                provider.provider_type = provider_type;
+            }
+            if let Some(base_url) = record.base_url {
+                provider.base_url = base_url;
+            }
+            if let Some(model_id) = record.model_id {
+                provider.model_id = model_id;
+            }
+            if let Some(secret_alias) = record.secret_alias {
+                provider.secret_alias = secret_alias;
+            }
+            if let Some(default_params_json) = record.default_params_json {
+                provider.default_params_json = default_params_json;
+            }
+            Ok(Some(provider.clone()))
+        }
+
+        async fn delete_provider(
+            &self,
+            id: &str,
+        ) -> LlmResult<bool> {
+            self.deleted.lock().expect("deleted lock").push(id.to_string());
+            Ok(self.providers.lock().expect("providers lock").remove(id).is_some())
+        }
+
+        async fn set_default_provider(
+            &self,
+            _id: &str,
+        ) -> LlmResult<()> {
+            Ok(())
+        }
+
+        async fn get_default_provider(&self) -> LlmResult<Option<StoredLlmProvider>> {
+            Ok(None)
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct FakeCredentialStore {
+        replaced: Arc<Mutex<Vec<(String, Option<String>)>>>,
+        fail_empty_replace: bool,
+    }
+
+    #[async_trait]
+    impl LlmCredentialStore for FakeCredentialStore {
+        async fn resolve_reference(
+            &self,
+            _alias: &str,
+        ) -> LlmResult<String> {
+            Ok("secret".to_string())
+        }
+
+        async fn verify_reference(
+            &self,
+            _alias: &str,
+        ) -> LlmResult<()> {
+            Ok(())
+        }
+
+        async fn create_owned_provider_key(
+            &self,
+            _provider_name: &str,
+            _api_key_value: &str,
+        ) -> LlmResult<String> {
+            Ok("llm_provider_generated".to_string())
+        }
+
+        async fn replace_provider_usage(
+            &self,
+            provider_id: &str,
+            secret_alias: Option<&str>,
+        ) -> LlmResult<()> {
+            if self.fail_empty_replace && secret_alias.is_none() {
+                return Err(LlmError::service_unavailable("Secret store not available"));
+            }
+            self.replaced
+                .lock()
+                .expect("replaced lock")
+                .push((provider_id.to_string(), secret_alias.map(str::to_string)));
+            Ok(())
+        }
+
+        async fn delete_owned_reference_if_unused(
+            &self,
+            _alias: &str,
+        ) -> LlmResult<()> {
+            Ok(())
+        }
+    }
+
+    fn stored_provider(
+        id: &str,
+        secret_alias: Option<&str>,
+    ) -> StoredLlmProvider {
+        StoredLlmProvider {
+            id: id.to_string(),
+            name: "Provider".to_string(),
+            provider_type: "openai_chat".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model_id: "gpt-4o".to_string(),
+            secret_alias: secret_alias.map(str::to_string),
+            default_params_json: None,
+            is_default: false,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn create_provider_without_key_does_not_require_usage_replacement() {
+        let repository = FakeRepository::default();
+        let credentials = FakeCredentialStore {
+            fail_empty_replace: true,
+            ..FakeCredentialStore::default()
+        };
+        let replaced = credentials.replaced.clone();
+        let manager = LlmProviderManager::new(repository, credentials, NoopLlmProviderEventSink);
+
+        let provider = block_on(manager.create_provider(CreateLlmProviderInput {
+            name: "No Key".to_string(),
+            provider_type: "openai_chat".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model_id: "gpt-4o".to_string(),
+            api_key: None,
+            default_params: None,
+        }))
+        .expect("create no-key provider");
+
+        assert_eq!(provider.secret_alias, None);
+        assert!(replaced.lock().expect("replaced lock").is_empty());
+    }
+
+    #[test]
+    fn update_provider_without_key_change_does_not_replace_usage() {
+        let repository = FakeRepository::with_provider(stored_provider("provider-1", None));
+        let credentials = FakeCredentialStore {
+            fail_empty_replace: true,
+            ..FakeCredentialStore::default()
+        };
+        let replaced = credentials.replaced.clone();
+        let manager = LlmProviderManager::new(repository, credentials, NoopLlmProviderEventSink);
+
+        block_on(manager.update_provider(UpdateLlmProviderInput {
+            id: "provider-1".to_string(),
+            name: Some("Renamed".to_string()),
+            provider_type: None,
+            base_url: None,
+            model_id: None,
+            api_key: None,
+            default_params: None,
+        }))
+        .expect("update no-key provider");
+
+        assert!(replaced.lock().expect("replaced lock").is_empty());
+    }
 }

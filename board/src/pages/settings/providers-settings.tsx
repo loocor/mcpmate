@@ -566,6 +566,7 @@ function ProviderDrawer({
 		setModelError(null);
 		try {
 			const trimmedApiKey = apiKey.trim();
+			const trimmedBaseUrl = baseUrl.trim();
 			const sanitizedApiKey = sanitizeStringForSave(trimmedApiKey);
 			const providerIdForStoredKey =
 				isEditing && provider?.id && trimmedApiKey === REDACTED_FULL
@@ -574,7 +575,7 @@ function ProviderDrawer({
 			const models = await llmApi.listModelsForConfig({
 				provider_id: providerIdForStoredKey,
 				provider_type: providerType,
-				base_url: baseUrl || DEFAULT_BASE_URLS[providerType],
+				base_url: trimmedBaseUrl || DEFAULT_BASE_URLS[providerType],
 				model_id: modelId.trim() || DEFAULT_MODEL_IDS[providerType],
 				api_key: sanitizedApiKey,
 			});
@@ -591,6 +592,9 @@ function ProviderDrawer({
 	}, [apiKey, baseUrl, canFetchModels, isEditing, isLoadingModels, modelId, provider, providerType]);
 
 	const handleSubmit = useCallback(() => {
+		const trimmedName = name.trim();
+		const trimmedBaseUrl = baseUrl.trim();
+		const trimmedModelId = modelId.trim();
 		const trimmedApiKey = apiKey.trim();
 		const sanitizedApiKey = sanitizeStringForSave(trimmedApiKey);
 		const submittedApiKey =
@@ -613,19 +617,19 @@ function ProviderDrawer({
 		if (isEditing && provider) {
 			updateMutation.mutate({
 				id: provider.id,
-				name: name || undefined,
+				name: trimmedName || undefined,
 				provider_type: providerType,
-				base_url: baseUrl || undefined,
-				model_id: modelId || undefined,
+				base_url: trimmedBaseUrl || undefined,
+				model_id: trimmedModelId || undefined,
 				api_key: submittedApiKey,
 				default_params: defaultParams,
 			});
 		} else {
 			createMutation.mutate({
-				name,
+				name: trimmedName,
 				provider_type: providerType,
-				base_url: baseUrl || DEFAULT_BASE_URLS[providerType],
-				model_id: modelId,
+				base_url: trimmedBaseUrl || DEFAULT_BASE_URLS[providerType],
+				model_id: trimmedModelId,
 				api_key: sanitizedApiKey,
 				default_params: defaultParams,
 			});

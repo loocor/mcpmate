@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::Stream;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
@@ -209,45 +209,6 @@ fn parse_models_response(
     let mut models: Vec<String> = models_resp.data.into_iter().map(|m| m.id).collect();
     models.sort();
     Ok(models)
-}
-
-fn sibling_openai_models_url(base_url: &str) -> Option<String> {
-    let mut url = reqwest::Url::parse(base_url).ok()?;
-    if url.path().trim_end_matches('/') != "/anthropic" {
-        return None;
-    }
-    url.set_path("/v1/models");
-    url.set_query(None);
-    Some(url.to_string())
-}
-
-async fn list_openai_compatible_models(
-    client: &Client,
-    api_key: &str,
-    url: &str,
-) -> Result<Vec<String>> {
-    let resp = client
-        .get(url)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .send()
-        .await
-        .context("Failed to list OpenAI-compatible models for Anthropic provider")?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "OpenAI-compatible models endpoint returned error (status {}): {}",
-            status,
-            summarize_response_body(&body)
-        );
-    }
-
-    let body = resp
-        .text()
-        .await
-        .context("Failed to read OpenAI-compatible models response")?;
-    parse_models_response(&body, "OpenAI-compatible")
 }
 
 #[derive(Deserialize)]
@@ -657,10 +618,12 @@ impl LlmProvider for AnthropicProvider {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         Ok(None) => return None,
-                        Err(e) => return Some((
-                            Err(anyhow::anyhow!("Stream error: {}", e)),
-                            (byte_stream, buffer, prompt_tokens),
-                        )),
+                        Err(e) => {
+                            return Some((
+                                Err(anyhow::anyhow!("Stream error: {}", e)),
+                                (byte_stream, buffer, prompt_tokens),
+                            ));
+                        }
                     }
                 }
             },
@@ -684,11 +647,6 @@ impl LlmProvider for AnthropicProvider {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            if status == StatusCode::NOT_FOUND {
-                if let Some(openai_models_url) = sibling_openai_models_url(&self.base_url) {
-                    return list_openai_compatible_models(&self.client, &self.api_key, &openai_models_url).await;
-                }
-            }
             anyhow::bail!(
                 "Anthropic models endpoint returned error (status {}): {}",
                 status,

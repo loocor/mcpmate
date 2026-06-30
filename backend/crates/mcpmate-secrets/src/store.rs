@@ -41,6 +41,18 @@ pub enum SecretStoreRotationError {
     PersistenceFailed { action: &'static str, message: String },
 }
 
+#[derive(Debug, Error)]
+pub enum SecretStoreDeleteError {
+    #[error("Secret '{alias}' was not found")]
+    NotFound { alias: String },
+    #[error("Secret '{alias}' is in use by {usage_count} runtime location(s)")]
+    InUse { alias: String, usage_count: usize },
+    #[error("Secret '{alias}' is in use by {unsupported_count} unsupported runtime location(s)")]
+    UnsupportedUsage { alias: String, unsupported_count: u64 },
+    #[error("secure store delete failed: {0}")]
+    Store(#[from] anyhow::Error),
+}
+
 impl fmt::Debug for LocalSecretStore {
     fn fmt(
         &self,
@@ -169,25 +181,31 @@ impl LocalSecretStore {
         &self,
         alias: &str,
         force: bool,
-    ) -> Result<()> {
+    ) -> std::result::Result<(), SecretStoreDeleteError> {
         if !force {
             let usages = self.list_usages(alias).await?;
             if !usages.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "Secret '{alias}' is in use by {} runtime location(s)",
-                    usages.len()
-                ));
+                return Err(SecretStoreDeleteError::InUse {
+                    alias: alias.to_string(),
+                    usage_count: usages.len(),
+                });
             }
 
             let unsupported_count = self.count_unsupported_usages_for_alias(alias).await?;
             if unsupported_count > 0 {
-                return Err(anyhow::anyhow!(
-                    "Secret '{alias}' is in use by {unsupported_count} unsupported runtime location(s)"
-                ));
+                return Err(SecretStoreDeleteError::UnsupportedUsage {
+                    alias: alias.to_string(),
+                    unsupported_count,
+                });
             }
         }
 
-        database::delete_secret(&self.pool, alias).await?;
+        let deleted = database::delete_secret(&self.pool, alias).await?;
+        if !deleted {
+            return Err(SecretStoreDeleteError::NotFound {
+                alias: alias.to_string(),
+            });
+        }
         self.encrypted_cache
             .write()
             .map_err(|_| anyhow::anyhow!("secret cache lock poisoned"))?
@@ -904,7 +922,7 @@ mod tests {
         .bind("future-location-row")
         .bind("provider/api-key")
         .bind("LLMPROVFuture")
-        .bind("llm_provider_api_key")
+        .bind("future_runtime_location")
         .bind(Option::<String>::None)
         .bind(Option::<i64>::None)
         .execute(&store.pool())
@@ -970,7 +988,7 @@ mod tests {
         .bind("future-only-location-row")
         .bind("provider/future-only")
         .bind("LLMPROVFuture")
-        .bind("llm_provider_api_key")
+        .bind("future_runtime_location")
         .bind(Option::<String>::None)
         .bind(Option::<i64>::None)
         .execute(&store.pool())

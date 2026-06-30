@@ -244,6 +244,17 @@ fn from_openai_message(msg: &OpenAiMessage) -> ChatMessage {
     }
 }
 
+fn from_openai_stream_tool_call_delta(delta: &OpenAiStreamToolCallDelta) -> ToolCallDelta {
+    ToolCallDelta {
+        index: delta.index,
+        id: delta.id.clone(),
+        function: delta.function.as_ref().map(|function| FunctionCallDelta {
+            name: function.name.clone(),
+            arguments: function.arguments.clone(),
+        }),
+    }
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     fn provider_type(&self) -> &str {
@@ -388,18 +399,11 @@ impl LlmProvider for OpenAiProvider {
                                             _ => None,
                                         }),
                                         content: c.delta.content.clone(),
-                                        tool_calls: c.delta.tool_calls.as_ref().map(|tc| {
-                                            tc.iter()
-                                                .map(|t| ToolCallDelta {
-                                                    index: t.id.as_ref().map(|_| 0).unwrap_or(t.index),
-                                                    id: t.id.clone(),
-                                                    function: t.function.as_ref().map(|f| FunctionCallDelta {
-                                                        name: f.name.clone(),
-                                                        arguments: f.arguments.clone(),
-                                                    }),
-                                                })
-                                                .collect()
-                                        }),
+                                        tool_calls: c
+                                            .delta
+                                            .tool_calls
+                                            .as_ref()
+                                            .map(|tc| tc.iter().map(from_openai_stream_tool_call_delta).collect()),
                                     })
                                     .unwrap_or(ChatDelta {
                                         role: None,
@@ -464,5 +468,23 @@ impl LlmProvider for OpenAiProvider {
         models.sort();
         Ok(models)
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_provider_stream_tool_call_index_when_id_is_present() {
+        let delta = OpenAiStreamToolCallDelta {
+            index: 3,
+            id: Some("call_3".to_string()),
+            function: None,
+        };
+
+        let mapped = from_openai_stream_tool_call_delta(&delta);
+
+        assert_eq!(mapped.index, 3);
+        assert_eq!(mapped.id.as_deref(), Some("call_3"));
+    }
 }

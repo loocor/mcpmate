@@ -27,7 +27,7 @@ use crate::{
         resolve_secret_usage_status_from_cache,
     },
 };
-use mcpmate_secrets::{RootKeyProviderMetadata, SecretRootKeyError};
+use mcpmate_secrets::{RootKeyProviderMetadata, SecretRootKeyError, SecretStoreDeleteError};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
@@ -220,7 +220,7 @@ pub async fn delete_secret(
     store
         .delete_secret(&payload.alias, true)
         .await
-        .map_err(map_secret_store_error)?;
+        .map_err(map_secret_store_delete_error)?;
     Ok(Json(SecretDeleteResp::success(SecretDeleteData {
         alias: payload.alias,
         deleted: true,
@@ -301,6 +301,17 @@ fn map_secret_store_error(error: anyhow::Error) -> ApiError {
         ApiError::Conflict(message)
     } else {
         ApiError::BadRequest(message)
+    }
+}
+
+fn map_secret_store_delete_error(error: SecretStoreDeleteError) -> ApiError {
+    let message = error.to_string();
+    match error {
+        SecretStoreDeleteError::NotFound { .. } => ApiError::NotFound(message),
+        SecretStoreDeleteError::InUse { .. } | SecretStoreDeleteError::UnsupportedUsage { .. } => {
+            ApiError::Conflict(message)
+        }
+        SecretStoreDeleteError::Store(_) => ApiError::BadRequest(message),
     }
 }
 
@@ -1003,6 +1014,9 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&db_pool)
             .await
             .expect("init server tables");
+        crate::config::llm::init::initialize_llm_tables(&db_pool)
+            .await
+            .expect("init llm tables");
         let store = Arc::new(
             LocalSecretStore::initialize_with_development_root_key(
                 db_pool.clone(),
@@ -1080,7 +1094,7 @@ mod tests {
         .bind(format!("{alias}-future-location-row"))
         .bind(alias)
         .bind("LLMPROVFuture")
-        .bind("llm_provider_api_key")
+        .bind("future_runtime_location")
         .bind(Option::<String>::None)
         .bind(Option::<i64>::None)
         .execute(pool)

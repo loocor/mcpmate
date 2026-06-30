@@ -8,7 +8,7 @@ use mcpmate_llm::{
     LlmProviderDefaultParamsInput, LlmProviderManager, LlmProviderModelPreviewInput, LlmProviderThinkingInput,
     LlmProviderThinkingMode, StoredLlmProvider, TracingLlmProviderEventSink, UpdateLlmProviderInput,
 };
-use mcpmate_secrets::{SecretReference, SecretResolver};
+use mcpmate_secrets::{SecretReference, SecretResolver, SecretStoreDeleteError};
 
 use crate::api::handlers::ApiError;
 use crate::api::models::llm::*;
@@ -333,11 +333,34 @@ impl LlmCredentialStore for SecureStoreLlmCredentialStore {
         }
 
         if let Some(store) = self.optional_secret_store().await {
-            store
-                .delete_secret(alias, false)
-                .await
-                .map_err(|err| LlmError::internal(err.to_string()))?;
+            match store.delete_secret(alias, false).await {
+                Ok(()) => {}
+                Err(err) if is_secret_in_use_delete_error(&err) => {}
+                Err(err) => return Err(LlmError::internal(err.to_string())),
+            }
         }
         Ok(())
+    }
+}
+
+fn is_secret_in_use_delete_error(err: &SecretStoreDeleteError) -> bool {
+    matches!(
+        err,
+        SecretStoreDeleteError::InUse { .. } | SecretStoreDeleteError::UnsupportedUsage { .. }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_secure_store_in_use_delete_errors_by_type() {
+        let err = SecretStoreDeleteError::InUse {
+            alias: "llm_provider_x".to_string(),
+            usage_count: 1,
+        };
+
+        assert!(is_secret_in_use_delete_error(&err));
     }
 }
