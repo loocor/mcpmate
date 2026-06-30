@@ -1,5 +1,34 @@
 [
 	{
+		"version": "0.3.4",
+		"date": "2026-06-30",
+		"highlights": [
+			"MCPMate v0.3.4-beta focuses on day-to-day operator control inside the dashboard. Capability management now uses the same searchable surface across install and profile flows, Inspector calls are easier to run and review in native or proxy mode, and secret, client, and profile screens expose custody and lifecycle state more consistently."
+		],
+		"changes": [
+			{
+				"type": "ref",
+				"text": "Capability lists now share one reusable surface for search, filtering, preview, and presentation across Add MCP Server install preview and profile detail workflows."
+			},
+			{
+				"type": "ref",
+				"text": "Profile detail now presents server, tool, prompt, resource, and template exposure through one capability management flow instead of separate management islands."
+			},
+			{
+				"type": "ref",
+				"text": "The Inspector drawer now supports a unified native/proxy inspect flow, preserves schema-derived defaults through form snapshots, and separates response output from live events."
+			},
+			{
+				"type": "fix",
+				"text": "Secret lifecycle, client form, profile, and server surfaces now reflect custody state and usage context more consistently across backend APIs and dashboard copy."
+			},
+			{
+				"type": "docs",
+				"text": "The website release record and related release-facing docs were aligned so the changelog remains the durable product history while roadmap copy stays focused on direction."
+			}
+		]
+	},
+	{
 		"version": "0.3.3",
 		"date": "2026-06-22",
 		"highlights": [

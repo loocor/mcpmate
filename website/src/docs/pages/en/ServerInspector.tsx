@@ -83,8 +83,9 @@ export default function ServerInspector() {
 			<H2>What the drawer adds</H2>
 			<Ul>
 				<Li>Schema-derived forms for tool and prompt arguments when metadata is available.</Li>
+				<Li>Form snapshots preserve generated defaults and Fill Mock values while you move between schema-driven and raw JSON input.</Li>
 				<Li>Raw JSON mode when you need exact request bodies instead of generated fields.</Li>
-				<Li>Live events for tool calls, including started, progress, log, result, error, and cancelled states.</Li>
+				<Li>Separate response and event output, so final results stay readable while started, progress, log, error, and cancelled states remain available for debugging.</Li>
 				<Li>Copy and clear actions so outputs can be reused in bug reports or comparisons.</Li>
 			</Ul>
 

@@ -12,9 +12,10 @@ export default function Inspector() {
 			}}
 		>
 			<P>
-				The MCPMate Inspector provides a powerful interface for monitoring and
-				debugging your MCP servers. Get real-time insights into server behavior,
-				examine logs, and diagnose issues all from within the MCPMate console.
+				The MCPMate Inspector is the live capability workbench for MCP servers. Use
+				it to compare native and proxy behavior, run controlled tool and prompt
+				requests, read resources, and capture response or event evidence without
+				leaving the console.
 			</P>
 
 			<DocScreenshot
@@ -26,30 +27,31 @@ export default function Inspector() {
 			<H2>Features</H2>
 			<Ul>
 				<Li>
-					<strong>Real-time Monitoring:</strong> Watch server activity as it
-					happens
+					<strong>Native and proxy channels:</strong> Compare raw server behavior
+					with MCPMate-managed exposure
 				</Li>
 				<Li>
-					<strong>Log Viewer:</strong> Browse and search through server logs
+					<strong>Schema-aware inputs:</strong> Generate forms from capability
+					metadata or switch to raw JSON
 				</Li>
 				<Li>
-					<strong>Request/Response Inspector:</strong> Examine MCP protocol
-					messages in detail
+					<strong>Response and event review:</strong> Examine final output,
+					progress, logs, errors, and cancellation separately
 				</Li>
 				<Li>
-					<strong>Performance Metrics:</strong> Track response times and resource
-					usage
+					<strong>Capability reads:</strong> Validate tools, prompts, resources,
+					and resource templates from the same drawer workflow
 				</Li>
 				<Li>
-					<strong>Error Diagnostics:</strong> Quickly identify and troubleshoot
-					issues
+					<strong>Error diagnostics:</strong> Quickly identify and troubleshoot
+					request failures
 				</Li>
 			</Ul>
 
 			<H2>Use cases</H2>
 			<Ul>
 				<Li>Debugging server configuration issues.</Li>
-				<Li>Monitoring runtime behavior during rollout windows.</Li>
+				<Li>Comparing native server output with profile-scoped proxy output.</Li>
 				<Li>Validating capability payloads before enabling to all clients.</Li>
 				<Li>Troubleshooting client-server communication problems.</Li>
 			</Ul>
@@ -57,7 +59,7 @@ export default function Inspector() {
 			<H2>Suggested workflow</H2>
 			<Ul>
 				<Li>Start from server details to identify the target server/capability.</Li>
-				<Li>Run controlled calls in Inspector and capture response metadata.</Li>
+				<Li>Run controlled calls in Inspector and review response and event output separately.</Li>
 				<Li>Cross-check timestamps with Audit Logs for full operation context.</Li>
 			</Ul>
 		</DocLayout>

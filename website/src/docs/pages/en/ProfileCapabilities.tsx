@@ -11,10 +11,10 @@ export default function ProfileCapabilities() {
 			}}
 		>
 			<P>
-				The capability tabs are where a profile becomes operational policy instead of
-				just metadata. Use them to decide which servers are attached to the profile
-				and which tools, prompts, resources, or templates should remain visible once
-				the profile is active.
+				Profile capability management is where a profile becomes operational policy
+				instead of just metadata. The shared capability surface lets you search,
+				filter, inspect, and bulk-edit the servers, tools, prompts, resources, and
+				templates that should remain visible once the profile is active.
 			</P>
 
 			<section id="servers">
@@ -67,7 +67,8 @@ export default function ProfileCapabilities() {
 
 			<H2>Shared operating pattern</H2>
 			<Ul>
-				<Li>Filter first, then use bulk actions for safe, repeatable changes.</Li>
+				<Li>Search or filter first, then use bulk actions for safe, repeatable changes.</Li>
+				<Li>Use Inspect from a server row when you need to validate live behavior before changing profile exposure.</Li>
 				<Li>Prefer disabling in the profile before disabling a whole server globally.</Li>
 				<Li>Re-check affected clients after bulk edits, because merged runtime exposure can change immediately.</Li>
 			</Ul>
