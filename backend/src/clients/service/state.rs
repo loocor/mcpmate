@@ -287,7 +287,11 @@ impl ClientConfigService {
         identifier: &str,
         state: &ClientStateRow,
     ) -> ConfigResult<bool> {
-        if state.has_local_config_target() {
+        let has_local_config_target = state.has_local_config_target();
+        let attachment_needs_repair =
+            has_local_config_target && matches!(state.attachment_state(), AttachmentState::NotApplicable);
+
+        if has_local_config_target && !attachment_needs_repair {
             return Ok(false);
         }
         let Some(config_path) = state.config_path() else {
@@ -306,15 +310,19 @@ impl ClientConfigService {
             }
         }
 
-        self.update_runtime_target(
-            identifier,
-            Some(config_path),
-            Some(ClientConnectionMode::LocalConfigDetected.as_str()),
-            false,
-        )
-        .await?;
+        let mut repaired = false;
+        if !has_local_config_target {
+            self.update_runtime_target(
+                identifier,
+                Some(config_path),
+                Some(ClientConnectionMode::LocalConfigDetected.as_str()),
+                false,
+            )
+            .await?;
+            repaired = true;
+        }
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE client
             SET attachment_state = 'detached'
@@ -326,9 +334,12 @@ impl ClientConfigService {
         .execute(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        repaired = repaired || result.rows_affected() > 0;
 
-        tracing::info!(client = %identifier, "Repaired local config target metadata");
-        Ok(true)
+        if repaired {
+            tracing::info!(client = %identifier, "Repaired local config target metadata");
+        }
+        Ok(repaired)
     }
 
     pub async fn suspend_client(

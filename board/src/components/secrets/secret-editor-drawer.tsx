@@ -83,6 +83,7 @@ interface SecretEditorDrawerProps {
 	usages?: SecretUsage[];
 	usagesLoading?: boolean;
 	usedByCount?: number;
+	unknownUsageCount?: number;
 	serverNameById?: ReadonlyMap<string, string>;
 	initialTab?: "general" | "usage";
 	nested?: boolean;
@@ -102,6 +103,7 @@ export function SecretEditorDrawer({
 	usages = [],
 	usagesLoading = false,
 	usedByCount,
+	unknownUsageCount = 0,
 	serverNameById,
 	initialTab = "general",
 	nested = false,
@@ -193,6 +195,7 @@ export function SecretEditorDrawer({
 		: "";
 	const isOAuthSecret = activeEditor ? !isUserCreatableSecretKind(activeEditor.kind) : false;
 	const isActiveOAuthSecret = isOAuthSecret && (usedByCount ?? 0) > 0;
+	const hasUnknownUsage = unknownUsageCount > 0;
 	const activeUsageCount =
 		usages.length > 0
 			? usages.filter((usage) => usage.status !== "stale").length
@@ -200,7 +203,7 @@ export function SecretEditorDrawer({
 	const historicalUsageCount = usages.filter(
 		(usage) => usage.status === "stale",
 	).length;
-	const canDeleteFromUsage = activeUsageCount === 0 && !isActiveOAuthSecret;
+	const canDeleteFromUsage = activeUsageCount === 0 && !isActiveOAuthSecret && !hasUnknownUsage;
 	const showStoredValueMask =
 		activeEditor?.mode === "edit" &&
 		!isOAuthSecret &&
@@ -223,6 +226,18 @@ export function SecretEditorDrawer({
 	const valueInputDisplay = showStoredValueMask
 		? STORED_SECRET_VALUE_MASK
 		: activeEditor.value;
+	const activeUsageSummaryValue = hasUnknownUsage ? "—" : activeUsageCount;
+	const historicalUsageSummaryValue = hasUnknownUsage
+		? "—"
+		: historicalUsageCount;
+	const activeUsageSummaryLabel = t("usage.summary.activeValue", {
+		defaultValue: "Active {{value}}",
+		value: activeUsageSummaryValue,
+	});
+	const historicalUsageSummaryLabel = t("usage.summary.historicalValue", {
+		defaultValue: "Historical {{value}}",
+		value: historicalUsageSummaryValue,
+	});
 	const copyPlaceholderLabel = t("editor.actions.copyPlaceholder", {
 		defaultValue: "Copy placeholder",
 	});
@@ -245,6 +260,44 @@ export function SecretEditorDrawer({
 	const kindDescription = isOAuthSecret
 		? oauthManagedDescription
 		: kindLockedDescription;
+	let usageSummaryDescription = t("usage.summary.blocked", {
+		defaultValue: "Remove active bindings before deleting this secret.",
+	});
+	if (hasUnknownUsage) {
+		usageSummaryDescription = t("usage.summary.unknown", {
+			defaultValue:
+				"Some stored usage references were created by another version and cannot be classified here.",
+		});
+	} else if (isActiveOAuthSecret) {
+		usageSummaryDescription = t("usage.summary.oauthManaged", {
+			defaultValue:
+				"OAuth credentials are cleaned up by OAuth revoke or server deletion.",
+		});
+	} else if (canDeleteFromUsage) {
+		usageSummaryDescription = t("usage.summary.canDelete", {
+			defaultValue: "No active runtime binding is using this secret.",
+		});
+	}
+	let deleteDisabledTitle: string | undefined;
+	if (!canDeleteFromUsage) {
+		if (hasUnknownUsage) {
+			deleteDisabledTitle = t("editor.actions.deleteDisabledUnknownTooltip", {
+				defaultValue:
+					"Cannot delete: some usage references cannot be classified by this version.",
+			});
+		} else if (isActiveOAuthSecret) {
+			deleteDisabledTitle = t("editor.actions.deleteDisabledOAuthTooltip", {
+				defaultValue:
+					"OAuth-managed credentials are removed by OAuth revoke or server deletion.",
+			});
+		} else {
+			deleteDisabledTitle = t("editor.actions.deleteDisabledTooltip", {
+				defaultValue:
+					"Cannot delete: secret is actively used by {{count}} location(s)",
+				count: activeUsageCount,
+			});
+		}
+	}
 
 	const requestClose = () => setOpen(false);
 
@@ -447,42 +500,24 @@ export function SecretEditorDrawer({
 							</TabsContent>
 							<TabsContent value="usage" className="space-y-4 pt-4">
 								<div className="rounded-lg border bg-muted/30 p-3">
-									<div className="flex flex-wrap items-center gap-2">
-										<Badge variant={activeUsageCount > 0 ? "success" : "outline"}>
-											{t("usage.summary.active", {
-												defaultValue: "Active {{count}}",
-												count: activeUsageCount,
-											})}
-										</Badge>
-										<Badge
-											variant={historicalUsageCount > 0 ? "warning" : "outline"}
-										>
-											{t("usage.summary.historical", {
-												defaultValue: "Historical {{count}}",
-												count: historicalUsageCount,
-											})}
-										</Badge>
+										<div className="flex flex-wrap items-center gap-2">
+											<Badge variant={activeUsageCount > 0 ? "success" : "outline"}>
+												{activeUsageSummaryLabel}
+											</Badge>
+											<Badge
+												variant={historicalUsageCount > 0 ? "warning" : "outline"}
+											>
+												{historicalUsageSummaryLabel}
+											</Badge>
 									</div>
 									<p className="mt-2 text-xs text-muted-foreground">
-										{isActiveOAuthSecret
-											? t("usage.summary.oauthManaged", {
-												defaultValue:
-													"OAuth credentials are cleaned up by OAuth revoke or server deletion.",
-											})
-											: canDeleteFromUsage
-												? t("usage.summary.canDelete", {
-													defaultValue:
-														"No active runtime binding is using this secret.",
-												})
-												: t("usage.summary.blocked", {
-													defaultValue:
-														"Remove active bindings before deleting this secret.",
-												})}
+										{usageSummaryDescription}
 									</p>
 								</div>
 								<SecretUsageList
 									usages={usages}
 									isLoading={usagesLoading}
+									unknownUsageCount={unknownUsageCount}
 									serverNameById={serverNameById}
 									onNavigateToServer={onNavigateToServer}
 								/>
@@ -506,20 +541,7 @@ export function SecretEditorDrawer({
 										variant="destructive"
 										className="gap-2"
 										disabled={isSaving || writesDisabled || !canDeleteFromUsage}
-										title={
-											!canDeleteFromUsage
-												? isActiveOAuthSecret
-													? t("editor.actions.deleteDisabledOAuthTooltip", {
-														defaultValue:
-															"OAuth-managed credentials are removed by OAuth revoke or server deletion.",
-													})
-													: t("editor.actions.deleteDisabledTooltip", {
-														defaultValue:
-															"Cannot delete: secret is actively used by {{count}} location(s)",
-														count: activeUsageCount,
-													})
-												: undefined
-										}
+										title={deleteDisabledTitle}
 										onClick={onDelete}
 									>
 										<Trash2 className="h-4 w-4" />

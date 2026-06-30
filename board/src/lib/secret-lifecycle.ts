@@ -3,6 +3,7 @@ import type { SecretMetadata } from "./types";
 
 export type SecretLifecycleState =
   | "active"
+  | "unknown"
   | "unused"
   | "oauth_managed";
 
@@ -12,6 +13,7 @@ export interface SecretLifecycle {
   state: SecretLifecycleState;
   activeCount: number;
   historicalCount: number;
+  unknownCount: number;
 }
 
 const OAUTH_SECRET_KIND_SET = new Set<string>(OAUTH_SECRET_KINDS);
@@ -27,12 +29,23 @@ export function classifySecretLifecycle(
 ): SecretLifecycle {
   const activeCount = secret.used_by_count;
   const historicalCount = secret.historical_usage_count;
+  const unknownCount = secret.unknown_usage_count ?? 0;
 
   if (activeCount > 0) {
     return {
       state: "active",
       activeCount,
       historicalCount,
+      unknownCount,
+    };
+  }
+
+  if (unknownCount > 0) {
+    return {
+      state: "unknown",
+      activeCount,
+      historicalCount,
+      unknownCount,
     };
   }
 
@@ -41,6 +54,7 @@ export function classifySecretLifecycle(
       state: "oauth_managed",
       activeCount,
       historicalCount,
+      unknownCount,
     };
   }
 
@@ -48,6 +62,7 @@ export function classifySecretLifecycle(
     state: "unused",
     activeCount,
     historicalCount,
+    unknownCount,
   };
 }
 

@@ -12,6 +12,7 @@ import type { SecretUsage, SecretUsageStatus } from "../../lib/types";
 interface SecretUsageListProps {
 	usages: SecretUsage[];
 	isLoading?: boolean;
+	unknownUsageCount?: number;
 	serverNameById?: ReadonlyMap<string, string>;
 	onNavigateToServer?: (serverId: string) => void;
 }
@@ -137,10 +138,16 @@ function SecretUsageSection({
 export function SecretUsageList({
 	usages,
 	isLoading = false,
+	unknownUsageCount = 0,
 	serverNameById,
 	onNavigateToServer,
 }: SecretUsageListProps) {
 	const { t } = useTranslation("secrets");
+	const hasUnknownUsage = unknownUsageCount > 0;
+	const unknownUsageDescription = t("usage.unknown.description", {
+		defaultValue:
+			"Some stored usage references were created by another version and cannot be shown here.",
+	});
 
 	const { activeUsages, staleUsages } = useMemo(() => {
 		const active: SecretUsage[] = [];
@@ -164,16 +171,23 @@ export function SecretUsageList({
 	}
 
 	if (usages.length === 0) {
+		const emptyTitle = hasUnknownUsage
+			? t("usage.unknown.title", {
+					defaultValue: "Usage is partially unknown",
+				})
+			: t("usage.empty", { defaultValue: "No server usage recorded" });
+		const emptyDescription = hasUnknownUsage
+			? unknownUsageDescription
+			: t("usage.emptyDescription", {
+					defaultValue:
+						"This secret has no active or historical server binding.",
+				});
+
 		return (
 			<div className="rounded-lg border border-dashed p-6 text-center">
-				<p className="text-sm font-medium">
-					{t("usage.empty", { defaultValue: "No server usage recorded" })}
-				</p>
+				<p className="text-sm font-medium">{emptyTitle}</p>
 				<p className="mt-1 text-xs text-muted-foreground">
-					{t("usage.emptyDescription", {
-						defaultValue:
-							"This secret has no active or historical server binding.",
-					})}
+					{emptyDescription}
 				</p>
 			</div>
 		);
@@ -181,6 +195,11 @@ export function SecretUsageList({
 
 	return (
 		<div className="space-y-6">
+			{hasUnknownUsage ? (
+				<div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+					{unknownUsageDescription}
+				</div>
+			) : null}
 			<SecretUsageSection
 				title={t("usage.sections.active", {
 					defaultValue: "Active bindings",

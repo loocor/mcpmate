@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TFunction } from "i18next";
 
+import { resolveClientIdentifierForSave } from "../../../components/client-form-identifiers";
 import { createClientFormSchema } from "../../../components/client-form-schema";
 import { clientsTranslations } from ".";
 
@@ -44,5 +45,35 @@ describe("clients translations", () => {
 				"detail.form.validation.displayNameRequired",
 			]);
 		}
+	});
+
+	test("limits strict client identifier format validation to create mode", () => {
+		const echoT = ((key: string) => key) as TFunction;
+		const values = {
+			identifier: "claude_desktop",
+			displayName: "Claude Desktop",
+			configFileChoice: "without_config_file",
+			supportedTransports: [],
+			configFileParseFormat: "json",
+			configFileParseContainerType: "standard",
+		};
+
+		const createResult = createClientFormSchema(echoT, "create").safeParse(values);
+		expect(createResult.success).toBe(false);
+		if (!createResult.success) {
+			expect(createResult.error.flatten().fieldErrors.identifier).toEqual([
+				"detail.form.validation.identifierFormat",
+			]);
+		}
+
+		const editResult = createClientFormSchema(echoT, "edit").safeParse(values);
+		expect(editResult.success).toBe(true);
+	});
+
+	test("preserves legacy client identifiers when saving edit mode", () => {
+		expect(resolveClientIdentifierForSave("create", "Claude Desktop")).toBe("claude-desktop");
+		expect(resolveClientIdentifierForSave("edit", "claude_desktop", "claude_desktop")).toBe(
+			"claude_desktop",
+		);
 	});
 });

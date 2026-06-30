@@ -155,6 +155,7 @@ export const profilesTranslations = {
 				prompts: "Prompts",
 				resources: "Resources",
 				templates: "Templates",
+				capabilities: "Capabilities",
 				logs: "Logs",
 			},
 			tokenSavings: {
@@ -236,12 +237,12 @@ export const profilesTranslations = {
 				multiSelect: "Multi-select",
 				priority: "Priority",
 				servers: "Servers",
-				tools: "Tools",
-				prompts: "Prompts",
-				resources: "Resources",
-				templates: "Templates",
+				allServers: "All servers",
+				allServersShort: "All",
+				enabledCapabilities: "enabled capabilities",
 				debugServer: "Inspect server",
 				browseServer: "Browse server",
+				resizeCapabilityColumns: "Resize capability columns",
 				status: "Status",
 				type: "Type",
 			},
@@ -251,13 +252,14 @@ export const profilesTranslations = {
 				prompts: "Manage prompts included in this profile",
 				resources: "Manage resources included in this profile",
 				templates: "Manage resource templates included in this profile",
+				capabilityServers:
+					"Select a server to manage its profile capabilities.",
+				allCapabilityGroups:
+					"Manage tools, resources, prompts, and resource templates across the visible servers.",
+				capabilityGroups:
+					"Manage tools, resources, prompts, and resource templates for the selected server.",
 			},
 		filters: {
-			status: {
-				all: "All",
-				enabled: "Enabled",
-				disabled: "Disabled",
-			},
 			server: {
 				all: "All Servers",
 			},
@@ -272,6 +274,7 @@ export const profilesTranslations = {
 				noResources: "No resources found in this profile",
 				noTemplates: "No templates found in this profile",
 				noServers: "No servers found in this profile",
+				selectServer: "Select a server to inspect its capabilities.",
 				profileNotFound: "Profile not found",
 			},
 			messages: {
@@ -473,6 +476,7 @@ export const profilesTranslations = {
 					prompts: "提示",
 					resources: "资源",
 					templates: "模板",
+					capabilities: "能力",
 					logs: "日志",
 				},
 				tokenSavings: {
@@ -553,12 +557,12 @@ export const profilesTranslations = {
 				multiSelect: "多选",
 				priority: "优先级",
 				servers: "服务器",
-				tools: "工具",
-				prompts: "提示",
-				resources: "资源",
-				templates: "模板",
+				allServers: "全部服务器",
+				allServersShort: "全部",
+				enabledCapabilities: "个已启用能力",
 				debugServer: "检视服务器",
 				browseServer: "浏览服务器",
+				resizeCapabilityColumns: "调整能力列宽",
 				status: "状态",
 				type: "类型",
 			},
@@ -568,13 +572,13 @@ export const profilesTranslations = {
 				prompts: "管理此配置集包含的提示",
 				resources: "管理此配置集包含的资源",
 				templates: "管理此配置集包含的资源模板",
+				capabilityServers: "选择服务器以管理它在该配置集中的能力。",
+				allCapabilityGroups:
+					"管理当前可见服务器中的工具、资源、提示与资源模板。",
+				capabilityGroups:
+					"管理所选服务器中的工具、资源、提示与资源模板。",
 			},
 		filters: {
-			status: {
-				all: "全部",
-				enabled: "已启用",
-				disabled: "已禁用",
-			},
 			server: {
 				all: "全部服务器",
 			},
@@ -589,6 +593,7 @@ export const profilesTranslations = {
 				noResources: "此配置集中未找到资源",
 				noTemplates: "此配置集中未找到模板",
 				noServers: "此配置集中未找到服务器",
+				selectServer: "选择一个服务器以查看它的能力。",
 				profileNotFound: "未找到配置集",
 			},
 				messages: {
@@ -797,6 +802,7 @@ export const profilesTranslations = {
 					prompts: "プロンプト",
 					resources: "リソース",
 					templates: "テンプレート",
+					capabilities: "ケイパビリティ",
 					logs: "ログ",
 				},
 				tokenSavings: {
@@ -878,12 +884,12 @@ export const profilesTranslations = {
 				multiSelect: "マルチセレクト",
 				priority: "優先度",
 				servers: "サーバー",
-				tools: "ツール",
-				prompts: "プロンプト",
-				resources: "リソース",
-				templates: "テンプレート",
+				allServers: "すべてのサーバー",
+				allServersShort: "すべて",
+				enabledCapabilities: "有効なケイパビリティ",
 				debugServer: "サーバーを検査",
 				browseServer: "サーバーを閲覧",
+				resizeCapabilityColumns: "ケイパビリティ列の幅を変更",
 				status: "状態",
 				type: "タイプ",
 			},
@@ -893,13 +899,14 @@ export const profilesTranslations = {
 					prompts: "このプロファイルに含まれるプロンプトを管理",
 					resources: "このプロファイルに含まれるリソースを管理",
 					templates: "このプロファイルに含まれるリソーステンプレートを管理",
+					capabilityServers:
+						"サーバーを選択して、このプロファイルでのケイパビリティを管理します。",
+					allCapabilityGroups:
+						"表示中のサーバー全体でツール、リソース、プロンプト、リソーステンプレートを管理します。",
+					capabilityGroups:
+						"選択したサーバーのツール、リソース、プロンプト、リソーステンプレートを管理します。",
 			},
 			filters: {
-				status: {
-					all: "すべて",
-					enabled: "有効",
-					disabled: "無効",
-				},
 				server: {
 					all: "すべてのサーバー",
 				},
@@ -914,6 +921,8 @@ export const profilesTranslations = {
 					noResources: "このプロファイルにリソースが見つかりません",
 					noTemplates: "このプロファイルにテンプレートが見つかりません",
 					noServers: "このプロファイルにサーバーが見つかりません",
+					selectServer:
+						"サーバーを選択してケイパビリティを確認してください。",
 					profileNotFound: "プロファイルが見つかりません",
 				},
 					messages: {

@@ -86,12 +86,14 @@ type SecretToolbarEntity = Entity & {
 	provider_kind: string;
 	used_by_count: number;
 	historical_usage_count: number;
+	unknown_usage_count?: number;
 	version: number;
 };
 
 const SECRET_LIFECYCLE_FILTERS: SecretLifecycleFilter[] = [
 	"all",
 	"active",
+	"unknown",
 	"unused",
 	"oauth_managed",
 ];
@@ -212,6 +214,10 @@ export function SecretsPage() {
 			usage: t("list.stats.usage", { defaultValue: "Usage" }),
 			history: t("list.stats.history", { defaultValue: "History" }),
 			version: t("list.stats.version", { defaultValue: "Version" }),
+			unknownUsageTitle: t("usage.unknown.description", {
+				defaultValue:
+					"Some stored usage references were created by another version and cannot be shown here.",
+			}),
 		}),
 		[t, i18n.language],
 	);
@@ -267,6 +273,7 @@ export function SecretsPage() {
 			provider_kind: secret.provider_kind,
 			used_by_count: secret.used_by_count,
 			historical_usage_count: secret.historical_usage_count,
+			unknown_usage_count: secret.unknown_usage_count,
 			version: secret.version,
 		}));
 	}, [filteredSecrets]);
@@ -510,21 +517,38 @@ export function SecretsPage() {
 
 	const editorMeta = useMemo(() => {
 		if (!editor || editor.mode !== "edit") {
-			return { placeholder: undefined, usedByCount: undefined };
+			return {
+				placeholder: undefined,
+				usedByCount: undefined,
+				unknownUsageCount: undefined,
+			};
 		}
 		const secret = secretsByAlias.get(editor.alias);
 		return {
 			placeholder: secret?.placeholder,
 			usedByCount: secret?.used_by_count,
+			unknownUsageCount: secret?.unknown_usage_count,
 		};
 	}, [editor, secretsByAlias]);
 
 	const statsCards = useMemo((): StatCardData[] => {
 		const secrets = secretsQuery.data ?? [];
 		const inUseCount = secrets.filter((secret) => secret.used_by_count > 0).length;
+		const unknownCount = secrets.filter(
+			(secret) => (secret.unknown_usage_count ?? 0) > 0,
+		).length;
 		const unusedCount = [...lifecycleByAlias.values()].filter(
 			secretIsUnused,
 		).length;
+		const unusedDescription =
+			unknownCount > 0
+				? t("stats.unused.unknownDescription", {
+						defaultValue: "{{count}} uncertain",
+						count: unknownCount,
+					})
+				: t("stats.unused.description", {
+						defaultValue: "not linked",
+					});
 		const storeStatus = storeStatusQuery.data;
 
 		let storeValue: string | number = "—";
@@ -568,9 +592,7 @@ export function SecretsPage() {
 			{
 				title: t("stats.unused.title", { defaultValue: "Unused" }),
 				value: secretsQuery.isLoading ? "—" : unusedCount,
-				description: t("stats.unused.description", {
-					defaultValue: "not linked",
-				}),
+				description: unusedDescription,
 			},
 			{
 				title: t("stats.store.title", { defaultValue: "Secure Store" }),
@@ -989,6 +1011,7 @@ export function SecretsPage() {
 				usages={usagesQuery.data ?? []}
 				usagesLoading={Boolean(editorAlias) && usagesQuery.isLoading}
 				usedByCount={editorMeta.usedByCount}
+				unknownUsageCount={editorMeta.unknownUsageCount}
 				serverNameById={serverNameById}
 				initialTab={editorInitialTab}
 				onNavigateToServer={handleNavigateToServer}
@@ -1069,6 +1092,11 @@ function resolveDeleteDescription(
 			return t("delete.descriptionActive", {
 				defaultValue:
 					"This secret is still actively used. Remove active bindings before deleting it.",
+			});
+		case "unknown":
+			return t("delete.descriptionUnknown", {
+				defaultValue:
+					"Some usage references cannot be classified by this version. Review logs before deleting.",
 			});
 		case "oauth_managed":
 			return t("delete.descriptionOAuth", {

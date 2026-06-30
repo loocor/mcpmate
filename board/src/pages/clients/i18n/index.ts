@@ -220,6 +220,8 @@ export const clientsTranslations = {
         tabs: { basic: "Basic", meta: "Meta" },
         validation: {
           identifierRequired: "Client ID is required.",
+          identifierFormat:
+            "Client ID can only use lowercase English letters, numbers, and hyphens.",
           displayNameRequired: "Client name is required.",
         },
         adminCatalog: {
@@ -234,11 +236,37 @@ export const clientsTranslations = {
             "{{count}} client presets were skipped because their discovery data is invalid.",
         },
         configFile: {
-          label: "Configuration File",
-          description: "Choose whether MCPMate should manage this client through a writable local config file.",
+          label: "Configuration Method",
+          description: "Choose how this client receives MCPMate service configuration.",
+          autoDescription:
+            "Complete the form below to update configuration automatically.",
           options: {
-            withConfigFile: "With config file",
-            withoutConfigFile: "Without config file",
+            withConfigFile: "Auto",
+            withoutConfigFile: "Manual",
+          },
+          manual: {
+            title: "Tips",
+            description:
+              "Copy the service snippet below and paste it into the target client's MCP server configuration page.",
+            steps: {
+              copy:
+                "Click Copy configuration snippet, then paste it into the target client's MCP server configuration page.",
+              connect:
+                "The snippet configures MCPMate as a Streamable HTTP server with this client ID in the URL.",
+            },
+            missingClientId:
+              "Enter a Client ID to generate the MCPMate configuration snippet.",
+            endpointLoading: "Loading MCPMate service endpoint...",
+            endpointUnavailable:
+              "MCPMate service endpoint is unavailable. Try again after settings load.",
+            copyButton: "Copy service snippet",
+            copiedButton: "Copied",
+            copyCooldown: "Copied. You can copy again in a moment.",
+            clientIdRequiredTitle: "Client ID required",
+            copySuccessTitle: "Configuration copied",
+            copySuccessMessage:
+              "MCPMate Streamable HTTP configuration snippet copied to clipboard.",
+            copyFailedTitle: "Copy failed",
           },
         },
         transportSupport: {
@@ -320,6 +348,8 @@ export const clientsTranslations = {
             validationTitle: "File association check",
             validationSuccess: "The selected file matches the current parse rules.",
             validationHint: "Pick a config file and MCPMate will validate whether these rules can find MCP server entries.",
+            inspectAfterSaveHint:
+              "Save the updated config path before MCPMate inspects this client target.",
             detectedFormat: "Detected format",
             containerMatch: "Container",
             serverCount: "Servers",
@@ -1009,6 +1039,8 @@ export const clientsTranslations = {
         tabs: { basic: "基础", meta: "元数据" },
         validation: {
           identifierRequired: "请填写客户端 ID。",
+          identifierFormat:
+            "客户端 ID 只能使用小写英文字母、数字和中横线。",
           displayNameRequired: "请填写客户端名称。",
         },
         adminCatalog: {
@@ -1022,11 +1054,37 @@ export const clientsTranslations = {
           partialWarning: "{{count}} 条客户端预置因发现数据无效而被跳过。",
         },
         configFile: {
-          label: "配置文件",
-          description: "选择 MCPMate 是否通过可写本地配置文件管理该客户端。",
+          label: "配置方式",
+          description: "选择这个客户端如何接入 MCPMate 服务配置。",
+          autoDescription:
+            "完善下列表单，自动更新配置信息。",
           options: {
-            withConfigFile: "带配置文件",
-            withoutConfigFile: "不带配置文件",
+            withConfigFile: "自动配置",
+            withoutConfigFile: "手工配置",
+          },
+          manual: {
+            title: "操作提示",
+            description:
+              "复制下列服务片段，粘贴到目标客户端的 MCP server 配置页。",
+            steps: {
+              copy:
+                "点击复制配置信息片段，将其粘贴到目标客户端的 MCP server 配置页里。",
+              connect:
+                "该片段会把 MCPMate 配置为 Streamable HTTP 服务，并在 URL 中携带当前客户端 ID。",
+            },
+            missingClientId:
+              "填写客户端 ID 后即可生成 MCPMate 配置信息片段。",
+            endpointLoading: "正在加载 MCPMate 服务地址...",
+            endpointUnavailable:
+              "暂时无法获取 MCPMate 服务地址，请等待设置加载后再试。",
+            copyButton: "复制服务片段",
+            copiedButton: "已复制成功",
+            copyCooldown: "已复制成功，稍后可再次复制。",
+            clientIdRequiredTitle: "需要客户端 ID",
+            copySuccessTitle: "配置信息已复制",
+            copySuccessMessage:
+              "MCPMate Streamable HTTP 配置信息片段已复制到剪贴板。",
+            copyFailedTitle: "复制失败",
           },
         },
         transportSupport: {
@@ -1107,6 +1165,8 @@ export const clientsTranslations = {
             validationTitle: "文件关联检查",
             validationSuccess: "所选文件与当前解析规则匹配。",
             validationHint: "选择一个配置文件后，MCPMate 会验证这些规则是否能定位到 MCP server 条目。",
+            inspectAfterSaveHint:
+              "保存更新后的配置路径后，MCPMate 才能检查该客户端目标。",
             detectedFormat: "检测到的格式",
             containerMatch: "容器",
             serverCount: "服务器",
@@ -1783,6 +1843,8 @@ export const clientsTranslations = {
         tabs: { basic: "基本", meta: "メタデータ" },
         validation: {
           identifierRequired: "クライアント ID を入力してください。",
+          identifierFormat:
+            "クライアント ID には小文字の英字、数字、ハイフンのみ使用できます。",
           displayNameRequired: "クライアント名を入力してください。",
         },
         adminCatalog: {
@@ -1796,11 +1858,37 @@ export const clientsTranslations = {
           partialWarning: "検出データが無効なため、{{count}} 件のクライアントプリセットをスキップしました。",
         },
         configFile: {
-          label: "設定ファイル",
-          description: "MCPMate が書き込み可能なローカル設定ファイルを通じてこのクライアントを管理するかを選択します。",
+          label: "設定方法",
+          description: "このクライアントへ MCPMate サーバー設定を渡す方法を選択します。",
+          autoDescription:
+            "下のフォームを入力すると、設定情報を自動更新できます。",
           options: {
-            withConfigFile: "設定ファイルあり",
-            withoutConfigFile: "設定ファイルなし",
+            withConfigFile: "自動設定",
+            withoutConfigFile: "手動設定",
+          },
+          manual: {
+            title: "Tips",
+            description:
+              "下のサービススニペットをコピーし、対象クライアントの MCP server 設定画面へ貼り付けてください。",
+            steps: {
+              copy:
+                "Copy configuration snippet をクリックし、対象クライアントの MCP server 設定画面へ貼り付けます。",
+              connect:
+                "このスニペットは、URL に現在のクライアント ID を含めた Streamable HTTP サーバーとして MCPMate を設定します。",
+            },
+            missingClientId:
+              "クライアント ID を入力すると、MCPMate 設定スニペットを生成できます。",
+            endpointLoading: "MCPMate サービスエンドポイントを読み込み中...",
+            endpointUnavailable:
+              "MCPMate サービスエンドポイントを取得できません。設定の読み込み後に再試行してください。",
+            copyButton: "サービススニペットをコピー",
+            copiedButton: "コピーしました",
+            copyCooldown: "コピーしました。少し待ってから再度コピーできます。",
+            clientIdRequiredTitle: "クライアント ID が必要です",
+            copySuccessTitle: "設定をコピーしました",
+            copySuccessMessage:
+              "MCPMate Streamable HTTP 設定スニペットをクリップボードにコピーしました。",
+            copyFailedTitle: "コピーに失敗しました",
           },
         },
         transportSupport: {
@@ -1888,6 +1976,8 @@ export const clientsTranslations = {
             validationTitle: "ファイル関連付けチェック",
             validationSuccess: "選択したファイルは現在の解析ルールに一致しています。",
             validationHint: "設定ファイルを選択すると、MCPMate がこれらのルールで MCP server エントリを見つけられるか検証します。",
+            inspectAfterSaveHint:
+              "更新した設定パスを保存してから、MCPMate がこのクライアント対象を検査できます。",
             detectedFormat: "検出フォーマット",
             containerMatch: "コンテナ",
             serverCount: "サーバー",

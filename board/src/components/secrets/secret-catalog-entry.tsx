@@ -18,6 +18,7 @@ export type SecretCatalogStatsLabels = {
 	usage: string;
 	history: string;
 	version: string;
+	unknownUsageTitle: string;
 };
 
 type SecretCatalogEntryBaseProps = {
@@ -53,6 +54,8 @@ function lifecycleBadgeVariant(
 	switch (state) {
 		case "active":
 			return "success";
+		case "unknown":
+			return "warning";
 		case "oauth_managed":
 			return "info";
 		case "unused":
@@ -66,6 +69,8 @@ function buildStats(
 	statsLabels: SecretCatalogStatsLabels,
 	providerNeedsAttention: boolean,
 ) {
+	const hasUnknownUsage = (secret.unknown_usage_count ?? 0) > 0;
+	const unknownTitle = hasUnknownUsage ? statsLabels.unknownUsageTitle : undefined;
 	return [
 		{
 			label: statsLabels.provider,
@@ -80,11 +85,13 @@ function buildStats(
 		},
 		{
 			label: statsLabels.usage,
-			value: secret.used_by_count,
+			value: hasUnknownUsage ? "—" : secret.used_by_count,
+			valueTitle: unknownTitle,
 		},
 		{
 			label: statsLabels.history,
-			value: secret.historical_usage_count,
+			value: hasUnknownUsage ? "—" : secret.historical_usage_count,
+			valueTitle: unknownTitle,
 		},
 		{
 			label: statsLabels.version,
@@ -122,6 +129,8 @@ function SecretCatalogEntryComponent(props: SecretCatalogEntryProps) {
 	const handleViewUsage = useCallback(() => {
 		onViewUsage?.(secret.alias);
 	}, [onViewUsage, secret.alias]);
+	const usageButtonLabel =
+		(secret.unknown_usage_count ?? 0) > 0 ? "—" : secret.used_by_count;
 
 	const description = useMemo(
 		() => (
@@ -181,7 +190,7 @@ function SecretCatalogEntryComponent(props: SecretCatalogEntryProps) {
 						aria-label={props.viewUsageLabel}
 					>
 						<ShieldCheck className="mr-2 h-4 w-4" />
-						{secret.used_by_count}
+						{usageButtonLabel}
 					</Button>,
 				]}
 				onClick={handleOpen}

@@ -1,6 +1,11 @@
 import type { TFunction } from "i18next";
 import * as z from "zod";
 
+import {
+	CLIENT_IDENTIFIER_PATTERN,
+	type ClientFormMode,
+} from "./client-form-identifiers";
+
 export type ClientConfigFileChoice = "with_config_file" | "without_config_file";
 export const SUPPORTED_TRANSPORT_VALUES = ["streamable_http", "sse", "stdio"] as const;
 export type SupportedTransportValue = (typeof SUPPORTED_TRANSPORT_VALUES)[number];
@@ -8,14 +13,26 @@ export const CONFIG_PARSE_FORMAT_VALUES = ["json", "json5", "toml", "yaml"] as c
 export type ConfigParseFormatValue = (typeof CONFIG_PARSE_FORMAT_VALUES)[number];
 export const CONFIG_PARSE_CONTAINER_TYPE_VALUES = ["standard", "array"] as const;
 
-export function createClientFormSchema(t: TFunction) {
+export function createClientFormSchema(t: TFunction, mode: ClientFormMode = "create") {
 	return z
 		.object({
-			identifier: z.string().min(1, {
-				message: t("detail.form.validation.identifierRequired", {
-					defaultValue: "Client ID is required.",
+			identifier: z
+				.string()
+				.min(1, {
+					message: t("detail.form.validation.identifierRequired", {
+						defaultValue: "Client ID is required.",
+					}),
+				})
+				.superRefine((value, ctx) => {
+					if (mode !== "create" || value.length === 0 || CLIENT_IDENTIFIER_PATTERN.test(value)) return;
+					ctx.addIssue({
+						code: z.ZodIssueCode.custom,
+						message: t("detail.form.validation.identifierFormat", {
+							defaultValue:
+								"Client ID can only use lowercase English letters, numbers, and hyphens.",
+						}),
+					});
 				}),
-			}),
 			displayName: z.string().min(1, {
 				message: t("detail.form.validation.displayNameRequired", {
 					defaultValue: "Client name is required.",

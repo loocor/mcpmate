@@ -75,7 +75,10 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
             .insert(binding_key);
     }
 
-    let all_indexed = store.list_all_usages().await.map_err(map_secret_store_error)?;
+    let (all_indexed, mut unknown_count_by_alias) = store
+        .list_all_usages_with_unsupported_counts()
+        .await
+        .map_err(map_secret_store_error)?;
     let mut indexed_by_alias: HashMap<String, Vec<SecretUsageView>> = HashMap::new();
     for usage in all_indexed {
         indexed_by_alias.entry(usage.alias.clone()).or_default().push(usage);
@@ -93,6 +96,7 @@ pub async fn list_secrets(State(state): State<Arc<AppState>>) -> Result<Json<Sec
     for metadata in secrets {
         let mut data = secret_metadata_data(metadata);
         data.used_by_count = active_count_by_alias.remove(&data.alias).unwrap_or(0);
+        data.unknown_usage_count = unknown_count_by_alias.remove(&data.alias).unwrap_or(0);
         let active_binding_keys = active_binding_keys_by_alias.remove(&data.alias).unwrap_or_default();
         let indexed = indexed_by_alias.remove(&data.alias).unwrap_or_default();
         let mut historical_usage_count = 0;
@@ -135,7 +139,9 @@ pub async fn create_secret(
         })
         .await
         .map_err(map_secret_store_error)?;
-    Ok(Json(SecretMetadataResp::success(secret_metadata_data(metadata))))
+    Ok(Json(SecretMetadataResp::success(
+        secret_metadata_data_with_unknown_count(metadata, 0),
+    )))
 }
 
 pub async fn update_secret(
@@ -163,7 +169,9 @@ pub async fn update_secret(
         })
         .await
         .map_err(map_secret_store_error)?;
-    Ok(Json(SecretMetadataResp::success(secret_metadata_data(metadata))))
+    Ok(Json(SecretMetadataResp::success(
+        secret_metadata_data_with_usage_state(&state, &store, metadata).await?,
+    )))
 }
 
 pub async fn get_secret_details(
@@ -175,7 +183,9 @@ pub async fn get_secret_details(
         .get_secret_metadata(&query.alias)
         .await
         .map_err(map_secret_store_error)?;
-    Ok(Json(SecretMetadataResp::success(secret_metadata_data(metadata))))
+    Ok(Json(SecretMetadataResp::success(
+        secret_metadata_data_with_usage_state(&state, &store, metadata).await?,
+    )))
 }
 
 pub async fn delete_secret(
@@ -197,6 +207,13 @@ pub async fn delete_secret(
             return Err(ApiError::Conflict(format!(
                 "Secret '{}' is actively used by server '{}' and cannot be deleted",
                 payload.alias, usage.server_id
+            )));
+        }
+        let unknown_usage_count = secret_unknown_usage_count(&store, &payload.alias).await?;
+        if unknown_usage_count > 0 {
+            return Err(ApiError::Conflict(format!(
+                "Secret '{}' has {} unsupported usage reference(s) and cannot be deleted without force",
+                payload.alias, unknown_usage_count
             )));
         }
     }
@@ -318,6 +335,13 @@ fn is_oauth_secret_kind(kind: &str) -> bool {
 }
 
 fn secret_metadata_data(metadata: SecretMetadataView) -> SecretMetadataData {
+    secret_metadata_data_with_unknown_count(metadata, 0)
+}
+
+fn secret_metadata_data_with_unknown_count(
+    metadata: SecretMetadataView,
+    unknown_usage_count: u64,
+) -> SecretMetadataData {
     SecretMetadataData {
         alias: metadata.alias,
         placeholder: metadata.placeholder,
@@ -329,9 +353,36 @@ fn secret_metadata_data(metadata: SecretMetadataView) -> SecretMetadataData {
         version: metadata.version,
         used_by_count: metadata.used_by_count,
         historical_usage_count: 0,
+        unknown_usage_count,
         created_at: metadata.created_at,
         updated_at: metadata.updated_at,
     }
+}
+
+async fn secret_unknown_usage_count(
+    store: &crate::core::secrets::store::LocalSecretStore,
+    alias: &str,
+) -> Result<u64, ApiError> {
+    store
+        .count_unsupported_usages_for_alias(alias)
+        .await
+        .map_err(map_secret_store_error)
+}
+
+async fn secret_metadata_data_with_usage_state(
+    state: &Arc<AppState>,
+    store: &crate::core::secrets::store::LocalSecretStore,
+    metadata: SecretMetadataView,
+) -> Result<SecretMetadataData, ApiError> {
+    let db = crate::api::handlers::server::common::get_database_from_state(state)?;
+    let alias = metadata.alias.clone();
+    let mut data = secret_metadata_data(metadata);
+    data.used_by_count = discover_active_secret_usages_for_alias(&db.pool, &alias)
+        .await
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?
+        .len() as u64;
+    data.unknown_usage_count = secret_unknown_usage_count(store, &alias).await?;
+    Ok(data)
 }
 
 fn secret_origin_input(origin: SecretOriginData) -> SecretOriginInput {
@@ -911,7 +962,169 @@ pub async fn switch_provider(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{path::PathBuf, time::Duration};
+
+    use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+    use tempfile::TempDir;
+    use tokio::sync::{Mutex, RwLock};
+
+    use crate::{
+        config::database::Database,
+        core::{
+            cache::{RedbCacheManager, manager::CacheConfig},
+            models::Config,
+            pool::UpstreamConnectionPool,
+            secrets::store::LocalSecretStore,
+        },
+        inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
+        system::metrics::MetricsCollector,
+    };
     use mcpmate_secrets::SecretRootKeyProvider;
+
+    struct TestContext {
+        _temp_dir: TempDir,
+        app_state: Arc<AppState>,
+        store: Arc<LocalSecretStore>,
+    }
+
+    async fn create_test_context() -> TestContext {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&db_pool)
+            .await
+            .expect("enable foreign keys");
+        crate::config::server::init::initialize_server_tables(&db_pool)
+            .await
+            .expect("init server tables");
+        let store = Arc::new(
+            LocalSecretStore::initialize_with_development_root_key(
+                db_pool.clone(),
+                temp_dir.path().join("secrets").join("local-root.key"),
+            )
+            .await
+            .expect("init secret store"),
+        );
+
+        let database = Arc::new(Database {
+            pool: db_pool,
+            path: PathBuf::from(":memory:"),
+        });
+        let cache_path = temp_dir.path().join("capability.redb");
+        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
+        let app_state = Arc::new(AppState {
+            connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
+                Arc::new(Config::default()),
+                Some(database.clone()),
+            ))),
+            metrics_collector: Arc::new(MetricsCollector::new(Duration::from_secs(5))),
+            http_proxy: None,
+            profile_merge_service: None,
+            database: Some(database),
+            audit_database: None,
+            audit_service: None,
+            config_application_state: Arc::new(crate::core::profile::ConfigApplicationStateManager::new()),
+            redb_cache,
+            unified_query: None,
+            client_service: None,
+            inspector_calls: Arc::new(InspectorCallRegistry::new()),
+            inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager: RwLock::new(None),
+            secret_store: RwLock::new(Some(store.clone())),
+            secret_store_readiness: RwLock::new(SecretStoreReadiness::ready(store.provider_metadata())),
+        });
+
+        TestContext {
+            _temp_dir: temp_dir,
+            app_state,
+            store,
+        }
+    }
+
+    async fn create_secret_with_unknown_usage(
+        context: &TestContext,
+        alias: &str,
+    ) {
+        context
+            .store
+            .create_secret(SecretCreateInput {
+                alias: alias.to_string(),
+                kind: SecretKindInput::ApiKey,
+                value: "secret".to_string(),
+                label: None,
+                origin: None,
+            })
+            .await
+            .expect("create secret");
+        insert_unsupported_usage(&context.store.pool(), alias).await;
+    }
+
+    async fn insert_unsupported_usage(
+        pool: &SqlitePool,
+        alias: &str,
+    ) {
+        sqlx::query(
+            r#"
+            INSERT INTO secure_store_usages (
+                id, alias, server_id, location_kind, location_name, location_index
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+        )
+        .bind(format!("{alias}-future-location-row"))
+        .bind(alias)
+        .bind("LLMPROVFuture")
+        .bind("llm_provider_api_key")
+        .bind(Option::<String>::None)
+        .bind(Option::<i64>::None)
+        .execute(pool)
+        .await
+        .expect("insert unknown usage row");
+    }
+
+    #[tokio::test]
+    async fn get_secret_details_reports_unknown_usage_separately() {
+        let context = create_test_context().await;
+        create_secret_with_unknown_usage(&context, "provider-api-key").await;
+
+        let Json(response) = get_secret_details(
+            State(context.app_state.clone()),
+            Query(SecretDetailsReq {
+                alias: "provider-api-key".to_string(),
+            }),
+        )
+        .await
+        .expect("get details");
+
+        assert!(response.success);
+        let data = response.data.expect("details data");
+        assert_eq!(data.used_by_count, 0);
+        assert_eq!(data.unknown_usage_count, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_secret_rejects_unknown_usage_without_force() {
+        let context = create_test_context().await;
+        create_secret_with_unknown_usage(&context, "provider-api-key").await;
+
+        let error = delete_secret(
+            State(context.app_state.clone()),
+            Json(SecretDeleteReq {
+                alias: "provider-api-key".to_string(),
+                force: false,
+            }),
+        )
+        .await
+        .expect_err("delete should reject unknown usage");
+
+        assert!(matches!(error, ApiError::Conflict(_)));
+        assert!(context.store.get_secret_metadata("provider-api-key").await.is_ok());
+    }
 
     #[test]
     fn root_key_load_error_readiness_preserves_provider_metadata() {

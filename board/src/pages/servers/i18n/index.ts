@@ -228,6 +228,11 @@ export const serversTranslations = {
 					all: "All Types",
 					selected: "{{count}} Types",
 				},
+				status: {
+					all: "All",
+					enabled: "Enabled",
+					disabled: "Disabled",
+				},
 			},
 			logs: {
 				title: "Logs",
@@ -1148,6 +1153,11 @@ export const serversTranslations = {
 					all: "全部类型",
 					selected: "{{count}} 种类型",
 				},
+				status: {
+					all: "全部",
+					enabled: "已启用",
+					disabled: "已禁用",
+				},
 			},
 			logs: {
 				title: "日志",
@@ -2024,6 +2034,11 @@ export const serversTranslations = {
 				kind: {
 					all: "すべての種類",
 					selected: "{{count}} 種類",
+				},
+				status: {
+					all: "すべて",
+					enabled: "有効",
+					disabled: "無効",
 				},
 			},
 			logs: {

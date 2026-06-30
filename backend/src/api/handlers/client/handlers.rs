@@ -3551,6 +3551,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_settings_marks_detached_when_switching_from_manual_to_local_config() {
+        let context = create_test_context().await;
+        let config_path = context._temp_dir.path().join("client-local-attach.json");
+        tokio::fs::write(&config_path, r#"{"mcpServers":{}}"#)
+            .await
+            .expect("seed config file");
+
+        let Json(manual_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                display_name: Some("Manual Runtime".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithoutConfigFile),
+                ..settings_update_req("custom.runtime.manual-to-local")
+            }),
+        )
+        .await
+        .expect("manual update succeeds");
+        assert!(manual_response.success);
+
+        let manual_state = context
+            .client_service
+            .fetch_state("custom.runtime.manual-to-local")
+            .await
+            .expect("fetch manual state")
+            .expect("manual state exists");
+        assert_eq!(manual_state.attachment_state().as_str(), "not_applicable");
+
+        let Json(local_response) = update_settings(
+            State(context.app_state.clone()),
+            Json(ClientSettingsUpdateReq {
+                config_mode: Some("hosted".to_string()),
+                transport: Some("streamable_http".to_string()),
+                display_name: Some("Manual Runtime".to_string()),
+                config_file_state: Some(ClientConfigFileState::WithConfigFile),
+                config_path: Some(config_path.to_string_lossy().to_string()),
+                config_file_parse: Some(json_object_parse("mcpServers")),
+                transports: Some(HashMap::from([("streamable_http".to_string(), streamable_http_rule())])),
+                ..settings_update_req("custom.runtime.manual-to-local")
+            }),
+        )
+        .await
+        .expect("local config update succeeds");
+        assert!(local_response.success);
+
+        let local_state = context
+            .client_service
+            .fetch_state("custom.runtime.manual-to-local")
+            .await
+            .expect("fetch local state")
+            .expect("local state exists");
+        assert!(local_state.has_local_config_target());
+        assert_eq!(local_state.attachment_state().as_str(), "detached");
+    }
+
+    #[tokio::test]
     async fn update_settings_clear_parse_does_not_revive_legacy_metadata() {
         let context = create_test_context().await;
         let config_path = context._temp_dir.path().join("zed-settings.json");
@@ -4103,13 +4158,33 @@ mod tests {
         let context = create_test_context().await;
         let identifier = "custom.runtime.detach";
         let config_path = context._temp_dir.path().join("runtime-detach-client.json");
-        seed_runtime_attachable_client(&context, identifier, &config_path).await;
+        let parsed = seed_runtime_attachable_client(&context, identifier, &config_path).await;
+        assert!(parsed["mcpServers"].get("MCPMate").is_some());
+
+        let seeded_state = context
+            .client_service
+            .fetch_state(identifier)
+            .await
+            .expect("fetch seeded detach state")
+            .expect("seeded detach state exists");
+        assert!(seeded_state.has_local_config_target());
 
         sqlx::query("UPDATE client SET attachment_state = 'detached' WHERE identifier = ?")
             .bind(identifier)
             .execute(&context.db_pool)
             .await
             .expect("force detached DB state while file still contains MCPMate");
+        let detached_state = context
+            .client_service
+            .fetch_state(identifier)
+            .await
+            .expect("fetch detached state")
+            .expect("detached state exists");
+        assert_eq!(detached_state.attachment_state().as_str(), "detached");
+        assert_eq!(
+            detect_mcpmate_in_client_config(context.client_service.as_ref(), &detached_state).await,
+            Some(true)
+        );
 
         let Json(detach_response) = client_detach(
             State(context.app_state.clone()),

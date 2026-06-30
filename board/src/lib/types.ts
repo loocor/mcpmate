@@ -666,6 +666,7 @@ export interface SecretMetadata {
   version: number;
   used_by_count: number;
   historical_usage_count: number;
+  unknown_usage_count?: number;
   created_at?: string | null;
   updated_at?: string | null;
 }
