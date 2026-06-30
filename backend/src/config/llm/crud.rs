@@ -141,18 +141,29 @@ pub async fn set_default_provider(
     pool: &Pool<Sqlite>,
     id: &str,
 ) -> Result<()> {
-    // Clear all defaults first
+    let mut tx = pool
+        .begin()
+        .await
+        .context("Failed to begin default provider transaction")?;
+
     sqlx::query("UPDATE llm_provider SET is_default = 0")
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .context("Failed to clear default providers")?;
 
-    // Set the new default
-    sqlx::query("UPDATE llm_provider SET is_default = 1 WHERE id = ?")
+    let result = sqlx::query("UPDATE llm_provider SET is_default = 1 WHERE id = ?")
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .context("Failed to set default provider")?;
+
+    if result.rows_affected() != 1 {
+        anyhow::bail!("LLM provider '{id}' was not found");
+    }
+
+    tx.commit()
+        .await
+        .context("Failed to commit default provider transaction")?;
 
     Ok(())
 }
@@ -164,4 +175,60 @@ pub async fn get_default_provider(pool: &Pool<Sqlite>) -> Result<Option<LlmProvi
         .context("Failed to fetch default provider")?;
 
     Ok(provider)
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::*;
+    use crate::config::llm::init::initialize_llm_tables;
+
+    async fn setup_pool() -> Pool<Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect sqlite");
+        initialize_llm_tables(&pool).await.expect("init llm tables");
+        pool
+    }
+
+    async fn create_test_provider(
+        pool: &Pool<Sqlite>,
+        name: &str,
+    ) -> LlmProviderConfig {
+        create_provider(
+            pool,
+            name,
+            "openai_chat",
+            "https://api.openai.com/v1",
+            "gpt-4o",
+            None,
+            None,
+        )
+        .await
+        .expect("create provider")
+    }
+
+    #[tokio::test]
+    async fn set_default_provider_keeps_existing_default_when_target_missing() {
+        let pool = setup_pool().await;
+        let provider = create_test_provider(&pool, "OpenAI").await;
+        let provider_id = provider.id.expect("provider id");
+        set_default_provider(&pool, &provider_id)
+            .await
+            .expect("set default provider");
+
+        let err = set_default_provider(&pool, "missing-provider")
+            .await
+            .expect_err("missing target should fail");
+
+        assert!(err.to_string().contains("missing-provider"));
+        let default_provider = get_default_provider(&pool)
+            .await
+            .expect("get default provider")
+            .expect("default provider remains");
+        assert_eq!(default_provider.id.as_deref(), Some(provider_id.as_str()));
+    }
 }

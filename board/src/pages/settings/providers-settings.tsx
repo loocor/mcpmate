@@ -457,6 +457,12 @@ function ProviderDrawer({
 	const [drawerTestError, setDrawerTestError] = useState<string | null>(null);
 	const [isLoadingModels, setIsLoadingModels] = useState(false);
 	const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const clearTestResetTimer = useCallback(() => {
+		if (resetTimerRef.current) {
+			clearTimeout(resetTimerRef.current);
+			resetTimerRef.current = null;
+		}
+	}, []);
 	const { onCreateSecret, controller: secretCreateController } = useInlineSecretCreateField(
 		(fieldName, placeholder) => {
 			if (fieldName === "api_key") {
@@ -465,12 +471,9 @@ function ProviderDrawer({
 		},
 	);
 
-	// Clean up timer on unmount
 	useEffect(() => {
-		return () => {
-			if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
-		};
-	}, []);
+		return clearTestResetTimer;
+	}, [clearTestResetTimer]);
 
 	useEffect(() => {
 		if (open) {
@@ -499,9 +502,9 @@ function ProviderDrawer({
 			setModelError(null);
 			setTestState("idle");
 			setDrawerTestError(null);
-			if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+			clearTestResetTimer();
 		}
-	}, [open, provider]);
+	}, [clearTestResetTimer, open, provider]);
 
 	const createMutation = useMutation({
 		mutationFn: (input: LlmProviderCreateInput) => llmApi.createProvider(input),
@@ -515,6 +518,7 @@ function ProviderDrawer({
 
 	const handleTest = useCallback(async () => {
 		if (!provider?.id || testState === "loading") return;
+		clearTestResetTimer();
 		setTestState("loading");
 		setDrawerTestError(null);
 		try {
@@ -529,8 +533,9 @@ function ProviderDrawer({
 		resetTimerRef.current = setTimeout(() => {
 			setTestState("idle");
 			setDrawerTestError(null);
+			resetTimerRef.current = null;
 		}, 2000);
-	}, [provider, testState]);
+	}, [clearTestResetTimer, provider, testState]);
 
 	const handleDelete = useCallback(() => {
 		if (!provider?.id || isDeleting) return;
@@ -854,7 +859,7 @@ function ProviderDrawer({
 									<p className="mt-2 text-xs text-destructive">
 										{t(
 											"settings:providers.thinkingBudgetRequired",
-											"Budget tokens must be positive and less than max tokens.",
+											"Budget tokens must be positive and leave at least 1000 tokens for output.",
 										)}
 									</p>
 								) : null}
