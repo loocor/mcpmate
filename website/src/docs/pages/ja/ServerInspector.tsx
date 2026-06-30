@@ -68,8 +68,9 @@ export default function ServerInspector() {
 			<H2>ドロワーで追加されるもの</H2>
 			<Ul>
 				<Li>メタデータが利用可能な場合、ツールとプロンプト引数のためのスキーマ派生フォーム。</Li>
+				<Li>Form snapshot により、schema-driven input と raw JSON input を切り替えても、生成された default や Fill Mock value を保持できます。</Li>
 				<Li>生成されたフィールドの代わりに正確なリクエストボディが必要な場合の生のJSONモード。</Li>
-				<Li>開始、進行中、ログ、結果、エラー、キャンセル状態を含む、ツール呼び出しのライブイベント。</Li>
+				<Li>Response output と event output を分けて表示するため、final result を読みやすく保ちながら started、progress、log、error、cancelled state をデバッグに使えます。</Li>
 				<Li>バグレポートや比較で出力を再利用できるようにするためのコピーおよびクリアアクション。</Li>
 			</Ul>
 

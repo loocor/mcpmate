@@ -61,8 +61,9 @@ export default function ServerInspectorZH() {
 			<H2>抽屉真正增加了什么</H2>
 			<Ul>
 				<Li>当 schema 完整时，自动生成工具 / prompt 参数表单。</Li>
+				<Li>表单快照会保留生成的默认值和 Fill Mock 值，方便在 schema 表单与原始 JSON 输入之间切换。</Li>
 				<Li>当你需要精确构造请求体时，可切换到原始 JSON 模式。</Li>
-				<Li>Tool call 支持 started、progress、log、result、error、cancelled 等实时事件。</Li>
+				<Li>响应输出与事件输出分开显示，最终结果保持清晰，同时保留 started、progress、log、error、cancelled 等调试线索。</Li>
 				<Li>输出支持复制与清空，方便做问题复现与结果比对。</Li>
 			</Ul>
 

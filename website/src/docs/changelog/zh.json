@@ -1,5 +1,34 @@
 [
 	{
+		"version": "0.3.4",
+		"date": "2026-06-30",
+		"highlights": [
+			"MCPMate v0.3.4-beta 聚焦控制台里的日常操作控制。能力管理现在在安装预览与配置集详情中使用同一套可搜索界面，Inspector 调用在 native / proxy 模式下更容易执行和复查，secret、客户端与配置集界面也更一致地呈现托管状态和生命周期信息。"
+		],
+		"changes": [
+			{
+				"type": "ref",
+				"text": "能力列表现在在 Add MCP Server 安装预览和配置集详情中复用同一套搜索、筛选、预览与展示界面。"
+			},
+			{
+				"type": "ref",
+				"text": "配置集详情把服务器、工具、提示词、资源和模板的暴露控制合并到一条能力管理流程中，减少分散管理入口。"
+			},
+			{
+				"type": "ref",
+				"text": "Inspector 抽屉现在支持统一的 native / proxy 检视流程，通过表单快照保留 schema 生成默认值，并把响应输出与实时事件分开展示。"
+			},
+			{
+				"type": "fix",
+				"text": "Secret 生命周期、客户端表单、配置集和服务器界面现在通过后端 API 与控制台文案更一致地呈现托管状态和使用上下文。"
+			},
+			{
+				"type": "docs",
+				"text": "官网发布记录和相关 release-facing 文档已完成对齐，让 changelog 继续作为持久产品历史，而 roadmap 聚焦产品方向。"
+			}
+		]
+	},
+	{
 		"version": "0.3.3",
 		"date": "2026-06-22",
 		"highlights": [

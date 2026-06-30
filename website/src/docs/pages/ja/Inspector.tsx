@@ -12,7 +12,7 @@ export default function Inspector() {
 			}}
 		>
 			<P>
-				MCPMateインスペクターは、MCPサーバーを監視およびデバッグするための強力なインターフェースを提供します。サーバーの動作に関するリアルタイムの洞察を得たり、ログを調べたり、問題を診断したりすることが、すべてMCPMateコンソール内から行えます。
+				MCPMate Inspector は MCP server のための live capability workbench です。Native と proxy の動作を比較し、tool / prompt request を制御して実行し、resource を読み取り、console を離れずに response や event の証拠を取得できます。
 			</P>
 
 			<DocScreenshot
@@ -24,16 +24,16 @@ export default function Inspector() {
 			<H2>機能</H2>
 			<Ul>
 				<Li>
-					<strong>リアルタイム監視:</strong> 発生しているサーバーのアクティビティを監視
+					<strong>Native と proxy channel:</strong> server の raw behavior と MCPMate-managed exposure を比較
 				</Li>
 				<Li>
-					<strong>ログビューア:</strong> サーバーログを閲覧および検索
+					<strong>Schema-aware input:</strong> capability metadata から form を生成し、必要に応じて raw JSON に切り替え
 				</Li>
 				<Li>
-					<strong>リクエスト/レスポンスインスペクター:</strong> MCPプロトコルメッセージを詳細に調査
+					<strong>Response と event review:</strong> final output、progress、log、error、cancel state を分けて確認
 				</Li>
 				<Li>
-					<strong>パフォーマンスメトリクス:</strong> 応答時間とリソース使用量を追跡
+					<strong>Capability read:</strong> tool、prompt、resource、resource template を同じ drawer workflow で検証
 				</Li>
 				<Li>
 					<strong>エラー診断:</strong> 問題を迅速に特定してトラブルシューティング
@@ -43,7 +43,7 @@ export default function Inspector() {
 			<H2>ユースケース</H2>
 			<Ul>
 				<Li>サーバー構成の問題をデバッグする。</Li>
-				<Li>ロールアウト期間中のランタイムの動作を監視する。</Li>
+				<Li>server の raw output と profile-scoped proxy output を比較する。</Li>
 				<Li>すべてのクライアントに対して有効にする前に機能のペイロードを検証する。</Li>
 				<Li>クライアントとサーバー間の通信の問題をトラブルシューティングする。</Li>
 			</Ul>
@@ -51,7 +51,7 @@ export default function Inspector() {
 			<H2>推奨されるワークフロー</H2>
 			<Ul>
 				<Li>サーバーの詳細から開始して、対象のサーバー/機能を特定します。</Li>
-				<Li>インスペクターで制御された呼び出しを実行し、レスポンスのメタデータを取得します。</Li>
+				<Li>Inspector で制御された呼び出しを実行し、response と event output を分けて確認します。</Li>
 				<Li>タイムスタンプを監査ログと照らし合わせて、操作の完全なコンテキストを確認します。</Li>
 			</Ul>
 		</DocLayout>

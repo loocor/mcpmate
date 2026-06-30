@@ -1,5 +1,34 @@
 [
 	{
+		"version": "0.3.4",
+		"date": "2026-06-30",
+		"highlights": [
+			"MCPMate v0.3.4-beta は、ダッシュボード内の日常的な運用コントロールに重点を置いたリリースです。Capability management はインストールプレビューとプロファイル詳細で同じ検索可能な画面を使うようになり、Inspector の呼び出しは native / proxy のどちらでも実行と確認がしやすくなり、secret、client、profile の画面では custody と lifecycle state がより一貫して見えるようになりました。"
+		],
+		"changes": [
+			{
+				"type": "ref",
+				"text": "Capability list は Add MCP Server のインストールプレビューとプロファイル詳細で、検索、フィルター、プレビュー、表示のための共通サーフェスを再利用するようになりました。"
+			},
+			{
+				"type": "ref",
+				"text": "プロファイル詳細では、server、tool、prompt、resource、template の公開制御を 1 つの capability management flow にまとめ、分散した管理入口を減らしました。"
+			},
+			{
+				"type": "ref",
+				"text": "Inspector drawer は native / proxy をまたぐ統一された inspect flow に対応し、form snapshot で schema 由来の default を保持し、response output と live event を分けて表示します。"
+			},
+			{
+				"type": "fix",
+				"text": "Secret lifecycle、client form、profile、server の画面は、backend API と dashboard copy を通じて custody state と usage context をより一貫して示すようになりました。"
+			},
+			{
+				"type": "docs",
+				"text": "Website の release record と関連する release-facing docs を揃え、changelog は継続的な product history、roadmap は方向性を示す文面として分けました。"
+			}
+		]
+	},
+	{
 		"version": "0.3.3",
 		"date": "2026-06-22",
 		"highlights": [
