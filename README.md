@@ -1,9 +1,11 @@
 # MCPMate
 
-**English** | [中文](./README_CN.md)
+<p align="right">
+  <strong>English</strong> | <a href="./README_CN.md">中文</a> | <a href="./README_JP.md">日本語</a>
+</p>
 
 <p align="center">
-  <img src="./assets/dashboard.png" alt="MCPMate dashboard" width="100%">
+  <img src="./assets/readme-hero-en.png" alt="MCPMate dashboard" width="100%">
 </p>
 
 <p align="center">
@@ -11,10 +13,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/loocor/MCPMate/releases"><img src="https://img.shields.io/github/v/release/loocor/MCPMate" alt="Release"></a>
+  <a href="https://github.com/loocor/MCPMate/releases"><img src="https://img.shields.io/github/downloads/loocor/MCPMate/total" alt="Downloads"></a>
   <a href="https://github.com/loocor/MCPMate/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey" alt="Platform">
-  <img src="https://img.shields.io/badge/Rust-1.75%2B-orange" alt="Rust">
-  <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen" alt="Node.js">
+  <img src="https://img.shields.io/badge/Rust-1.85%2B-orange" alt="Rust">
   <a href="https://modelcontextprotocol.io/specification/2025-11-25"><img src="https://img.shields.io/badge/MCP-2025--11--25-purple" alt="MCP Spec"></a>
 </p>
 
@@ -189,7 +192,7 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 ### Option B: Build from Source
 
-**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) 1.75+, [Node.js](https://nodejs.org/) 18+ or [Bun](https://bun.sh/), SQLite 3
+**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) 1.85+, [Node.js](https://nodejs.org/) 18+ or [Bun](https://bun.sh/), SQLite 3
 
 **1. Clone & Build the Backend**
 
@@ -270,9 +273,3 @@ Contributions are welcome! Please:
 ## 📄 License
 
 [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0)
-
----
-
-<p align="center">
-  Built with ❤️ by <a href="https://github.com/loocor">Loocor</a>
-</p>
