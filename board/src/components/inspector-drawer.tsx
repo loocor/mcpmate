@@ -5,15 +5,16 @@ import {
 	ChevronsUpDown,
 	Copy,
 	Eraser,
+	ExternalLink,
 	Loader2,
+	Maximize2,
+	Minimize2,
 	RefreshCw,
 	ShieldAlert,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-	configSuitsApi,
 	inspectorApi,
 	isInspectorSessionUnavailableError,
 	systemApi,
@@ -45,26 +46,27 @@ import {
 } from "./ui/drawer";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { ScrollArea } from "./ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
 import {
 	Tooltip,
-	TooltipArrow,
 	TooltipContent,
-	TooltipPortal,
 	TooltipProvider,
 	TooltipTrigger,
 } from "./ui/tooltip";
 
 type InspectorKind = "tool" | "resource" | "prompt" | "template";
 type InspectorMode = "proxy" | "native";
+type InspectorProxyMode = "hosted" | "unify";
+type InspectorProxyScope = "isolated" | "active_catalog";
 
 export interface InspectorDrawerProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	serverId?: string;
 	serverName?: string;
+	scratchId?: string;
+	showStandaloneButton?: boolean;
 	kind: InspectorKind;
 	item: CapabilityRecord | null;
 	capabilityOptions?: CapabilityRecord[];
@@ -195,6 +197,13 @@ type InspectorResponse<T = unknown> = {
 	error?: unknown;
 };
 
+type InspectorCapabilityListData = {
+	tools?: unknown[];
+	prompts?: unknown[];
+	resources?: unknown[];
+	templates?: unknown[];
+};
+
 type InspectorEventEntry = {
 	data: InspectorSseEvent;
 	timestamp: number;
@@ -204,6 +213,12 @@ type InspectorFormSnapshot = {
 	argsJson: string;
 	useRaw: boolean;
 	values: JsonObject;
+};
+
+type InspectorTargetPayload = {
+	server_id?: string;
+	server_name?: string;
+	scratch_id?: string;
 };
 
 const TOOL_KIND_KEYS: Array<keyof CapabilityRecord> = [
@@ -231,6 +246,7 @@ const TEMPLATE_KIND_KEYS: Array<keyof CapabilityRecord> = [
 ];
 
 const INSPECT_SESSION_GRACE_MS = 30_000;
+const INSPECT_SESSION_KEEPALIVE_MS = 60_000;
 
 function computeRecordKey(
 	record: CapabilityRecord | null,
@@ -376,7 +392,7 @@ function pickResourceUri(source: CapabilityRecord | null): string {
 }
 
 function normalizeCapabilityOptions(
-	resp: InspectorResponse<any> | undefined,
+	resp: InspectorResponse<InspectorCapabilityListData> | undefined,
 	kind: InspectorKind,
 ): CapabilityRecord[] {
 	const data = resp?.data;
@@ -401,6 +417,8 @@ export function InspectorDrawer({
 	onOpenChange,
 	serverId,
 	serverName,
+	scratchId,
+	showStandaloneButton = true,
 	kind,
 	item,
 	capabilityOptions,
@@ -410,6 +428,9 @@ export function InspectorDrawer({
 	usePageTranslations("inspector");
 	const drawerContentRef = useRef<HTMLDivElement | null>(null);
 	const [mode, setMode] = useState<InspectorMode>("native");
+	const [proxyMode, setProxyMode] = useState<InspectorProxyMode>("hosted");
+	const [proxyScope, setProxyScope] =
+		useState<InspectorProxyScope>("isolated");
 	const [timeoutMs, setTimeoutMs] = useState<number>(8000);
 	const [timeoutInitialized, setTimeoutInitialized] = useState(false);
 
@@ -459,10 +480,6 @@ export function InspectorDrawer({
 	const [submitting, setSubmitting] = useState(false);
 	const [cancelling, setCancelling] = useState(false);
 	const [result, setResult] = useState<unknown>(null);
-	const [responseActionsHidden, setResponseActionsHidden] = useState(false);
-	const responseActionsHideTimer = useRef<ReturnType<typeof setTimeout> | null>(
-		null,
-	);
 	const [events, setEvents] = useState<InspectorEventEntry[]>([]);
 	const eventsEndRef = useRef<HTMLDivElement | null>(null);
 	const wsRef = useRef<WebSocket | null>(null);
@@ -477,8 +494,9 @@ export function InspectorDrawer({
 	const [nativeSession, setNativeSession] =
 		useState<InspectorSessionOpenData | null>(null);
 	const nativeSessionRef = useRef<InspectorSessionOpenData | null>(null);
+	const nativeSessionTargetKeyRef = useRef<string | null>(null);
 	const pendingNativeSessionRef = useRef<{
-		serverId: string;
+		targetKey: string;
 		promise: Promise<InspectorSessionOpenData>;
 	} | null>(null);
 	const nativeSessionCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(
@@ -490,38 +508,29 @@ export function InspectorDrawer({
 	// combobox open/width is handled in CapabilityCombobox
 	const [formCollapsed, setFormCollapsed] = useState(false);
 
-	// Combobox state is managed directly by Popover component
-	const activeProfilesQ = useQuery({
-		queryKey: ["inspector-proxy-profiles", serverId],
-		enabled: open && mode === "proxy" && Boolean(serverId),
-		queryFn: async () => {
-			const suitsResp = await configSuitsApi.getAll();
-			const active = suitsResp.suits.filter((suit) => suit.is_active);
-			const enabled: string[] = [];
-			await Promise.all(
-				active.map(async (suit) => {
-					try {
-						const res = await configSuitsApi.getServers(suit.id);
-						const match = (res.servers || []).find(
-							(server) => server.id === serverId && server.enabled,
-						);
-						if (match) {
-							enabled.push(suit.name || suit.id);
-						}
-					} catch (error) {
-						console.error("Failed to load servers for suit", suit.id, error);
-					}
-				}),
-			);
-			return enabled;
-		},
-	});
-	const proxyAvailable = (activeProfilesQ.data?.length ?? 0) > 0;
-	const isProxyChecking =
-		mode === "proxy" && activeProfilesQ.isFetching && !activeProfilesQ.isFetched;
-	const canUseCurrentMode = mode === "native" || proxyAvailable;
-	const proxyUnavailable = mode === "proxy" && !isProxyChecking && !proxyAvailable;
-	const optionListKey = `${serverId || serverName || "unknown"}:${mode}:${kind}`;
+	const proxyUsesActiveCatalog =
+		mode === "proxy" && proxyScope === "active_catalog";
+	const targetPayload = useMemo<InspectorTargetPayload>(
+		() => ({
+			server_id: scratchId ? undefined : serverId,
+			server_name: scratchId ? undefined : serverName,
+			scratch_id: scratchId,
+		}),
+		[scratchId, serverId, serverName],
+	);
+	const nativeTargetKey = scratchId || serverId || serverName || "missing-target";
+	const requestTargetPayload = useMemo<InspectorTargetPayload>(
+		() => (proxyUsesActiveCatalog ? {} : targetPayload),
+		[proxyUsesActiveCatalog, targetPayload],
+	);
+	const hasRequestTarget =
+		proxyUsesActiveCatalog ||
+		Boolean(
+			requestTargetPayload.server_id ||
+				requestTargetPayload.server_name ||
+				requestTargetPayload.scratch_id,
+		);
+	const optionListKey = `${nativeTargetKey}:${mode}:${proxyMode}:${proxyScope}:${kind}`;
 	const hasListedOptions = listedOptionKeys.has(optionListKey);
 	const hasProvidedOptions = capabilityOptions !== undefined;
 	const propItemKey = useMemo(() => computeRecordKey(item, kind), [item, kind]);
@@ -543,9 +552,18 @@ export function InspectorDrawer({
 		};
 	}, []);
 
-	useEffect(() => {
-		nativeSessionRef.current = nativeSession;
-	}, [nativeSession]);
+	const setNativeSessionState = useCallback(
+		(session: InspectorSessionOpenData | null, targetKey?: string | null) => {
+			nativeSessionRef.current = session;
+			nativeSessionTargetKeyRef.current = session
+				? (targetKey ?? nativeSessionTargetKeyRef.current)
+				: null;
+			if (mountedRef.current) {
+				setNativeSession(session);
+			}
+		},
+		[],
+	);
 
 	const clearNativeSessionCloseTimer = useCallback(() => {
 		if (nativeSessionCloseTimer.current) {
@@ -565,25 +583,39 @@ export function InspectorDrawer({
 				mountedRef.current &&
 				nativeSessionRef.current?.session_id === session.session_id
 			) {
-				setNativeSession(null);
-				nativeSessionRef.current = null;
+				setNativeSessionState(null);
 			}
 		},
-		[],
+		[setNativeSessionState],
 	);
+
+	const closePendingNativeSession = useCallback(() => {
+		const pending = pendingNativeSessionRef.current;
+		pendingNativeSessionRef.current = null;
+		if (!pending) {
+			return;
+		}
+		void pending.promise
+			.then((session) => closeNativeSession(session))
+			.catch((error) => {
+				console.warn("Pending inspector session did not open", error);
+			});
+	}, [closeNativeSession]);
 
 	const invalidateNativeSession = useCallback(() => {
 		clearNativeSessionCloseTimer();
-		pendingNativeSessionRef.current = null;
+		closePendingNativeSession();
 		const current = nativeSessionRef.current;
-		nativeSessionRef.current = null;
-		if (mountedRef.current) {
-			setNativeSession(null);
-		}
+		setNativeSessionState(null);
 		if (current) {
 			void closeNativeSession(current);
 		}
-	}, [clearNativeSessionCloseTimer, closeNativeSession]);
+	}, [
+		clearNativeSessionCloseTimer,
+		closeNativeSession,
+		closePendingNativeSession,
+		setNativeSessionState,
+	]);
 
 	const scheduleNativeSessionClose = useCallback(
 		(session: InspectorSessionOpenData) => {
@@ -598,18 +630,25 @@ export function InspectorDrawer({
 	const ensureNativeSession = useCallback(async (): Promise<
 		string | undefined
 	> => {
-		if (!serverId) {
+		if (
+			!targetPayload.server_id &&
+			!targetPayload.server_name &&
+			!targetPayload.scratch_id
+		) {
 			return undefined;
 		}
 		clearNativeSessionCloseTimer();
 
 		const current = nativeSessionRef.current;
-		if (current?.mode === "native" && current.server_id === serverId) {
+		if (
+			current?.mode === "native" &&
+			nativeSessionTargetKeyRef.current === nativeTargetKey
+		) {
 			return current.session_id;
 		}
 
 		const pending = pendingNativeSessionRef.current;
-		if (pending?.serverId === serverId) {
+		if (pending?.targetKey === nativeTargetKey) {
 			const session = await pending.promise;
 			return session.session_id;
 		}
@@ -621,8 +660,7 @@ export function InspectorDrawer({
 		const pendingPromise = inspectorApi
 			.sessionOpen({
 				mode: "native",
-				server_id: serverId,
-				server_name: serverName,
+				...targetPayload,
 			})
 			.then((response) => {
 				if (!response?.success || !response.data) {
@@ -635,7 +673,7 @@ export function InspectorDrawer({
 				return response.data;
 			});
 		pendingNativeSessionRef.current = {
-			serverId,
+			targetKey: nativeTargetKey,
 			promise: pendingPromise,
 		};
 
@@ -646,10 +684,7 @@ export function InspectorDrawer({
 				return undefined;
 			}
 			pendingNativeSessionRef.current = null;
-			if (mountedRef.current) {
-				setNativeSession(session);
-			}
-			nativeSessionRef.current = session;
+			setNativeSessionState(session, nativeTargetKey);
 			return session.session_id;
 		} catch (error) {
 			if (pendingNativeSessionRef.current?.promise === pendingPromise) {
@@ -660,23 +695,59 @@ export function InspectorDrawer({
 	}, [
 		clearNativeSessionCloseTimer,
 		closeNativeSession,
-		serverId,
-		serverName,
+		nativeTargetKey,
+		setNativeSessionState,
+		targetPayload,
 	]);
+
+	const refreshNativeSession = useCallback(
+		async (session: InspectorSessionOpenData) => {
+			const response = await inspectorApi.sessionRefresh({
+				session_id: session.session_id,
+			});
+			if (!response?.success || !response.data) {
+				throw new Error(
+					response?.error
+						? String(response.error)
+						: "Failed to refresh inspector session",
+				);
+			}
+			if (nativeSessionRef.current?.session_id !== session.session_id) {
+				return;
+			}
+			setNativeSessionState(response.data);
+		},
+		[setNativeSessionState],
+	);
 
 	useEffect(() => {
 		const current = nativeSessionRef.current;
 		if (!current) {
+			if (!open || mode !== "native") {
+				closePendingNativeSession();
+			}
 			return;
 		}
 
-		if (open && mode === "native" && current.server_id === serverId) {
+		if (
+			open &&
+			mode === "native" &&
+			nativeSessionTargetKeyRef.current === nativeTargetKey
+		) {
 			clearNativeSessionCloseTimer();
 			return;
 		}
 
+		closePendingNativeSession();
 		scheduleNativeSessionClose(current);
-	}, [clearNativeSessionCloseTimer, mode, open, scheduleNativeSessionClose, serverId]);
+	}, [
+		clearNativeSessionCloseTimer,
+		closePendingNativeSession,
+		mode,
+		nativeTargetKey,
+		open,
+		scheduleNativeSessionClose,
+	]);
 
 	useEffect(() => {
 		if (!open || mode !== "native") {
@@ -688,16 +759,60 @@ export function InspectorDrawer({
 				error instanceof Error ? error.message : String(error ?? ""),
 			);
 		});
-	}, [ensureNativeSession, mode, open, t]);
+	}, [ensureNativeSession, mode, nativeSession?.session_id, open, t]);
+
+	useEffect(() => {
+		if (!open || mode !== "native" || !nativeSession?.session_id) {
+			return;
+		}
+
+		let cancelled = false;
+		const refresh = async () => {
+			const current = nativeSessionRef.current;
+			if (!current) {
+				return;
+			}
+			try {
+				await refreshNativeSession(current);
+			} catch (error) {
+				if (cancelled) {
+					return;
+				}
+				console.warn("Failed to refresh inspector session", error);
+				if (
+					isInspectorSessionUnavailableError(error) &&
+					nativeSessionRef.current?.session_id === current.session_id
+				) {
+					invalidateNativeSession();
+				}
+			}
+		};
+
+		const interval = window.setInterval(() => {
+			void refresh();
+		}, INSPECT_SESSION_KEEPALIVE_MS);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(interval);
+		};
+	}, [
+		mode,
+		nativeSession?.session_id,
+		open,
+		invalidateNativeSession,
+		refreshNativeSession,
+	]);
 
 	useEffect(() => {
 		return () => {
+			closePendingNativeSession();
 			const current = nativeSessionRef.current;
 			if (current) {
 				scheduleNativeSessionClose(current);
 			}
 		};
-	}, [scheduleNativeSessionClose]);
+	}, [closePendingNativeSession, scheduleNativeSessionClose]);
 
 	useEffect(() => {
 		if (propItemKey !== lastPropKeyRef.current) {
@@ -705,6 +820,17 @@ export function InspectorDrawer({
 			lastPropKeyRef.current = propItemKey;
 		}
 	}, [propItemKey]);
+
+	useEffect(() => {
+		setResult(null);
+		setActiveCallId(null);
+		activeCallIdRef.current = null;
+		setOverrideItem(null);
+		if (!hasProvidedOptions) {
+			setCapOptions(item ? [item] : []);
+			setListedOptionKeys(new Set());
+		}
+	}, [hasProvidedOptions, item, nativeTargetKey]);
 
 	useEffect(() => {
 		if (open && !wasOpenRef.current) {
@@ -739,7 +865,6 @@ export function InspectorDrawer({
 			return;
 		}
 		setResult(null);
-		setEvents([]);
 		setView("response");
 		setSubmitting(false);
 		setCancelling(false);
@@ -1006,6 +1131,16 @@ export function InspectorDrawer({
 		}
 	}
 
+	function readRequestArguments(): JsonObject | undefined {
+		if (!expectsArguments) {
+			return undefined;
+		}
+		if (useRaw) {
+			return parseArgs();
+		}
+		return values;
+	}
+
 	// Try to extract text from common MCP/LLM response envelopes
 	function extractHumanText(value: unknown): string | null {
 		if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -1013,18 +1148,15 @@ export function InspectorDrawer({
 			if (rec.type === "text" && typeof rec.text === "string") {
 				return rec.text as string;
 			}
-			if (Array.isArray((rec as any).content)) {
-				const segments = ((rec as any).content as unknown[]).map((seg) => {
+			if (Array.isArray(rec.content)) {
+				const segments = rec.content.map((seg) => {
 					if (typeof seg === "string") return seg;
 					if (
-						seg &&
-						typeof seg === "object" &&
-						!Array.isArray(seg) &&
-						((seg as any).type === "text" ||
-							(seg as any).type === "input_text") &&
-						typeof (seg as any).text === "string"
+						isRecord(seg) &&
+						(seg.type === "text" || seg.type === "input_text") &&
+						typeof seg.text === "string"
 					) {
-						return String((seg as any).text);
+						return seg.text;
 					}
 					return null;
 				});
@@ -1045,20 +1177,10 @@ export function InspectorDrawer({
 	}, [capOptions, kind]);
 
 	const refreshCapabilityOptions = useCallback(async () => {
-		if (!serverId && !serverName) {
+		if (!hasRequestTarget) {
 			setCapOptionsError(t("errors.sessionMissing"));
 			return;
 		}
-		if (mode === "proxy" && !proxyAvailable) {
-			setCapOptionsError(
-				t("proxy.unavailable", {
-					defaultValue:
-						"Proxy mode is unavailable because this server is not enabled in any active profile.",
-				}),
-			);
-			return;
-		}
-
 		setCapOptionsLoading(true);
 		setCapOptionsError(null);
 		try {
@@ -1068,13 +1190,15 @@ export function InspectorDrawer({
 				throw new Error(t("errors.sessionMissing"));
 			}
 			const commonPayload = {
-				server_id: serverId,
-				server_name: serverName,
+				...requestTargetPayload,
 				mode,
 				session_id: sessionId,
 				refresh: true,
+				...(mode === "proxy"
+					? { proxy_mode: proxyMode, proxy_scope: proxyScope }
+					: {}),
 			};
-			let resp: InspectorResponse<any> | undefined;
+			let resp: InspectorResponse<InspectorCapabilityListData> | undefined;
 			if (kind === "tool") {
 				resp = (await inspectorApi.toolsList(commonPayload)) as
 					| InspectorResponse<{ tools?: unknown[] }>
@@ -1117,16 +1241,16 @@ export function InspectorDrawer({
 		kind,
 		mode,
 		optionListKey,
-		proxyAvailable,
-		serverId,
-		serverName,
+		proxyMode,
+		proxyScope,
+		hasRequestTarget,
+		requestTargetPayload,
 		t,
 	]);
 
 	const handleCapabilitySelect = useCallback(
 		(value: string) => {
 			setResult(null);
-			setEvents([]);
 			setView("response");
 			setActiveCallId(null);
 			activeCallIdRef.current = null;
@@ -1174,38 +1298,8 @@ export function InspectorDrawer({
 
 	const clearOutput = useCallback(() => {
 		setResult(null);
-		setEvents([]);
 		setView("response");
 	}, []);
-
-	const clearResponseActionsHideTimer = useCallback(() => {
-		if (responseActionsHideTimer.current != null) {
-			clearTimeout(responseActionsHideTimer.current);
-			responseActionsHideTimer.current = null;
-		}
-	}, []);
-
-	const scheduleResponseActionsHide = useCallback(() => {
-		clearResponseActionsHideTimer();
-		responseActionsHideTimer.current = setTimeout(() => {
-			setResponseActionsHidden(true);
-			responseActionsHideTimer.current = null;
-		}, 450);
-	}, [clearResponseActionsHideTimer]);
-
-	const resetResponseActions = useCallback(() => {
-		clearResponseActionsHideTimer();
-		setResponseActionsHidden(false);
-	}, [clearResponseActionsHideTimer]);
-
-	useEffect(() => {
-		clearResponseActionsHideTimer();
-		setResponseActionsHidden(false);
-	}, [clearResponseActionsHideTimer, result]);
-
-	useEffect(() => () => clearResponseActionsHideTimer(), [
-		clearResponseActionsHideTimer,
-	]);
 
 	const hasSchemaInputs =
 		schemaObj &&
@@ -1222,6 +1316,43 @@ export function InspectorDrawer({
 			minute: "2-digit",
 		});
 	})();
+	const displayTargetLabel = scratchId
+		? `Scratch: ${serverName ?? scratchId}`
+		: serverName || serverId || "-";
+	const serverInputValue = scratchId
+		? (serverName ?? scratchId)
+		: serverName || serverId || "-";
+	const standaloneUrl = useMemo(() => {
+		if (!showStandaloneButton || scratchId || (!serverId && !serverName)) {
+			return null;
+		}
+		const params = new URLSearchParams();
+		if (serverId) {
+			params.set("server_id", serverId);
+		} else if (serverName) {
+			params.set("server_name", serverName);
+		}
+		params.set("kind", kind);
+		const capabilityKey =
+			currentItemKey || (kind === "resource" ? uri : name).trim();
+		if (capabilityKey) {
+			params.set("capability_key", capabilityKey);
+		}
+		return `/inspector?${params.toString()}`;
+	}, [
+		currentItemKey,
+		kind,
+		name,
+		scratchId,
+		serverId,
+		serverName,
+		showStandaloneButton,
+		uri,
+	]);
+	const handleOpenStandalone = useCallback(() => {
+		if (!standaloneUrl) return;
+		window.open(standaloneUrl, "_blank", "noopener,noreferrer");
+	}, [standaloneUrl]);
 
 	const handleInspectorEvent = useCallback(
 		(payload: InspectorSseEvent) => {
@@ -1401,7 +1532,6 @@ export function InspectorDrawer({
 			setSubmitting(true);
 			setResult(null);
 			if (kind === "tool") {
-				setEvents([]);
 				setCancelling(false);
 			}
 			let resp: InspectorResponse<Record<string, unknown>> | null = null;
@@ -1411,32 +1541,23 @@ export function InspectorDrawer({
 				channel: "inspector" as const,
 				mode,
 			};
-			if (mode === "proxy" && !proxyAvailable) {
-				throw new Error(
-					t("proxy.unavailable", {
-						defaultValue:
-							"Proxy mode is unavailable because this server is not enabled in any active profile.",
-					}),
-				);
-			}
+			const proxyPayload =
+				mode === "proxy"
+					? { proxy_mode: proxyMode, proxy_scope: proxyScope }
+					: {};
 			const effectiveSessionId =
 				mode === "native" ? await ensureNativeSession() : undefined;
 			if (mode === "native" && !effectiveSessionId) {
 				throw new Error(t("errors.sessionMissing"));
 			}
 			if (kind === "tool") {
-				const args = expectsArguments
-					? useRaw
-						? parseArgs()
-						: values
-					: undefined;
+				const args = readRequestArguments();
 				if (expectsArguments && args === undefined) {
 					setSubmitting(false);
 					return;
 				}
 
-				const effectiveServerId = serverId;
-				if (!effectiveServerId && !serverName) {
+				if (!hasRequestTarget) {
 					throw new Error(t("errors.sessionMissing"));
 				}
 
@@ -1446,22 +1567,22 @@ export function InspectorDrawer({
 					method: "tools/call",
 					payload: {
 						tool: name,
-						server_id: effectiveServerId,
-						server_name: serverName,
+						...requestTargetPayload,
 						arguments: args,
 						timeout_ms: timeoutMs,
 						session_id: effectiveSessionId,
+						...proxyPayload,
 					},
 				});
 
 				const response = await inspectorApi.toolCallStart({
 					tool: name,
-					server_id: effectiveServerId,
-					server_name: serverName,
+					...requestTargetPayload,
 					mode,
 					arguments: args,
 					timeout_ms: timeoutMs,
 					session_id: effectiveSessionId,
+					...proxyPayload,
 				});
 
 				const data = response?.data ?? null;
@@ -1476,11 +1597,7 @@ export function InspectorDrawer({
 				subscribeToCall(data.call_id);
 				return;
 			} else if (kind === "prompt") {
-				const args = expectsArguments
-					? useRaw
-						? parseArgs()
-						: values
-					: undefined;
+				const args = readRequestArguments();
 				if (expectsArguments && args === undefined) return;
 				onLog?.({
 					...baseLog,
@@ -1488,19 +1605,19 @@ export function InspectorDrawer({
 					method: "prompts/get",
 					payload: {
 						name,
-						server_id: serverId,
-						server_name: serverName,
+						...requestTargetPayload,
 						arguments: args,
 						session_id: effectiveSessionId,
+						...proxyPayload,
 					},
 				});
 				resp = (await inspectorApi.promptGet({
 					name,
-					server_id: serverId,
-					server_name: serverName,
+					...requestTargetPayload,
 					mode,
 					arguments: args,
 					session_id: effectiveSessionId,
+					...proxyPayload,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
 					throw new Error(
@@ -1520,11 +1637,7 @@ export function InspectorDrawer({
 					t("notifications.executedMessage"),
 				);
 			} else if (kind === "template") {
-				const args = expectsArguments
-					? useRaw
-						? parseArgs()
-						: values
-					: undefined;
+				const args = readRequestArguments();
 				if (expectsArguments && args === undefined) return;
 
 				// Generate URI from template by replacing {arg} placeholders
@@ -1543,17 +1656,17 @@ export function InspectorDrawer({
 						uri: generatedUri,
 						template: name,
 						arguments: args,
-						server_id: serverId,
-						server_name: serverName,
+						...requestTargetPayload,
 						session_id: effectiveSessionId,
+						...proxyPayload,
 					},
 				});
 				resp = (await inspectorApi.resourceRead({
 					uri: generatedUri,
-					server_id: serverId,
-					server_name: serverName,
+					...requestTargetPayload,
 					session_id: effectiveSessionId,
 					mode,
+					...proxyPayload,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
 					throw new Error(
@@ -1579,17 +1692,17 @@ export function InspectorDrawer({
 					method: "resources/read",
 					payload: {
 						uri,
-						server_id: serverId,
-						server_name: serverName,
+						...requestTargetPayload,
 						session_id: effectiveSessionId,
+						...proxyPayload,
 					},
 				});
 				resp = (await inspectorApi.resourceRead({
 					uri,
-					server_id: serverId,
-					server_name: serverName,
+					...requestTargetPayload,
 					session_id: effectiveSessionId,
 					mode,
+					...proxyPayload,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
 					throw new Error(
@@ -1653,14 +1766,13 @@ export function InspectorDrawer({
 				t("notifications.copySuccess"),
 				t("notifications.copySuccessMessage"),
 			);
-			scheduleResponseActionsHide();
 		} catch (err) {
 			notifyError(
 				t("notifications.copyFailed"),
 				err instanceof Error ? err.message : String(err),
 			);
 		}
-	}, [result, scheduleResponseActionsHide, t]);
+	}, [result, t]);
 
 	const displaySessionId =
 		mode === "native" ? nativeSession?.session_id : undefined;
@@ -1672,15 +1784,15 @@ export function InspectorDrawer({
 					<TooltipTrigger asChild>
 						<button
 							type="button"
-							className="inline-flex h-8 w-8 items-center justify-center text-slate-500 transition hover:text-slate-700 dark:text-slate-300 dark:hover:text-slate-100"
+							className="inline-flex h-7 w-7 items-center justify-center text-slate-500 transition hover:text-slate-700 dark:text-slate-300 dark:hover:text-slate-100"
 							aria-label={
 								sessionActive ? t("session.active") : t("session.pending")
 							}
 						>
 							{sessionActive ? (
-								<CheckCircle2 className="h-5 w-5 text-emerald-500" />
+								<CheckCircle2 className="h-4 w-4 text-emerald-500" />
 							) : (
-								<AlertCircle className="h-5 w-5 text-amber-500" />
+								<AlertCircle className="h-4 w-4 text-amber-500" />
 							)}
 						</button>
 					</TooltipTrigger>
@@ -1692,7 +1804,7 @@ export function InspectorDrawer({
 						{sessionActive ? (
 							<p>
 								{t("session.connected", {
-									serverName: serverName || serverId,
+									serverName: displayTargetLabel,
 									expiry: sessionExpiry ?? "soon",
 								})}
 							</p>
@@ -1704,34 +1816,15 @@ export function InspectorDrawer({
 			</TooltipProvider>
 		) : null;
 
-	const handleToggleFormClick = useCallback(
-		(event: React.MouseEvent<HTMLDivElement>) => {
-			const target = event.target as HTMLElement;
-			// Ignore interactive controls so output clicks are the only input toggle target.
-			if (
-				target.closest("button") ||
-				target.closest("a") ||
-				target.closest('[data-prevent-collapse="true"]') ||
-				target.closest("[data-radix-popper-content-wrapper]")
-			) {
-				return;
-			}
-			setFormCollapsed((collapsed) => !collapsed);
-		},
-		[],
-	);
-
 	const listButton = (
 		<Button
 			type="button"
 			variant="default"
 			onClick={() => void refreshCapabilityOptions()}
-			disabled={
-				capOptionsLoading || submitting || isProxyChecking || !canUseCurrentMode
-			}
+			disabled={capOptionsLoading || submitting}
 			className="h-9 shrink-0 gap-2 px-3"
 		>
-			{capOptionsLoading || isProxyChecking ? (
+			{capOptionsLoading ? (
 				<Loader2 className="h-4 w-4 animate-spin" />
 			) : (
 				<RefreshCw className="h-4 w-4" />
@@ -1741,10 +1834,9 @@ export function InspectorDrawer({
 				: t("actions.list", { defaultValue: "List" })}
 		</Button>
 	);
-	const proxyUnavailableText = t("proxy.unavailable", {
-		defaultValue:
-			"Proxy mode is unavailable because this server is not enabled in any active profile.",
-	});
+	const outputToggleLabel = formCollapsed
+		? t("actions.restoreInput", { defaultValue: "Restore input" })
+		: t("actions.maximizeOutput", { defaultValue: "Maximize output" });
 
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange}>
@@ -1767,7 +1859,33 @@ export function InspectorDrawer({
 							</DrawerTitle>
 							<DrawerDescription>{t("subtitle")}</DrawerDescription>
 						</div>
-						{sessionIndicator}
+						<div className="flex shrink-0 items-center gap-1">
+							{standaloneUrl ? (
+								<TooltipProvider delayDuration={150}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<Button
+												type="button"
+												variant="ghost"
+												size="icon"
+												className="h-8 w-8"
+												onClick={handleOpenStandalone}
+												aria-label={t("standalone.open", {
+													defaultValue: "Open standalone Inspector",
+												})}
+											>
+												<ExternalLink className="h-4 w-4" />
+											</Button>
+										</TooltipTrigger>
+										<TooltipContent side="left" align="end">
+											{t("standalone.open", {
+												defaultValue: "Open standalone Inspector",
+											})}
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
+							) : null}
+						</div>
 					</div>
 				</DrawerHeader>
 
@@ -1814,43 +1932,16 @@ export function InspectorDrawer({
 												<AlertTriangle className="h-4 w-4" />
 												{t("form.native", { defaultValue: "Native" })}
 											</Button>
-											<TooltipProvider delayDuration={200}>
-												<Tooltip>
-													<TooltipTrigger asChild>
-														<Button
-															type="button"
-															variant={mode === "proxy" ? "default" : "outline"}
-															className="h-9 flex-1 rounded-l-none gap-2 px-3"
-															onClick={() => setMode("proxy")}
-														>
-															{isProxyChecking ? (
-																<Loader2 className="h-4 w-4 animate-spin" />
-															) : (
-																<ShieldAlert
-																	className={`h-4 w-4 ${proxyUnavailable ? "text-amber-300" : ""}`}
-																/>
-															)}
-															<span
-																className={
-																	proxyUnavailable ? "text-amber-300" : undefined
-																}
-															>
-																{t("form.proxy", { defaultValue: "Proxy" })}
-															</span>
-														</Button>
-													</TooltipTrigger>
-													{proxyUnavailable ? (
-														<TooltipPortal>
-															<TooltipContent side="top" align="start">
-																<p className="max-w-xs text-xs leading-relaxed">
-																	{proxyUnavailableText}
-																</p>
-																<TooltipArrow />
-															</TooltipContent>
-														</TooltipPortal>
-													) : null}
-												</Tooltip>
-											</TooltipProvider>
+											<Button
+												type="button"
+												variant={mode === "proxy" ? "default" : "outline"}
+												className="h-9 flex-1 rounded-l-none gap-2 px-3"
+												disabled={Boolean(scratchId)}
+												onClick={() => setMode("proxy")}
+											>
+												<ShieldAlert className="h-4 w-4" />
+												{t("form.proxy", { defaultValue: "Proxy" })}
+											</Button>
 										</ButtonGroup>
 									</div>
 									<div className="space-y-1">
@@ -1868,27 +1959,89 @@ export function InspectorDrawer({
 									</div>
 									<div className="space-y-1">
 										<Label>{t("form.server")}</Label>
-										<TooltipProvider delayDuration={200}>
-											<Tooltip>
-												<TooltipTrigger asChild>
-													<Input
-														value={serverName || serverId || "-"}
-														disabled
-														className="h-9"
-													/>
-												</TooltipTrigger>
-												{serverName && serverId ? (
-													<TooltipPortal>
+										<div className="relative">
+											<TooltipProvider delayDuration={200}>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<Input
+															value={serverInputValue}
+															readOnly
+															aria-readonly="true"
+															className="h-9 cursor-default pr-10 text-slate-600 dark:text-slate-300"
+														/>
+													</TooltipTrigger>
+													{!scratchId && serverName && serverId ? (
 														<TooltipContent side="top" align="start">
 															<p className="text-xs">ID: {serverId}</p>
-															<TooltipArrow />
 														</TooltipContent>
-													</TooltipPortal>
-												) : null}
-											</Tooltip>
-										</TooltipProvider>
+													) : null}
+												</Tooltip>
+											</TooltipProvider>
+											{sessionIndicator ? (
+												<div
+													className="absolute inset-y-0 right-1 flex items-center"
+													data-prevent-collapse="true"
+												>
+													{sessionIndicator}
+												</div>
+											) : null}
+										</div>
 									</div>
 								</div>
+								{mode === "proxy" ? (
+									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+										<div className="space-y-1">
+											<Label>
+												{t("form.proxyMode", { defaultValue: "Proxy mode" })}
+											</Label>
+											<ButtonGroup className="flex w-full">
+												<Button
+													type="button"
+													variant={proxyMode === "hosted" ? "default" : "outline"}
+													className="h-9 flex-1 rounded-r-none px-3"
+													onClick={() => setProxyMode("hosted")}
+												>
+													{t("form.hosted", { defaultValue: "Hosted" })}
+												</Button>
+												<Button
+													type="button"
+													variant={proxyMode === "unify" ? "default" : "outline"}
+													className="h-9 flex-1 rounded-l-none px-3"
+													onClick={() => setProxyMode("unify")}
+												>
+													{t("form.unify", { defaultValue: "Unify" })}
+												</Button>
+											</ButtonGroup>
+										</div>
+										<div className="space-y-1">
+											<Label>
+												{t("form.proxyScope", { defaultValue: "Surface" })}
+											</Label>
+											<ButtonGroup className="flex w-full">
+												<Button
+													type="button"
+													variant={proxyScope === "isolated" ? "default" : "outline"}
+													className="h-9 flex-1 rounded-r-none px-3"
+													onClick={() => setProxyScope("isolated")}
+												>
+													{t("form.isolated", { defaultValue: "Isolated" })}
+												</Button>
+												<Button
+													type="button"
+													variant={
+														proxyScope === "active_catalog" ? "default" : "outline"
+													}
+													className="h-9 flex-1 rounded-l-none px-3"
+													onClick={() => setProxyScope("active_catalog")}
+												>
+													{t("form.activeCatalog", {
+														defaultValue: "Active catalog",
+													})}
+												</Button>
+											</ButtonGroup>
+										</div>
+									</div>
+								) : null}
 
 								{kind === "resource" || kind === "template" ? (
 									<div className="space-y-1">
@@ -1900,7 +2053,7 @@ export function InspectorDrawer({
 										<div className="flex min-w-0 gap-2">
 											<div className="min-w-0 flex-1">
 												<CapabilityCombobox
-													kind={kind as any}
+													kind={kind}
 													items={capOptions}
 													value={currentItemKey || undefined}
 													onChange={(key) => handleCapabilitySelect(key)}
@@ -1923,21 +2076,20 @@ export function InspectorDrawer({
 													getLabel={(it) => {
 														const entry = it as CapabilityRecord;
 														if (kind === "template") {
-															return (toStringValue((entry as any).uriTemplate) ||
-																toStringValue((entry as any).uri_template) ||
-																toStringValue((entry as any).name) ||
+															return (toStringValue(entry.uriTemplate) ||
+																toStringValue(entry.uri_template) ||
+																toStringValue(entry.name) ||
 																computeRecordKey(entry, kind)) as string;
 														}
-														return (toStringValue((entry as any).resource_uri) ||
-															toStringValue((entry as any).uri) ||
-															toStringValue((entry as any).name) ||
+														return (toStringValue(entry.resource_uri) ||
+															toStringValue(entry.uri) ||
+															toStringValue(entry.name) ||
 															computeRecordKey(entry, kind)) as string;
 													}}
 													getDescription={(it) => {
 														const entry = it as CapabilityRecord;
 														return (
-															toStringValue((entry as any).description) ||
-															undefined
+															toStringValue(entry.description) || undefined
 														);
 													}}
 												/>
@@ -1954,7 +2106,7 @@ export function InspectorDrawer({
 											<div className="flex min-w-0 gap-2">
 												<div className="min-w-0 flex-1">
 													<CapabilityCombobox
-														kind={kind as any}
+														kind={kind}
 														items={capOptions}
 														value={currentItemKey || undefined}
 														onChange={(key) => handleCapabilitySelect(key)}
@@ -1983,13 +2135,13 @@ export function InspectorDrawer({
 																);
 															} else {
 																const uniqueName = toStringValue(
-																	(entry as any).unique_name,
+																	entry.unique_name,
 																);
 																const promptName = toStringValue(
-																	(entry as any).prompt_name,
+																	entry.prompt_name,
 																);
 																const rawName = toStringValue(
-																	(entry as any).name,
+																	entry.name,
 																);
 																return (
 																	(mode === "proxy"
@@ -2125,54 +2277,64 @@ export function InspectorDrawer({
 						<TabsContent
 							value="response"
 							className="min-h-0 flex-1 flex-col data-[state=active]:flex"
-							onClick={handleToggleFormClick}
 						>
 							<CardListScrollBody>
-								<div
-									className="group relative min-h-full text-xs text-slate-700 dark:text-slate-200"
-									onMouseLeave={resetResponseActions}
-								>
-									{result ? (
-										<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
-											<ButtonGroup
-												className={`pointer-events-auto bg-white/95 opacity-0 backdrop-blur-sm shadow-sm transition-opacity dark:bg-slate-900/95 ${
-													responseActionsHidden
-														? ""
-														: "group-hover:opacity-100"
-												}`}
+								<div className="group relative min-h-full text-xs text-slate-700 dark:text-slate-200">
+									<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
+										<ButtonGroup className="pointer-events-none bg-white/95 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-50 dark:bg-slate-900/95">
+											{result ? (
+												<>
+													<Button
+														type="button"
+														variant="outline"
+														size="sm"
+														className="h-7 w-7 p-0"
+														onClick={(event) => {
+															event.stopPropagation();
+															handleCopy();
+														}}
+														data-prevent-collapse="true"
+														title={t("actions.copy")}
+													>
+														<Copy className="h-3.5 w-3.5" />
+													</Button>
+													<Button
+														type="button"
+														variant="outline"
+														size="sm"
+														className="h-7 w-7 p-0"
+														onClick={(event) => {
+															event.stopPropagation();
+															clearOutput();
+														}}
+														data-prevent-collapse="true"
+														title={t("actions.clear")}
+													>
+														<Eraser className="h-3.5 w-3.5" />
+													</Button>
+												</>
+											) : null}
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												className="h-7 w-7 p-0"
+												onClick={(event) => {
+													event.stopPropagation();
+													setFormCollapsed((collapsed) => !collapsed);
+												}}
+												data-prevent-collapse="true"
+												title={outputToggleLabel}
+												aria-label={outputToggleLabel}
 											>
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													className="h-7 w-7 p-0"
-													onClick={(event) => {
-														event.stopPropagation();
-														handleCopy();
-													}}
-													data-prevent-collapse="true"
-													title={t("actions.copy")}
-												>
-													<Copy className="h-3.5 w-3.5" />
-												</Button>
-												<Button
-													type="button"
-													variant="outline"
-													size="sm"
-													className="h-7 w-7 p-0"
-													onClick={(event) => {
-														event.stopPropagation();
-														scheduleResponseActionsHide();
-														clearOutput();
-													}}
-													data-prevent-collapse="true"
-													title={t("actions.clear")}
-												>
-													<Eraser className="h-3.5 w-3.5" />
-												</Button>
-											</ButtonGroup>
-										</div>
-									) : null}
+												{formCollapsed ? (
+													<Minimize2 className="h-3.5 w-3.5" />
+												) : (
+													<Maximize2 className="h-3.5 w-3.5" />
+												)}
+											</Button>
+										</ButtonGroup>
+									</div>
 									<div
 										className={
 											result
@@ -2190,53 +2352,82 @@ export function InspectorDrawer({
 						<TabsContent
 							value="events"
 							className="min-h-0 flex-1 flex-col data-[state=active]:flex"
-							onClick={handleToggleFormClick}
 						>
 							<CardListScrollBody>
-								{events.length === 0 ? (
-									<div className="min-h-full p-3 text-xs text-slate-500 dark:text-slate-300">
-										{t("events.placeholder")}
+								<div className="group relative min-h-full">
+									<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
+										<ButtonGroup className="pointer-events-none bg-white/95 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-50 dark:bg-slate-900/95">
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												className="h-7 w-7 p-0"
+												onClick={(event) => {
+													event.stopPropagation();
+													setFormCollapsed((collapsed) => !collapsed);
+												}}
+												data-prevent-collapse="true"
+												title={outputToggleLabel}
+												aria-label={outputToggleLabel}
+											>
+												{formCollapsed ? (
+													<Minimize2 className="h-3.5 w-3.5" />
+												) : (
+													<Maximize2 className="h-3.5 w-3.5" />
+												)}
+											</Button>
+										</ButtonGroup>
 									</div>
-								) : (
-									<>
-										<ul className="space-y-2 p-3">
-											{events.map((entry, index) => {
-												const label = formatEventLabel(entry, t);
-												const detail = formatEventDetails(entry, t);
-												const key = `${entry.data.event}-${entry.timestamp}-${index}`;
-												return (
-													<li
-														key={key}
-														className="rounded border border-slate-200 bg-white p-3 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/50"
-													>
-														<div className="flex items-center justify-between gap-2">
-															<div className="flex items-center gap-2">
-																<Badge
-																	variant={badgeVariantForEvent(entry.data.event)}
-																	className="uppercase"
-																>
-																	{entry.data.event}
-																</Badge>
-																<span className="font-medium text-slate-700 dark:text-slate-100">
-																	{label}
-																</span>
+									{events.length === 0 ? (
+										<div className="min-h-full p-3 text-xs text-slate-500 dark:text-slate-300">
+											{t("events.placeholder")}
+										</div>
+									) : (
+										<>
+											<ul className="text-xs">
+												{events.map((entry, index) => {
+													const label = formatEventLabel(entry, t);
+													const detail = formatEventDetails(entry, t);
+													const key = `${entry.data.event}-${entry.timestamp}-${index}`;
+													const inlineDetail =
+														entry.data.event === "result" ? detail : null;
+													const blockDetail =
+														detail && !inlineDetail ? detail : null;
+													return (
+														<li
+															key={key}
+															className="flex min-h-14 items-center px-3 py-1.5 even:bg-white odd:bg-slate-50 dark:even:bg-slate-900 dark:odd:bg-slate-800/70"
+														>
+															<div className="min-w-0 flex-1">
+																<div className="flex min-w-0 items-center gap-2">
+																	<Badge
+																		variant={badgeVariantForEvent(entry.data.event)}
+																		className="uppercase"
+																	>
+																		{entry.data.event}
+																	</Badge>
+																	<span className="min-w-0 truncate font-medium text-slate-700 dark:text-slate-100">
+																		{label}
+																	</span>
+																</div>
+																<div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] leading-relaxed text-slate-500 dark:text-slate-300">
+																	<span>{formatTimestamp(entry.timestamp)}</span>
+																	{inlineDetail ? <span>{inlineDetail}</span> : null}
+																</div>
+																{blockDetail ? (
+																	<pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+																		{blockDetail}
+																	</pre>
+																) : null}
 															</div>
-															<span className="text-[11px] text-slate-500 dark:text-slate-300">
-																{formatTimestamp(entry.timestamp)}
-															</span>
-														</div>
-														{detail ? (
-															<pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-600 dark:text-slate-300">
-																{detail}
-															</pre>
-														) : null}
-													</li>
-												);
-											})}
-										</ul>
-										<div ref={eventsEndRef} />
-									</>
-								)}
+														</li>
+													);
+												})}
+											</ul>
+											<div ref={eventsEndRef} />
+										</>
+									)}
+								</div>
 							</CardListScrollBody>
 						</TabsContent>
 					</Tabs>
@@ -2264,7 +2455,7 @@ export function InspectorDrawer({
 							) : null}
 							<Button
 								onClick={onSubmit}
-								disabled={submitting || isProxyChecking || !canUseCurrentMode}
+								disabled={submitting}
 								className="w-full sm:w-auto"
 							>
 								{submitting ? t("actions.running") : t("actions.run")}
