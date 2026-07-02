@@ -6,6 +6,7 @@ import {
   KeyRound,
   LayoutDashboard,
   Menu,
+  Microscope,
   Server,
   Settings,
   Sliders,
@@ -172,6 +173,10 @@ export function Sidebar() {
 
         <SidebarLink to="/runtime" icon={<Activity size={20} />}>
           {sidebarOpen && t("nav.runtime", { defaultValue: "Runtime" })}
+        </SidebarLink>
+
+        <SidebarLink to="/inspector" icon={<Microscope size={20} />}>
+          {sidebarOpen && t("nav.inspector", { defaultValue: "Inspector" })}
         </SidebarLink>
 
         {showApiDocsMenu && (

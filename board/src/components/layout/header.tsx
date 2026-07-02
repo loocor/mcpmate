@@ -78,6 +78,7 @@ export function boardPathToDocsPage(pathname: string, search = ""): string {
   if (pathname.startsWith("/secrets")) return "settings";
   if (pathname.startsWith("/runtime") || pathname.startsWith("/system"))
     return "runtime";
+  if (pathname.startsWith("/inspector")) return "server-inspector";
   if (pathname.startsWith("/audit")) return "logs";
   if (pathname.startsWith("/api-docs")) return "api-docs";
   if (pathname.startsWith("/settings")) return "settings";
@@ -94,6 +95,7 @@ const ROUTE_TRANSLATIONS = {
   servers: "header.routes.servers",
   secrets: "header.routes.secrets",
   runtime: "header.routes.runtime",
+  inspector: "header.routes.inspector",
   audit: "header.routes.audit",
   apiDocs: "header.routes.apiDocs",
   system: "header.routes.system",
@@ -108,6 +110,7 @@ const ROUTE_KEYS: Record<string, keyof typeof ROUTE_TRANSLATIONS> = {
   "/servers": "servers",
   "/secrets": "secrets",
   "/runtime": "runtime",
+  "/inspector": "inspector",
   "/audit": "audit",
   "/api-docs": "apiDocs",
   "/system": "system",
@@ -122,6 +125,7 @@ const ROUTE_FALLBACKS: Record<keyof typeof ROUTE_TRANSLATIONS, string> = {
   servers: "Servers",
   secrets: "Secrets",
   runtime: "Runtime",
+  inspector: "Inspector",
   audit: "Logs",
   apiDocs: "API Docs",
   system: "System",
