@@ -230,17 +230,30 @@ export interface ServerInstanceDetails {
 
 export interface InspectorToolCallStartData {
   call_id: string;
-  server_id: string;
+  server_id?: string;
+  scratch_id?: string;
   mode: "proxy" | "native";
   session_id?: string;
   request_id: string;
   progress_token: string;
 }
 
+export interface InspectorTargetData {
+  mode: "proxy" | "native";
+  server_id?: string;
+  scratch_id?: string;
+  proxy_mode?: "hosted" | "unify";
+  proxy_scope?: "isolated" | "active_catalog";
+}
+
 export interface InspectorSessionOpenData {
   session_id: string;
-  server_id: string;
+  target?: InspectorTargetData;
+  server_id?: string;
+  scratch_id?: string;
   mode: "proxy" | "native";
+  proxy_mode?: "hosted" | "unify";
+  proxy_scope?: "isolated" | "active_catalog";
   expires_at_epoch_ms: number;
 }
 

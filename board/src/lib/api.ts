@@ -1581,43 +1581,96 @@ export function extractImportStats(
 }
 
 // Inspector API
+type InspectorProxyMode = "hosted" | "unify";
+type InspectorProxyScope = "isolated" | "active_catalog";
+type InspectorMode = "proxy" | "native";
+
+type InspectorTargetQuery = {
+	server_id?: string;
+	server_name?: string;
+	scratch_id?: string;
+	session_id?: string;
+	mode?: InspectorMode;
+	refresh?: boolean;
+	proxy_mode?: InspectorProxyMode;
+	proxy_scope?: InspectorProxyScope;
+};
+
+type InspectorTargetRequest = Omit<InspectorTargetQuery, "refresh">;
+
+type InspectorScratchServerRecord = {
+	id: string;
+	name: string;
+	config: Record<string, unknown>;
+	provenance: {
+		kind: "scratch" | "managed_registry";
+		origin?: string | null;
+		server_id?: string | null;
+		server_name?: string | null;
+	};
+	created_at_epoch_ms?: number;
+	updated_at_epoch_ms?: number;
+};
+
+type InspectorScratchServerListData = {
+	records: InspectorScratchServerRecord[];
+	total: number;
+};
+
+type InspectorScratchServerCreateData = {
+	record: InspectorScratchServerRecord;
+};
+
+type InspectorScratchServerDeleteData = {
+	record_id: string;
+	deleted: boolean;
+};
+
+type InspectorSnapshotData = {
+	snapshot: Record<string, unknown>;
+};
+
+type InspectorCapabilityPatchData = {
+	record: Record<string, unknown>;
+};
+
+type InspectorLlmEvaluationData = {
+	evaluation: Record<string, unknown>;
+};
+
+const appendInspectorTargetQuery = (
+	qs: URLSearchParams,
+	q: InspectorTargetQuery,
+) => {
+	if (q.server_id) qs.set("server_id", q.server_id);
+	if (q.server_name) qs.set("server_name", q.server_name);
+	if (q.scratch_id) qs.set("scratch_id", q.scratch_id);
+	if (q.session_id) qs.set("session_id", q.session_id);
+	if (q.mode) qs.set("mode", q.mode);
+	if (q.refresh != null) qs.set("refresh", String(q.refresh));
+	if (q.proxy_mode) qs.set("proxy_mode", q.proxy_mode);
+	if (q.proxy_scope) qs.set("proxy_scope", q.proxy_scope);
+};
+
 export const inspectorApi = {
-	toolsList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
+	toolsList: (q: InspectorTargetQuery) => {
 		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
+		appendInspectorTargetQuery(qs, q);
 		return fetchApi(`/api/mcp/inspector/tool/list?${qs}`);
 	},
-	toolCall: (req: {
+	toolCall: (req: InspectorTargetRequest & {
 		tool: string;
-		server_id?: string;
-		server_name?: string;
 		arguments?: Record<string, unknown>;
-		mode?: "proxy" | "native";
 		timeout_ms?: number;
-		session_id?: string;
 	}) =>
 		fetchApi(`/api/mcp/inspector/tool/call`, {
 			method: "POST",
 			body: JSON.stringify(req),
 		}),
-	toolCallStart: async (req: {
+	toolCallStart: async (req: InspectorTargetRequest & {
 		tool: string;
-		server_id?: string;
-		server_name?: string;
 		arguments?: Record<string, unknown>;
-		mode?: "proxy" | "native";
 		timeout_ms?: number;
-		session_id?: string;
 	}) =>
 		fetchApi<ApiWrapper<InspectorToolCallStartData>>(
 			`/api/mcp/inspector/tool/call/start`,
@@ -1634,11 +1687,7 @@ export const inspectorApi = {
 				body: JSON.stringify(req),
 			},
 		),
-	sessionOpen: async (req: {
-		mode: "proxy" | "native";
-		server_id?: string;
-		server_name?: string;
-	}) =>
+	sessionOpen: async (req: InspectorTargetRequest) =>
 		fetchApi<ApiWrapper<InspectorSessionOpenData>>(
 			`/api/mcp/inspector/session/open`,
 			{
@@ -1654,81 +1703,114 @@ export const inspectorApi = {
 				body: JSON.stringify(req),
 			},
 		),
+	sessionRefresh: async (req: { session_id: string }) =>
+		fetchApi<ApiWrapper<InspectorSessionOpenData>>(
+			`/api/mcp/inspector/session/refresh`,
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		),
 	toolCallEventsWsUrl: (callId: string) => {
 		const wsBase = resolveWebSocketUrl();
 		return `${wsBase}/inspector/events?call_id=${encodeURIComponent(callId)}`;
 	},
-	resourcesList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
+	resourcesList: (q: InspectorTargetQuery) => {
 		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
+		appendInspectorTargetQuery(qs, q);
 		return fetchApi(`/api/mcp/inspector/resource/list?${qs}`);
 	},
-	resourceRead: (q: {
+	resourceRead: (q: InspectorTargetRequest & {
 		uri: string;
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
 	}) => {
 		const qs = new URLSearchParams({ uri: q.uri });
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
+		appendInspectorTargetQuery(qs, q);
 		return fetchApi(`/api/mcp/inspector/resource/read?${qs}`);
 	},
-	promptsList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
+	promptsList: (q: InspectorTargetQuery) => {
 		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
+		appendInspectorTargetQuery(qs, q);
 		return fetchApi(`/api/mcp/inspector/prompt/list?${qs}`);
 	},
-	promptGet: (req: {
+	promptGet: (req: InspectorTargetRequest & {
 		name: string;
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
 		arguments?: Record<string, unknown>;
-		mode?: "proxy" | "native";
 	}) =>
 		fetchApi(`/api/mcp/inspector/prompt/get`, {
 			method: "POST",
 			body: JSON.stringify(req),
 		}),
-	templatesList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
+	templatesList: (q: InspectorTargetQuery) => {
 		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
+		appendInspectorTargetQuery(qs, q);
 		return fetchApi(`/api/mcp/inspector/template/list?${qs}`);
 	},
+	compatibilitySnapshot: async (q: InspectorTargetQuery) => {
+		const qs = new URLSearchParams();
+		appendInspectorTargetQuery(qs, q);
+		return fetchApi<ApiWrapper<InspectorSnapshotData>>(
+			`/api/mcp/inspector/compatibility/snapshot?${qs}`,
+		);
+	},
+	packageSafetySnapshot: async (q: InspectorTargetQuery) => {
+		const qs = new URLSearchParams();
+		appendInspectorTargetQuery(qs, q);
+		return fetchApi<ApiWrapper<InspectorSnapshotData>>(
+			`/api/mcp/inspector/package-safety/snapshot?${qs}`,
+		);
+	},
+	capabilityPatchUpsert: async (
+		req: InspectorTargetRequest & {
+			capability_kind: "tools" | "prompts" | "resources" | "resource_templates";
+			capability_key: string;
+			patch: Record<string, unknown>;
+		},
+	) =>
+		fetchApi<ApiWrapper<InspectorCapabilityPatchData>>(
+			`/api/mcp/inspector/capability-patch/upsert`,
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		),
+	llmEvaluate: async (
+		req: InspectorTargetRequest & {
+			scenario: string;
+			provider_id?: string;
+			max_tools?: number;
+		},
+	) =>
+		fetchApi<ApiWrapper<InspectorLlmEvaluationData>>(
+			`/api/mcp/inspector/llm/evaluate`,
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		),
+	scratchServerList: async () =>
+		fetchApi<ApiWrapper<InspectorScratchServerListData>>(
+			`/api/mcp/inspector/scratch/server/list`,
+		),
+	scratchServerCreate: async (req: {
+		name: string;
+		config: Record<string, unknown>;
+		origin?: string;
+	}) =>
+		fetchApi<ApiWrapper<InspectorScratchServerCreateData>>(
+			`/api/mcp/inspector/scratch/server/create`,
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		),
+	scratchServerDelete: async (req: { record_id: string }) =>
+		fetchApi<ApiWrapper<InspectorScratchServerDeleteData>>(
+			`/api/mcp/inspector/scratch/server/delete`,
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		),
 };
 
 export const auditApi = {
