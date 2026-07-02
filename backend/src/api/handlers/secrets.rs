@@ -1049,6 +1049,9 @@ mod tests {
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            inspector_workspace: Arc::new(crate::inspector::workspace::InspectorWorkspace::new(
+                crate::common::paths::global_paths(),
+            )),
             oauth_manager: RwLock::new(None),
             secret_store: RwLock::new(Some(store.clone())),
             secret_store_readiness: RwLock::new(SecretStoreReadiness::ready(store.provider_metadata())),

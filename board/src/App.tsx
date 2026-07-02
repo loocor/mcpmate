@@ -20,6 +20,7 @@ import { AuditPage } from "./pages/audit/audit-page";
 import { ClientDirectCapabilitiesPage } from "./pages/clients/client-direct-page.tsx";
 import { ClientsPage } from "./pages/clients/clients-page";
 import { DashboardPage } from "./pages/dashboard/dashboard-page";
+import { InspectorPage } from "./pages/inspector/inspector-page";
 import { MarketDetailPage } from "./pages/market/market-detail-page";
 import { MarketPage } from "./pages/market/market-page";
 import { CatalogProvider } from "./lib/market";
@@ -160,6 +161,7 @@ function App() {
 										}
 									/>
 									<Route path="runtime" element={<RuntimePage />} />
+									<Route path="inspector" element={<InspectorPage />} />
 									<Route path="secrets" element={<SecretsPage />} />
 									<Route path="audit" element={<AuditPage />} />
 									<Route path="api-docs" element={<ApiDocsPage />} />
