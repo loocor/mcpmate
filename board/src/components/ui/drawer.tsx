@@ -16,6 +16,7 @@ function setAppInert(_inert: boolean) { /* no-op */ }
 // Create a context to share the close handler with DrawerOverlay
 const DrawerContext = React.createContext<{
 	onClose?: () => void;
+	direction?: "right" | "left" | "top" | "bottom";
 }>({});
 
 const Drawer = ({
@@ -60,7 +61,7 @@ const Drawer = ({
     React.useEffect(() => () => {}, []);
 
 	return (
-		<DrawerContext.Provider value={{ onClose: handleClose }}>
+		<DrawerContext.Provider value={{ onClose: handleClose, direction }}>
 			<DrawerPrimitive.Root
 				shouldScaleBackground={shouldScaleBackground}
 				direction={direction}
@@ -114,15 +115,17 @@ const DrawerContent = React.forwardRef<
 	React.ElementRef<typeof DrawerPrimitive.Content>,
 	React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Content>
 >(({ className, children, ...props }, ref) => {
+	const { direction } = React.useContext(DrawerContext);
+	const placementClass =
+		direction === "left"
+			? "fixed top-0 bottom-0 left-0 z-50 h-screen w-full sm:w-[560px] md:w-[720px] flex flex-col border-r border-slate-200 dark:border-slate-700 bg-background shadow-lg overflow-y-auto overflow-x-hidden"
+			: "fixed top-0 right-0 bottom-0 z-50 h-screen w-full sm:w-[560px] md:w-[720px] flex flex-col border-l border-slate-200 dark:border-slate-700 bg-background shadow-lg overflow-y-auto overflow-x-hidden";
 	return (
 		<DrawerPortal>
 			<DrawerOverlay />
 			<DrawerPrimitive.Content
 				ref={ref}
-				className={cn(
-					"fixed top-0 right-0 bottom-0 z-50 h-screen w-full sm:w-[560px] md:w-[720px] flex flex-col border-l border-slate-200 dark:border-slate-700 bg-background shadow-lg overflow-y-auto overflow-x-hidden",
-					className,
-				)}
+				className={cn(placementClass, className)}
 				{...props}
 			>
 				{children}

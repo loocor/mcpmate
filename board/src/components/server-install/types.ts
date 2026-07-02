@@ -175,6 +175,8 @@ export interface ServerInstallManualFormProps {
 	onClose: () => void;
 	onSubmit: (draft: ServerInstallDraft) => Promise<void> | void;
 	onSubmitMultiple?: (drafts: ServerInstallDraft[]) => Promise<void> | void;
+	drawerDirection?: "right" | "left" | "top" | "bottom";
+	drawerContentClassName?: string;
 	/** Optional callback to refresh the server from the registry */
 	onRefreshFromRegistry?: () => void;
 	/** Whether the server is currently being refreshed from the registry */

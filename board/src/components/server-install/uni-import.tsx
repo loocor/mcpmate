@@ -118,6 +118,8 @@ export const ServerInstallManualForm = forwardRef<
 			serverId,
 			onInitiateOAuth,
 			extraTab,
+			drawerDirection = "right",
+			drawerContentClassName,
 		}: ServerInstallManualFormProps,
 		ref,
 	) => {
@@ -952,9 +954,12 @@ export const ServerInstallManualForm = forwardRef<
 			<>
 				<Drawer
 					open={isOpen}
+					direction={drawerDirection}
 					onOpenChange={(value) => (!value ? onClose() : undefined)}
 				>
-					<DrawerContent className={INSTALL_DRAWER_CONTENT_CLASS}>
+					<DrawerContent
+						className={cn(INSTALL_DRAWER_CONTENT_CLASS, drawerContentClassName)}
+					>
 						<form onSubmit={onFormSubmit} className={INSTALL_FORM_CLASS}>
 							<DrawerHeader className="shrink-0 pb-2">
 								<div className="flex items-start justify-between gap-2">
