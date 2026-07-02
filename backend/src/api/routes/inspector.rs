@@ -2,13 +2,18 @@ use std::sync::Arc;
 
 use crate::api::handlers::inspector;
 use crate::api::models::inspector::{
-    InspectorListQuery, InspectorPromptGetReq, InspectorPromptGetResp, InspectorPromptsListResp,
-    InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListResp, InspectorSessionCloseReq,
-    InspectorSessionCloseResp, InspectorSessionOpenReq, InspectorSessionOpenResp, InspectorTemplatesListResp,
-    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallReq, InspectorToolCallResp,
-    InspectorToolCallStartResp, InspectorToolsListResp,
+    InspectorCapabilityPatchResp, InspectorCapabilityPatchUpsertReq, InspectorCompatibilitySnapshotResp,
+    InspectorListQuery, InspectorLlmEvaluationReq, InspectorLlmEvaluationResp, InspectorPackageSafetySnapshotResp,
+    InspectorPromptGetReq, InspectorPromptGetResp, InspectorPromptsListResp, InspectorResourceReadQuery,
+    InspectorResourceReadResp, InspectorResourcesListResp, InspectorScratchServerCreateReq,
+    InspectorScratchServerCreateResp, InspectorScratchServerDeleteReq, InspectorScratchServerDeleteResp,
+    InspectorScratchServerListResp, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
+    InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp, InspectorTemplatesListResp,
+    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallEvidenceQuery,
+    InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartResp,
+    InspectorToolsListResp,
 };
-use crate::{aide_wrapper_payload, aide_wrapper_query};
+use crate::{aide_wrapper, aide_wrapper_payload, aide_wrapper_query};
 use aide::axum::{
     ApiRouter,
     routing::{get_with, post_with},
@@ -57,6 +62,53 @@ aide_wrapper_payload!(
     InspectorToolCallCancelResp,
     "Inspector: cancel tool call"
 );
+aide_wrapper_payload!(
+    inspector::capability_patch_upsert,
+    InspectorCapabilityPatchUpsertReq,
+    InspectorCapabilityPatchResp,
+    "Inspector: upsert capability patch"
+);
+aide_wrapper_payload!(
+    inspector::llm_evaluate,
+    InspectorLlmEvaluationReq,
+    InspectorLlmEvaluationResp,
+    "Inspector: run LLM evaluation"
+);
+aide_wrapper!(
+    inspector::scratch_server_list,
+    InspectorScratchServerListResp,
+    "Inspector: list scratch server records"
+);
+aide_wrapper_payload!(
+    inspector::scratch_server_create,
+    InspectorScratchServerCreateReq,
+    InspectorScratchServerCreateResp,
+    "Inspector: create scratch server record"
+);
+aide_wrapper_payload!(
+    inspector::scratch_server_delete,
+    InspectorScratchServerDeleteReq,
+    InspectorScratchServerDeleteResp,
+    "Inspector: delete scratch server record"
+);
+aide_wrapper_query!(
+    inspector::tool_call_evidence,
+    InspectorToolCallEvidenceQuery,
+    InspectorToolCallEvidenceResp,
+    "Inspector: get tool call evidence"
+);
+aide_wrapper_query!(
+    inspector::compatibility_snapshot,
+    InspectorListQuery,
+    InspectorCompatibilitySnapshotResp,
+    "Inspector: get compatibility snapshot"
+);
+aide_wrapper_query!(
+    inspector::package_safety_snapshot,
+    InspectorListQuery,
+    InspectorPackageSafetySnapshotResp,
+    "Inspector: get package safety snapshot"
+);
 aide_wrapper_query!(
     inspector::resource_read,
     InspectorResourceReadQuery,
@@ -81,6 +133,12 @@ aide_wrapper_payload!(
     InspectorSessionCloseResp,
     "Inspector: close session"
 );
+aide_wrapper_payload!(
+    inspector::session_refresh,
+    InspectorSessionRefreshReq,
+    InspectorSessionRefreshResp,
+    "Inspector: refresh session"
+);
 use crate::api::routes::AppState;
 
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
@@ -95,6 +153,39 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/inspector/tool/call/cancel",
             post_with(tool_call_cancel_aide, tool_call_cancel_docs),
+        )
+        .api_route(
+            "/mcp/inspector/tool/call/evidence",
+            get_with(tool_call_evidence_aide, tool_call_evidence_docs),
+        )
+        .api_route(
+            "/mcp/inspector/capability-patch/upsert",
+            post_with(capability_patch_upsert_aide, capability_patch_upsert_docs),
+        )
+        .api_route(
+            "/mcp/inspector/llm/evaluate",
+            post_with(llm_evaluate_aide, llm_evaluate_docs),
+        )
+        .api_route(
+            "/mcp/inspector/scratch/server/list",
+            get_with(scratch_server_list_aide, scratch_server_list_docs),
+        )
+        .api_route(
+            "/mcp/inspector/scratch/server/create",
+            post_with(scratch_server_create_aide, scratch_server_create_docs),
+        )
+        .api_route(
+            "/mcp/inspector/scratch/server/delete",
+            post_with(scratch_server_delete_aide, scratch_server_delete_docs),
+        )
+        // compatibility
+        .api_route(
+            "/mcp/inspector/compatibility/snapshot",
+            get_with(compatibility_snapshot_aide, compatibility_snapshot_docs),
+        )
+        .api_route(
+            "/mcp/inspector/package-safety/snapshot",
+            get_with(package_safety_snapshot_aide, package_safety_snapshot_docs),
         )
         // resources
         .api_route(
@@ -124,6 +215,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/inspector/session/close",
             post_with(session_close_aide, session_close_docs),
+        )
+        .api_route(
+            "/mcp/inspector/session/refresh",
+            post_with(session_refresh_aide, session_refresh_docs),
         )
         .with_state(state)
 }

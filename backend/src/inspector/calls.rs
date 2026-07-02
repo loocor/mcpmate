@@ -16,7 +16,11 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot};
 
-use crate::api::models::inspector::InspectorMode;
+use crate::inspector::contract::InspectorMode;
+use crate::inspector::evidence::{
+    InspectorEvidenceEvent, InspectorEvidenceLayer, InspectorEvidenceSnapshot, InspectorOperationStatus,
+    InspectorToolCallEvidenceInput, tool_call_snapshot,
+};
 
 /// Capacity for inspector progress/log broadcasts. Large enough for chatty MCP tools (e.g. browser automation) before WebSocket consumers lag.
 const BROADCAST_BUFFER: usize = 256;
@@ -111,6 +115,8 @@ pub struct RegisteredCall {
 struct CallEntry {
     call_id: String,
     server_id: String,
+    mode: InspectorMode,
+    session_id: Option<String>,
     progress_token: ProgressToken,
     request_id: RequestId,
     started_at: Instant,
@@ -118,6 +124,7 @@ struct CallEntry {
     tx: broadcast::Sender<InspectorEvent>,
     cancel_tx: mpsc::Sender<CancelCommand>,
     completion_tx: Mutex<Option<oneshot::Sender<InspectorTerminal>>>,
+    evidence_events: Mutex<Vec<InspectorEvidenceEvent>>,
 }
 
 enum CancelCommand {
@@ -135,7 +142,72 @@ struct InnerRegistry {
 #[derive(Clone)]
 struct CompletedCall {
     event: InspectorEvent,
+    snapshot: InspectorEvidenceSnapshot,
     expires_at: Instant,
+}
+
+impl CallEntry {
+    async fn emit_event(
+        &self,
+        event: InspectorEvent,
+    ) {
+        let evidence_event = {
+            let mut events = self.evidence_events.lock().await;
+            let evidence_event = InspectorEvidenceEvent::new(
+                events.len() as u64,
+                evidence_layer_for_event(&event),
+                event_name(&event),
+                now_epoch_ms(),
+                serde_json::to_value(&event).unwrap_or(Value::Null),
+            );
+            events.push(evidence_event.clone());
+            evidence_event
+        };
+
+        tracing::debug!(
+            call_id = %self.call_id,
+            sequence = evidence_event.sequence,
+            layer = ?evidence_event.layer,
+            event = %evidence_event.event,
+            "Inspector evidence event recorded"
+        );
+
+        let _ = self.tx.send(event);
+    }
+
+    async fn evidence_snapshot(
+        &self,
+        terminal_event: Option<&InspectorEvent>,
+    ) -> InspectorEvidenceSnapshot {
+        let events = self.evidence_events.lock().await.clone();
+        let started_at_epoch_ms = self
+            .started_at_system
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default();
+        let completed_at_epoch_ms = terminal_event.map(|_| now_epoch_ms());
+        let elapsed_ms = terminal_event
+            .and_then(terminal_elapsed_ms)
+            .or_else(|| completed_at_epoch_ms.map(|_| self.started_at.elapsed().as_millis() as u64));
+        let response = terminal_event.and_then(terminal_response);
+
+        tool_call_snapshot(InspectorToolCallEvidenceInput {
+            call_id: self.call_id.clone(),
+            server_id: self.server_id.clone(),
+            mode: self.mode,
+            session_id: self.session_id.clone(),
+            request_id: request_key_from_request_id(self.request_id.clone()),
+            progress_token: progress_token_to_string(&self.progress_token),
+            status: terminal_event
+                .map(operation_status)
+                .unwrap_or(InspectorOperationStatus::Running),
+            started_at_epoch_ms,
+            completed_at_epoch_ms,
+            elapsed_ms,
+            events,
+            response,
+        })
+    }
 }
 
 #[derive(Clone, Default)]
@@ -170,6 +242,8 @@ impl InspectorCallRegistry {
         let entry = Arc::new(CallEntry {
             call_id: call_id.clone(),
             server_id: server_id.clone(),
+            mode,
+            session_id: session_id.clone(),
             progress_token: handle.progress_token.clone(),
             request_id: handle.id.clone(),
             started_at: Instant::now(),
@@ -177,6 +251,7 @@ impl InspectorCallRegistry {
             tx: tx.clone(),
             cancel_tx,
             completion_tx: Mutex::new(Some(completion_tx)),
+            evidence_events: Mutex::new(Vec::new()),
         });
 
         {
@@ -198,13 +273,15 @@ impl InspectorCallRegistry {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or_default();
-        let _ = entry.tx.send(InspectorEvent::Started {
-            call_id: call_id.clone(),
-            server_id: server_id.clone(),
-            mode,
-            session_id: session_id.clone(),
-            started_at_epoch_ms: started_epoch,
-        });
+        entry
+            .emit_event(InspectorEvent::Started {
+                call_id: call_id.clone(),
+                server_id: server_id.clone(),
+                mode,
+                session_id: session_id.clone(),
+                started_at_epoch_ms: started_epoch,
+            })
+            .await;
 
         // Spawn worker task to await response / cancel
         tokio::spawn(call_worker(self.clone(), entry.clone(), handle, cancel_rx));
@@ -243,6 +320,25 @@ impl InspectorCallRegistry {
             .map(|completed| CallSubscription::Completed(completed.event))
     }
 
+    pub async fn evidence_snapshot(
+        &self,
+        call_id: &str,
+    ) -> Option<InspectorEvidenceSnapshot> {
+        self.purge_completed().await;
+
+        if let Some(entry) = self.inner.calls.read().await.get(call_id).cloned() {
+            return Some(entry.evidence_snapshot(None).await);
+        }
+
+        self.inner
+            .completed
+            .read()
+            .await
+            .get(call_id)
+            .cloned()
+            .map(|completed| completed.snapshot)
+    }
+
     pub async fn cancel_call(
         &self,
         call_id: &str,
@@ -274,12 +370,14 @@ impl InspectorCallRegistry {
             .cloned()
         {
             if let Some(entry) = self.inner.calls.read().await.get(&call_id).cloned() {
-                let _ = entry.tx.send(InspectorEvent::Progress {
-                    call_id,
-                    progress: params.progress,
-                    total: params.total,
-                    message: params.message.clone(),
-                });
+                entry
+                    .emit_event(InspectorEvent::Progress {
+                        call_id,
+                        progress: params.progress,
+                        total: params.total,
+                        message: params.message.clone(),
+                    })
+                    .await;
             }
         }
     }
@@ -296,12 +394,14 @@ impl InspectorCallRegistry {
             if let Some(entry) = self.inner.calls.read().await.get(&call_id).cloned() {
                 let data = serde_json::to_value(&params.data).unwrap_or(Value::Null);
                 let level = Some(logging_level_to_str(&params.level).to_string());
-                let _ = entry.tx.send(InspectorEvent::Log {
-                    call_id,
-                    level,
-                    logger: params.logger.clone(),
-                    data,
-                });
+                entry
+                    .emit_event(InspectorEvent::Log {
+                        call_id,
+                        level,
+                        logger: params.logger.clone(),
+                        data,
+                    })
+                    .await;
             }
         }
     }
@@ -374,7 +474,8 @@ impl InspectorCallRegistry {
                 },
             };
 
-            let _ = entry.tx.send(terminal_event.clone());
+            entry.emit_event(terminal_event.clone()).await;
+            let snapshot = entry.evidence_snapshot(Some(&terminal_event)).await;
 
             if let Some(tx) = entry.completion_tx.lock().await.take() {
                 let _ = tx.send(terminal);
@@ -384,6 +485,7 @@ impl InspectorCallRegistry {
                 entry.call_id.clone(),
                 CompletedCall {
                     event: terminal_event,
+                    snapshot,
                     expires_at: Instant::now() + Duration::from_secs(30),
                 },
             );
@@ -395,6 +497,59 @@ impl InspectorCallRegistry {
         let now = Instant::now();
         completed.retain(|_, entry| entry.expires_at > now);
     }
+}
+
+fn evidence_layer_for_event(event: &InspectorEvent) -> InspectorEvidenceLayer {
+    match event {
+        InspectorEvent::Started { .. } | InspectorEvent::Cancelled { .. } => InspectorEvidenceLayer::Platform,
+        InspectorEvent::Progress { .. }
+        | InspectorEvent::Log { .. }
+        | InspectorEvent::Result { .. }
+        | InspectorEvent::Error { .. } => InspectorEvidenceLayer::Mcp,
+    }
+}
+
+fn event_name(event: &InspectorEvent) -> &'static str {
+    match event {
+        InspectorEvent::Started { .. } => "started",
+        InspectorEvent::Progress { .. } => "progress",
+        InspectorEvent::Log { .. } => "log",
+        InspectorEvent::Result { .. } => "result",
+        InspectorEvent::Error { .. } => "error",
+        InspectorEvent::Cancelled { .. } => "cancelled",
+    }
+}
+
+fn operation_status(event: &InspectorEvent) -> InspectorOperationStatus {
+    match event {
+        InspectorEvent::Result { .. } => InspectorOperationStatus::Succeeded,
+        InspectorEvent::Error { .. } => InspectorOperationStatus::Failed,
+        InspectorEvent::Cancelled { .. } => InspectorOperationStatus::Cancelled,
+        InspectorEvent::Started { .. } | InspectorEvent::Progress { .. } | InspectorEvent::Log { .. } => {
+            InspectorOperationStatus::Running
+        }
+    }
+}
+
+fn terminal_elapsed_ms(event: &InspectorEvent) -> Option<u64> {
+    match event {
+        InspectorEvent::Result { elapsed_ms, .. } => Some(*elapsed_ms),
+        _ => None,
+    }
+}
+
+fn terminal_response(event: &InspectorEvent) -> Option<Value> {
+    match event {
+        InspectorEvent::Result { result, .. } => Some(result.clone()),
+        _ => None,
+    }
+}
+
+fn now_epoch_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default()
 }
 
 fn token_key(token: &ProgressToken) -> String {
@@ -517,4 +672,72 @@ async fn call_worker(
         call_id = %call_id,
         "Inspector call_worker completed"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::NumberOrString;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn evidence_snapshot_layers_call_events() {
+        let (tx, _) = broadcast::channel(BROADCAST_BUFFER);
+        let (cancel_tx, _cancel_rx) = mpsc::channel(CANCEL_BUFFER);
+        let (completion_tx, _completion_rx) = oneshot::channel();
+        let entry = CallEntry {
+            call_id: "call-1".to_string(),
+            server_id: "server-1".to_string(),
+            mode: InspectorMode::Native,
+            session_id: Some("session-1".to_string()),
+            progress_token: ProgressToken(NumberOrString::String("progress-1".to_string().into())),
+            request_id: RequestId::String("request-1".to_string().into()),
+            started_at: Instant::now(),
+            started_at_system: UNIX_EPOCH + Duration::from_millis(100),
+            tx,
+            cancel_tx,
+            completion_tx: Mutex::new(Some(completion_tx)),
+            evidence_events: Mutex::new(Vec::new()),
+        };
+
+        entry
+            .emit_event(InspectorEvent::Started {
+                call_id: "call-1".to_string(),
+                server_id: "server-1".to_string(),
+                mode: InspectorMode::Native,
+                session_id: Some("session-1".to_string()),
+                started_at_epoch_ms: 100,
+            })
+            .await;
+        entry
+            .emit_event(InspectorEvent::Log {
+                call_id: "call-1".to_string(),
+                level: Some("info".to_string()),
+                logger: Some("test".to_string()),
+                data: json!({"message": "hello"}),
+            })
+            .await;
+        let terminal = InspectorEvent::Result {
+            call_id: "call-1".to_string(),
+            server_id: "server-1".to_string(),
+            elapsed_ms: 42,
+            result: json!({"content": []}),
+        };
+        entry.emit_event(terminal.clone()).await;
+
+        let snapshot = entry.evidence_snapshot(Some(&terminal)).await;
+
+        assert_eq!(snapshot.operation.operation_id, "call-1");
+        assert_eq!(snapshot.operation.status, InspectorOperationStatus::Succeeded);
+        assert_eq!(snapshot.operation.elapsed_ms, Some(42));
+        assert_eq!(snapshot.operation.request_id, "request-1");
+        assert_eq!(snapshot.operation.progress_token, "progress-1");
+        assert_eq!(snapshot.platform_rows.len(), 2);
+        assert!(snapshot.platform_rows.iter().any(|row| row.kind == "started"));
+        assert_eq!(snapshot.mcp_rows.len(), 2);
+        assert!(snapshot.mcp_rows.iter().any(|row| row.kind == "log"));
+        assert!(snapshot.mcp_rows.iter().any(|row| row.kind == "result"));
+        assert_eq!(snapshot.response, Some(json!({"content": []})));
+        assert_eq!(snapshot.events.len(), 3);
+    }
 }

@@ -262,6 +262,41 @@ pub async fn connect_stdio_server(
     Ok((service, tools, capabilities, pid))
 }
 
+/// Connect to a stdio server without issuing a capability probe.
+pub async fn connect_stdio_server_no_probe(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    ct: CancellationToken,
+    database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+) -> Result<(
+    crate::core::transport::ClientService,
+    Option<ServerCapabilities>,
+    Option<u32>,
+)> {
+    let (mut cmd, transformed_command) = prepare_server_command(server_config).await?;
+    setup_command_environment(&mut cmd, server_config, &transformed_command, database_pool).await?;
+
+    let command = server_config
+        .command
+        .as_ref()
+        .expect("command already validated in prepare_server_command");
+    let connection_timeout = get_connection_timeout(command);
+    let service = connect_with_timeout(cmd, ct.clone(), server_name, connection_timeout).await?;
+    let pid = get_process_id_for_server(server_name, server_config).await;
+    let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+
+    tracing::debug!(
+        "Connected to server '{}' without initial capability probe, capabilities: {:?}, process ID: {:?}",
+        server_name,
+        capabilities
+            .as_ref()
+            .map(|c| format!("resources={}", c.resources.is_some())),
+        pid
+    );
+
+    Ok((service, capabilities, pid))
+}
+
 /// Helper function to get process ID for a server
 async fn get_process_id_for_server(
     server_name: &str,

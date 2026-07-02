@@ -65,6 +65,21 @@ impl MCPMatePaths {
         self.base_dir.join("logs")
     }
 
+    /// Get the Inspector workspace directory (~/.mcpmate/inspector)
+    pub fn inspector_dir(&self) -> PathBuf {
+        self.base_dir.join("inspector")
+    }
+
+    /// Get the Inspector server record directory (~/.mcpmate/inspector/servers)
+    pub fn inspector_servers_dir(&self) -> PathBuf {
+        self.inspector_dir().join("servers")
+    }
+
+    /// Get the Inspector capability patch directory (~/.mcpmate/inspector/patches)
+    pub fn inspector_patches_dir(&self) -> PathBuf {
+        self.inspector_dir().join("patches")
+    }
+
     /// Get the downloads directory (system temp dir)
     pub fn downloads_dir(&self) -> PathBuf {
         std::env::temp_dir().join("mcpmate-downloads")

@@ -9,23 +9,107 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::api::handlers::ApiError;
-// use crate::api::models::inspector::InspectorMode;
+use crate::api::handlers::llm::{llm_manager, map_llm_error};
 use crate::api::models::inspector::{
-    InspectorCallEventsQuery, InspectorListQuery, InspectorPromptGetData, InspectorPromptGetReq,
-    InspectorPromptGetResp, InspectorPromptsListData, InspectorPromptsListResp, InspectorResourceReadData,
-    InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListData, InspectorResourcesListResp,
-    InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
-    InspectorSessionOpenResp, InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData,
-    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallReq,
-    InspectorToolCallResp, InspectorToolCallStartData, InspectorToolCallStartResp, InspectorToolsListData,
-    InspectorToolsListResp,
+    InspectorCallEventsQuery, InspectorCapabilityPatchData, InspectorCapabilityPatchResp,
+    InspectorCapabilityPatchUpsertReq, InspectorCompatibilitySnapshotData, InspectorCompatibilitySnapshotResp,
+    InspectorListQuery, InspectorLlmEvaluationData, InspectorLlmEvaluationReq, InspectorLlmEvaluationResp,
+    InspectorPackageSafetySnapshotData, InspectorPackageSafetySnapshotResp, InspectorPromptGetData,
+    InspectorPromptGetReq, InspectorPromptGetResp, InspectorPromptsListData, InspectorPromptsListResp,
+    InspectorResourceReadData, InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListData,
+    InspectorResourcesListResp, InspectorScratchServerCreateData, InspectorScratchServerCreateReq,
+    InspectorScratchServerCreateResp, InspectorScratchServerDeleteData, InspectorScratchServerDeleteReq,
+    InspectorScratchServerDeleteResp, InspectorScratchServerListData, InspectorScratchServerListResp,
+    InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenData,
+    InspectorSessionOpenReq, InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp,
+    InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData, InspectorToolCallCancelReq,
+    InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallEvidenceData, InspectorToolCallEvidenceQuery,
+    InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartData,
+    InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
 };
 use crate::api::routes::AppState;
-use crate::inspector::{calls::CallSubscription, service};
+use crate::inspector::{calls::CallSubscription, context::InspectorServiceContext, service};
+
+fn evidence_value(data_value: &Value) -> Option<Value> {
+    data_value.get("evidence").cloned()
+}
+
+struct CapabilityListParts {
+    mode: String,
+    items: Vec<Value>,
+    total: usize,
+    meta: Option<Vec<Value>>,
+    elapsed_ms: u64,
+    evidence: Option<Value>,
+}
+
+fn value_array(
+    data_value: &Value,
+    key: &str,
+) -> Vec<Value> {
+    match data_value.get(key).cloned() {
+        Some(Value::Array(items)) => items,
+        _ => Vec::new(),
+    }
+}
+
+fn value_string(
+    data_value: &Value,
+    key: &str,
+) -> String {
+    data_value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn value_u64(
+    data_value: &Value,
+    key: &str,
+) -> u64 {
+    data_value.get(key).and_then(Value::as_u64).unwrap_or_default()
+}
+
+fn nullable_string(
+    data_value: &Value,
+    key: &str,
+) -> Option<String> {
+    data_value.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn capability_list_parts(
+    data_value: &Value,
+    items_key: &str,
+) -> CapabilityListParts {
+    let items = value_array(data_value, items_key);
+    let total = data_value
+        .get("total")
+        .and_then(Value::as_u64)
+        .unwrap_or(items.len() as u64) as usize;
+
+    CapabilityListParts {
+        mode: value_string(data_value, "mode"),
+        items,
+        total,
+        meta: data_value.get("meta").and_then(Value::as_array).cloned(),
+        elapsed_ms: value_u64(data_value, "elapsed_ms"),
+        evidence: evidence_value(data_value),
+    }
+}
+
+fn serialize_inspector_value<T: Serialize>(
+    value: T,
+    label: &str,
+) -> Result<Value, ApiError> {
+    serde_json::to_value(value)
+        .map_err(|error| ApiError::InternalError(format!("Failed to serialize Inspector {label}: {error}")))
+}
 
 // ==============================
 // Tools
@@ -35,32 +119,16 @@ pub async fn tools_list(
     State(state): State<Arc<AppState>>,
     Query(query): Query<InspectorListQuery>,
 ) -> Result<Json<InspectorToolsListResp>, ApiError> {
-    let data_value = service::list_tools(&state, &query).await?;
-    // Convert Value into strongly typed data
-    let mode = data_value
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let tools: Vec<Value> = match data_value.get("tools").cloned() {
-        Some(Value::Array(v)) => v,
-        _ => Vec::new(),
-    };
-    let total = data_value
-        .get("total")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(tools.len() as u64) as usize;
-    let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
-    let elapsed_ms = data_value
-        .get("elapsed_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or_default();
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let data_value = service::list_tools(&context, (&query).into()).await?;
+    let parts = capability_list_parts(&data_value, "tools");
     let data = InspectorToolsListData {
-        mode,
-        tools,
-        total,
-        meta,
-        elapsed_ms,
+        mode: parts.mode,
+        tools: parts.items,
+        total: parts.total,
+        meta: parts.meta,
+        elapsed_ms: parts.elapsed_ms,
+        evidence: parts.evidence,
     };
     Ok(Json(InspectorToolsListResp::success(data)))
 }
@@ -69,14 +137,9 @@ pub async fn tool_call(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InspectorToolCallReq>,
 ) -> Result<Json<InspectorToolCallResp>, ApiError> {
-    // Preflight: When neither server_id nor server_name is provided, avoid hitting naming resolver
-    if req.server_id.is_none() && req.server_name.is_none() {
-        let resp = InspectorToolCallResp::error_simple("bad_request", "server_id or server_name is required");
-        return Ok(Json(resp));
-    }
-
     // Execute and normalize errors as 200 with structured error payload (Inspector UX contract)
-    match service::call_tool(&state, &req).await {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    match service::call_tool(&context, (&req).into()).await {
         Ok(outcome) => {
             let data = InspectorToolCallData {
                 message: outcome.message.unwrap_or_else(|| "completed".to_string()),
@@ -113,11 +176,14 @@ pub async fn tool_call_start(
         server_id = ?req.server_id,
         server_name = ?req.server_name,
         session_id = ?req.session_id,
+        proxy_mode = ?req.proxy_mode,
+        proxy_scope = ?req.proxy_scope,
         has_arguments = req.arguments.is_some(),
         "Inspector tool_call_start request received"
     );
 
-    let info = service::start_tool_call(&state, &req).await?;
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let info = service::start_tool_call(&context, (&req).into()).await?;
 
     tracing::info!(
         call_id = %info.call_id,
@@ -232,22 +298,164 @@ pub async fn tool_call_cancel(
     )))
 }
 
+pub async fn tool_call_evidence(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<InspectorToolCallEvidenceQuery>,
+) -> Result<Json<InspectorToolCallEvidenceResp>, ApiError> {
+    let snapshot = state
+        .inspector_calls
+        .evidence_snapshot(&query.call_id)
+        .await
+        .ok_or_else(|| ApiError::NotFound(format!("Inspector call '{}' not found", query.call_id)))?;
+    let snapshot = serialize_inspector_value(snapshot, "evidence")?;
+
+    Ok(Json(InspectorToolCallEvidenceResp::success(
+        InspectorToolCallEvidenceData { snapshot },
+    )))
+}
+
 pub async fn session_open(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InspectorSessionOpenReq>,
 ) -> Result<Json<InspectorSessionOpenResp>, ApiError> {
-    let data = service::open_session(&state, &req).await?;
-    Ok(Json(InspectorSessionOpenResp::success(data)))
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let info = service::open_session(&context, (&req).into()).await?;
+    Ok(Json(InspectorSessionOpenResp::success(session_info_data(info))))
 }
 
 pub async fn session_close(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InspectorSessionCloseReq>,
 ) -> Result<Json<InspectorSessionCloseResp>, ApiError> {
-    let closed = service::close_session(&state, &req).await?;
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let closed = service::close_session(&context, &req.session_id).await?;
     Ok(Json(InspectorSessionCloseResp::success(InspectorSessionCloseData {
         closed,
     })))
+}
+
+pub async fn session_refresh(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorSessionRefreshReq>,
+) -> Result<Json<InspectorSessionRefreshResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let info = service::refresh_session(&context, &req.session_id).await?;
+    Ok(Json(InspectorSessionRefreshResp::success(session_info_data(info))))
+}
+
+fn session_info_data(info: crate::inspector::sessions::InspectorSessionInfo) -> InspectorSessionOpenData {
+    InspectorSessionOpenData {
+        session_id: info.session_id,
+        target: (&info.target).into(),
+        server_id: info.target.server_id().map(str::to_string),
+        scratch_id: info.target.scratch_id().map(str::to_string),
+        mode: info.target.mode(),
+        proxy_mode: info.target.proxy_mode(),
+        proxy_scope: info.target.proxy_scope(),
+        expires_at_epoch_ms: info.expires_at_epoch_ms,
+    }
+}
+
+// ==============================
+// Compatibility
+// ==============================
+
+pub async fn compatibility_snapshot(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<InspectorListQuery>,
+) -> Result<Json<InspectorCompatibilitySnapshotResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let snapshot = service::compatibility_snapshot(&context, (&query).into()).await?;
+    Ok(Json(InspectorCompatibilitySnapshotResp::success(
+        InspectorCompatibilitySnapshotData { snapshot },
+    )))
+}
+
+pub async fn package_safety_snapshot(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<InspectorListQuery>,
+) -> Result<Json<InspectorPackageSafetySnapshotResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let snapshot = service::package_safety_snapshot(&context, (&query).into()).await?;
+    Ok(Json(InspectorPackageSafetySnapshotResp::success(
+        InspectorPackageSafetySnapshotData { snapshot },
+    )))
+}
+
+pub async fn capability_patch_upsert(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorCapabilityPatchUpsertReq>,
+) -> Result<Json<InspectorCapabilityPatchResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let record = service::upsert_capability_patch(&context, (&req).into()).await?;
+    let record = serialize_inspector_value(record, "capability patch")?;
+    Ok(Json(InspectorCapabilityPatchResp::success(
+        InspectorCapabilityPatchData { record },
+    )))
+}
+
+pub async fn llm_evaluate(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorLlmEvaluationReq>,
+) -> Result<Json<InspectorLlmEvaluationResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let prepared = service::prepare_llm_evaluation(&context, (&req).into()).await?;
+    let result = llm_manager(state)?
+        .chat_completion(prepared.provider_id.as_deref(), prepared.chat_request.clone())
+        .await
+        .map_err(map_llm_error)?;
+    let evaluation = service::finish_llm_evaluation(prepared, result.provider, result.response)?;
+    Ok(Json(InspectorLlmEvaluationResp::success(InspectorLlmEvaluationData {
+        evaluation,
+    })))
+}
+
+// ==============================
+// Scratch Servers
+// ==============================
+
+pub async fn scratch_server_list(
+    State(state): State<Arc<AppState>>
+) -> Result<Json<InspectorScratchServerListResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let records = service::list_scratch_server_records(&context)?;
+    let total = records.len();
+    let records = serialize_inspector_value(records, "scratch records")?
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok(Json(InspectorScratchServerListResp::success(
+        InspectorScratchServerListData { records, total },
+    )))
+}
+
+pub async fn scratch_server_create(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorScratchServerCreateReq>,
+) -> Result<Json<InspectorScratchServerCreateResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let input = (&req)
+        .try_into()
+        .map_err(|error| ApiError::BadRequest(format!("Invalid Inspector scratch server config: {}", error)))?;
+    let record = service::create_scratch_server_record(&context, input)?;
+    let record = serialize_inspector_value(record, "scratch record")?;
+    Ok(Json(InspectorScratchServerCreateResp::success(
+        InspectorScratchServerCreateData { record },
+    )))
+}
+
+pub async fn scratch_server_delete(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorScratchServerDeleteReq>,
+) -> Result<Json<InspectorScratchServerDeleteResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let deleted = service::delete_scratch_server_record(&context, &req.record_id)?;
+    Ok(Json(InspectorScratchServerDeleteResp::success(
+        InspectorScratchServerDeleteData {
+            record_id: req.record_id,
+            deleted,
+        },
+    )))
 }
 
 // ==============================
@@ -258,135 +466,34 @@ pub async fn prompts_list(
     State(state): State<Arc<AppState>>,
     Query(query): Query<InspectorListQuery>,
 ) -> Result<Json<InspectorPromptsListResp>, ApiError> {
-    let data_value = service::list_prompts(&state, &query).await?;
-    let mode = data_value
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let prompts: Vec<Value> = match data_value.get("prompts").cloned() {
-        Some(Value::Array(v)) => v,
-        _ => Vec::new(),
-    };
-    let total = data_value
-        .get("total")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(prompts.len() as u64) as usize;
-    let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
-    let elapsed_ms = data_value
-        .get("elapsed_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or_default();
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let data_value = service::list_prompts(&context, (&query).into()).await?;
+    let parts = capability_list_parts(&data_value, "prompts");
     let data = InspectorPromptsListData {
-        mode,
-        prompts,
-        total,
-        meta,
-        elapsed_ms,
+        mode: parts.mode,
+        prompts: parts.items,
+        total: parts.total,
+        meta: parts.meta,
+        elapsed_ms: parts.elapsed_ms,
+        evidence: parts.evidence,
     };
     Ok(Json(InspectorPromptsListResp::success(data)))
-    // legacy code kept in VCS history
-    // legacy code below kept for reference; will be removed after stabilization
-    /*
-    let refresh = if query.refresh {
-        Some(crate::core::capability::runtime::RefreshStrategy::Force)
-    } else {
-        Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst)
-    };
-    let mut items: Vec<rmcp::model::Prompt> = Vec::new();
-
-    if query.server_id.is_some() || query.server_name.is_some() {
-        let server_id = resolve_server(&query.server_id, &query.server_name).await?;
-        let ctx = crate::core::capability::runtime::ListCtx {
-            capability: crate::core::capability::CapabilityType::Prompts,
-            server_id,
-            refresh,
-            timeout: Some(Duration::from_secs(10)),
-            validation_session: None,
-        };
-        let res = crate::core::capability::runtime::list(
-            &ctx,
-            &state.redb_cache,
-            &state.connection_pool,
-            &state
-                .database
-                .as_ref()
-                .ok_or(ApiError::InternalError("Database not available".into()))?
-                .clone(),
-        )
-        .await
-        .map_err(map_anyhow)?;
-        items = res.items.into_prompts().unwrap_or_default();
-    } else {
-        let db = state
-            .database
-            .as_ref()
-            .ok_or(ApiError::InternalError("Database not available".into()))?;
-        let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            r#"
-            SELECT sc.id, sc.name, sc.capabilities
-            FROM server_config sc
-            JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
-            JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
-            WHERE sc.enabled = 1
-            GROUP BY sc.id, sc.name, sc.capabilities
-            "#,
-        )
-        .fetch_all(&db.pool)
-        .await
-        .unwrap_or_default();
-
-        let mut tasks = Vec::new();
-        for (server_id, _name, _caps) in enabled_servers {
-            let ctx = crate::core::capability::runtime::ListCtx {
-                capability: crate::core::capability::CapabilityType::Prompts,
-                server_id: server_id.clone(),
-                refresh,
-                timeout: Some(Duration::from_secs(10)),
-                validation_session: None,
-            };
-            let redb = state.redb_cache.clone();
-            let pool = state.connection_pool.clone();
-            let db_arc = state.database.as_ref().unwrap().clone();
-            tasks.push(async move {
-                match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db_arc).await {
-                    Ok(result) => result.items.into_prompts().unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                }
-            });
-        }
-        for mut v in futures::stream::iter(tasks)
-            .buffer_unordered(crate::core::capability::facade::concurrency_limit())
-            .collect::<Vec<_>>()
-            .await
-        {
-            items.append(&mut v);
-        }
-    }
-
-    let data = json!({ "mode": format!("{:?}", query.mode).to_lowercase(), "prompts": items, "total": items.len() });
-    Ok(Json(json!({"success": true, "data": data})))
-    */
 }
 
 pub async fn prompt_get(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InspectorPromptGetReq>,
 ) -> Result<Json<InspectorPromptGetResp>, ApiError> {
-    let v = service::prompt_get(&state, &req).await?;
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let v = service::prompt_get(&context, (&req).into()).await?;
     let result: Value = v.get("result").cloned().unwrap_or_else(|| json!({}));
-    let server_id = v.get("server_id").cloned().and_then(|vv| {
-        if vv.is_null() {
-            None
-        } else {
-            vv.as_str().map(|s| s.to_string())
-        }
-    });
-    let elapsed_ms = v.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
+    let server_id = nullable_string(&v, "server_id");
+    let elapsed_ms = value_u64(&v, "elapsed_ms");
     Ok(Json(InspectorPromptGetResp::success(InspectorPromptGetData {
         result,
         server_id,
         elapsed_ms,
+        evidence: evidence_value(&v),
     })))
 }
 
@@ -398,24 +505,16 @@ pub async fn resources_list(
     State(state): State<Arc<AppState>>,
     Query(query): Query<InspectorListQuery>,
 ) -> Result<Json<InspectorResourcesListResp>, ApiError> {
-    let v = service::list_resources(&state, &query).await?;
-    let mode = v.get("mode").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let resources: Vec<Value> = match v.get("resources").cloned() {
-        Some(Value::Array(v)) => v,
-        _ => Vec::new(),
-    };
-    let total = v
-        .get("total")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(resources.len() as u64) as usize;
-    let meta = v.get("meta").and_then(|v| v.as_array()).cloned();
-    let elapsed_ms = v.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let v = service::list_resources(&context, (&query).into()).await?;
+    let parts = capability_list_parts(&v, "resources");
     Ok(Json(InspectorResourcesListResp::success(InspectorResourcesListData {
-        mode,
-        resources,
-        total,
-        meta,
-        elapsed_ms,
+        mode: parts.mode,
+        resources: parts.items,
+        total: parts.total,
+        meta: parts.meta,
+        elapsed_ms: parts.elapsed_ms,
+        evidence: parts.evidence,
     })))
 }
 
@@ -423,20 +522,16 @@ pub async fn resource_read(
     State(state): State<Arc<AppState>>,
     Query(req): Query<InspectorResourceReadQuery>,
 ) -> Result<Json<InspectorResourceReadResp>, ApiError> {
-    let v = service::resource_read(&state, &req).await?;
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let v = service::resource_read(&context, (&req).into()).await?;
     let result: Value = v.get("result").cloned().unwrap_or_else(|| json!({}));
-    let server_id = v.get("server_id").cloned().and_then(|vv| {
-        if vv.is_null() {
-            None
-        } else {
-            vv.as_str().map(|s| s.to_string())
-        }
-    });
-    let elapsed_ms = v.get("elapsed_ms").and_then(|v| v.as_u64()).unwrap_or_default();
+    let server_id = nullable_string(&v, "server_id");
+    let elapsed_ms = value_u64(&v, "elapsed_ms");
     Ok(Json(InspectorResourceReadResp::success(InspectorResourceReadData {
         result,
         server_id,
         elapsed_ms,
+        evidence: evidence_value(&v),
     })))
 }
 
@@ -448,31 +543,16 @@ pub async fn templates_list(
     State(state): State<Arc<AppState>>,
     Query(query): Query<InspectorListQuery>,
 ) -> Result<Json<InspectorTemplatesListResp>, ApiError> {
-    let data_value = service::list_templates(&state, &query).await?;
-    let mode = data_value
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let templates: Vec<Value> = match data_value.get("templates").cloned() {
-        Some(Value::Array(v)) => v,
-        _ => Vec::new(),
-    };
-    let total = data_value
-        .get("total")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(templates.len() as u64) as usize;
-    let meta = data_value.get("meta").and_then(|v| v.as_array()).cloned();
-    let elapsed_ms = data_value
-        .get("elapsed_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or_default();
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let data_value = service::list_templates(&context, (&query).into()).await?;
+    let parts = capability_list_parts(&data_value, "templates");
     let data = InspectorTemplatesListData {
-        mode,
-        templates,
-        total,
-        meta,
-        elapsed_ms,
+        mode: parts.mode,
+        templates: parts.items,
+        total: parts.total,
+        meta: parts.meta,
+        elapsed_ms: parts.elapsed_ms,
+        evidence: parts.evidence,
     };
     Ok(Json(InspectorTemplatesListResp::success(data)))
 }

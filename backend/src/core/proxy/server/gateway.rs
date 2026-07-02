@@ -3,8 +3,8 @@ use crate::{
     audit::AuditService,
     clients::models::FirstContactBehavior,
     clients::service::ClientConfigService,
-    common::startup_diagnostics::{self, StartupDegradedEvent, component},
     common::constants::protocol,
+    common::startup_diagnostics::{self, StartupDegradedEvent, component},
     config::audit_database::AuditDatabase,
     config::database::Database,
     core::{pool::UpstreamConnectionPool, transport::TransportType},
@@ -175,8 +175,15 @@ impl ProxyServer {
         &self,
         mut client: ClientContext,
     ) -> Result<ClientContext, rmcp::ErrorData> {
-        if let Some(ref svc) = self.client_config_service {
-            self.enforce_client_governance_for_initialize(svc, &client).await?;
+        let runtime_override = crate::core::profile::visibility::runtime_surface_override(&client.client_id);
+
+        if let Some(override_config) = runtime_override {
+            client.config_mode = override_config.config_mode;
+            client.unify_workspace = override_config.unify_workspace;
+        } else {
+            if let Some(ref svc) = self.client_config_service {
+                self.enforce_client_governance_for_initialize(svc, &client).await?;
+            }
         }
 
         if client.config_mode.is_none() {

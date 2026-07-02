@@ -27,8 +27,7 @@ pub async fn connect_server(
         ServerType::Stdio => {
             let ct = ct.unwrap_or_default();
 
-            let result =
-                stdio::connect_stdio_server(server_name, server_config, ct, database_pool).await?;
+            let result = stdio::connect_stdio_server(server_name, server_config, ct, database_pool).await?;
 
             Ok(result)
         }
@@ -52,13 +51,5 @@ pub async fn connect_server_simple(
     Option<ServerCapabilities>,
     Option<u32>,
 )> {
-    connect_server(
-        server_name,
-        server_config,
-        server_type,
-        transport_type,
-        None,
-        None,
-    )
-    .await
+    connect_server(server_name, server_config, server_type, transport_type, None, None).await
 }

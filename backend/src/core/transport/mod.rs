@@ -16,6 +16,8 @@ pub use crate::common::server::TransportType;
 
 // Re-export main transport functions
 pub use http::connect_http_server;
+pub use http::connect_http_server_no_probe;
 pub use http::connect_http_server_with_client;
+pub use http::connect_http_server_with_client_no_probe;
 pub use http::connect_http_server_with_client_timeouts;
 pub use unified::{connect_server, connect_server_simple};

@@ -27,7 +27,10 @@ use crate::clients::ClientConfigService;
 use crate::common::startup_diagnostics::{self, StartupDegradedEvent, component};
 use crate::{
     core::{pool::UpstreamConnectionPool, proxy::ProxyServer},
-    inspector::{calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager},
+    inspector::{
+        calls::InspectorCallRegistry, service as inspector_service, sessions::InspectorSessionManager,
+        workspace::InspectorWorkspace,
+    },
     system::metrics::MetricsCollector,
 };
 
@@ -61,6 +64,8 @@ pub struct AppState {
     pub inspector_calls: Arc<InspectorCallRegistry>,
     /// Inspector session manager
     pub inspector_sessions: Arc<InspectorSessionManager>,
+    /// Inspector-only workspace for scratch server records and evidence inputs
+    pub inspector_workspace: Arc<InspectorWorkspace>,
     pub oauth_manager: RwLock<Option<Arc<crate::core::oauth::OAuthManager>>>,
     pub secret_store: RwLock<Option<Arc<crate::core::secrets::store::LocalSecretStore>>>,
     pub secret_store_readiness: RwLock<crate::core::secrets::store::SecretStoreReadiness>,
@@ -139,6 +144,7 @@ async fn create_router_internal(
 
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     let inspector_sessions = Arc::new(InspectorSessionManager::new());
+    let inspector_workspace = Arc::new(InspectorWorkspace::new(crate::common::paths::global_paths()));
     inspector_service::set_call_registry(inspector_calls.clone());
 
     // Create unified query adapter (optional, for incremental migration)
@@ -157,6 +163,7 @@ async fn create_router_internal(
             client_service: None,
             inspector_calls: inspector_calls.clone(),
             inspector_sessions: inspector_sessions.clone(),
+            inspector_workspace: inspector_workspace.clone(),
             oauth_manager: RwLock::new(None),
             secret_store: RwLock::new(None),
             secret_store_readiness: RwLock::new(crate::core::secrets::store::SecretStoreReadiness::unavailable(
@@ -254,6 +261,7 @@ async fn create_router_internal(
         client_service,
         inspector_calls,
         inspector_sessions,
+        inspector_workspace,
         oauth_manager: RwLock::new(oauth_manager),
         secret_store: RwLock::new(secret_store),
         secret_store_readiness: RwLock::new(secret_store_readiness),

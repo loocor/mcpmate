@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use sha2::{Digest, Sha256};
 
 use crate::clients::models::{CapabilitySource, ClientCapabilityConfig, UnifyDirectExposureConfig};
@@ -11,6 +13,8 @@ use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_
 use crate::core::profile::ProfileService;
 use crate::core::proxy::server::ClientContext;
 use crate::mcper::{HOSTED_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES};
+
+static RUNTIME_SURFACE_OVERRIDES: Lazy<DashMap<String, RuntimeSurfaceOverride>> = Lazy::new(DashMap::new);
 
 fn builtin_tool_surface_ids(
     config_mode: Option<&str>,
@@ -93,6 +97,36 @@ struct ResolvedPolicies {
     has_prompt_policy: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeSurfaceOverride {
+    pub config_mode: Option<String>,
+    pub server_ids: Option<Vec<String>>,
+    pub unify_workspace: Option<UnifyDirectExposureConfig>,
+}
+
+pub fn upsert_runtime_surface_override(
+    client_id: impl Into<String>,
+    mut override_config: RuntimeSurfaceOverride,
+) {
+    normalize_override_server_ids(&mut override_config);
+    RUNTIME_SURFACE_OVERRIDES.insert(client_id.into(), override_config);
+}
+
+pub fn remove_runtime_surface_override(client_id: &str) {
+    RUNTIME_SURFACE_OVERRIDES.remove(client_id);
+}
+
+pub fn runtime_surface_override(client_id: &str) -> Option<RuntimeSurfaceOverride> {
+    RUNTIME_SURFACE_OVERRIDES.get(client_id).map(|entry| entry.clone())
+}
+
+fn normalize_override_server_ids(override_config: &mut RuntimeSurfaceOverride) {
+    if let Some(server_ids) = override_config.server_ids.as_mut() {
+        server_ids.sort();
+        server_ids.dedup();
+    }
+}
+
 impl ResolvedPolicies {
     fn policy_flags(&self) -> [bool; 4] {
         [
@@ -156,6 +190,32 @@ impl ProfileVisibilityService {
         &self,
         client_context: &ClientContext,
     ) -> Result<VisibilitySnapshot> {
+        if let Some(override_config) = runtime_surface_override(&client_context.client_id) {
+            let config_mode = override_config
+                .config_mode
+                .as_deref()
+                .or(client_context.config_mode.as_deref());
+            let unify_workspace = override_config
+                .unify_workspace
+                .as_ref()
+                .or(client_context.unify_workspace.as_ref());
+            if let Some(server_ids) = override_config.server_ids.as_deref() {
+                return self
+                    .resolve_runtime_surface_snapshot(
+                        &client_context.client_id,
+                        config_mode,
+                        unify_workspace,
+                        server_ids,
+                    )
+                    .await;
+            }
+            if matches!(config_mode, Some("unify")) {
+                return self
+                    .resolve_unify_snapshot(&client_context.client_id, config_mode, unify_workspace)
+                    .await;
+            }
+        }
+
         if matches!(client_context.config_mode.as_deref(), Some("unify")) {
             return self
                 .resolve_unify_snapshot(
@@ -187,6 +247,10 @@ impl ProfileVisibilityService {
         &self,
         client_context: &ClientContext,
     ) -> Result<ClientCapabilityConfig> {
+        if runtime_surface_override(&client_context.client_id).is_some() {
+            return Ok(Self::active_capability_config());
+        }
+
         if matches!(client_context.config_mode.as_deref(), Some("unify")) {
             return Ok(Self::active_capability_config());
         }
@@ -291,6 +355,91 @@ impl ProfileVisibilityService {
         let snapshot = build_snapshot(client_id, surface_fingerprint, profile_ids, server_ids, policies);
 
         Ok(snapshot)
+    }
+
+    async fn resolve_runtime_surface_snapshot(
+        &self,
+        client_id: &str,
+        config_mode: Option<&str>,
+        unify_workspace: Option<&UnifyDirectExposureConfig>,
+        requested_server_ids: &[String],
+    ) -> Result<VisibilitySnapshot> {
+        let db = self
+            .db
+            .as_ref()
+            .context("Profile visibility requires database access")?;
+
+        let server_ids = self
+            .resolve_runtime_surface_server_ids(&db.pool, requested_server_ids)
+            .await?;
+        let profile_ids = Vec::new();
+        let capability_config = Self::active_capability_config();
+        let policies = self.resolve_policies(&db.pool, &server_ids, &profile_ids).await?;
+        let direct_surface_fingerprint = self.compute_unify_direct_surface_fingerprint(unify_workspace).await?;
+        let override_fingerprint =
+            compute_runtime_surface_fingerprint(&server_ids, direct_surface_fingerprint.as_deref());
+        let surface_fingerprint = compute_surface_fingerprint(
+            &capability_config,
+            &policies,
+            config_mode,
+            Some(&override_fingerprint),
+            Some(builtin_tool_surface_ids(
+                config_mode,
+                capability_config.capability_source,
+            )),
+        );
+
+        Ok(build_snapshot(
+            client_id,
+            surface_fingerprint,
+            profile_ids,
+            server_ids,
+            policies,
+        ))
+    }
+
+    async fn resolve_runtime_surface_server_ids(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        requested_server_ids: &[String],
+    ) -> Result<Vec<String>> {
+        if requested_server_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let placeholders = repeat_placeholders(requested_server_ids.len());
+        let sql = format!(
+            r#"
+            SELECT id
+            FROM server_config
+            WHERE enabled = 1 AND id IN ({placeholders})
+            ORDER BY name, id
+            "#,
+        );
+        let mut query = sqlx::query_scalar::<_, String>(&sql);
+        for server_id in requested_server_ids {
+            query = query.bind(server_id);
+        }
+        let mut server_ids = query
+            .fetch_all(pool)
+            .await
+            .context("Failed to resolve runtime surface servers")?;
+        server_ids.sort();
+        server_ids.dedup();
+
+        if server_ids.len() != requested_server_ids.len() {
+            let missing = requested_server_ids
+                .iter()
+                .filter(|server_id| !server_ids.contains(server_id))
+                .cloned()
+                .collect::<Vec<_>>();
+            return Err(anyhow!(
+                "Runtime surface override includes unknown or disabled server ids: {}",
+                missing.join(", ")
+            ));
+        }
+
+        Ok(server_ids)
     }
 
     async fn compute_unify_direct_surface_fingerprint(
@@ -1021,6 +1170,25 @@ fn compute_surface_fingerprint(
         direct_surface_fingerprint,
         builtin_tools,
     })
+}
+
+fn compute_runtime_surface_fingerprint(
+    server_ids: &[String],
+    direct_surface_fingerprint: Option<&str>,
+) -> String {
+    let mut sorted_server_ids = server_ids.to_vec();
+    sorted_server_ids.sort();
+    sorted_server_ids.dedup();
+
+    let mut hasher = Sha256::new();
+    hasher.update("runtime_surface");
+    hasher.update([0]);
+    hasher.update(sorted_server_ids.join("\u{1f}"));
+    hasher.update([0]);
+    if let Some(direct_surface_fingerprint) = direct_surface_fingerprint {
+        hasher.update(direct_surface_fingerprint);
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 fn build_snapshot(

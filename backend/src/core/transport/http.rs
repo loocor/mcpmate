@@ -100,6 +100,31 @@ where
     Ok((service, tools, capabilities))
 }
 
+async fn build_service_no_probe<T>(
+    server_name: &str,
+    transport: T,
+    service_timeout: std::time::Duration,
+) -> Result<(crate::core::transport::ClientService, Option<ServerCapabilities>)>
+where
+    T: rmcp::transport::Transport<rmcp::RoleClient> + Send + 'static,
+{
+    let handler = crate::core::transport::client::UpstreamClientHandler::new(server_name.to_string());
+    let service = timeout(service_timeout, async { handler.serve(transport).await })
+        .await
+        .map_err(|_| anyhow::anyhow!(format!("Connection timeout for server '{server_name}'")))??;
+    let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+
+    tracing::debug!(
+        "Connected to server '{}' without initial capability probe, capabilities: {:?}",
+        server_name,
+        capabilities
+            .as_ref()
+            .map(|c| format!("resources={}", c.resources.is_some()))
+    );
+
+    Ok((service, capabilities))
+}
+
 /// Connect to a streamable HTTP server with timeout
 pub async fn connect_http_server(
     server_name: &str,
@@ -154,6 +179,42 @@ pub async fn connect_http_server(
     res
 }
 
+pub async fn connect_http_server_no_probe(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    transport_type: TransportType,
+) -> Result<(crate::core::transport::ClientService, Option<ServerCapabilities>)> {
+    if let Some(hdrs) = server_config.headers.as_ref() {
+        if !hdrs.is_empty() {
+            let mut header_map = reqwest::header::HeaderMap::new();
+            for (k, v) in hdrs.iter() {
+                if let (Ok(name), Ok(value)) = (
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(v),
+                ) {
+                    let controlled = matches!(
+                        name.as_str().to_ascii_lowercase().as_str(),
+                        "accept"
+                            | "content-length"
+                            | "host"
+                            | "connection"
+                            | "transfer-encoding"
+                            | protocol::MCP_PROTOCOL_VERSION_HEADER_LOWER
+                    );
+                    if controlled {
+                        continue;
+                    }
+                    header_map.insert(name, value);
+                }
+            }
+            let client = reqwest::Client::builder().default_headers(header_map).build()?;
+            return connect_http_server_with_client_no_probe(server_name, server_config, client, transport_type).await;
+        }
+    }
+
+    connect_http_server_with_client_no_probe(server_name, server_config, reqwest::Client::new(), transport_type).await
+}
+
 /// Connect to a streamable HTTP server with provided reqwest client
 pub async fn connect_http_server_with_client(
     server_name: &str,
@@ -194,6 +255,28 @@ pub async fn connect_http_server_with_client(
         elapsed
     );
     Ok((service, tools, capabilities))
+}
+
+pub async fn connect_http_server_with_client_no_probe(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    client: reqwest::Client,
+    transport_type: TransportType,
+) -> Result<(crate::core::transport::ClientService, Option<ServerCapabilities>)> {
+    let url = server_config
+        .url
+        .as_ref()
+        .context("URL not specified for HTTP server")?;
+
+    let service_timeout = get_sse_service_timeout();
+    match transport_type {
+        TransportType::StreamableHttp => {
+            let config = make_streamable_config(url, &server_config.headers);
+            let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
+            build_service_no_probe(server_name, transport, service_timeout).await
+        }
+        TransportType::Stdio => anyhow::bail!("Stdio transport not supported by this function"),
+    }
 }
 
 /// Connect to a streamable HTTP server with custom timeouts

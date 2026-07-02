@@ -19,10 +19,10 @@ use crate::core::secrets::store::{
     SecretUsageUpsertInput,
 };
 
-type BackendLlmProviderManager =
+pub(crate) type BackendLlmProviderManager =
     LlmProviderManager<SqliteLlmProviderRepository, SecureStoreLlmCredentialStore, TracingLlmProviderEventSink>;
 
-fn llm_manager(state: Arc<AppState>) -> Result<BackendLlmProviderManager, ApiError> {
+pub(crate) fn llm_manager(state: Arc<AppState>) -> Result<BackendLlmProviderManager, ApiError> {
     let pool = state
         .database
         .as_ref()
@@ -36,7 +36,7 @@ fn llm_manager(state: Arc<AppState>) -> Result<BackendLlmProviderManager, ApiErr
     ))
 }
 
-fn map_llm_error(err: LlmError) -> ApiError {
+pub(crate) fn map_llm_error(err: LlmError) -> ApiError {
     let kind = err.kind();
     let message = err.to_string();
     match kind {
@@ -225,7 +225,7 @@ pub async fn get_default_provider(State(state): State<Arc<AppState>>) -> Result<
 }
 
 #[derive(Clone)]
-struct SecureStoreLlmCredentialStore {
+pub(crate) struct SecureStoreLlmCredentialStore {
     state: Arc<AppState>,
 }
 

@@ -17,8 +17,8 @@ pub use credentials::{LlmCredentialStore, PreparedLlmCredential};
 pub use error::{LlmError, LlmErrorKind, LlmResult};
 pub use events::{LlmProviderEvent, LlmProviderEventSink, NoopLlmProviderEventSink, TracingLlmProviderEventSink};
 pub use manager::{
-    CreateLlmProviderInput, LlmProviderDefaultParamsInput, LlmProviderManager, LlmProviderModelPreviewInput,
-    LlmProviderThinkingInput, UpdateLlmProviderInput,
+    CreateLlmProviderInput, LlmChatCompletionResult, LlmProviderDefaultParamsInput, LlmProviderManager,
+    LlmProviderModelPreviewInput, LlmProviderThinkingInput, UpdateLlmProviderInput,
 };
 pub use provider::{ConnectivityResult, LlmProvider};
 pub use repository::{CreateLlmProviderRecord, LlmProviderRepository, StoredLlmProvider, UpdateLlmProviderRecord};

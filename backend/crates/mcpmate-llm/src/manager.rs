@@ -11,6 +11,7 @@ use crate::{
     factory,
     provider::{ConnectivityResult, LlmProvider},
     repository::{CreateLlmProviderRecord, LlmProviderRepository, StoredLlmProvider, UpdateLlmProviderRecord},
+    types::{ChatRequest, ChatResponse},
 };
 
 #[derive(Debug, Clone)]
@@ -18,6 +19,12 @@ pub struct LlmProviderManager<R, C, E> {
     repository: R,
     credentials: C,
     events: E,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmChatCompletionResult {
+    pub provider: StoredLlmProvider,
+    pub response: ChatResponse,
 }
 
 impl<R, C, E> LlmProviderManager<R, C, E>
@@ -306,6 +313,30 @@ where
 
     pub async fn get_default_provider(&self) -> LlmResult<Option<StoredLlmProvider>> {
         self.repository.get_default_provider().await
+    }
+
+    pub async fn chat_completion(
+        &self,
+        provider_id: Option<&str>,
+        request: ChatRequest,
+    ) -> LlmResult<LlmChatCompletionResult> {
+        let config =
+            match provider_id {
+                Some(id) => self.get_provider_or_not_found(id).await?,
+                None => self.repository.get_default_provider().await?.ok_or_else(|| {
+                    LlmError::bad_request("LLM evaluation requires provider_id or a default provider")
+                })?,
+            };
+        let provider = self.provider_for_stored_config(&config).await?;
+        let response = provider
+            .chat_completion(request)
+            .await
+            .map_err(|err| LlmError::internal(err.to_string()))?;
+
+        Ok(LlmChatCompletionResult {
+            provider: config,
+            response,
+        })
     }
 
     async fn get_provider_or_not_found(
