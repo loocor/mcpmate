@@ -358,55 +358,9 @@
 		 * Convert GitHub MCP registry server format to MCPMate import format.
 		 */
 		convertRegistryToMcpMate(server) {
-			const name = server.name || "unknown";
-			const mcpServers = {};
-
-			// Handle stdio packages
-			if (Array.isArray(server.packages) && server.packages.length > 0) {
-				for (const pkg of server.packages) {
-					const serverName = pkg.identifier || name;
-					const entry = {};
-
-					if (pkg.registryType === "npm") {
-						entry.command = "npx";
-						entry.args = ["-y", pkg.identifier];
-					} else if (pkg.registryType === "pypi") {
-						entry.command = pkg.runtimeHint || "uvx";
-						entry.args = [pkg.identifier];
-					} else if (pkg.runtimeHint) {
-						entry.command = pkg.runtimeHint;
-						entry.args = [pkg.identifier];
-					} else {
-						entry.command = "npx";
-						entry.args = ["-y", pkg.identifier];
-					}
-
-					// Add environment variables if present
-					if (Array.isArray(pkg.environmentVariables) && pkg.environmentVariables.length > 0) {
-						entry.env = {};
-						for (const envVar of pkg.environmentVariables) {
-							entry.env[envVar.name] = "";
-						}
-					}
-
-					mcpServers[serverName] = entry;
-				}
-			}
-
-			// Handle remote servers
-			if (Array.isArray(server.remotes) && server.remotes.length > 0) {
-				for (const remote of server.remotes) {
-					const serverName = remote.identifier || name;
-					const entry = { url: remote.url };
-					mcpServers[serverName] = entry;
-				}
-			}
-
-			if (Object.keys(mcpServers).length === 0) {
-				return null;
-			}
-
-			return JSON.stringify({ mcpServers });
+			return globalThis.__MCPMATE_REGISTRY_IMPORT__?.convertRegistryToMcpMate(
+				server,
+			) ?? null;
 		},
 
 		/**

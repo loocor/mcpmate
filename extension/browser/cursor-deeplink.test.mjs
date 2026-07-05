@@ -43,6 +43,7 @@ describe("cursor deeplink parsing", () => {
 			JSON.stringify({
 				mcpServers: {
 					"mcp-mermaid": {
+						type: "stdio",
 						command: "npx",
 						args: ["-y", "mcp-mermaid"],
 					},
@@ -64,9 +65,49 @@ describe("cursor deeplink parsing", () => {
 			JSON.stringify({
 				mcpServers: {
 					"phantom-mcp-server": {
+						type: "stdio",
 						command: "npx",
 						args: ["-y", "@phantom/mcp-server"],
 						env: { PHANTOM_APP_ID: "your-phantom-app-id" },
+					},
+				},
+			}),
+		);
+	});
+
+	test("parses cursor.directory remote install links with explicit transport", () => {
+		const config = btoa(
+			JSON.stringify({
+				url: "https://example.com/mcp",
+				transport: "streamable-http",
+			}),
+		);
+		const href = `cursor://anysphere.cursor-deeplink/mcp/install?name=remote-api&config=${config}`;
+		expect(parseCursorMcpInstallLink(href)).toBe(
+			JSON.stringify({
+				mcpServers: {
+					"remote-api": {
+						url: "https://example.com/mcp",
+						type: "streamable_http",
+					},
+				},
+			}),
+		);
+	});
+
+	test("uses remote URL path as a last resort transport hint", () => {
+		const config = btoa(
+			JSON.stringify({
+				url: "https://example.com/events/sse",
+			}),
+		);
+		const href = `cursor://anysphere.cursor-deeplink/mcp/install?name=remote-api&config=${config}`;
+		expect(parseCursorMcpInstallLink(href)).toBe(
+			JSON.stringify({
+				mcpServers: {
+					"remote-api": {
+						url: "https://example.com/events/sse",
+						type: "sse",
 					},
 				},
 			}),

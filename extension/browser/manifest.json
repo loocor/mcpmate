@@ -63,6 +63,7 @@
 			"js": [
 				"cursor-deeplink.js",
 				"import-handoff.js",
+				"registry-import.js",
 				"content.js"
 			],
 			"run_at": "document_idle"

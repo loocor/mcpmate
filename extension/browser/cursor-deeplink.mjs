@@ -12,6 +12,44 @@ export function splitMergedStdioCommand(command, args) {
 	return { command: parts[0], args: parts.slice(1) };
 }
 
+function normalizeCursorTransport(value, fallback) {
+	const token = typeof value === "string" ? value.trim().toLowerCase() : "";
+	switch (token) {
+		case "sse":
+		case "server-sent-events":
+			return "sse";
+		case "streamable-http":
+		case "streamable_http":
+		case "streamablehttp":
+		case "http":
+		case "http_stream":
+		case "http-stream":
+		case "httpstream":
+			return "streamable_http";
+		default:
+			return fallback;
+	}
+}
+
+function transportFromUrl(url) {
+	try {
+		const parsed = new URL(url);
+		const segments = parsed.pathname
+			.split("/")
+			.map((segment) => segment.trim().toLowerCase())
+			.filter(Boolean);
+		if (segments.includes("mcp")) {
+			return "streamable_http";
+		}
+		if (segments.includes("sse")) {
+			return "sse";
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
+
 /** @param {string} href Cursor MCP install deep link URL. */
 export function parseCursorMcpInstallLink(href) {
 	try {
@@ -28,22 +66,25 @@ export function parseCursorMcpInstallLink(href) {
 
 		if (cursorConfig.url) {
 			entry.url = cursorConfig.url;
+			entry.type = normalizeCursorTransport(
+				cursorConfig.transport,
+				transportFromUrl(cursorConfig.url) ?? "streamable_http",
+			);
 		}
 		if (cursorConfig.command) {
 			const { command, args } = splitMergedStdioCommand(
 				cursorConfig.command,
 				cursorArgs,
 			);
+			entry.type = "stdio";
 			if (command) entry.command = command;
 			if (args?.length) entry.args = args;
 		} else if (cursorArgs?.length) {
+			entry.type = "stdio";
 			entry.args = cursorArgs;
 		}
 		if (cursorConfig.env && typeof cursorConfig.env === "object") {
 			entry.env = cursorConfig.env;
-		}
-		if (cursorConfig.transport && typeof cursorConfig.transport === "string") {
-			entry.type = cursorConfig.transport;
 		}
 		if (!entry.url && !entry.command) return null;
 
