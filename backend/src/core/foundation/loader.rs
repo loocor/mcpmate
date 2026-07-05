@@ -11,7 +11,7 @@ use crate::{
     config::{
         database::Database,
         models::Server,
-        server::{ServerEnabledService, get_server_args, get_server_env, headers::is_authorization_header_key},
+        server::{ServerEnabledService, get_server_args, get_server_env, headers::has_non_empty_authorization_header},
     },
     core::profile::merge::ProfileMerger,
     core::{
@@ -116,7 +116,7 @@ fn startup_skip_reason(
 }
 
 fn has_manual_authorization(headers: Option<&HashMap<String, String>>) -> bool {
-    headers.is_some_and(|headers| headers.keys().any(|key| is_authorization_header_key(key)))
+    headers.is_some_and(has_non_empty_authorization_header)
 }
 
 fn warn_degraded_server_field(

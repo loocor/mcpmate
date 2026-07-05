@@ -14,7 +14,10 @@ use crate::{
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
     config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
-    config::server::{get_server_headers, merge_env_for_update, merge_headers_for_update},
+    config::server::{
+        get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update,
+        merge_headers_for_update,
+    },
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
@@ -56,10 +59,7 @@ async fn clear_oauth_auth_source_for_manual_authorization(
     server_id: &str,
     headers: &HashMap<String, String>,
 ) -> Result<(), ApiError> {
-    let has_manual_authorization_header = headers
-        .keys()
-        .any(|key| crate::config::server::headers::is_authorization_header_key(key));
-    if !has_manual_authorization_header {
+    if !has_non_empty_authorization_header(headers) {
         return Ok(());
     }
 
@@ -1188,6 +1188,81 @@ mod tests {
             Some("Bearer manual-token")
         );
         assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+    }
+
+    #[tokio::test]
+    async fn create_server_with_manual_authorization_header_persists_header() {
+        let context = create_test_context().await;
+
+        let response = create_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "name": "manual auth create server",
+                    "server_type": "streamable_http",
+                    "url": "https://example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer manual-token",
+                        "X-Trace": "trace-1",
+                    }
+                }))
+                .expect("decode create request"),
+            ),
+        )
+        .await
+        .expect("create server");
+        let created = response.0.data.expect("created server data");
+        let server_id = created.id.expect("created server id");
+
+        let headers = server::get_server_headers(&context.database.pool, &server_id)
+            .await
+            .expect("load headers");
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer manual-token")
+        );
+        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+    }
+
+    #[tokio::test]
+    async fn manual_authorization_cleanup_ignores_blank_authorization_and_proxy_authorization() {
+        let context = create_test_context().await;
+        let server_id = "serv_non_manual_authorization";
+
+        let mut server = Server::new_streamable_http(
+            "non manual auth server".to_string(),
+            Some("https://example.com/mcp".to_string()),
+        );
+        server.id = Some(server_id.to_string());
+        server::upsert_server(&context.database.pool, &server)
+            .await
+            .expect("insert server");
+        insert_plain_oauth_auth_source(&context.database.pool, server_id).await;
+
+        clear_oauth_auth_source_for_manual_authorization(
+            &context.app_state,
+            &context.database,
+            server_id,
+            &HashMap::from([
+                ("Authorization".to_string(), "   ".to_string()),
+                ("Proxy-Authorization".to_string(), "Bearer proxy-token".to_string()),
+            ]),
+        )
+        .await
+        .expect("manual auth cleanup");
+
+        assert!(
+            server::get_server_oauth_config(&context.database.pool, server_id)
+                .await
+                .expect("load oauth config")
+                .is_some()
+        );
+        assert!(
+            server::get_server_oauth_token(&context.database.pool, server_id)
+                .await
+                .expect("load oauth token")
+                .is_some()
+        );
     }
 
     async fn insert_plain_oauth_auth_source(
