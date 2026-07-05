@@ -1038,7 +1038,6 @@ function createFeaturedCarousel(kind, entries) {
 
 		const goToRealIndex = (targetRealIndex, smooth) => {
 			if (jumping) return;
-			const currentReal = getActiveRealIndex();
 			const targetPhysical = targetRealIndex + 1;
 
 			if (!smooth) {
@@ -1047,23 +1046,7 @@ function createFeaturedCarousel(kind, entries) {
 				return;
 			}
 
-			if (targetRealIndex === currentReal) {
-				goToSlideIndex(targetPhysical, true);
-				return;
-			}
-
-			const forwardSteps = (targetRealIndex - currentReal + realCount) % realCount;
-			const backwardSteps = (currentReal - targetRealIndex + realCount) % realCount;
-
-			if (forwardSteps > 0 && forwardSteps < backwardSteps) {
-				goToSlideIndex(realCount + 1, true);
-				return;
-			}
-			if (backwardSteps > 0 && backwardSteps < forwardSteps) {
-				goToSlideIndex(0, true);
-				return;
-			}
-
+			syncDots(targetRealIndex);
 			goToSlideIndex(targetPhysical, true);
 		};
 
