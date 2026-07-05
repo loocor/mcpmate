@@ -1,0 +1,240 @@
+:root {
+	color-scheme: light dark;
+	--background: #f8fafc;
+	--card: #ffffff;
+	--foreground: #0f172a;
+	--muted: #64748b;
+	--border: #d8dee8;
+	--primary: #111827;
+	--primary-foreground: #ffffff;
+	--secondary: #ffffff;
+	--secondary-hover: #f1f5f9;
+	--success: #047857;
+	--warning: #b45309;
+	--error: #b91c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--background: #0f172a;
+		--card: #111827;
+		--foreground: #e5e7eb;
+		--muted: #94a3b8;
+		--border: #263244;
+		--primary: #e5e7eb;
+		--primary-foreground: #111827;
+		--secondary: #182235;
+		--secondary-hover: #223049;
+		--success: #34d399;
+		--warning: #f59e0b;
+		--error: #f87171;
+	}
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	min-width: 320px;
+	min-height: 100vh;
+	font-family:
+		Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+		sans-serif;
+	color: var(--foreground);
+	background: var(--background);
+}
+
+body[data-handoff-visible="false"] .panel {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.shell {
+	display: grid;
+	min-height: 100vh;
+	place-items: center;
+	padding: 24px;
+}
+
+.panel {
+	width: min(100%, 560px);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--card);
+	padding: 20px;
+	box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+	transition: opacity 120ms ease;
+}
+
+.brand {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.logo {
+	width: 42px;
+	height: 42px;
+	flex: 0 0 auto;
+}
+
+.eyebrow {
+	margin: 0 0 3px;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0;
+	text-transform: uppercase;
+	color: var(--muted);
+}
+
+h1 {
+	margin: 0;
+	font-size: 20px;
+	line-height: 1.2;
+	letter-spacing: 0;
+}
+
+.summary,
+.note {
+	margin: 14px 0 0;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--muted);
+}
+
+.status {
+	margin-top: 16px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 10px 12px;
+	font-size: 13px;
+	line-height: 1.4;
+	text-align: center;
+	color: var(--muted);
+	background: color-mix(in srgb, var(--secondary) 82%, transparent);
+}
+
+.status[data-state="ready"] {
+	color: var(--success);
+}
+
+.status[data-state="stale"] {
+	color: var(--warning);
+}
+
+.status[data-state="error"] {
+	color: var(--error);
+}
+
+.actions {
+	display: grid;
+	gap: 10px;
+	margin-top: 18px;
+}
+
+button,
+a.secondary {
+	display: flex;
+	width: 100%;
+	min-height: 38px;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	border-radius: 8px;
+	padding: 0 14px;
+	font-size: 14px;
+	font-weight: 650;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+button:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
+.primary {
+	border: 1px solid var(--primary);
+	color: var(--primary-foreground);
+	background: var(--primary);
+}
+
+.secondary {
+	border: 1px solid var(--border);
+	color: var(--foreground);
+	background: var(--secondary);
+}
+
+.secondary:hover:not(:disabled) {
+	background: var(--secondary-hover);
+}
+
+.external-link-icon {
+	width: 14px;
+	height: 14px;
+	flex: 0 0 auto;
+	position: relative;
+}
+
+.external-link-icon::before,
+.external-link-icon::after {
+	position: absolute;
+	content: "";
+}
+
+.external-link-icon::before {
+	top: 2px;
+	right: 2px;
+	width: 7px;
+	height: 7px;
+	border-top: 1.8px solid currentColor;
+	border-right: 1.8px solid currentColor;
+}
+
+.external-link-icon::after {
+	top: 7px;
+	left: 2px;
+	width: 10px;
+	height: 1.8px;
+	background: currentColor;
+	transform: rotate(-45deg);
+	transform-origin: center;
+}
+
+.help {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-top: 18px;
+	border-top: 1px solid var(--border);
+	padding-top: 14px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.help p {
+	margin: 0;
+}
+
+.help-links {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+}
+
+.help-links a {
+	color: var(--foreground);
+	font-weight: 650;
+	text-decoration: none;
+}
+
+.help-links a:hover {
+	text-decoration: underline;
+}

@@ -29,7 +29,8 @@ The import handoff payload JSON matches desktop handling in `deep_link.rs`:
 - Optional icon metadata is supported when Admin catalog entries provide it.
 - Uses `config.js` as the extension deployment config. Update `adminApiOrigin` there if the Admin API origin changes.
 - Run `bun extension/browser/scripts/write-build-info.mjs` before packaging to refresh `build-info.js` with the current build date.
-- The snippet-to-desktop import path remains enabled through `content.js` and `mcpmate://import/server`.
+- The snippet-to-desktop import path remains enabled through `content.js` and `mcpmate://import/server`; ready imports open MCPMate directly without showing an intermediate browser page.
+- The fallback handoff page inherits the popup language preference and offers explicit **Open MCPMate** and **Install MCPMate** actions plus localized help/community links when an import request is unavailable.
 - What remains disabled is telemetry-style import submission to Admin APIs. The extension does not upload import events or usage analytics to Admin in the current phase.
 - `manifest.json` icons use PNGs (`icons/icon-{16,32,48,128}.png`) because Chromium extension UIs do not reliably show SVG there. The popup also switches to `icons/icon-dark-{16,32,48,128}.png` for dark mode so the toolbar mark remains legible.
 - **GitHub MCP page integration**: On `github.com/mcp` pages, the extension automatically injects an "Install in MCPMate" option into the Install dropdown menus for each MCP server. This provides a seamless way to import servers directly from GitHub's MCP catalog into MCPMate desktop.
@@ -51,6 +52,7 @@ Status: Available on Chromium-based browser extension stores, including Chrome W
 5. Use the popup settings panel to choose the extension language and theme.
 6. Browse discovery sections backed by the configured discovery source.
 7. Visit any page with an MCP server snippet to use the in-page **Add to MCPMate** handoff.
+8. MCPMate should open directly. If a fallback handoff page appears, choose **Open MCPMate** when the desktop app is installed, or **Install MCPMate** when no app handles `mcpmate://` links yet.
 
 ## Popup dev preview (Cursor / local browser)
 
