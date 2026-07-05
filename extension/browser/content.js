@@ -537,17 +537,54 @@
 		window.open(url, "_blank", "noopener,noreferrer");
 	}
 
-	function scheduleImportFallback(handoff, id) {
+	function trackHandoffWrite(writeRecord) {
+		return writeRecord.then(
+			() => ({ ok: true }),
+			(error) => ({ ok: false, error }),
+		);
+	}
+
+	function reportDeferredImportHandoffFailure(error) {
+		console.error("[MCPMate] Deferred import handoff failed:", error);
+	}
+
+	async function cleanupImportFallbackRecord(handoff, id) {
+		try {
+			await handoff.removeHandoffRecord(id);
+		} catch (error) {
+			reportDeferredImportHandoffFailure(error);
+		}
+	}
+
+	async function resolveImportFallback(handoff, id, fallbackUrl, writeResult) {
+		const result = await writeResult;
+		if (!result.ok) {
+			if (shouldOpenImportFallback()) {
+				reportImportHandoffFailure(result.error);
+			} else {
+				reportDeferredImportHandoffFailure(result.error);
+			}
+			return;
+		}
+
+		if (!shouldOpenImportFallback()) {
+			await cleanupImportFallbackRecord(handoff, id);
+			return;
+		}
+
+		requestImportFallbackPage(fallbackUrl);
+	}
+
+	function scheduleImportFallback(handoff, id, writeResult) {
 		const fallbackUrl = withQueryParam(
 			handoff.buildHandoffPageUrl(id),
 			"fallback",
 			"1",
 		);
 		window.setTimeout(() => {
-			if (!shouldOpenImportFallback()) {
-				return;
-			}
-			requestImportFallbackPage(fallbackUrl);
+			void resolveImportFallback(handoff, id, fallbackUrl, writeResult).catch(
+				reportDeferredImportHandoffFailure,
+			);
 		}, IMPORT_FALLBACK_DELAY_MS);
 	}
 
@@ -566,9 +603,9 @@
 		};
 		const id = handoff.createHandoffId();
 		const record = handoff.createHandoffRecord(payload);
-		await handoff.writeHandoffRecord(id, record);
+		const writeResult = trackHandoffWrite(handoff.writeHandoffRecord(id, record));
 		openExternalImportUrl(handoff.buildMcpMateImportUrl(payload));
-		scheduleImportFallback(handoff, id);
+		scheduleImportFallback(handoff, id, writeResult);
 	}
 
 	function reportImportHandoffFailure(error) {
