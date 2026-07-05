@@ -56,6 +56,32 @@ pub fn merge_headers_for_update(
     merged
 }
 
+pub fn is_authorization_header_key(key: &str) -> bool {
+    key.trim().eq_ignore_ascii_case("authorization")
+}
+
+pub fn has_non_empty_authorization_header(headers: &HashMap<String, String>) -> bool {
+    headers
+        .iter()
+        .any(|(key, value)| is_authorization_header_key(key) && !value.trim().is_empty())
+}
+
+pub async fn remove_authorization_headers(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<()> {
+    let existing = get_server_headers(pool, server_id).await?;
+    if !existing.keys().any(|key| is_authorization_header_key(key)) {
+        return Ok(());
+    }
+
+    let filtered = existing
+        .into_iter()
+        .filter(|(key, _)| !is_authorization_header_key(key))
+        .collect();
+    replace_server_headers(pool, server_id, &filtered).await
+}
+
 /// Merge incoming env updates with stored values, preserving secrets for redacted masks.
 /// Env keys are case-sensitive (unlike HTTP headers).
 pub fn merge_env_for_update(
@@ -180,7 +206,8 @@ pub async fn get_server_headers(
 #[cfg(test)]
 mod tests {
     use super::{
-        is_redacted_display_value, merge_env_for_update, merge_headers_for_update,
+        has_non_empty_authorization_header, is_authorization_header_key, is_redacted_display_value,
+        merge_env_for_update, merge_headers_for_update,
     };
     use std::collections::HashMap;
 
@@ -208,6 +235,30 @@ mod tests {
             Some("Bearer real-token")
         );
         assert_eq!(merged.get("x-custom").map(String::as_str), Some("updated"));
+    }
+
+    #[test]
+    fn detects_authorization_header_keys_case_insensitively() {
+        assert!(is_authorization_header_key("Authorization"));
+        assert!(is_authorization_header_key(" authorization "));
+        assert!(!is_authorization_header_key("Proxy-Authorization"));
+        assert!(!is_authorization_header_key("X-Api-Key"));
+    }
+
+    #[test]
+    fn detects_non_empty_authorization_header_values() {
+        assert!(has_non_empty_authorization_header(&HashMap::from([(
+            "Authorization".to_string(),
+            "Bearer token".to_string(),
+        )])));
+        assert!(!has_non_empty_authorization_header(&HashMap::from([(
+            "Authorization".to_string(),
+            "   ".to_string(),
+        )])));
+        assert!(!has_non_empty_authorization_header(&HashMap::from([(
+            "Proxy-Authorization".to_string(),
+            "Bearer proxy-token".to_string(),
+        )])));
     }
 
     #[test]

@@ -14,7 +14,10 @@ use crate::{
     common::server::ServerType,
     config::server::capabilities::sync_via_connection_pool,
     config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
-    config::server::{get_server_headers, merge_env_for_update, merge_headers_for_update},
+    config::server::{
+        get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update,
+        merge_headers_for_update,
+    },
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
@@ -26,7 +29,10 @@ use crate::{
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
 use std::sync::Arc;
-use std::{collections::BTreeSet, str::FromStr};
+use std::{
+    collections::{BTreeSet, HashMap},
+    str::FromStr,
+};
 
 /// Validate server configuration
 #[inline]
@@ -45,6 +51,26 @@ fn validate_server_config(
             "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
         ))),
     }
+}
+
+async fn clear_oauth_auth_source_for_manual_authorization(
+    state: &Arc<AppState>,
+    db: &Database,
+    server_id: &str,
+    headers: &HashMap<String, String>,
+) -> Result<(), ApiError> {
+    if !has_non_empty_authorization_header(headers) {
+        return Ok(());
+    }
+
+    delete_oauth_secrets_for_server_best_effort(state, db, server_id).await?;
+    crate::config::server::delete_server_oauth_config(&db.pool, server_id)
+        .await
+        .map_err(map_anyhow_error)?;
+    crate::config::server::delete_server_oauth_token(&db.pool, server_id)
+        .await
+        .map_err(map_anyhow_error)?;
+    Ok(())
 }
 
 /// Create server model from configuration using strict ServerType enum
@@ -331,14 +357,17 @@ pub async fn create_server(
     // Persist default headers if provided
     if reusable_pending_server.is_some() {
         let empty_headers = std::collections::HashMap::new();
-        replace_server_headers(&db.pool, &server_id, payload.headers.as_ref().unwrap_or(&empty_headers))
+        let headers = payload.headers.as_ref().unwrap_or(&empty_headers);
+        replace_server_headers(&db.pool, &server_id, headers)
             .await
             .map_err(map_anyhow_error)?;
+        clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, headers).await?;
     } else if let Some(headers) = &payload.headers {
         if !headers.is_empty() {
             upsert_server_headers(&db.pool, &server_id, headers)
                 .await
                 .map_err(map_anyhow_error)?;
+            clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, headers).await?;
         }
     }
 
@@ -602,6 +631,7 @@ pub async fn update_server(
         replace_server_headers(&db.pool, &server_id, &merged_headers)
             .await
             .map_err(map_anyhow_error)?;
+        clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, &merged_headers).await?;
     }
 
     // Update server arguments if provided
@@ -1103,6 +1133,175 @@ mod tests {
                 .await
                 .expect("count oauth secret rows");
         assert_eq!(remaining_secret_count, 0);
+    }
+
+    #[tokio::test]
+    async fn update_server_with_manual_authorization_header_clears_oauth_auth_source() {
+        let context = create_test_context().await;
+        let server_id = "serv_manual_authorization";
+
+        let mut server = Server::new_streamable_http(
+            "manual auth server".to_string(),
+            Some("https://example.com/mcp".to_string()),
+        );
+        server.id = Some(server_id.to_string());
+        server::upsert_server(&context.database.pool, &server)
+            .await
+            .expect("insert server");
+
+        insert_plain_oauth_auth_source(&context.database.pool, server_id).await;
+
+        let _response = update_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "id": server_id,
+                    "headers": {
+                        "Authorization": "Bearer manual-token",
+                        "X-Trace": "trace-1",
+                    }
+                }))
+                .expect("decode update request"),
+            ),
+        )
+        .await
+        .expect("update server");
+
+        assert!(
+            server::get_server_oauth_config(&context.database.pool, server_id)
+                .await
+                .expect("load oauth config")
+                .is_none()
+        );
+        assert!(
+            server::get_server_oauth_token(&context.database.pool, server_id)
+                .await
+                .expect("load oauth token")
+                .is_none()
+        );
+
+        let headers = server::get_server_headers(&context.database.pool, server_id)
+            .await
+            .expect("load headers");
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer manual-token")
+        );
+        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+    }
+
+    #[tokio::test]
+    async fn create_server_with_manual_authorization_header_persists_header() {
+        let context = create_test_context().await;
+
+        let response = create_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "name": "manual auth create server",
+                    "server_type": "streamable_http",
+                    "url": "https://example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer manual-token",
+                        "X-Trace": "trace-1",
+                    }
+                }))
+                .expect("decode create request"),
+            ),
+        )
+        .await
+        .expect("create server");
+        let created = response.0.data.expect("created server data");
+        let server_id = created.id.expect("created server id");
+
+        let headers = server::get_server_headers(&context.database.pool, &server_id)
+            .await
+            .expect("load headers");
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer manual-token")
+        );
+        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+    }
+
+    #[tokio::test]
+    async fn manual_authorization_cleanup_ignores_blank_authorization_and_proxy_authorization() {
+        let context = create_test_context().await;
+        let server_id = "serv_non_manual_authorization";
+
+        let mut server = Server::new_streamable_http(
+            "non manual auth server".to_string(),
+            Some("https://example.com/mcp".to_string()),
+        );
+        server.id = Some(server_id.to_string());
+        server::upsert_server(&context.database.pool, &server)
+            .await
+            .expect("insert server");
+        insert_plain_oauth_auth_source(&context.database.pool, server_id).await;
+
+        clear_oauth_auth_source_for_manual_authorization(
+            &context.app_state,
+            &context.database,
+            server_id,
+            &HashMap::from([
+                ("Authorization".to_string(), "   ".to_string()),
+                ("Proxy-Authorization".to_string(), "Bearer proxy-token".to_string()),
+            ]),
+        )
+        .await
+        .expect("manual auth cleanup");
+
+        assert!(
+            server::get_server_oauth_config(&context.database.pool, server_id)
+                .await
+                .expect("load oauth config")
+                .is_some()
+        );
+        assert!(
+            server::get_server_oauth_token(&context.database.pool, server_id)
+                .await
+                .expect("load oauth token")
+                .is_some()
+        );
+    }
+
+    async fn insert_plain_oauth_auth_source(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+    ) {
+        server::upsert_server_oauth_config(
+            pool,
+            &ServerOAuthConfig {
+                id: None,
+                server_id: server_id.to_string(),
+                authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                token_endpoint: "https://issuer.example.com/token".to_string(),
+                client_id: "client-1".to_string(),
+                client_secret: None,
+                scopes: Some("read write".to_string()),
+                redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("insert oauth config");
+        server::upsert_server_oauth_token(
+            pool,
+            &ServerOAuthToken {
+                id: None,
+                server_id: server_id.to_string(),
+                access_token: "oauth-access-token".to_string(),
+                refresh_token: Some("oauth-refresh-token".to_string()),
+                token_type: "bearer".to_string(),
+                expires_at: None,
+                scope: Some("read write".to_string()),
+                created_at: None,
+                updated_at: None,
+            },
+        )
+        .await
+        .expect("insert oauth token");
     }
 
     async fn insert_test_oauth_secret_rows(

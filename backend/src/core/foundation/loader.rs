@@ -11,7 +11,7 @@ use crate::{
     config::{
         database::Database,
         models::Server,
-        server::{ServerEnabledService, get_server_args, get_server_env},
+        server::{ServerEnabledService, get_server_args, get_server_env, headers::has_non_empty_authorization_header},
     },
     core::profile::merge::ProfileMerger,
     core::{
@@ -116,7 +116,7 @@ fn startup_skip_reason(
 }
 
 fn has_manual_authorization(headers: Option<&HashMap<String, String>>) -> bool {
-    headers.is_some_and(|headers| headers.keys().any(|key| key.eq_ignore_ascii_case("authorization")))
+    headers.is_some_and(has_non_empty_authorization_header)
 }
 
 fn warn_degraded_server_field(
@@ -875,10 +875,11 @@ mod tests {
             .and_then(|server| server.headers.as_ref())
             .expect("manual authorization headers should be preserved");
 
-        assert_eq!(
-            headers.get("Authorization").map(String::as_str),
-            Some("Bearer manual-token")
-        );
+        let authorization = headers
+            .iter()
+            .find_map(|(key, value)| key.eq_ignore_ascii_case("authorization").then_some(value.as_str()));
+
+        assert_eq!(authorization, Some("Bearer manual-token"));
     }
 
     #[tokio::test]

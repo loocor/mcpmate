@@ -701,6 +701,7 @@ impl OAuthManager {
 
         self.store_oauth_token_with_context(&server_context, token_response, None)
             .await?;
+        server::remove_authorization_headers(&self.pool, &pending.server_id).await?;
 
         self.get_status(&pending.server_id).await
     }
@@ -1412,6 +1413,16 @@ mod tests {
             )
             .await
             .expect("save oauth config");
+        server::upsert_server_headers(
+            &manager.pool,
+            "serv_exchange",
+            &HashMap::from([
+                ("Authorization".to_string(), "Bearer manual-token".to_string()),
+                ("X-Trace".to_string(), "trace-1".to_string()),
+            ]),
+        )
+        .await
+        .expect("store manual headers");
 
         let initiate = manager.initiate("serv_exchange").await.expect("initiate oauth");
         let status = manager
@@ -1428,6 +1439,11 @@ mod tests {
             mcpmate_secrets::resolve_placeholders(&stored.access_token, store.as_ref()).expect("resolve access"),
             "access-123"
         );
+        let headers = server::get_server_headers(&manager.pool, "serv_exchange")
+            .await
+            .expect("load headers");
+        assert!(!headers.contains_key("authorization"));
+        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
     }
 
     #[tokio::test]
@@ -2278,6 +2294,49 @@ mod tests {
             headers.get("Authorization").map(String::as_str),
             Some("Bearer manual-token")
         );
+    }
+
+    #[tokio::test]
+    async fn upsert_config_preserves_manual_authorization_header_until_oauth_connects() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_oauth_auth_mode").await;
+        server::upsert_server_headers(
+            &manager.pool,
+            "serv_oauth_auth_mode",
+            &HashMap::from([
+                ("Authorization".to_string(), "Bearer manual-token".to_string()),
+                ("X-Trace".to_string(), "trace-1".to_string()),
+            ]),
+        )
+        .await
+        .expect("store manual headers");
+
+        let status = manager
+            .upsert_config(
+                "serv_oauth_auth_mode",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                    token_endpoint: "https://issuer.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+
+        let headers = server::get_server_headers(&manager.pool, "serv_oauth_auth_mode")
+            .await
+            .expect("load headers");
+
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer manual-token")
+        );
+        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+        assert!(server::has_manual_authorization_header(&Some(headers)));
+        assert!(status.manual_authorization_override);
     }
 
     #[tokio::test]
