@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Check,
 	Edit3,
-	Eye,
 	GripVertical,
 	Play,
 	RefreshCw,
@@ -21,10 +20,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { capabilityRecordMatchesSearch } from "../../lib/capability-search";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
-import { CachedAvatar } from "../../components/cached-avatar";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import {
-	BulkSelectionCheckbox,
 	BulkSelectionHeader,
 	useBulkSelection,
 	useBulkSelectionLabels,
@@ -38,13 +35,8 @@ import {
 	type CapabilityPreviewFlatItem,
 } from "../../components/capability-preview-list";
 import { CapabilityToolbar } from "../../components/capability-toolbar";
-import { CardListScrollBody } from "../../components/card-list-scroll-body";
 import { CAPABILITY_SCROLL_CARD_CLASS } from "../../components/capability-scroll-card-layout";
-import {
-	CapsuleStripeList,
-	CapsuleStripeListItem,
-} from "../../components/capsule-stripe-list";
-import { CapsuleStripeRowBody } from "../../components/capsule-stripe-row";
+import { ServerListPanel, type ServerListPanelItem } from "../../components/server-list-panel";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
 import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
 import { ProfileTokenUsageChart } from "./components/profile-token-usage-chart";
@@ -76,7 +68,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../../components/ui/select";
-import { Switch } from "../../components/ui/switch";
 import {
 	Tabs,
 	TabsContent,
@@ -1001,6 +992,26 @@ export function ProfileDetailPage() {
 		[capabilityCountsByServerId, visibleServers],
 	);
 
+	const serverListPanelItems: ServerListPanelItem[] = useMemo(
+		() =>
+			visibleServers.map((server) => {
+				const global = (globalServers as ProfileGlobalServerSummary[]).find(
+					(gs) => gs.name === server.name,
+				);
+				const counts = capabilityCountsByServerId.get(server.id);
+				return {
+					id: server.id,
+					name: server.name,
+					enabled: server.enabled,
+					iconSrc: global?.icons?.[0]?.src ?? null,
+					capabilityCount: counts
+						? `${counts.enabled}/${counts.total} ${t("profiles:detail.labels.enabledCapabilities", { defaultValue: "enabled capabilities" })}`
+						: undefined,
+				};
+			}),
+		[capabilityCountsByServerId, globalServers, t, visibleServers],
+	);
+
 	const capabilityStatusFilter = useCallback(
 		(item: { enabled: boolean }) =>
 			capabilityStatus === "all" ||
@@ -1802,231 +1813,28 @@ export function ProfileDetailPage() {
 												</Select>
 											</div>
 										</div>
-										<CardListScrollBody className="mx-3 mb-3 mt-0">
-											{isLoadingServers ? (
-												<div className="space-y-3">
-													{["s1", "s2", "s3"].map((id) => (
-														<div
-															key={`capabilities-server-skel-${id}`}
-															className="h-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800"
-														/>
-													))}
-												</div>
-											) : visibleServers.length > 0 ? (
-													<CapsuleStripeList className="rounded-none border-0 overflow-visible">
-														<CapsuleStripeListItem
-															key={ALL_CAPABILITY_SERVERS_ID}
-															interactive
-															className={`group relative px-3 transition-colors ${
-																isAllCapabilityServersSelected
-																	? "bg-primary/10"
-																	: ""
-															}`}
-															onClick={() =>
-																setSelectedCapabilityServerId(
-																	ALL_CAPABILITY_SERVERS_ID,
-																)
-															}
-															onKeyDown={(event) => {
-																if (event.key === "Enter" || event.key === " ") {
-																	event.preventDefault();
-																	setSelectedCapabilityServerId(
-																		ALL_CAPABILITY_SERVERS_ID,
-																	);
-																}
-															}}
-														>
-															<CapsuleStripeRowBody
-																lead={
-																	<div className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-[10px] font-semibold uppercase text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
-																		{t("profiles:detail.labels.allServersShort", {
-																			defaultValue: "All",
-																		})}
-																	</div>
-																}
-																trailing={
-																	<Badge variant="outline">
-																		{visibleServers.length}
-																	</Badge>
-																}
-															>
-																<div className="min-w-0">
-																	<div
-																		className="truncate font-medium text-slate-900 dark:text-slate-100"
-																		title={t("profiles:detail.labels.allServers", {
-																			defaultValue: "All servers",
-																		})}
-																	>
-																		{t("profiles:detail.labels.allServers", {
-																			defaultValue: "All servers",
-																		})}
-																	</div>
-																	<div
-																		className="mt-1 truncate text-xs text-slate-500"
-																		title={`${visibleServerCapabilityCounts.enabled}/${visibleServerCapabilityCounts.total} ${t(
-																			"profiles:detail.labels.enabledCapabilities",
-																			{
-																				defaultValue: "enabled capabilities",
-																			},
-																		)}`}
-																	>
-																		{visibleServerCapabilityCounts.enabled}/
-																		{visibleServerCapabilityCounts.total}{" "}
-																		{t(
-																			"profiles:detail.labels.enabledCapabilities",
-																			{
-																				defaultValue: "enabled capabilities",
-																			},
-																		)}
-																	</div>
-																</div>
-															</CapsuleStripeRowBody>
-														</CapsuleStripeListItem>
-														{visibleServers.map((server) => {
-															const global = (
-																globalServers as ProfileGlobalServerSummary[]
-															).find(
-																(gs) => gs.name === server.name,
-															);
-															const globalIcon = global?.icons?.[0]?.src;
-															const iconAlt =
-																global?.name || server.name || server.id;
-															const avatarFallback = (server.name || server.id || "S")
-																.slice(0, 1)
-																.toUpperCase();
-															const counts =
-																capabilityCountsByServerId.get(server.id) ?? {
-																	enabled: 0,
-																	prompts: 0,
-																	resources: 0,
-																	templates: 0,
-																	tools: 0,
-																	total: 0,
-																};
-															const isSelected =
-																selectedCapabilityServer?.id === server.id;
-															const bulkSelected =
-																serverBulk.isBulkMode &&
-																serverBulk.selectedIdSet.has(server.id);
-															let serverItemStateClass = "";
-															if (isSelected) {
-																serverItemStateClass = "bg-primary/10";
-															} else if (bulkSelected) {
-																serverItemStateClass = "bg-accent/40";
-															}
-															const serverLeadClassName = serverBulk.isBulkMode
-																? "flex items-center gap-3"
-																: "flex items-center gap-0";
-
-															return (
-																<CapsuleStripeListItem
-																	key={server.id}
-																	interactive
-																	className={`group relative px-3 transition-colors ${serverItemStateClass}`}
-																	onClick={() => setSelectedCapabilityServerId(server.id)}
-																	onKeyDown={(event) => {
-																		if (event.key === "Enter" || event.key === " ") {
-																			event.preventDefault();
-																			setSelectedCapabilityServerId(server.id);
-																		}
-																	}}
-																>
-																	<CapsuleStripeRowBody
-																		lead={
-																			<div className={serverLeadClassName}>
-																				<BulkSelectionCheckbox
-																					visible={serverBulk.isBulkMode}
-																					checked={bulkSelected}
-																					onToggle={() =>
-																						serverBulk.toggleItem(server.id)
-																					}
-																					ariaLabel={t(
-																						"profiles:detail.bulk.selectItem",
-																						{
-																							name: server.name,
-																							defaultValue: "Select {{name}}",
-																						},
-																					)}
-																				/>
-																				<CachedAvatar
-																					src={globalIcon}
-																					alt={
-																						iconAlt ? `${iconAlt} icon` : undefined
-																					}
-																					fallback={avatarFallback}
-																					size="sm"
-																					shape="rounded"
-																					className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
-																				/>
-																			</div>
-																		}
-																		trailing={
-																			<div className="flex w-[4.25rem] shrink-0 items-center justify-end gap-1">
-																				{!serverBulk.isBulkMode ? (
-																					<button
-																						type="button"
-																						className="flex h-7 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground opacity-0 shadow-none transition-[color,opacity] hover:bg-transparent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 group-hover:opacity-100"
-																						onClick={(event) => {
-																							event.stopPropagation();
-																							openServerDetail(server.id);
-																						}}
-																						aria-label={t(
-																							"profiles:detail.labels.browseServer",
-																							{ defaultValue: "Browse server" },
-																						)}
-																					>
-																						<Eye className="h-4 w-4" />
-																					</button>
-																				) : null}
-																				<Switch
-																					checked={server.enabled}
-																					onClick={(e) => e.stopPropagation()}
-																					onCheckedChange={(enabled) =>
-																						serverToggleMutation.mutate({
-																							serverId: server.id,
-																							enable: enabled,
-																						})
-																					}
-																					disabled={serverToggleMutation.isPending}
-																				/>
-																			</div>
-																		}
-																>
-																	<div className="min-w-0">
-																		<div
-																			className="truncate font-medium text-slate-900 dark:text-slate-100"
-																			title={server.name}
-																		>
-																			{server.name}
-																		</div>
-																		<div
-																			className="mt-1 truncate text-xs text-slate-500"
-																			title={`${counts.enabled}/${counts.total} ${t(
-																				"profiles:detail.labels.enabledCapabilities",
-																				{
-																					defaultValue: "enabled capabilities",
-																				},
-																			)}`}
-																		>
-																			{counts.enabled}/{counts.total}{" "}
-																			{t("profiles:detail.labels.enabledCapabilities", {
-																				defaultValue: "enabled capabilities",
-																			})}
-																		</div>
-																	</div>
-																</CapsuleStripeRowBody>
-															</CapsuleStripeListItem>
-														);
-													})}
-												</CapsuleStripeList>
-											) : (
-												<div className="flex min-h-full items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
-													{t("profiles:detail.emptyStates.noServers", {
-														defaultValue: "No servers found in this profile",
-													})}
-												</div>
-											)}
-										</CardListScrollBody>
+										<ServerListPanel
+											className="mx-3 mb-3 mt-0"
+											servers={serverListPanelItems}
+											selectedId={selectedCapabilityServerId}
+											onSelect={setSelectedCapabilityServerId}
+											onToggleEnabled={(id, enabled) =>
+												serverToggleMutation.mutate({ serverId: id, enable: enabled })
+											}
+											onBrowseServer={openServerDetail}
+											toggleDisabled={serverToggleMutation.isPending}
+											isLoading={isLoadingServers}
+											showSearch={false}
+											showStatusFilter={false}
+											showSwitch
+											showBulkMode
+											showAllServersRow
+											allServersTotalCount={visibleServers.length}
+											allServersCapabilitySummary={`${visibleServerCapabilityCounts.enabled}/${visibleServerCapabilityCounts.total} ${t("profiles:detail.labels.enabledCapabilities", { defaultValue: "enabled capabilities" })}`}
+											onBulkAction={(action, ids) =>
+												bulkServersM.mutate({ enable: action === "enable", ids })
+											}
+										/>
 									</div>
 
 									<button

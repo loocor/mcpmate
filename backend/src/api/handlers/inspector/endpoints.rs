@@ -27,10 +27,10 @@ use crate::api::models::inspector::{
     InspectorScratchServerDeleteResp, InspectorScratchServerListData, InspectorScratchServerListResp,
     InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenData,
     InspectorSessionOpenReq, InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp,
-    InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData, InspectorToolCallCancelReq,
-    InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallEvidenceData, InspectorToolCallEvidenceQuery,
-    InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartData,
-    InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
+    InspectorSnapshotQuery, InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData,
+    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallEvidenceData,
+    InspectorToolCallEvidenceQuery, InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp,
+    InspectorToolCallStartData, InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
 };
 use crate::api::routes::AppState;
 use crate::inspector::{calls::CallSubscription, context::InspectorServiceContext, service};
@@ -362,7 +362,7 @@ fn session_info_data(info: crate::inspector::sessions::InspectorSessionInfo) -> 
 
 pub async fn compatibility_snapshot(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<InspectorListQuery>,
+    Query(query): Query<InspectorSnapshotQuery>,
 ) -> Result<Json<InspectorCompatibilitySnapshotResp>, ApiError> {
     let context = InspectorServiceContext::from_app_state(state.as_ref());
     let snapshot = service::compatibility_snapshot(&context, (&query).into()).await?;
@@ -373,7 +373,7 @@ pub async fn compatibility_snapshot(
 
 pub async fn package_safety_snapshot(
     State(state): State<Arc<AppState>>,
-    Query(query): Query<InspectorListQuery>,
+    Query(query): Query<InspectorSnapshotQuery>,
 ) -> Result<Json<InspectorPackageSafetySnapshotResp>, ApiError> {
     let context = InspectorServiceContext::from_app_state(state.as_ref());
     let snapshot = service::package_safety_snapshot(&context, (&query).into()).await?;

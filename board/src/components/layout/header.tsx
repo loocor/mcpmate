@@ -1,5 +1,6 @@
-import { ArrowLeft, BookOpen, MessageSquare, Moon, Sun } from "lucide-react";
+import { ArrowLeft, BookOpen, MessageSquare, Moon, ScrollText, Sun } from "lucide-react";
 import { useCallback } from "react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import { openMcpmateGithubDiscussions } from "../../lib/github-discussions";
@@ -9,7 +10,9 @@ import {
 } from "../../pages/market/market-list-pagination-storage";
 import { useAppStore } from "../../lib/store";
 import { websiteDocsLocale } from "../../lib/website-lang";
+import { cn } from "../../lib/utils";
 import { NotificationCenter } from "../notification-center";
+import { useInspectorChrome } from "./inspector-chrome-context";
 import {
   Tooltip,
   TooltipContent,
@@ -134,10 +137,49 @@ const ROUTE_FALLBACKS: Record<keyof typeof ROUTE_TRANSLATIONS, string> = {
 
 const MAIN_ROUTES = Object.keys(ROUTE_KEYS);
 
-export function Header() {
+type HeaderProps = {
+  titleOverride?: string;
+  actionsOverride?: ReactNode;
+};
+
+function InspectorActivityHeaderButton({
+  expanded,
+  onToggle,
+  label,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  label: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          data-inspector-activity-trigger
+          onClick={onToggle}
+          className={cn(
+            "p-2 text-muted-foreground transition-colors hover:text-foreground",
+            expanded && "text-foreground",
+          )}
+          aria-label={label}
+          aria-expanded={expanded}
+        >
+          <ScrollText size={20} aria-hidden />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="end">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function Header({ titleOverride, actionsOverride }: HeaderProps = {}) {
   const location = useLocation();
   const navigate = useNavigate();
   const { theme, setTheme, sidebarOpen } = useAppStore();
+  const inspectorChrome = useInspectorChrome();
   const { t, i18n } = useTranslation();
 
   const toggleTheme = useCallback(() => {
@@ -162,6 +204,8 @@ export function Header() {
       defaultValue: ROUTE_FALLBACKS[routeKey] ?? location.pathname,
     })
     : location.pathname;
+  const displayTitle = titleOverride ?? pageTitle;
+  const showPageTitle = Boolean(titleOverride) || isMainRoute;
 
   const handleBack = () => {
     if (isMarketDetailPath(location.pathname)) {
@@ -180,6 +224,12 @@ export function Header() {
   const themeLabel = t("header.toggleTheme", {
     defaultValue: "Toggle theme",
   });
+  const activityLabel = inspectorChrome?.activityPanelExpanded
+    ? t("inspector:standalone.hideActivity", { defaultValue: "Hide activity" })
+    : t("inspector:standalone.showActivity", { defaultValue: "Show activity" });
+  const showInspectorActivity = Boolean(
+    location.pathname.startsWith("/inspector") && inspectorChrome,
+  );
 
   return (
     <header
@@ -190,9 +240,9 @@ export function Header() {
         {/* Left side: Sidebar toggle + Page title/Back button */}
         <div className="flex items-center gap-3">
           {/* Page title or Back button */}
-          {isMainRoute ? (
+          {showPageTitle ? (
             <h1 className="text-xl font-semibold text-foreground">
-              {pageTitle}
+              {displayTitle}
             </h1>
           ) : (
             <button
@@ -208,48 +258,62 @@ export function Header() {
 
         {/* Right side: Theme toggle + Notification center */}
         <TooltipProvider delayDuration={400}>
-          <div className="flex items-center space-x-4">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleFeedbackClick}
-                  className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label={feedbackLabel}
-                >
-                  <MessageSquare size={20} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{feedbackLabel}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleDocsClick}
-                  className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label={docsLabel}
-                >
-                  <BookOpen size={20} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{docsLabel}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={toggleTheme}
-                  aria-label={themeLabel}
-                  className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{themeLabel}</TooltipContent>
-            </Tooltip>
+          <div className="flex items-center space-x-4 overflow-visible">
+            {actionsOverride ? (
+              actionsOverride
+            ) : (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={handleFeedbackClick}
+                      className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={feedbackLabel}
+                    >
+                      <MessageSquare size={20} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{feedbackLabel}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={handleDocsClick}
+                      className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={docsLabel}
+                    >
+                      <BookOpen size={20} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{docsLabel}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={toggleTheme}
+                      aria-label={themeLabel}
+                      className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{themeLabel}</TooltipContent>
+                </Tooltip>
 
-            <NotificationCenter />
+                {showInspectorActivity && inspectorChrome ? (
+                  <InspectorActivityHeaderButton
+                    expanded={inspectorChrome.activityPanelExpanded}
+                    onToggle={inspectorChrome.toggleActivityPanel}
+                    label={activityLabel}
+                  />
+                ) : (
+                  <NotificationCenter />
+                )}
+              </>
+            )}
           </div>
         </TooltipProvider>
       </div>

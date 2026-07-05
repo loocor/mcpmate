@@ -11,6 +11,7 @@ import { serversApi } from "../../lib/api";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { resolveOAuthReadiness } from "../../lib/oauth-readiness";
 import { isTauriEnvironmentSync } from "../../lib/platform";
+import { cn } from "../../lib/utils";
 import type {
 	OAuthCallbackNotificationPayload,
 	OAuthConfigRequest,
@@ -26,6 +27,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "../ui/tooltip";
+import { SERVER_INSTALL_FORM_ROW_LABEL_CLASS } from "./field-list";
 
 type OAuthProgressState = "idle" | "preparing" | "awaiting_callback" | "connected" | "error";
 
@@ -38,6 +40,13 @@ interface ServerAuthSectionProps {
 	onInitiateOAuth: (config: OAuthConfigRequest) => Promise<void>;
 	onAuthModeChange?: (mode: "header" | "oauth") => void;
 	onOAuthConnected?: (serverId: string) => void;
+	className?: string;
+	segmentListClassName?: string;
+	segmentTriggerClassName?: string;
+	segmentDotClassName?: string;
+	oauthPanelClassName?: string;
+	labelClassName?: string;
+	panelOffsetClassName?: string;
 }
 
 function toFormState(status: OAuthStatus | null): OAuthConfigRequest {
@@ -71,6 +80,13 @@ export function ServerAuthSection({
 	onInitiateOAuth,
 	onAuthModeChange,
 	onOAuthConnected,
+	className,
+	segmentListClassName,
+	segmentTriggerClassName,
+	segmentDotClassName,
+	oauthPanelClassName,
+	labelClassName,
+	panelOffsetClassName,
 }: ServerAuthSectionProps) {
 	const { t, i18n } = useTranslation("servers");
 	const queryClient = useQueryClient();
@@ -542,9 +558,9 @@ export function ServerAuthSection({
 	const isRevokeDisabled = isBusy;
 
 	return (
-		<div className="space-y-4 pt-2 border-t mt-4">
-			<div className="flex items-center gap-4">
-				<Label className="w-20 text-right">
+		<div className={cn("space-y-4", className)}>
+			<div className="flex items-center gap-3">
+				<Label className={cn(SERVER_INSTALL_FORM_ROW_LABEL_CLASS, labelClassName)}>
 					{t("manual.auth.label", { defaultValue: "AUTH" })}
 				</Label>
 				<div className="flex-1 min-w-0">
@@ -555,12 +571,21 @@ export function ServerAuthSection({
 						]}
 						value={authMode}
 						onValueChange={(val) => setAuthMode(val as "header" | "oauth")}
+						listClassName={segmentListClassName}
+						triggerClassName={segmentTriggerClassName}
+						dotClassName={segmentDotClassName}
 					/>
 				</div>
 			</div>
 
 			{authMode === "oauth" && (
-				<div className="ml-24 space-y-4 rounded-md border p-4 bg-slate-50/50 dark:bg-slate-900/20">
+				<div
+					className={cn(
+						"ml-24 space-y-4 rounded-md border p-4 bg-slate-50/50 dark:bg-slate-900/20",
+						panelOffsetClassName,
+						oauthPanelClassName,
+					)}
+				>
 					<div className="flex flex-wrap items-center justify-between gap-3">
 						{progressMessage ? (
 							<p className="text-xs text-slate-500 dark:text-slate-400">
@@ -646,8 +671,9 @@ export function ServerAuthSection({
 					</div>
 
 					{showAdvanced ? (
-						<div className="rounded-md border bg-white/80 dark:bg-slate-950/10">
-							<div className="grid gap-3 px-3 py-3 md:grid-cols-2">
+						<>
+							<div className="border-t border-border" />
+							<div className="grid gap-3 md:grid-cols-2">
 								<div className="space-y-1.5">
 									<label className="text-xs font-medium" htmlFor={authorizationEndpointId}>
 										{t("manual.auth.oauth.fields.authorizationEndpoint", { defaultValue: "Authorization endpoint" })}
@@ -747,7 +773,7 @@ export function ServerAuthSection({
 									/>
 								</div>
 							</div>
-						</div>
+						</>
 					) : null}
 
 					{oauthStatusQ.isFetching ? (

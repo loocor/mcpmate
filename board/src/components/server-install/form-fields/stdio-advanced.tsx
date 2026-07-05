@@ -1,6 +1,7 @@
 import { Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import type { Control, UseFormRegister } from "react-hook-form";
+import { cn } from "../../../lib/utils";
 import { Input } from "../../ui/input";
 import {
 	FIELD_PAIR_KEY_INPUT_CLASS,
@@ -30,6 +31,8 @@ interface StdioAdvancedProps {
 	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
 	getEnvRowKeyAt?: (index: number) => string | undefined;
+	className?: string;
+	labelClassName?: string;
 }
 
 export function StdioAdvanced({
@@ -49,14 +52,17 @@ export function StdioAdvanced({
 	onCreateSecret,
 	secretOriginBase,
 	getEnvRowKeyAt,
+	className,
+	labelClassName,
 }: StdioAdvancedProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || !isStdio) return null;
 
 	return (
-		<div className="space-y-4">
+		<div className={cn("space-y-4", className)}>
 			<FieldList
 				label={t("manual.fields.args.label", { defaultValue: "Arguments" })}
+				labelClassName={labelClassName}
 				fields={argFields}
 				onRemove={removeArg}
 				deleteConfirmStates={deleteConfirmStates}
@@ -122,6 +128,7 @@ export function StdioAdvanced({
 				label={t("manual.fields.env.label", {
 					defaultValue: "Environment Variables",
 				})}
+				labelClassName={labelClassName}
 				fields={envFields}
 				onRemove={removeEnv}
 				deleteConfirmStates={deleteConfirmStates}

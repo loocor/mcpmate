@@ -29,6 +29,9 @@ export interface SegmentProps
 	onValueChange?: (value: string) => void;
 	showDots?: boolean;
 	className?: string;
+	listClassName?: string;
+	triggerClassName?: string;
+	dotClassName?: string;
 	disabled?: boolean;
 }
 
@@ -43,6 +46,9 @@ const Segment = React.forwardRef<
 			onValueChange,
 			showDots = true,
 			className,
+			listClassName,
+			triggerClassName,
+			dotClassName,
 			disabled = false,
 			...props
 		},
@@ -61,6 +67,7 @@ const Segment = React.forwardRef<
 					className={cn(
 						"inline-flex min-h-10 h-auto w-full items-center justify-center rounded-md bg-slate-100 p-1 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
 						disabled && "opacity-50 pointer-events-none",
+						listClassName,
 					)}
 				>
 					{options.map((option) => {
@@ -80,24 +87,26 @@ const Segment = React.forwardRef<
 									"flex items-center gap-2",
 									option.tooltip && "w-full",
 									option.disabled && "opacity-50 cursor-not-allowed",
+									triggerClassName,
 								)}
 							>
 								{showDots && (
 									<div
 										className={cn(
-											"w-3 h-3 rounded-full border-2 transition-all",
+											"size-3 shrink-0 rounded-full border-2 transition-all",
 											"border-slate-400 bg-transparent",
 											"dark:border-slate-500",
 											value === option.value &&
 											"border-primary bg-primary dark:border-primary dark:bg-primary",
 											option.disabled && "opacity-50",
+											dotClassName,
 										)}
 									/>
 								)}
 								{option.icon && (
 									<span className="flex-shrink-0">{option.icon}</span>
 								)}
-								<span>
+								<span className="min-w-0 text-center leading-tight">
 									{option.label}
 									{option.status ? (
 										<sup className="ml-0.5">

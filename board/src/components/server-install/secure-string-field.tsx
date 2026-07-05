@@ -10,6 +10,10 @@ import { resolveSecureFieldVariant } from "../../lib/secure-field";
 import { InlineSecureStringField } from "./inline-secure-string-field";
 import type { SecretOrigin } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import {
+	InlineSecretCreate,
+	useInlineSecretCreate,
+} from "../secrets/inline-secret-create";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import {
@@ -138,7 +142,7 @@ export function SecureStringField({
 		pickerInsertTargetRef.current = plainInsertTargetRef.current;
 	}, []);
 
-	const handleSecretPick = (placeholderValue: string) => {
+	const handleSecretPick = useCallback((placeholderValue: string) => {
 		const target =
 			pickerInsertTargetRef.current ?? plainInsertTargetRef.current ?? undefined;
 		pickerInsertTargetRef.current = null;
@@ -148,14 +152,33 @@ export function SecureStringField({
 				target,
 			}),
 		);
-	};
+	}, [headerKey, onChange, value]);
+
+	const inlineCreateController = useInlineSecretCreate({
+		onCreated: (_fieldName, secret) => {
+			handleSecretPick(secret.placeholder);
+		},
+	});
+	const openInlineSecretCreate = inlineCreateController.open;
+
+	const handleInlineCreateSecret = useCallback(
+		(secretOrigin: SecretOrigin) => {
+			void openInlineSecretCreate({ origin: secretOrigin });
+		},
+		[openInlineSecretCreate],
+	);
+
+	const effectiveCreateSecret = onCreateSecret ?? handleInlineCreateSecret;
+	const inlineCreateDrawer = onCreateSecret ? null : (
+		<InlineSecretCreate controller={inlineCreateController} nested />
+	);
 
 	const secretPicker = (
 		<div onPointerDownCapture={capturePlainInsertTargetForPicker}>
 			<SecretPickerButton
 				className={cn(pickerPositionClass, pickerClassName)}
 				origin={origin}
-				onCreateNew={onCreateSecret}
+				onCreateNew={effectiveCreateSecret}
 				onSelect={handleSecretPick}
 			/>
 		</div>
@@ -163,108 +186,117 @@ export function SecureStringField({
 
 	if (shouldUseInlineEditor(value)) {
 		return (
-			<InlineSecureStringField
-				id={id}
-				value={value}
-				onChange={handleValueChange}
-				onRequestPlainFocus={handleInlinePlainFocus}
-				onBlur={onBlur}
-				placeholder={placeholder}
-				className={className}
-				pickerClassName={pickerClassName}
-				onCreateSecret={onCreateSecret}
-				origin={origin}
-				pairLayout={usePairChrome}
-				pairRemove={pairRemove}
-			/>
+			<>
+				<InlineSecureStringField
+					id={id}
+					value={value}
+					onChange={handleValueChange}
+					onRequestPlainFocus={handleInlinePlainFocus}
+					onBlur={onBlur}
+					placeholder={placeholder}
+					className={className}
+					pickerClassName={pickerClassName}
+					onCreateSecret={effectiveCreateSecret}
+					origin={origin}
+					pairLayout={usePairChrome}
+					pairRemove={pairRemove}
+				/>
+				{inlineCreateDrawer}
+			</>
 		);
 	}
 
 	if (variant === "redacted" || variant === "bearer-redacted") {
 		return (
-			<div
-				className={cn(
-					"group/secret-field",
-					redactedFieldShellClassName,
-					actionsPadding,
-					className,
-				)}
-			>
-				{isBearerRedacted ? (
-					<span className="shrink-0 text-sm text-foreground">Bearer </span>
-				) : null}
-				<span className="relative inline-flex h-6 shrink-0 items-center max-w-[11rem] group/badge">
-					<Badge
-						variant="outline"
-						className="inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-full border-emerald-200 bg-emerald-50 px-2 py-0 font-mono text-xs text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20"
-					>
-						<span className="relative inline-flex h-3 w-3 shrink-0 items-center justify-center">
-							<KeyRound
-								className="h-3 w-3 transition-opacity group-hover/badge:opacity-0 group-focus-within/badge:opacity-0 [@media(hover:none)]:opacity-0"
-								aria-hidden
-							/>
-							<button
-								type="button"
-								className="absolute inset-0 flex h-3 w-3 items-center justify-center rounded-full bg-destructive text-white opacity-0 transition-opacity hover:bg-destructive/90 focus:opacity-100 group-hover/badge:opacity-100 group-focus-within/badge:opacity-100 [@media(hover:none)]:opacity-100"
-								onClick={(event) => {
-									event.preventDefault();
-									event.stopPropagation();
-									replaceRedactedWithText("");
-								}}
-								aria-label={t("manual.secrets.clear", {
-									defaultValue: "Clear secret",
+			<>
+				<div
+					className={cn(
+						"group/secret-field",
+						redactedFieldShellClassName,
+						actionsPadding,
+						className,
+					)}
+				>
+					{isBearerRedacted ? (
+						<span className="shrink-0 text-sm text-foreground">Bearer </span>
+					) : null}
+					<span className="relative inline-flex h-6 shrink-0 items-center max-w-[11rem] group/badge">
+						<Badge
+							variant="outline"
+							className="inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-full border-emerald-200 bg-emerald-50 px-2 py-0 font-mono text-xs text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20"
+						>
+							<span className="relative inline-flex h-3 w-3 shrink-0 items-center justify-center">
+								<KeyRound
+									className="h-3 w-3 transition-opacity group-hover/badge:opacity-0 group-focus-within/badge:opacity-0 [@media(hover:none)]:opacity-0"
+									aria-hidden
+								/>
+								<button
+									type="button"
+									className="absolute inset-0 flex h-3 w-3 items-center justify-center rounded-full bg-destructive text-white opacity-0 transition-opacity hover:bg-destructive/90 focus:opacity-100 group-hover/badge:opacity-100 group-focus-within/badge:opacity-100 [@media(hover:none)]:opacity-100"
+									onClick={(event) => {
+										event.preventDefault();
+										event.stopPropagation();
+										replaceRedactedWithText("");
+									}}
+									aria-label={t("manual.secrets.clear", {
+										defaultValue: "Clear secret",
+									})}
+								>
+									<X className="h-2.5 w-2.5" strokeWidth={3} />
+								</button>
+							</span>
+							<span className="min-w-0 truncate">
+								{t("manual.secrets.storedSecret", {
+									defaultValue: "Stored secret",
 								})}
-							>
-								<X className="h-2.5 w-2.5" strokeWidth={3} />
-							</button>
-						</span>
-						<span className="min-w-0 truncate">
-							{t("manual.secrets.storedSecret", {
-								defaultValue: "Stored secret",
-							})}
-						</span>
-					</Badge>
-				</span>
-				<input
-					type="text"
-					defaultValue=""
-					onChange={(event) => handleRedactedTextInput(event.target.value)}
-					onBlur={onBlur}
-					className="h-6 min-w-[2ch] flex-1 basis-0 border-0 bg-transparent p-0 text-sm outline-none focus:outline-none focus:ring-0"
-					aria-label={t("manual.secrets.inlineText", {
-						defaultValue: "Secret value text",
-					})}
-				/>
-				{secretPicker}
-				{pairRemove ? <PairFieldRemoveButton {...pairRemove} /> : null}
-			</div>
+							</span>
+						</Badge>
+					</span>
+					<input
+						type="text"
+						defaultValue=""
+						onChange={(event) => handleRedactedTextInput(event.target.value)}
+						onBlur={onBlur}
+						className="h-6 min-w-[2ch] flex-1 basis-0 border-0 bg-transparent p-0 text-sm outline-none focus:outline-none focus:ring-0"
+						aria-label={t("manual.secrets.inlineText", {
+							defaultValue: "Secret value text",
+						})}
+					/>
+					{secretPicker}
+					{pairRemove ? <PairFieldRemoveButton {...pairRemove} /> : null}
+				</div>
+				{inlineCreateDrawer}
+			</>
 		);
 	}
 
 	return (
-		<div
-			ref={plainFieldRef}
-			className={cn(
-				"group/secret-field relative w-full min-w-0",
-				className,
-			)}
-		>
-			<Input
-				ref={plainInputRef}
-				id={id}
-				name={name}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-				onFocus={(event) => syncPlainInsertTarget(event.currentTarget)}
-				onClick={(event) => syncPlainInsertTarget(event.currentTarget)}
-				onKeyUp={(event) => syncPlainInsertTarget(event.currentTarget)}
-				onSelect={(event) => syncPlainInsertTarget(event.currentTarget)}
-				onBlur={handlePlainInputBlur}
-				placeholder={placeholder}
-				className={cn("w-full", actionsPadding)}
-			/>
-			{secretPicker}
-			{pairRemove ? <PairFieldRemoveButton {...pairRemove} /> : null}
-		</div>
+		<>
+			<div
+				ref={plainFieldRef}
+				className={cn(
+					"group/secret-field relative w-full min-w-0",
+					className,
+				)}
+			>
+				<Input
+					ref={plainInputRef}
+					id={id}
+					name={name}
+					value={value}
+					onChange={(event) => onChange(event.target.value)}
+					onFocus={(event) => syncPlainInsertTarget(event.currentTarget)}
+					onClick={(event) => syncPlainInsertTarget(event.currentTarget)}
+					onKeyUp={(event) => syncPlainInsertTarget(event.currentTarget)}
+					onSelect={(event) => syncPlainInsertTarget(event.currentTarget)}
+					onBlur={handlePlainInputBlur}
+					placeholder={placeholder}
+					className={cn("w-full", actionsPadding)}
+				/>
+				{secretPicker}
+				{pairRemove ? <PairFieldRemoveButton {...pairRemove} /> : null}
+			</div>
+			{inlineCreateDrawer}
+		</>
 	);
 }

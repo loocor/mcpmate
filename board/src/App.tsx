@@ -112,6 +112,7 @@ function App() {
 								<Route path="oauth/callback" element={<OAuthCallbackPage />} />
 								<Route path="onboarding" element={<OnboardingPage />} />
 								<Route path="operator" element={<TrayOperatorPanelPage />} />
+								<Route path="inspector" element={<InspectorPage />} />
 								<Route path="/" element={<Layout />}>
 									<Route index element={<DashboardPage />} />
 									{/* New canonical routes */}
@@ -161,7 +162,6 @@ function App() {
 										}
 									/>
 									<Route path="runtime" element={<RuntimePage />} />
-									<Route path="inspector" element={<InspectorPage />} />
 									<Route path="secrets" element={<SecretsPage />} />
 									<Route path="audit" element={<AuditPage />} />
 									<Route path="api-docs" element={<ApiDocsPage />} />

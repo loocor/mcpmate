@@ -1,10 +1,11 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 
 type CardListScrollBodyProps = {
 	children: ReactNode;
 	className?: string;
+	style?: CSSProperties;
 	/** Disable scrolling while loading placeholders are shown. */
 	scrollLocked?: boolean;
 };
@@ -34,6 +35,7 @@ const insetShadeIdleClass = "opacity-0 shadow-none";
 export function CardListScrollBody({
 	children,
 	className,
+	style,
 	scrollLocked = false,
 }: CardListScrollBodyProps) {
 	const [shadeFromScroll, setShadeFromScroll] = useState(false);
@@ -58,7 +60,7 @@ export function CardListScrollBody({
 	useEffect(() => () => clearHideTimer(), [clearHideTimer]);
 
 	return (
-		<div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", className)}>
+		<div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", className)} style={style}>
 			<div className={frameClass}>
 				<div
 					className={cn(

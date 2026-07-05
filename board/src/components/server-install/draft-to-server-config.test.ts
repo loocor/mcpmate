@@ -42,6 +42,20 @@ describe("draftToServerConfig", () => {
 		expect(config.headers).toBeUndefined();
 	});
 
+	test("merges URL params into non-stdio server URL", () => {
+		const config = draftToServerConfig({
+			name: "http-server",
+			kind: "streamable_http",
+			url: "https://example.com/mcp?existing=1",
+			urlParams: {
+				token: "abc",
+				existing: "2",
+			},
+		});
+
+		expect(config.url).toBe("https://example.com/mcp?existing=2&token=abc");
+	});
+
 	test("preserves non-registry source without modification", () => {
 		const config = draftToServerConfig({
 			name: "admin-server",

@@ -41,7 +41,7 @@ export function MetaFields({
 
 	return (
 		<div className="space-y-4">
-			<div className="flex items-center gap-4">
+			<div className="flex items-center gap-3">
 				<Label htmlFor={metaIconUrlId} className="w-20 shrink-0 text-right">
 					{t("manual.fields.meta.icon.label", { defaultValue: "Icon" })}
 				</Label>
@@ -76,7 +76,7 @@ export function MetaFields({
 				</div>
 			</div>
 
-			<div className="flex items-center gap-4">
+			<div className="flex items-center gap-3">
 				<Label htmlFor={metaVersionId} className="w-20 shrink-0 text-right">
 					{t("manual.fields.meta.version.label", { defaultValue: "Version" })}
 				</Label>
@@ -91,7 +91,7 @@ export function MetaFields({
 				</div>
 			</div>
 
-			<div className="flex items-center gap-4">
+			<div className="flex items-center gap-3">
 				<Label htmlFor={metaWebsiteUrlId} className="w-20 shrink-0 text-right">
 					{t("manual.fields.meta.website.label", { defaultValue: "Website" })}
 				</Label>
@@ -113,7 +113,7 @@ export function MetaFields({
 				</div>
 			</div>
 
-			<div className="flex items-center gap-4">
+			<div className="flex items-center gap-3">
 				<Label htmlFor={metaRepositoryUrlId} className="w-20 shrink-0 text-right">
 					{t("manual.fields.meta.repo.url.label", {
 						defaultValue: "Repository URL",
@@ -137,7 +137,7 @@ export function MetaFields({
 				</div>
 			</div>
 
-			<div className="flex items-center gap-4">
+			<div className="flex items-center gap-3">
 				<Label htmlFor={metaRepositorySourceId} className="w-20 shrink-0 text-right">
 					{t("manual.fields.meta.repo.source.label", {
 						defaultValue: "Repository Source",
@@ -154,7 +154,7 @@ export function MetaFields({
 				</div>
 			</div>
 
-			<div className="flex items-center gap-4">
+			<div className="flex items-center gap-3">
 				<Label htmlFor={metaRepositorySubfolderId} className="w-20 shrink-0 text-right">
 					{t("manual.fields.meta.repo.subfolder.label", {
 						defaultValue: "Repository Subfolder",
@@ -171,7 +171,7 @@ export function MetaFields({
 				</div>
 			</div>
 
-			<div className="flex items-center gap-4">
+			<div className="flex items-center gap-3">
 				<Label htmlFor={metaRepositoryId} className="w-20 shrink-0 text-right">
 					{t("manual.fields.meta.repo.id.label", {
 						defaultValue: "Repository Entry ID (Metadata)",
@@ -188,7 +188,7 @@ export function MetaFields({
 				</div>
 			</div>
 
-			<div className="flex items-start gap-4">
+			<div className="flex items-start gap-3">
 				<Label htmlFor={metaDescriptionId} className="w-20 shrink-0 pt-3 text-right">
 					{t("manual.fields.meta.description.label", {
 						defaultValue: "Description",

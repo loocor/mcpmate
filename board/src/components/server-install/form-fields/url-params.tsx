@@ -26,6 +26,7 @@ interface UrlParamsProps {
 	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
 	getRowKeyAt?: (index: number) => string | undefined;
+	labelClassName?: string;
 }
 
 export function UrlParams({
@@ -42,6 +43,7 @@ export function UrlParams({
 	onCreateSecret,
 	secretOriginBase,
 	getRowKeyAt,
+	labelClassName,
 }: UrlParamsProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -51,6 +53,7 @@ export function UrlParams({
 			label={t("manual.fields.urlParams.label", {
 				defaultValue: "URL Parameters",
 			})}
+			labelClassName={labelClassName}
 			fields={urlParamFields}
 			onRemove={removeUrlParam}
 			deleteConfirmStates={deleteConfirmStates}

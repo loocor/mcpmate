@@ -17,6 +17,7 @@ import {
 	isTauriEnvironmentSync,
 } from "../../lib/platform";
 import { cn } from "../../lib/utils";
+import { sidebarNavItemClassName, SidebarNavIcon } from "./sidebar-nav-item";
 import { websiteLangParam } from "../../lib/website-lang";
 
 type AccountStatus = {
@@ -47,10 +48,9 @@ function GitHubMark(props: React.SVGProps<SVGSVGElement>) {
 }
 
 const triggerClassName = cn(
-	"flex w-full items-center px-3 py-2 text-sm font-medium rounded-md transition-colors",
+	"flex items-center text-sm font-medium rounded-md transition-colors",
 	"hover:bg-slate-200 dark:hover:bg-slate-800",
 	"text-slate-700 dark:text-slate-400",
-	"text-left",
 );
 
 export function AccountSessionDialog({ sidebarOpen }: AccountSessionDialogProps) {
@@ -238,10 +238,20 @@ export function AccountSessionDialog({ sidebarOpen }: AccountSessionDialogProps)
 			}}
 		>
 			<DialogTrigger asChild>
-				<button type="button" className={triggerClassName}>
-					<span className="mr-3 flex h-5 w-5 shrink-0 items-center justify-center">
+				<button
+					type="button"
+					className={cn(
+						triggerClassName,
+						sidebarNavItemClassName(sidebarOpen, {
+							className:
+								"text-slate-700 hover:bg-slate-200 dark:text-slate-400 dark:hover:bg-slate-800",
+						}),
+						sidebarOpen && "text-left",
+					)}
+				>
+					<SidebarNavIcon sidebarOpen={sidebarOpen}>
 						<User size={20} aria-hidden />
-					</span>
+					</SidebarNavIcon>
 					{sidebarOpen ? (
 						<span>
 							{t("nav.account", { defaultValue: "Account" })}

@@ -98,7 +98,20 @@ export interface CapabilityListProps<T = CapabilityRecord> {
 	 * the host card keeps rounded corners (see `CardListScrollBody`).
 	 */
 	scrollContainedBody?: boolean;
+	/** Compact sidebar row: no checkbox/leading icon, single-line title + description. */
+	rowLayout?: "default" | "compact";
+	/** Optional CTA rendered below compact empty text (e.g. Inspector list fetch). */
+	emptyAction?: CapabilityListEmptyAction;
 }
+
+export type CapabilityListEmptyAction = {
+	onClick: () => void;
+	disabled?: boolean;
+	loading?: boolean;
+	/** Large icon shown above the empty message, matching board EmptyState layout. */
+	headerIcon?: ReactNode;
+	ariaLabel?: string;
+};
 
 function asString(v: unknown): string | undefined {
 	if (v == null) return undefined;
@@ -313,6 +326,80 @@ function isDetailsTarget(target: HTMLElement): boolean {
 	return Boolean(target.closest("summary") || target.closest("details"));
 }
 
+const COMPACT_LIST_SKELETON_ROWS = 3;
+
+function compactCapabilityListShell(content: ReactNode, borderless = false) {
+	if (borderless) {
+		return <div className="flex flex-col overflow-hidden">{content}</div>;
+	}
+	return <CapsuleStripeList>{content}</CapsuleStripeList>;
+}
+
+function compactCapabilityListSkeleton(borderless = false) {
+	return compactCapabilityListShell(
+		Array.from({ length: COMPACT_LIST_SKELETON_ROWS }, (_, index) => (
+			<CapsuleStripeListItem
+				key={`compact-capability-list-skeleton-${index}`}
+				className="px-2 py-1.5"
+			>
+				<div className="min-w-0 flex-1 space-y-1">
+					<div className="h-3 w-[42%] animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+					<div className="h-2.5 max-w-[88%] animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+				</div>
+			</CapsuleStripeListItem>
+		)),
+		borderless,
+	);
+}
+
+function compactCapabilityListEmpty(
+	message: string,
+	borderless = false,
+	action?: CapabilityListEmptyAction,
+) {
+	const isInteractive = Boolean(action && !action.disabled && !action.loading);
+	const handleActivate = () => {
+		if (!isInteractive || !action) return;
+		action.onClick();
+	};
+	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (!isInteractive) return;
+		if (event.key === "Enter" || event.key === " ") {
+			event.preventDefault();
+			handleActivate();
+		}
+	};
+
+	const emptyBody = (
+		<div
+			role={action ? "button" : undefined}
+			tabIndex={isInteractive ? 0 : undefined}
+			aria-label={action?.ariaLabel}
+			aria-disabled={action?.disabled || action?.loading || undefined}
+			className={cn(
+				"flex w-full min-h-full flex-col items-center justify-center px-3 py-6 text-center",
+				isInteractive &&
+				"cursor-pointer opacity-75 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none",
+				action?.disabled && "cursor-not-allowed opacity-60",
+			)}
+			onClick={isInteractive ? handleActivate : undefined}
+			onKeyDown={handleKeyDown}
+		>
+			{action?.headerIcon ? (
+				<div className="mb-3 flex h-10 w-10 items-center justify-center text-muted-foreground">
+					{action.headerIcon}
+				</div>
+			) : null}
+			<p className="text-xs leading-relaxed text-muted-foreground">{message}</p>
+		</div>
+	);
+
+	if (borderless) {
+		return <div className="h-full min-h-full w-full max-w-full">{emptyBody}</div>;
+	}
+	return compactCapabilityListShell(emptyBody);
+}
+
 export function CapabilityList<T = CapabilityRecord>({
 	title,
 	kind,
@@ -341,6 +428,8 @@ export function CapabilityList<T = CapabilityRecord>({
 	renderAction,
 	scrollBodyClassName,
 	scrollContainedBody,
+	rowLayout = "default",
+	emptyAction,
 }: CapabilityListProps<T>) {
 	const [internalFilter, setInternalFilter] = useState("");
 	const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
@@ -386,7 +475,11 @@ export function CapabilityList<T = CapabilityRecord>({
 	);
 
 	const useStripeSkeleton = context === "profile" || useCapsule;
-	const skeleton = useStripeSkeleton ? (
+	const isCompactLayout = rowLayout === "compact";
+	const compactBorderless = isCompactLayout && scrollContainedBody;
+	const skeleton = isCompactLayout ? (
+		compactCapabilityListSkeleton(compactBorderless)
+	) : useStripeSkeleton ? (
 		<CapabilityListSkeleton
 			className={scrollContainedBody ? "p-0" : undefined}
 			fillContainer={scrollContainedBody}
@@ -406,6 +499,49 @@ export function CapabilityList<T = CapabilityRecord>({
 		const item = mapped.raw;
 		const id = getId ? getId(item) : String(idx);
 		const isSelected = !!(selectable && selectedIdSet?.has(id));
+
+		if (rowLayout === "compact") {
+			const isBulkSelectionMode = !!(selectable && onSelectToggle);
+			const handleSelect = () => {
+				if (selectable && onSelectToggle) onSelectToggle(id, item);
+			};
+			const handleItemClick = (e: MouseEvent<HTMLElement>) => {
+				const target = e.target as HTMLElement;
+				if (hasActiveTextSelection()) return;
+				if (isNestedInteractiveTarget(target, e.currentTarget)) return;
+				if (isBulkSelectionMode) {
+					handleSelect();
+				}
+			};
+			const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+				if (!isBulkSelectionMode) return;
+				if (event.key === "Enter" || event.key === " ") {
+					event.preventDefault();
+					handleSelect();
+				}
+			};
+
+			return (
+				<CapsuleStripeListItem
+					key={id}
+					interactive={isBulkSelectionMode}
+					className={cn(
+						"px-2 py-1.5",
+						isSelected ? "text-foreground" : "text-muted-foreground",
+					)}
+					onClick={handleItemClick}
+					onKeyDown={handleKeyDown}
+				>
+					<div className="min-w-0">
+						<p className="truncate text-xs font-medium">{mapped.title}</p>
+						{mapped.description ? (
+							<p className="truncate text-[11px] opacity-80">{mapped.description}</p>
+						) : null}
+					</div>
+				</CapsuleStripeListItem>
+			);
+		}
+
 		const isEnabled = getEnabled ? !!getEnabled(item) : undefined;
 		const hasLazyDetails = Object.prototype.hasOwnProperty.call(
 			lazyDetailsById,
@@ -644,10 +780,10 @@ export function CapabilityList<T = CapabilityRecord>({
 						</div>
 					) : null}
 					{loadDetails &&
-					hasLazyDetails &&
-					!lazyDetails &&
-					!lazyDetailsLoading &&
-					!hasLoadedDetails ? (
+						hasLazyDetails &&
+						!lazyDetails &&
+						!lazyDetailsLoading &&
+						!hasLoadedDetails ? (
 						<div className="text-xs text-slate-500 dark:text-slate-400">
 							{t("servers:capabilityList.noDetails", {
 								defaultValue: "No additional details available.",
@@ -812,7 +948,7 @@ export function CapabilityList<T = CapabilityRecord>({
 				<CapsuleStripeList
 					className={
 						scrollContainedBody
-							? "rounded-none border-0 overflow-visible"
+							? "overflow-hidden rounded-none border-0"
 							: undefined
 					}
 				>
@@ -829,28 +965,33 @@ export function CapabilityList<T = CapabilityRecord>({
 	);
 
 	const isEmpty = !loading && renderedItems.length === 0;
+	const emptyMessage =
+		emptyText ||
+		t("servers:capabilityList.emptyFallback", {
+			defaultValue: "No data.",
+		});
+	const centerEmptyInContainer = isEmpty && scrollContainedBody;
 
 	const list = (
 		<div
 			className={
-				isEmpty
-					? "flex min-h-full w-full flex-col items-center justify-center px-4 py-8 text-center"
-					: loading && scrollContainedBody
-						? "min-h-full"
-						: undefined
+				centerEmptyInContainer
+					? "flex min-h-full w-full flex-col items-center justify-center px-4 text-center"
+					: !isCompactLayout && isEmpty
+						? "flex min-h-full w-full flex-col items-center justify-center px-4 py-8 text-center"
+						: loading && scrollContainedBody
+							? "min-h-full"
+							: undefined
 			}
 		>
 			{loading ? (
 				skeleton
 			) : renderedItems.length ? (
 				listContent
+			) : isCompactLayout ? (
+				compactCapabilityListEmpty(emptyMessage, compactBorderless, emptyAction)
 			) : (
-				<p className="text-sm text-slate-500 dark:text-slate-400">
-					{emptyText ||
-						t("servers:capabilityList.emptyFallback", {
-							defaultValue: "No data.",
-						})}
-				</p>
+				<p className="text-sm text-slate-500 dark:text-slate-400">{emptyMessage}</p>
 			)}
 		</div>
 	);

@@ -353,20 +353,25 @@ fn validate_record_id(id: &str) -> Result<()> {
 }
 
 fn normalize_server_record_id(name: &str) -> Result<String> {
+    let trimmed = name.trim();
+    if !trimmed.as_bytes().first().is_some_and(u8::is_ascii_alphabetic) {
+        return Err(anyhow::anyhow!(
+            "Inspector scratch server name must start with an ASCII letter"
+        ));
+    }
+
     let mut normalized = String::new();
     let mut last_was_separator = false;
 
-    for byte in name.trim().bytes() {
-        let next = if byte.is_ascii_alphanumeric() {
-            Some(byte.to_ascii_lowercase() as char)
+    for byte in trimmed.bytes() {
+        let ch = if byte.is_ascii_alphanumeric() {
+            byte.to_ascii_lowercase() as char
         } else if byte == b'-' || byte == b'_' || byte.is_ascii_whitespace() {
-            Some('-')
+            '-'
         } else {
-            None
-        };
-
-        let Some(ch) = next else {
-            continue;
+            return Err(anyhow::anyhow!(
+                "Inspector scratch server name must contain only ASCII letters, numbers, spaces, hyphens, or underscores"
+            ));
         };
 
         if ch == '-' {
@@ -387,7 +392,7 @@ fn normalize_server_record_id(name: &str) -> Result<String> {
 
     if normalized.is_empty() {
         Err(anyhow::anyhow!(
-            "Inspector scratch server name must contain at least one ASCII letter or number"
+            "Inspector scratch server name must start with an ASCII letter"
         ))
     } else {
         Ok(normalized)
@@ -548,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn scratch_record_id_rejects_names_without_ascii_slug() {
+    fn scratch_record_id_rejects_names_without_ascii_letter_prefix() {
         let tmp = tempdir().expect("tmp dir");
         let workspace = InspectorWorkspace::from_servers_dir(tmp.path().join("servers"));
 
@@ -567,11 +572,64 @@ mod tests {
             })
             .expect_err("non-ascii-only name should fail");
 
-        assert!(
-            error
-                .to_string()
-                .contains("must contain at least one ASCII letter or number")
-        );
+        assert!(error.to_string().contains("must start with an ASCII letter"));
+
+        let error = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "1scratch".to_string(),
+                config: MCPServerConfig {
+                    kind: ServerType::Stdio,
+                    command: Some("node".to_string()),
+                    args: None,
+                    url: None,
+                    env: None,
+                    headers: None,
+                },
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect_err("digit-prefixed name should fail");
+
+        assert!(error.to_string().contains("must start with an ASCII letter"));
+
+        let error = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Scratch临时".to_string(),
+                config: MCPServerConfig {
+                    kind: ServerType::Stdio,
+                    command: Some("node".to_string()),
+                    args: None,
+                    url: None,
+                    env: None,
+                    headers: None,
+                },
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect_err("non-ascii characters should fail");
+
+        assert!(error.to_string().contains("must contain only ASCII letters"));
+    }
+
+    #[test]
+    fn scratch_record_id_allows_digits_after_ascii_letter() {
+        let tmp = tempdir().expect("tmp dir");
+        let workspace = InspectorWorkspace::from_servers_dir(tmp.path().join("servers"));
+
+        let record = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Scratch 1".to_string(),
+                config: MCPServerConfig {
+                    kind: ServerType::Stdio,
+                    command: Some("node".to_string()),
+                    args: None,
+                    url: None,
+                    env: None,
+                    headers: None,
+                },
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect("letter-prefixed name with digits should pass");
+
+        assert_eq!(record.id, "scratch-1");
     }
 
     #[test]

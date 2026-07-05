@@ -1,50 +1,99 @@
 import {
-	FileText,
-	LayoutTemplate,
-	Loader2,
+	GitCompareArrows,
 	MessageSquareText,
 	Microscope,
 	PackageSearch,
-	PencilLine,
-	Plus,
 	RefreshCcw,
-	RefreshCw,
+	Route,
 	ShieldCheck,
-	Trash2,
-	Wrench,
+	Waypoints,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
-import InspectorDrawer from "../../components/inspector-drawer";
-import { ServerInstallManualForm } from "../../components/server-install";
+import { InspectorWindowLayout } from "../../components/layout/inspector-layout";
+import { InspectorChromeProvider } from "../../components/layout/inspector-chrome-context";
+import { ActivityLogTable } from "../../components/activity-log-table";
+import { InspectorBottomPanel } from "../../components/inspector-bottom-panel";
+import { INSPECTOR_BOTTOM_BAR_ICON_BUTTON_CLASSNAME } from "../../lib/inspector-bottom-bar";
+import { InspectorEventDetailDrawer } from "../../components/inspector-event-detail-drawer";
+import { InspectorServerPicker } from "../../components/inspector-server-picker";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { ButtonGroup } from "../../components/ui/button-group";
-import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Segment } from "../../components/ui/segment";
 import { Textarea } from "../../components/ui/textarea";
-import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
-import { inspectorApi, serversApi } from "../../lib/api";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "../../components/ui/tooltip";
+import { inspectorApi, isInspectorSessionUnavailableError, serversApi } from "../../lib/api";
+import {
+	inspectorEventMatchesSearch,
+	type InspectorLogEventEntry,
+	type InspectorLogTranslate,
+	type InspectorMcpListKind,
+} from "../../lib/inspector-event-log";
+import {
+	clearInspectorStandaloneConnectionTargetKey,
+	loadInspectorStandaloneConnectionTargetKey,
+	saveInspectorStandaloneConnectionTargetKey,
+	type InspectorStandaloneConnectionTargetKey,
+} from "../../lib/inspector-standalone-storage";
+import { useInspectorStandaloneLog } from "../../lib/hooks/use-inspector-standalone-log";
+import { useInspectorNativeSession } from "../../lib/hooks/use-inspector-native-session";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
-import { notifyError, notifySuccess, stringifyError } from "../../lib/notify";
-import type { ServerSummary } from "../../lib/types";
-import type { CapabilityRecord } from "../../types/capabilities";
+import { mapInspectorEventToActivityLogRow } from "../../lib/map-inspector-event-to-activity-log-row";
+import { notifyError, stringifyError } from "../../lib/notify";
+import { urlWithMergedSearchParams } from "../../lib/server-import-payload";
+import { formatInspectorServerLabel } from "../../lib/inspector-capability";
+import { useAppStore } from "../../lib/store";
+import { cn } from "../../lib/utils";
+import {
+	inspectorSidebarExpandedControlsClassName,
+	inspectorConnectWorkspaceClassName,
+	inspectorWorkspaceContentClassName,
+	sidebarFeatureTabIconSize,
+	sidebarIconLabeledActionClassName,
+	sidebarIconRailClassName,
+	sidebarIconRailGridClassName,
+	sidebarNavItemClassName,
+	SidebarNavIcon,
+} from "../../components/layout/sidebar-nav-item";
+import type { ServerCapabilitySummary, ServerSummary } from "../../lib/types";
+import {
+	capabilityFamilyListMethod,
+	fetchInspectorCapabilityList,
+} from "./inspector-capability-list-api";
+import { InspectorConnectWorkspace } from "./inspector-connect-workspace";
+import type { InspectorConnectCandidate } from "./inspector-connect-server-form";
+import { InspectorCapabilityWorkspace } from "./inspector-capability-workspace";
+import { InspectorConfigurationWorkspace } from "./inspector-configuration-workspace";
+import {
+	DEFAULT_INSPECTOR_CONFIGURATION,
+	DEFAULT_INSPECTOR_LLM_EVALUATION_FOCUS,
+	INSPECTOR_CAPABILITY_FAMILIES,
+	createEmptyCapabilityFamilyState,
+	createInitialCapabilityFamilyStates,
+	type InspectorCapabilityFamily,
+	type InspectorCapabilityFamilyOption,
+	type InspectorCompatibilitySpecVersion,
+	type InspectorConfigurationState,
+	type InspectorFeatureTab,
+	type InspectorFooterWorkspace,
+	type InspectorLlmEvaluationFocus,
+	type InspectorPackageSafetyDatabase,
+	type InspectorPackageSafetyFactSource,
+	type InspectorPackageSafetyScanDepth,
+	type InspectorWorkspaceView,
+	inspectorWorkspaceModeLabel,
+} from "./inspector-feature-config";
+import { InspectorFeatureSidebarPanel } from "./inspector-feature-sidebar-panel";
+import { BrushCleaning } from "./inspector-icons";
+import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 
-type InspectorKind = "tool" | "resource" | "prompt" | "template";
 type InspectorSnapshotKind = "compatibility" | "package_safety";
-type InspectorFeatureTab =
-	| "inspect"
-	| "compatibility"
-	| "package_safety"
-	| "patcher"
-	| "llm_evaluation";
-type InspectorCapabilityPatchKind =
-	| "tools"
-	| "prompts"
-	| "resources"
-	| "resource_templates";
 
 type InspectorScratchServerRecord = {
 	id: string;
@@ -64,6 +113,7 @@ type InspectorManagedTarget = {
 	name: string;
 	enabled: boolean;
 	serverType?: string;
+	capability?: ServerCapabilitySummary;
 };
 
 type InspectorScratchTarget = {
@@ -75,14 +125,11 @@ type InspectorScratchTarget = {
 
 type InspectorTarget = InspectorManagedTarget | InspectorScratchTarget;
 
+type InspectorConnectionMode = "native" | "proxy" | "bridge";
+
 type InspectorSnapshotState = {
 	kind: InspectorSnapshotKind;
 	payload: Record<string, unknown>;
-	loadedAt: string;
-};
-
-type InspectorPatchState = {
-	record: Record<string, unknown>;
 	loadedAt: string;
 };
 
@@ -91,59 +138,74 @@ type InspectorEvaluationState = {
 	loadedAt: string;
 };
 
-const INSPECTOR_KINDS: Array<{
-	value: InspectorKind;
-	icon: typeof Wrench;
-	labelKey: string;
-	defaultLabel: string;
-}> = [
-	{
-		value: "tool",
-		icon: Wrench,
-		labelKey: "modes.toolCall",
-		defaultLabel: "Tool",
-	},
-	{
-		value: "prompt",
-		icon: MessageSquareText,
-		labelKey: "modes.getPrompt",
-		defaultLabel: "Prompt",
-	},
-	{
-		value: "resource",
-		icon: FileText,
-		labelKey: "modes.readResource",
-		defaultLabel: "Resource",
-	},
-	{
-		value: "template",
-		icon: LayoutTemplate,
-		labelKey: "modes.getTemplate",
-		defaultLabel: "Template",
-	},
-];
-
 const FEATURE_TABS: Array<{
 	value: InspectorFeatureTab;
 	icon: typeof Microscope;
 	label: string;
+	shortLabel: string;
+	description: string;
 }> = [
-	{ value: "inspect", icon: Microscope, label: "Inspect" },
-	{ value: "compatibility", icon: ShieldCheck, label: "Compatibility" },
-	{ value: "package_safety", icon: PackageSearch, label: "Package Safety" },
-	{ value: "patcher", icon: PencilLine, label: "Patcher" },
-	{ value: "llm_evaluation", icon: MessageSquareText, label: "LLM Evaluation" },
-];
+		{
+			value: "inspect",
+			icon: Microscope,
+			label: "Capabilities",
+			shortLabel: "Inspect",
+			description: "List and inspect tools, prompts, resources, and templates.",
+		},
+		{
+			value: "compatibility",
+			icon: ShieldCheck,
+			label: "Compatibility",
+			shortLabel: "Compat",
+			description: "Check protocol and capability compatibility.",
+		},
+		{
+			value: "package_safety",
+			icon: PackageSearch,
+			label: "Package Safety",
+			shortLabel: "Safety",
+			description: "Review dependency and package safety evidence.",
+		},
+		{
+			value: "llm_evaluation",
+			icon: MessageSquareText,
+			label: "LLM Evaluation",
+			shortLabel: "LLM",
+			description: "Evaluate behavior with configured model providers.",
+		},
+	];
 
-const CAPABILITY_PATCH_KINDS: Array<{
-	value: InspectorCapabilityPatchKind;
+const INSPECTOR_TRANSPORT_MODE_OPTIONS: Array<{
+	value: InspectorConnectionMode;
 	label: string;
+	ariaLabel: string;
+	icon: React.ReactNode;
+	tooltip: string;
+	disabled?: boolean;
 }> = [
-	{ value: "tools", label: "Tools" },
-	{ value: "prompts", label: "Prompts" },
-	{ value: "resources", label: "Resources" },
-	{ value: "resource_templates", label: "Templates" },
-];
+		{
+			value: "native",
+			label: "Native",
+			ariaLabel: "Native",
+			icon: <Route className="h-4 w-4" />,
+			tooltip: "Connect directly to the selected server through the local native session.",
+		},
+		{
+			value: "proxy",
+			label: "Proxy",
+			ariaLabel: "Proxy",
+			icon: <Waypoints className="h-4 w-4" />,
+			tooltip: "Exercise the server through MCPMate proxy routing and profile policy.",
+		},
+		{
+			value: "bridge",
+			label: "Bridge",
+			ariaLabel: "Bridge",
+			icon: <GitCompareArrows className="h-4 w-4" />,
+			tooltip: "Simulate the middle layer between a host app and server for bidirectional testing.",
+			disabled: true,
+		},
+	];
 
 function targetKey(target: InspectorTarget): string {
 	return `${target.source}:${target.id}`;
@@ -151,82 +213,22 @@ function targetKey(target: InspectorTarget): string {
 
 function targetLabel(target: InspectorTarget | null): string {
 	if (!target) return "No target selected";
-	return target.source === "managed"
-		? target.name || target.id
-		: `Scratch: ${target.name || target.id}`;
+	const name = formatInspectorServerLabel(target.name, target.id);
+	return target.source === "managed" ? name : `Scratch: ${name}`;
 }
 
-function parseInspectorKind(value: string | null): InspectorKind {
-	return value === "tool" ||
-		value === "prompt" ||
-		value === "resource" ||
-		value === "template"
-		? value
-		: "tool";
-}
-
-function segmentedButtonClass(index: number, total: number): string {
-	return [
-		"h-9 px-3",
-		index === 0 ? "rounded-r-none" : "",
-		index === total - 1 ? "rounded-l-none" : "",
-		index > 0 && index < total - 1 ? "rounded-none" : "",
-	].join(" ");
-}
-
-function snapshotTitle(kind: InspectorSnapshotKind): string {
-	return kind === "compatibility"
-		? "Compatibility snapshot"
-		: "Package safety snapshot";
-}
-
-function capabilityRecordFromKey(
-	kind: InspectorKind,
-	key: string,
-): CapabilityRecord | null {
-	const trimmed = key.trim();
-	if (!trimmed) return null;
-	if (kind === "tool") {
-		return {
-			name: trimmed,
-			tool_name: trimmed,
-			unique_name: trimmed,
-		} as CapabilityRecord;
-	}
-	if (kind === "prompt") {
-		return {
-			name: trimmed,
-			prompt_name: trimmed,
-			unique_name: trimmed,
-		} as CapabilityRecord;
-	}
-	if (kind === "resource") {
-		return {
-			name: trimmed,
-			uri: trimmed,
-			resource_uri: trimmed,
-		} as CapabilityRecord;
-	}
-	return {
-		name: trimmed,
-		uriTemplate: trimmed,
-		uri_template: trimmed,
-	} as CapabilityRecord;
-}
-
-function hasEntries(value: Record<string, string> | undefined): boolean {
+function hasEntries(value?: Record<string, string>): value is Record<string, string> {
 	return Boolean(value && Object.keys(value).length > 0);
 }
 
-function buildScratchConfigFromDraft(
-	draft: ServerInstallDraft,
-): Record<string, unknown> {
+function buildScratchServerConfig(draft: ServerInstallDraft): Record<string, unknown> {
 	const config: Record<string, unknown> = {
 		type: draft.kind,
 	};
-
 	if (draft.kind === "stdio") {
-		config.command = draft.command;
+		if (draft.command) {
+			config.command = draft.command;
+		}
 		if (draft.args?.length) {
 			config.args = draft.args;
 		}
@@ -235,12 +237,38 @@ function buildScratchConfigFromDraft(
 		}
 		return config;
 	}
-
-	config.url = draft.url;
+	if (draft.url) {
+		config.url = hasEntries(draft.urlParams)
+			? urlWithMergedSearchParams(draft.url, draft.urlParams)
+			: draft.url;
+	}
 	if (hasEntries(draft.headers)) {
 		config.headers = draft.headers;
 	}
 	return config;
+}
+
+function snapshotTitle(kind: InspectorSnapshotKind): string {
+	return kind === "compatibility"
+		? "Compatibility snapshot"
+		: "Package safety snapshot";
+}
+
+function capabilityFamilyToListKind(
+	family: InspectorCapabilityFamily,
+): InspectorMcpListKind | null {
+	switch (family) {
+		case "tools":
+			return "tools";
+		case "prompts":
+			return "prompts";
+		case "resources":
+			return "resources";
+		case "resource_templates":
+			return "templates";
+		default:
+			return null;
+	}
 }
 
 function managedTargetsFromServers(
@@ -253,84 +281,218 @@ function managedTargetsFromServers(
 			name: server.name || server.id,
 			enabled: Boolean(server.enabled ?? server.globally_enabled),
 			serverType: server.server_type,
+			capability: server.capability ?? server.capabilities,
 		}))
 		.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function capabilityFamilyIsAdvertised(
+	capability: ServerCapabilitySummary,
+	family: InspectorCapabilityFamily,
+): boolean {
+	switch (family) {
+		case "tools":
+			return capability.supports_tools || capability.tools_count > 0;
+		case "prompts":
+			return capability.supports_prompts || capability.prompts_count > 0;
+		case "resources":
+			return capability.supports_resources || capability.resources_count > 0;
+		case "resource_templates":
+			return capability.resource_templates_count > 0;
+		default:
+			return false;
+	}
 }
 
 export function InspectorPage() {
 	const { t } = useTranslation("inspector");
 	usePageTranslations("inspector");
+	const sidebarOpen = useAppStore((state) => state.sidebarOpen);
 	const [searchParams] = useSearchParams();
 	const initialServerId = searchParams.get("server_id");
 	const initialServerName = searchParams.get("server_name");
-	const initialCapabilityKey = searchParams.get("capability_key") ?? "";
-	const patchKeyId = useId();
-	const patchJsonId = useId();
 	const evaluationScenarioId = useId();
-	const evaluationProviderId = useId();
-	const capabilityKeyId = useId();
 	const [featureTab, setFeatureTab] = useState<InspectorFeatureTab>("inspect");
-	const [kind, setKind] = useState<InspectorKind>(() =>
-		parseInspectorKind(searchParams.get("kind")),
+	const [workspaceView, setWorkspaceView] = useState<InspectorWorkspaceView>("connect");
+	const [footerWorkspace, setFooterWorkspace] =
+		useState<InspectorFooterWorkspace | null>(null);
+	const [capabilityFamilyStates, setCapabilityFamilyStates] = useState(
+		createInitialCapabilityFamilyStates,
 	);
-	const [drawerOpen, setDrawerOpen] = useState(Boolean(initialServerId || initialServerName));
-	const [capabilityKey, setCapabilityKey] = useState(initialCapabilityKey);
+	const capabilityListRequestRef = useRef(0);
+	const loggedSessionOpenRef = useRef<string | null>(null);
+	const [activeCapabilityFamily, setActiveCapabilityFamily] =
+		useState<InspectorCapabilityFamily | null>("tools");
+	const [inspectorConfig, setInspectorConfig] = useState<InspectorConfigurationState>(
+		DEFAULT_INSPECTOR_CONFIGURATION,
+	);
+	const [connectionMode, setConnectionMode] = useState<InspectorConnectionMode>("native");
 	const [managedTargets, setManagedTargets] = useState<InspectorManagedTarget[]>([]);
 	const [scratchTargets, setScratchTargets] = useState<InspectorScratchTarget[]>([]);
-	const [targetsLoading, setTargetsLoading] = useState(false);
+	const [targetsLoaded, setTargetsLoaded] = useState(false);
 	const [targetsError, setTargetsError] = useState<string | null>(null);
 	const [selectedTargetKey, setSelectedTargetKey] = useState<string | null>(null);
-	const [scratchImportOpen, setScratchImportOpen] = useState(false);
-	const [scratchImportSaving, setScratchImportSaving] = useState(false);
-	const [scratchDeletingId, setScratchDeletingId] = useState<string | null>(null);
+	const [connectedTargetKey, setConnectedTargetKey] = useState<string | null>(null);
+	const [pendingConnectTargetKey, setPendingConnectTargetKey] = useState<string | null>(null);
+	const [restoringConnectTargetKey, setRestoringConnectTargetKey] = useState<string | null>(null);
+	const [restoredConnectedTargetKey, setRestoredConnectedTargetKey] = useState(
+		loadInspectorStandaloneConnectionTargetKey,
+	);
 	const [snapshotLoading, setSnapshotLoading] =
 		useState<InspectorSnapshotKind | null>(null);
 	const [snapshotState, setSnapshotState] =
 		useState<InspectorSnapshotState | null>(null);
-	const [patchKind, setPatchKind] =
-		useState<InspectorCapabilityPatchKind>("tools");
-	const [patchCapabilityKey, setPatchCapabilityKey] = useState(initialCapabilityKey);
-	const [patchJson, setPatchJson] = useState("");
-	const [patchLoading, setPatchLoading] = useState(false);
-	const [patchState, setPatchState] = useState<InspectorPatchState | null>(
-		null,
-	);
 	const [evaluationScenario, setEvaluationScenario] = useState("");
 	const [evaluationProviderIdValue, setEvaluationProviderIdValue] =
 		useState("");
+	const [compatibilitySpecVersion, setCompatibilitySpecVersion] =
+		useState<InspectorCompatibilitySpecVersion>("2025-11-25");
+	const [packageSafetyFactSource, setPackageSafetyFactSource] =
+		useState<InspectorPackageSafetyFactSource>("runtime_cache");
+	const [packageSafetyDatabase, setPackageSafetyDatabase] =
+		useState<InspectorPackageSafetyDatabase>("combined");
+	const [packageSafetyScanDepth, setPackageSafetyScanDepth] =
+		useState<InspectorPackageSafetyScanDepth>("standard");
+	const [llmEvaluationFocus, setLlmEvaluationFocus] = useState<
+		InspectorLlmEvaluationFocus[]
+	>(DEFAULT_INSPECTOR_LLM_EVALUATION_FOCUS);
 	const [evaluationLoading, setEvaluationLoading] = useState(false);
 	const [evaluationState, setEvaluationState] =
 		useState<InspectorEvaluationState | null>(null);
+	const [activityPanelExpanded, setActivityPanelExpanded] = useState(false);
+	const [activityPanelHeight, setActivityPanelHeight] = useState(280);
+	const [activityPanelPinned, setActivityPanelPinned] = useState(false);
+	const [activitySearch, setActivitySearch] = useState("");
+	const [activitySearchOpen, setActivitySearchOpen] = useState(false);
+	const [capabilitySearch, setCapabilitySearch] = useState("");
+	const [capabilitySearchOpen, setCapabilitySearchOpen] = useState(false);
+	const [selectedActivityEntryId, setSelectedActivityEntryId] = useState<string | null>(
+		null,
+	);
 
 	const targets = useMemo(
 		() => [...managedTargets, ...scratchTargets],
 		[managedTargets, scratchTargets],
 	);
-	const selectedTarget = useMemo(
-		() => targets.find((target) => targetKey(target) === selectedTargetKey) ?? null,
-		[selectedTargetKey, targets],
+	const connectedTarget = useMemo(
+		() => targets.find((target) => targetKey(target) === connectedTargetKey) ?? null,
+		[connectedTargetKey, targets],
 	);
-	const activeKind = useMemo(
+	const connectedTargetSnapshot = useMemo(() => {
+		if (!connectedTarget) return null;
+		if (connectedTarget.source === "managed") {
+			return {
+				source: "managed" as const,
+				serverId: connectedTarget.id,
+				name: connectedTarget.name,
+			};
+		}
+		return {
+			source: "scratch" as const,
+			scratchId: connectedTarget.id,
+			name: connectedTarget.name,
+			config: connectedTarget.config,
+		};
+	}, [connectedTarget]);
+	const visibleCapabilityFamilies = useMemo<InspectorCapabilityFamilyOption[]>(() => {
+		if (!connectedTarget) return [];
+
+		const stableFamilies = INSPECTOR_CAPABILITY_FAMILIES.filter(
+			(family) => !family.placeholder,
+		);
+
+		if (connectedTarget.source !== "managed" || !connectedTarget.capability) {
+			return stableFamilies;
+		}
+
+		const { capability } = connectedTarget;
+		return stableFamilies.filter((family) =>
+			capabilityFamilyIsAdvertised(capability, family.value),
+		);
+	}, [connectedTarget]);
+	const connectedTargetLogId = connectedTarget ? targetKey(connectedTarget) : "";
+	const selectedTargetIsLoaded =
+		!!selectedTargetKey &&
+		targets.some((target) => targetKey(target) === selectedTargetKey);
+	const activityTargetLogId =
+		connectedTargetLogId || (selectedTargetIsLoaded ? selectedTargetKey : "");
+	const { events: activityEvents, appendEvent, clearEvents } =
+		useInspectorStandaloneLog(activityTargetLogId);
+	const translateInspectorEvent = useCallback<InspectorLogTranslate>(
+		(key, options) => {
+			if (key.startsWith("inspector:")) {
+				return t(key.replace(/^inspector:/, ""), options);
+			}
+			return t(key, options);
+		},
+		[t],
+	);
+	const filteredActivityEvents = useMemo(
 		() =>
-			INSPECTOR_KINDS.find((entry) => entry.value === kind) ??
-			INSPECTOR_KINDS[0],
-		[kind],
+			activityEvents.filter((entry) =>
+				inspectorEventMatchesSearch(entry, activitySearch, translateInspectorEvent),
+			),
+		[activityEvents, activitySearch, translateInspectorEvent],
 	);
-	const ActiveIcon = activeKind.icon;
-	const selectedCapabilityItem = useMemo(
-		() => capabilityRecordFromKey(kind, capabilityKey),
-		[capabilityKey, kind],
+	const activityRows = useMemo(
+		() =>
+			filteredActivityEvents.map((entry, index) =>
+				mapInspectorEventToActivityLogRow(entry, index, translateInspectorEvent),
+			),
+		[filteredActivityEvents, translateInspectorEvent],
 	);
+	const selectedActivityEntry = useMemo<InspectorLogEventEntry | null>(
+		() =>
+			activityEvents.find((entry) => entry.id === selectedActivityEntryId) ?? null,
+		[activityEvents, selectedActivityEntryId],
+	);
+	const activeFamilyState = activeCapabilityFamily
+		? capabilityFamilyStates[activeCapabilityFamily]
+		: null;
+	const selectedCapabilityItem = useMemo(() => {
+		if (!activeCapabilityFamily || !activeFamilyState?.selectedKey) {
+			return null;
+		}
+		return (
+			activeFamilyState.items.find(
+				(item) => item.key === activeFamilyState.selectedKey,
+			) ?? null
+		);
+	}, [activeCapabilityFamily, activeFamilyState]);
 	const targetRequest = useMemo(() => {
-		if (!selectedTarget) return null;
-		return selectedTarget.source === "managed"
-			? { mode: "native" as const, server_id: selectedTarget.id }
-			: { mode: "native" as const, scratch_id: selectedTarget.id };
-	}, [selectedTarget]);
+		if (!connectedTarget) return null;
+		return connectedTarget.source === "managed"
+			? { mode: "native" as const, server_id: connectedTarget.id }
+			: { mode: "native" as const, scratch_id: connectedTarget.id };
+	}, [connectedTarget]);
+	const {
+		ensureSession,
+		invalidateSession,
+		connected: sessionConnected,
+		sessionId: currentSessionId,
+	} =
+		useInspectorNativeSession(targetRequest);
+
+	const selectFeatureTab = useCallback(
+		(tab: InspectorFeatureTab) => {
+			setFooterWorkspace(null);
+			setFeatureTab(tab);
+			if (!connectedTarget || !sessionConnected) {
+				setWorkspaceView("connect");
+				return;
+			}
+			setWorkspaceView(tab);
+		},
+		[connectedTarget, sessionConnected],
+	);
+
+	const selectFooterWorkspace = useCallback((workspace: InspectorFooterWorkspace) => {
+		setFooterWorkspace(workspace);
+		setWorkspaceView(workspace);
+	}, []);
 
 	const refreshTargets = useCallback(
 		async (preferredTargetKey?: string) => {
-			setTargetsLoading(true);
 			setTargetsError(null);
 			try {
 				const [managedResponse, scratchResponse] = await Promise.all([
@@ -355,6 +517,7 @@ export function InspectorPage() {
 					.sort((left, right) => left.name.localeCompare(right.name));
 				setManagedTargets(nextManaged);
 				setScratchTargets(nextScratch);
+				setTargetsLoaded(true);
 				if (preferredTargetKey) {
 					setSelectedTargetKey(preferredTargetKey);
 				}
@@ -367,8 +530,6 @@ export function InspectorPage() {
 					}),
 					message,
 				);
-			} finally {
-				setTargetsLoading(false);
 			}
 		},
 		[t],
@@ -379,7 +540,29 @@ export function InspectorPage() {
 	}, [refreshTargets]);
 
 	useEffect(() => {
+		if (!restoredConnectedTargetKey || !targetsLoaded) {
+			return;
+		}
+
+		if (targets.some((target) => targetKey(target) === restoredConnectedTargetKey)) {
+			setSelectedTargetKey(restoredConnectedTargetKey);
+			setConnectedTargetKey(restoredConnectedTargetKey);
+			setPendingConnectTargetKey(restoredConnectedTargetKey);
+			setRestoringConnectTargetKey(restoredConnectedTargetKey);
+		} else {
+			setRestoringConnectTargetKey(null);
+			clearInspectorStandaloneConnectionTargetKey();
+		}
+		setRestoredConnectedTargetKey(null);
+	}, [restoredConnectedTargetKey, targets, targetsLoaded]);
+
+	useEffect(() => {
 		if (selectedTargetKey && targets.some((target) => targetKey(target) === selectedTargetKey)) {
+			return;
+		}
+
+		if (!initialServerId && !initialServerName) {
+			setSelectedTargetKey(null);
 			return;
 		}
 
@@ -388,8 +571,7 @@ export function InspectorPage() {
 			: initialServerName
 				? managedTargets.find((target) => target.name === initialServerName)
 				: null;
-		const nextTarget = requestedManaged ?? targets[0] ?? null;
-		setSelectedTargetKey(nextTarget ? targetKey(nextTarget) : null);
+		setSelectedTargetKey(requestedManaged ? targetKey(requestedManaged) : null);
 	}, [
 		initialServerId,
 		initialServerName,
@@ -399,10 +581,52 @@ export function InspectorPage() {
 	]);
 
 	useEffect(() => {
+		setCapabilityFamilyStates(createInitialCapabilityFamilyStates());
+		setActiveCapabilityFamily("tools");
 		setSnapshotState(null);
-		setPatchState(null);
 		setEvaluationState(null);
-	}, [selectedTargetKey]);
+	}, [connectedTargetKey]);
+
+	useEffect(() => {
+		if (!connectedTargetKey || targets.some((target) => targetKey(target) === connectedTargetKey)) {
+			return;
+		}
+		setConnectedTargetKey(null);
+		setPendingConnectTargetKey(null);
+		setRestoringConnectTargetKey(null);
+		if (targetsLoaded) {
+			clearInspectorStandaloneConnectionTargetKey();
+		}
+	}, [connectedTargetKey, targets, targetsLoaded]);
+
+	useEffect(() => {
+		if (!sessionConnected || !connectedTargetKey) {
+			return;
+		}
+		if (
+			!connectedTargetKey.startsWith("managed:") &&
+			!connectedTargetKey.startsWith("scratch:")
+		) {
+			return;
+		}
+		saveInspectorStandaloneConnectionTargetKey(
+			connectedTargetKey as InspectorStandaloneConnectionTargetKey,
+		);
+	}, [connectedTargetKey, sessionConnected]);
+
+	useEffect(() => {
+		const firstFamily = visibleCapabilityFamilies[0]?.value ?? null;
+		if (!firstFamily) {
+			setActiveCapabilityFamily(null);
+			return;
+		}
+		if (
+			!activeCapabilityFamily ||
+			!visibleCapabilityFamilies.some((family) => family.value === activeCapabilityFamily)
+		) {
+			setActiveCapabilityFamily(firstFamily);
+		}
+	}, [activeCapabilityFamily, visibleCapabilityFamilies]);
 
 	const requireTargetRequest = useCallback(
 		(action: string) => {
@@ -421,116 +645,287 @@ export function InspectorPage() {
 		[targetRequest, t],
 	);
 
-	const createScratchFromDraft = useCallback(
-		async (draft: ServerInstallDraft): Promise<InspectorScratchServerRecord> => {
-			const response = await inspectorApi.scratchServerCreate({
-				name: draft.name,
-				config: buildScratchConfigFromDraft(draft),
-				origin: "standalone_inspector",
-			});
-			if (!response?.success || !response.data?.record) {
-				throw new Error(
-					response?.error
-						? String(response.error)
-						: "Failed to create Inspector scratch server",
+	const logActivityStep = useCallback(
+		(entry: Parameters<typeof appendEvent>[0]) => {
+			appendEvent(entry);
+			if (activityPanelPinned) {
+				setActivityPanelExpanded(true);
+			}
+		},
+		[activityPanelPinned, appendEvent],
+	);
+
+	const logCurrentSessionClose = useCallback(() => {
+		if (!currentSessionId || !connectedTargetLogId) {
+			return;
+		}
+		logActivityStep({
+			data: {
+				event: "session_close",
+				session_id: currentSessionId,
+				server_id: connectedTargetLogId,
+			},
+			request: { session_id: currentSessionId },
+		});
+		loggedSessionOpenRef.current = null;
+	}, [connectedTargetLogId, currentSessionId, logActivityStep]);
+
+	const handleCapabilityList = useCallback(
+		async (family: InspectorCapabilityFamily) => {
+			const requestTarget = requireTargetRequest(
+				capabilityFamilyListMethod(family),
+			);
+			if (!requestTarget || !connectedTargetLogId) {
+				return;
+			}
+
+			const requestId = ++capabilityListRequestRef.current;
+
+			setActiveCapabilityFamily(family);
+			setCapabilityFamilyStates((previous) => ({
+				...previous,
+				[family]: {
+					...previous[family],
+					listing: true,
+				},
+			}));
+
+			const listKind = capabilityFamilyToListKind(family);
+			const listMethod = capabilityFamilyListMethod(family);
+
+			try {
+				const sessionId = await ensureSession();
+				if (!sessionId) {
+					throw new Error("Failed to open inspector session");
+				}
+
+				if (requestId !== capabilityListRequestRef.current) {
+					return;
+				}
+
+				if (listKind) {
+					logActivityStep({
+						data: {
+							event: "mcp_exchange",
+							direction: "outbound",
+							method: listMethod,
+							server_id: connectedTargetLogId,
+							mode: "native",
+							session_id: sessionId,
+						},
+						request: { jsonrpc: "2.0", method: listMethod },
+					});
+				}
+
+				const items = await fetchInspectorCapabilityList({
+					family,
+					targetRequest: requestTarget,
+					sessionId,
+					refresh: true,
+				});
+
+				if (requestId !== capabilityListRequestRef.current) {
+					return;
+				}
+
+				if (listKind) {
+					logActivityStep({
+						data: {
+							event: "mcp_exchange",
+							direction: "inbound",
+							method: listMethod,
+							server_id: connectedTargetLogId,
+							mode: "native",
+							session_id: sessionId,
+						},
+						response: { jsonrpc: "2.0", result: { [listKind]: items } },
+					});
+				}
+
+				setCapabilityFamilyStates((previous) => ({
+					...previous,
+					[family]: {
+						listed: true,
+						listing: false,
+						items,
+						selectedKey: items[0]?.key ?? null,
+					},
+				}));
+			} catch (error) {
+				if (requestId !== capabilityListRequestRef.current) {
+					return;
+				}
+				if (isInspectorSessionUnavailableError(error)) {
+					invalidateSession();
+				}
+				setCapabilityFamilyStates((previous) => ({
+					...previous,
+					[family]: {
+						...previous[family],
+						listing: false,
+					},
+				}));
+				notifyError(
+					t("standalone.capabilityListFailedTitle", {
+						defaultValue: "Capability list failed",
+					}),
+					stringifyError(error),
 				);
 			}
-			return response.data.record as InspectorScratchServerRecord;
+		},
+		[
+			ensureSession,
+			invalidateSession,
+			logActivityStep,
+			requireTargetRequest,
+			connectedTargetLogId,
+			t,
+		],
+	);
+
+	const handleCapabilityClear = useCallback(
+		(family: InspectorCapabilityFamily) => {
+			setCapabilityFamilyStates((previous) => ({
+				...previous,
+				[family]: createEmptyCapabilityFamilyState(),
+			}));
+			setCapabilitySearch("");
+			setCapabilitySearchOpen(false);
+			if (activeCapabilityFamily === family) {
+				setActiveCapabilityFamily("tools");
+			}
+		},
+		[activeCapabilityFamily],
+	);
+
+	const handleCapabilitySelectItem = useCallback(
+		(family: InspectorCapabilityFamily, key: string) => {
+			setActiveCapabilityFamily(family);
+			setCapabilityFamilyStates((previous) => ({
+				...previous,
+				[family]: {
+					...previous[family],
+					selectedKey: key,
+				},
+			}));
 		},
 		[],
 	);
 
-	const handleScratchImport = useCallback(
-		async (draft: ServerInstallDraft) => {
-			setScratchImportSaving(true);
-			try {
-				const record = await createScratchFromDraft(draft);
-				await refreshTargets(`scratch:${record.id}`);
-				setScratchImportOpen(false);
-				notifySuccess(
-					t("scratch.notifications.created", {
-						defaultValue: "Scratch server saved",
-					}),
-					record.name,
-				);
-			} catch (error) {
-				notifyError(
-					t("scratch.notifications.failed", {
-						defaultValue: "Scratch server import failed",
-					}),
-					stringifyError(error),
-				);
-			} finally {
-				setScratchImportSaving(false);
-			}
+	const handleActiveCapabilityFamilyChange = useCallback(
+		(family: InspectorCapabilityFamily | null) => {
+			capabilityListRequestRef.current += 1;
+			setActiveCapabilityFamily(family);
 		},
-		[createScratchFromDraft, refreshTargets, t],
+		[],
 	);
 
-	const handleScratchImportMultiple = useCallback(
-		async (drafts: ServerInstallDraft[]) => {
-			setScratchImportSaving(true);
-			try {
-				let lastRecord: InspectorScratchServerRecord | null = null;
-				for (const draft of drafts) {
-					lastRecord = await createScratchFromDraft(draft);
+	useEffect(() => {
+		if (!pendingConnectTargetKey || pendingConnectTargetKey !== connectedTargetKey) {
+			return;
+		}
+		void ensureSession()
+			.then((sessionId) => {
+				if (!sessionId) {
+					setConnectedTargetKey(null);
+					return;
 				}
-				await refreshTargets(lastRecord ? `scratch:${lastRecord.id}` : undefined);
-				setScratchImportOpen(false);
-				notifySuccess(
-					t("scratch.notifications.created", {
-						defaultValue: "Scratch server saved",
-					}),
-					lastRecord?.name,
-				);
-			} catch (error) {
-				notifyError(
-					t("scratch.notifications.failed", {
-						defaultValue: "Scratch server import failed",
-					}),
-					stringifyError(error),
-				);
-			} finally {
-				setScratchImportSaving(false);
-			}
-		},
-		[createScratchFromDraft, refreshTargets, t],
-	);
+				if (connectedTargetLogId) {
+					const sessionOpenLogKey = `${connectedTargetLogId}:${sessionId}`;
+					if (loggedSessionOpenRef.current !== sessionOpenLogKey) {
+						logActivityStep({
+							data: {
+								event: "session_open",
+								server_id: connectedTargetLogId,
+								mode: "native",
+							},
+							request: targetRequest,
+							response: { session_id: sessionId },
+						});
+						loggedSessionOpenRef.current = sessionOpenLogKey;
+					}
+				}
+			})
+			.catch((error) => {
+				setConnectedTargetKey(null);
+				setRestoringConnectTargetKey(null);
+				notifyError("Connection failed", stringifyError(error));
+			})
+			.finally(() => {
+				setPendingConnectTargetKey(null);
+				setRestoringConnectTargetKey(null);
+			});
+	}, [
+		connectedTargetKey,
+		connectedTargetLogId,
+		ensureSession,
+		logActivityStep,
+		pendingConnectTargetKey,
+		targetRequest,
+	]);
 
-	const handleScratchDelete = useCallback(
-		async (recordId: string) => {
-			setScratchDeletingId(recordId);
+	const handleConnect = useCallback(
+		async (candidate: InspectorConnectCandidate) => {
+			logCurrentSessionClose();
+			clearInspectorStandaloneConnectionTargetKey();
+			setRestoredConnectedTargetKey(null);
+			setRestoringConnectTargetKey(null);
+			if (candidate.source === "managed") {
+				const key = `managed:${candidate.serverId}`;
+				setSelectedTargetKey(key);
+				setConnectedTargetKey(key);
+				setPendingConnectTargetKey(key);
+				return;
+			}
+
+			if (candidate.scratchId) {
+				const key = `scratch:${candidate.scratchId}`;
+				setSelectedTargetKey(key);
+				setConnectedTargetKey(key);
+				setPendingConnectTargetKey(key);
+				return;
+			}
+
+			setPendingConnectTargetKey("scratch:create");
 			try {
-				const response = await inspectorApi.scratchServerDelete({
-					record_id: recordId,
+				const response = await inspectorApi.scratchServerCreate({
+					name: candidate.draft.name,
+					config: buildScratchServerConfig(candidate.draft),
+					origin: "inspector-connect",
 				});
-				if (!response?.success || !response.data?.deleted) {
+				if (!response.success || !response.data?.record) {
 					throw new Error(
-						response?.error
+						response.error
 							? String(response.error)
-							: "Failed to delete Inspector scratch server",
+							: "Failed to create Inspector scratch server",
 					);
 				}
-				await refreshTargets();
-				notifySuccess(
-					t("scratch.notifications.deleted", {
-						defaultValue: "Scratch server deleted",
-					}),
-					recordId,
-				);
+				const record = response.data.record as InspectorScratchServerRecord;
+				if (!record.id) {
+					throw new Error("Inspector scratch server response is missing an id");
+				}
+				const key = `scratch:${record.id}`;
+				await refreshTargets(key);
+				setConnectedTargetKey(key);
+				setPendingConnectTargetKey(key);
 			} catch (error) {
-				notifyError(
-					t("scratch.notifications.deleteFailed", {
-						defaultValue: "Scratch server delete failed",
-					}),
-					stringifyError(error),
-				);
-			} finally {
-				setScratchDeletingId(null);
+				setConnectedTargetKey(null);
+				setPendingConnectTargetKey(null);
+				setRestoringConnectTargetKey(null);
+				notifyError("Connection failed", stringifyError(error));
 			}
 		},
-		[refreshTargets, t],
+		[logCurrentSessionClose, refreshTargets],
 	);
+
+	const handleDisconnect = useCallback(() => {
+		logCurrentSessionClose();
+		invalidateSession();
+		setConnectedTargetKey(null);
+		setPendingConnectTargetKey(null);
+		setRestoringConnectTargetKey(null);
+		clearInspectorStandaloneConnectionTargetKey();
+	}, [invalidateSession, logCurrentSessionClose]);
 
 	const handleSnapshotLoad = useCallback(
 		async (snapshotKind: InspectorSnapshotKind) => {
@@ -571,81 +966,6 @@ export function InspectorPage() {
 		},
 		[requireTargetRequest, t],
 	);
-
-	const handlePatchApply = useCallback(async () => {
-		const requestTarget = requireTargetRequest("Capability patcher");
-		if (!requestTarget) return;
-
-		const nextCapabilityKey = patchCapabilityKey.trim();
-		if (!nextCapabilityKey) {
-			notifyError(
-				t("standalone.patchKeyRequiredTitle", {
-					defaultValue: "Capability key is required",
-				}),
-			);
-			return;
-		}
-
-		let patch: Record<string, unknown>;
-		try {
-			const parsed = JSON.parse(patchJson);
-			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-				throw new Error("Patch must be a JSON object");
-			}
-			patch = parsed as Record<string, unknown>;
-		} catch (error) {
-			notifyError(
-				t("standalone.patchJsonInvalidTitle", {
-					defaultValue: "Invalid patch JSON",
-				}),
-				stringifyError(error),
-			);
-			return;
-		}
-
-		setPatchLoading(true);
-		try {
-			const response = await inspectorApi.capabilityPatchUpsert({
-				...requestTarget,
-				capability_kind: patchKind,
-				capability_key: nextCapabilityKey,
-				patch,
-			});
-
-			if (!response.success || !response.data?.record) {
-				throw new Error(
-					typeof response.error === "string"
-						? response.error
-						: "Inspector capability patch request failed",
-				);
-			}
-
-			setPatchState({
-				record: response.data.record,
-				loadedAt: new Date().toLocaleTimeString(),
-			});
-			notifySuccess(
-				t("standalone.patchSavedTitle", {
-					defaultValue: "Capability patch saved",
-				}),
-			);
-		} catch (error) {
-			notifyError(
-				t("standalone.patchFailedTitle", {
-					defaultValue: "Patch failed",
-				}),
-				stringifyError(error),
-			);
-		} finally {
-			setPatchLoading(false);
-		}
-	}, [
-		patchCapabilityKey,
-		patchJson,
-		patchKind,
-		requireTargetRequest,
-		t,
-	]);
 
 	const handleEvaluationRun = useCallback(async () => {
 		const requestTarget = requireTargetRequest("LLM evaluation");
@@ -699,522 +1019,445 @@ export function InspectorPage() {
 		t,
 	]);
 
-	const renderTargetButton = (target: InspectorTarget) => {
-		const selected = selectedTargetKey === targetKey(target);
-		return (
-			<div
-				key={targetKey(target)}
-				className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
-					selected
-						? "border-primary bg-primary/10 text-foreground"
-						: "border-transparent hover:border-border hover:bg-muted/70"
-				}`}
-			>
-				<button
-					type="button"
-					className="w-full text-left"
-					onClick={() => setSelectedTargetKey(targetKey(target))}
-				>
-					<div className="flex items-start justify-between gap-2">
-						<div className="min-w-0">
-							<p className="truncate font-medium">{target.name || target.id}</p>
-							<p className="mt-1 truncate text-xs text-muted-foreground">
-								{target.source === "managed"
-									? target.serverType || "managed server"
-									: target.id}
-							</p>
-						</div>
-						<div className="flex shrink-0 items-center gap-1">
-							<Badge
-								variant={target.source === "managed" ? "secondary" : "outline"}
-							>
-								{target.source === "managed" ? "Managed" : "Scratch"}
-							</Badge>
-							{target.source === "managed" ? (
-								<Badge variant={target.enabled ? "default" : "outline"}>
-									{target.enabled ? "Enabled" : "Disabled"}
-								</Badge>
-							) : null}
-						</div>
-					</div>
-				</button>
-				{target.source === "scratch" ? (
-					<div className="mt-2 flex justify-end">
-						<Button
-							type="button"
-							variant="ghost"
-							size="sm"
-							className="h-7 gap-1 px-2 text-red-600 hover:text-red-700"
-							disabled={scratchDeletingId === target.id}
-							onClick={() => void handleScratchDelete(target.id)}
-						>
-							{scratchDeletingId === target.id ? (
-								<Loader2 className="h-3.5 w-3.5 animate-spin" />
-							) : (
-								<Trash2 className="h-3.5 w-3.5" />
-							)}
-							Delete
-						</Button>
-					</div>
-				) : null}
+	const capabilityControlsDisabled = !connectedTarget || !sessionConnected;
+	const sessionConnecting = pendingConnectTargetKey !== null;
+	const sessionRestoring =
+		!!restoringConnectTargetKey &&
+		restoringConnectTargetKey === connectedTargetKey &&
+		sessionConnecting &&
+		!sessionConnected;
+
+	const connectionComposer = (
+		<InspectorConnectWorkspace
+			selectedTargetKey={selectedTargetKey}
+			connectedTargetKey={connectedTargetKey}
+			connectedTargetSnapshot={connectedTargetSnapshot}
+			connected={sessionConnected}
+			connecting={sessionConnecting}
+			onConnect={handleConnect}
+			onDisconnect={handleDisconnect}
+		/>
+	);
+
+	const inspectorChrome = useMemo(
+		() => ({
+			activityPanelExpanded,
+			toggleActivityPanel: () => setActivityPanelExpanded((previous) => !previous),
+		}),
+		[activityPanelExpanded],
+	);
+
+	const headerActions = (
+		<Segment
+			value={connectionMode}
+			onValueChange={(value) => setConnectionMode(value as InspectorConnectionMode)}
+			options={INSPECTOR_TRANSPORT_MODE_OPTIONS}
+			showDots={false}
+			className="w-auto"
+			listClassName="h-10 min-h-0 w-auto rounded-full"
+			triggerClassName="h-8 gap-1.5 rounded-full px-3 py-0 text-xs"
+		/>
+	);
+
+	const sidebarContent = sidebarOpen ? (
+		<div className={inspectorSidebarExpandedControlsClassName()}>
+			<div className="shrink-0">
+				<InspectorServerPicker
+					serverName={connectedTarget ? targetLabel(connectedTarget) : null}
+					connected={sessionConnected}
+					restoring={sessionRestoring}
+					onOpenConnect={() => selectFooterWorkspace("connect")}
+				/>
 			</div>
-		);
-	};
+			<div className={cn(sidebarIconRailClassName(), "shrink-0")}>
+				<div className={sidebarIconRailGridClassName()}>
+					{FEATURE_TABS.map((tab) => {
+						const Icon = tab.icon;
+						const selected = featureTab === tab.value && footerWorkspace === null;
+						return (
+							<button
+								key={tab.value}
+								type="button"
+								aria-label={tab.label}
+								className={sidebarIconLabeledActionClassName({
+									selected,
+								})}
+								onClick={() => selectFeatureTab(tab.value)}
+							>
+								<Icon size={sidebarFeatureTabIconSize} aria-hidden />
+								<span className="max-w-full truncate text-[10px] font-medium leading-none">
+									{tab.shortLabel}
+								</span>
+							</button>
+						);
+					})}
+				</div>
+			</div>
+			<InspectorFeatureSidebarPanel
+				featureTab={featureTab}
+				onFeatureTabActivate={selectFeatureTab}
+				hasSelectedTarget={!!connectedTarget && sessionConnected}
+				capabilityFamilyStates={capabilityFamilyStates}
+				capabilityFamilies={sessionConnected ? visibleCapabilityFamilies : []}
+				activeCapabilityFamily={activeCapabilityFamily}
+				onActiveCapabilityFamilyChange={handleActiveCapabilityFamilyChange}
+				onCapabilityList={(family) => void handleCapabilityList(family)}
+				onCapabilityClear={handleCapabilityClear}
+				onCapabilitySelectItem={handleCapabilitySelectItem}
+				capabilitySearch={capabilitySearch}
+				onCapabilitySearchChange={setCapabilitySearch}
+				capabilitySearchOpen={capabilitySearchOpen}
+				onCapabilitySearchOpenChange={setCapabilitySearchOpen}
+				capabilityControlsDisabled={capabilityControlsDisabled}
+				compatibilitySpecVersion={compatibilitySpecVersion}
+				onCompatibilitySpecVersionChange={setCompatibilitySpecVersion}
+				packageSafetyFactSource={packageSafetyFactSource}
+				onPackageSafetyFactSourceChange={setPackageSafetyFactSource}
+				packageSafetyDatabase={packageSafetyDatabase}
+				onPackageSafetyDatabaseChange={setPackageSafetyDatabase}
+				packageSafetyScanDepth={packageSafetyScanDepth}
+				onPackageSafetyScanDepthChange={setPackageSafetyScanDepth}
+				llmEvaluationFocus={llmEvaluationFocus}
+				onLlmEvaluationFocusChange={setLlmEvaluationFocus}
+				llmEvaluationProviderId={evaluationProviderIdValue}
+				onLlmEvaluationProviderIdChange={setEvaluationProviderIdValue}
+			/>
+			{targetsError ? (
+				<p className="shrink-0 text-xs text-red-600 dark:text-red-400">{targetsError}</p>
+			) : null}
+		</div>
+	) : (
+		<>
+			{FEATURE_TABS.map((tab) => {
+				const Icon = tab.icon;
+				const selected = featureTab === tab.value && footerWorkspace === null;
+				return (
+					<Tooltip key={tab.value}>
+						<TooltipTrigger asChild>
+							<button
+								type="button"
+								aria-label={tab.label}
+								className={sidebarNavItemClassName(false, {
+									active: selected,
+								})}
+								onClick={() => selectFeatureTab(tab.value)}
+							>
+								<SidebarNavIcon sidebarOpen={false}>
+									<Icon size={sidebarFeatureTabIconSize} />
+								</SidebarNavIcon>
+							</button>
+						</TooltipTrigger>
+						<TooltipContent
+							side="right"
+							align="center"
+							className="max-w-xs px-3 py-2 text-xs leading-relaxed"
+						>
+							<p className="font-semibold">{tab.label}</p>
+							<p className="mt-1 font-normal text-background/85">
+								{tab.description}
+							</p>
+						</TooltipContent>
+					</Tooltip>
+				);
+			})}
+			{targetsError ? (
+				<p className="text-xs text-red-600 dark:text-red-400">{targetsError}</p>
+			) : null}
+		</>
+	);
 
 	return (
-		<div className="flex min-h-full bg-background">
-			<aside className="flex w-[320px] shrink-0 flex-col border-r border-border bg-card/50">
-				<div className="border-b border-border p-4">
-					<div className="flex items-center justify-between gap-2">
-						<div className="min-w-0">
-							<div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-								<Microscope className="h-4 w-4" />
-								<span>{t("standalone.eyebrow", { defaultValue: "Inspector" })}</span>
+		<InspectorChromeProvider value={inspectorChrome}>
+			<InspectorWindowLayout
+				sidebar={sidebarContent}
+				footerWorkspace={footerWorkspace}
+				onFooterWorkspaceChange={selectFooterWorkspace}
+				workspaceModeLabel={inspectorWorkspaceModeLabel(workspaceView)}
+				headerActions={headerActions}
+			>
+				<div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
+					<main className="mb-8 flex min-h-0 min-w-0 flex-1 flex-col">
+						{workspaceView === "configuration" ? (
+							<div className={inspectorWorkspaceContentClassName("pt-3")}>
+								<InspectorConfigurationWorkspace
+									config={inspectorConfig}
+									onConfigChange={(patch) =>
+										setInspectorConfig((previous) => ({ ...previous, ...patch }))
+									}
+								/>
 							</div>
-							<h1 className="mt-1 truncate text-lg font-semibold text-foreground">
-								{t("standalone.title", { defaultValue: "Inspector Workbench" })}
-							</h1>
-						</div>
-						<div className="flex shrink-0 gap-1">
-							<Button
-								type="button"
-								variant="outline"
-								size="icon"
-								className="h-8 w-8"
-								disabled={targetsLoading}
-								onClick={() => void refreshTargets()}
-								aria-label="Refresh targets"
-							>
-								{targetsLoading ? (
-									<Loader2 className="h-4 w-4 animate-spin" />
-								) : (
-									<RefreshCw className="h-4 w-4" />
-								)}
-							</Button>
-							<Button
-								type="button"
-								size="icon"
-								className="h-8 w-8"
-								onClick={() => setScratchImportOpen(true)}
-								aria-label="Add scratch server"
-							>
-								<Plus className="h-4 w-4" />
-							</Button>
-						</div>
-					</div>
-					{targetsError ? (
-						<p className="mt-3 text-xs text-red-600 dark:text-red-400">
-							{targetsError}
-						</p>
-					) : null}
-				</div>
-				<div className="min-h-0 flex-1 overflow-y-auto p-3">
-					<div className="space-y-4">
-						<section className="space-y-2">
-							<div className="flex items-center justify-between px-1">
-								<p className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-									Managed Registry
-								</p>
-								<Badge variant="secondary">{managedTargets.length}</Badge>
+						) : workspaceView === "connect" ? (
+							<div className={inspectorConnectWorkspaceClassName()}>
+								{connectionComposer}
 							</div>
-							<div className="space-y-1">
-								{managedTargets.length
-									? managedTargets.map(renderTargetButton)
-									: (
-										<p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
-											No managed servers.
+						) : !connectedTarget || !sessionConnected ? (
+							<div className={inspectorConnectWorkspaceClassName()}>
+								{connectionComposer}
+							</div>
+						) : (
+							<>
+								<div className="bg-background px-6 py-4">
+									<div className="flex flex-wrap items-center gap-2">
+										<p className="truncate text-xl font-semibold text-foreground">
+											{targetLabel(connectedTarget)}
 										</p>
-									)}
-							</div>
-						</section>
-						<section className="space-y-2">
-							<div className="flex items-center justify-between px-1">
-								<p className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">
-									Scratch Workspace
-								</p>
-								<Badge variant="outline">{scratchTargets.length}</Badge>
-							</div>
-							<div className="space-y-1">
-								{scratchTargets.length
-									? scratchTargets.map(renderTargetButton)
-									: (
-										<p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
-											Add a scratch server with the plus button.
-										</p>
-									)}
-							</div>
-						</section>
-					</div>
-				</div>
-			</aside>
-
-			<main className="flex min-w-0 flex-1 flex-col">
-				<div className="border-b border-border bg-background px-6 py-4">
-					<div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-						<div className="min-w-0">
-							<p className="text-sm text-muted-foreground">Target</p>
-							<div className="mt-1 flex flex-wrap items-center gap-2">
-								<p className="truncate text-xl font-semibold text-foreground">
-									{targetLabel(selectedTarget)}
-								</p>
-								{selectedTarget ? (
-									<Badge
-										variant={
-											selectedTarget.source === "managed" ? "secondary" : "outline"
-										}
-									>
-										{selectedTarget.source === "managed"
-											? "Managed"
-											: "Scratch"}
-									</Badge>
-								) : null}
-							</div>
-						</div>
-						<Tabs
-							value={featureTab}
-							onValueChange={(value) => setFeatureTab(value as InspectorFeatureTab)}
-						>
-							<TabsList className="flex h-auto flex-wrap justify-start">
-								{FEATURE_TABS.map((tab) => {
-									const Icon = tab.icon;
-									return (
-										<TabsTrigger
-											key={tab.value}
-											value={tab.value}
-											className="gap-2"
+										<Badge
+											variant={
+												connectedTarget.source === "managed" ? "secondary" : "outline"
+											}
 										>
-											<Icon className="h-4 w-4" />
-											{tab.label}
-										</TabsTrigger>
-									);
-								})}
-							</TabsList>
-						</Tabs>
-					</div>
-				</div>
+											{connectedTarget.source === "managed" ? "Managed" : "Scratch"}
+										</Badge>
+									</div>
+								</div>
 
-				<Tabs
-					value={featureTab}
-					onValueChange={(value) => setFeatureTab(value as InspectorFeatureTab)}
-					className="min-h-0 flex-1"
-				>
-					<div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-						<TabsContent value="inspect" className="m-0 max-w-4xl space-y-6">
-							<div className="rounded-md border border-border bg-card/60 p-4">
-								<div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-									<div className="min-w-0 space-y-3">
-										<div className="flex items-center gap-2">
-											<ActiveIcon className="h-5 w-5 text-muted-foreground" />
-											<div>
-												<p className="text-base font-medium text-foreground">
-													{t(activeKind.labelKey, {
-														defaultValue: activeKind.defaultLabel,
-													})}
+								<div className={inspectorWorkspaceContentClassName()}>
+
+									{workspaceView === "inspect" ? (
+										<InspectorCapabilityWorkspace
+											activeFamily={activeCapabilityFamily}
+											selectedItem={selectedCapabilityItem}
+											items={activeFamilyState?.items ?? []}
+											onSelectItemKey={(key) => {
+												if (!activeCapabilityFamily) return;
+												handleCapabilitySelectItem(activeCapabilityFamily, key);
+											}}
+											disabled={capabilityControlsDisabled}
+										/>
+									) : null}
+
+									{workspaceView === "compatibility" ? (
+										<div className="max-w-5xl space-y-4">
+											<div className="rounded-md border border-dashed border-border bg-card/40 p-4">
+												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+													<div className="min-w-0">
+														<div className="flex items-center gap-2">
+															<ShieldCheck className="h-5 w-5 text-muted-foreground" />
+															<p className="text-base font-medium text-foreground">
+																Compatibility summary
+															</p>
+														</div>
+														<p className="mt-1 text-sm text-muted-foreground">
+															Baseline: {compatibilitySpecVersion}. Summarize view and
+															spec-fit hints will render here.
+														</p>
+													</div>
+													<Button
+														type="button"
+														variant="outline"
+														className="h-9 gap-2"
+														disabled={snapshotLoading !== null}
+														onClick={() => void handleSnapshotLoad("compatibility")}
+													>
+														{snapshotLoading === "compatibility" ? (
+															<RefreshCcw className="h-4 w-4 animate-spin" />
+														) : (
+															<ShieldCheck className="h-4 w-4" />
+														)}
+														Run comparison (draft)
+													</Button>
+												</div>
+											</div>
+											<div className="rounded-md border border-dashed border-border bg-card/20 p-4">
+												<p className="text-sm font-medium text-foreground">
+													Spec vs server diff
 												</p>
 												<p className="mt-1 text-sm text-muted-foreground">
-													{targetLabel(selectedTarget)}
+													Git-diff style requirement columns and optional timeline will
+													appear here after backend wiring.
 												</p>
+												{snapshotState?.kind === "compatibility" ? (
+													<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
+														{JSON.stringify(snapshotState.payload, null, 2)}
+													</pre>
+												) : null}
 											</div>
 										</div>
-										<ButtonGroup className="flex flex-wrap">
-											{INSPECTOR_KINDS.map((entry, index) => {
-												const Icon = entry.icon;
-												return (
+									) : null}
+
+									{workspaceView === "package_safety" ? (
+										<div className="max-w-5xl space-y-4">
+											<div className="rounded-md border border-dashed border-border bg-card/40 p-4">
+												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+													<div className="min-w-0">
+														<div className="flex items-center gap-2">
+															<PackageSearch className="h-5 w-5 text-muted-foreground" />
+															<p className="text-base font-medium text-foreground">
+																Package safety scan
+															</p>
+														</div>
+														<p className="mt-1 text-sm text-muted-foreground">
+															Source: {packageSafetyFactSource.replace("_", " ")} ·
+															Database: {packageSafetyDatabase} · Depth:{" "}
+															{packageSafetyScanDepth}
+														</p>
+													</div>
 													<Button
-														key={entry.value}
 														type="button"
-														variant={kind === entry.value ? "default" : "outline"}
-														className={`gap-2 ${segmentedButtonClass(
-															index,
-															INSPECTOR_KINDS.length,
-														)}`}
-														onClick={() => setKind(entry.value)}
+														variant="outline"
+														className="h-9 gap-2"
+														disabled={snapshotLoading !== null}
+														onClick={() => void handleSnapshotLoad("package_safety")}
 													>
-														<Icon className="h-4 w-4" />
-														{t(entry.labelKey, {
-															defaultValue: entry.defaultLabel,
-														})}
+														{snapshotLoading === "package_safety" ? (
+															<RefreshCcw className="h-4 w-4 animate-spin" />
+														) : (
+															<PackageSearch className="h-4 w-4" />
+														)}
+														Start scan (draft)
 													</Button>
-												);
-											})}
-										</ButtonGroup>
-									</div>
-									<Button
-										type="button"
-										className="h-9 gap-2"
-										disabled={!selectedTarget}
-										onClick={() => setDrawerOpen(true)}
-									>
-										<ActiveIcon className="h-4 w-4" />
-										{t("standalone.open", { defaultValue: "Open Inspector" })}
-									</Button>
-								</div>
-								<div className="mt-4 space-y-2">
-									<Label htmlFor={capabilityKeyId}>Capability key</Label>
-									<Input
-										id={capabilityKeyId}
-										value={capabilityKey}
-										onChange={(event) => setCapabilityKey(event.target.value)}
-										placeholder="Optional tool, prompt, resource, or template key"
-										className="font-mono text-sm"
-									/>
-								</div>
-							</div>
-						</TabsContent>
-
-						<TabsContent value="compatibility" className="m-0 max-w-4xl">
-							<div className="rounded-md border border-border bg-card/60 p-4">
-								<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-									<div className="min-w-0">
-										<div className="flex items-center gap-2">
-											<ShieldCheck className="h-5 w-5 text-muted-foreground" />
-											<p className="text-base font-medium text-foreground">
-												Compatibility
-											</p>
-										</div>
-										<p className="mt-1 text-sm text-muted-foreground">
-											{snapshotState?.kind === "compatibility"
-												? `${snapshotTitle(snapshotState.kind)} - ${snapshotState.loadedAt}`
-												: "No compatibility snapshot loaded."}
-										</p>
-									</div>
-									<Button
-										type="button"
-										variant="outline"
-										className="h-9 gap-2"
-										disabled={snapshotLoading !== null}
-										onClick={() => void handleSnapshotLoad("compatibility")}
-									>
-										{snapshotLoading === "compatibility" ? (
-											<RefreshCcw className="h-4 w-4 animate-spin" />
-										) : (
-											<ShieldCheck className="h-4 w-4" />
-										)}
-										Load snapshot
-									</Button>
-								</div>
-								{snapshotState?.kind === "compatibility" ? (
-									<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
-										{JSON.stringify(snapshotState.payload, null, 2)}
-									</pre>
-								) : null}
-							</div>
-						</TabsContent>
-
-						<TabsContent value="package_safety" className="m-0 max-w-4xl">
-							<div className="rounded-md border border-border bg-card/60 p-4">
-								<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-									<div className="min-w-0">
-										<div className="flex items-center gap-2">
-											<PackageSearch className="h-5 w-5 text-muted-foreground" />
-											<p className="text-base font-medium text-foreground">
-												Package Safety
-											</p>
-										</div>
-										<p className="mt-1 text-sm text-muted-foreground">
-											{snapshotState?.kind === "package_safety"
-												? `${snapshotTitle(snapshotState.kind)} - ${snapshotState.loadedAt}`
-												: "No package safety snapshot loaded."}
-										</p>
-									</div>
-									<Button
-										type="button"
-										variant="outline"
-										className="h-9 gap-2"
-										disabled={snapshotLoading !== null}
-										onClick={() => void handleSnapshotLoad("package_safety")}
-									>
-										{snapshotLoading === "package_safety" ? (
-											<RefreshCcw className="h-4 w-4 animate-spin" />
-										) : (
-											<PackageSearch className="h-4 w-4" />
-										)}
-										Load snapshot
-									</Button>
-								</div>
-								{snapshotState?.kind === "package_safety" ? (
-									<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
-										{JSON.stringify(snapshotState.payload, null, 2)}
-									</pre>
-								) : null}
-							</div>
-						</TabsContent>
-
-						<TabsContent value="llm_evaluation" className="m-0 max-w-4xl">
-							<div className="rounded-md border border-border bg-card/60 p-4">
-								<div className="flex flex-col gap-4">
-									<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-										<div className="min-w-0">
-											<div className="flex items-center gap-2">
-												<MessageSquareText className="h-5 w-5 text-muted-foreground" />
-												<p className="text-base font-medium text-foreground">
-													LLM evaluation
-												</p>
+												</div>
 											</div>
-											<p className="mt-1 text-sm text-muted-foreground">
-												{evaluationState
-													? `Evaluation loaded - ${evaluationState.loadedAt}`
-													: "No evaluation loaded."}
-											</p>
+											<div className="rounded-md border border-dashed border-border bg-card/20 p-4">
+												<p className="text-sm font-medium text-foreground">
+													Scan progress and findings
+												</p>
+												<p className="mt-1 text-sm text-muted-foreground">
+													Structured results or embedded report views will render here.
+												</p>
+												{snapshotState?.kind === "package_safety" ? (
+													<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
+														{JSON.stringify(snapshotState.payload, null, 2)}
+													</pre>
+												) : null}
+											</div>
 										</div>
-										<Button
-											type="button"
-											className="h-9 gap-2"
-											disabled={evaluationLoading}
-											onClick={() => void handleEvaluationRun()}
-										>
-											{evaluationLoading ? (
-												<RefreshCcw className="h-4 w-4 animate-spin" />
-											) : (
-												<MessageSquareText className="h-4 w-4" />
-											)}
-											Run evaluation
-										</Button>
-									</div>
-									<div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-										<div className="space-y-2">
-											<Label htmlFor={evaluationProviderId}>Provider ID</Label>
-											<Input
-												id={evaluationProviderId}
-												value={evaluationProviderIdValue}
-												onChange={(event) =>
-													setEvaluationProviderIdValue(event.target.value)
-												}
-												placeholder="default provider"
-												className="font-mono text-sm"
-											/>
+									) : null}
+
+									{workspaceView === "llm_evaluation" ? (
+										<div className="max-w-5xl space-y-4">
+											<div className="rounded-md border border-dashed border-border bg-card/40 p-4">
+												<div className="flex flex-col gap-4">
+													<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+														<div className="min-w-0">
+															<div className="flex items-center gap-2">
+																<MessageSquareText className="h-5 w-5 text-muted-foreground" />
+																<p className="text-base font-medium text-foreground">
+																	LLM evaluation
+																</p>
+															</div>
+															<p className="mt-1 text-sm text-muted-foreground">
+																Focus: {llmEvaluationFocus.join(", ") || "none"} ·
+																Provider: {evaluationProviderIdValue || "default"}
+															</p>
+														</div>
+														<Button
+															type="button"
+															className="h-9 gap-2"
+															disabled={evaluationLoading}
+															onClick={() => void handleEvaluationRun()}
+														>
+															{evaluationLoading ? (
+																<RefreshCcw className="h-4 w-4 animate-spin" />
+															) : (
+																<MessageSquareText className="h-4 w-4" />
+															)}
+															Run evaluation (draft)
+														</Button>
+													</div>
+													<div className="space-y-2">
+														<Label htmlFor={evaluationScenarioId}>Scenario</Label>
+														<Textarea
+															id={evaluationScenarioId}
+															value={evaluationScenario}
+															onChange={(event) =>
+																setEvaluationScenario(event.target.value)
+															}
+															placeholder="Ask the model to review this server using the selected focus dimensions."
+															className="min-h-28 text-sm"
+														/>
+													</div>
+												</div>
+											</div>
+											<div className="rounded-md border border-dashed border-border bg-card/20 p-4">
+												<p className="text-sm font-medium text-foreground">
+													Analysis and recommendations
+												</p>
+												<p className="mt-1 text-sm text-muted-foreground">
+													Factual scan outputs feed into the model; recommendations list
+													here. Follow-up chat comes later.
+												</p>
+												{evaluationState ? (
+													<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
+														{JSON.stringify(evaluationState.evaluation, null, 2)}
+													</pre>
+												) : null}
+											</div>
 										</div>
-										<div className="space-y-2">
-											<Label htmlFor={evaluationScenarioId}>Scenario</Label>
-											<Textarea
-												id={evaluationScenarioId}
-												value={evaluationScenario}
-												onChange={(event) =>
-													setEvaluationScenario(event.target.value)
-												}
-												placeholder="Convert 9 AM in Singapore to New York time."
-												className="min-h-28 text-sm"
-											/>
-										</div>
-									</div>
-									{evaluationState ? (
-										<pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
-											{JSON.stringify(evaluationState.evaluation, null, 2)}
-										</pre>
 									) : null}
 								</div>
-							</div>
-						</TabsContent>
+							</>
+						)}
+					</main>
 
-						<TabsContent value="patcher" className="m-0 max-w-4xl">
-							<div className="rounded-md border border-border bg-card/60 p-4">
-								<div className="flex flex-col gap-4">
-									<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-										<div className="min-w-0">
-											<div className="flex items-center gap-2">
-												<PencilLine className="h-5 w-5 text-muted-foreground" />
-												<p className="text-base font-medium text-foreground">
-													Capability patcher
-												</p>
-											</div>
-											<p className="mt-1 text-sm text-muted-foreground">
-												{patchState
-													? `Patch saved - ${patchState.loadedAt}`
-													: "No patch saved."}
-											</p>
-										</div>
-										<Button
-											type="button"
-											className="h-9 gap-2"
-											disabled={patchLoading}
-											onClick={() => void handlePatchApply()}
-										>
-											{patchLoading ? (
-												<RefreshCcw className="h-4 w-4 animate-spin" />
-											) : (
-												<PencilLine className="h-4 w-4" />
-											)}
-											Save patch
-										</Button>
-									</div>
-									<div className="space-y-2">
-										<Label>Capability kind</Label>
-										<ButtonGroup className="flex flex-wrap">
-											{CAPABILITY_PATCH_KINDS.map((entry, index) => (
-												<Button
-													key={entry.value}
-													type="button"
-													variant={patchKind === entry.value ? "default" : "outline"}
-													className={segmentedButtonClass(
-														index,
-														CAPABILITY_PATCH_KINDS.length,
-													)}
-													onClick={() => setPatchKind(entry.value)}
-												>
-													{entry.label}
-												</Button>
-											))}
-										</ButtonGroup>
-									</div>
-									<div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-										<div className="space-y-2">
-											<Label htmlFor={patchKeyId}>Capability key</Label>
-											<Input
-												id={patchKeyId}
-												value={patchCapabilityKey}
-												onChange={(event) =>
-													setPatchCapabilityKey(event.target.value)
-												}
-												placeholder="time_convert_time"
-												className="font-mono text-sm"
-											/>
-										</div>
-										<div className="space-y-2">
-											<Label htmlFor={patchJsonId}>Patch JSON</Label>
-											<Textarea
-												id={patchJsonId}
-												value={patchJson}
-												onChange={(event) => setPatchJson(event.target.value)}
-												placeholder={'{\n  "description": "..."\n}'}
-												className="min-h-32 font-mono text-xs"
-												spellCheck={false}
-											/>
-										</div>
-									</div>
-									{patchState ? (
-										<pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
-											{JSON.stringify(patchState.record, null, 2)}
-										</pre>
-									) : null}
+					<InspectorBottomPanel
+						expanded={activityPanelExpanded}
+						onExpandedChange={setActivityPanelExpanded}
+						height={activityPanelHeight}
+						onHeightChange={setActivityPanelHeight}
+						title={`Activity · ${activityEvents.length}`}
+						search={{
+							value: activitySearch,
+							onChange: setActivitySearch,
+							open: activitySearchOpen,
+							onOpenChange: setActivitySearchOpen,
+							placeholder: "Search activity",
+							ariaLabel: "Search activity",
+							clearAriaLabel: "Clear activity search",
+						}}
+						pinned={activityPanelPinned}
+						onPinnedChange={setActivityPanelPinned}
+						headerActions={
+							<button
+								type="button"
+								className={INSPECTOR_BOTTOM_BAR_ICON_BUTTON_CLASSNAME}
+								disabled={activityEvents.length === 0}
+								aria-label="Clear activity"
+								onClick={clearEvents}
+							>
+								<BrushCleaning className="h-3.5 w-3.5" aria-hidden />
+							</button>
+						}
+					>
+						<ActivityLogTable
+							rows={activityRows}
+							headers={{
+								expandColumn: "Details",
+								timestamp: "Time",
+								action: "Action",
+								category: "Category",
+								status: "Status",
+								target: "Target",
+								duration: "Duration",
+							}}
+							emptyState={
+								<div className="p-6 text-sm text-muted-foreground">
+									No Inspector activity for the selected target.
 								</div>
-							</div>
-						</TabsContent>
-					</div>
-				</Tabs>
-			</main>
+							}
+							size="small"
+							fillContainer
+							interactiveColumns
+							onRowClick={(row) => {
+								if (row.eventId) {
+									setSelectedActivityEntryId(row.eventId);
+								}
+							}}
+						/>
+					</InspectorBottomPanel>
 
-			<InspectorDrawer
-				open={drawerOpen}
-				onOpenChange={setDrawerOpen}
-				serverId={selectedTarget?.source === "managed" ? selectedTarget.id : undefined}
-				serverName={selectedTarget?.name}
-				scratchId={selectedTarget?.source === "scratch" ? selectedTarget.id : undefined}
-				showStandaloneButton={false}
-				kind={kind}
-				item={selectedCapabilityItem}
-			/>
+					<InspectorEventDetailDrawer
+						open={selectedActivityEntry !== null}
+						onOpenChange={(open) => {
+							if (!open) {
+								setSelectedActivityEntryId(null);
+							}
+						}}
+						entry={selectedActivityEntry}
+					/>
 
-			<ServerInstallManualForm
-				isOpen={scratchImportOpen}
-				onClose={() => {
-					if (!scratchImportSaving) {
-						setScratchImportOpen(false);
-					}
-				}}
-				onSubmit={handleScratchImport}
-				onSubmitMultiple={handleScratchImportMultiple}
-				drawerDirection="left"
-			/>
-		</div>
+				</div>
+			</InspectorWindowLayout>
+		</InspectorChromeProvider>
 	);
 }

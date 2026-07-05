@@ -15,7 +15,7 @@ import { cn } from "../lib/utils";
 
 export type CapabilityKind = "tool" | "prompt" | "resource" | "template";
 
-export interface CapabilityRecordLike {}
+export interface CapabilityRecordLike { }
 
 export interface CapabilityComboboxProps<T extends CapabilityRecordLike = CapabilityRecordLike> {
   kind: CapabilityKind;
@@ -32,9 +32,13 @@ export interface CapabilityComboboxProps<T extends CapabilityRecordLike = Capabi
   renderTriggerTrailing?: (item: T) => ReactNode;
   renderItemLeading?: (item: T) => ReactNode;
   renderItemTrailing?: (item: T) => ReactNode;
+  menuInputTrailing?: ReactNode;
+  menuWidthTargetRef?: React.RefObject<HTMLElement | null>;
+  menuMatchTargetWidth?: boolean;
   menuBleed?: boolean;
   menuGroupClassName?: string;
   menuItemClassName?: string;
+  menuItemContentClassName?: string;
   getKey: (item: T) => string;
   getLabel: (item: T) => string;
   getDescription?: (item: T) => string | undefined;
@@ -55,9 +59,13 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
     renderTriggerTrailing,
     renderItemLeading,
     renderItemTrailing,
+    menuInputTrailing,
+    menuWidthTargetRef,
+    menuMatchTargetWidth = false,
     menuBleed = true,
     menuGroupClassName,
     menuItemClassName,
+    menuItemContentClassName,
     getKey,
     getLabel,
     getDescription,
@@ -79,7 +87,10 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
 
   React.useEffect(() => {
     if (!open || !triggerRef.current) return;
-    const el = triggerRef.current;
+    const el =
+      menuMatchTargetWidth && menuWidthTargetRef?.current
+        ? menuWidthTargetRef.current
+        : triggerRef.current;
     const update = () => setMenuWidth(el.offsetWidth);
     update();
     const ro = new ResizeObserver(update);
@@ -89,7 +100,7 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
       ro.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [open]);
+  }, [menuMatchTargetWidth, menuWidthTargetRef, open]);
 
   const selectedItem = React.useMemo(() => {
     if (!value) return undefined;
@@ -145,7 +156,16 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
         style={menuWidth ? { width: `${menuWidth}px` } : undefined}
       >
         <Command className={menuBleed ? "rounded-none" : undefined}>
-          <CommandInput placeholder={placeholder} />
+          <div className="relative flex items-center">
+            <div className="min-w-0 flex-1">
+              <CommandInput placeholder={placeholder} />
+            </div>
+            {menuInputTrailing ? (
+              <div className="shrink-0 border-b pr-2 flex h-[45px] items-center">
+                {menuInputTrailing}
+              </div>
+            ) : null}
+          </div>
           <CommandList
             className={
               menuBleed
@@ -189,7 +209,8 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
                     <div
                       className={cn(
                         "flex w-full min-w-0 items-center gap-3",
-                        menuBleed && "px-4",
+                        menuBleed && menuItemContentClassName === undefined && "px-4",
+                        menuItemContentClassName,
                       )}
                     >
                       {renderItemLeading ? renderItemLeading(entry) : null}

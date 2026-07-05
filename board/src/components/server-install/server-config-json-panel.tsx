@@ -3,6 +3,7 @@ import { writeClipboardText } from "../../lib/clipboard";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
+import { cn } from "../../lib/utils";
 
 interface ServerConfigJsonPanelProps {
 	id: string;
@@ -10,6 +11,7 @@ interface ServerConfigJsonPanelProps {
 	jsonText: string;
 	jsonError: string | null;
 	jsonEditingEnabled: boolean;
+	className?: string;
 	onJsonChange?: (text: string) => void;
 	copyLabel?: string;
 }
@@ -20,11 +22,12 @@ export function ServerConfigJsonPanel({
 	jsonText,
 	jsonError,
 	jsonEditingEnabled,
+	className,
 	onJsonChange,
 	copyLabel = "Copy JSON",
 }: ServerConfigJsonPanelProps) {
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
+		<div className={cn("flex min-h-0 flex-1 flex-col", className)}>
 			<div className="flex min-h-0 flex-1 items-stretch gap-4">
 				<Label htmlFor={id} className="w-20 shrink-0 pt-3 text-right">
 					{label}

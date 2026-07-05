@@ -63,6 +63,10 @@ pub struct InspectorLlmEvaluationReq {
     pub provider_id: Option<String>,
     #[serde(default)]
     pub max_tools: Option<usize>,
+    #[serde(default)]
+    pub dimensions: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<Value>,
     pub server_id: Option<String>,
     pub server_name: Option<String>,
     pub scratch_id: Option<String>,
@@ -91,6 +95,26 @@ pub struct InspectorPromptGetReq {
     pub proxy_mode: Option<InspectorProxyMode>,
     #[serde(default)]
     pub proxy_scope: Option<InspectorProxyScope>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InspectorSnapshotQuery {
+    pub server_id: Option<String>,
+    pub server_name: Option<String>,
+    pub scratch_id: Option<String>,
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub mode: InspectorMode,
+    #[serde(default)]
+    pub proxy_mode: Option<InspectorProxyMode>,
+    #[serde(default)]
+    pub proxy_scope: Option<InspectorProxyScope>,
+    #[serde(default)]
+    pub spec_version: Option<String>,
+    #[serde(default)]
+    pub package_source: Option<String>,
+    #[serde(default)]
+    pub scan_depth: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -168,6 +192,34 @@ impl From<&InspectorListQuery> for InspectorSnapshotRequest {
         Self {
             target: query.into(),
             session_id: query.session_id.clone(),
+            spec_version: None,
+            package_source: None,
+            scan_depth: None,
+        }
+    }
+}
+
+impl From<&InspectorSnapshotQuery> for InspectorTargetRequest {
+    fn from(query: &InspectorSnapshotQuery) -> Self {
+        inspector_target_request(
+            query.mode,
+            &query.server_id,
+            &query.server_name,
+            &query.scratch_id,
+            query.proxy_mode,
+            query.proxy_scope,
+        )
+    }
+}
+
+impl From<&InspectorSnapshotQuery> for InspectorSnapshotRequest {
+    fn from(query: &InspectorSnapshotQuery) -> Self {
+        Self {
+            target: query.into(),
+            session_id: query.session_id.clone(),
+            spec_version: query.spec_version.clone(),
+            package_source: query.package_source.clone(),
+            scan_depth: query.scan_depth.clone(),
         }
     }
 }
@@ -235,6 +287,8 @@ impl From<&InspectorLlmEvaluationReq> for InspectorLlmEvaluationRequest {
             provider_id: req.provider_id.clone(),
             scenario: req.scenario.clone(),
             max_tools: req.max_tools,
+            dimensions: req.dimensions.clone(),
+            evidence: req.evidence.clone(),
         }
     }
 }

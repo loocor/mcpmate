@@ -131,6 +131,7 @@ import {
 	SECONDARY_TAB_CONTENT_CLASS,
 } from "./form-tab-layout";
 import { CoreConfigTabPanel } from "./core-config-tab-panel";
+import { SERVER_INSTALL_FORM_ROW_LABEL_CLASS } from "./field-list";
 import { ServerConfigJsonPanel } from "./server-config-json-panel";
 import {
 	breathingAnimation,
@@ -1792,7 +1793,7 @@ export const ServerInstallWizard = forwardRef(
 					className={cn(
 						"group relative transition-colors",
 						(bulkSelected || options.isActive) &&
-							"bg-primary/10 ring-1 ring-slate-200/80 dark:ring-slate-700/60",
+						"bg-primary/10 ring-1 ring-slate-200/80 dark:ring-slate-700/60",
 					)}
 					onClick={handleRowActivate}
 					onKeyDown={(event) => {
@@ -2151,8 +2152,8 @@ export const ServerInstallWizard = forwardRef(
 												formContent={
 													<>
 														<div className="space-y-4">
-															<div className="flex items-center gap-4">
-																<Label htmlFor={nameId} className="w-20 text-right">
+															<div className="flex items-center gap-3">
+																<Label htmlFor={nameId} className={SERVER_INSTALL_FORM_ROW_LABEL_CLASS}>
 																	{t("manual.fields.name.label", {
 																		defaultValue: "Name",
 																	})}
@@ -2194,8 +2195,8 @@ export const ServerInstallWizard = forwardRef(
 																	)}
 																</div>
 															</div>
-															<div className="flex items-center gap-4">
-																<Label htmlFor={kindId} className="w-20 text-right">
+															<div className="flex items-center gap-3">
+																<Label htmlFor={kindId} className={SERVER_INSTALL_FORM_ROW_LABEL_CLASS}>
 																	{t("manual.fields.type.label", {
 																		defaultValue: "Type",
 																	})}
@@ -2605,9 +2606,9 @@ export const ServerInstallWizard = forwardRef(
 											emptyText={
 												capabilityKindFilters.length
 													? t("wizard.preview.emptyCapabilityFilters", {
-															defaultValue:
-																"No capabilities match the selected filters.",
-														})
+														defaultValue:
+															"No capabilities match the selected filters.",
+													})
 													: undefined
 											}
 											renderFlatList={renderImportFlatCapabilityList}

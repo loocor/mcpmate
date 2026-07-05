@@ -979,10 +979,8 @@ async fn inspector_native_scratch_record_runs_without_registry_server() {
         data_str(&safety_body, "/data/snapshot/target/source"),
         "scratch_workspace"
     );
-    assert_eq!(
-        data_str(&safety_body, "/data/snapshot/scanner/status"),
-        "not_configured"
-    );
+    assert_eq!(data_str(&safety_body, "/data/snapshot/scanner/status"), "completed");
+    assert_eq!(data_str(&safety_body, "/data/snapshot/scanner/provider"), "local_rules");
     assert!(
         data_str(&safety_body, "/data/snapshot/inventory/fingerprint").starts_with("cmd:"),
         "stdio scratch inventory should expose a command fingerprint: {safety_body}"

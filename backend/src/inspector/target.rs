@@ -46,6 +46,9 @@ pub struct InspectorCapabilityListRequest {
 pub struct InspectorSnapshotRequest {
     pub target: InspectorTargetRequest,
     pub session_id: Option<String>,
+    pub spec_version: Option<String>,
+    pub package_source: Option<String>,
+    pub scan_depth: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +90,8 @@ pub struct InspectorLlmEvaluationRequest {
     pub provider_id: Option<String>,
     pub scenario: String,
     pub max_tools: Option<usize>,
+    pub dimensions: Vec<String>,
+    pub evidence: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

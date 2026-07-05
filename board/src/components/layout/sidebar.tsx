@@ -17,34 +17,76 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, useLocation } from "react-router-dom";
 import { resolveMarketListHref } from "../../pages/market/market-list-pagination-storage";
+import {
+  openInspectorWindow,
+  shouldOpenInspectorInSameTab,
+} from "../../lib/open-inspector-window";
 import { useAppStore } from "../../lib/store";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { AccountSessionDialog } from "./account-session-dialog";
+import { SidebarBrandBadge } from "./sidebar-brand-badge";
+import {
+  SidebarNavIcon,
+  SidebarSectionLabelSlot,
+  sidebarBodyClassName,
+  sidebarFooterClassName,
+  sidebarHeaderBrandClassName,
+  sidebarHeaderClassName,
+  sidebarLogoToggleClassName,
+  sidebarNavItemClassName,
+} from "./sidebar-nav-item";
 
 interface SidebarLinkProps {
   to: string;
   icon: React.ReactNode;
   children: React.ReactNode;
+  sidebarOpen: boolean;
 }
 
-function SidebarLink({ to, icon, children }: SidebarLinkProps) {
+function SidebarLink({ to, icon, children, sidebarOpen }: SidebarLinkProps) {
   return (
     <NavLink
       to={to}
       className={({ isActive }) =>
-        cn(
-          "flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors",
-          "hover:bg-accent",
-          isActive
-            ? "bg-accent text-accent-foreground"
-            : "text-muted-foreground",
-        )
+        sidebarNavItemClassName(sidebarOpen, { active: isActive })
       }
     >
-      <span className="mr-3 h-5 w-5">{icon}</span>
-      <span>{children}</span>
+      <SidebarNavIcon sidebarOpen={sidebarOpen}>{icon}</SidebarNavIcon>
+      {sidebarOpen ? <span>{children}</span> : null}
     </NavLink>
+  );
+}
+
+interface SidebarInspectorLinkProps {
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  sidebarOpen: boolean;
+}
+
+function SidebarInspectorLink({
+  icon,
+  children,
+  sidebarOpen,
+}: SidebarInspectorLinkProps) {
+  const { t } = useTranslation();
+
+  return (
+    <a
+      href="/inspector"
+      className={sidebarNavItemClassName(sidebarOpen)}
+      aria-label={t("nav.inspector", { defaultValue: "Inspector" })}
+      onClick={(event) => {
+        if (shouldOpenInspectorInSameTab(event)) {
+          return;
+        }
+        event.preventDefault();
+        openInspectorWindow();
+      }}
+    >
+      <SidebarNavIcon sidebarOpen={sidebarOpen}>{icon}</SidebarNavIcon>
+      {sidebarOpen ? <span>{children}</span> : null}
+    </a>
   );
 }
 
@@ -69,13 +111,8 @@ export function Sidebar() {
         sidebarOpen ? "w-64" : "w-16",
       )}
     >
-      <div className="flex h-16 shrink-0 items-center px-4">
-        <div
-          className={cn(
-            "flex min-w-0 items-center gap-2",
-            sidebarOpen ? "w-full" : "w-full justify-center",
-          )}
-        >
+      <div className={sidebarHeaderClassName()}>
+        <div className={sidebarHeaderBrandClassName(sidebarOpen)}>
           {sidebarOpen ? (
             <>
               {/* Brand: show logo + title when expanded; overflow-x-hidden on sidebar clips during width transition */}
@@ -89,9 +126,7 @@ export function Sidebar() {
               />
               <span className="shrink-0 whitespace-nowrap font-bold text-xl text-foreground">
                 {t("layout.brand", { defaultValue: "MCPMate" })}{" "}
-                <sup className="text-[9px] text-muted-foreground">
-                  {t("layout.alpha", { defaultValue: "Beta" })}
-                </sup>
+                <SidebarBrandBadge />
               </span>
               <Button
                 variant="ghost"
@@ -109,7 +144,7 @@ export function Sidebar() {
             <button
               type="button"
               onClick={toggleSidebar}
-              className="flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-accent"
+              className={sidebarLogoToggleClassName()}
               aria-label={t("layout.expandSidebar", {
                 defaultValue: "Expand sidebar",
               })}
@@ -124,72 +159,107 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="flex flex-col flex-1 gap-1 px-2 py-4">
-        <div className={cn("flex", !sidebarOpen && "justify-center")}>
-          {sidebarOpen ? (
-            <span className="px-3 text-xs font-semibold text-muted-foreground mb-1">
-              {t("nav.main", { defaultValue: "MAIN" })}
-            </span>
-          ) : null}
-        </div>
+      <div className={sidebarBodyClassName(sidebarOpen)}>
+        <SidebarSectionLabelSlot
+          sidebarOpen={sidebarOpen}
+          label={t("nav.main", { defaultValue: "MAIN" })}
+        />
 
-        <SidebarLink to="/" icon={<LayoutDashboard size={20} />}>
-          {sidebarOpen && t("nav.dashboard", { defaultValue: "Dashboard" })}
+        <SidebarLink
+          to="/"
+          icon={<LayoutDashboard size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.dashboard", { defaultValue: "Dashboard" })}
         </SidebarLink>
 
-        <SidebarLink to="/profiles" icon={<Sliders size={20} />}>
-          {sidebarOpen && t("nav.profiles", { defaultValue: "Profiles" })}
+        <SidebarLink
+          to="/profiles"
+          icon={<Sliders size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.profiles", { defaultValue: "Profiles" })}
         </SidebarLink>
 
-        <SidebarLink to="/clients" icon={<AppWindow size={20} />}>
-          {sidebarOpen && t("nav.clients", { defaultValue: "Clients" })}
+        <SidebarLink
+          to="/clients"
+          icon={<AppWindow size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.clients", { defaultValue: "Clients" })}
         </SidebarLink>
 
-        <SidebarLink to="/servers" icon={<Server size={20} />}>
-          {sidebarOpen && t("nav.servers", { defaultValue: "Servers" })}
+        <SidebarLink
+          to="/servers"
+          icon={<Server size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.servers", { defaultValue: "Servers" })}
         </SidebarLink>
 
-        <SidebarLink to={marketHref} icon={<Store size={20} />}>
-          {sidebarOpen && t("nav.market", { defaultValue: "Market" })}
+        <SidebarLink
+          to={marketHref}
+          icon={<Store size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.market", { defaultValue: "Market" })}
         </SidebarLink>
 
         {/* Tools removed per feedback */}
 
-        <div className={cn("flex mt-4", !sidebarOpen && "justify-center")}>
-          {sidebarOpen ? (
-            <span className="px-3 text-xs font-semibold text-muted-foreground mb-1">
-              {t("nav.developer", { defaultValue: "Advanced" })}
-            </span>
-          ) : null}
-        </div>
+        <SidebarSectionLabelSlot
+          sidebarOpen={sidebarOpen}
+          label={t("nav.developer", { defaultValue: "Advanced" })}
+          className={sidebarOpen ? "mt-4" : undefined}
+        />
 
-        <SidebarLink to="/audit" icon={<FileSearch size={20} />}>
-          {sidebarOpen && t("nav.audit", { defaultValue: "Logs" })}
+        <SidebarLink
+          to="/audit"
+          icon={<FileSearch size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.audit", { defaultValue: "Logs" })}
         </SidebarLink>
 
-        <SidebarLink to="/secrets" icon={<KeyRound size={20} />}>
-          {sidebarOpen && t("nav.secrets", { defaultValue: "Secure Store" })}
+        <SidebarLink
+          to="/secrets"
+          icon={<KeyRound size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.secrets", { defaultValue: "Secure Store" })}
         </SidebarLink>
 
-        <SidebarLink to="/runtime" icon={<Activity size={20} />}>
-          {sidebarOpen && t("nav.runtime", { defaultValue: "Runtime" })}
+        <SidebarLink
+          to="/runtime"
+          icon={<Activity size={20} />}
+          sidebarOpen={sidebarOpen}
+        >
+          {t("nav.runtime", { defaultValue: "Runtime" })}
         </SidebarLink>
 
-        <SidebarLink to="/inspector" icon={<Microscope size={20} />}>
-          {sidebarOpen && t("nav.inspector", { defaultValue: "Inspector" })}
-        </SidebarLink>
+        <SidebarInspectorLink icon={<Microscope size={20} />} sidebarOpen={sidebarOpen}>
+          {t("nav.inspector", { defaultValue: "Inspector" })}
+        </SidebarInspectorLink>
 
         {showApiDocsMenu && (
-          <SidebarLink to="/api-docs" icon={<Bug size={20} />}>
-            {sidebarOpen && t("nav.apiDocs", { defaultValue: "API Docs" })}
+          <SidebarLink
+            to="/api-docs"
+            icon={<Bug size={20} />}
+            sidebarOpen={sidebarOpen}
+          >
+            {t("nav.apiDocs", { defaultValue: "API Docs" })}
           </SidebarLink>
         )}
 
-        <div className="mt-auto flex flex-col gap-1">
+        <div className={sidebarFooterClassName(sidebarOpen)}>
           <AccountSessionDialog sidebarOpen={sidebarOpen} />
 
-          <SidebarLink to="/settings" icon={<Settings size={20} />}>
-            {sidebarOpen && t("nav.settings", { defaultValue: "Settings" })}
+          <SidebarLink
+            to="/settings"
+            icon={<Settings size={20} />}
+            sidebarOpen={sidebarOpen}
+          >
+            {t("nav.settings", { defaultValue: "Settings" })}
           </SidebarLink>
         </div>
       </div>

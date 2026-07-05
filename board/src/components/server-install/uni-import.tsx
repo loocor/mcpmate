@@ -75,6 +75,7 @@ import {
 	SECONDARY_TAB_CONTENT_CLASS,
 } from "./form-tab-layout";
 import { CoreConfigTabPanel } from "./core-config-tab-panel";
+import { SERVER_INSTALL_FORM_ROW_LABEL_CLASS } from "./field-list";
 import { ServerConfigJsonPanel } from "./server-config-json-panel";
 import {
 	breathingAnimation,
@@ -1107,8 +1108,8 @@ export const ServerInstallManualForm = forwardRef<
 											formContent={
 												<>
 													<div className="space-y-4">
-														<div className="flex items-center gap-4">
-															<Label htmlFor={nameId} className="w-20 text-right">
+														<div className="flex items-center gap-3">
+															<Label htmlFor={nameId} className={SERVER_INSTALL_FORM_ROW_LABEL_CLASS}>
 																{nameLabel}
 															</Label>
 															<div className="flex-1">
@@ -1134,8 +1135,8 @@ export const ServerInstallManualForm = forwardRef<
 																)}
 															</div>
 														</div>
-														<div className="flex items-center gap-4">
-															<Label htmlFor={kindId} className="w-20 text-right">
+														<div className="flex items-center gap-3">
+															<Label htmlFor={kindId} className={SERVER_INSTALL_FORM_ROW_LABEL_CLASS}>
 																{typeLabel}
 															</Label>
 															<div className="flex-1">

@@ -27,6 +27,7 @@ interface HttpHeadersProps {
 	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
 	getRowKeyAt?: (index: number) => string | undefined;
+	labelClassName?: string;
 }
 
 export function HttpHeaders({
@@ -44,6 +45,7 @@ export function HttpHeaders({
 	onCreateSecret,
 	secretOriginBase,
 	getRowKeyAt,
+	labelClassName,
 }: HttpHeadersProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form" || isStdio) return null;
@@ -52,6 +54,7 @@ export function HttpHeaders({
 		<FieldList
 			label={t("manual.fields.headers.label", { defaultValue: "HTTP Headers" })}
 			labelTooltip={labelTooltip}
+			labelClassName={labelClassName}
 			fields={headerFields}
 			onRemove={removeHeader}
 			deleteConfirmStates={deleteConfirmStates}

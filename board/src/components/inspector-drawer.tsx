@@ -23,6 +23,7 @@ import { writeClipboardText } from "../lib/clipboard";
 import { smartFormat } from "../lib/format";
 import { usePageTranslations } from "../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../lib/notify";
+import { openInspectorWindow } from "../lib/open-inspector-window";
 import type { InspectorSessionOpenData, InspectorSseEvent } from "../lib/types";
 import type {
 	CapabilityArgument,
@@ -527,8 +528,8 @@ export function InspectorDrawer({
 		proxyUsesActiveCatalog ||
 		Boolean(
 			requestTargetPayload.server_id ||
-				requestTargetPayload.server_name ||
-				requestTargetPayload.scratch_id,
+			requestTargetPayload.server_name ||
+			requestTargetPayload.scratch_id,
 		);
 	const optionListKey = `${nativeTargetKey}:${mode}:${proxyMode}:${proxyScope}:${kind}`;
 	const hasListedOptions = listedOptionKeys.has(optionListKey);
@@ -1351,7 +1352,7 @@ export function InspectorDrawer({
 	]);
 	const handleOpenStandalone = useCallback(() => {
 		if (!standaloneUrl) return;
-		window.open(standaloneUrl, "_blank", "noopener,noreferrer");
+		openInspectorWindow(standaloneUrl);
 	}, [standaloneUrl]);
 
 	const handleInspectorEvent = useCallback(
@@ -1778,7 +1779,7 @@ export function InspectorDrawer({
 		mode === "native" ? nativeSession?.session_id : undefined;
 	const sessionActive = Boolean(displaySessionId);
 	const sessionIndicator =
-		kind === "tool" && mode === "native" ? (
+		mode === "native" ? (
 			<TooltipProvider delayDuration={150}>
 				<Tooltip>
 					<TooltipTrigger asChild>

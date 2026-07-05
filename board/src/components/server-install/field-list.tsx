@@ -13,10 +13,20 @@ import {
 import { GHOST_INPUT_CLASS } from "./types";
 
 /** Key column: content-sized within group, but capped so value always keeps room. */
-const fieldPairGridClassName =
-	"grid min-w-0 grid-cols-[minmax(6rem,fit-content(14rem))_minmax(0,1fr)] gap-x-2 gap-y-0.5";
-const fieldPairRowClassName =
-	"col-span-2 grid min-w-0 grid-cols-subgrid items-center py-0.5";
+export const FIELD_PAIR_GRID_CLASS =
+	"grid min-w-0 grid-cols-[minmax(6rem,fit-content(14rem))_minmax(0,1fr)] gap-x-3 gap-y-1.5";
+export const FIELD_PAIR_ROW_CLASS =
+	"col-span-2 grid min-w-0 grid-cols-subgrid items-center py-0";
+
+/** Shared left label column for server install / edit drawer form rows. */
+export const SERVER_INSTALL_FORM_ROW_LABEL_CLASS =
+	"flex min-h-9 w-[84px] shrink-0 items-center justify-end text-right leading-tight";
+
+/** FieldList section labels (multi-row lists such as env / headers). */
+export const FIELD_LIST_LABEL_CLASS = cn(
+	"self-start",
+	SERVER_INSTALL_FORM_ROW_LABEL_CLASS,
+);
 
 export const FIELD_PAIR_KEY_INPUT_CLASS = "min-w-0 w-full";
 export const FIELD_PAIR_VALUE_CELL_CLASS = "min-w-0 w-full";
@@ -126,6 +136,7 @@ export function PairGhostRow({
 interface FieldListProps {
 	label: string;
 	labelTooltip?: string;
+	labelClassName?: string;
 	fields: Array<{ id: string;[key: string]: unknown }>;
 	onRemove: (index: number) => void;
 	renderField: (
@@ -143,6 +154,7 @@ interface FieldListProps {
 export const FieldList: React.FC<FieldListProps> = ({
 	label,
 	labelTooltip,
+	labelClassName,
 	fields,
 	onRemove,
 	renderField,
@@ -163,7 +175,13 @@ export const FieldList: React.FC<FieldListProps> = ({
 		<TooltipProvider delayDuration={200}>
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<Label className="flex w-20 shrink-0 cursor-help select-none items-center justify-end self-start pt-2.5 text-right">
+					<Label
+						className={cn(
+							"cursor-help select-none",
+							FIELD_LIST_LABEL_CLASS,
+							labelClassName,
+						)}
+					>
 						{label}
 					</Label>
 				</TooltipTrigger>
@@ -177,32 +195,34 @@ export const FieldList: React.FC<FieldListProps> = ({
 			</Tooltip>
 		</TooltipProvider>
 	) : (
-		<Label className="flex w-20 shrink-0 items-center justify-end self-start pt-2.5 text-right">
+		<Label
+			className={cn(FIELD_LIST_LABEL_CLASS, labelClassName)}
+		>
 			{label}
 		</Label>
 	);
 
 	return (
 		<div className="space-y-0">
-			<div className="flex items-start gap-4">
+			<div className="flex items-start gap-3">
 				{labelNode}
 				{pairLayout ? (
-					<div className={cn("flex-1", fieldPairGridClassName)}>
+					<div className={cn("min-w-0 flex-1", FIELD_PAIR_GRID_CLASS)}>
 						{fields.map((field, index) => (
-							<div key={field.id} className={fieldPairRowClassName}>
+							<div key={field.id} className={FIELD_PAIR_ROW_CLASS}>
 								{renderField(field, index)}
 							</div>
 						))}
-						<div className={fieldPairRowClassName}>
+						<div className={FIELD_PAIR_ROW_CLASS}>
 							{renderField({ id: "ghost" }, fields.length)}
 						</div>
 					</div>
 				) : (
-					<div className="flex flex-1 flex-col gap-y-0.5">
+					<div className="flex min-w-0 flex-1 flex-col gap-y-1.5">
 						{fields.map((field, index) => (
 							<div
 								key={field.id}
-								className="group flex items-center gap-2 py-0.5"
+								className="group flex items-center gap-2 py-0"
 							>
 								<div className="relative min-w-0 flex-1">
 									{renderField(field, index)}
@@ -226,8 +246,8 @@ export const FieldList: React.FC<FieldListProps> = ({
 								</div>
 							</div>
 						))}
-						<div className="flex items-center gap-2 py-0.5">
-							<div className="relative flex-1">
+						<div className="flex items-center gap-2 py-0">
+							<div className="relative min-w-0 flex-1">
 								{renderField({ id: "ghost" }, fields.length)}
 							</div>
 						</div>

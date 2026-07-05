@@ -8,10 +8,10 @@ use crate::api::models::inspector::{
     InspectorResourceReadResp, InspectorResourcesListResp, InspectorScratchServerCreateReq,
     InspectorScratchServerCreateResp, InspectorScratchServerDeleteReq, InspectorScratchServerDeleteResp,
     InspectorScratchServerListResp, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
-    InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp, InspectorTemplatesListResp,
-    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallEvidenceQuery,
-    InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartResp,
-    InspectorToolsListResp,
+    InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp, InspectorSnapshotQuery,
+    InspectorTemplatesListResp, InspectorToolCallCancelReq, InspectorToolCallCancelResp,
+    InspectorToolCallEvidenceQuery, InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp,
+    InspectorToolCallStartResp, InspectorToolsListResp,
 };
 use crate::{aide_wrapper, aide_wrapper_payload, aide_wrapper_query};
 use aide::axum::{
@@ -99,13 +99,13 @@ aide_wrapper_query!(
 );
 aide_wrapper_query!(
     inspector::compatibility_snapshot,
-    InspectorListQuery,
+    InspectorSnapshotQuery,
     InspectorCompatibilitySnapshotResp,
     "Inspector: get compatibility snapshot"
 );
 aide_wrapper_query!(
     inspector::package_safety_snapshot,
-    InspectorListQuery,
+    InspectorSnapshotQuery,
     InspectorPackageSafetySnapshotResp,
     "Inspector: get package safety snapshot"
 );

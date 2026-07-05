@@ -5,6 +5,8 @@ import type { ManualServerFormValues } from "../types";
 import { useTranslation } from "react-i18next";
 import { SecureStringField } from "../secure-string-field";
 import type { SecretOrigin } from "../../../lib/types";
+import { cn } from "../../../lib/utils";
+import { SERVER_INSTALL_FORM_ROW_LABEL_CLASS } from "../field-list";
 
 interface CommandFieldProps {
 	kind: ManualServerFormValues["kind"];
@@ -15,6 +17,7 @@ interface CommandFieldProps {
 	viewMode: "form" | "json";
 	onCreateSecret?: (fieldName: string, origin: SecretOrigin) => void;
 	secretOriginBase?: SecretOrigin;
+	labelClassName?: string;
 }
 
 export function CommandField({
@@ -26,6 +29,7 @@ export function CommandField({
 	viewMode,
 	onCreateSecret,
 	secretOriginBase,
+	labelClassName,
 }: CommandFieldProps) {
 	const { t } = useTranslation("servers");
 	if (viewMode !== "form") return null;
@@ -33,11 +37,14 @@ export function CommandField({
 	const isStdio = kind === "stdio";
 
 	return isStdio ? (
-		<div key={`stdio-${kind}`} className="flex items-center gap-4">
-			<Label htmlFor={commandId} className="w-20 text-right">
+		<div key={`stdio-${kind}`} className="flex items-center gap-3">
+			<Label
+				htmlFor={commandId}
+				className={cn(SERVER_INSTALL_FORM_ROW_LABEL_CLASS, labelClassName)}
+			>
 				{t("manual.fields.command.label", { defaultValue: "Command" })}
 			</Label>
-			<div className="flex-1">
+			<div className="min-w-0 flex-1">
 				<Controller
 					name="command"
 					control={control}
@@ -75,11 +82,14 @@ export function CommandField({
 			</div>
 		</div>
 	) : (
-		<div key={`url-${kind}`} className="flex items-center gap-4">
-			<Label htmlFor={urlId} className="w-20 text-right">
+		<div key={`url-${kind}`} className="flex items-center gap-3">
+			<Label
+				htmlFor={urlId}
+				className={cn(SERVER_INSTALL_FORM_ROW_LABEL_CLASS, labelClassName)}
+			>
 				{t("manual.fields.url.label", { defaultValue: "Server URL" })}
 			</Label>
-			<div className="flex-1">
+			<div className="min-w-0 flex-1">
 				<Controller
 					name="url"
 					control={control}

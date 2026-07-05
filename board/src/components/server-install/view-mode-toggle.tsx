@@ -49,11 +49,10 @@ export const FormViewModeToggle = memo(function FormViewModeToggle({
 				type="button"
 				onClick={handleForm}
 				onKeyDown={(event) => handleKeyDown(event, "form")}
-				className={`rounded-l-md rounded-r-none font-medium transition-colors ${sizeClasses} ${
-					mode === "form"
-						? "bg-primary text-primary-foreground"
-						: "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
-				}`}
+				className={`rounded-l-md rounded-r-none font-medium transition-colors ${sizeClasses} ${mode === "form"
+					? "bg-primary text-primary-foreground"
+					: "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
+					}`}
 			>
 				{t("manual.viewMode.form", { defaultValue: "Form" })}
 			</button>
@@ -61,11 +60,10 @@ export const FormViewModeToggle = memo(function FormViewModeToggle({
 				type="button"
 				onClick={handleJson}
 				onKeyDown={(event) => handleKeyDown(event, "json")}
-				className={`rounded-r-md rounded-l-none font-medium transition-colors ${sizeClasses} ${
-					mode === "json"
-						? "bg-primary text-primary-foreground"
-						: "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
-				}`}
+				className={`rounded-r-md rounded-l-none font-medium transition-colors ${sizeClasses} ${mode === "json"
+					? "bg-primary text-primary-foreground"
+					: "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
+					}`}
 			>
 				{t("manual.viewMode.json", { defaultValue: "JSON" })}
 			</button>
