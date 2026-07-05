@@ -515,6 +515,7 @@ impl OAuthManager {
             updated_at: None,
         };
         server::upsert_server_oauth_config(&self.pool, &config).await?;
+        server::remove_authorization_headers(&self.pool, server_id).await?;
         self.get_status(server_id).await
     }
 
@@ -2278,6 +2279,60 @@ mod tests {
             headers.get("Authorization").map(String::as_str),
             Some("Bearer manual-token")
         );
+
+        let proxy_manual = HashMap::from([(
+            "Proxy-Authorization".to_string(),
+            "Bearer proxy-manual-token".to_string(),
+        )]);
+        let proxy_headers = manager
+            .get_effective_server_headers("serv_manual_refresh", Some(proxy_manual))
+            .await
+            .expect("proxy authorization header should not trigger refresh")
+            .expect("headers");
+
+        assert_eq!(
+            proxy_headers.get("Proxy-Authorization").map(String::as_str),
+            Some("Bearer proxy-manual-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_config_clears_manual_authorization_header() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_oauth_auth_mode").await;
+        server::upsert_server_headers(
+            &manager.pool,
+            "serv_oauth_auth_mode",
+            &HashMap::from([
+                ("Authorization".to_string(), "Bearer manual-token".to_string()),
+                ("X-Trace".to_string(), "trace-1".to_string()),
+            ]),
+        )
+        .await
+        .expect("store manual headers");
+
+        let status = manager
+            .upsert_config(
+                "serv_oauth_auth_mode",
+                OAuthConfigInput {
+                    authorization_endpoint: "https://issuer.example.com/authorize".to_string(),
+                    token_endpoint: "https://issuer.example.com/token".to_string(),
+                    client_id: "client-1".to_string(),
+                    client_secret: None,
+                    scopes: Some("read write".to_string()),
+                    redirect_uri: "http://localhost:5173/oauth/callback".to_string(),
+                },
+            )
+            .await
+            .expect("save oauth config");
+
+        let headers = server::get_server_headers(&manager.pool, "serv_oauth_auth_mode")
+            .await
+            .expect("load headers");
+
+        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+        assert!(!server::has_manual_authorization_header(&Some(headers)));
+        assert!(!status.manual_authorization_override);
     }
 
     #[tokio::test]

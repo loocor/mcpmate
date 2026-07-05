@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use crate::config::models::{ServerOAuthConfig, ServerOAuthToken};
 use crate::generate_id;
 
+use super::headers::is_authorization_header_key;
+
 pub async fn upsert_server_oauth_config(
     pool: &Pool<Sqlite>,
     config: &ServerOAuthConfig,
@@ -150,7 +152,7 @@ pub async fn get_all_oauth_tokens(pool: &Pool<Sqlite>) -> Result<Vec<ServerOAuth
 pub fn has_manual_authorization_header(headers: &Option<HashMap<String, String>>) -> bool {
     headers
         .as_ref()
-        .map(|hdrs| hdrs.keys().any(|key| key.eq_ignore_ascii_case("authorization")))
+        .map(|hdrs| hdrs.keys().any(|key| is_authorization_header_key(key)))
         .unwrap_or(false)
 }
 
