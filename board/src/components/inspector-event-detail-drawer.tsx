@@ -1,5 +1,5 @@
-import { Copy } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronRight, Copy } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { InspectorMcpResponseViewer } from "./inspector-mcp-response-viewer";
 import { Button } from "./ui/button";
@@ -12,12 +12,10 @@ import {
 	DrawerHeader,
 	DrawerTitle,
 } from "./ui/drawer";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { writeClipboardText } from "../lib/clipboard";
 import {
 	buildInspectorEventProtocolView,
 	type InspectorEventProtocolView,
-	serializeInspectorEventEntryForDisplay,
 } from "../lib/inspector-event-protocol-view";
 import {
 	formatInspectorEventAction,
@@ -39,16 +37,47 @@ const PAYLOAD_DISPLAY_OPTIONS: SegmentOption[] = [
 	{ value: "outline", label: "Outline" },
 ];
 
+function serializePayloadForClipboard(value: unknown): string {
+	if (typeof value === "string") {
+		return value;
+	}
+	return JSON.stringify(value, null, 2) ?? String(value);
+}
+
 function PayloadSection({
 	title,
 	value,
 	fill = false,
+	copyLabel,
+	copyMessage,
 }: {
 	title: string;
 	value: unknown;
 	fill?: boolean;
+	copyLabel?: string;
+	copyMessage?: string;
 }) {
+	const { t } = useTranslation("inspector");
 	const [displayMode, setDisplayMode] = useState<PayloadDisplayMode>("json");
+	const serializedValue = useMemo(() => serializePayloadForClipboard(value), [value]);
+
+	const handleCopy = useCallback(async () => {
+		try {
+			await writeClipboardText(serializedValue);
+			notifySuccess(
+				t("notifications.payloadCopySuccess", { defaultValue: "Payload copied" }),
+				copyMessage ??
+					t("notifications.payloadCopySuccessMessage", {
+						defaultValue: "Payload copied to clipboard.",
+					}),
+			);
+		} catch (error) {
+			notifyError(
+				t("notifications.copyFailed", { defaultValue: "Copy failed" }),
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}, [copyMessage, serializedValue, t]);
 
 	if (value === undefined) {
 		return null;
@@ -70,25 +99,42 @@ function PayloadSection({
 					className={INSPECTOR_COMPACT_SEGMENT_CLASSNAME}
 				/>
 			</div>
-			{displayMode === "outline" ? (
-				<InspectorJsonOutline
-					value={value}
-					className={cn(
-						fill
-							? "min-h-0 flex-1"
-							: "max-h-[min(28vh,240px)] shrink-0",
-					)}
-				/>
-			) : (
-				<JsonCodeBlock
-					code={JSON.stringify(value, null, 2)}
-					className={cn(
-						fill
-							? "min-h-0 flex-1 overflow-y-auto overflow-x-auto"
-							: "max-h-[min(28vh,240px)] shrink-0 overflow-y-auto overflow-x-auto",
-					)}
-				/>
-			)}
+			<div
+				className={cn(
+					"group/payload relative min-w-0",
+					fill && "flex min-h-0 flex-1 flex-col",
+				)}
+			>
+				<Button
+					type="button"
+					variant="outline"
+					size="icon"
+					className="absolute right-2 top-2 z-10 h-7 w-7 opacity-0 shadow-sm transition-opacity group-hover/payload:opacity-100 group-focus-within/payload:opacity-100"
+					aria-label={copyLabel ?? t("actions.copyPayload", { defaultValue: "Copy payload" })}
+					onClick={() => void handleCopy()}
+				>
+					<Copy className="h-3.5 w-3.5" />
+				</Button>
+				{displayMode === "outline" ? (
+					<InspectorJsonOutline
+						value={value}
+						className={cn(
+							fill
+								? "min-h-0 flex-1"
+								: "max-h-[min(28vh,240px)] shrink-0",
+						)}
+					/>
+				) : (
+					<JsonCodeBlock
+						code={JSON.stringify(value, null, 2)}
+						className={cn(
+							fill
+								? "min-h-0 flex-1 overflow-y-auto overflow-x-auto"
+								: "max-h-[min(28vh,240px)] shrink-0 overflow-y-auto overflow-x-auto",
+						)}
+					/>
+				)}
+			</div>
 		</section>
 	);
 }
@@ -101,7 +147,68 @@ function hasMcpProtocolPayload(protocolView: InspectorEventProtocolView): boolea
 	);
 }
 
-function McpProtocolTabContent({
+function InspectorContextCard({
+	protocolView,
+	t,
+}: {
+	protocolView: InspectorEventProtocolView;
+	t: (key: string, options?: Record<string, unknown>) => string;
+}) {
+	const [expanded, setExpanded] = useState(false);
+	const contextFieldCount = Object.keys(protocolView.context).length;
+
+	if (contextFieldCount === 0) {
+		return null;
+	}
+
+	return (
+		<section className="shrink-0 rounded-md border border-border bg-card text-card-foreground">
+			<button
+				type="button"
+				className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+				aria-expanded={expanded}
+				onClick={() => setExpanded((current) => !current)}
+			>
+				<span className="flex min-w-0 items-center gap-2">
+					<ChevronRight
+						className={cn(
+							"h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+							expanded && "rotate-90",
+						)}
+						aria-hidden
+					/>
+					<span className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
+						{t("activity.drawer.inspectorContext", {
+							defaultValue: "Inspector context",
+						})}
+					</span>
+				</span>
+				<span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+					{t("activity.drawer.contextFieldCount", {
+						defaultValue: "{{count}} fields",
+						count: contextFieldCount,
+					})}
+				</span>
+			</button>
+			{expanded ? (
+				<div className="border-t border-border p-3">
+					<PayloadSection
+						title={t("activity.drawer.contextPayload", {
+							defaultValue: "Context payload",
+						})}
+						value={protocolView.context}
+						copyLabel={t("actions.copyContext", { defaultValue: "Copy context" })}
+						copyMessage={t("notifications.contextCopySuccessMessage", {
+							defaultValue: "Inspector context copied to clipboard.",
+						})}
+					/>
+				</div>
+			) : null}
+		</section>
+	);
+}
+
+function McpProtocolContent({
 	protocolView,
 	entry,
 	t,
@@ -110,70 +217,55 @@ function McpProtocolTabContent({
 	entry: InspectorLogEventEntry;
 	t: (key: string, options?: Record<string, unknown>) => string;
 }) {
-	if (!hasMcpProtocolPayload(protocolView)) {
-		return (
-			<div className="text-sm text-muted-foreground">
-				{t("activity.drawer.mcpEmpty", {
-					defaultValue: "No MCP request, response, or notification payload for this activity entry.",
-				})}
-			</div>
-		);
-	}
-
 	const capabilityKind = inferInspectorCapabilityKindFromEntry(entry);
+	const hasProtocolPayload = hasMcpProtocolPayload(protocolView);
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col gap-4">
-			<PayloadSection
-				title={t("activity.drawer.mcpRequest", {
-					defaultValue: "MCP request",
-				})}
-				value={protocolView.request}
-			/>
-			{protocolView.response !== undefined ? (
-				<InspectorMcpResponseViewer
-					fill
-					response={protocolView.response}
-					kind={capabilityKind}
-					title={t("activity.drawer.mcpResponse", {
-						defaultValue: "MCP response",
+		<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+			<InspectorContextCard protocolView={protocolView} t={t} />
+			{hasProtocolPayload ? (
+				<>
+					<PayloadSection
+						title={t("activity.drawer.mcpRequest", {
+							defaultValue: "MCP request",
+						})}
+						value={protocolView.request}
+						copyLabel={t("actions.copyRequest", { defaultValue: "Copy request" })}
+						copyMessage={t("notifications.requestCopySuccessMessage", {
+							defaultValue: "Request payload copied to clipboard.",
+						})}
+					/>
+					{protocolView.response !== undefined ? (
+						<InspectorMcpResponseViewer
+							fill
+							response={protocolView.response}
+							kind={capabilityKind}
+							title={t("activity.drawer.mcpResponse", {
+								defaultValue: "MCP response",
+							})}
+						/>
+					) : null}
+					<PayloadSection
+						title={t("activity.drawer.mcpNotification", {
+							defaultValue: "MCP notification",
+						})}
+						value={protocolView.notification}
+						copyLabel={t("actions.copyNotification", {
+							defaultValue: "Copy notification",
+						})}
+						copyMessage={t("notifications.notificationCopySuccessMessage", {
+							defaultValue: "Notification payload copied to clipboard.",
+						})}
+					/>
+				</>
+			) : (
+				<div className="text-sm text-muted-foreground">
+					{t("activity.drawer.mcpEmpty", {
+						defaultValue: "No MCP request, response, or notification payload for this activity entry.",
 					})}
-				/>
-			) : null}
-			<PayloadSection
-				title={t("activity.drawer.mcpNotification", {
-					defaultValue: "MCP notification",
-				})}
-				value={protocolView.notification}
-			/>
+				</div>
+			)}
 		</div>
-	);
-}
-
-function InspectorContextTabContent({
-	protocolView,
-	t,
-}: {
-	protocolView: InspectorEventProtocolView;
-	t: (key: string, options?: Record<string, unknown>) => string;
-}) {
-	if (Object.keys(protocolView.context).length === 0) {
-		return (
-			<div className="text-sm text-muted-foreground">
-				{t("activity.drawer.inspectorEmpty", {
-					defaultValue: "No inspector context for this activity entry.",
-				})}
-			</div>
-		);
-	}
-
-	return (
-		<PayloadSection
-			title={t("activity.drawer.inspectorContext", {
-				defaultValue: "Inspector context",
-			})}
-			value={protocolView.context}
-		/>
 	);
 }
 
@@ -210,102 +302,39 @@ export function InspectorEventDetailDrawer({
 		() => (entry ? buildInspectorEventProtocolView(entry) : null),
 		[entry],
 	);
-	const [detailTab, setDetailTab] = useState<"mcp" | "inspector">("mcp");
-
-	useEffect(() => {
-		if (!protocolView) {
-			return;
-		}
-		setDetailTab(hasMcpProtocolPayload(protocolView) ? "mcp" : "inspector");
-	}, [entry?.id, protocolView]);
-
-	const handleCopy = useCallback(async () => {
-		if (!entry) {
-			return;
-		}
-		try {
-			await writeClipboardText(serializeInspectorEventEntryForDisplay(entry));
-			notifySuccess(
-				t("notifications.activityEntryCopySuccess", { defaultValue: "Activity entry copied" }),
-				t("notifications.activityEntryCopySuccessMessage", {
-					defaultValue: "Inspector activity payload copied to clipboard.",
-				}),
-			);
-		} catch (error) {
-			notifyError(
-				t("notifications.copyFailed", { defaultValue: "Copy failed" }),
-				error instanceof Error ? error.message : String(error),
-			);
-		}
-	}, [entry, t]);
 
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange} direction="right">
 			<DrawerContent className="flex h-full flex-col overflow-hidden">
 				<DrawerHeader className="shrink-0">
-					<div className="flex items-start justify-between gap-3">
-						<div className="min-w-0">
-							<DrawerTitle>
-								{t("activity.drawer.title", { defaultValue: "Activity details" })}
-							</DrawerTitle>
-							<DrawerDescription>{description}</DrawerDescription>
-						</div>
-						{entry ? (
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								className="h-7 shrink-0 gap-1 px-2 text-xs"
-								onClick={() => void handleCopy()}
-							>
-								<Copy className="h-3.5 w-3.5" />
-								{t("actions.copy", { defaultValue: "Copy" })}
-							</Button>
-						) : null}
+					<div className="min-w-0">
+						<DrawerTitle>
+							{t("activity.drawer.title", { defaultValue: "Activity details" })}
+						</DrawerTitle>
+						<DrawerDescription>{description}</DrawerDescription>
 					</div>
 				</DrawerHeader>
 				<div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-3">
 					{entry ? (
 						protocolView ? (
-							<Tabs
-								value={detailTab}
-								onValueChange={(value) => setDetailTab(value as "mcp" | "inspector")}
-								className="flex min-h-0 flex-1 flex-col space-y-3"
-							>
-								<TabsList className="grid w-full grid-cols-2 text-sm">
-									<TabsTrigger value="mcp">
-										{t("activity.drawer.tabs.mcp", { defaultValue: "MCP" })}
-									</TabsTrigger>
-									<TabsTrigger value="inspector">
-										{t("activity.drawer.tabs.inspector", { defaultValue: "Inspector" })}
-									</TabsTrigger>
-								</TabsList>
-								<TabsContent
-									value="mcp"
-									className="min-h-0 flex-1 flex-col overflow-hidden data-[state=active]:flex"
-								>
-									<McpProtocolTabContent
-										protocolView={protocolView}
-										entry={entry}
-										t={t}
-									/>
-								</TabsContent>
-								<TabsContent
-									value="inspector"
-									className="min-h-0 flex-1 flex-col gap-4 overflow-y-auto data-[state=active]:flex"
-								>
-									<InspectorContextTabContent protocolView={protocolView} t={t} />
-								</TabsContent>
-							</Tabs>
+							<McpProtocolContent protocolView={protocolView} entry={entry} t={t} />
 						) : (
 							<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
 								<PayloadSection
 									title={t("activity.drawer.activity", { defaultValue: "Activity" })}
 									value={entry.data}
+									copyLabel={t("actions.copyActivity", { defaultValue: "Copy activity" })}
+									copyMessage={t("notifications.activityCopySuccessMessage", {
+										defaultValue: "Activity payload copied to clipboard.",
+									})}
 								/>
 								<PayloadSection
 									title={t("activity.drawer.request", { defaultValue: "Request" })}
 									value={entry.request}
+									copyLabel={t("actions.copyRequest", { defaultValue: "Copy request" })}
+									copyMessage={t("notifications.requestCopySuccessMessage", {
+										defaultValue: "Request payload copied to clipboard.",
+									})}
 								/>
 								{entry.response !== undefined ? (
 									<InspectorMcpResponseViewer

@@ -1,3 +1,5 @@
+import { ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { InspectorCapabilityKind } from "../lib/inspector-capability";
 import {
 	buildInspectorJsonOutline,
@@ -27,7 +29,49 @@ export function InspectorJsonOutline({
 	value: unknown;
 	className?: string;
 }) {
-	const rows = buildInspectorJsonOutline(value);
+	const rows = useMemo(() => buildInspectorJsonOutline(value), [value]);
+	const expandableRowIds = useMemo(() => {
+		const ids = new Set<string>();
+		rows.forEach((row, index) => {
+			if ((rows[index + 1]?.depth ?? 0) > row.depth) {
+				ids.add(row.id);
+			}
+		});
+		return ids;
+	}, [rows]);
+	const [collapsedRowIds, setCollapsedRowIds] = useState<Set<string>>(() => new Set());
+	useEffect(() => {
+		setCollapsedRowIds(new Set());
+	}, [value]);
+	const visibleRows = useMemo(() => {
+		const nextRows: InspectorJsonOutlineRow[] = [];
+		let hiddenDepth: number | null = null;
+		for (const row of rows) {
+			if (hiddenDepth !== null) {
+				if (row.depth > hiddenDepth) {
+					continue;
+				}
+				hiddenDepth = null;
+			}
+			nextRows.push(row);
+			if (collapsedRowIds.has(row.id) && expandableRowIds.has(row.id)) {
+				hiddenDepth = row.depth;
+			}
+		}
+		return nextRows;
+	}, [collapsedRowIds, expandableRowIds, rows]);
+
+	function toggleRow(rowId: string): void {
+		setCollapsedRowIds((current) => {
+			const next = new Set(current);
+			if (next.has(rowId)) {
+				next.delete(rowId);
+			} else {
+				next.add(rowId);
+			}
+			return next;
+		});
+	}
 
 	return (
 		<div
@@ -37,28 +81,54 @@ export function InspectorJsonOutline({
 			)}
 		>
 			<div className="min-w-max divide-y divide-slate-100 dark:divide-slate-900">
-				{rows.map((row) => (
-					<div
-						key={row.id}
-						className="grid grid-cols-[minmax(12rem,1fr)_auto_minmax(8rem,0.8fr)] items-center gap-3 px-3 py-2"
-						style={{ paddingLeft: `${12 + row.depth * 18}px` }}
-					>
-						<span className="font-mono font-medium text-slate-800 dark:text-slate-200">
-							{row.label}
-						</span>
-						<span
-							className={cn(
-								"rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase leading-none",
-								JSON_OUTLINE_TYPE_CLASSNAMES[row.type],
-							)}
+				{visibleRows.map((row) => {
+					const isExpandable = expandableRowIds.has(row.id);
+					const isCollapsed = collapsedRowIds.has(row.id);
+					return (
+						<div
+							key={row.id}
+							className="grid grid-cols-[minmax(12rem,1fr)_auto_minmax(8rem,0.8fr)] items-center gap-3 px-3 py-2"
 						>
-							{row.type}
-						</span>
-						<span className="truncate font-mono text-slate-500 dark:text-slate-400">
-							{row.summary}
-						</span>
-					</div>
-				))}
+							<div className="flex min-w-0 items-center font-mono font-medium text-slate-800 dark:text-slate-200">
+								{Array.from({ length: row.depth }).map((_, index) => (
+									<span
+										key={`${row.id}-guide-${index}`}
+										className="h-6 w-[18px] shrink-0 border-l border-slate-200 dark:border-slate-800"
+										aria-hidden
+									/>
+								))}
+								{isExpandable ? (
+									<button
+										type="button"
+										className="mr-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+										aria-expanded={!isCollapsed}
+										aria-label={isCollapsed ? "Expand JSON node" : "Collapse JSON node"}
+										onClick={() => toggleRow(row.id)}
+									>
+										<ChevronRight
+											className={`h-3.5 w-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
+											aria-hidden
+										/>
+									</button>
+								) : (
+									<span className="mr-1 h-4 w-4 shrink-0" aria-hidden />
+								)}
+								<span className="min-w-0 truncate">{row.label}</span>
+							</div>
+							<span
+								className={cn(
+									"rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase leading-none",
+									JSON_OUTLINE_TYPE_CLASSNAMES[row.type],
+								)}
+							>
+								{row.type}
+							</span>
+							<span className="truncate font-mono text-slate-500 dark:text-slate-400">
+								{row.summary}
+							</span>
+						</div>
+					);
+				})}
 			</div>
 		</div>
 	);

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { Copy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { InspectorCapabilityKind } from "../lib/inspector-capability";
+import { writeClipboardText } from "../lib/clipboard";
 import {
 	extractMcpProtocolEnvelopeBody,
 	firstInspectorPreviewImageBlock,
@@ -24,6 +26,8 @@ import {
 } from "./inspector-response-preview";
 import { JsonCodeBlock } from "./json-code-block";
 import { LazyImage } from "./lazy-image";
+import { notifyError, notifySuccess } from "../lib/notify";
+import { Button } from "./ui/button";
 import { Segment, type SegmentOption } from "./ui/segment";
 
 const FILL_SURFACE_CLASSNAME =
@@ -174,6 +178,27 @@ export function InspectorMcpResponseViewer({
 		() => resolveEffectiveInspectorMcpResponseViewMode(response, kind, preferredSegment),
 		[response, kind, preferredSegment],
 	);
+	const serializedResponse = useMemo(
+		() => JSON.stringify(response, null, 2) ?? String(response),
+		[response],
+	);
+
+	const handleCopy = useCallback(async () => {
+		try {
+			await writeClipboardText(serializedResponse);
+			notifySuccess(
+				t("notifications.payloadCopySuccess", { defaultValue: "Payload copied" }),
+				t("notifications.responseCopySuccessMessage", {
+					defaultValue: "Response payload copied to clipboard.",
+				}),
+			);
+		} catch (error) {
+			notifyError(
+				t("notifications.copyFailed", { defaultValue: "Copy failed" }),
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}, [serializedResponse, t]);
 
 	const segmentOptions = useMemo<SegmentOption[]>(
 		() =>
@@ -216,7 +241,22 @@ export function InspectorMcpResponseViewer({
 			) : (
 				segmentControl
 			)}
-			<div className={cn(fill && "flex min-h-0 flex-1 flex-col overflow-hidden")}>
+			<div
+				className={cn(
+					"group/payload relative min-w-0",
+					fill && "flex min-h-0 flex-1 flex-col overflow-hidden",
+				)}
+			>
+				<Button
+					type="button"
+					variant="outline"
+					size="icon"
+					className="absolute right-2 top-2 z-10 h-7 w-7 opacity-0 shadow-sm transition-opacity group-hover/payload:opacity-100 group-focus-within/payload:opacity-100"
+					aria-label={t("actions.copyResponse", { defaultValue: "Copy response" })}
+					onClick={() => void handleCopy()}
+				>
+					<Copy className="h-3.5 w-3.5" />
+				</Button>
 				<InspectorMcpResponseBody
 					mode={effectiveMode}
 					response={response}
