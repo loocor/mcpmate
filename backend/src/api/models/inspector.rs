@@ -572,6 +572,8 @@ pub struct InspectorSessionOpenData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_scope: Option<InspectorProxyScope>,
     pub expires_at_epoch_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handshake: Option<crate::inspector::handshake::InspectorSessionHandshakeData>,
 }
 api_resp!(
     InspectorSessionOpenResp,

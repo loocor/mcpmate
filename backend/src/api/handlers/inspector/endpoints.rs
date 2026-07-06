@@ -353,6 +353,7 @@ fn session_info_data(info: crate::inspector::sessions::InspectorSessionInfo) -> 
         proxy_mode: info.target.proxy_mode(),
         proxy_scope: info.target.proxy_scope(),
         expires_at_epoch_ms: info.expires_at_epoch_ms,
+        handshake: info.handshake,
     }
 }
 

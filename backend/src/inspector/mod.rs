@@ -2,6 +2,7 @@ pub mod calls;
 pub mod context;
 pub mod contract;
 pub mod evidence;
+pub mod handshake;
 pub mod runtime;
 pub mod service;
 pub mod sessions;

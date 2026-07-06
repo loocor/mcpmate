@@ -246,6 +246,19 @@ export interface InspectorTargetData {
   proxy_scope?: "isolated" | "active_catalog";
 }
 
+export interface InspectorMcpHandshakeMessage {
+  direction: "outbound" | "inbound" | string;
+  method: string;
+  payload: unknown;
+}
+
+export interface InspectorSessionHandshakeData {
+  protocol_version: string;
+  server_name: string;
+  server_title?: string | null;
+  messages: InspectorMcpHandshakeMessage[];
+}
+
 export interface InspectorSessionOpenData {
   session_id: string;
   target?: InspectorTargetData;
@@ -255,6 +268,7 @@ export interface InspectorSessionOpenData {
   proxy_mode?: "hosted" | "unify";
   proxy_scope?: "isolated" | "active_catalog";
   expires_at_epoch_ms: number;
+  handshake?: InspectorSessionHandshakeData | null;
 }
 
 export interface InspectorSessionCloseData {

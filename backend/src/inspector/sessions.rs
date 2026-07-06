@@ -8,6 +8,7 @@ use rmcp::RoleClient;
 use rmcp::service::Peer;
 use tokio::sync::RwLock;
 
+use crate::inspector::handshake::InspectorSessionHandshakeData;
 use crate::inspector::runtime::{self, InspectorRuntimeOwner};
 use crate::inspector::target::InspectorTarget;
 
@@ -19,6 +20,7 @@ pub struct InspectorSessionInfo {
     pub session_id: String,
     pub target: InspectorTarget,
     pub expires_at_epoch_ms: u128,
+    pub handshake: Option<InspectorSessionHandshakeData>,
 }
 
 struct SessionEntry {
@@ -26,6 +28,7 @@ struct SessionEntry {
     target: InspectorTarget,
     peer: Option<Peer<RoleClient>>,
     runtime_owner: Option<InspectorRuntimeOwner>,
+    handshake: Option<InspectorSessionHandshakeData>,
     expires_at: Instant,
 }
 
@@ -40,6 +43,7 @@ pub struct ActiveSession {
     pub target: InspectorTarget,
     pub peer: Option<Peer<RoleClient>>,
     pub expires_at_epoch_ms: u128,
+    pub handshake: Option<InspectorSessionHandshakeData>,
 }
 
 pub enum SessionLookup {
@@ -63,6 +67,7 @@ impl InspectorSessionManager {
         target: InspectorTarget,
         peer: Option<Peer<RoleClient>>,
         runtime_owner: Option<InspectorRuntimeOwner>,
+        handshake: Option<InspectorSessionHandshakeData>,
     ) -> InspectorSessionInfo {
         let now = Instant::now();
         let entry = SessionEntry {
@@ -70,6 +75,7 @@ impl InspectorSessionManager {
             target: target.clone(),
             peer,
             runtime_owner,
+            handshake: handshake.clone(),
             expires_at: now + SESSION_TTL,
         };
 
@@ -82,6 +88,7 @@ impl InspectorSessionManager {
             session_id,
             target,
             expires_at_epoch_ms: session_expiry_epoch(now + SESSION_TTL),
+            handshake,
         }
     }
 
@@ -123,6 +130,7 @@ impl InspectorSessionManager {
             target: entry.target.clone(),
             peer: entry.peer.clone(),
             expires_at_epoch_ms: session_expiry_epoch(expires_at),
+            handshake: entry.handshake.clone(),
         })
     }
 
@@ -226,6 +234,7 @@ mod tests {
                     target: InspectorTarget::native("expired-server".to_string()),
                     peer: None,
                     runtime_owner: None,
+                    handshake: None,
                     expires_at: now - Duration::from_secs(1),
                 },
             );
@@ -243,6 +252,7 @@ mod tests {
                     ),
                     peer: None,
                     runtime_owner: None,
+                    handshake: None,
                     expires_at: now + Duration::from_secs(60),
                 },
             );

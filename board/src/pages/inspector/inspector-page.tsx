@@ -44,6 +44,7 @@ import {
 import { useInspectorStandaloneLog } from "../../lib/hooks/use-inspector-standalone-log";
 import { useInspectorNativeSession } from "../../lib/hooks/use-inspector-native-session";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { appendSessionHandshakeEvents } from "../../lib/inspector-session-handshake";
 import { mapInspectorEventToActivityLogRow } from "../../lib/map-inspector-event-to-activity-log-row";
 import { notifyError, stringifyError } from "../../lib/notify";
 import { urlWithMergedSearchParams } from "../../lib/server-import-payload";
@@ -467,6 +468,7 @@ export function InspectorPage() {
 	}, [connectedTarget]);
 	const {
 		ensureSession,
+		ensureSessionData,
 		invalidateSession,
 		connected: sessionConnected,
 		sessionId: currentSessionId,
@@ -824,12 +826,13 @@ export function InspectorPage() {
 		if (!pendingConnectTargetKey || pendingConnectTargetKey !== connectedTargetKey) {
 			return;
 		}
-		void ensureSession()
-			.then((sessionId) => {
-				if (!sessionId) {
+		void ensureSessionData()
+			.then((session) => {
+				if (!session) {
 					setConnectedTargetKey(null);
 					return;
 				}
+				const sessionId = session.session_id;
 				if (connectedTargetLogId) {
 					const sessionOpenLogKey = `${connectedTargetLogId}:${sessionId}`;
 					if (loggedSessionOpenRef.current !== sessionOpenLogKey) {
@@ -842,6 +845,15 @@ export function InspectorPage() {
 							request: targetRequest,
 							response: { session_id: sessionId },
 						});
+						appendSessionHandshakeEvents(
+							session.handshake,
+							{
+								serverId: connectedTargetLogId,
+								mode: "native",
+								sessionId,
+							},
+							logActivityStep,
+						);
 						loggedSessionOpenRef.current = sessionOpenLogKey;
 					}
 				}
@@ -858,7 +870,7 @@ export function InspectorPage() {
 	}, [
 		connectedTargetKey,
 		connectedTargetLogId,
-		ensureSession,
+		ensureSessionData,
 		logActivityStep,
 		pendingConnectTargetKey,
 		targetRequest,

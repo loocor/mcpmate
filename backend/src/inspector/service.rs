@@ -1057,12 +1057,13 @@ pub async fn open_session(
     let session_id = crate::generate_id!("inspses");
     let runtime_env = context.runtime_environment();
     let runtime = runtime_env.connect_target(&target).await?;
+    let handshake = Some(crate::inspector::handshake::build_session_handshake(&runtime.peer));
     let peer = Some(runtime.peer);
     let runtime_owner = Some(runtime.owner);
 
     Ok(context
         .sessions()
-        .open_session(session_id.clone(), target, peer, runtime_owner)
+        .open_session(session_id.clone(), target, peer, runtime_owner, handshake)
         .await)
 }
 
@@ -1087,6 +1088,7 @@ pub async fn refresh_session(
             session_id: session.session_id,
             target: session.target,
             expires_at_epoch_ms: session.expires_at_epoch_ms,
+            handshake: session.handshake,
         }),
         SessionLookup::Expired(closed) => {
             closed.cleanup_runtime().await;
