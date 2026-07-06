@@ -16,7 +16,9 @@
 	}
 
 	const MAX_PAYLOAD_CHARS = 48000;
-	const SCHEME_URL = "mcpmate://import/server";
+	const IMPORT_FALLBACK_DELAY_MS = 1600;
+	const IMPORT_HANDOFF_ERROR_MESSAGE =
+		"MCPMate import handoff failed. Reload the extension and try again.";
 	/** JSON/YAML-ish keys that usually wrap MCP server maps (Cursor/VS Code `mcp`, Claude Desktop `mcpServers`, etc.). */
 	const MCP_SNIPPET_PATTERNS = [
 		/["']mcpServers["']\s*:/i,
@@ -295,7 +297,7 @@
 			try {
 				const config = await this.fetchServerConfig(serverPath);
 				if (config) {
-					openMcpMate(config);
+					await openMcpMate(config).catch(reportImportHandoffFailure);
 				} else {
 					console.warn("[MCPMate] Could not build server config");
 				}
@@ -356,55 +358,9 @@
 		 * Convert GitHub MCP registry server format to MCPMate import format.
 		 */
 		convertRegistryToMcpMate(server) {
-			const name = server.name || "unknown";
-			const mcpServers = {};
-
-			// Handle stdio packages
-			if (Array.isArray(server.packages) && server.packages.length > 0) {
-				for (const pkg of server.packages) {
-					const serverName = pkg.identifier || name;
-					const entry = {};
-
-					if (pkg.registryType === "npm") {
-						entry.command = "npx";
-						entry.args = ["-y", pkg.identifier];
-					} else if (pkg.registryType === "pypi") {
-						entry.command = pkg.runtimeHint || "uvx";
-						entry.args = [pkg.identifier];
-					} else if (pkg.runtimeHint) {
-						entry.command = pkg.runtimeHint;
-						entry.args = [pkg.identifier];
-					} else {
-						entry.command = "npx";
-						entry.args = ["-y", pkg.identifier];
-					}
-
-					// Add environment variables if present
-					if (Array.isArray(pkg.environmentVariables) && pkg.environmentVariables.length > 0) {
-						entry.env = {};
-						for (const envVar of pkg.environmentVariables) {
-							entry.env[envVar.name] = "";
-						}
-					}
-
-					mcpServers[serverName] = entry;
-				}
-			}
-
-			// Handle remote servers
-			if (Array.isArray(server.remotes) && server.remotes.length > 0) {
-				for (const remote of server.remotes) {
-					const serverName = remote.identifier || name;
-					const entry = { url: remote.url };
-					mcpServers[serverName] = entry;
-				}
-			}
-
-			if (Object.keys(mcpServers).length === 0) {
-				return null;
-			}
-
-			return JSON.stringify({ mcpServers });
+			return globalThis.__MCPMATE_REGISTRY_IMPORT__?.convertRegistryToMcpMate(
+				server,
+			) ?? null;
 		},
 
 		/**
@@ -538,17 +494,6 @@
 		return undefined;
 	}
 
-	function utf8ToBase64Url(obj) {
-		const json = JSON.stringify(obj);
-		const bytes = new TextEncoder().encode(json);
-		let binary = "";
-		for (let i = 0; i < bytes.length; i++) {
-			binary += String.fromCharCode(bytes[i]);
-		}
-		const b64 = btoa(binary);
-		return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-	}
-
 	function detectSource() {
 		if (location.hostname === "github.com") {
 			const path = location.pathname;
@@ -562,20 +507,110 @@
 		return { type: "browser" };
 	}
 
-	function openMcpMate(text, sourceOverride) {
-		const payload = {
-			text,
-			format: inferFormat(text),
-			source: sourceOverride ?? detectSource(),
-		};
-		const p = utf8ToBase64Url(payload);
-		const url = `${SCHEME_URL}?p=${encodeURIComponent(p)}`;
+	function openExternalImportUrl(url) {
 		const a = document.createElement("a");
 		a.href = url;
 		a.style.display = "none";
 		document.documentElement.appendChild(a);
 		a.click();
 		a.remove();
+	}
+
+	function withQueryParam(url, key, value) {
+		const parsed = new URL(url);
+		parsed.searchParams.set(key, value);
+		return parsed.toString();
+	}
+
+	function shouldOpenImportFallback() {
+		return document.visibilityState === "visible" && document.hasFocus();
+	}
+
+	function requestImportFallbackPage(url) {
+		if (globalThis.chrome?.runtime?.sendMessage) {
+			globalThis.chrome.runtime.sendMessage({
+				type: "mcpmate.openImportFallback",
+				url,
+			});
+			return;
+		}
+		window.open(url, "_blank", "noopener,noreferrer");
+	}
+
+	function trackHandoffWrite(writeRecord) {
+		return writeRecord.then(
+			() => ({ ok: true }),
+			(error) => ({ ok: false, error }),
+		);
+	}
+
+	function reportDeferredImportHandoffFailure(error) {
+		console.error("[MCPMate] Deferred import handoff failed:", error);
+	}
+
+	async function cleanupImportFallbackRecord(handoff, id) {
+		try {
+			await handoff.removeHandoffRecord(id);
+		} catch (error) {
+			reportDeferredImportHandoffFailure(error);
+		}
+	}
+
+	async function resolveImportFallback(handoff, id, fallbackUrl, writeResult) {
+		const result = await writeResult;
+		if (!result.ok) {
+			if (shouldOpenImportFallback()) {
+				reportImportHandoffFailure(result.error);
+			} else {
+				reportDeferredImportHandoffFailure(result.error);
+			}
+			return;
+		}
+
+		if (!shouldOpenImportFallback()) {
+			await cleanupImportFallbackRecord(handoff, id);
+			return;
+		}
+
+		requestImportFallbackPage(fallbackUrl);
+	}
+
+	function scheduleImportFallback(handoff, id, writeResult) {
+		const fallbackUrl = withQueryParam(
+			handoff.buildHandoffPageUrl(id),
+			"fallback",
+			"1",
+		);
+		window.setTimeout(() => {
+			void resolveImportFallback(handoff, id, fallbackUrl, writeResult).catch(
+				reportDeferredImportHandoffFailure,
+			);
+		}, IMPORT_FALLBACK_DELAY_MS);
+	}
+
+	async function openMcpMate(text, sourceOverride) {
+		const handoff = globalThis.__MCPMATE_IMPORT_HANDOFF__;
+		if (!handoff) {
+			window.alert(
+				"MCPMate import handoff is unavailable. Reload the extension and try again.",
+			);
+			return;
+		}
+		const payload = {
+			text,
+			format: inferFormat(text),
+			source: sourceOverride ?? detectSource(),
+		};
+		const id = handoff.createHandoffId();
+		const record = handoff.createHandoffRecord(payload);
+		const writeResult = trackHandoffWrite(handoff.writeHandoffRecord(id, record));
+		openExternalImportUrl(handoff.buildMcpMateImportUrl(payload));
+		scheduleImportFallback(handoff, id, writeResult);
+	}
+
+	function reportImportHandoffFailure(error) {
+		console.error("[MCPMate] Import handoff failed:", error);
+		window.alert(IMPORT_HANDOFF_ERROR_MESSAGE);
 	}
 
 	function getSnippetText(block) {
@@ -658,7 +693,7 @@
 				);
 				return;
 			}
-			openMcpMate(text);
+			openMcpMate(text).catch(reportImportHandoffFailure);
 		});
 
 		actions.appendChild(button);
@@ -704,7 +739,11 @@
 			const parseCursorMcpInstallLink =
 				globalThis.__MCPMATE_CURSOR_DEEPLINK__?.parseCursorMcpInstallLink;
 			const config = parseCursorMcpInstallLink?.(link.href) ?? null;
-			if (config) openMcpMate(config, { type: "portal", ref: "cursor-directory" });
+			if (config) {
+				openMcpMate(config, { type: "portal", ref: "cursor-directory" }).catch(
+					reportImportHandoffFailure,
+				);
+			}
 		});
 
 		container.appendChild(btn);

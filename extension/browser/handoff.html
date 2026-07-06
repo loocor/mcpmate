@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>MCPMate Handoff</title>
+		<link rel="stylesheet" href="handoff.css" />
+	</head>
+
+	<body data-handoff-visible="false">
+		<main class="shell">
+			<section class="panel" aria-labelledby="handoff-title">
+				<div class="brand">
+					<img src="icons/logo.svg" alt="" class="logo" />
+					<div>
+						<p class="eyebrow" id="handoff-eyebrow">MCPMate</p>
+						<h1 id="handoff-title">Open this server in MCPMate</h1>
+					</div>
+				</div>
+
+				<p class="summary" id="handoff-summary">
+					MCPMate needs the desktop app to preview, validate, and save this server configuration.
+				</p>
+
+				<div class="status" id="handoff-status" role="status">
+					Loading import payload...
+				</div>
+
+				<div class="actions">
+					<button type="button" class="primary" id="open-button" disabled>
+						<span id="open-button-label">Open MCPMate</span>
+						<span class="external-link-icon" aria-hidden="true"></span>
+					</button>
+					<a
+						class="secondary"
+						id="install-link"
+						href="https://mcp.umate.ai/#download"
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						<span id="install-link-label">Install MCPMate</span>
+						<span class="external-link-icon" aria-hidden="true"></span>
+					</a>
+				</div>
+
+				<p class="note" id="handoff-note">
+					If MCPMate is already installed, choose Open MCPMate. If nothing opens,
+					install MCPMate and return to this page.
+				</p>
+
+				<footer class="help">
+					<p id="handoff-help-title">Need help installing MCPMate?</p>
+					<div class="help-links">
+						<a
+							id="community-link"
+							href="https://discord.gg/pc5YfEVbKj"
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							Join Discord
+						</a>
+						<a
+							id="issues-link"
+							href="https://github.com/loocor/mcpmate/issues"
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							GitHub Issues
+						</a>
+					</div>
+				</footer>
+			</section>
+		</main>
+
+		<script type="module" src="handoff.js"></script>
+	</body>
+
+</html>

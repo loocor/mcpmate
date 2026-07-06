@@ -18,6 +18,15 @@ function applyIconForTheme(isDark) {
   chrome.action.setIcon({ path: iconPaths(suffix) });
 }
 
+function openFallbackHandoffPage(url) {
+  const parsed = new URL(url);
+  const extensionOrigin = new URL(chrome.runtime.getURL("/")).origin;
+  if (parsed.origin !== extensionOrigin || parsed.pathname !== "/handoff.html") {
+    throw new Error("Refusing to open unsupported extension page");
+  }
+  chrome.tabs.create({ url });
+}
+
 // Sync icon on startup from persisted theme
 chrome.storage.local.get("mcpmate.toolbarTheme", (result) => {
   applyIconForTheme(result["mcpmate.toolbarTheme"] === "dark");
@@ -28,4 +37,21 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes["mcpmate.toolbarTheme"]) {
     applyIconForTheme(changes["mcpmate.toolbarTheme"].newValue === "dark");
   }
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "mcpmate.openImportFallback") {
+    return false;
+  }
+
+  try {
+    openFallbackHandoffPage(message.url);
+    sendResponse({ ok: true });
+  } catch (error) {
+    sendResponse({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return false;
 });
