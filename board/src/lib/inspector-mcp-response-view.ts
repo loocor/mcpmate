@@ -11,13 +11,15 @@ export type InspectorMcpResponseViewMode =
 	| "raw"
 	| "markdown"
 	| "image"
+	| "outline"
 	| "json";
 
-export type InspectorMcpResponseSegmentMode = "preview" | "json" | "raw";
+export type InspectorMcpResponseSegmentMode = "preview" | "json" | "outline" | "raw";
 
 export const INSPECTOR_MCP_RESPONSE_SEGMENT_OPTIONS: InspectorMcpResponseSegmentMode[] = [
 	"preview",
 	"json",
+	"outline",
 	"raw",
 ];
 
@@ -29,6 +31,7 @@ export const INSPECTOR_MCP_RESPONSE_VIEW_FALLBACK_ORDER: InspectorMcpResponseVie
 	"preview",
 	"image",
 	"json",
+	"outline",
 	"raw",
 ];
 
@@ -121,6 +124,7 @@ export function inspectorMcpResponseModeHasContent(
 		case "image":
 			return firstInspectorPreviewImageBlock(blocks) != null;
 		case "json":
+		case "outline":
 			return true;
 		case "raw":
 			return extractInspectorResponseText(payload, kind) != null;
@@ -132,6 +136,9 @@ export function mapInspectorMcpResponseModeToSegment(
 ): InspectorMcpResponseSegmentMode {
 	if (mode === "json") {
 		return "json";
+	}
+	if (mode === "outline") {
+		return "outline";
 	}
 	if (mode === "raw") {
 		return "raw";
@@ -172,6 +179,8 @@ export function resolveInspectorMcpResponseViewModeForSegment(
 		}
 		case "json":
 			return "json";
+		case "outline":
+			return "outline";
 		case "raw":
 			if (inspectorMcpResponseModeHasContent("raw", response, kind)) {
 				return "raw";

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { InspectorMcpResponseViewer } from "./inspector-mcp-response-viewer";
 import { Button } from "./ui/button";
+import { InspectorJsonOutline } from "./inspector-response-preview";
 import { JsonCodeBlock } from "./json-code-block";
 import {
 	Drawer,
@@ -23,9 +24,20 @@ import {
 	type InspectorLogEventEntry,
 	type InspectorLogTranslate,
 } from "../lib/inspector-event-log";
-import { inferInspectorCapabilityKindFromEntry } from "../lib/inspector-mcp-response-view";
+import {
+	INSPECTOR_COMPACT_SEGMENT_CLASSNAME,
+	inferInspectorCapabilityKindFromEntry,
+} from "../lib/inspector-mcp-response-view";
 import { notifyError, notifySuccess } from "../lib/notify";
 import { cn, formatLocalDateTime } from "../lib/utils";
+import { Segment, type SegmentOption } from "./ui/segment";
+
+type PayloadDisplayMode = "json" | "outline";
+
+const PAYLOAD_DISPLAY_OPTIONS: SegmentOption[] = [
+	{ value: "json", label: "JSON" },
+	{ value: "outline", label: "Outline" },
+];
 
 function PayloadSection({
 	title,
@@ -36,24 +48,47 @@ function PayloadSection({
 	value: unknown;
 	fill?: boolean;
 }) {
+	const [displayMode, setDisplayMode] = useState<PayloadDisplayMode>("json");
+
 	if (value === undefined) {
 		return null;
 	}
+
 	return (
 		<section
 			className={cn("space-y-2", fill && "flex min-h-0 min-w-0 flex-1 flex-col")}
 		>
-			<h3 className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-				{title}
-			</h3>
-			<JsonCodeBlock
-				code={JSON.stringify(value, null, 2)}
-				className={cn(
-					fill
-						? "min-h-0 flex-1 overflow-y-auto overflow-x-auto"
-						: "max-h-[min(28vh,240px)] shrink-0 overflow-y-auto overflow-x-auto",
-				)}
-			/>
+			<div className="flex shrink-0 items-center justify-between gap-2">
+				<h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					{title}
+				</h3>
+				<Segment
+					value={displayMode}
+					onValueChange={(nextMode) => setDisplayMode(nextMode as PayloadDisplayMode)}
+					options={PAYLOAD_DISPLAY_OPTIONS}
+					showDots={false}
+					className={INSPECTOR_COMPACT_SEGMENT_CLASSNAME}
+				/>
+			</div>
+			{displayMode === "outline" ? (
+				<InspectorJsonOutline
+					value={value}
+					className={cn(
+						fill
+							? "min-h-0 flex-1"
+							: "max-h-[min(28vh,240px)] shrink-0",
+					)}
+				/>
+			) : (
+				<JsonCodeBlock
+					code={JSON.stringify(value, null, 2)}
+					className={cn(
+						fill
+							? "min-h-0 flex-1 overflow-y-auto overflow-x-auto"
+							: "max-h-[min(28vh,240px)] shrink-0 overflow-y-auto overflow-x-auto",
+					)}
+				/>
+			)}
 		</section>
 	);
 }

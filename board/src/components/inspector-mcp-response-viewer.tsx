@@ -18,7 +18,10 @@ import {
 	parseInspectorResponsePreview,
 } from "../lib/inspector-response-preview";
 import { cn } from "../lib/utils";
-import { InspectorResponsePreview } from "./inspector-response-preview";
+import {
+	InspectorJsonOutline,
+	InspectorResponsePreview,
+} from "./inspector-response-preview";
 import { JsonCodeBlock } from "./json-code-block";
 import { LazyImage } from "./lazy-image";
 import { Segment, type SegmentOption } from "./ui/segment";
@@ -29,6 +32,7 @@ const FILL_SURFACE_CLASSNAME =
 const SEGMENT_LABELS: Record<InspectorMcpResponseSegmentMode, string> = {
 	preview: "Preview",
 	json: "JSON",
+	outline: "Outline",
 	raw: "Raw",
 };
 
@@ -120,6 +124,15 @@ function InspectorMcpResponseBody({
 					}
 				/>
 			</div>
+		);
+	}
+
+	if (mode === "outline") {
+		return (
+			<InspectorJsonOutline
+				value={response}
+				className={fill ? FILL_SURFACE_CLASSNAME : undefined}
+			/>
 		);
 	}
 

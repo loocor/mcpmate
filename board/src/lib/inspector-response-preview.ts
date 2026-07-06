@@ -13,6 +13,32 @@ export type InspectorPreviewBlock =
 			alt?: string;
 	  };
 
+export type InspectorJsonOutlineRow = {
+	id: string;
+	depth: number;
+	label: string;
+	type:
+		| "array"
+		| "boolean"
+		| "null"
+		| "number"
+		| "object"
+		| "string"
+		| "truncated"
+		| "undefined"
+		| "unknown";
+	summary: string;
+};
+
+export type InspectorJsonOutlineOptions = {
+	maxDepth?: number;
+	maxRows?: number;
+};
+
+const INSPECTOR_JSON_OUTLINE_DEFAULT_MAX_DEPTH = 8;
+const INSPECTOR_JSON_OUTLINE_DEFAULT_MAX_ROWS = 300;
+const INSPECTOR_JSON_OUTLINE_MAX_SUMMARY_LENGTH = 160;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -140,4 +166,185 @@ export function hasInspectorResponsePreview(
 	kind: InspectorCapabilityKind,
 ): boolean {
 	return parseInspectorResponsePreview(response, kind).length > 0;
+}
+
+function pluralize(count: number, singular: string, plural: string): string {
+	return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function jsonOutlineType(value: unknown): InspectorJsonOutlineRow["type"] {
+	if (value === null) {
+		return "null";
+	}
+	if (Array.isArray(value)) {
+		return "array";
+	}
+	if (isRecord(value)) {
+		return "object";
+	}
+	if (value === undefined) {
+		return "undefined";
+	}
+	const valueType = typeof value;
+	if (valueType === "boolean" || valueType === "number" || valueType === "string") {
+		return valueType;
+	}
+	return "unknown";
+}
+
+function truncateJsonOutlineSummary(summary: string): string {
+	if (summary.length <= INSPECTOR_JSON_OUTLINE_MAX_SUMMARY_LENGTH) {
+		return summary;
+	}
+	return `${summary.slice(0, INSPECTOR_JSON_OUTLINE_MAX_SUMMARY_LENGTH - 3)}...`;
+}
+
+function jsonOutlineSummary(value: unknown): string {
+	if (Array.isArray(value)) {
+		return pluralize(value.length, "item", "items");
+	}
+	if (isRecord(value)) {
+		return pluralize(Object.keys(value).length, "key", "keys");
+	}
+	if (typeof value === "string") {
+		return truncateJsonOutlineSummary(JSON.stringify(value));
+	}
+	if (value === undefined) {
+		return "undefined";
+	}
+	return truncateJsonOutlineSummary(String(value));
+}
+
+function pathForObjectKey(parentId: string, key: string): string {
+	return /^[A-Za-z_$][\w$]*$/.test(key)
+		? `${parentId}.${key}`
+		: `${parentId}[${JSON.stringify(key)}]`;
+}
+
+function pushJsonOutlineRows(
+	rows: InspectorJsonOutlineRow[],
+	value: unknown,
+	label: string,
+	id: string,
+	depth: number,
+	options: Required<InspectorJsonOutlineOptions>,
+	state: { truncated: boolean },
+): void {
+	if (rows.length >= options.maxRows) {
+		state.truncated = true;
+		return;
+	}
+
+	rows.push({
+		id,
+		depth,
+		label,
+		type: jsonOutlineType(value),
+		summary: jsonOutlineSummary(value),
+	});
+
+	if (depth >= options.maxDepth) {
+		if (
+			(Array.isArray(value) && value.length > 0) ||
+			(isRecord(value) && Object.keys(value).length > 0)
+		) {
+			pushJsonOutlineTruncation(
+				rows,
+				`${id}.__maxDepth`,
+				depth + 1,
+				"Nested entries hidden after max depth",
+				options,
+				state,
+			);
+		}
+		return;
+	}
+
+	if (Array.isArray(value)) {
+		value.forEach((entry, index) => {
+			if (rows.length >= options.maxRows - 1) {
+				pushJsonOutlineTruncation(
+					rows,
+					`${id}.__maxRows`,
+					depth + 1,
+					"Additional entries hidden after max rows",
+					options,
+					state,
+				);
+				return;
+			}
+			pushJsonOutlineRows(
+				rows,
+				entry,
+				`[${index}]`,
+				`${id}[${index}]`,
+				depth + 1,
+				options,
+				state,
+			);
+		});
+		return;
+	}
+
+	if (isRecord(value)) {
+		Object.entries(value).forEach(([key, entry]) => {
+			if (rows.length >= options.maxRows - 1) {
+				pushJsonOutlineTruncation(
+					rows,
+					`${id}.__maxRows`,
+					depth + 1,
+					"Additional entries hidden after max rows",
+					options,
+					state,
+				);
+				return;
+			}
+			pushJsonOutlineRows(
+				rows,
+				entry,
+				key,
+				pathForObjectKey(id, key),
+				depth + 1,
+				options,
+				state,
+			);
+		});
+	}
+}
+
+function pushJsonOutlineTruncation(
+	rows: InspectorJsonOutlineRow[],
+	id: string,
+	depth: number,
+	summary: string,
+	options: Required<InspectorJsonOutlineOptions>,
+	state: { truncated: boolean },
+): void {
+	if (state.truncated || rows.length >= options.maxRows) {
+		state.truncated = true;
+		return;
+	}
+	rows.push({
+		id,
+		depth,
+		label: "...",
+		type: "truncated",
+		summary,
+	});
+	state.truncated = true;
+}
+
+export function buildInspectorJsonOutline(
+	value: unknown,
+	options: InspectorJsonOutlineOptions = {},
+): InspectorJsonOutlineRow[] {
+	const rows: InspectorJsonOutlineRow[] = [];
+	const resolvedOptions = {
+		maxDepth: Math.max(0, options.maxDepth ?? INSPECTOR_JSON_OUTLINE_DEFAULT_MAX_DEPTH),
+		maxRows: Math.max(1, options.maxRows ?? INSPECTOR_JSON_OUTLINE_DEFAULT_MAX_ROWS),
+	};
+	pushJsonOutlineRows(rows, value, "$", "$", 0, resolvedOptions, {
+		truncated: false,
+	});
+	return rows;
 }

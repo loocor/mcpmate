@@ -30,6 +30,12 @@ describe("inspector mcp response view", () => {
 		};
 		expect(pickDefaultInspectorMcpResponseViewMode(response, "tool")).toBe("json");
 		expect(pickDefaultInspectorMcpResponseSegmentMode(response, "tool")).toBe("json");
+		expect(resolveInspectorMcpResponseViewModeForSegment("outline", response, "tool")).toBe(
+			"outline",
+		);
+		expect(resolveActiveInspectorMcpResponseSegmentMode(response, "tool", "outline")).toBe(
+			"outline",
+		);
 	});
 
 	it("maps rich markdown content to the preview segment", () => {
