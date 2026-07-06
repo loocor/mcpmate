@@ -27,10 +27,11 @@ use crate::api::models::inspector::{
     InspectorScratchServerDeleteResp, InspectorScratchServerListData, InspectorScratchServerListResp,
     InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenData,
     InspectorSessionOpenReq, InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp,
-    InspectorSnapshotQuery, InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData,
-    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallEvidenceData,
-    InspectorToolCallEvidenceQuery, InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp,
-    InspectorToolCallStartData, InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
+    InspectorSnapshotQuery, InspectorTasksListData, InspectorTasksListResp, InspectorTemplatesListData,
+    InspectorTemplatesListResp, InspectorToolCallCancelData, InspectorToolCallCancelReq, InspectorToolCallCancelResp,
+    InspectorToolCallData, InspectorToolCallEvidenceData, InspectorToolCallEvidenceQuery,
+    InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartData,
+    InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
 };
 use crate::api::routes::AppState;
 use crate::inspector::{calls::CallSubscription, context::InspectorServiceContext, service};
@@ -556,4 +557,26 @@ pub async fn templates_list(
         evidence: parts.evidence,
     };
     Ok(Json(InspectorTemplatesListResp::success(data)))
+}
+
+// ==============================
+// Tasks
+// ==============================
+
+pub async fn tasks_list(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<InspectorListQuery>,
+) -> Result<Json<InspectorTasksListResp>, ApiError> {
+    let context = InspectorServiceContext::from_app_state(state.as_ref());
+    let data_value = service::list_tasks(&context, (&query).into()).await?;
+    let parts = capability_list_parts(&data_value, "tasks");
+    let data = InspectorTasksListData {
+        mode: parts.mode,
+        tasks: parts.items,
+        total: parts.total,
+        meta: parts.meta,
+        elapsed_ms: parts.elapsed_ms,
+        evidence: parts.evidence,
+    };
+    Ok(Json(InspectorTasksListResp::success(data)))
 }

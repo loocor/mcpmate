@@ -160,28 +160,33 @@ fn record_conflict(
     }
 }
 
-struct ImportCandidate {
+pub(crate) struct ImportCandidate {
     server_type: ServerType,
     persisted_kind: &'static str,
-    fingerprint: String,
-    url_signature: Option<fingerprint::UrlSignature>,
+    pub(crate) fingerprint: String,
+    pub(crate) url_signature: Option<fingerprint::UrlSignature>,
 }
 
-fn prepare_import_candidate(cfg: &ServersImportConfig) -> Result<ImportCandidate> {
-    let lc = cfg.kind.trim().to_ascii_lowercase();
-    let server_type = ServerType::from_client_format(&lc)
-        .map_err(|_| anyhow::anyhow!(format!("Invalid server type '{}'", cfg.kind)))?;
+pub(crate) fn prepare_import_candidate_from_parts(
+    kind: &str,
+    command: Option<&str>,
+    url: Option<&str>,
+    args: &[String],
+) -> Result<ImportCandidate> {
+    let lc = kind.trim().to_ascii_lowercase();
+    let server_type =
+        ServerType::from_client_format(&lc).map_err(|_| anyhow::anyhow!(format!("Invalid server type '{}'", kind)))?;
     let persisted_kind = server_type.client_format();
-    validate_server_config(persisted_kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let command_for_validation = command.map(str::to_string);
+    let url_for_validation = url.map(str::to_string);
+    validate_server_config(persisted_kind, &command_for_validation, &url_for_validation)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     let mut url_signature: Option<fingerprint::UrlSignature> = None;
     let fp = match server_type {
-        ServerType::Stdio => fingerprint::fingerprint_for_stdio(
-            cfg.command.as_deref().unwrap_or_default(),
-            cfg.args.as_deref().unwrap_or(&[]),
-        ),
+        ServerType::Stdio => fingerprint::fingerprint_for_stdio(command.unwrap_or_default(), args),
         ServerType::Sse | ServerType::StreamableHttp => {
-            let sig = fingerprint::url_signature(cfg.url.as_deref().unwrap_or_default());
+            let sig = fingerprint::url_signature(url.unwrap_or_default());
             let key = format!("{}|{}", sig.fingerprint, persisted_kind);
             url_signature = Some(sig);
             key
@@ -196,23 +201,39 @@ fn prepare_import_candidate(cfg: &ServersImportConfig) -> Result<ImportCandidate
     })
 }
 
-fn import_conflict_reason(
-    existing: &ExistingIndex,
+fn prepare_import_candidate(cfg: &ServersImportConfig) -> Result<ImportCandidate> {
+    prepare_import_candidate_from_parts(
+        &cfg.kind,
+        cfg.command.as_deref(),
+        cfg.url.as_deref(),
+        cfg.args.as_deref().unwrap_or(&[]),
+    )
+}
+
+pub(crate) trait ImportConflictIndex {
+    fn names(&self) -> &HashSet<String>;
+    fn fingerprints(&self) -> &HashSet<String>;
+    fn url_bases(&self) -> &HashSet<String>;
+    fn url_signatures(&self) -> &HashMap<String, fingerprint::UrlSignature>;
+}
+
+pub(crate) fn import_conflict_reason(
+    existing: &impl ImportConflictIndex,
     name: &str,
     candidate: &ImportCandidate,
     opts: &ImportOptions,
 ) -> Option<SkipReason> {
     if opts.by_fingerprint
         && !candidate.fingerprint.is_empty()
-        && existing.fingerprints.contains(&candidate.fingerprint)
+        && existing.fingerprints().contains(&candidate.fingerprint)
     {
         return Some(SkipReason::DuplicateFingerprint);
     }
 
     if opts.by_fingerprint {
         if let Some(sig) = candidate.url_signature.as_ref() {
-            if existing.url_bases.contains(&sig.base) {
-                let existing_sig = existing.url_signatures.get(&sig.base);
+            if existing.url_bases().contains(&sig.base) {
+                let existing_sig = existing.url_signatures().get(&sig.base);
                 return Some(SkipReason::UrlQueryMismatch {
                     existing_query: existing_sig.and_then(|s| s.display_query()),
                     incoming_query: sig.display_query(),
@@ -221,7 +242,7 @@ fn import_conflict_reason(
         }
     }
 
-    if opts.by_name && existing.names.contains(name) {
+    if opts.by_name && existing.names().contains(name) {
         return Some(SkipReason::DuplicateName);
     }
 
@@ -325,7 +346,10 @@ fn import_config_from_inspected_entry(
             url,
             env: Some(env),
             headers,
-            source: Some(ServerSource::new(ServerSourceType::Local, Some(client_identifier.to_string()))),
+            source: Some(ServerSource::new(
+                ServerSourceType::Local,
+                Some(client_identifier.to_string()),
+            )),
             meta: None,
         },
     ))
@@ -685,6 +709,24 @@ struct ExistingIndex {
     url_signatures: HashMap<String, fingerprint::UrlSignature>,
 }
 
+impl ImportConflictIndex for ExistingIndex {
+    fn names(&self) -> &HashSet<String> {
+        &self.names
+    }
+
+    fn fingerprints(&self) -> &HashSet<String> {
+        &self.fingerprints
+    }
+
+    fn url_bases(&self) -> &HashSet<String> {
+        &self.url_bases
+    }
+
+    fn url_signatures(&self) -> &HashMap<String, fingerprint::UrlSignature> {
+        &self.url_signatures
+    }
+}
+
 impl ExistingIndex {
     async fn build(db: &Pool<Sqlite>) -> Result<Self> {
         let mut names = HashSet::new();
@@ -765,17 +807,20 @@ mod tests {
 
     #[test]
     fn client_config_import_plan_filters_out_mcpmate_self_entry() {
-        let plan = build_import_plan_from_entries([
-            server_entry("MCPMate", "stdio", Some("mcpmate-bridge"), None, None),
-            server_entry(
-                "context7",
-                "streamable_http",
-                None,
-                Some("http://127.0.0.1:8123/mcp"),
-                None,
-            ),
-            server_entry("shadcn-mcp-server", "unclassified", None, None, None),
-        ], "test-client");
+        let plan = build_import_plan_from_entries(
+            [
+                server_entry("MCPMate", "stdio", Some("mcpmate-bridge"), None, None),
+                server_entry(
+                    "context7",
+                    "streamable_http",
+                    None,
+                    Some("http://127.0.0.1:8123/mcp"),
+                    None,
+                ),
+                server_entry("shadcn-mcp-server", "unclassified", None, None, None),
+            ],
+            "test-client",
+        );
 
         assert!(!plan.items.contains_key("MCPMate"));
         let context7 = plan.items.get("context7").expect("context7 server entry");
@@ -788,10 +833,13 @@ mod tests {
 
     #[test]
     fn client_config_import_plan_reports_invalid_entries() {
-        let plan = build_import_plan_from_entries([
-            server_entry("broken", "unclassified", None, None, Some("config_invalid_entry")),
-            server_entry("valid", "stdio", Some("uvx"), None, None),
-        ], "test-client");
+        let plan = build_import_plan_from_entries(
+            [
+                server_entry("broken", "unclassified", None, None, Some("config_invalid_entry")),
+                server_entry("valid", "stdio", Some("uvx"), None, None),
+            ],
+            "test-client",
+        );
 
         assert!(plan.items.contains_key("valid"));
         assert_eq!(plan.skipped_servers.len(), 1);

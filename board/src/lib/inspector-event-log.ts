@@ -9,7 +9,12 @@ export type InspectorLogTranslate = (
 	options?: Record<string, unknown>,
 ) => string;
 
-export type InspectorMcpListKind = "tools" | "resources" | "prompts" | "templates";
+export type InspectorMcpListKind =
+	| "tools"
+	| "resources"
+	| "prompts"
+	| "templates"
+	| "tasks";
 
 export type InspectorLocalAiEvent =
 	| {
@@ -184,6 +189,52 @@ export function inspectorEventBelongsToServer(
 		return false;
 	}
 	return eventServerId === serverId;
+}
+
+function readSessionIdFromRecord(record: unknown): string | null {
+	if (!record || typeof record !== "object") {
+		return null;
+	}
+	const sessionId = (record as { session_id?: unknown }).session_id;
+	return typeof sessionId === "string" ? sessionId : null;
+}
+
+export function resolveInspectorEventSessionId(
+	entry: InspectorLogEventEntry,
+): string | null {
+	const { data } = entry;
+	if ("session_id" in data && typeof data.session_id === "string") {
+		return data.session_id;
+	}
+	return readSessionIdFromRecord(entry.request) ?? readSessionIdFromRecord(entry.response);
+}
+
+export function inspectorEventBelongsToSession(
+	entry: InspectorLogEventEntry,
+	sessionId: string,
+): boolean {
+	const eventSessionId = resolveInspectorEventSessionId(entry);
+	if (!eventSessionId) {
+		return false;
+	}
+	return eventSessionId === sessionId;
+}
+
+export type InspectorActivityContextFilter =
+	| { field: "server_id"; value: string }
+	| { field: "session_id"; value: string };
+
+export function inspectorEventMatchesContextFilter(
+	entry: InspectorLogEventEntry,
+	filter: InspectorActivityContextFilter | null,
+): boolean {
+	if (!filter) {
+		return true;
+	}
+	if (filter.field === "server_id") {
+		return inspectorEventBelongsToServer(entry, filter.value);
+	}
+	return inspectorEventBelongsToSession(entry, filter.value);
 }
 
 export function filterInspectorLogEventsForServer(

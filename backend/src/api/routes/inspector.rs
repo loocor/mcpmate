@@ -9,7 +9,7 @@ use crate::api::models::inspector::{
     InspectorScratchServerCreateResp, InspectorScratchServerDeleteReq, InspectorScratchServerDeleteResp,
     InspectorScratchServerListResp, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
     InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp, InspectorSnapshotQuery,
-    InspectorTemplatesListResp, InspectorToolCallCancelReq, InspectorToolCallCancelResp,
+    InspectorTasksListResp, InspectorTemplatesListResp, InspectorToolCallCancelReq, InspectorToolCallCancelResp,
     InspectorToolCallEvidenceQuery, InspectorToolCallEvidenceResp, InspectorToolCallReq, InspectorToolCallResp,
     InspectorToolCallStartResp, InspectorToolsListResp,
 };
@@ -43,6 +43,12 @@ aide_wrapper_query!(
     InspectorListQuery,
     InspectorTemplatesListResp,
     "Inspector: list templates"
+);
+aide_wrapper_query!(
+    inspector::tasks_list,
+    InspectorListQuery,
+    InspectorTasksListResp,
+    "Inspector: list tasks"
 );
 aide_wrapper_payload!(
     inspector::tool_call,
@@ -201,6 +207,8 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/mcp/inspector/template/list",
             get_with(templates_list_aide, templates_list_docs),
         )
+        // tasks
+        .api_route("/mcp/inspector/task/list", get_with(tasks_list_aide, tasks_list_docs))
         // prompts
         .api_route(
             "/mcp/inspector/prompt/list",

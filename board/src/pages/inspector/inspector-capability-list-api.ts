@@ -13,6 +13,7 @@ type InspectorListResponse = {
 		prompts?: unknown[];
 		resources?: unknown[];
 		templates?: unknown[];
+		tasks?: unknown[];
 	} | null;
 	error?: unknown;
 };
@@ -104,6 +105,13 @@ function capabilityRecordKey(
 				toStringValue(record.name) ??
 				""
 			);
+		case "tasks":
+			return (
+				toStringValue(record.taskId) ??
+				toStringValue(record.task_id) ??
+				toStringValue(record.name) ??
+				""
+			);
 		default:
 			return toStringValue(record.unique_name) ?? toStringValue(record.name) ?? "";
 	}
@@ -142,6 +150,13 @@ function capabilityRecordTitle(
 				toStringValue(record.uriTemplate) ??
 				toStringValue(record.uri_template) ??
 				(key || "Template")
+			);
+		case "tasks":
+			return (
+				toStringValue(record.name) ??
+				toStringValue(record.taskId) ??
+				toStringValue(record.task_id) ??
+				(key || "Task")
 			);
 		default:
 			return toStringValue(record.name) ?? (key || "Capability");
@@ -188,6 +203,10 @@ function capabilityRecordMatchesFamily(
 			return Boolean(uri ?? name);
 		case "resource_templates":
 			return Boolean(template ?? name);
+		case "tasks":
+			return Boolean(
+				toStringValue(record.taskId) ?? toStringValue(record.task_id) ?? name,
+			);
 		default:
 			return false;
 	}
@@ -207,7 +226,9 @@ function normalizeCapabilityRecords(
 					? data?.resources
 					: family === "resource_templates"
 						? data?.templates
-						: undefined;
+						: family === "tasks"
+							? data?.tasks
+							: undefined;
 
 	if (!Array.isArray(rawList)) {
 		return [];
@@ -231,7 +252,8 @@ export async function fetchInspectorCapabilityList(params: {
 		family !== "tools" &&
 		family !== "prompts" &&
 		family !== "resources" &&
-		family !== "resource_templates"
+		family !== "resource_templates" &&
+		family !== "tasks"
 	) {
 		throw new Error(`Capability list is not available for ${family} yet.`);
 	}
@@ -255,6 +277,9 @@ export async function fetchInspectorCapabilityList(params: {
 			break;
 		case "resource_templates":
 			response = (await inspectorApi.templatesList(payload)) as InspectorListResponse;
+			break;
+		case "tasks":
+			response = (await inspectorApi.tasksList(payload)) as InspectorListResponse;
 			break;
 	}
 

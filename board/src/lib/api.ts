@@ -1745,6 +1745,11 @@ export const inspectorApi = {
 		appendInspectorTargetQuery(qs, q);
 		return fetchApi(`/api/mcp/inspector/template/list?${qs}`);
 	},
+	tasksList: (q: InspectorTargetQuery) => {
+		const qs = new URLSearchParams();
+		appendInspectorTargetQuery(qs, q);
+		return fetchApi(`/api/mcp/inspector/task/list?${qs}`);
+	},
 	compatibilitySnapshot: async (q: InspectorTargetQuery) => {
 		const qs = new URLSearchParams();
 		appendInspectorTargetQuery(qs, q);

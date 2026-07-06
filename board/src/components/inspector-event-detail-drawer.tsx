@@ -1,10 +1,19 @@
-import { ChevronRight, Copy } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { Copy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { InspectorMcpResponseViewer } from "./inspector-mcp-response-viewer";
+import { InspectorContextPropertyPanel } from "./inspector-context-property-panel";
+import { InspectorDrawerCollapsibleSection } from "./inspector-drawer-collapsible-section";
+import {
+	InspectorRecordPropertyPanel,
+	isFlatInspectorRecord,
+} from "./inspector-record-property-panel";
+import {
+	InspectorPayloadSegmentBody,
+	inspectorPayloadSegmentShowsCopyButton,
+} from "./inspector-payload-segment-body";
+import { useInspectorPayloadSegmentOptions } from "./use-inspector-payload-segment-options";
 import { Button } from "./ui/button";
-import { InspectorJsonOutline } from "./inspector-response-preview";
-import { JsonCodeBlock } from "./json-code-block";
 import {
 	Drawer,
 	DrawerContent,
@@ -24,18 +33,16 @@ import {
 } from "../lib/inspector-event-log";
 import {
 	INSPECTOR_COMPACT_SEGMENT_CLASSNAME,
+	INSPECTOR_PAYLOAD_FLOATING_ACTION_CLASSNAME,
+	coerceInspectorPayloadSegmentMode,
 	inferInspectorCapabilityKindFromEntry,
+	pickDefaultInspectorPayloadSegmentMode,
+	resolveGenericPayloadSegmentView,
+	type InspectorPayloadSegmentMode,
 } from "../lib/inspector-mcp-response-view";
 import { notifyError, notifySuccess } from "../lib/notify";
 import { cn, formatLocalDateTime } from "../lib/utils";
-import { Segment, type SegmentOption } from "./ui/segment";
-
-type PayloadDisplayMode = "json" | "outline";
-
-const PAYLOAD_DISPLAY_OPTIONS: SegmentOption[] = [
-	{ value: "json", label: "JSON" },
-	{ value: "outline", label: "Outline" },
-];
+import { Segment } from "./ui/segment";
 
 function serializePayloadForClipboard(value: unknown): string {
 	if (typeof value === "string") {
@@ -50,16 +57,38 @@ function PayloadSection({
 	fill = false,
 	copyLabel,
 	copyMessage,
+	onFilterByServerId,
+	onFilterBySessionId,
 }: {
 	title: string;
 	value: unknown;
 	fill?: boolean;
 	copyLabel?: string;
 	copyMessage?: string;
+	onFilterByServerId?: (serverId: string) => void;
+	onFilterBySessionId?: (sessionId: string) => void;
 }) {
 	const { t } = useTranslation("inspector");
-	const [displayMode, setDisplayMode] = useState<PayloadDisplayMode>("json");
+	const payloadDisplayOptions = useInspectorPayloadSegmentOptions(value);
+	const [displayMode, setDisplayMode] = useState<InspectorPayloadSegmentMode>(() =>
+		pickDefaultInspectorPayloadSegmentMode(value),
+	);
+
+	useEffect(() => {
+		setDisplayMode(pickDefaultInspectorPayloadSegmentMode(value));
+	}, [value]);
+
+	const activeDisplayMode = useMemo(
+		() => coerceInspectorPayloadSegmentMode(displayMode, value),
+		[displayMode, value],
+	);
+
 	const serializedValue = useMemo(() => serializePayloadForClipboard(value), [value]);
+	const effectiveMode = useMemo(
+		() => resolveGenericPayloadSegmentView(activeDisplayMode, value),
+		[activeDisplayMode, value],
+	);
+	const showPropertyPanel = isFlatInspectorRecord(value) && !fill;
 
 	const handleCopy = useCallback(async () => {
 		try {
@@ -67,9 +96,9 @@ function PayloadSection({
 			notifySuccess(
 				t("notifications.payloadCopySuccess", { defaultValue: "Payload copied" }),
 				copyMessage ??
-					t("notifications.payloadCopySuccessMessage", {
-						defaultValue: "Payload copied to clipboard.",
-					}),
+				t("notifications.payloadCopySuccessMessage", {
+					defaultValue: "Payload copied to clipboard.",
+				}),
 			);
 		} catch (error) {
 			notifyError(
@@ -83,59 +112,64 @@ function PayloadSection({
 		return null;
 	}
 
+	const segmentControl =
+		!showPropertyPanel && payloadDisplayOptions.length > 1 ? (
+			<Segment
+				value={activeDisplayMode}
+				onValueChange={(nextMode) =>
+					setDisplayMode(nextMode as InspectorPayloadSegmentMode)
+				}
+				options={payloadDisplayOptions}
+				showDots={false}
+				className={INSPECTOR_COMPACT_SEGMENT_CLASSNAME}
+			/>
+		) : null;
+
 	return (
-		<section
-			className={cn("space-y-2", fill && "flex min-h-0 min-w-0 flex-1 flex-col")}
+		<InspectorDrawerCollapsibleSection
+			title={title}
+			fill={fill}
+			collapsible={showPropertyPanel}
+			headerActions={segmentControl}
 		>
-			<div className="flex shrink-0 items-center justify-between gap-2">
-				<h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-					{title}
-				</h3>
-				<Segment
-					value={displayMode}
-					onValueChange={(nextMode) => setDisplayMode(nextMode as PayloadDisplayMode)}
-					options={PAYLOAD_DISPLAY_OPTIONS}
-					showDots={false}
-					className={INSPECTOR_COMPACT_SEGMENT_CLASSNAME}
+			{showPropertyPanel ? (
+				<InspectorRecordPropertyPanel
+					record={value}
+					t={t}
+					onFilterByServerId={onFilterByServerId}
+					onFilterBySessionId={onFilterBySessionId}
 				/>
-			</div>
-			<div
-				className={cn(
-					"group/payload relative min-w-0",
-					fill && "flex min-h-0 flex-1 flex-col",
-				)}
-			>
-				<Button
-					type="button"
-					variant="outline"
-					size="icon"
-					className="absolute right-2 top-2 z-10 h-7 w-7 opacity-0 shadow-sm transition-opacity group-hover/payload:opacity-100 group-focus-within/payload:opacity-100"
-					aria-label={copyLabel ?? t("actions.copyPayload", { defaultValue: "Copy payload" })}
-					onClick={() => void handleCopy()}
+			) : (
+				<div
+					className={cn(
+						"group/payload relative min-w-0",
+						fill && "flex min-h-0 flex-1 flex-col overflow-hidden",
+					)}
 				>
-					<Copy className="h-3.5 w-3.5" />
-				</Button>
-				{displayMode === "outline" ? (
-					<InspectorJsonOutline
+					{inspectorPayloadSegmentShowsCopyButton(effectiveMode) ? (
+						<Button
+							type="button"
+							variant="outline"
+							size="icon"
+							className={cn(
+								INSPECTOR_PAYLOAD_FLOATING_ACTION_CLASSNAME,
+								"absolute right-2 top-2 z-10",
+							)}
+							aria-label={copyLabel ?? t("actions.copyPayload", { defaultValue: "Copy payload" })}
+							onClick={() => void handleCopy()}
+						>
+							<Copy className="h-3.5 w-3.5" />
+						</Button>
+					) : null}
+					<InspectorPayloadSegmentBody
+						mode={effectiveMode}
 						value={value}
-						className={cn(
-							fill
-								? "min-h-0 flex-1"
-								: "max-h-[min(28vh,240px)] shrink-0",
-						)}
+						fill={fill}
+						compact={!fill}
 					/>
-				) : (
-					<JsonCodeBlock
-						code={JSON.stringify(value, null, 2)}
-						className={cn(
-							fill
-								? "min-h-0 flex-1 overflow-y-auto overflow-x-auto"
-								: "max-h-[min(28vh,240px)] shrink-0 overflow-y-auto overflow-x-auto",
-						)}
-					/>
-				)}
-			</div>
-		</section>
+				</div>
+			)}
+		</InspectorDrawerCollapsibleSection>
 	);
 }
 
@@ -150,61 +184,27 @@ function hasMcpProtocolPayload(protocolView: InspectorEventProtocolView): boolea
 function InspectorContextCard({
 	protocolView,
 	t,
+	onFilterByServerId,
+	onFilterBySessionId,
 }: {
 	protocolView: InspectorEventProtocolView;
 	t: (key: string, options?: Record<string, unknown>) => string;
+	onFilterByServerId?: (serverId: string) => void;
+	onFilterBySessionId?: (sessionId: string) => void;
 }) {
-	const [expanded, setExpanded] = useState(false);
-	const contextFieldCount = Object.keys(protocolView.context).length;
-
-	if (contextFieldCount === 0) {
-		return null;
-	}
-
 	return (
-		<section className="shrink-0 rounded-md border border-border bg-card text-card-foreground">
-			<button
-				type="button"
-				className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
-				aria-expanded={expanded}
-				onClick={() => setExpanded((current) => !current)}
-			>
-				<span className="flex min-w-0 items-center gap-2">
-					<ChevronRight
-						className={cn(
-							"h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
-							expanded && "rotate-90",
-						)}
-						aria-hidden
-					/>
-					<span className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						{t("activity.drawer.inspectorContext", {
-							defaultValue: "Inspector context",
-						})}
-					</span>
-				</span>
-				<span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-					{t("activity.drawer.contextFieldCount", {
-						defaultValue: "{{count}} fields",
-						count: contextFieldCount,
-					})}
-				</span>
-			</button>
-			{expanded ? (
-				<div className="border-t border-border p-3">
-					<PayloadSection
-						title={t("activity.drawer.contextPayload", {
-							defaultValue: "Context payload",
-						})}
-						value={protocolView.context}
-						copyLabel={t("actions.copyContext", { defaultValue: "Copy context" })}
-						copyMessage={t("notifications.contextCopySuccessMessage", {
-							defaultValue: "Inspector context copied to clipboard.",
-						})}
-					/>
-				</div>
-			) : null}
-		</section>
+		<InspectorDrawerCollapsibleSection
+			title={t("activity.drawer.inspectorContext", {
+				defaultValue: "Inspector context",
+			})}
+		>
+			<InspectorContextPropertyPanel
+				context={protocolView.context}
+				t={t}
+				onFilterByServerId={onFilterByServerId}
+				onFilterBySessionId={onFilterBySessionId}
+			/>
+		</InspectorDrawerCollapsibleSection>
 	);
 }
 
@@ -212,20 +212,32 @@ function McpProtocolContent({
 	protocolView,
 	entry,
 	t,
+	onFilterByServerId,
+	onFilterBySessionId,
 }: {
 	protocolView: InspectorEventProtocolView;
 	entry: InspectorLogEventEntry;
 	t: (key: string, options?: Record<string, unknown>) => string;
+	onFilterByServerId?: (serverId: string) => void;
+	onFilterBySessionId?: (sessionId: string) => void;
 }) {
 	const capabilityKind = inferInspectorCapabilityKindFromEntry(entry);
 	const hasProtocolPayload = hasMcpProtocolPayload(protocolView);
+	const hasContext = Object.keys(protocolView.context).length > 0;
 
-	return (
-		<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-			<InspectorContextCard protocolView={protocolView} t={t} />
-			{hasProtocolPayload ? (
-				<>
+	const payloadSections = useMemo(() => {
+		if (!hasProtocolPayload) {
+			return [];
+		}
+
+		const sections: Array<{ key: string; node: (fill: boolean) => ReactNode }> = [];
+
+		if (protocolView.request !== undefined) {
+			sections.push({
+				key: "request",
+				node: (fill) => (
 					<PayloadSection
+						fill={fill}
 						title={t("activity.drawer.mcpRequest", {
 							defaultValue: "MCP request",
 						})}
@@ -234,18 +246,35 @@ function McpProtocolContent({
 						copyMessage={t("notifications.requestCopySuccessMessage", {
 							defaultValue: "Request payload copied to clipboard.",
 						})}
+						onFilterByServerId={onFilterByServerId}
+						onFilterBySessionId={onFilterBySessionId}
 					/>
-					{protocolView.response !== undefined ? (
-						<InspectorMcpResponseViewer
-							fill
-							response={protocolView.response}
-							kind={capabilityKind}
-							title={t("activity.drawer.mcpResponse", {
-								defaultValue: "MCP response",
-							})}
-						/>
-					) : null}
+				),
+			});
+		}
+
+		if (protocolView.response !== undefined) {
+			sections.push({
+				key: "response",
+				node: (fill) => (
+					<InspectorMcpResponseViewer
+						fill={fill}
+						response={protocolView.response}
+						kind={capabilityKind}
+						title={t("activity.drawer.mcpResponse", {
+							defaultValue: "MCP response",
+						})}
+					/>
+				),
+			});
+		}
+
+		if (protocolView.notification !== undefined) {
+			sections.push({
+				key: "notification",
+				node: (fill) => (
 					<PayloadSection
+						fill={fill}
 						title={t("activity.drawer.mcpNotification", {
 							defaultValue: "MCP notification",
 						})}
@@ -256,15 +285,143 @@ function McpProtocolContent({
 						copyMessage={t("notifications.notificationCopySuccessMessage", {
 							defaultValue: "Notification payload copied to clipboard.",
 						})}
+						onFilterByServerId={onFilterByServerId}
+						onFilterBySessionId={onFilterBySessionId}
 					/>
-				</>
-			) : (
-				<div className="text-sm text-muted-foreground">
-					{t("activity.drawer.mcpEmpty", {
-						defaultValue: "No MCP request, response, or notification payload for this activity entry.",
-					})}
+				),
+			});
+		}
+
+		return sections;
+	}, [capabilityKind, hasProtocolPayload, onFilterByServerId, onFilterBySessionId, protocolView, t]);
+
+	const lastPayloadIndex = payloadSections.length - 1;
+
+	if (!hasContext && payloadSections.length === 0) {
+		return (
+			<div className="text-sm text-muted-foreground">
+				{t("activity.drawer.mcpEmpty", {
+					defaultValue: "No MCP request, response, or notification payload for this activity entry.",
+				})}
+			</div>
+		);
+	}
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+			{hasContext ? (
+				<InspectorContextCard
+					protocolView={protocolView}
+					t={t}
+					onFilterByServerId={onFilterByServerId}
+					onFilterBySessionId={onFilterBySessionId}
+				/>
+			) : null}
+			{payloadSections.length > 0 ? (
+				<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+					{payloadSections.map((section, index) => (
+						<div
+							key={section.key}
+							className={cn(
+								"min-h-0 min-w-0",
+								index === lastPayloadIndex && "flex flex-1 flex-col",
+							)}
+						>
+							{section.node(index === lastPayloadIndex)}
+						</div>
+					))}
 				</div>
-			)}
+			) : null}
+		</div>
+	);
+}
+
+function FallbackActivityContent({
+	entry,
+	t,
+	onFilterByServerId,
+	onFilterBySessionId,
+}: {
+	entry: InspectorLogEventEntry;
+	t: (key: string, options?: Record<string, unknown>) => string;
+	onFilterByServerId?: (serverId: string) => void;
+	onFilterBySessionId?: (sessionId: string) => void;
+}) {
+	const capabilityKind = inferInspectorCapabilityKindFromEntry(entry);
+
+	const payloadSections = useMemo(() => {
+		const sections: Array<{ key: string; node: (fill: boolean) => ReactNode }> = [];
+
+		if (entry.data !== undefined) {
+			sections.push({
+				key: "activity",
+				node: (fill) => (
+					<PayloadSection
+						fill={fill}
+						title={t("activity.drawer.activity", { defaultValue: "Activity" })}
+						value={entry.data}
+						copyLabel={t("actions.copyActivity", { defaultValue: "Copy activity" })}
+						copyMessage={t("notifications.activityCopySuccessMessage", {
+							defaultValue: "Activity payload copied to clipboard.",
+						})}
+						onFilterByServerId={onFilterByServerId}
+						onFilterBySessionId={onFilterBySessionId}
+					/>
+				),
+			});
+		}
+
+		if (entry.request !== undefined) {
+			sections.push({
+				key: "request",
+				node: (fill) => (
+					<PayloadSection
+						fill={fill}
+						title={t("activity.drawer.request", { defaultValue: "Request" })}
+						value={entry.request}
+						copyLabel={t("actions.copyRequest", { defaultValue: "Copy request" })}
+						copyMessage={t("notifications.requestCopySuccessMessage", {
+							defaultValue: "Request payload copied to clipboard.",
+						})}
+						onFilterByServerId={onFilterByServerId}
+						onFilterBySessionId={onFilterBySessionId}
+					/>
+				),
+			});
+		}
+
+		if (entry.response !== undefined) {
+			sections.push({
+				key: "response",
+				node: (fill) => (
+					<InspectorMcpResponseViewer
+						fill={fill}
+						response={entry.response}
+						kind={capabilityKind}
+						title={t("activity.drawer.response", { defaultValue: "Response" })}
+					/>
+				),
+			});
+		}
+
+		return sections;
+	}, [capabilityKind, entry, onFilterByServerId, onFilterBySessionId, t]);
+
+	const lastPayloadIndex = payloadSections.length - 1;
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+			{payloadSections.map((section, index) => (
+				<div
+					key={section.key}
+					className={cn(
+						"min-h-0 min-w-0",
+						index === lastPayloadIndex && "flex flex-1 flex-col",
+					)}
+				>
+					{section.node(index === lastPayloadIndex)}
+				</div>
+			))}
 		</div>
 	);
 }
@@ -273,10 +430,14 @@ export function InspectorEventDetailDrawer({
 	open,
 	onOpenChange,
 	entry,
+	onFilterByServerId,
+	onFilterBySessionId,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	entry: InspectorLogEventEntry | null;
+	onFilterByServerId?: (serverId: string) => void;
+	onFilterBySessionId?: (sessionId: string) => void;
 }) {
 	const { t } = useTranslation("inspector");
 	const translateEvent = useCallback<InspectorLogTranslate>(
@@ -303,6 +464,22 @@ export function InspectorEventDetailDrawer({
 		[entry],
 	);
 
+	const handleFilterByServerId = useCallback(
+		(serverId: string) => {
+			onFilterByServerId?.(serverId);
+			onOpenChange(false);
+		},
+		[onFilterByServerId, onOpenChange],
+	);
+
+	const handleFilterBySessionId = useCallback(
+		(sessionId: string) => {
+			onFilterBySessionId?.(sessionId);
+			onOpenChange(false);
+		},
+		[onFilterBySessionId, onOpenChange],
+	);
+
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange} direction="right">
 			<DrawerContent className="flex h-full flex-col overflow-hidden">
@@ -314,37 +491,23 @@ export function InspectorEventDetailDrawer({
 						<DrawerDescription>{description}</DrawerDescription>
 					</div>
 				</DrawerHeader>
-				<div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-3">
+				<div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-3 pt-0">
 					{entry ? (
 						protocolView ? (
-							<McpProtocolContent protocolView={protocolView} entry={entry} t={t} />
+							<McpProtocolContent
+								protocolView={protocolView}
+								entry={entry}
+								t={t}
+								onFilterByServerId={handleFilterByServerId}
+								onFilterBySessionId={handleFilterBySessionId}
+							/>
 						) : (
-							<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-								<PayloadSection
-									title={t("activity.drawer.activity", { defaultValue: "Activity" })}
-									value={entry.data}
-									copyLabel={t("actions.copyActivity", { defaultValue: "Copy activity" })}
-									copyMessage={t("notifications.activityCopySuccessMessage", {
-										defaultValue: "Activity payload copied to clipboard.",
-									})}
-								/>
-								<PayloadSection
-									title={t("activity.drawer.request", { defaultValue: "Request" })}
-									value={entry.request}
-									copyLabel={t("actions.copyRequest", { defaultValue: "Copy request" })}
-									copyMessage={t("notifications.requestCopySuccessMessage", {
-										defaultValue: "Request payload copied to clipboard.",
-									})}
-								/>
-								{entry.response !== undefined ? (
-									<InspectorMcpResponseViewer
-										fill
-										response={entry.response}
-										kind={inferInspectorCapabilityKindFromEntry(entry)}
-										title={t("activity.drawer.response", { defaultValue: "Response" })}
-									/>
-								) : null}
-							</div>
+							<FallbackActivityContent
+								entry={entry}
+								t={t}
+								onFilterByServerId={handleFilterByServerId}
+								onFilterBySessionId={handleFilterBySessionId}
+							/>
 						)
 					) : (
 						<div className="text-sm text-muted-foreground">

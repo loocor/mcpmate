@@ -443,6 +443,23 @@ api_resp!(
 );
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+pub struct InspectorTasksListData {
+    pub mode: String,
+    pub tasks: Vec<serde_json::Value>,
+    pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Vec<serde_json::Value>>,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<serde_json::Value>,
+}
+api_resp!(
+    InspectorTasksListResp,
+    InspectorTasksListData,
+    "Inspector tasks list response"
+);
+
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
 pub struct InspectorPromptGetData {
     pub result: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]

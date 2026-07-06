@@ -11,7 +11,7 @@ export type InspectorEventProtocolView = {
 	context: Record<string, unknown>;
 };
 
-const INSPECTOR_CONTEXT_KEYS = [
+export const INSPECTOR_CONTEXT_KEYS = [
 	"server_id",
 	"server_name",
 	"mode",
@@ -20,6 +20,8 @@ const INSPECTOR_CONTEXT_KEYS = [
 	"call_id",
 	"elapsed_ms",
 ] as const;
+
+export type InspectorContextKey = (typeof INSPECTOR_CONTEXT_KEYS)[number];
 
 function asRecord(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {

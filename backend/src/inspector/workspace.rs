@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -6,7 +7,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::{common::paths::MCPMatePaths, core::models::MCPServerConfig};
+use crate::{
+    common::paths::MCPMatePaths,
+    config::server::import::{self, ImportCandidate, ImportConflictIndex, ImportOptions, SkipReason},
+    core::models::MCPServerConfig,
+};
 
 #[derive(Debug, Clone)]
 pub struct InspectorWorkspace {
@@ -118,6 +123,17 @@ impl InspectorWorkspace {
                 self.servers_dir.display()
             )
         })?;
+        if let Some((existing, reason)) = self.find_conflicting_server_record(&input)? {
+            if matches!(reason, SkipReason::DuplicateFingerprint) {
+                return Ok(existing);
+            }
+            return Err(anyhow::anyhow!(
+                "Inspector server record '{}' conflicts with existing record '{}': {}",
+                input.name,
+                existing.name,
+                reason.code()
+            ));
+        }
         let id = self.next_server_record_id(&input.name)?;
         let now = Utc::now();
         let record = InspectorServerRecord {
@@ -189,6 +205,34 @@ impl InspectorWorkspace {
 
         records.sort_by(|left, right| left.name.cmp(&right.name).then_with(|| left.id.cmp(&right.id)));
         Ok(records)
+    }
+
+    pub fn find_matching_server_record(
+        &self,
+        input: &InspectorServerRecordInput,
+    ) -> Result<Option<InspectorServerRecord>> {
+        Ok(self
+            .find_conflicting_server_record(input)?
+            .and_then(|(record, reason)| {
+                if matches!(reason, SkipReason::DuplicateFingerprint) {
+                    Some(record)
+                } else {
+                    None
+                }
+            }))
+    }
+
+    fn find_conflicting_server_record(
+        &self,
+        input: &InspectorServerRecordInput,
+    ) -> Result<Option<(InspectorServerRecord, SkipReason)>> {
+        for record in self.list_server_records()? {
+            let Some(reason) = server_record_conflict_reason(&record, input)? else {
+                continue;
+            };
+            return Ok(Some((record, reason)));
+        }
+        Ok(None)
     }
 
     pub fn delete_server_record(
@@ -399,6 +443,110 @@ fn normalize_server_record_id(name: &str) -> Result<String> {
     }
 }
 
+pub(crate) fn server_records_match(
+    left: &InspectorServerRecord,
+    right: &InspectorServerRecord,
+) -> bool {
+    server_record_conflict_reason(
+        left,
+        &InspectorServerRecordInput {
+            name: right.name.clone(),
+            config: right.config.clone(),
+            provenance: right.provenance.clone(),
+        },
+    )
+    .ok()
+    .flatten()
+    .is_some()
+}
+
+fn provenance_matches(
+    record: &InspectorServerProvenance,
+    input: &InspectorServerProvenance,
+) -> bool {
+    match (record, input) {
+        (InspectorServerProvenance::Scratch { .. }, InspectorServerProvenance::Scratch { .. }) => true,
+        (
+            InspectorServerProvenance::ManagedRegistry {
+                server_id: record_id, ..
+            },
+            InspectorServerProvenance::ManagedRegistry {
+                server_id: input_id, ..
+            },
+        ) => record_id == input_id,
+        _ => false,
+    }
+}
+
+fn server_record_conflict_reason(
+    record: &InspectorServerRecord,
+    input: &InspectorServerRecordInput,
+) -> Result<Option<SkipReason>> {
+    if !provenance_matches(&record.provenance, &input.provenance) {
+        return Ok(None);
+    }
+
+    let existing = ServerRecordImportIndex::from_record(record)?;
+    let candidate = import_candidate_from_config(&input.config)?;
+    Ok(import::import_conflict_reason(
+        &existing,
+        &input.name,
+        &candidate,
+        &ImportOptions::dashboard_import(false, None),
+    ))
+}
+
+fn import_candidate_from_config(config: &MCPServerConfig) -> Result<ImportCandidate> {
+    import::prepare_import_candidate_from_parts(
+        config.kind.client_format(),
+        config.command.as_deref(),
+        config.url.as_deref(),
+        config.args.as_deref().unwrap_or(&[]),
+    )
+}
+
+#[derive(Debug, Default)]
+struct ServerRecordImportIndex {
+    names: HashSet<String>,
+    fingerprints: HashSet<String>,
+    url_bases: HashSet<String>,
+    url_signatures: HashMap<String, crate::config::server::fingerprint::UrlSignature>,
+}
+
+impl ServerRecordImportIndex {
+    fn from_record(record: &InspectorServerRecord) -> Result<Self> {
+        let mut index = Self::default();
+        let candidate = import_candidate_from_config(&record.config)?;
+        index.names.insert(record.name.clone());
+        if !candidate.fingerprint.is_empty() {
+            index.fingerprints.insert(candidate.fingerprint.clone());
+        }
+        if let Some(signature) = candidate.url_signature {
+            index.url_bases.insert(signature.base.clone());
+            index.url_signatures.insert(signature.base.clone(), signature);
+        }
+        Ok(index)
+    }
+}
+
+impl ImportConflictIndex for ServerRecordImportIndex {
+    fn names(&self) -> &HashSet<String> {
+        &self.names
+    }
+
+    fn fingerprints(&self) -> &HashSet<String> {
+        &self.fingerprints
+    }
+
+    fn url_bases(&self) -> &HashSet<String> {
+        &self.url_bases
+    }
+
+    fn url_signatures(&self) -> &HashMap<String, crate::config::server::fingerprint::UrlSignature> {
+        &self.url_signatures
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -499,13 +647,13 @@ mod tests {
         let tmp = tempdir().expect("tmp dir");
         let workspace = InspectorWorkspace::from_servers_dir(tmp.path().join("servers"));
 
-        for name in ["Zulu", "Alpha"] {
+        for (name, command) in [("Zulu", "node"), ("Alpha", "uvx")] {
             workspace
                 .create_server_record(InspectorServerRecordInput {
                     name: name.to_string(),
                     config: MCPServerConfig {
                         kind: ServerType::Stdio,
-                        command: Some("node".to_string()),
+                        command: Some(command.to_string()),
                         args: None,
                         url: None,
                         env: None,
@@ -526,15 +674,15 @@ mod tests {
     }
 
     #[test]
-    fn scratch_record_ids_are_normalized_and_deduped() {
+    fn scratch_record_rejects_duplicate_name_with_different_config() {
         let tmp = tempdir().expect("tmp dir");
         let workspace = InspectorWorkspace::from_servers_dir(tmp.path().join("servers"));
 
-        let create = || InspectorServerRecordInput {
+        let create = |command: &str| InspectorServerRecordInput {
             name: "Scratch Fetch".to_string(),
             config: MCPServerConfig {
                 kind: ServerType::Stdio,
-                command: Some("node".to_string()),
+                command: Some(command.to_string()),
                 args: None,
                 url: None,
                 env: None,
@@ -543,13 +691,135 @@ mod tests {
             provenance: InspectorServerProvenance::Scratch { origin: None },
         };
 
-        let first = workspace.create_server_record(create()).expect("create first");
-        let second = workspace.create_server_record(create()).expect("create second");
+        let first = workspace.create_server_record(create("node")).expect("create first");
+        let error = workspace
+            .create_server_record(create("uvx"))
+            .expect_err("same name with different config should conflict");
 
         assert_eq!(first.id, "scratch-fetch");
-        assert_eq!(second.id, "scratch-fetch-2");
+        assert!(error.to_string().contains("duplicate_name"));
         assert!(workspace.servers_dir().join("scratch-fetch.json").exists());
-        assert!(workspace.servers_dir().join("scratch-fetch-2.json").exists());
+        assert!(!workspace.servers_dir().join("scratch-fetch-2.json").exists());
+    }
+
+    #[test]
+    fn matching_scratch_record_uses_import_fingerprint_rules() {
+        let tmp = tempdir().expect("tmp dir");
+        let workspace = InspectorWorkspace::from_servers_dir(tmp.path().join("servers"));
+        let config = MCPServerConfig {
+            kind: ServerType::Stdio,
+            command: Some("bunx".to_string()),
+            args: Some(vec![
+                "-y".to_string(),
+                "@modelcontextprotocol/server-everything".to_string(),
+            ]),
+            url: None,
+            env: Some(HashMap::from([("TOKEN".to_string(), "test".to_string())])),
+            headers: None,
+        };
+        let first = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Everything".to_string(),
+                config: config.clone(),
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect("create first");
+
+        let matching = workspace
+            .find_matching_server_record(&InspectorServerRecordInput {
+                name: "Everything copy".to_string(),
+                config: MCPServerConfig {
+                    command: Some("npx".to_string()),
+                    args: Some(vec!["@modelcontextprotocol/server-everything".to_string()]),
+                    ..config.clone()
+                },
+                provenance: InspectorServerProvenance::Scratch {
+                    origin: Some("inspector-connect".to_string()),
+                },
+            })
+            .expect("find matching")
+            .expect("matching record");
+        assert_eq!(matching.id, first.id);
+
+        let duplicate_create = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Everything copy".to_string(),
+                config: MCPServerConfig {
+                    command: Some("npx".to_string()),
+                    args: Some(vec!["@modelcontextprotocol/server-everything".to_string()]),
+                    ..config.clone()
+                },
+                provenance: InspectorServerProvenance::Scratch {
+                    origin: Some("inspector-connect".to_string()),
+                },
+            })
+            .expect("reuse existing");
+        assert_eq!(duplicate_create.id, first.id);
+        assert!(!workspace.servers_dir().join("everything-2.json").exists());
+
+        let conflicting_name = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Everything".to_string(),
+                config: MCPServerConfig {
+                    command: Some("uvx".to_string()),
+                    ..config
+                },
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect_err("same name with different fingerprint should conflict");
+        assert!(conflicting_name.to_string().contains("duplicate_name"));
+    }
+
+    #[test]
+    fn scratch_http_records_use_import_url_signature_rules() {
+        let tmp = tempdir().expect("tmp dir");
+        let workspace = InspectorWorkspace::from_servers_dir(tmp.path().join("servers"));
+        let first = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Remote Search".to_string(),
+                config: MCPServerConfig {
+                    kind: ServerType::StreamableHttp,
+                    command: None,
+                    args: None,
+                    url: Some("https://Example.com:443/mcp/?b=2&a=1&token=secret".to_string()),
+                    env: None,
+                    headers: None,
+                },
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect("create first");
+
+        let duplicate = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Remote Search copy".to_string(),
+                config: MCPServerConfig {
+                    kind: ServerType::StreamableHttp,
+                    command: None,
+                    args: None,
+                    url: Some("https://example.com/mcp?a=1&b=2&access_token=other".to_string()),
+                    env: None,
+                    headers: None,
+                },
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect("reuse equivalent URL signature");
+        assert_eq!(duplicate.id, first.id);
+
+        let query_conflict = workspace
+            .create_server_record(InspectorServerRecordInput {
+                name: "Remote Search beta".to_string(),
+                config: MCPServerConfig {
+                    kind: ServerType::StreamableHttp,
+                    command: None,
+                    args: None,
+                    url: Some("https://example.com/mcp?a=1&b=3".to_string()),
+                    env: None,
+                    headers: None,
+                },
+                provenance: InspectorServerProvenance::Scratch { origin: None },
+            })
+            .expect_err("same URL base with different query should conflict");
+        assert!(query_conflict.to_string().contains("url_query_mismatch"));
     }
 
     #[test]

@@ -79,9 +79,10 @@ import { cn } from "../../lib/utils";
 
 const INSPECTOR_MEDIUM_INPUT_CLASS =
 	"[&_input]:h-9 [&_input]:px-3 [&_input]:py-1.5 [&_input]:text-sm [&_input]:focus-visible:ring-2 [&_input]:focus-visible:ring-offset-0 [&_button]:focus-visible:ring-offset-0";
-const INSPECTOR_MEDIUM_SEGMENT_LIST_CLASS = "min-h-9 h-9 p-1";
+const INSPECTOR_MEDIUM_SEGMENT_LIST_CLASS =
+	"flex h-9 w-full items-center gap-0.5 p-1";
 const INSPECTOR_MEDIUM_SEGMENT_TRIGGER_CLASS =
-	"h-7 px-2 py-1 text-sm leading-none focus-visible:ring-offset-0";
+	"h-7 flex-1 self-center px-3 py-0 text-sm leading-none focus-visible:ring-offset-0";
 const INSPECTOR_MEDIUM_DOT_CLASS = "size-2.5 border-[1.5px]";
 const INSPECTOR_INGEST_MESSAGE =
 	"Drag or paste a server config. Click this area to expand it when collapsed.";
@@ -941,90 +942,90 @@ export function InspectorConnectServerForm({
 
 	const formContent = (
 		<div className="mx-3 box-border flex flex-col gap-3 overflow-visible pb-px pt-3">
-				<div className="flex items-center gap-3">
-					<Label htmlFor={nameId} className={SERVER_INSTALL_FORM_ROW_LABEL_CLASS}>
-						{t("manual.fields.name.label", { defaultValue: "Name" })}
-					</Label>
-					<div className="flex min-w-0 flex-1 items-center gap-2">
-						<Input
-							id={nameId}
-							{...register("name")}
-							placeholder={t("manual.fields.name.placeholder", {
-								defaultValue: "e.g., local-mcp",
-							})}
-							disabled={disabled}
-						/>
-						{!connected ? (
-							<Popover open={serverPickerOpen} onOpenChange={setServerPickerOpen}>
-								<PopoverTrigger asChild>
-									<Button
-										type="button"
-										variant="outline"
-										size="icon"
-										className="h-9 w-9 shrink-0"
-										disabled={disabled}
-										aria-label="Choose existing server"
-										title="Choose existing server"
-									>
-										<ChevronsUpDown className="h-4 w-4 opacity-60" />
-									</Button>
-								</PopoverTrigger>
-								<PopoverContent
-									align="end"
-									className="w-[min(420px,var(--radix-popover-content-available-width))] overflow-hidden p-0"
+			<div className="flex items-center gap-3">
+				<Label htmlFor={nameId} className={SERVER_INSTALL_FORM_ROW_LABEL_CLASS}>
+					{t("manual.fields.name.label", { defaultValue: "Name" })}
+				</Label>
+				<div className="flex min-w-0 flex-1 items-center gap-2">
+					<Input
+						id={nameId}
+						{...register("name")}
+						placeholder={t("manual.fields.name.placeholder", {
+							defaultValue: "e.g., local-mcp",
+						})}
+						disabled={disabled}
+					/>
+					{!connected ? (
+						<Popover open={serverPickerOpen} onOpenChange={setServerPickerOpen}>
+							<PopoverTrigger asChild>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									className="h-9 w-9 shrink-0"
+									disabled={disabled}
+									aria-label="Choose existing server"
+									title="Choose existing server"
 								>
-									<Command className="max-h-full [&_[cmdk-list-sizer]]:w-full">
-										<CommandInput placeholder="Search servers..." />
-										<CommandList className="max-h-[280px] !overflow-x-visible !overflow-y-visible overscroll-contain p-0">
-											<CommandEmpty>No servers found.</CommandEmpty>
-											{serverOptions.map((server) => {
-												const SourceIcon =
-													server.source === "managed" ? Database : Pencil;
-												const isSelected =
-													(server.source === "managed" &&
-														selectedServerId === server.id) ||
-													(server.source === "scratch" &&
-														selectedScratchId === server.id);
-												return (
-													<CommandItem
-														key={`${server.source}:${server.id}`}
-														value={`${server.name} ${server.id} ${server.serverType ?? ""} ${server.source}`}
-														onSelect={() => void handleServerSelect(server)}
-														className="w-full gap-2 rounded-none px-3 py-2"
-													>
-														<SourceIcon
-															className={cn(
-																"h-4 w-4 shrink-0",
-																isSelected
-																	? "text-slate-950 dark:text-slate-50"
-																	: "text-muted-foreground",
-															)}
-															aria-hidden
-														/>
-														<span className="sr-only">
-															{server.source === "managed" ? "Managed" : "Scratch"}
-														</span>
-														<span className="min-w-0 flex-1 truncate font-medium">
-															{server.name}
-														</span>
-														<span className="shrink-0 text-xs text-muted-foreground">
-															{server.serverType ?? "unknown"}
-														</span>
-													</CommandItem>
-												);
-											})}
-										</CommandList>
-									</Command>
-								</PopoverContent>
-							</Popover>
-						) : null}
-					</div>
+									<ChevronsUpDown className="h-4 w-4 opacity-60" />
+								</Button>
+							</PopoverTrigger>
+							<PopoverContent
+								align="end"
+								className="w-[min(420px,var(--radix-popover-content-available-width))] overflow-hidden p-0"
+							>
+								<Command className="max-h-full [&_[cmdk-list-sizer]]:w-full">
+									<CommandInput placeholder="Search servers..." />
+									<CommandList className="max-h-[280px] !overflow-x-visible !overflow-y-visible overscroll-contain p-0">
+										<CommandEmpty>No servers found.</CommandEmpty>
+										{serverOptions.map((server) => {
+											const SourceIcon =
+												server.source === "managed" ? Database : Pencil;
+											const isSelected =
+												(server.source === "managed" &&
+													selectedServerId === server.id) ||
+												(server.source === "scratch" &&
+													selectedScratchId === server.id);
+											return (
+												<CommandItem
+													key={`${server.source}:${server.id}`}
+													value={`${server.name} ${server.id} ${server.serverType ?? ""} ${server.source}`}
+													onSelect={() => void handleServerSelect(server)}
+													className="w-full gap-2 rounded-none px-3 py-2"
+												>
+													<SourceIcon
+														className={cn(
+															"h-4 w-4 shrink-0",
+															isSelected
+																? "text-slate-950 dark:text-slate-50"
+																: "text-muted-foreground",
+														)}
+														aria-hidden
+													/>
+													<span className="sr-only">
+														{server.source === "managed" ? "Managed" : "Scratch"}
+													</span>
+													<span className="min-w-0 flex-1 truncate font-medium">
+														{server.name}
+													</span>
+													<span className="shrink-0 text-xs text-muted-foreground">
+														{server.serverType ?? "unknown"}
+													</span>
+												</CommandItem>
+											);
+										})}
+									</CommandList>
+								</Command>
+							</PopoverContent>
+						</Popover>
+					) : null}
 				</div>
+			</div>
 			<div className="flex items-center gap-3">
 				<Label htmlFor={kindId} className={SERVER_INSTALL_FORM_ROW_LABEL_CLASS}>
 					{t("manual.fields.type.label", { defaultValue: "Type" })}
 				</Label>
-				<div className="min-w-0 flex-1">
+				<div className="flex-1">
 					<Segment
 						options={serverTypeOptions}
 						value={kind}
@@ -1036,6 +1037,7 @@ export function InspectorConnectServerForm({
 						}
 						showDots
 						disabled={disabled}
+						className="w-full"
 						listClassName={INSPECTOR_MEDIUM_SEGMENT_LIST_CLASS}
 						triggerClassName={INSPECTOR_MEDIUM_SEGMENT_TRIGGER_CLASS}
 						dotClassName={INSPECTOR_MEDIUM_DOT_CLASS}
@@ -1152,80 +1154,80 @@ export function InspectorConnectServerForm({
 				/>
 			) : null}
 
-				<div
-					className="mb-3 flex min-h-0 flex-1 flex-col overflow-visible"
-					onFocusCapture={collapseDropZone}
-					onPointerDown={collapseDropZone}
-				>
-					<CoreConfigTabPanel
-						viewMode={viewMode}
-						onViewModeChange={setViewMode}
-						toolbarInsideScroll
-						toolbarClassName={cn("mx-3 px-0 pb-0", connected ? "pt-0" : "pt-3")}
-						scrollClassName="space-y-0 overflow-y-auto overscroll-contain p-0"
-						formContent={formContent}
-						jsonContent={
-							<ServerConfigJsonPanel
-								id={manualJsonId}
-								label={t("manual.fields.json.label", { defaultValue: "JSON" })}
-								jsonText={jsonText}
-								jsonError={jsonError}
-								jsonEditingEnabled
-								className="pr-3 pt-3"
-								onJsonChange={setJsonText}
-								copyLabel={t("manual.fields.json.copy", {
-									defaultValue: "Copy JSON",
-								})}
-							/>
-						}
-					/>
-				</div>
+			<div
+				className="mb-3 flex min-h-0 flex-1 flex-col overflow-visible"
+				onFocusCapture={collapseDropZone}
+				onPointerDown={collapseDropZone}
+			>
+				<CoreConfigTabPanel
+					viewMode={viewMode}
+					onViewModeChange={setViewMode}
+					toolbarInsideScroll
+					toolbarClassName={cn("mx-3 px-0 pb-0", connected ? "pt-0" : "pt-3")}
+					scrollClassName="space-y-0 overflow-y-auto overscroll-contain p-0"
+					formContent={formContent}
+					jsonContent={
+						<ServerConfigJsonPanel
+							id={manualJsonId}
+							label={t("manual.fields.json.label", { defaultValue: "JSON" })}
+							jsonText={jsonText}
+							jsonError={jsonError}
+							jsonEditingEnabled
+							className="pr-3 pt-3"
+							onJsonChange={setJsonText}
+							copyLabel={t("manual.fields.json.copy", {
+								defaultValue: "Copy JSON",
+							})}
+						/>
+					}
+				/>
+			</div>
 
-				<div className="mx-3 flex shrink-0 flex-col gap-1.5 pt-0 sm:flex-row sm:items-center sm:justify-between">
-					<div className="flex min-w-0 items-center gap-2.5">
-						<span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", statusColor)} />
-						<p className="min-w-0 truncate text-xs text-muted-foreground">
-							{statusDetail}
-						</p>
-					</div>
-					<div className="flex shrink-0 items-center justify-end gap-2">
-						{!connected ? (
-							<Button
-								type="button"
-								variant="outline"
-								onClick={resetForm}
-								disabled={connecting || disabled}
-								size="sm"
-								className="gap-2"
-							>
-								<RotateCcw className="h-4 w-4" />
-								Reset
-							</Button>
-						) : null}
+			<div className="mx-3 flex shrink-0 flex-col gap-1.5 pt-0 sm:flex-row sm:items-center sm:justify-between">
+				<div className="flex min-w-0 items-center gap-2.5">
+					<span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", statusColor)} />
+					<p className="min-w-0 truncate text-xs text-muted-foreground">
+						{statusDetail}
+					</p>
+				</div>
+				<div className="flex shrink-0 items-center justify-end gap-2">
+					{!connected ? (
 						<Button
 							type="button"
-							onClick={() => {
-								if (connected) {
-									onDisconnect();
-									return;
-								}
-								if (connectCandidate) {
-									void onConnect(connectCandidate);
-								}
-							}}
-							disabled={connecting || disabled || (!connected && !connectCandidate)}
+							variant="outline"
+							onClick={resetForm}
+							disabled={connecting || disabled}
 							size="sm"
-							className="min-w-32 gap-2"
+							className="gap-2"
 						>
-							{connecting ? (
-								<Loader2 className="h-4 w-4 animate-spin" />
-							) : connected ? (
-								<Unplug className="h-4 w-4" />
-							) : (
-								<Plug className="h-4 w-4" />
-							)}
-							{connecting ? "Connecting" : connected ? "Disconnect" : "Connect"}
+							<RotateCcw className="h-4 w-4" />
+							Reset
 						</Button>
+					) : null}
+					<Button
+						type="button"
+						onClick={() => {
+							if (connected) {
+								onDisconnect();
+								return;
+							}
+							if (connectCandidate) {
+								void onConnect(connectCandidate);
+							}
+						}}
+						disabled={connecting || disabled || (!connected && !connectCandidate)}
+						size="sm"
+						className="min-w-32 gap-2"
+					>
+						{connecting ? (
+							<Loader2 className="h-4 w-4 animate-spin" />
+						) : connected ? (
+							<Unplug className="h-4 w-4" />
+						) : (
+							<Plug className="h-4 w-4" />
+						)}
+						{connecting ? "Connecting" : connected ? "Disconnect" : "Connect"}
+					</Button>
 				</div>
 			</div>
 		</div>

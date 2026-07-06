@@ -117,14 +117,8 @@ export const InspectorBottomPanel = forwardRef<HTMLDivElement, InspectorBottomPa
 		}, [expanded, onExpandedChange, pinned]);
 
 		const handleHeaderClick = useCallback(() => {
-			if (pinned) {
-				onExpandedChange(!expanded);
-				return;
-			}
-			if (!expanded) {
-				onExpandedChange(true);
-			}
-		}, [expanded, onExpandedChange, pinned]);
+			onExpandedChange(!expanded);
+		}, [expanded, onExpandedChange]);
 
 		const handlePinClick = useCallback(() => {
 			onPinnedChange?.(!pinned);

@@ -13,6 +13,14 @@ export type InspectorPreviewBlock =
 			alt?: string;
 	  };
 
+export type InspectorJsonOutlineSummaryMeta =
+	| { kind: "keys"; count: number }
+	| { kind: "items"; count: number }
+	| { kind: "emptyObject" }
+	| { kind: "emptyArray" }
+	| { kind: "truncatedRows" }
+	| { kind: "truncatedDepth" };
+
 export type InspectorJsonOutlineRow = {
 	id: string;
 	depth: number;
@@ -28,6 +36,8 @@ export type InspectorJsonOutlineRow = {
 		| "undefined"
 		| "unknown";
 	summary: string;
+	hasChildren: boolean;
+	summaryMeta?: InspectorJsonOutlineSummaryMeta;
 };
 
 export type InspectorJsonOutlineOptions = {
@@ -199,20 +209,40 @@ function truncateJsonOutlineSummary(summary: string): string {
 	return `${summary.slice(0, INSPECTOR_JSON_OUTLINE_MAX_SUMMARY_LENGTH - 3)}...`;
 }
 
-function jsonOutlineSummary(value: unknown): string {
+function jsonOutlineRowSummary(value: unknown): {
+	summary: string;
+	summaryMeta?: InspectorJsonOutlineSummaryMeta;
+} {
 	if (Array.isArray(value)) {
-		return pluralize(value.length, "item", "items");
+		if (value.length === 0) {
+			return { summary: "[]", summaryMeta: { kind: "emptyArray" } };
+		}
+		return {
+			summary: pluralize(value.length, "item", "items"),
+			summaryMeta: { kind: "items", count: value.length },
+		};
 	}
 	if (isRecord(value)) {
-		return pluralize(Object.keys(value).length, "key", "keys");
+		const keyCount = Object.keys(value).length;
+		if (keyCount === 0) {
+			return { summary: "{}", summaryMeta: { kind: "emptyObject" } };
+		}
+		return {
+			summary: pluralize(keyCount, "key", "keys"),
+			summaryMeta: { kind: "keys", count: keyCount },
+		};
 	}
 	if (typeof value === "string") {
-		return truncateJsonOutlineSummary(JSON.stringify(value));
+		return { summary: truncateJsonOutlineSummary(JSON.stringify(value)) };
 	}
 	if (value === undefined) {
-		return "undefined";
+		return { summary: "undefined" };
 	}
-	return truncateJsonOutlineSummary(String(value));
+	return { summary: truncateJsonOutlineSummary(String(value)) };
+}
+
+function valueHasNestedEntries(value: unknown): boolean {
+	return (Array.isArray(value) && value.length > 0) || (isRecord(value) && Object.keys(value).length > 0);
 }
 
 function pathForObjectKey(parentId: string, key: string): string {
@@ -235,27 +265,22 @@ function pushJsonOutlineRows(
 		return;
 	}
 
+	const { summary, summaryMeta } = jsonOutlineRowSummary(value);
+	const hasChildren = depth < options.maxDepth && valueHasNestedEntries(value);
+
 	rows.push({
 		id,
 		depth,
 		label,
 		type: jsonOutlineType(value),
-		summary: jsonOutlineSummary(value),
+		summary,
+		summaryMeta,
+		hasChildren,
 	});
 
 	if (depth >= options.maxDepth) {
-		if (
-			(Array.isArray(value) && value.length > 0) ||
-			(isRecord(value) && Object.keys(value).length > 0)
-		) {
-			pushJsonOutlineTruncation(
-				rows,
-				`${id}.__maxDepth`,
-				depth + 1,
-				"Nested entries hidden after max depth",
-				options,
-				state,
-			);
+		if (valueHasNestedEntries(value)) {
+			pushJsonOutlineTruncation(rows, `${id}.__maxDepth`, depth + 1, options, state, "truncatedDepth");
 		}
 		return;
 	}
@@ -263,14 +288,7 @@ function pushJsonOutlineRows(
 	if (Array.isArray(value)) {
 		value.forEach((entry, index) => {
 			if (rows.length >= options.maxRows - 1) {
-				pushJsonOutlineTruncation(
-					rows,
-					`${id}.__maxRows`,
-					depth + 1,
-					"Additional entries hidden after max rows",
-					options,
-					state,
-				);
+				pushJsonOutlineTruncation(rows, `${id}.__maxRows`, depth + 1, options, state, "truncatedRows");
 				return;
 			}
 			pushJsonOutlineRows(
@@ -289,14 +307,7 @@ function pushJsonOutlineRows(
 	if (isRecord(value)) {
 		Object.entries(value).forEach(([key, entry]) => {
 			if (rows.length >= options.maxRows - 1) {
-				pushJsonOutlineTruncation(
-					rows,
-					`${id}.__maxRows`,
-					depth + 1,
-					"Additional entries hidden after max rows",
-					options,
-					state,
-				);
+				pushJsonOutlineTruncation(rows, `${id}.__maxRows`, depth + 1, options, state, "truncatedRows");
 				return;
 			}
 			pushJsonOutlineRows(
@@ -316,9 +327,9 @@ function pushJsonOutlineTruncation(
 	rows: InspectorJsonOutlineRow[],
 	id: string,
 	depth: number,
-	summary: string,
 	options: Required<InspectorJsonOutlineOptions>,
 	state: { truncated: boolean },
+	kind: "truncatedRows" | "truncatedDepth",
 ): void {
 	if (state.truncated || rows.length >= options.maxRows) {
 		state.truncated = true;
@@ -329,7 +340,12 @@ function pushJsonOutlineTruncation(
 		depth,
 		label: "...",
 		type: "truncated",
-		summary,
+		summary:
+			kind === "truncatedDepth"
+				? "Nested entries hidden after max depth"
+				: "Additional entries hidden after max rows",
+		summaryMeta: { kind },
+		hasChildren: false,
 	});
 	state.truncated = true;
 }

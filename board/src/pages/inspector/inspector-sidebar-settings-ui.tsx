@@ -19,10 +19,10 @@ import {
 import { cn } from "../../lib/utils";
 
 const inspectorSidebarSegmentListClassName =
-	"min-h-8 h-auto gap-1 bg-muted p-1 text-muted-foreground dark:bg-muted";
+	"min-h-8 h-auto w-full gap-1 bg-muted p-1 text-muted-foreground dark:bg-muted";
 
 const inspectorSidebarSegmentTriggerClassName =
-	"min-w-0 gap-1 p-1.5 text-[11px] leading-tight transition-colors group-hover:text-muted-foreground group-hover:opacity-100 data-[state=inactive]:text-muted-foreground data-[state=inactive]:opacity-75 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm dark:data-[state=active]:bg-background dark:data-[state=active]:text-foreground";
+	"min-w-0 basis-0 gap-1 p-1.5 text-[11px] leading-tight transition-colors group-hover:text-muted-foreground group-hover:opacity-100 data-[state=inactive]:text-muted-foreground data-[state=inactive]:opacity-75 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm dark:data-[state=active]:bg-background dark:data-[state=active]:text-foreground";
 
 const inspectorSidebarSegmentDotClassName =
 	"group-hover:border-slate-400 group-hover:bg-slate-400 dark:group-hover:border-slate-500 dark:group-hover:bg-slate-500";

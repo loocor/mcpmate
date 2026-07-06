@@ -134,7 +134,6 @@ export const INSPECTOR_CAPABILITY_FAMILIES: InspectorCapabilityFamilyOption[] = 
 		value: "tasks",
 		label: "Tasks",
 		listMethod: "tasks/list",
-		placeholder: true,
 	},
 	{
 		value: "extensions",

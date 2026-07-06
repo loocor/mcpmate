@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use rmcp::model::{
-    GetPromptRequestParams, GetPromptResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult,
-    Resource, ResourceTemplate, Tool,
+    ClientRequest, GetPromptRequestParams, GetPromptResult, ListTasksRequest, PaginatedRequestParams,
+    ReadResourceRequestParams, ReadResourceResult, Resource, ResourceTemplate, ServerResult, Task, Tool,
 };
 use rmcp::service::{Peer, RoleClient};
 use serde_json::Value;
@@ -563,6 +563,31 @@ pub async fn list_resource_templates(peer: &Peer<RoleClient>) -> Result<Vec<Reso
         cursor = result.next_cursor;
         if cursor.is_none() {
             return Ok(templates);
+        }
+    }
+}
+
+pub async fn list_tasks(peer: &Peer<RoleClient>) -> Result<Vec<Task>, ApiError> {
+    let mut cursor = None;
+    let mut tasks = Vec::new();
+    loop {
+        let result = peer
+            .send_request(ClientRequest::ListTasksRequest(ListTasksRequest {
+                method: Default::default(),
+                params: Some(PaginatedRequestParams::default().with_cursor(cursor)),
+                extensions: Default::default(),
+            }))
+            .await
+            .map_err(map_service)?;
+        let ServerResult::ListTasksResult(result) = result else {
+            return Err(ApiError::InternalError(
+                "Unexpected response for Inspector tasks/list request".into(),
+            ));
+        };
+        tasks.extend(result.tasks);
+        cursor = result.next_cursor;
+        if cursor.is_none() {
+            return Ok(tasks);
         }
     }
 }

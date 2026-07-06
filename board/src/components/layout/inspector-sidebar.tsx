@@ -113,12 +113,7 @@ export function InspectorSidebar({
 				</div>
 			</div>
 
-			<div
-				className={inspectorSidebarBodyClassName(
-					sidebarOpen,
-					sidebarOpen ? "min-h-0" : undefined,
-				)}
-			>
+			<div className={inspectorSidebarBodyClassName(sidebarOpen)}>
 				<TooltipProvider delayDuration={200}>
 					{sidebarOpen ? (
 						<div className={inspectorSidebarScrollContentClassName()}>{children}</div>

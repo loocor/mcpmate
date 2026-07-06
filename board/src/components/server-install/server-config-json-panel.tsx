@@ -1,8 +1,8 @@
 import { Copy } from "lucide-react";
 import { writeClipboardText } from "../../lib/clipboard";
+import { JsonEditableCodeBlock } from "../json-code-block";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
-import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/utils";
 
 interface ServerConfigJsonPanelProps {
@@ -33,7 +33,7 @@ export function ServerConfigJsonPanel({
 					{label}
 				</Label>
 				<div className="flex min-h-0 flex-1 flex-col">
-					<div className="group relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-input">
+					<div className="group relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-input bg-slate-50 dark:bg-slate-900">
 						{jsonText ? (
 							<div className="pointer-events-none absolute top-0 right-0 z-10 flex w-full justify-end p-2">
 								<Button
@@ -51,25 +51,12 @@ export function ServerConfigJsonPanel({
 								</Button>
 							</div>
 						) : null}
-						<Textarea
+						<JsonEditableCodeBlock
 							id={id}
-							value={jsonText}
-							onChange={
-								jsonEditingEnabled && onJsonChange
-									? (event) => onJsonChange(event.target.value)
-									: undefined
-							}
+							code={jsonText}
 							readOnly={!jsonEditingEnabled}
-							aria-readonly={!jsonEditingEnabled}
-							className="min-h-0 flex-1 resize-none overflow-y-auto border-0 font-mono text-sm focus:outline-none focus:ring-0"
-							style={{
-								background: "transparent",
-								caretColor: jsonEditingEnabled ? "currentColor" : "transparent",
-								userSelect: "text",
-								WebkitUserSelect: "text",
-								MozUserSelect: "text",
-								msUserSelect: "text",
-							}}
+							onCodeChange={jsonEditingEnabled ? onJsonChange : undefined}
+							aria-label={label}
 						/>
 					</div>
 					{jsonError ? (

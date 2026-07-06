@@ -30,7 +30,9 @@ import {
 } from "../../components/ui/tooltip";
 import { inspectorApi, isInspectorSessionUnavailableError, serversApi } from "../../lib/api";
 import {
+	inspectorEventMatchesContextFilter,
 	inspectorEventMatchesSearch,
+	type InspectorActivityContextFilter,
 	type InspectorLogEventEntry,
 	type InspectorLogTranslate,
 	type InspectorMcpListKind,
@@ -55,6 +57,7 @@ import {
 	inspectorSidebarExpandedControlsClassName,
 	inspectorConnectWorkspaceClassName,
 	inspectorWorkspaceContentClassName,
+	inspectorWorkspaceTargetHeaderClassName,
 	sidebarFeatureTabIconSize,
 	sidebarIconLabeledActionClassName,
 	sidebarIconRailClassName,
@@ -267,6 +270,8 @@ function capabilityFamilyToListKind(
 			return "resources";
 		case "resource_templates":
 			return "templates";
+		case "tasks":
+			return "tasks";
 		default:
 			return null;
 	}
@@ -300,6 +305,30 @@ function capabilityFamilyIsAdvertised(
 			return capability.supports_resources || capability.resources_count > 0;
 		case "resource_templates":
 			return capability.resource_templates_count > 0;
+		default:
+			return false;
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sessionCapabilityFamilyIsAdvertised(
+	capabilities: Record<string, unknown>,
+	family: InspectorCapabilityFamily,
+): boolean {
+	switch (family) {
+		case "tools":
+			return isRecord(capabilities.tools);
+		case "prompts":
+			return isRecord(capabilities.prompts);
+		case "resources":
+			return isRecord(capabilities.resources);
+		case "resource_templates":
+			return isRecord(capabilities.resources);
+		case "tasks":
+			return isRecord(capabilities.tasks);
 		default:
 			return false;
 	}
@@ -365,6 +394,8 @@ export function InspectorPage() {
 	const [activityPanelPinned, setActivityPanelPinned] = useState(false);
 	const [activitySearch, setActivitySearch] = useState("");
 	const [activitySearchOpen, setActivitySearchOpen] = useState(false);
+	const [activityContextFilter, setActivityContextFilter] =
+		useState<InspectorActivityContextFilter | null>(null);
 	const [capabilitySearch, setCapabilitySearch] = useState("");
 	const [capabilitySearchOpen, setCapabilitySearchOpen] = useState(false);
 	const [selectedActivityEntryId, setSelectedActivityEntryId] = useState<string | null>(
@@ -395,22 +426,6 @@ export function InspectorPage() {
 			config: connectedTarget.config,
 		};
 	}, [connectedTarget]);
-	const visibleCapabilityFamilies = useMemo<InspectorCapabilityFamilyOption[]>(() => {
-		if (!connectedTarget) return [];
-
-		const stableFamilies = INSPECTOR_CAPABILITY_FAMILIES.filter(
-			(family) => !family.placeholder,
-		);
-
-		if (connectedTarget.source !== "managed" || !connectedTarget.capability) {
-			return stableFamilies;
-		}
-
-		const { capability } = connectedTarget;
-		return stableFamilies.filter((family) =>
-			capabilityFamilyIsAdvertised(capability, family.value),
-		);
-	}, [connectedTarget]);
 	const connectedTargetLogId = connectedTarget ? targetKey(connectedTarget) : "";
 	const selectedTargetIsLoaded =
 		!!selectedTargetKey &&
@@ -428,12 +443,40 @@ export function InspectorPage() {
 		},
 		[t],
 	);
+	const activityContextFilterConfig = useMemo(() => {
+		if (!activityContextFilter) {
+			return null;
+		}
+		const label =
+			activityContextFilter.field === "server_id"
+				? t("activity.drawer.contextFields.server_id", { defaultValue: "Server ID" })
+				: t("activity.drawer.contextFields.session_id", { defaultValue: "Session ID" });
+		return {
+			label,
+			value: activityContextFilter.value,
+			onClear: () => setActivityContextFilter(null),
+			clearAriaLabel: t("activity.clearContextFilter", {
+				defaultValue: "Clear activity filter",
+			}),
+		};
+	}, [activityContextFilter, t]);
+
+	const applyActivityContextFilter = useCallback(
+		(filter: InspectorActivityContextFilter) => {
+			setActivityContextFilter(filter);
+			setActivitySearchOpen(true);
+			setActivityPanelExpanded(true);
+		},
+		[],
+	);
 	const filteredActivityEvents = useMemo(
 		() =>
-			activityEvents.filter((entry) =>
-				inspectorEventMatchesSearch(entry, activitySearch, translateInspectorEvent),
+			activityEvents.filter(
+				(entry) =>
+					inspectorEventMatchesContextFilter(entry, activityContextFilter) &&
+					inspectorEventMatchesSearch(entry, activitySearch, translateInspectorEvent),
 			),
-		[activityEvents, activitySearch, translateInspectorEvent],
+		[activityContextFilter, activityEvents, activitySearch, translateInspectorEvent],
 	);
 	const activityRows = useMemo(
 		() =>
@@ -442,6 +485,21 @@ export function InspectorPage() {
 			),
 		[filteredActivityEvents, translateInspectorEvent],
 	);
+	const activityPanelTitle = useMemo(() => {
+		const total = activityEvents.length;
+		const visible = filteredActivityEvents.length;
+		if (visible !== total) {
+			return t("activity.panelTitleFiltered", {
+				defaultValue: "Activity · {{visible}}/{{total}}",
+				visible,
+				total,
+			});
+		}
+		return t("activity.panelTitle", {
+			defaultValue: "Activity · {{total}}",
+			total,
+		});
+	}, [activityEvents.length, filteredActivityEvents.length, t]);
 	const selectedActivityEntry = useMemo<InspectorLogEventEntry | null>(
 		() =>
 			activityEvents.find((entry) => entry.id === selectedActivityEntryId) ?? null,
@@ -472,8 +530,35 @@ export function InspectorPage() {
 		invalidateSession,
 		connected: sessionConnected,
 		sessionId: currentSessionId,
+		sessionData: currentSessionData,
 	} =
 		useInspectorNativeSession(targetRequest);
+
+	const visibleCapabilityFamilies = useMemo<InspectorCapabilityFamilyOption[]>(() => {
+		if (!connectedTarget) return [];
+
+		const advertisedByDefaultFamilies = INSPECTOR_CAPABILITY_FAMILIES.filter(
+			(family) => !family.placeholder && family.value !== "tasks",
+		);
+		const listableFamilies = INSPECTOR_CAPABILITY_FAMILIES.filter(
+			(family) => !family.placeholder,
+		);
+		const sessionCapabilities = currentSessionData?.handshake?.capabilities;
+		if (isRecord(sessionCapabilities)) {
+			return listableFamilies.filter((family) =>
+				sessionCapabilityFamilyIsAdvertised(sessionCapabilities, family.value),
+			);
+		}
+
+		if (connectedTarget.source !== "managed" || !connectedTarget.capability) {
+			return advertisedByDefaultFamilies;
+		}
+
+		const { capability } = connectedTarget;
+		return advertisedByDefaultFamilies.filter((family) =>
+			capabilityFamilyIsAdvertised(capability, family.value),
+		);
+	}, [connectedTarget, currentSessionData]);
 
 	const selectFeatureTab = useCallback(
 		(tab: InspectorFeatureTab) => {
@@ -1066,8 +1151,8 @@ export function InspectorPage() {
 			options={INSPECTOR_TRANSPORT_MODE_OPTIONS}
 			showDots={false}
 			className="w-auto"
-			listClassName="h-10 min-h-0 w-auto rounded-full"
-			triggerClassName="h-8 gap-1.5 rounded-full px-3 py-0 text-xs"
+			listClassName="h-11 w-auto items-center rounded-full p-1"
+			triggerClassName="h-9 gap-1.5 self-center rounded-full px-3 py-0 text-xs leading-none"
 		/>
 	);
 
@@ -1208,7 +1293,7 @@ export function InspectorPage() {
 							</div>
 						) : (
 							<>
-								<div className="bg-background px-6 py-4">
+								<div className={inspectorWorkspaceTargetHeaderClassName()}>
 									<div className="flex flex-wrap items-center gap-2">
 										<p className="truncate text-xl font-semibold text-foreground">
 											{targetLabel(connectedTarget)}
@@ -1230,11 +1315,6 @@ export function InspectorPage() {
 											activeFamily={activeCapabilityFamily}
 											selectedItem={selectedCapabilityItem}
 											items={activeFamilyState?.items ?? []}
-											onSelectItemKey={(key) => {
-												if (!activeCapabilityFamily) return;
-												handleCapabilitySelectItem(activeCapabilityFamily, key);
-											}}
-											disabled={capabilityControlsDisabled}
 										/>
 									) : null}
 
@@ -1407,12 +1487,13 @@ export function InspectorPage() {
 						onExpandedChange={setActivityPanelExpanded}
 						height={activityPanelHeight}
 						onHeightChange={setActivityPanelHeight}
-						title={`Activity · ${activityEvents.length}`}
+						title={activityPanelTitle}
 						search={{
 							value: activitySearch,
 							onChange: setActivitySearch,
 							open: activitySearchOpen,
 							onOpenChange: setActivitySearchOpen,
+							contextFilter: activityContextFilterConfig,
 							placeholder: "Search activity",
 							ariaLabel: "Search activity",
 							clearAriaLabel: "Clear activity search",
@@ -1466,6 +1547,12 @@ export function InspectorPage() {
 							}
 						}}
 						entry={selectedActivityEntry}
+						onFilterByServerId={(serverId) => {
+							applyActivityContextFilter({ field: "server_id", value: serverId });
+						}}
+						onFilterBySessionId={(sessionId) => {
+							applyActivityContextFilter({ field: "session_id", value: sessionId });
+						}}
 					/>
 
 				</div>

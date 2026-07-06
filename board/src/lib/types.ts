@@ -256,6 +256,7 @@ export interface InspectorSessionHandshakeData {
   protocol_version: string;
   server_name: string;
   server_title?: string | null;
+  capabilities?: Record<string, unknown> | null;
   messages: InspectorMcpHandshakeMessage[];
 }
 

@@ -35,7 +35,7 @@ use crate::inspector::target::{
 };
 use crate::inspector::workspace::{
     InspectorCapabilityPatchInput, InspectorCapabilityPatchKind, InspectorCapabilityPatchRecord, InspectorPatchTarget,
-    InspectorServerProvenance, InspectorServerRecord, InspectorServerRecordInput,
+    InspectorServerProvenance, InspectorServerRecord, InspectorServerRecordInput, server_records_match,
 };
 
 #[derive(Debug, Clone)]
@@ -500,6 +500,7 @@ enum CapabilityKind {
     Prompts,
     Resources,
     ResourceTemplates,
+    Tasks,
 }
 
 impl CapabilityKind {
@@ -509,15 +510,17 @@ impl CapabilityKind {
             CapabilityKind::Prompts => "prompts",
             CapabilityKind::Resources => "resources",
             CapabilityKind::ResourceTemplates => "templates",
+            CapabilityKind::Tasks => "tasks",
         }
     }
 
-    fn patch_kind(self) -> InspectorCapabilityPatchKind {
+    fn patch_kind(self) -> Option<InspectorCapabilityPatchKind> {
         match self {
-            CapabilityKind::Tools => InspectorCapabilityPatchKind::Tools,
-            CapabilityKind::Prompts => InspectorCapabilityPatchKind::Prompts,
-            CapabilityKind::Resources => InspectorCapabilityPatchKind::Resources,
-            CapabilityKind::ResourceTemplates => InspectorCapabilityPatchKind::ResourceTemplates,
+            CapabilityKind::Tools => Some(InspectorCapabilityPatchKind::Tools),
+            CapabilityKind::Prompts => Some(InspectorCapabilityPatchKind::Prompts),
+            CapabilityKind::Resources => Some(InspectorCapabilityPatchKind::Resources),
+            CapabilityKind::ResourceTemplates => Some(InspectorCapabilityPatchKind::ResourceTemplates),
+            CapabilityKind::Tasks => None,
         }
     }
 }
@@ -554,6 +557,13 @@ pub async fn list_templates(
     request: InspectorCapabilityListRequest,
 ) -> Result<Value, ApiError> {
     list_capability_response(context, &request, CapabilityKind::ResourceTemplates).await
+}
+
+pub async fn list_tasks(
+    context: &InspectorServiceContext<'_>,
+    request: InspectorCapabilityListRequest,
+) -> Result<Value, ApiError> {
+    list_capability_response(context, &request, CapabilityKind::Tasks).await
 }
 
 pub async fn compatibility_snapshot(
@@ -766,13 +776,19 @@ pub fn finish_llm_evaluation(
 pub fn list_scratch_server_records(
     context: &InspectorServiceContext<'_>
 ) -> Result<Vec<InspectorServerRecord>, ApiError> {
-    let records = context
+    let mut records = Vec::new();
+    for record in context
         .workspace()
         .list_server_records()
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .into_iter()
         .filter(|record| matches!(record.provenance, InspectorServerProvenance::Scratch { .. }))
-        .collect::<Vec<_>>();
+    {
+        if records.iter().any(|existing| server_records_match(existing, &record)) {
+            continue;
+        }
+        records.push(record);
+    }
     Ok(records)
 }
 
@@ -1511,6 +1527,7 @@ async fn list_proxy_capability_payload_from_peer(
         CapabilityKind::Prompts => serialize_items(runtime::list_prompts(peer).await?),
         CapabilityKind::Resources => serialize_items(runtime::list_resources(peer).await?),
         CapabilityKind::ResourceTemplates => serialize_items(runtime::list_resource_templates(peer).await?),
+        CapabilityKind::Tasks => serialize_items(runtime::list_tasks(peer).await?),
     };
     let items = result?;
     Ok((
@@ -1588,6 +1605,7 @@ async fn list_native_capability_payload(
         CapabilityKind::Prompts => serialize_items(runtime::list_prompts(acquired.peer()).await?),
         CapabilityKind::Resources => serialize_items(runtime::list_resources(acquired.peer()).await?),
         CapabilityKind::ResourceTemplates => serialize_items(runtime::list_resource_templates(acquired.peer()).await?),
+        CapabilityKind::Tasks => serialize_items(runtime::list_tasks(acquired.peer()).await?),
     };
     acquired.cancel_runtime().await;
 
@@ -1631,7 +1649,10 @@ async fn apply_capability_patches_for_list_request(
     let native_target =
         resolve_expected_native_target(request.target.clone(), "Expected native Inspector mode", false).await?;
     let target = patch_target_from_native(&native_target);
-    let patches = capability_patches_for_target(context, &target, kind.patch_kind())?;
+    let Some(patch_kind) = kind.patch_kind() else {
+        return Ok(());
+    };
+    let patches = capability_patches_for_target(context, &target, patch_kind)?;
     apply_capability_patches(items, kind, &patches);
     Ok(())
 }
@@ -1715,6 +1736,7 @@ fn capability_item_key(
             .get("uriTemplate")
             .or_else(|| item.get("uri_template"))
             .and_then(Value::as_str),
+        CapabilityKind::Tasks => None,
     }
 }
 

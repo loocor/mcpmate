@@ -11,8 +11,9 @@ export function sidebarBodyClassName(sidebarOpen: boolean, className?: string) {
 
 export function inspectorSidebarBodyClassName(sidebarOpen: boolean, className?: string) {
 	return cn(
-		"flex flex-col flex-1 gap-3 px-2 pb-3 pt-0",
-		!sidebarOpen && "items-center",
+		sidebarOpen
+			? "flex min-h-0 flex-col flex-1 gap-3 px-2 pb-3 pt-0"
+			: "flex flex-col flex-1 gap-1 px-2 pb-4 pt-0 items-center",
 		className,
 	);
 }
@@ -109,7 +110,7 @@ export function inspectorSidebarScrollContentClassName() {
 
 /** Main workspace scroll body inside the inspector main area. */
 export function inspectorWorkspaceContentClassName(className?: string) {
-	return cn("min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-0", className);
+	return cn("flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-0", className);
 }
 
 /** Connect workspace shell; child panels own their internal scrolling. */
@@ -118,6 +119,11 @@ export function inspectorConnectWorkspaceClassName(className?: string) {
 		"box-border flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-3 pt-3",
 		className,
 	);
+}
+
+/** Aligns with sidebar server picker (h-9) + controls gap (gap-3) below the h-16 header. */
+export function inspectorWorkspaceTargetHeaderClassName(className?: string) {
+	return cn("flex h-12 shrink-0 items-center bg-background px-6", className);
 }
 
 export function inspectorSidebarFooterClassName(sidebarOpen: boolean) {

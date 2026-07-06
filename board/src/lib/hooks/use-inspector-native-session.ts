@@ -28,6 +28,9 @@ export function useInspectorNativeSession(
 	} | null>(null);
 	const [connected, setConnected] = useState(false);
 	const [sessionId, setSessionId] = useState<string | null>(null);
+	const [sessionData, setSessionData] = useState<InspectorSessionOpenData | null>(
+		null,
+	);
 
 	const closeSession = useCallback(async (session: InspectorSessionOpenData) => {
 		try {
@@ -51,6 +54,7 @@ export function useInspectorNativeSession(
 		nativeSessionTargetKeyRef.current = null;
 		setConnected(false);
 		setSessionId(null);
+		setSessionData(null);
 		if (current) {
 			void closeSession(current);
 		}
@@ -79,6 +83,7 @@ export function useInspectorNativeSession(
 			nativeSessionRef.current = null;
 			nativeSessionTargetKeyRef.current = null;
 			setConnected(false);
+			setSessionData(null);
 		}
 
 		const pendingPromise = inspectorApi
@@ -110,6 +115,7 @@ export function useInspectorNativeSession(
 			nativeSessionTargetKeyRef.current = cacheKey;
 			setConnected(true);
 			setSessionId(session.session_id);
+			setSessionData(session);
 			return session;
 		} catch (error) {
 			if (pendingNativeSessionRef.current?.promise === pendingPromise) {
@@ -117,6 +123,7 @@ export function useInspectorNativeSession(
 			}
 			setConnected(false);
 			setSessionId(null);
+			setSessionData(null);
 			throw error;
 		}
 	}, [closeSession, target]);
@@ -137,5 +144,12 @@ export function useInspectorNativeSession(
 		[invalidateSession],
 	);
 
-	return { ensureSession, ensureSessionData, invalidateSession, connected, sessionId };
+	return {
+		ensureSession,
+		ensureSessionData,
+		invalidateSession,
+		connected,
+		sessionId,
+		sessionData,
+	};
 }

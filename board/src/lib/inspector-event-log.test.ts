@@ -7,9 +7,11 @@ import {
 	inspectorEventBelongsToServer,
 	inspectorEventCategory,
 	inspectorEventHasPayload,
+	inspectorEventMatchesContextFilter,
 	inspectorEventRowKey,
 	resolveInspectorEventCategoryKind,
 	resolveInspectorEventServerId,
+	resolveInspectorEventSessionId,
 } from "./inspector-event-log";
 import { INSPECTOR_EPHEMERAL_SERVER_ID } from "./inspector-ephemeral";
 
@@ -228,5 +230,63 @@ describe("filterInspectorStandaloneActivityLogEvents", () => {
 				aiEvent,
 			]),
 		).toEqual([sessionOpen, sessionClose, mcpRequest, mcpResult]);
+	});
+});
+
+describe("inspector activity context filters", () => {
+	it("resolves session ids from event data and payloads", () => {
+		const entry = createInspectorLogEntry({
+			data: {
+				event: "mcp_exchange",
+				direction: "outbound",
+				method: "initialize",
+				server_id: "srv-1",
+				mode: "native",
+				session_id: "sess-abc",
+			},
+		});
+		expect(resolveInspectorEventSessionId(entry)).toBe("sess-abc");
+	});
+
+	it("filters activity rows by server id and session id", () => {
+		const matching = createInspectorLogEntry({
+			data: {
+				event: "mcp_exchange",
+				direction: "outbound",
+				method: "tools/list",
+				server_id: "scratch:everything",
+				mode: "native",
+				session_id: "INSPSESdVcDZK4iYjZi",
+			},
+		});
+		const otherSession = createInspectorLogEntry({
+			data: {
+				event: "mcp_exchange",
+				direction: "outbound",
+				method: "tools/list",
+				server_id: "scratch:everything",
+				mode: "native",
+				session_id: "OTHER",
+			},
+		});
+
+		expect(
+			inspectorEventMatchesContextFilter(matching, {
+				field: "server_id",
+				value: "scratch:everything",
+			}),
+		).toBe(true);
+		expect(
+			inspectorEventMatchesContextFilter(otherSession, {
+				field: "session_id",
+				value: "INSPSESdVcDZK4iYjZi",
+			}),
+		).toBe(false);
+		expect(
+			inspectorEventMatchesContextFilter(matching, {
+				field: "session_id",
+				value: "INSPSESdVcDZK4iYjZi",
+			}),
+		).toBe(true);
 	});
 });

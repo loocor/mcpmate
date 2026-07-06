@@ -1,14 +1,33 @@
 import { ChevronRight } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+	forwardRef,
+	useEffect,
+	useImperativeHandle,
+	useMemo,
+	useState,
+	type KeyboardEvent,
+} from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { InspectorCapabilityKind } from "../lib/inspector-capability";
 import {
 	buildInspectorJsonOutline,
 	parseInspectorResponsePreview,
 	type InspectorJsonOutlineRow,
+	type InspectorJsonOutlineSummaryMeta,
 } from "../lib/inspector-response-preview";
 import { cn } from "../lib/utils";
 import { JsonCodeBlock } from "./json-code-block";
 import { LazyImage } from "./lazy-image";
+
+export const INSPECTOR_PAYLOAD_SURFACE_CLASSNAME =
+	"min-w-0 overflow-auto rounded-md bg-slate-50 font-mono text-xs dark:bg-slate-900";
+
+const JSON_OUTLINE_INDENT_PX = 12;
+const JSON_OUTLINE_BASE_PADDING_PX = 8;
+
+const JSON_OUTLINE_TYPE_COLUMN_CLASSNAME =
+	"w-[4.5rem] shrink-0 text-right opacity-50 transition-opacity group-hover/outline-row:opacity-100 group-focus-within/outline-row:opacity-100";
 
 const JSON_OUTLINE_TYPE_CLASSNAMES: Record<InspectorJsonOutlineRow["type"], string> = {
 	array: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/70 dark:bg-blue-950/40 dark:text-blue-300",
@@ -22,27 +41,111 @@ const JSON_OUTLINE_TYPE_CLASSNAMES: Record<InspectorJsonOutlineRow["type"], stri
 	unknown: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400",
 };
 
-export function InspectorJsonOutline({
-	value,
-	className,
-}: {
-	value: unknown;
-	className?: string;
-}) {
+const JSON_OUTLINE_CONTAINER_TYPES = new Set<InspectorJsonOutlineRow["type"]>(["array", "object"]);
+
+const JSON_OUTLINE_VALUE_CLASSNAMES: Partial<Record<InspectorJsonOutlineRow["type"], string>> = {
+	boolean: "text-amber-700 dark:text-amber-300",
+	null: "text-slate-500 dark:text-slate-400",
+	number: "text-emerald-700 dark:text-emerald-300",
+	string: "text-rose-700 dark:text-rose-400",
+	truncated: "italic text-slate-500 dark:text-slate-400",
+	undefined: "text-slate-500 dark:text-slate-400",
+	unknown: "text-slate-500 dark:text-slate-400",
+};
+
+function formatJsonOutlineSummary(
+	row: InspectorJsonOutlineRow,
+	t: TFunction,
+): string {
+	const meta = row.summaryMeta;
+	if (!meta) {
+		return row.summary;
+	}
+	return formatJsonOutlineSummaryMeta(meta, t, row.summary);
+}
+
+function formatJsonOutlineSummaryMeta(
+	meta: InspectorJsonOutlineSummaryMeta,
+	t: TFunction,
+	fallback: string,
+): string {
+	switch (meta.kind) {
+		case "keys":
+			return t(meta.count === 1 ? "jsonOutline.summary.key" : "jsonOutline.summary.keys", {
+				defaultValue: meta.count === 1 ? "{{count}} key" : "{{count}} keys",
+				count: meta.count,
+			});
+		case "items":
+			return t(meta.count === 1 ? "jsonOutline.summary.item" : "jsonOutline.summary.items", {
+				defaultValue: meta.count === 1 ? "{{count}} item" : "{{count}} items",
+				count: meta.count,
+			});
+		case "emptyObject":
+			return t("jsonOutline.summary.emptyObject", { defaultValue: "{}" });
+		case "emptyArray":
+			return t("jsonOutline.summary.emptyArray", { defaultValue: "[]" });
+		case "truncatedRows":
+			return t("jsonOutline.summary.maxRows", {
+				defaultValue: "Additional entries hidden after max rows",
+			});
+		case "truncatedDepth":
+			return t("jsonOutline.summary.maxDepth", {
+				defaultValue: "Nested entries hidden after max depth",
+			});
+		default:
+			return fallback;
+	}
+}
+
+function buildDefaultCollapsedRowIds(rows: InspectorJsonOutlineRow[]): Set<string> {
+	const collapsed = new Set<string>();
+	for (const row of rows) {
+		if (row.hasChildren && row.depth >= 1) {
+			collapsed.add(row.id);
+		}
+	}
+	return collapsed;
+}
+
+function buildAllCollapsedRowIds(rows: InspectorJsonOutlineRow[]): Set<string> {
+	const collapsed = new Set<string>();
+	for (const row of rows) {
+		if (row.hasChildren) {
+			collapsed.add(row.id);
+		}
+	}
+	return collapsed;
+}
+
+export type InspectorJsonOutlineHandle = {
+	expandAll: () => void;
+	collapseAll: () => void;
+};
+
+export const InspectorJsonOutline = forwardRef<
+	InspectorJsonOutlineHandle,
+	{
+		value: unknown;
+		className?: string;
+	}
+>(function InspectorJsonOutline({ value, className }, ref) {
+	const { t } = useTranslation("inspector");
 	const rows = useMemo(() => buildInspectorJsonOutline(value), [value]);
-	const expandableRowIds = useMemo(() => {
-		const ids = new Set<string>();
-		rows.forEach((row, index) => {
-			if ((rows[index + 1]?.depth ?? 0) > row.depth) {
-				ids.add(row.id);
-			}
-		});
-		return ids;
-	}, [rows]);
 	const [collapsedRowIds, setCollapsedRowIds] = useState<Set<string>>(() => new Set());
+
 	useEffect(() => {
-		setCollapsedRowIds(new Set());
-	}, [value]);
+		setCollapsedRowIds(buildDefaultCollapsedRowIds(rows));
+	}, [rows, value]);
+
+	useImperativeHandle(
+		ref,
+		() => ({
+			expandAll: () => setCollapsedRowIds(new Set()),
+			collapseAll: () => setCollapsedRowIds(buildAllCollapsedRowIds(rows)),
+		}),
+		[rows],
+	);
+
 	const visibleRows = useMemo(() => {
 		const nextRows: InspectorJsonOutlineRow[] = [];
 		let hiddenDepth: number | null = null;
@@ -54,12 +157,12 @@ export function InspectorJsonOutline({
 				hiddenDepth = null;
 			}
 			nextRows.push(row);
-			if (collapsedRowIds.has(row.id) && expandableRowIds.has(row.id)) {
+			if (collapsedRowIds.has(row.id) && row.hasChildren) {
 				hiddenDepth = row.depth;
 			}
 		}
 		return nextRows;
-	}, [collapsedRowIds, expandableRowIds, rows]);
+	}, [collapsedRowIds, rows]);
 
 	function toggleRow(rowId: string): void {
 		setCollapsedRowIds((current) => {
@@ -73,58 +176,95 @@ export function InspectorJsonOutline({
 		});
 	}
 
+	function handleRowKeyDown(event: KeyboardEvent<HTMLDivElement>, rowId: string): void {
+		if (event.key === "Enter" || event.key === " ") {
+			event.preventDefault();
+			toggleRow(rowId);
+		}
+	}
+
 	return (
-		<div
-			className={cn(
-				"min-w-0 overflow-auto rounded-md border border-slate-200 bg-white text-xs dark:border-slate-800 dark:bg-slate-950",
-				className,
-			)}
-		>
-			<div className="min-w-max divide-y divide-slate-100 dark:divide-slate-900">
+		<div className={cn(INSPECTOR_PAYLOAD_SURFACE_CLASSNAME, "flex min-h-0 flex-col", className)}>
+			<div className="divide-y divide-slate-200/70 dark:divide-slate-800/80">
 				{visibleRows.map((row) => {
-					const isExpandable = expandableRowIds.has(row.id);
+					const isExpandable = row.hasChildren;
 					const isCollapsed = collapsedRowIds.has(row.id);
+					const isContainer = JSON_OUTLINE_CONTAINER_TYPES.has(row.type);
+					const summary = formatJsonOutlineSummary(row, t);
+					const rowLabel =
+						row.label === "$"
+							? t("jsonOutline.root", { defaultValue: "root" })
+							: row.label;
+
 					return (
 						<div
 							key={row.id}
-							className="grid grid-cols-[minmax(12rem,1fr)_auto_minmax(8rem,0.8fr)] items-center gap-3 px-3 py-2"
+							role={isExpandable ? "button" : undefined}
+							tabIndex={isExpandable ? 0 : undefined}
+							aria-expanded={isExpandable ? !isCollapsed : undefined}
+							aria-label={
+								isExpandable
+									? isCollapsed
+										? t("jsonOutline.expandNode", { defaultValue: "Expand JSON node" })
+										: t("jsonOutline.collapseNode", { defaultValue: "Collapse JSON node" })
+									: undefined
+							}
+							className={cn(
+								"group/outline-row grid grid-cols-[0.875rem_minmax(0,1fr)_4.5rem] items-center gap-2 py-1.5 pr-2",
+								isExpandable &&
+								"cursor-pointer hover:bg-slate-100/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:hover:bg-slate-800/50",
+							)}
+							style={{
+								paddingLeft: JSON_OUTLINE_BASE_PADDING_PX + row.depth * JSON_OUTLINE_INDENT_PX,
+							}}
+							onClick={isExpandable ? () => toggleRow(row.id) : undefined}
+							onKeyDown={
+								isExpandable ? (event) => handleRowKeyDown(event, row.id) : undefined
+							}
 						>
-							<div className="flex min-w-0 items-center font-mono font-medium text-slate-800 dark:text-slate-200">
-								{Array.from({ length: row.depth }).map((_, index) => (
-									<span
-										key={`${row.id}-guide-${index}`}
-										className="h-6 w-[18px] shrink-0 border-l border-slate-200 dark:border-slate-800"
+							<span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+								{isExpandable ? (
+									<ChevronRight
+										className={cn(
+											"h-3.5 w-3.5 text-muted-foreground transition-transform",
+											!isCollapsed && "rotate-90",
+										)}
 										aria-hidden
 									/>
-								))}
-								{isExpandable ? (
-									<button
-										type="button"
-										className="mr-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-slate-100"
-										aria-expanded={!isCollapsed}
-										aria-label={isCollapsed ? "Expand JSON node" : "Collapse JSON node"}
-										onClick={() => toggleRow(row.id)}
-									>
-										<ChevronRight
-											className={`h-3.5 w-3.5 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
-											aria-hidden
-										/>
-									</button>
-								) : (
-									<span className="mr-1 h-4 w-4 shrink-0" aria-hidden />
-								)}
-								<span className="min-w-0 truncate">{row.label}</span>
-							</div>
-							<span
-								className={cn(
-									"rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase leading-none",
-									JSON_OUTLINE_TYPE_CLASSNAMES[row.type],
-								)}
-							>
-								{row.type}
+								) : null}
 							</span>
-							<span className="truncate font-mono text-slate-500 dark:text-slate-400">
-								{row.summary}
+							<span
+								className="min-w-0 truncate text-left"
+								title={`${rowLabel}: ${summary}`}
+							>
+								<span
+									className={cn(
+										"font-medium text-slate-800 dark:text-slate-200",
+										row.type === "truncated" && "text-muted-foreground",
+									)}
+								>
+									{rowLabel}
+								</span>
+								<span className="text-muted-foreground">: </span>
+								<span
+									className={cn(
+										isContainer
+											? "text-muted-foreground"
+											: JSON_OUTLINE_VALUE_CLASSNAMES[row.type],
+									)}
+								>
+									{summary}
+								</span>
+							</span>
+							<span className={JSON_OUTLINE_TYPE_COLUMN_CLASSNAME}>
+								<span
+									className={cn(
+										"inline-block rounded border px-1 py-px font-mono text-[10px] uppercase leading-none",
+										JSON_OUTLINE_TYPE_CLASSNAMES[row.type],
+									)}
+								>
+									{t(`jsonOutline.types.${row.type}`, { defaultValue: row.type })}
+								</span>
 							</span>
 						</div>
 					);
@@ -132,7 +272,7 @@ export function InspectorJsonOutline({
 			</div>
 		</div>
 	);
-}
+});
 
 export function InspectorResponsePreview({
 	result,
