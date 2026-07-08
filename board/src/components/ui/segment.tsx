@@ -65,7 +65,7 @@ const Segment = React.forwardRef<
 			>
 				<TabsPrimitive.List
 					className={cn(
-						"inline-flex h-8 items-stretch gap-0.5 rounded-md bg-slate-100 p-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+						"flex h-8 w-full items-stretch gap-0.5 rounded-md bg-slate-100 p-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
 						disabled && "opacity-50 pointer-events-none",
 						listClassName,
 					)}

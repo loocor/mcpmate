@@ -1,6 +1,6 @@
 import { inspectorApi } from "../../lib/api";
 import type { InspectorNativeTargetRequest } from "../../lib/hooks/use-inspector-native-session";
-import type { CapabilityRecord } from "../../types/capabilities";
+import type { CapabilityArgument, CapabilityRecord } from "../../types/capabilities";
 import type {
 	InspectorCapabilityFamily,
 	InspectorCapabilityListItem,
@@ -35,6 +35,60 @@ function toSchemaObject(value: unknown): Record<string, unknown> | undefined {
 	return value;
 }
 
+function defaultFromArgumentRecord(record: CapabilityRecord): unknown {
+	if ("default" in record) return record.default;
+	if ("defaultValue" in record) return record.defaultValue;
+	if ("value" in record) return record.value;
+	return undefined;
+}
+
+function normalizeArguments(value: unknown): CapabilityArgument[] {
+	if (!Array.isArray(value)) return [];
+	return value.map((entry, index) => {
+		const record = toCapabilityRecord(entry);
+		if (!record) {
+			return { name: `arg_${index}` };
+		}
+		return {
+			name: toStringValue(record.name) ?? `arg_${index}`,
+			type: toStringValue(record.type) ?? "string",
+			description: toStringValue(record.description),
+			default: defaultFromArgumentRecord(record),
+			required:
+				typeof record.required === "boolean" ? record.required : undefined,
+		};
+	});
+}
+
+function schemaFromArguments(
+	value: unknown,
+): Record<string, unknown> | undefined {
+	const args = normalizeArguments(value);
+	if (args.length === 0) return undefined;
+
+	const required: string[] = [];
+	const properties = Object.fromEntries(
+		args.map((arg, index) => {
+			const name = arg.name ?? `arg_${index}`;
+			if (arg.required) required.push(name);
+			return [
+				name,
+				{
+					type: arg.type ?? "string",
+					...(arg.description ? { description: arg.description } : {}),
+					...(arg.default !== undefined ? { default: arg.default } : {}),
+				},
+			];
+		}),
+	);
+
+	return {
+		type: "object",
+		properties,
+		...(required.length > 0 ? { required } : {}),
+	};
+}
+
 function resolveInputSchema(
 	record: CapabilityRecord,
 ): Record<string, unknown> | undefined {
@@ -44,7 +98,7 @@ function resolveInputSchema(
 			return schema;
 		}
 	}
-	return undefined;
+	return schemaFromArguments(record.arguments);
 }
 
 function resolveOutputSchema(
@@ -176,6 +230,7 @@ export function capabilityRecordToListItem(
 		description: toStringValue(record.description),
 		inputSchema: resolveInputSchema(record),
 		outputSchema: resolveOutputSchema(record),
+		metadata: record as Record<string, unknown>,
 	};
 }
 

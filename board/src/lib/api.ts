@@ -1594,6 +1594,9 @@ type InspectorTargetQuery = {
 	refresh?: boolean;
 	proxy_mode?: InspectorProxyMode;
 	proxy_scope?: InspectorProxyScope;
+	spec_version?: string;
+	package_source?: string;
+	scan_depth?: string;
 };
 
 type InspectorTargetRequest = Omit<InspectorTargetQuery, "refresh">;
@@ -1650,6 +1653,9 @@ const appendInspectorTargetQuery = (
 	if (q.refresh != null) qs.set("refresh", String(q.refresh));
 	if (q.proxy_mode) qs.set("proxy_mode", q.proxy_mode);
 	if (q.proxy_scope) qs.set("proxy_scope", q.proxy_scope);
+	if (q.spec_version) qs.set("spec_version", q.spec_version);
+	if (q.package_source) qs.set("package_source", q.package_source);
+	if (q.scan_depth) qs.set("scan_depth", q.scan_depth);
 };
 
 export const inspectorApi = {

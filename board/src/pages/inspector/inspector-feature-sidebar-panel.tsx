@@ -12,8 +12,6 @@ import type {
 	InspectorCompatibilitySpecVersion,
 	InspectorFeatureTab,
 	InspectorLlmEvaluationFocus,
-	InspectorPackageSafetyDatabase,
-	InspectorPackageSafetyFactSource,
 	InspectorPackageSafetyScanDepth,
 } from "./inspector-feature-config";
 
@@ -35,10 +33,6 @@ type InspectorFeatureSidebarPanelProps = {
 	capabilityControlsDisabled?: boolean;
 	compatibilitySpecVersion: InspectorCompatibilitySpecVersion;
 	onCompatibilitySpecVersionChange: (value: InspectorCompatibilitySpecVersion) => void;
-	packageSafetyFactSource: InspectorPackageSafetyFactSource;
-	onPackageSafetyFactSourceChange: (value: InspectorPackageSafetyFactSource) => void;
-	packageSafetyDatabase: InspectorPackageSafetyDatabase;
-	onPackageSafetyDatabaseChange: (value: InspectorPackageSafetyDatabase) => void;
 	packageSafetyScanDepth: InspectorPackageSafetyScanDepth;
 	onPackageSafetyScanDepthChange: (value: InspectorPackageSafetyScanDepth) => void;
 	llmEvaluationFocus: InspectorLlmEvaluationFocus[];
@@ -89,10 +83,6 @@ export function InspectorFeatureSidebarPanel({
 	capabilityControlsDisabled = false,
 	compatibilitySpecVersion,
 	onCompatibilitySpecVersionChange,
-	packageSafetyFactSource,
-	onPackageSafetyFactSourceChange,
-	packageSafetyDatabase,
-	onPackageSafetyDatabaseChange,
 	packageSafetyScanDepth,
 	onPackageSafetyScanDepthChange,
 	llmEvaluationFocus,
@@ -181,10 +171,6 @@ export function InspectorFeatureSidebarPanel({
 				className="flex min-h-0 flex-1 flex-col"
 			>
 				<InspectorPackageSafetySidebarSettings
-					packageSafetyFactSource={packageSafetyFactSource}
-					onPackageSafetyFactSourceChange={onPackageSafetyFactSourceChange}
-					packageSafetyDatabase={packageSafetyDatabase}
-					onPackageSafetyDatabaseChange={onPackageSafetyDatabaseChange}
 					packageSafetyScanDepth={packageSafetyScanDepth}
 					onPackageSafetyScanDepthChange={onPackageSafetyScanDepthChange}
 				/>

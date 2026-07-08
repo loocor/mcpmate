@@ -33,14 +33,11 @@ export type InspectorCapabilityFamily =
 export type InspectorCompatibilitySpecVersion =
 	| "2024-11-05"
 	| "2025-03-26"
-	| "2025-11-25"
-	| "2026-07-01";
+	| "2025-11-25";
 
-export type InspectorPackageSafetyFactSource = "runtime_cache" | "server_manifest";
+export type InspectorPackageSafetyFactSource = "server_config";
 
-export type InspectorPackageSafetyDatabase = "osv" | "npm_audit" | "combined";
-
-export type InspectorPackageSafetyScanDepth = "quick" | "standard" | "deep";
+export type InspectorPackageSafetyScanDepth = "standard" | "deep";
 
 export type InspectorLlmEvaluationFocus =
 	| "compatibility"
@@ -54,6 +51,7 @@ export type InspectorCapabilityListItem = {
 	description?: string;
 	inputSchema?: Record<string, unknown>;
 	outputSchema?: Record<string, unknown>;
+	metadata?: Record<string, unknown>;
 };
 
 export type InspectorCapabilityFamilyState = {
@@ -202,13 +200,6 @@ export const INSPECTOR_COMPATIBILITY_SPEC_OPTIONS: Array<{
 		highlights: "Tasks, apps, and richer extension surfaces for server review.",
 		specUrl: "https://modelcontextprotocol.io/specification/2025-11-25",
 	},
-	{
-		value: "2026-07-01",
-		label: "2026-07 (draft)",
-		segmentLabel: "2026-07",
-		description: "Upcoming July 2026 revision.",
-		highlights: "Draft baseline for forward-looking compatibility checks.",
-	},
 ];
 
 export const INSPECTOR_PACKAGE_SAFETY_FACT_SOURCES: Array<{
@@ -218,53 +209,18 @@ export const INSPECTOR_PACKAGE_SAFETY_FACT_SOURCES: Array<{
 	description: string;
 }> = [
 	{
-		value: "runtime_cache",
-		label: "Runtime cache index",
-		segmentLabel: "Cache",
-		description: "Use package metadata from the runtime cache.",
-	},
-	{
-		value: "server_manifest",
-		label: "Server manifest",
-		segmentLabel: "Manifest",
-		description: "Use package facts recorded by the server.",
+		value: "server_config",
+		label: "Server config",
+		segmentLabel: "Config",
+		description: "Use command, args, URL, and transport facts from the configured server.",
 	},
 ];
 
 export const INSPECTOR_PACKAGE_SAFETY_FACT_SOURCE_TOOLTIP =
-	"Choose where package metadata is loaded before advisory lookup runs.";
-
-export const INSPECTOR_PACKAGE_SAFETY_DATABASES: Array<{
-	value: InspectorPackageSafetyDatabase;
-	label: string;
-	segmentLabel: string;
-	description: string;
-}> = [
-	{
-		value: "combined",
-		label: "Combined sources",
-		segmentLabel: "All",
-		description: "Query OSV and npm audit together.",
-	},
-	{
-		value: "osv",
-		label: "OSV",
-		segmentLabel: "OSV",
-		description: "Open Source Vulnerabilities database only.",
-	},
-	{
-		value: "npm_audit",
-		label: "npm audit",
-		segmentLabel: "NPM",
-		description: "npm advisory reports only.",
-	},
-];
-
-export const INSPECTOR_PACKAGE_SAFETY_DATABASE_TOOLTIP =
-	"Choose which advisory database feeds vulnerability findings for this scan.";
+	"Current package safety scans use the configured command, args, URL, and transport as local-rule facts.";
 
 export const INSPECTOR_PACKAGE_SAFETY_SETTINGS_NOTE =
-	"Choose fact source, advisory database, and scan depth before running a package safety scan.";
+	"Review the fact source and choose scan depth before running a package safety scan.";
 
 export const INSPECTOR_PACKAGE_SAFETY_SCAN_DEPTHS: Array<{
 	value: InspectorPackageSafetyScanDepth;
@@ -272,12 +228,6 @@ export const INSPECTOR_PACKAGE_SAFETY_SCAN_DEPTHS: Array<{
 	segmentLabel: string;
 	description: string;
 }> = [
-	{
-		value: "quick",
-		label: "Quick",
-		segmentLabel: "Quick",
-		description: "Surface-level dependency checks.",
-	},
 	{
 		value: "standard",
 		label: "Default",
@@ -288,12 +238,12 @@ export const INSPECTOR_PACKAGE_SAFETY_SCAN_DEPTHS: Array<{
 		value: "deep",
 		label: "Deep",
 		segmentLabel: "Deep",
-		description: "Full transitive scan and advisory lookup.",
+		description: "Run the deepest available local-rule review for the configured server.",
 	},
 ];
 
 export const INSPECTOR_PACKAGE_SAFETY_SCAN_DEPTH_TOOLTIP =
-	"Control how far the scanner walks dependencies and advisory records.";
+	"Control how far the local scanner walks server configuration facts.";
 
 export const INSPECTOR_LLM_EVALUATION_SETTINGS_NOTE =
 	"Reuse prior scan facts and choose what the model should analyze.";

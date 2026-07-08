@@ -1,13 +1,9 @@
 import {
-	INSPECTOR_PACKAGE_SAFETY_DATABASES,
-	INSPECTOR_PACKAGE_SAFETY_DATABASE_TOOLTIP,
 	INSPECTOR_PACKAGE_SAFETY_FACT_SOURCES,
 	INSPECTOR_PACKAGE_SAFETY_FACT_SOURCE_TOOLTIP,
 	INSPECTOR_PACKAGE_SAFETY_SCAN_DEPTHS,
 	INSPECTOR_PACKAGE_SAFETY_SCAN_DEPTH_TOOLTIP,
 	INSPECTOR_PACKAGE_SAFETY_SETTINGS_NOTE,
-	type InspectorPackageSafetyDatabase,
-	type InspectorPackageSafetyFactSource,
 	type InspectorPackageSafetyScanDepth,
 } from "./inspector-feature-config";
 import {
@@ -19,22 +15,16 @@ import {
 } from "./inspector-sidebar-settings-ui";
 
 type InspectorPackageSafetySidebarSettingsProps = {
-	packageSafetyFactSource: InspectorPackageSafetyFactSource;
-	onPackageSafetyFactSourceChange: (value: InspectorPackageSafetyFactSource) => void;
-	packageSafetyDatabase: InspectorPackageSafetyDatabase;
-	onPackageSafetyDatabaseChange: (value: InspectorPackageSafetyDatabase) => void;
 	packageSafetyScanDepth: InspectorPackageSafetyScanDepth;
 	onPackageSafetyScanDepthChange: (value: InspectorPackageSafetyScanDepth) => void;
 };
 
 export function InspectorPackageSafetySidebarSettings({
-	packageSafetyFactSource,
-	onPackageSafetyFactSourceChange,
-	packageSafetyDatabase,
-	onPackageSafetyDatabaseChange,
 	packageSafetyScanDepth,
 	onPackageSafetyScanDepthChange,
 }: InspectorPackageSafetySidebarSettingsProps) {
+	const factSource = INSPECTOR_PACKAGE_SAFETY_FACT_SOURCES[0];
+
 	return (
 		<InspectorSidebarSettingsShell notes={INSPECTOR_PACKAGE_SAFETY_SETTINGS_NOTE}>
 			<section className="space-y-1">
@@ -49,38 +39,12 @@ export function InspectorPackageSafetySidebarSettings({
 						/>
 					}
 				/>
-				<InspectorSidebarSegmentControl
-					options={INSPECTOR_PACKAGE_SAFETY_FACT_SOURCES.map((option) => ({
-						value: option.value,
-						label: option.segmentLabel,
-						ariaLabel: option.label,
-					}))}
-					value={packageSafetyFactSource}
-					onValueChange={onPackageSafetyFactSourceChange}
-				/>
-			</section>
-
-			<section className="space-y-1">
-				<InspectorSidebarSectionHeader
-					title="Advisory database"
-					tooltip={
-						<InspectorSidebarOptionTooltipBody
-							summary={INSPECTOR_PACKAGE_SAFETY_DATABASE_TOOLTIP}
-							options={inspectorSidebarSegmentTooltipOptions(
-								INSPECTOR_PACKAGE_SAFETY_DATABASES,
-							)}
-						/>
-					}
-				/>
-				<InspectorSidebarSegmentControl
-					options={INSPECTOR_PACKAGE_SAFETY_DATABASES.map((option) => ({
-						value: option.value,
-						label: option.segmentLabel,
-						ariaLabel: option.label,
-					}))}
-					value={packageSafetyDatabase}
-					onValueChange={onPackageSafetyDatabaseChange}
-				/>
+				<div className="rounded-md border border-border bg-muted/60 px-3 py-2">
+					<p className="text-sm font-medium text-foreground">{factSource.label}</p>
+					<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+						{factSource.description}
+					</p>
+				</div>
 			</section>
 
 			<section className="space-y-1">

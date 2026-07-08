@@ -134,7 +134,23 @@ export function useInspectorNativeSession(
 	}, [ensureSessionData]);
 
 	useEffect(() => {
-		invalidateSession();
+		const cacheKey = nativeTargetCacheKey(target);
+		const currentKey = nativeSessionTargetKeyRef.current;
+		const pendingKey = pendingNativeSessionRef.current?.targetKey ?? null;
+
+		if (!cacheKey) {
+			if (currentKey || pendingKey) {
+				invalidateSession();
+			}
+			return;
+		}
+
+		if (
+			(currentKey && currentKey !== cacheKey) ||
+			(pendingKey && pendingKey !== cacheKey)
+		) {
+			invalidateSession();
+		}
 	}, [target?.server_id, target?.scratch_id, invalidateSession]);
 
 	useEffect(

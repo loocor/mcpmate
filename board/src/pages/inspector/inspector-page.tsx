@@ -75,6 +75,10 @@ import type { InspectorConnectCandidate } from "./inspector-connect-server-form"
 import { InspectorCapabilityWorkspace } from "./inspector-capability-workspace";
 import { InspectorConfigurationWorkspace } from "./inspector-configuration-workspace";
 import {
+	InspectorCompatibilitySnapshotReport,
+	InspectorPackageSafetySnapshotReport,
+} from "./inspector-snapshot-report";
+import {
 	DEFAULT_INSPECTOR_CONFIGURATION,
 	DEFAULT_INSPECTOR_LLM_EVALUATION_FOCUS,
 	INSPECTOR_CAPABILITY_FAMILIES,
@@ -87,8 +91,6 @@ import {
 	type InspectorFeatureTab,
 	type InspectorFooterWorkspace,
 	type InspectorLlmEvaluationFocus,
-	type InspectorPackageSafetyDatabase,
-	type InspectorPackageSafetyFactSource,
 	type InspectorPackageSafetyScanDepth,
 	type InspectorWorkspaceView,
 	inspectorWorkspaceModeLabel,
@@ -258,6 +260,14 @@ function snapshotTitle(kind: InspectorSnapshotKind): string {
 		: "Package safety snapshot";
 }
 
+function snapshotMethod(kind: InspectorSnapshotKind): string {
+	return kind === "compatibility"
+		? "inspector/compatibility.snapshot"
+		: "inspector/package_safety.snapshot";
+}
+
+const PACKAGE_SAFETY_SOURCE = "server_config";
+
 function capabilityFamilyToListKind(
 	family: InspectorCapabilityFamily,
 ): InspectorMcpListKind | null {
@@ -377,10 +387,6 @@ export function InspectorPage() {
 		useState("");
 	const [compatibilitySpecVersion, setCompatibilitySpecVersion] =
 		useState<InspectorCompatibilitySpecVersion>("2025-11-25");
-	const [packageSafetyFactSource, setPackageSafetyFactSource] =
-		useState<InspectorPackageSafetyFactSource>("runtime_cache");
-	const [packageSafetyDatabase, setPackageSafetyDatabase] =
-		useState<InspectorPackageSafetyDatabase>("combined");
 	const [packageSafetyScanDepth, setPackageSafetyScanDepth] =
 		useState<InspectorPackageSafetyScanDepth>("standard");
 	const [llmEvaluationFocus, setLlmEvaluationFocus] = useState<
@@ -564,13 +570,9 @@ export function InspectorPage() {
 		(tab: InspectorFeatureTab) => {
 			setFooterWorkspace(null);
 			setFeatureTab(tab);
-			if (!connectedTarget || !sessionConnected) {
-				setWorkspaceView("connect");
-				return;
-			}
 			setWorkspaceView(tab);
 		},
-		[connectedTarget, sessionConnected],
+		[],
 	);
 
 	const selectFooterWorkspace = useCallback((workspace: InspectorFooterWorkspace) => {
@@ -779,9 +781,10 @@ export function InspectorPage() {
 
 			const listKind = capabilityFamilyToListKind(family);
 			const listMethod = capabilityFamilyListMethod(family);
+			let sessionId: string | undefined;
 
 			try {
-				const sessionId = await ensureSession();
+				sessionId = await ensureSession();
 				if (!sessionId) {
 					throw new Error("Failed to open inspector session");
 				}
@@ -800,7 +803,14 @@ export function InspectorPage() {
 							mode: "native",
 							session_id: sessionId,
 						},
-						request: { jsonrpc: "2.0", method: listMethod },
+						request: {
+							jsonrpc: "2.0",
+							method: listMethod,
+							params: {
+								refresh: true,
+								session_id: sessionId,
+							},
+						},
 					});
 				}
 
@@ -845,6 +855,19 @@ export function InspectorPage() {
 				if (isInspectorSessionUnavailableError(error)) {
 					invalidateSession();
 				}
+				logActivityStep({
+					data: {
+						event: "error",
+						call_id: listMethod,
+						server_id: connectedTargetLogId,
+						message: stringifyError(error),
+					},
+					request: {
+						jsonrpc: "2.0",
+						method: listMethod,
+						...(sessionId ? { session_id: sessionId } : {}),
+					},
+				});
 				setCapabilityFamilyStates((previous) => ({
 					...previous,
 					[family]: {
@@ -1030,8 +1053,65 @@ export function InspectorPage() {
 			if (!requestTarget) return;
 
 			setSnapshotLoading(snapshotKind);
+			const startedAt = Date.now();
+			const method = snapshotMethod(snapshotKind);
+			const serverId =
+				connectedTargetLogId ||
+				requestTarget.server_id ||
+				requestTarget.scratch_id ||
+				"inspector-target";
+			let sessionId: string | undefined;
 			try {
-				const request = { ...requestTarget, refresh: true };
+				sessionId = await ensureSession();
+				if (!sessionId) {
+					throw new Error("Failed to open inspector session");
+				}
+
+				const request =
+					snapshotKind === "compatibility"
+						? {
+								...requestTarget,
+								refresh: true,
+								session_id: sessionId,
+								spec_version: compatibilitySpecVersion,
+							}
+						: {
+								...requestTarget,
+								refresh: true,
+								session_id: sessionId,
+								package_source: PACKAGE_SAFETY_SOURCE,
+								scan_depth: packageSafetyScanDepth,
+							};
+				const requestParams =
+					snapshotKind === "compatibility"
+						? {
+								spec_version: compatibilitySpecVersion,
+								refresh: true,
+								session_id: sessionId,
+							}
+						: {
+								package_source: PACKAGE_SAFETY_SOURCE,
+								scan_depth: packageSafetyScanDepth,
+								refresh: true,
+								session_id: sessionId,
+							};
+
+				logActivityStep({
+					data: {
+						event: "mcp_exchange",
+						direction: "outbound",
+						method,
+						server_id: serverId,
+						mode: "native",
+						session_id: sessionId,
+					},
+					request: {
+						jsonrpc: "2.0",
+						method,
+						params: requestParams,
+					},
+				});
+
 				const response =
 					snapshotKind === "compatibility"
 						? await inspectorApi.compatibilitySnapshot(request)
@@ -1050,7 +1130,41 @@ export function InspectorPage() {
 					payload: response.data.snapshot,
 					loadedAt: new Date().toLocaleTimeString(),
 				});
+				logActivityStep({
+					data: {
+						event: "mcp_exchange",
+						direction: "inbound",
+						method,
+						server_id: serverId,
+						mode: "native",
+						session_id: sessionId,
+					},
+					response: {
+						jsonrpc: "2.0",
+						result: {
+							snapshot: response.data.snapshot,
+						},
+					},
+					durationMs: Date.now() - startedAt,
+				});
 			} catch (error) {
+				if (isInspectorSessionUnavailableError(error)) {
+					invalidateSession();
+				}
+				logActivityStep({
+					data: {
+						event: "error",
+						call_id: method,
+						server_id: serverId,
+						message: stringifyError(error),
+					},
+					request: {
+						operation: method,
+						target: requestTarget,
+						...(sessionId ? { session_id: sessionId } : {}),
+					},
+					durationMs: Date.now() - startedAt,
+				});
 				notifyError(
 					t("standalone.snapshotFailedTitle", {
 						defaultValue: "Snapshot failed",
@@ -1061,7 +1175,16 @@ export function InspectorPage() {
 				setSnapshotLoading(null);
 			}
 		},
-		[requireTargetRequest, t],
+		[
+			compatibilitySpecVersion,
+			packageSafetyScanDepth,
+			connectedTargetLogId,
+			ensureSession,
+			invalidateSession,
+			logActivityStep,
+			requireTargetRequest,
+			t,
+		],
 	);
 
 	const handleEvaluationRun = useCallback(async () => {
@@ -1208,10 +1331,6 @@ export function InspectorPage() {
 				capabilityControlsDisabled={capabilityControlsDisabled}
 				compatibilitySpecVersion={compatibilitySpecVersion}
 				onCompatibilitySpecVersionChange={setCompatibilitySpecVersion}
-				packageSafetyFactSource={packageSafetyFactSource}
-				onPackageSafetyFactSourceChange={setPackageSafetyFactSource}
-				packageSafetyDatabase={packageSafetyDatabase}
-				onPackageSafetyDatabaseChange={setPackageSafetyDatabase}
 				packageSafetyScanDepth={packageSafetyScanDepth}
 				onPackageSafetyScanDepthChange={setPackageSafetyScanDepth}
 				llmEvaluationFocus={llmEvaluationFocus}
@@ -1315,11 +1434,17 @@ export function InspectorPage() {
 											activeFamily={activeCapabilityFamily}
 											selectedItem={selectedCapabilityItem}
 											items={activeFamilyState?.items ?? []}
+											targetRequest={targetRequest}
+											serverLogId={connectedTargetLogId}
+											requestTimeoutMs={inspectorConfig.requestTimeoutMs}
+											ensureSession={ensureSession}
+											onSessionUnavailable={invalidateSession}
+											onLogActivity={logActivityStep}
 										/>
 									) : null}
 
 									{workspaceView === "compatibility" ? (
-										<div className="max-w-5xl space-y-4">
+										<div className="flex min-h-0 flex-1 flex-col space-y-4">
 											<div className="rounded-md border border-dashed border-border bg-card/40 p-4">
 												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 													<div className="min-w-0">
@@ -1330,8 +1455,9 @@ export function InspectorPage() {
 															</p>
 														</div>
 														<p className="mt-1 text-sm text-muted-foreground">
-															Baseline: {compatibilitySpecVersion}. Summarize view and
-															spec-fit hints will render here.
+															Baseline: {compatibilitySpecVersion}. Compares advertised
+															MCP surfaces, schema hints, and protocol fit against the
+															selected spec.
 														</p>
 													</div>
 													<Button
@@ -1346,29 +1472,27 @@ export function InspectorPage() {
 														) : (
 															<ShieldCheck className="h-4 w-4" />
 														)}
-														Run comparison (draft)
+														Run comparison
 													</Button>
 												</div>
 											</div>
-											<div className="rounded-md border border-dashed border-border bg-card/20 p-4">
-												<p className="text-sm font-medium text-foreground">
-													Spec vs server diff
-												</p>
-												<p className="mt-1 text-sm text-muted-foreground">
-													Git-diff style requirement columns and optional timeline will
-													appear here after backend wiring.
-												</p>
-												{snapshotState?.kind === "compatibility" ? (
-													<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
-														{JSON.stringify(snapshotState.payload, null, 2)}
-													</pre>
-												) : null}
-											</div>
+											<InspectorCompatibilitySnapshotReport
+												payload={
+													snapshotState?.kind === "compatibility"
+														? snapshotState.payload
+														: null
+												}
+												loadedAt={
+													snapshotState?.kind === "compatibility"
+														? snapshotState.loadedAt
+														: undefined
+												}
+											/>
 										</div>
 									) : null}
 
 									{workspaceView === "package_safety" ? (
-										<div className="max-w-5xl space-y-4">
+										<div className="flex min-h-0 flex-1 flex-col space-y-4">
 											<div className="rounded-md border border-dashed border-border bg-card/40 p-4">
 												<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 													<div className="min-w-0">
@@ -1379,9 +1503,8 @@ export function InspectorPage() {
 															</p>
 														</div>
 														<p className="mt-1 text-sm text-muted-foreground">
-															Source: {packageSafetyFactSource.replace("_", " ")} ·
-															Database: {packageSafetyDatabase} · Depth:{" "}
-															{packageSafetyScanDepth}
+															Source: {PACKAGE_SAFETY_SOURCE.replace("_", " ")} ·
+															Scanner: local rules · Depth: {packageSafetyScanDepth}
 														</p>
 													</div>
 													<Button
@@ -1396,23 +1519,22 @@ export function InspectorPage() {
 														) : (
 															<PackageSearch className="h-4 w-4" />
 														)}
-														Start scan (draft)
+														Start scan
 													</Button>
 												</div>
 											</div>
-											<div className="rounded-md border border-dashed border-border bg-card/20 p-4">
-												<p className="text-sm font-medium text-foreground">
-													Scan progress and findings
-												</p>
-												<p className="mt-1 text-sm text-muted-foreground">
-													Structured results or embedded report views will render here.
-												</p>
-												{snapshotState?.kind === "package_safety" ? (
-													<pre className="mt-4 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-muted-foreground">
-														{JSON.stringify(snapshotState.payload, null, 2)}
-													</pre>
-												) : null}
-											</div>
+											<InspectorPackageSafetySnapshotReport
+												payload={
+													snapshotState?.kind === "package_safety"
+														? snapshotState.payload
+														: null
+												}
+												loadedAt={
+													snapshotState?.kind === "package_safety"
+														? snapshotState.loadedAt
+														: undefined
+												}
+											/>
 										</div>
 									) : null}
 
