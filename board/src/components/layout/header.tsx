@@ -233,7 +233,7 @@ export function Header({ titleOverride, actionsOverride }: HeaderProps = {}) {
 
   return (
     <header
-      className={`fixed top-0 right-0 z-30 flex h-16 items-center border-b border-border bg-card px-4 ${sidebarOpen ? "left-64" : "left-16"
+      className={`fixed top-0 right-0 z-30 flex h-16 items-center border-b border-border bg-card px-3 ${sidebarOpen ? "left-64" : "left-16"
         } transition-all duration-300 ease-in-out`}
     >
       <div className="flex w-full items-center justify-between">

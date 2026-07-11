@@ -121,9 +121,9 @@ export function inspectorConnectWorkspaceClassName(className?: string) {
 	);
 }
 
-/** Aligns with sidebar server picker (h-9) + controls gap (gap-3) below the h-16 header. */
+/** Workspace target/capability header below the h-16 shell header. */
 export function inspectorWorkspaceTargetHeaderClassName(className?: string) {
-	return cn("flex h-12 shrink-0 items-center bg-background px-6", className);
+	return cn("flex shrink-0 items-center bg-background p-3", className);
 }
 
 export function inspectorSidebarFooterClassName(sidebarOpen: boolean) {

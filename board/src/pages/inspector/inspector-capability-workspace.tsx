@@ -1,11 +1,10 @@
-import { Copy, Eraser, Loader2, Play, RotateCcw } from "lucide-react";
+import { Copy, Loader2, Play, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CardListScrollBody } from "../../components/card-list-scroll-body";
 import { InspectorMcpResponseViewer } from "../../components/inspector-mcp-response-viewer";
 import { SchemaForm } from "../../components/schema-form";
 import { defaultFromSchema } from "../../components/schema-form-utils";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonGroup } from "../../components/ui/button-group";
 import { Label } from "../../components/ui/label";
@@ -40,6 +39,7 @@ type InspectorCapabilityWorkspaceProps = {
 	ensureSession: () => Promise<string | undefined>;
 	onSessionUnavailable: () => void;
 	onLogActivity: (entry: CreateInspectorLogEntryInput) => void;
+	onHeaderActionsChange?: (actions: ReactNode | null) => void;
 };
 
 type InspectorCallableFamily =
@@ -146,10 +146,11 @@ function extractResultPayload(response: InspectorApiResponse): unknown {
 	return data ?? response;
 }
 
-function schemaPreview(value: Record<string, unknown> | undefined, emptyLabel: string) {
-	if (!value || Object.keys(value).length === 0) {
-		return <p className="text-xs text-muted-foreground">{emptyLabel}</p>;
-	}
+function hasSchemaPreview(value: Record<string, unknown> | undefined) {
+	return Boolean(value && Object.keys(value).length > 0);
+}
+
+function schemaPreview(value: Record<string, unknown>) {
 	return (
 		<pre className="max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background/70 p-3 font-mono text-xs text-muted-foreground">
 			{JSON.stringify(value, null, 2)}
@@ -260,66 +261,6 @@ function validateResourceTemplateArgs(
 	return `Missing required URI variable(s): ${missingVariables.join(", ")}`;
 }
 
-function invocationBadgeVariant(
-	status: InspectorInvocationState["status"],
-): "outline" | "secondary" | "success" | "warning" | "destructive" {
-	switch (status) {
-		case "success":
-			return "success";
-		case "running":
-			return "warning";
-		case "error":
-			return "destructive";
-		case "idle":
-			return "outline";
-	}
-}
-
-function invocationTone(
-	status: InspectorInvocationState["status"],
-): "default" | "good" | "warn" | "bad" {
-	switch (status) {
-		case "success":
-			return "good";
-		case "running":
-			return "warn";
-		case "error":
-			return "bad";
-		case "idle":
-			return "default";
-	}
-}
-
-function invocationStatusLabel(status: InspectorInvocationState["status"]): string {
-	switch (status) {
-		case "success":
-			return "OK";
-		case "running":
-			return "PENDING";
-		case "error":
-			return "ERROR";
-		case "idle":
-			return "READY";
-	}
-}
-
-function durationLabel(invocation: InspectorInvocationState): string {
-	if (invocation.durationMs != null) {
-		return `${invocation.durationMs}ms`;
-	}
-	if (invocation.status === "running") {
-		return "pending";
-	}
-	return "n/a";
-}
-
-function timeoutLabel(
-	callableFamily: InspectorCallableFamily | null,
-	requestTimeoutMs: number,
-): string {
-	return callableFamily === "tools" ? `${requestTimeoutMs}ms` : "n/a";
-}
-
 function actionLabel(callableFamily: InspectorCallableFamily | null): string {
 	switch (callableFamily) {
 		case "resources":
@@ -387,32 +328,6 @@ function resolveRequestArgs({
 	return args;
 }
 
-function InspectorEvidenceStat({
-	label,
-	value,
-	tone,
-}: {
-	label: string;
-	value: string;
-	tone?: "default" | "good" | "warn" | "bad";
-}): ReactNode {
-	return (
-		<div
-			className={cn(
-				"min-w-0 rounded-md border border-border bg-background/60 px-3 py-2",
-				tone === "good" && "border-emerald-500/30 bg-emerald-500/5",
-				tone === "warn" && "border-amber-500/30 bg-amber-500/5",
-				tone === "bad" && "border-destructive/30 bg-destructive/5",
-			)}
-		>
-			<p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-				{label}
-			</p>
-			<p className="mt-1 truncate font-mono text-xs text-foreground">{value}</p>
-		</div>
-	);
-}
-
 export function InspectorCapabilityWorkspace({
 	activeFamily,
 	selectedItem,
@@ -423,6 +338,7 @@ export function InspectorCapabilityWorkspace({
 	ensureSession,
 	onSessionUnavailable,
 	onLogActivity,
+	onHeaderActionsChange,
 }: InspectorCapabilityWorkspaceProps) {
 	const familyMeta = INSPECTOR_CAPABILITY_FAMILIES.find(
 		(entry) => entry.value === activeFamily,
@@ -434,7 +350,7 @@ export function InspectorCapabilityWorkspace({
 			return selectedItem.inputSchema ?? schemaFromResourceTemplateUri(selectedItem.key);
 		}
 		return selectedItem?.inputSchema;
-	}, [activeFamily, selectedItem?.inputSchema, selectedItem?.key]);
+	}, [activeFamily, selectedItem]);
 	const outputSchema = selectedItem?.outputSchema;
 	const [useRaw, setUseRaw] = useState(false);
 	const [args, setArgs] = useState<JsonObject>(EMPTY_ARGS);
@@ -526,10 +442,6 @@ export function InspectorCapabilityWorkspace({
 			notifyError("Copy failed", stringifyError(error));
 		}
 	}, [callableFamily, serializedMetadataPreview, serializedRequestPreview]);
-
-	const handleClearResponse = useCallback(() => {
-		setInvocation({ status: "idle", response: null, error: null, durationMs: null });
-	}, []);
 
 	const handleInvoke = useCallback(async () => {
 		if (!callableFamily || !selectedItem) return;
@@ -706,6 +618,40 @@ export function InspectorCapabilityWorkspace({
 		useRaw,
 	]);
 
+	const canInvoke = Boolean(callableFamily && targetRequest && selectedItem);
+
+	useEffect(() => {
+		if (!onHeaderActionsChange) {
+			return;
+		}
+		if (!canInvoke || !callableFamily) {
+			onHeaderActionsChange(null);
+			return;
+		}
+		onHeaderActionsChange(
+			<Button
+				type="button"
+				className="h-9 gap-2"
+				disabled={invocation.status === "running"}
+				onClick={() => void handleInvoke()}
+			>
+				{invocation.status === "running" ? (
+					<Loader2 className="h-4 w-4 animate-spin" />
+				) : (
+					<Play className="h-4 w-4" />
+				)}
+				{actionLabel(callableFamily)}
+			</Button>,
+		);
+		return () => onHeaderActionsChange(null);
+	}, [
+		callableFamily,
+		canInvoke,
+		handleInvoke,
+		invocation.status,
+		onHeaderActionsChange,
+	]);
+
 	if (!activeFamily) {
 		return (
 			<div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-md border border-dashed border-border bg-card/20 p-8 text-center">
@@ -732,55 +678,17 @@ export function InspectorCapabilityWorkspace({
 		);
 	}
 
-	const canInvoke = Boolean(callableFamily && targetRequest);
 	const responseKind = capabilityKind ?? "tool";
-	const requestResponseTitle = callableFamily
-		? "Request / Response"
-		: "Capability Metadata";
-	const requestResponseDescription = callableFamily
-		? "Composer and payload panes follow the standalone Inspector activity log shape."
-		: "List-only capabilities expose their advertised metadata without a call action.";
-	const methodLabel = callableFamily ? capabilityFamilyToMethod(callableFamily) : "metadata";
+	const showInputSchema = hasSchemaPreview(inputSchema);
+	const showOutputSchema = hasSchemaPreview(outputSchema);
 
 	return (
-		<div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(22rem,0.9fr)_minmax(0,1.35fr)]">
+		<div className="flex flex-col gap-4 xl:grid xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(22rem,0.9fr)_minmax(0,1.35fr)]">
 			<section className="flex min-h-0 flex-col rounded-md border border-border bg-card/40">
 				<div className="border-b border-border p-4">
-					<div className="flex flex-wrap items-start justify-between gap-3">
-						<div className="min-w-0 space-y-2">
-							<div className="flex flex-wrap items-center gap-2">
-								<Badge variant="outline">{familyMeta.label}</Badge>
-								{callableFamily ? (
-									<Badge variant="secondary">
-										{capabilityFamilyToMethod(callableFamily)}
-									</Badge>
-								) : (
-									<Badge variant="secondary">List only</Badge>
-								)}
-							</div>
-							<div>
-								<p className="truncate text-lg font-semibold text-foreground">
-									{selectedItem.title}
-								</p>
-								<p className="mt-1 break-all font-mono text-xs text-muted-foreground">
-									{selectedItem.key}
-								</p>
-							</div>
-						</div>
-						<Button
-							type="button"
-							className="h-9 gap-2"
-							disabled={!canInvoke || invocation.status === "running"}
-							onClick={() => void handleInvoke()}
-						>
-							{invocation.status === "running" ? (
-								<Loader2 className="h-4 w-4 animate-spin" />
-							) : (
-								<Play className="h-4 w-4" />
-							)}
-							{actionLabel(callableFamily)}
-						</Button>
-					</div>
+					<p className="break-all font-mono text-xs text-muted-foreground">
+						{selectedItem.key}
+					</p>
 					<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
 						{selectedItem.description || "No description provided."}
 					</p>
@@ -823,7 +731,12 @@ export function InspectorCapabilityWorkspace({
 								</ButtonGroup>
 							</div>
 
-							<CardListScrollBody className="min-h-[14rem] flex-none">
+							<CardListScrollBody
+								className={cn(
+									"flex-none",
+									(useRaw || !inputSchema) && "min-h-[14rem]",
+								)}
+							>
 								<div className="p-3">
 									{useRaw || !inputSchema ? (
 										<Textarea
@@ -854,68 +767,37 @@ export function InspectorCapabilityWorkspace({
 						</div>
 					)}
 
-					<div className="grid min-h-0 gap-3 lg:grid-cols-2">
-						<div className="space-y-2">
-							<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-								Input schema
-							</p>
-							{schemaPreview(inputSchema, "No input schema listed.")}
+					{showInputSchema || showOutputSchema ? (
+						<div
+							className={cn(
+								"grid min-h-0 gap-3",
+								showInputSchema && showOutputSchema && "xl:grid-cols-2",
+							)}
+						>
+							{showInputSchema && inputSchema ? (
+								<div className="space-y-2">
+									<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Input schema
+									</p>
+									{schemaPreview(inputSchema)}
+								</div>
+							) : null}
+							{showOutputSchema && outputSchema ? (
+								<div className="space-y-2">
+									<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Output schema
+									</p>
+									{schemaPreview(outputSchema)}
+								</div>
+							) : null}
 						</div>
-						<div className="space-y-2">
-							<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-								Output schema
-							</p>
-							{schemaPreview(outputSchema, "No output schema listed.")}
-						</div>
-					</div>
+					) : null}
 				</div>
 			</section>
 
 			<section className="flex min-h-0 flex-col rounded-md border border-border bg-card/40">
-				<div className="border-b border-border p-4">
-					<div className="flex items-center justify-between gap-3">
-						<div>
-							<p className="text-sm font-semibold text-foreground">
-								{requestResponseTitle}
-							</p>
-							<p className="mt-1 text-xs text-muted-foreground">
-								{requestResponseDescription}
-							</p>
-						</div>
-						<div className="flex shrink-0 items-center gap-2">
-							<Badge variant={invocationBadgeVariant(invocation.status)}>
-								{invocationStatusLabel(invocation.status)}
-							</Badge>
-							<Button
-								type="button"
-								variant="outline"
-								size="icon"
-								className="h-8 w-8"
-								disabled={invocation.status === "idle" || invocation.status === "running"}
-								aria-label="Clear response"
-								onClick={handleClearResponse}
-							>
-								<Eraser className="h-3.5 w-3.5" />
-							</Button>
-						</div>
-					</div>
-					<div className="mt-4 grid gap-2 md:grid-cols-4">
-						<InspectorEvidenceStat label="Method" value={methodLabel} />
-						<InspectorEvidenceStat
-							label="Status"
-							value={invocationStatusLabel(invocation.status)}
-							tone={invocationTone(invocation.status)}
-						/>
-						<InspectorEvidenceStat
-							label="Timeout"
-							value={timeoutLabel(callableFamily, requestTimeoutMs)}
-						/>
-						<InspectorEvidenceStat label="Duration" value={durationLabel(invocation)} />
-					</div>
-				</div>
-
-				<div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-rows-[minmax(11rem,0.75fr)_minmax(16rem,1.25fr)]">
-					<div className="flex min-h-0 flex-col gap-2">
+				<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+					<div className="flex shrink-0 flex-col gap-2">
 						<div className="flex items-center justify-between gap-2">
 							<p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 								{previewLabel(callableFamily)}
@@ -932,7 +814,7 @@ export function InspectorCapabilityWorkspace({
 								<Copy className="h-3.5 w-3.5" />
 							</Button>
 						</div>
-						<CardListScrollBody>
+						<CardListScrollBody className="min-h-[12rem]">
 							<pre className="p-3 font-mono text-xs leading-relaxed text-muted-foreground">
 								{callableFamily
 									? serializedRequestPreview
@@ -941,7 +823,7 @@ export function InspectorCapabilityWorkspace({
 						</CardListScrollBody>
 					</div>
 
-					<div className="flex min-h-0 flex-col">
+					<div className="flex min-h-[16rem] flex-1 flex-col">
 						{invocation.status === "success" ? (
 							<InspectorMcpResponseViewer
 								response={invocation.response}

@@ -8,7 +8,7 @@ import {
 	ShieldCheck,
 	Waypoints,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { InspectorWindowLayout } from "../../components/layout/inspector-layout";
@@ -395,6 +395,8 @@ export function InspectorPage() {
 	const [evaluationLoading, setEvaluationLoading] = useState(false);
 	const [evaluationState, setEvaluationState] =
 		useState<InspectorEvaluationState | null>(null);
+	const [capabilityHeaderActions, setCapabilityHeaderActions] =
+		useState<ReactNode | null>(null);
 	const [activityPanelExpanded, setActivityPanelExpanded] = useState(false);
 	const [activityPanelHeight, setActivityPanelHeight] = useState(280);
 	const [activityPanelPinned, setActivityPanelPinned] = useState(false);
@@ -524,6 +526,16 @@ export function InspectorPage() {
 			) ?? null
 		);
 	}, [activeCapabilityFamily, activeFamilyState]);
+	const activeCapabilityFamilyLabel = useMemo(() => {
+		if (!activeCapabilityFamily) {
+			return null;
+		}
+		return (
+			INSPECTOR_CAPABILITY_FAMILIES.find(
+				(family) => family.value === activeCapabilityFamily,
+			)?.label ?? null
+		);
+	}, [activeCapabilityFamily]);
 	const targetRequest = useMemo(() => {
 		if (!connectedTarget) return null;
 		return connectedTarget.source === "managed"
@@ -668,6 +680,12 @@ export function InspectorPage() {
 		selectedTargetKey,
 		targets,
 	]);
+
+	useEffect(() => {
+		if (workspaceView !== "inspect") {
+			setCapabilityHeaderActions(null);
+		}
+	}, [workspaceView]);
 
 	useEffect(() => {
 		setCapabilityFamilyStates(createInitialCapabilityFamilyStates());
@@ -1070,31 +1088,31 @@ export function InspectorPage() {
 				const request =
 					snapshotKind === "compatibility"
 						? {
-								...requestTarget,
-								refresh: true,
-								session_id: sessionId,
-								spec_version: compatibilitySpecVersion,
-							}
+							...requestTarget,
+							refresh: true,
+							session_id: sessionId,
+							spec_version: compatibilitySpecVersion,
+						}
 						: {
-								...requestTarget,
-								refresh: true,
-								session_id: sessionId,
-								package_source: PACKAGE_SAFETY_SOURCE,
-								scan_depth: packageSafetyScanDepth,
-							};
+							...requestTarget,
+							refresh: true,
+							session_id: sessionId,
+							package_source: PACKAGE_SAFETY_SOURCE,
+							scan_depth: packageSafetyScanDepth,
+						};
 				const requestParams =
 					snapshotKind === "compatibility"
 						? {
-								spec_version: compatibilitySpecVersion,
-								refresh: true,
-								session_id: sessionId,
-							}
+							spec_version: compatibilitySpecVersion,
+							refresh: true,
+							session_id: sessionId,
+						}
 						: {
-								package_source: PACKAGE_SAFETY_SOURCE,
-								scan_depth: packageSafetyScanDepth,
-								refresh: true,
-								session_id: sessionId,
-							};
+							package_source: PACKAGE_SAFETY_SOURCE,
+							scan_depth: packageSafetyScanDepth,
+							refresh: true,
+							session_id: sessionId,
+						};
 
 				logActivityStep({
 					data: {
@@ -1413,18 +1431,37 @@ export function InspectorPage() {
 						) : (
 							<>
 								<div className={inspectorWorkspaceTargetHeaderClassName()}>
-									<div className="flex flex-wrap items-center gap-2">
-										<p className="truncate text-xl font-semibold text-foreground">
-											{targetLabel(connectedTarget)}
-										</p>
-										<Badge
-											variant={
-												connectedTarget.source === "managed" ? "secondary" : "outline"
-											}
-										>
-											{connectedTarget.source === "managed" ? "Managed" : "Scratch"}
-										</Badge>
-									</div>
+									{workspaceView === "inspect" ? (
+										<div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+											<div className="flex min-w-0 flex-1 items-center gap-3">
+												<p className="truncate text-xl font-semibold text-foreground">
+													{selectedCapabilityItem?.title ??
+														t("standalone.selectCapabilityTitle", {
+															defaultValue: "Select a capability",
+														})}
+												</p>
+												{activeCapabilityFamilyLabel ? (
+													<Badge variant="outline">{activeCapabilityFamilyLabel}</Badge>
+												) : null}
+											</div>
+											<div className="flex shrink-0 items-center gap-2">
+												{capabilityHeaderActions}
+											</div>
+										</div>
+									) : (
+										<div className="flex flex-wrap items-center gap-2">
+											<p className="truncate text-xl font-semibold text-foreground">
+												{targetLabel(connectedTarget)}
+											</p>
+											<Badge
+												variant={
+													connectedTarget.source === "managed" ? "secondary" : "outline"
+												}
+											>
+												{connectedTarget.source === "managed" ? "Managed" : "Scratch"}
+											</Badge>
+										</div>
+									)}
 								</div>
 
 								<div className={inspectorWorkspaceContentClassName()}>
@@ -1440,6 +1477,7 @@ export function InspectorPage() {
 											ensureSession={ensureSession}
 											onSessionUnavailable={invalidateSession}
 											onLogActivity={logActivityStep}
+											onHeaderActionsChange={setCapabilityHeaderActions}
 										/>
 									) : null}
 
