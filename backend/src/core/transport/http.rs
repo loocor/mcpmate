@@ -15,6 +15,14 @@ use rmcp::{
 use std::time::Duration;
 use tokio::time::timeout;
 
+fn annotate_operation<T>(
+    result: Result<T>,
+    operation: &str,
+    server_name: &str,
+) -> Result<T> {
+    result.with_context(|| format!("{operation} failed for server '{server_name}'"))
+}
+
 /// Internal helper used by streamable HTTP connections
 async fn connect_http_internal(
     server_name: &str,
@@ -79,12 +87,14 @@ where
     let handler = crate::core::transport::client::UpstreamClientHandler::new(server_name.to_string());
     let service = timeout(service_timeout, async { handler.serve(transport).await })
         .await
-        .map_err(|_| anyhow::anyhow!(format!("Connection timeout for server '{server_name}'")))??;
+        .map_err(|_| anyhow::anyhow!(format!("Connection timeout for server '{server_name}'")))?;
+    let service = annotate_operation(service.map_err(anyhow::Error::from), "initialize/connect", server_name)?;
 
     // Fetch tools
     let tools = timeout(tools_timeout, service.list_all_tools())
         .await
-        .map_err(|_| anyhow::anyhow!(format!("Timeout listing tools for server '{server_name}'")))??;
+        .map_err(|_| anyhow::anyhow!(format!("Timeout listing tools for server '{server_name}'")))?;
+    let tools = annotate_operation(tools.map_err(anyhow::Error::from), "tools/list", server_name)?;
 
     let capabilities = service.peer_info().map(|info| info.capabilities.clone());
 
@@ -202,8 +212,7 @@ pub async fn connect_http_server_with_client_timeouts(
     server_config: &MCPServerConfig,
     client: reqwest::Client,
     transport_type: TransportType,
-    _connection_timeout: Duration,
-    service_timeout: Duration,
+    connection_timeout: Duration,
     tools_timeout: Duration,
 ) -> Result<(
     crate::core::transport::ClientService,
@@ -220,7 +229,7 @@ pub async fn connect_http_server_with_client_timeouts(
         TransportType::StreamableHttp => {
             let config = make_streamable_config(url, &server_config.headers);
             let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
-            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
+            build_service_tools(server_name, transport, connection_timeout, tools_timeout).await?
         }
         TransportType::Stdio => {
             anyhow::bail!("HTTP timeouts not applicable for stdio transport");
@@ -235,4 +244,20 @@ pub async fn connect_http_server_with_client_timeouts(
     );
 
     Ok((service, tools, capabilities))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::annotate_operation;
+
+    #[test]
+    fn protocol_errors_include_the_preview_operation_name() {
+        for operation in ["initialize/connect", "tools/list"] {
+            let error = annotate_operation::<()>(Err(anyhow::anyhow!("protocol failure")), operation, "docs")
+                .expect_err("protocol failure must remain visible");
+
+            assert!(error.to_string().contains(operation));
+            assert!(error.to_string().contains("docs"));
+        }
+    }
 }

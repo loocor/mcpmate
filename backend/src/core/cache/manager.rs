@@ -283,6 +283,39 @@ impl RedbCacheManager {
         Ok(())
     }
 
+    /// Atomically replace all L2 capability entries for one server, then
+    /// publish the replacement to L1 without exposing an empty cache state.
+    pub async fn replace_server_data(
+        &self,
+        server_data: &CachedServerData,
+    ) -> Result<(), CacheError> {
+        let operations = CacheOperations::new(&self.db);
+        operations.replace_server_data(server_data)?;
+
+        let key_prefix = format!("{}#", server_data.server_id);
+        let cache_key = self.generate_cache_key(
+            &server_data.server_id,
+            &server_data.instance_type(),
+            server_data.scope(),
+        );
+        {
+            let mut memory_cache = self.memory_cache.write().await;
+            let keys_to_remove = memory_cache
+                .iter()
+                .filter_map(|(key, _)| key.starts_with(&key_prefix).then_some(key.clone()))
+                .collect::<Vec<_>>();
+            for key in keys_to_remove {
+                memory_cache.pop(&key);
+            }
+            memory_cache.put(cache_key, server_data.clone());
+        }
+
+        let mut metrics = self.metrics.write().await;
+        metrics.write_operations += 1;
+        metrics.cache_invalidations += 1;
+        Ok(())
+    }
+
     /// Retrieve server data from cache with multi-layer lookup
     pub async fn get_server_data(
         &self,

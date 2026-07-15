@@ -3,8 +3,9 @@
 
 use super::{common, shared::*};
 use crate::api::models::server::{
-    ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload, ServerUpdateReq,
-    ServersImportData, ServersImportReq, ServersImportResp, SkippedServerData,
+    ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload,
+    ServerNamespaceRemediationReq, ServerOperationData, ServerOperationResp, ServerUpdateReq, ServersImportData,
+    ServersImportReq, ServersImportResp, SkippedServerData,
 };
 use crate::{
     api::handlers::{
@@ -15,8 +16,7 @@ use crate::{
     config::server::capabilities::sync_via_connection_pool,
     config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
     config::server::{
-        get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update,
-        merge_headers_for_update,
+        get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update, merge_headers_for_update,
     },
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
@@ -51,6 +51,121 @@ fn validate_server_config(
             "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
         ))),
     }
+}
+
+pub async fn remediate_server_namespace(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ServerNamespaceRemediationReq>,
+) -> Result<Json<ServerOperationResp>, ApiError> {
+    let db = common::get_database_from_state(&state)?;
+    crate::config::server::validate_server_namespace(&payload.namespace)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    let issue = common::load_namespace_issue(&db.pool, &payload.id)
+        .await
+        .map_err(map_anyhow_error)?;
+    if issue.is_none() {
+        return Err(ApiError::Conflict(
+            "Namespace remediation is available only for servers with an unresolved namespace issue".to_string(),
+        ));
+    }
+    if let Some(owner) = crate::config::server::get_server(&db.pool, &payload.namespace)
+        .await
+        .map_err(map_anyhow_error)?
+        .filter(|server| server.id.as_deref() != Some(payload.id.as_str()))
+    {
+        return Err(ApiError::Conflict(format!(
+            "Namespace '{}' is already used by server '{}'",
+            payload.namespace,
+            owner.id.unwrap_or(owner.name)
+        )));
+    }
+
+    let secret_store = state.secret_store.read().await.clone();
+    let (server, server_config) =
+        crate::core::foundation::loader::load_server_config_strict(db.as_ref(), &payload.id, secret_store)
+            .await
+            .map_err(map_anyhow_error)?;
+    let mut snapshot =
+        crate::config::server::capabilities::discover_from_config(&payload.id, &server_config, server.server_type)
+            .await
+            .map_err(map_anyhow_error)?;
+
+    if let Err(error) = crate::config::server::namespace_repair::remediate_namespace_with_snapshot(
+        &db.pool,
+        &payload.id,
+        &payload.namespace,
+        &mut snapshot,
+    )
+    .await
+    {
+        if error
+            .downcast_ref::<crate::core::capability::naming::ExternalIdentifierCollision>()
+            .is_some()
+        {
+            crate::config::server::namespace_repair::record_capability_collision_from_error(&db.pool, &error)
+                .await
+                .map_err(map_anyhow_error)?;
+            return Err(ApiError::Conflict(error.to_string()));
+        }
+        return Err(map_anyhow_error(error));
+    }
+
+    let mut pending_steps = Vec::new();
+    if let Err(error) = crate::config::server::capabilities::apply_discovered_snapshot(
+        &db.pool,
+        &state.redb_cache,
+        &payload.id,
+        &payload.namespace,
+        &snapshot,
+        true,
+    )
+    .await
+    {
+        if let Err(record_error) =
+            crate::config::server::namespace_repair::record_capability_collision_from_error(&db.pool, &error).await
+        {
+            tracing::warn!(
+                server_id = %payload.id,
+                error = %record_error,
+                "Failed to record post-commit capability collision"
+            );
+        }
+        pending_steps.push(format!("capability cache refresh: {error}"));
+    }
+
+    let pool_sync_result = {
+        let mut pool = state.connection_pool.lock().await;
+        pool.sync_servers_from_active_profile().await
+    };
+    if let Err(error) = pool_sync_result {
+        pending_steps.push(format!("connection pool refresh: {error}"));
+    }
+
+    if !pending_steps.is_empty() {
+        tracing::warn!(
+            server_id = %payload.id,
+            pending_steps = %pending_steps.join("; "),
+            "Namespace remediation committed, but runtime convergence is pending"
+        );
+    }
+
+    let (result, status) = if pending_steps.is_empty() {
+        ("Namespace remediated", "remediated")
+    } else {
+        (
+            "Namespace remediated; runtime convergence pending",
+            "remediated_pending",
+        )
+    };
+
+    Ok(Json(ServerOperationResp::success(ServerOperationData {
+        id: payload.id,
+        name: payload.namespace,
+        result: result.to_string(),
+        status: status.to_string(),
+        allowed_operations: Vec::new(),
+    })))
 }
 
 async fn clear_oauth_auth_source_for_manual_authorization(
@@ -293,6 +408,9 @@ pub async fn create_server(
     let db = common::get_database_from_state(&state)?;
     let is_pending_import = payload.pending_import.unwrap_or(false);
 
+    crate::config::server::validate_server_namespace(&payload.name)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
     let existing_server = crate::config::server::get_server(&db.pool, &payload.name)
         .await
         .map_err(map_anyhow_error)?;
@@ -438,7 +556,7 @@ pub async fn create_server(
 
     // Initial capability discovery + dual write (SQLite shadow + REDB)
     if !server.pending_import {
-        let _ = sync_via_connection_pool(
+        if let Err(error) = sync_via_connection_pool(
             &state.connection_pool,
             &state.redb_cache,
             &db.pool,
@@ -446,7 +564,10 @@ pub async fn create_server(
             &payload.name,
             crate::config::server::capabilities::default_pool_lock_timeout_secs(),
         )
-        .await;
+        .await
+        {
+            tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
+        }
     }
 
     let server_row = crate::config::server::get_server_by_id(&db.pool, &server_id)
@@ -474,7 +595,7 @@ pub async fn create_server(
 
     let audit_server_id = server_id.clone();
     let response = Json(ServerDetailsResp::success(ServerDetailsData {
-        id: Some(server_id),
+        id: Some(server_id.clone()),
         name: server_name,
         source,
         enabled: effective_enabled,
@@ -488,6 +609,7 @@ pub async fn create_server(
         env: details.env,
         headers: None,
         meta: details.meta,
+        server_info: details.server_info,
         capability: details.capability,
         protocol_version: details.protocol_version,
         created_at,
@@ -498,6 +620,9 @@ pub async fn create_server(
         oauth_custody_state: oauth_summary.oauth_custody_state,
         oauth_requires_reconnect: oauth_summary.oauth_requires_reconnect,
         oauth_issue: oauth_summary.oauth_issue,
+        namespace_issue: common::load_namespace_issue(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?,
     }));
 
     let mut data = Map::new();
@@ -551,7 +676,6 @@ pub async fn update_server(
     let db = common::get_database_from_state(&state)?;
 
     let id = payload.id.clone();
-
     // Get existing server by ID
     let existing_server = crate::config::server::get_server_by_id(&db.pool, &id)
         .await
@@ -689,7 +813,7 @@ pub async fn update_server(
     }
 
     if existing_server.pending_import && !updated_server.pending_import {
-        let _ = sync_via_connection_pool(
+        if let Err(error) = sync_via_connection_pool(
             &state.connection_pool,
             &state.redb_cache,
             &db.pool,
@@ -697,7 +821,10 @@ pub async fn update_server(
             &existing_server.name,
             crate::config::server::capabilities::default_pool_lock_timeout_secs(),
         )
-        .await;
+        .await
+        {
+            tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after completing server import");
+        }
     }
 
     let direct_constraint_changed = existing_server.enabled.as_bool() != updated_server.enabled.as_bool()
@@ -708,7 +835,7 @@ pub async fn update_server(
     }
 
     // Get server details via shared helper
-    let details = common::get_complete_server_details(&db.pool, &server_id, &existing_server.name, &state).await;
+    let details = common::get_complete_server_details(&db.pool, &server_id, &updated_server.name, &state).await;
     let oauth_summary = common::load_server_oauth_response_summary(
         &db.pool,
         &state,
@@ -719,10 +846,10 @@ pub async fn update_server(
 
     // Return success response
     let audit_server_id = server_id.clone();
-    let audit_server_name = existing_server.name.clone();
+    let audit_server_name = updated_server.name.clone();
     let response = Json(ServerDetailsResp::success(ServerDetailsData {
         id: Some(server_id),
-        name: existing_server.name,
+        name: updated_server.name.clone(),
         source: updated_server.source.clone(),
         enabled: details.globally_enabled && details.enabled_in_profile,
         globally_enabled: details.globally_enabled,
@@ -735,6 +862,7 @@ pub async fn update_server(
         env: details.env,
         headers: None,
         meta: details.meta,
+        server_info: details.server_info,
         capability: details.capability,
         protocol_version: details.protocol_version,
         created_at: updated_server.created_at.map(|dt| dt.to_rfc3339()),
@@ -745,6 +873,7 @@ pub async fn update_server(
         oauth_custody_state: oauth_summary.oauth_custody_state,
         oauth_requires_reconnect: oauth_summary.oauth_requires_reconnect,
         oauth_issue: oauth_summary.oauth_issue,
+        namespace_issue: None,
     }));
 
     let mut data = Map::new();
@@ -1191,6 +1320,195 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_server_rejects_non_canonical_namespace_with_suggestion() {
+        let context = create_test_context().await;
+
+        let error = create_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "name": "Sequential Thinking-v2",
+                    "server_type": "streamable_http",
+                    "url": "https://example.com/mcp"
+                }))
+                .expect("decode create request"),
+            ),
+        )
+        .await
+        .expect_err("non-canonical namespace must fail");
+
+        match error {
+            ApiError::BadRequest(message) => {
+                assert!(message.contains("Suggested namespace: 'sequential_thinking_v2'"));
+            }
+            other => panic!("expected bad request, got {other:?}"),
+        }
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
+            .fetch_one(&context.database.pool)
+            .await
+            .expect("count servers");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn oauth_pending_import_rejects_namespace_before_creating_record() {
+        let context = create_test_context().await;
+
+        let error = create_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "name": "OAuth Pending Server",
+                    "server_type": "streamable_http",
+                    "url": "https://example.com/mcp",
+                    "pending_import": true
+                }))
+                .expect("decode pending import request"),
+            ),
+        )
+        .await
+        .expect_err("pending OAuth record requires a confirmed namespace");
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
+            .fetch_one(&context.database.pool)
+            .await
+            .expect("count servers");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn create_server_rejects_namespace_conflicts_without_renaming() {
+        let context = create_test_context().await;
+        let mut existing = Server::new_streamable_http(
+            "stable_namespace".to_string(),
+            Some("https://example.com/existing".to_string()),
+        );
+        existing.id = Some("server-existing".to_string());
+        server::upsert_server(&context.database.pool, &existing)
+            .await
+            .expect("insert existing server");
+
+        let error = create_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "name": "stable_namespace",
+                    "server_type": "streamable_http",
+                    "url": "https://example.com/new"
+                }))
+                .expect("decode create request"),
+            ),
+        )
+        .await
+        .expect_err("duplicate namespace must fail");
+
+        assert!(matches!(error, ApiError::Conflict(_)));
+        let names = sqlx::query_scalar::<_, String>("SELECT name FROM server_config ORDER BY name")
+            .fetch_all(&context.database.pool)
+            .await
+            .expect("load namespaces");
+        assert_eq!(names, vec!["stable_namespace"]);
+    }
+
+    #[tokio::test]
+    async fn namespace_remediation_is_available_only_for_invalid_legacy_servers() {
+        let context = create_test_context().await;
+        let fixture = context._temp_dir.path().join("namespace_remediation_fixture.py");
+        std::fs::write(
+            &fixture,
+            format!(
+                r#"
+import json
+import sys
+
+for line in sys.stdin:
+    request = json.loads(line)
+    request_id = request.get("id")
+    if request_id is None:
+        continue
+    method = request.get("method")
+    if method == "initialize":
+        result = {{
+            "protocolVersion": "{}",
+            "capabilities": {{"tools": {{}}}},
+            "serverInfo": {{"name": "namespace-remediation-fixture", "version": "1.0.0"}}
+        }}
+    elif method == "tools/list":
+        result = {{"tools": []}}
+    else:
+        continue
+    sys.stdout.write(json.dumps({{"jsonrpc": "2.0", "id": request_id, "result": result}}) + "\n")
+    sys.stdout.flush()
+"#,
+                crate::common::constants::protocol::CURRENT_VERSION
+            ),
+        )
+        .expect("write namespace remediation fixture");
+        let mut legacy = Server::new_stdio("Sequential Thinking".to_string(), Some("python3".to_string()));
+        legacy.id = Some("server-legacy".to_string());
+        server::upsert_server(&context.database.pool, &legacy)
+            .await
+            .expect("insert legacy server");
+        server::upsert_server_args(
+            &context.database.pool,
+            "server-legacy",
+            &[fixture.to_string_lossy().to_string()],
+        )
+        .await
+        .expect("store fixture argument");
+
+        let response = remediate_server_namespace(
+            State(context.app_state.clone()),
+            Json(ServerNamespaceRemediationReq {
+                id: "server-legacy".to_string(),
+                namespace: "sequential_reasoning".to_string(),
+            }),
+        )
+        .await
+        .expect("remediate legacy namespace");
+        assert_eq!(response.0.data.expect("operation data").name, "sequential_reasoning");
+
+        let error = remediate_server_namespace(
+            State(context.app_state.clone()),
+            Json(ServerNamespaceRemediationReq {
+                id: "server-legacy".to_string(),
+                namespace: "another_namespace".to_string(),
+            }),
+        )
+        .await
+        .expect_err("ordinary rename must remain unavailable");
+        assert!(matches!(error, ApiError::Conflict(_)));
+    }
+
+    #[tokio::test]
+    async fn namespace_remediation_connection_failure_does_not_commit_changes() {
+        let context = create_test_context().await;
+        let mut legacy =
+            Server::new_streamable_http("Legacy Server".to_string(), Some("http://127.0.0.1:9/mcp".to_string()));
+        legacy.id = Some("server-unreachable".to_string());
+        server::upsert_server(&context.database.pool, &legacy)
+            .await
+            .expect("insert unreachable legacy server");
+
+        remediate_server_namespace(
+            State(context.app_state.clone()),
+            Json(ServerNamespaceRemediationReq {
+                id: "server-unreachable".to_string(),
+                namespace: "legacy_server".to_string(),
+            }),
+        )
+        .await
+        .expect_err("upstream discovery failure must abort remediation");
+
+        let namespace: String = sqlx::query_scalar("SELECT name FROM server_config WHERE id = 'server-unreachable'")
+            .fetch_one(&context.database.pool)
+            .await
+            .expect("load unchanged namespace");
+        assert_eq!(namespace, "Legacy Server");
+    }
+
+    #[tokio::test]
     async fn create_server_with_manual_authorization_header_persists_header() {
         let context = create_test_context().await;
 
@@ -1198,7 +1516,7 @@ mod tests {
             State(context.app_state.clone()),
             Json(
                 serde_json::from_value(serde_json::json!({
-                    "name": "manual auth create server",
+                    "name": "manual_auth_create_server",
                     "server_type": "streamable_http",
                     "url": "https://example.com/mcp",
                     "headers": {
@@ -1343,9 +1661,9 @@ mod tests {
             .await
             .expect("enable foreign keys");
 
-        crate::config::server::init::initialize_server_tables(&db_pool)
+        crate::config::initialization::run_initialization(&db_pool)
             .await
-            .expect("init server tables");
+            .expect("initialize database");
         LocalSecretStore::initialize_with_development_root_key(
             db_pool.clone(),
             temp_dir.path().join("secrets").join("local-root.key"),

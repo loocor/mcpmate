@@ -13,9 +13,9 @@ use crate::api::models::{
         InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq,
         InstanceListResp, InstanceManageReq, ServerCapabilityDetailReq, ServerCapabilityDetailResp,
         ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp, ServerListReq,
-        ServerListResp, ServerManageReq, ServerOperationResp, ServerPreviewReq, ServerPreviewResp, ServerPromptsResp,
-        ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq, ServersImportReq,
-        ServersImportResp,
+        ServerListResp, ServerManageReq, ServerNamespaceRemediationReq, ServerOperationResp, ServerPreviewReq,
+        ServerPreviewResp, ServerPromptsResp, ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp,
+        ServerUpdateReq, ServersImportReq, ServersImportResp,
     },
 };
 use crate::{aide_wrapper, aide_wrapper_payload, aide_wrapper_query};
@@ -38,6 +38,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         // CRUD operations - Payload parameters
         .api_route("/mcp/servers/create", post_with(create_server_aide, create_server_docs))
         .api_route("/mcp/servers/update", post_with(update_server_aide, update_server_docs))
+        .api_route(
+            "/mcp/servers/namespace/remediate",
+            post_with(remediate_server_namespace_aide, remediate_server_namespace_docs),
+        )
         .api_route(
             "/mcp/servers/delete",
             delete_with(delete_server_aide, delete_server_docs),
@@ -272,6 +276,13 @@ aide_wrapper_payload!(
     ServerUpdateReq,
     ServerDetailsResp,
     "Update server configuration"
+);
+
+aide_wrapper_payload!(
+    server::remediate_server_namespace,
+    ServerNamespaceRemediationReq,
+    ServerOperationResp,
+    "Remediate a non-canonical legacy server namespace"
 );
 
 aide_wrapper_payload!(

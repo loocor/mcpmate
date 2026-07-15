@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::config::database::Database;
 use crate::core::cache::manager::RedbCacheManager;
-use crate::core::capability::naming::{NamingKind, resolve_unique_name};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::core::foundation::types::ConnectionStatus;
 use crate::core::pool::UpstreamConnectionPool;
 use crate::core::profile::visibility::ProfileVisibilityService;
@@ -999,9 +999,8 @@ impl BrokerService {
             HashMap::new()
         };
 
-        let get_enrichment = |server_id: &str| -> Option<String> {
-            enrichment_map.get(server_id).cloned().unwrap_or(None)
-        };
+        let get_enrichment =
+            |server_id: &str| -> Option<String> { enrichment_map.get(server_id).cloned().unwrap_or(None) };
 
         let mut summaries: Vec<SurfaceDirectoryItem> = tools
             .into_iter()
@@ -1642,19 +1641,12 @@ impl BrokerService {
             return Ok(UcanError::visibility_denied("tool", tool_name).to_call_tool_result());
         }
 
-        let (server_name, original_tool_name) = resolve_unique_name(NamingKind::Tool, tool_name)
+        let route = resolve_capability_route(NamingKind::Tool, tool_name)
             .await
             .with_context(|| format!("Failed to resolve unique tool '{}'", tool_name))?;
-        let server_id = match crate::core::capability::resolver::to_id(&server_name)
-            .await
-            .ok()
-            .flatten()
-        {
-            Some(id) => id,
-            None => {
-                return Ok(UcanError::server_unreachable("unknown", &server_name).to_call_tool_result());
-            }
-        };
+        let server_id = route.server_id;
+        let server_name = route.server_name;
+        let original_tool_name = route.upstream_value;
 
         let peer = match self.acquire_peer(&client_context, &server_id).await {
             Ok(p) => p,
@@ -1737,6 +1729,7 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let database = database.clone();
@@ -1753,23 +1746,24 @@ impl BrokerService {
             .collect::<Vec<_>>()
             .await
         {
-            if let Ok(result) = result {
-                if let Some(tools) = result.items.into_tools() {
-                    for tool in tools {
-                        let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
-                            NamingKind::Tool,
-                            &server_name,
-                            tool.name.as_ref(),
-                        )
-                        .await;
-                        visible.push(VisibleToolEntry {
-                            server_id: server_id.clone(),
-                            server_name: server_name.clone(),
-                            raw_tool_name,
-                            tool,
-                        });
-                    }
-                }
+            let result = result.with_context(|| format!("Failed to list tools for server '{server_id}'"))?;
+            let tools = result
+                .items
+                .into_tools()
+                .ok_or_else(|| anyhow!("Tool listing returned a different capability kind for server '{server_id}'"))?;
+            for tool in tools {
+                let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::Tool,
+                    &server_id,
+                    tool.name.as_ref(),
+                )
+                .await?;
+                visible.push(VisibleToolEntry {
+                    server_id: server_id.clone(),
+                    server_name: server_name.clone(),
+                    raw_tool_name,
+                    tool,
+                });
             }
         }
 
@@ -1843,6 +1837,7 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let database = database.clone();
@@ -1860,23 +1855,24 @@ impl BrokerService {
             .collect::<Vec<_>>()
             .await
         {
-            if let Ok(result) = result {
-                if let Some(prompts) = result.items.into_prompts() {
-                    for mut prompt in prompts {
-                        let raw_prompt_name = prompt.name.to_string();
-                        prompt.name = crate::core::capability::naming::generate_unique_name(
-                            NamingKind::Prompt,
-                            &server_name,
-                            &raw_prompt_name,
-                        );
-                        visible.push(VisiblePromptEntry {
-                            server_id: server_id.clone(),
-                            server_name: server_name.clone(),
-                            raw_prompt_name,
-                            prompt,
-                        });
-                    }
-                }
+            let result = result.with_context(|| format!("Failed to list prompts for server '{server_id}'"))?;
+            let prompts = result.items.into_prompts().ok_or_else(|| {
+                anyhow!("Prompt listing returned a different capability kind for server '{server_id}'")
+            })?;
+            for prompt in prompts {
+                let presented_name = prompt.name.to_string();
+                let raw_prompt_name = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::Prompt,
+                    &server_id,
+                    &presented_name,
+                )
+                .await?;
+                visible.push(VisiblePromptEntry {
+                    server_id: server_id.clone(),
+                    server_name: server_name.clone(),
+                    raw_prompt_name,
+                    prompt,
+                });
             }
         }
 
@@ -1952,6 +1948,7 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let database = database.clone();
@@ -1969,23 +1966,24 @@ impl BrokerService {
             .collect::<Vec<_>>()
             .await
         {
-            if let Ok(result) = result {
-                if let Some(resources) = result.items.into_resources() {
-                    for mut resource in resources {
-                        let raw_resource_uri = resource.uri.to_string();
-                        resource.raw.uri = crate::core::capability::naming::generate_unique_name(
-                            NamingKind::Resource,
-                            &server_name,
-                            &raw_resource_uri,
-                        );
-                        visible.push(VisibleResourceEntry {
-                            server_id: server_id.clone(),
-                            server_name: server_name.clone(),
-                            raw_resource_uri,
-                            resource,
-                        });
-                    }
-                }
+            let result = result.with_context(|| format!("Failed to list resources for server '{server_id}'"))?;
+            let resources = result.items.into_resources().ok_or_else(|| {
+                anyhow!("Resource listing returned a different capability kind for server '{server_id}'")
+            })?;
+            for resource in resources {
+                let presented_uri = resource.uri.to_string();
+                let raw_resource_uri = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::Resource,
+                    &server_id,
+                    &presented_uri,
+                )
+                .await?;
+                visible.push(VisibleResourceEntry {
+                    server_id: server_id.clone(),
+                    server_name: server_name.clone(),
+                    raw_resource_uri,
+                    resource,
+                });
             }
         }
 
@@ -2066,6 +2064,7 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let database = database.clone();
@@ -2083,23 +2082,24 @@ impl BrokerService {
             .collect::<Vec<_>>()
             .await
         {
-            if let Ok(result) = result {
-                if let Some(templates) = result.items.into_resource_templates() {
-                    for mut resource_template in templates {
-                        let raw_uri_template = resource_template.uri_template.to_string();
-                        resource_template.raw.name = crate::core::capability::naming::generate_unique_name(
-                            NamingKind::ResourceTemplate,
-                            &server_name,
-                            &raw_uri_template,
-                        );
-                        visible.push(VisibleResourceTemplateEntry {
-                            server_id: server_id.clone(),
-                            server_name: server_name.clone(),
-                            raw_uri_template,
-                            resource_template,
-                        });
-                    }
-                }
+            let result =
+                result.with_context(|| format!("Failed to list resource templates for server '{server_id}'"))?;
+            let templates = result.items.into_resource_templates().ok_or_else(|| {
+                anyhow!("Resource template listing returned a different capability kind for server '{server_id}'")
+            })?;
+            for resource_template in templates {
+                let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::ResourceTemplate,
+                    &server_id,
+                    resource_template.name.as_ref(),
+                )
+                .await?;
+                visible.push(VisibleResourceTemplateEntry {
+                    server_id: server_id.clone(),
+                    server_name: server_name.clone(),
+                    raw_uri_template,
+                    resource_template,
+                });
             }
         }
 
@@ -2172,31 +2172,17 @@ impl BrokerService {
             return Ok(UcanError::visibility_denied("prompt", prompt_name).to_call_tool_result());
         }
 
-        let (server_name, upstream_prompt_name) = resolve_unique_name(NamingKind::Prompt, prompt_name)
+        let route = resolve_capability_route(NamingKind::Prompt, prompt_name)
             .await
             .with_context(|| format!("Failed to resolve unique prompt '{}'", prompt_name))?;
-        let server_id = match crate::core::capability::resolver::to_id(&server_name)
-            .await
-            .ok()
-            .flatten()
-        {
-            Some(id) => id,
-            None => {
-                return Ok(UcanError::server_unreachable("unknown", &server_name).to_call_tool_result());
-            }
-        };
+        let server_id = route.server_id;
+        let upstream_prompt_name = route.upstream_value;
 
-        let prompt_mapping = {
-            let filter: HashSet<_> = std::iter::once(server_id.clone()).collect();
-            let mapping =
-                crate::core::capability::facade::build_prompt_mapping_filtered(&self.connection_pool, Some(&filter))
-                    .await;
-            if mapping.contains_key(&upstream_prompt_name) {
-                mapping
-            } else {
-                crate::core::capability::facade::build_prompt_mapping(&self.connection_pool).await
-            }
-        };
+        let filter: HashSet<_> = std::iter::once(server_id.clone()).collect();
+        let prompt_mapping =
+            crate::core::capability::facade::build_prompt_mapping_filtered(&self.connection_pool, Some(&filter))
+                .await
+                .context("Failed to build routed prompt inventory")?;
 
         match crate::core::capability::facade::get_upstream_prompt(
             &self.connection_pool,
@@ -2234,35 +2220,20 @@ impl BrokerService {
             return Ok(UcanError::visibility_denied("resource", resource_uri).to_call_tool_result());
         }
 
-        let (server_name, upstream_resource_uri) = resolve_unique_name(NamingKind::Resource, resource_uri)
+        let route = resolve_capability_route(NamingKind::Resource, resource_uri)
             .await
             .with_context(|| format!("Failed to resolve unique resource '{}'", resource_uri))?;
-        let server_id = match crate::core::capability::resolver::to_id(&server_name)
-            .await
-            .ok()
-            .flatten()
-        {
-            Some(id) => id,
-            None => {
-                return Ok(UcanError::server_unreachable("unknown", &server_name).to_call_tool_result());
-            }
-        };
+        let server_id = route.server_id;
+        let upstream_resource_uri = route.upstream_value;
 
-        let resource_mapping = {
-            let filter: HashSet<_> = std::iter::once(server_id.clone()).collect();
-            let mapping = crate::core::capability::facade::build_resource_mapping_filtered(
-                &self.connection_pool,
-                Some(&self.database),
-                Some(&filter),
-            )
-            .await;
-            if mapping.contains_key(&upstream_resource_uri) {
-                mapping
-            } else {
-                crate::core::capability::facade::build_resource_mapping(&self.connection_pool, Some(&self.database))
-                    .await
-            }
-        };
+        let filter: HashSet<_> = std::iter::once(server_id.clone()).collect();
+        let resource_mapping = crate::core::capability::facade::build_resource_mapping_filtered(
+            &self.connection_pool,
+            Some(&self.database),
+            Some(&filter),
+        )
+        .await
+        .context("Failed to build routed resource inventory")?;
 
         match crate::core::capability::facade::read_upstream_resource(
             &self.connection_pool,

@@ -303,6 +303,9 @@ pub async fn prompts_list(
             refresh,
             timeout: Some(Duration::from_secs(10)),
             validation_session: None,
+            runtime_identity: None,
+            connection_selection: None,
+            name_domain: crate::core::capability::runtime::NameDomain::External,
         };
         let res = crate::core::capability::runtime::list(
             &ctx,
@@ -344,6 +347,9 @@ pub async fn prompts_list(
                 refresh,
                 timeout: Some(Duration::from_secs(10)),
                 validation_session: None,
+                runtime_identity: None,
+                connection_selection: None,
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = state.redb_cache.clone();
             let pool = state.connection_pool.clone();

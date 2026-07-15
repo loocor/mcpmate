@@ -10,10 +10,9 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::capability::{CapabilityType, enrich_capability_items};
 use super::common::{InspectQuery, create_inspect_response};
 
 /// List all tools for a specific server
@@ -51,7 +50,7 @@ async fn server_tools_core(
     .await
     {
         let tools_resp = ServerToolsResp::success(json_to_server_tools_resp(response));
-        return Ok(attach_raw_tool_names(&db, &server_info.server_id, tools_resp).await);
+        return project_tool_response(&db, &server_info.server_id, tools_resp).await;
     }
 
     // Through CapabilityService: handler only requests result; service orchestrates cache/runtime/temp
@@ -73,6 +72,7 @@ async fn server_tools_core(
             validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
             runtime_identity: None,
             connection_selection: None,
+            name_domain: crate::core::capability::runtime::NameDomain::External,
         })
         .await;
     match list_result {
@@ -87,16 +87,18 @@ async fn server_tools_core(
                     let response =
                         create_inspect_response(json_items, meta.cache_hit, params.refresh, meta.source.as_str());
                     let tools_resp = ServerToolsResp::success(json_to_server_tools_resp(response));
-                    return Ok(attach_raw_tool_names(&db, &server_info.server_id, tools_resp).await);
+                    return project_tool_response(&db, &server_info.server_id, tools_resp).await;
                 }
             } else {
-                tracing::warn!("Capability runtime returned non-tool items for tool capability");
+                tracing::error!("Capability runtime returned non-tool items for tool capability");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
 
             // Temporary instance is handled inside CapabilityService; handler does not touch pool
         }
         Err(e) => {
             tracing::error!("Failed to list tools via unified entry: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -112,7 +114,7 @@ async fn server_tools_core(
         crate::common::constants::strategies::NONE,
     );
     let tools_resp = ServerToolsResp::success(json_to_server_tools_resp(result));
-    Ok(attach_raw_tool_names(&db, &server_info.server_id, tools_resp).await)
+    project_tool_response(&db, &server_info.server_id, tools_resp).await
 }
 
 /// Helper function to convert Json response to ServerToolsResp
@@ -149,168 +151,26 @@ fn json_to_server_tools_resp(json_response: axum::Json<serde_json::Value>) -> Se
     ServerToolsData { items, state, meta }
 }
 
-fn enrich_server_tool_items_with_raw_tool_name(
-    items: Vec<Value>,
-    persisted_tools: &[crate::config::models::ServerTool],
-) -> Vec<Value> {
-    let raw_tool_name_by_visible_name = persisted_tools
-        .iter()
-        .map(|tool| (tool.unique_name.as_str(), tool.tool_name.as_str()))
-        .collect::<HashMap<_, _>>();
-    let persisted_by_unique_name = persisted_tools
-        .iter()
-        .map(|tool| (tool.unique_name.as_str(), tool))
-        .collect::<HashMap<_, _>>();
-    let persisted_by_raw_name = persisted_tools
-        .iter()
-        .map(|tool| (tool.tool_name.as_str(), tool))
-        .collect::<HashMap<_, _>>();
-
-    items
-        .into_iter()
-        .map(|item| {
-            let Some(object) = item.as_object() else {
-                return item;
-            };
-
-            let Some(visible_name) = object.get("name").and_then(Value::as_str) else {
-                return item;
-            };
-
-            let persisted_tool = persisted_by_unique_name
-                .get(visible_name)
-                .copied()
-                .or_else(|| persisted_by_raw_name.get(visible_name).copied())
-                .or_else(|| {
-                    object
-                        .get("tool_name")
-                        .and_then(Value::as_str)
-                        .and_then(|raw_tool_name| persisted_by_raw_name.get(raw_tool_name).copied())
-                });
-
-            let raw_tool_name = object
-                .get("tool_name")
-                .and_then(Value::as_str)
-                .or_else(|| raw_tool_name_by_visible_name.get(visible_name).copied())
-                .or_else(|| persisted_tool.map(|tool| tool.tool_name.as_str()));
-
-            let Some(raw_tool_name) = raw_tool_name else {
-                return item;
-            };
-
-            let mut object = object.clone();
-            object.insert("tool_name".to_string(), Value::String(raw_tool_name.to_string()));
-            if let Some(tool) = persisted_tool {
-                object.insert("unique_name".to_string(), Value::String(tool.unique_name.clone()));
-                object.insert("id".to_string(), Value::String(tool.id.clone()));
-            }
-            Value::Object(object)
-        })
-        .collect()
-}
-
-async fn attach_raw_tool_names(
+async fn project_tool_response(
     db: &Arc<crate::config::database::Database>,
     server_id: &str,
     mut response: ServerToolsResp,
-) -> ServerToolsResp {
+) -> Result<ServerToolsResp, StatusCode> {
     let Some(data) = response.data.take() else {
-        return response;
+        return Ok(response);
     };
 
-    let persisted_tools = match crate::config::server::tools::get_server_tools(&db.pool, server_id).await {
-        Ok(tools) => tools,
-        Err(error) => {
-            tracing::warn!(server_id = %server_id, error = %error, "Failed to load persisted server tools for response enrichment");
-            response.data = Some(data);
-            return response;
-        }
-    };
+    let items = enrich_capability_items(CapabilityType::Tools, &db.pool, server_id, data.items)
+        .await
+        .map_err(|error| {
+            tracing::error!(server_id = %server_id, error = %error, "Tool naming projection failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     response.data = Some(ServerToolsData {
-        items: enrich_server_tool_items_with_raw_tool_name(data.items, &persisted_tools),
+        items,
         state: data.state,
         meta: data.meta,
     });
-    response
-}
-
-#[cfg(test)]
-mod tests {
-    use super::enrich_server_tool_items_with_raw_tool_name;
-    use crate::config::models::ServerTool;
-    use serde_json::json;
-
-    #[test]
-    fn preserves_display_name_and_attaches_raw_tool_name() {
-        let items = vec![json!({
-            "name": "21magic_component_builder",
-            "description": "Build a component",
-        })];
-        let persisted_tools = vec![ServerTool {
-            id: "stool_1".to_string(),
-            server_id: "server-1".to_string(),
-            server_name: "21magic".to_string(),
-            tool_name: "component_builder".to_string(),
-            unique_name: "21magic_component_builder".to_string(),
-            description: Some("Build a component".to_string()),
-            created_at: None,
-            updated_at: None,
-        }];
-
-        let enriched = enrich_server_tool_items_with_raw_tool_name(items, &persisted_tools);
-        let item = enriched
-            .first()
-            .and_then(|value| value.as_object())
-            .expect("tool item object");
-
-        assert_eq!(
-            item.get("name").and_then(|value| value.as_str()),
-            Some("21magic_component_builder")
-        );
-        assert_eq!(
-            item.get("tool_name").and_then(|value| value.as_str()),
-            Some("component_builder")
-        );
-        assert_eq!(
-            item.get("unique_name").and_then(|value| value.as_str()),
-            Some("21magic_component_builder")
-        );
-        assert_eq!(item.get("id").and_then(|value| value.as_str()), Some("stool_1"));
-    }
-
-    #[test]
-    fn enriches_raw_tool_name_items_with_unique_identifiers() {
-        let items = vec![json!({
-            "name": "click",
-            "description": "Click an element",
-        })];
-        let persisted_tools = vec![ServerTool {
-            id: "stool_devtools_click".to_string(),
-            server_id: "server-devtools".to_string(),
-            server_name: "devtools".to_string(),
-            tool_name: "click".to_string(),
-            unique_name: "devtools_click".to_string(),
-            description: Some("Click an element".to_string()),
-            created_at: None,
-            updated_at: None,
-        }];
-
-        let enriched = enrich_server_tool_items_with_raw_tool_name(items, &persisted_tools);
-        let item = enriched
-            .first()
-            .and_then(|value| value.as_object())
-            .expect("tool item object");
-
-        assert_eq!(item.get("name").and_then(|value| value.as_str()), Some("click"));
-        assert_eq!(item.get("tool_name").and_then(|value| value.as_str()), Some("click"));
-        assert_eq!(
-            item.get("unique_name").and_then(|value| value.as_str()),
-            Some("devtools_click")
-        );
-        assert_eq!(
-            item.get("id").and_then(|value| value.as_str()),
-            Some("stool_devtools_click")
-        );
-    }
+    Ok(response)
 }

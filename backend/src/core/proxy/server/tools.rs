@@ -1,6 +1,6 @@
 use super::*;
 use crate::clients::models::CapabilitySource;
-use crate::core::capability::naming::{NamingKind, resolve_unique_name};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::mcper::builtin::ClientBuiltinContext;
 use crate::mcper::{
     HOSTED_BUILTIN_TOOL_NAMES, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ADD_TOOL,
@@ -87,7 +87,7 @@ pub(super) async fn list_tools(
         )
         .fetch_all(&db.pool)
         .await
-        .unwrap_or_default();
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
         let redb = &server.redb_cache;
         let pool = &server.connection_pool;
@@ -108,31 +108,36 @@ pub(super) async fn list_tools(
                 validation_session: None,
                 runtime_identity: client.runtime_identity(),
                 connection_selection: client.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
             tasks.push(async move {
-                let tools = match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                    Ok(result) => result.items.into_tools().unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                };
-                (server_id, server_name, tools)
+                let result = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                    .await
+                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+                let tools = result.items.into_tools().ok_or_else(|| {
+                    McpError::internal_error("Tool listing returned a different capability kind", None)
+                })?;
+                Ok::<_, McpError>((server_id, server_name, tools))
             });
         }
 
-        for (server_id, server_name, tool_batch) in futures::stream::iter(tasks)
+        for result in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
+            let (server_id, _server_name, tool_batch) = result?;
             for tool in tool_batch {
                 let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
                     NamingKind::Tool,
-                    &server_name,
+                    &server_id,
                     tool.name.as_ref(),
                 )
-                .await;
+                .await
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
                 let expose_directly = !unify_mode
                     || crate::core::proxy::server::unify_directly_exposed_tool_allowed(
                         client.unify_workspace.as_ref(),
@@ -321,31 +326,20 @@ pub(super) async fn call_tool(
         ));
     }
 
-    let (server_name, original_tool_name) =
-        resolve_unique_name(NamingKind::Tool, &request.name)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    call_id = %call_id,
-                    tool = %request.name,
-                    error = %e,
-                    "ProxyServer::call_tool failed to resolve unique name"
-                );
-                McpError::internal_error(format!("Failed to resolve unique tool name: {}", e), None)
-            })?;
-    let server_id = crate::core::capability::resolver::to_id(&server_name)
+    let route = resolve_capability_route(NamingKind::Tool, &request.name)
         .await
-        .ok()
-        .flatten()
-        .ok_or_else(|| {
+        .map_err(|e| {
             tracing::error!(
                 call_id = %call_id,
                 tool = %request.name,
-                server_name = %server_name,
-                "ProxyServer::call_tool missing server id for mapping"
+                error = %e,
+                "ProxyServer::call_tool failed to resolve unique name"
             );
-            McpError::internal_error("Server not found for tool mapping".to_string(), None)
+            McpError::internal_error(format!("Failed to resolve unique tool name: {}", e), None)
         })?;
+    let server_id = route.server_id;
+    let server_name = route.server_name;
+    let original_tool_name = route.upstream_value;
 
     let directly_exposed = if matches!(client.config_mode.as_deref(), Some("unify")) {
         let db = server

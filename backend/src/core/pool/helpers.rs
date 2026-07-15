@@ -856,4 +856,47 @@ mod tests {
         assert_eq!(pool.production_route_count(), 0);
         assert_eq!(pool.client_bound_connection_count(), 0);
     }
+
+    #[tokio::test]
+    async fn capability_collision_block_removes_only_challenger_exposure() {
+        let mut pool = create_test_pool();
+        let challenger = "server-challenger";
+        let owner = "server-owner";
+
+        pool.connections.insert(
+            challenger.to_string(),
+            HashMap::from([(
+                "challenger-default".to_string(),
+                UpstreamConnection::new(challenger.to_string()),
+            )]),
+        );
+        pool.connections.insert(
+            owner.to_string(),
+            HashMap::from([(
+                "owner-default".to_string(),
+                UpstreamConnection::new(owner.to_string()),
+            )]),
+        );
+        pool.client_bound_connections.insert(
+            (challenger.to_string(), "client-1".to_string()),
+            HashMap::from([(
+                "challenger-client".to_string(),
+                UpstreamConnection::new(challenger.to_string()),
+            )]),
+        );
+        let challenger_route = ProductionRouteKey::per_client(challenger, "client-1");
+        let owner_route = ProductionRouteKey::shareable(owner);
+        pool.production_routes
+            .insert(challenger_route.clone(), "challenger-client".to_string());
+        pool.production_routes
+            .insert(owner_route.clone(), "owner-default".to_string());
+
+        pool.block_server_after_capability_collision(challenger).await;
+
+        assert!(!pool.connections.contains_key(challenger));
+        assert!(!pool.has_affinity_bound_connection(challenger, "client-1"));
+        assert!(!pool.production_routes.contains_key(&challenger_route));
+        assert!(pool.connections.contains_key(owner));
+        assert!(pool.production_routes.contains_key(&owner_route));
+    }
 }

@@ -14,7 +14,7 @@ use crate::api::{
 };
 
 use super::capability::{CapabilityType, enrich_capability_items, respond_with_enriched};
-use super::common::{create_inspect_response, get_database_from_state};
+use super::common::create_inspect_response;
 
 /// Helper function to convert Json response to ServerPromptsResp
 fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptsData {
@@ -110,9 +110,9 @@ async fn server_prompts_core(
             validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
             runtime_identity: None,
             connection_selection: None,
+            name_domain: crate::core::capability::runtime::NameDomain::External,
         })
         .await;
-    // TODO: introduce unified naming module for prompts to avoid potential name collisions (similar to tools)
     match list_result {
         Ok(list_result) => {
             let crate::core::capability::runtime::ListResult { items, meta } = list_result;
@@ -123,33 +123,32 @@ async fn server_prompts_core(
                         .map(|prompt| serde_json::to_value(prompt).unwrap_or(serde_json::Value::Null))
                         .collect();
 
-                    if let Ok(db) = get_database_from_state(app_state) {
-                        let enriched = enrich_capability_items(
-                            CapabilityType::Prompts,
-                            &db.pool,
-                            &server_info.server_id,
-                            json_items.clone(),
-                        )
-                        .await;
-                        let response_data =
-                            respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
-                        let prompts_resp = json_to_server_prompts_resp(response_data);
-                        return Ok(ServerPromptsResp::success(prompts_resp));
-                    }
-
+                    let enriched =
+                        enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, json_items)
+                            .await
+                            .map_err(|error| {
+                                tracing::error!(
+                                    server_id = %server_info.server_id,
+                                    error = %error,
+                                    "Prompt naming projection failed"
+                                );
+                                StatusCode::INTERNAL_SERVER_ERROR
+                            })?;
                     let response_data =
-                        create_inspect_response(json_items, meta.cache_hit, params.refresh, meta.source.as_str());
+                        respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
                     let prompts_resp = json_to_server_prompts_resp(response_data);
                     return Ok(ServerPromptsResp::success(prompts_resp));
                 }
             } else {
-                tracing::warn!("Capability runtime returned non-prompt items for prompt capability");
+                tracing::error!("Capability runtime returned non-prompt items for prompt capability");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
 
             // Temporary instance fallback is handled by CapabilityService; handler remains unaware of pool
         }
         Err(e) => {
             tracing::error!("Failed to list prompts via unified entry: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 

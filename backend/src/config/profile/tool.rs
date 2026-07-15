@@ -10,7 +10,6 @@ use crate::{
         models::ProfileToolWithDetails,
         profile::{DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION},
     },
-    core::capability::naming::{NamingKind, strip_server_prefix},
     generate_id,
 };
 
@@ -186,9 +185,10 @@ pub async fn get_profile_tools(
 
 /// Add a tool to a profile (new architecture)
 ///
-/// This function adds a tool to a profile using the new architecture.
-/// It first ensures the server tool mapping exists in server_tools table,
-/// then creates the profile association.
+/// This function adds a registered tool to a profile using the new architecture.
+/// It accepts either the exact upstream name used by internal inventory flows or
+/// the external identifier exposed to profile clients, then links the existing
+/// catalog row without creating a second naming path.
 /// If the tool is added or updated, it also publishes a ToolEnabledInProfileChanged event.
 pub async fn add_tool_to_profile(
     pool: &Pool<Sqlite>,
@@ -205,46 +205,40 @@ pub async fn add_tool_to_profile(
         enabled
     );
 
-    // First, ensure the server tool mapping exists in server_tools table
-    let server_name = crate::config::operations::server::get_server_name_safe(pool, server_id)
+    let registered_tool = match crate::config::server::tools::get_server_tool(pool, server_id, tool_name)
         .await
-        .context("Failed to get server name")?;
-
-    let original_tool_name = if let Some(existing) =
-        crate::config::server::tools::get_server_tool_by_unique_name(pool, tool_name)
-            .await
-            .context("Failed to lookup tool by unique name")?
+        .context("Failed to check exact upstream tool")?
     {
-        if existing.server_id == server_id {
-            existing.tool_name
-        } else {
-            tool_name.to_string()
+        Some(tool) => tool,
+        None => {
+            let route = crate::core::capability::naming::resolve_capability_route_with_pool(
+                pool,
+                crate::core::capability::naming::NamingKind::Tool,
+                tool_name,
+            )
+            .await
+            .with_context(|| format!("Tool selection '{tool_name}' is not registered in the capability catalog"))?;
+            if route.server_id != server_id {
+                return Err(anyhow::anyhow!(
+                    "Tool selection '{}' belongs to server '{}', not '{}'",
+                    tool_name,
+                    route.server_id,
+                    server_id
+                ));
+            }
+            crate::config::server::tools::get_server_tool(pool, server_id, &route.upstream_value)
+                .await
+                .context("Failed to load routed upstream tool")?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Tool selection '{}' routes to unregistered upstream tool '{}'",
+                        tool_name,
+                        route.upstream_value
+                    )
+                })?
         }
-    } else if let Some(stripped) = strip_server_prefix(NamingKind::Tool, &server_name, tool_name) {
-        stripped
-    } else {
-        tool_name.to_string()
     };
-
-    let server_tool_id = if let Some(existing_tool) =
-        crate::config::server::tools::get_server_tool(pool, server_id, &original_tool_name)
-            .await
-            .context("Failed to check existing server tool")?
-    {
-        existing_tool.id
-    } else {
-        crate::config::server::tools::upsert_server_tool(
-            pool,
-            server_id,
-            &server_name,
-            &original_tool_name,
-            None, // description will be updated during tool sync
-            None,
-        )
-        .await
-        .context("Failed to upsert server tool")?
-        .tool_id
-    };
+    let server_tool_id = registered_tool.id;
 
     // Check if the tool already exists in the profile
     let existing_enabled = sqlx::query_scalar::<_, bool>(
@@ -427,4 +421,72 @@ pub async fn update_tool_enabled_status(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::add_tool_to_profile;
+
+    async fn setup_profile_catalog() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
+            .execute(&pool)
+            .await
+            .expect("insert server");
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-a', 'Profile A', '', 'shared', 1, 1, 1, 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert profile");
+        crate::config::server::tools::upsert_server_tool(&pool, "server-a", "searxng", "get_searxng_status", None)
+            .await
+            .expect("insert catalog tool");
+        pool
+    }
+
+    #[tokio::test]
+    async fn profile_tool_selection_resolves_external_identifier_through_catalog() {
+        let pool = setup_profile_catalog().await;
+
+        add_tool_to_profile(&pool, "profile-a", "server-a", "searxng_get_status", true)
+            .await
+            .expect("add external tool selection");
+
+        let upstream_name = sqlx::query_scalar::<_, String>(
+            "SELECT st.tool_name FROM profile_tool pt JOIN server_tools st ON st.id = pt.server_tool_id WHERE pt.profile_id = 'profile-a'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load linked upstream tool");
+        assert_eq!(upstream_name, "get_searxng_status");
+    }
+
+    #[tokio::test]
+    async fn profile_tool_selection_rejects_values_missing_from_catalog() {
+        let pool = setup_profile_catalog().await;
+
+        let error = add_tool_to_profile(&pool, "profile-a", "server-a", "searxng_missing_tool", true)
+            .await
+            .expect_err("unknown external tool must not create a catalog mapping");
+
+        assert!(error.to_string().contains("not registered"));
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_tools")
+            .fetch_one(&pool)
+            .await
+            .expect("count catalog tools");
+        assert_eq!(count, 1);
+    }
 }

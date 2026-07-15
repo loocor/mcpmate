@@ -19,6 +19,8 @@ pub struct EventHandlers {
     pub connection_pool: Option<Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>>,
     /// Optional event-driven capability manager for server capability sync
     pub event_capability_manager: Option<Arc<crate::core::events::capability::EventDrivenCapabilityManager>>,
+    /// Optional client configuration service for direct-exposure reconciliation.
+    pub client_config_service: Option<Arc<crate::clients::service::ClientConfigService>>,
 }
 
 impl Default for EventHandlers {
@@ -34,6 +36,7 @@ impl EventHandlers {
             profile_service: None,
             connection_pool: None,
             event_capability_manager: None,
+            client_config_service: None,
         }
     }
 
@@ -62,6 +65,15 @@ impl EventHandlers {
     ) {
         self.event_capability_manager = Some(event_capability_manager);
         info!("Set event-driven capability manager for event handlers");
+    }
+
+    /// Set the client configuration service used after namespace repair.
+    pub fn set_client_config_service(
+        &mut self,
+        client_config_service: Arc<crate::clients::service::ClientConfigService>,
+    ) {
+        self.client_config_service = Some(client_config_service);
+        info!("Set client configuration service for event handlers");
     }
 
     /// Initialize event handlers and register with the global event bus
@@ -110,6 +122,56 @@ impl EventHandlers {
                 "{}: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
                 context, refreshed, t, p, r
             );
+        }
+    }
+
+    async fn reconcile_direct_exposure_for_server(
+        &self,
+        server_id: &str,
+        context: &str,
+    ) {
+        let Some(client_config_service) = &self.client_config_service else {
+            return;
+        };
+        match client_config_service
+            .reconcile_unify_direct_exposure_for_server(server_id)
+            .await
+        {
+            Ok(reconciled) => {
+                if let Some(proxy_server) = global_proxy_server() {
+                    for client in &reconciled {
+                        if let Err(error) = proxy_server
+                            .apply_persisted_unify_direct_exposure(
+                                &client.identifier,
+                                client.unify_direct_exposure.clone(),
+                            )
+                            .await
+                        {
+                            warn!(
+                                server_id = %server_id,
+                                client = %client.identifier,
+                                error = %error,
+                                context,
+                                "Failed to apply reconciled direct exposure"
+                            );
+                        }
+                    }
+                }
+                debug!(
+                    server_id = %server_id,
+                    clients = reconciled.len(),
+                    context,
+                    "Reconciled direct exposure"
+                );
+            }
+            Err(error) => {
+                error!(
+                    server_id = %server_id,
+                    error = %error,
+                    context,
+                    "Failed to reconcile direct exposure"
+                );
+            }
         }
     }
 
@@ -189,6 +251,68 @@ impl EventHandlers {
                         resources_count
                     );
                 }
+            }
+            Event::CapabilityCatalogChanged { server_id, server_name } => {
+                info!(
+                    server_id = %server_id,
+                    server_name = %server_name,
+                    "Capability catalog changed"
+                );
+                self.invalidate_profile_cache().await;
+                self.reconcile_direct_exposure_for_server(&server_id, "Capability catalog change")
+                    .await;
+                self.notify_all_list_changed("Capability catalog change").await;
+            }
+            Event::CapabilityCollisionDetected {
+                server_id,
+                conflicting_server_id,
+                external_identifier,
+            } => {
+                warn!(
+                    server_id = %server_id,
+                    conflicting_server_id = %conflicting_server_id,
+                    external_identifier = %external_identifier,
+                    "Blocking capability-collision challenger"
+                );
+                if let Some(connection_pool) = &self.connection_pool {
+                    let mut pool = connection_pool.lock().await;
+                    pool.block_server_after_capability_collision(&server_id).await;
+                    if let Err(error) = pool.sync_servers_from_active_profile().await {
+                        error!(
+                            server_id = %server_id,
+                            error = %error,
+                            "Failed to refresh pool after capability collision"
+                        );
+                    }
+                }
+                self.invalidate_profile_cache().await;
+                self.notify_all_list_changed("Capability collision").await;
+            }
+            Event::ServerNamespaceRepaired {
+                server_id,
+                old_namespace,
+                new_namespace,
+                outcome,
+                tool_changes,
+                prompt_changes,
+                resource_changes,
+                template_changes,
+            } => {
+                info!(
+                    server_id = %server_id,
+                    old_namespace = %old_namespace,
+                    new_namespace = %new_namespace,
+                    outcome = %outcome,
+                    tool_changes,
+                    prompt_changes,
+                    resource_changes,
+                    template_changes,
+                    "Legacy server namespace repair committed"
+                );
+                self.invalidate_cache_and_sync_servers().await;
+                self.reconcile_direct_exposure_for_server(&server_id, "Server namespace repair")
+                    .await;
+                self.notify_all_list_changed("Server namespace repair").await;
             }
             Event::ResourceEnabledInProfileChanged { .. } => {
                 debug!("Resource configuration changed: emitting resources/list_changed");

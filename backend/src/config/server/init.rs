@@ -16,6 +16,7 @@ pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_server_env_table(pool).await?;
     create_server_headers_table(pool).await?;
     create_server_meta_table(pool).await?;
+    create_server_namespace_issue_table(pool).await?;
     create_server_oauth_config_table(pool).await?;
     create_server_oauth_tokens_table(pool).await?;
 
@@ -23,6 +24,29 @@ pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     cleanup_pending_import_servers(pool).await?;
 
     tracing::debug!("Server-related database tables initialized successfully");
+    Ok(())
+}
+
+async fn create_server_namespace_issue_table(pool: &Pool<Sqlite>) -> Result<()> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS server_namespace_issue (
+            server_id TEXT PRIMARY KEY,
+            issue_kind TEXT NOT NULL,
+            capability_kind TEXT,
+            external_identifier TEXT,
+            upstream_value TEXT,
+            conflicting_server_id TEXT,
+            conflicting_upstream_value TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
+            FOREIGN KEY (conflicting_server_id) REFERENCES server_config (id) ON DELETE CASCADE
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -200,6 +224,8 @@ async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
             registry_meta_json TEXT,
             registry_version TEXT,
             repository TEXT,
+            upstream_name TEXT,
+            upstream_title TEXT,
             server_version TEXT,
             website TEXT,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -222,6 +248,8 @@ async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
     ensure_column(pool, "server_meta", "registry_version", "TEXT").await?;
     ensure_column(pool, "server_meta", "registry_meta_json", "TEXT").await?;
     ensure_column(pool, "server_meta", "extras_json", "TEXT").await?;
+    ensure_column(pool, "server_meta", "upstream_name", "TEXT").await?;
+    ensure_column(pool, "server_meta", "upstream_title", "TEXT").await?;
 
     Ok(())
 }
@@ -349,10 +377,7 @@ async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{
-        common::{
-            server::ServerType,
-            status::EnabledStatus,
-        },
+        common::{server::ServerType, status::EnabledStatus},
         config::{models::Server, server::crud::upsert_server},
     };
 
@@ -412,5 +437,36 @@ mod tests {
             .expect("list remaining servers");
 
         assert_eq!(remaining_names, vec!["visible-server".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn initialize_server_tables_adds_observed_identity_columns_to_existing_meta_table() {
+        let pool = setup_pool().await;
+        sqlx::query(
+            r#"
+            CREATE TABLE server_meta (
+                id TEXT PRIMARY KEY,
+                server_id TEXT NOT NULL UNIQUE,
+                server_name TEXT NOT NULL,
+                registry_version TEXT,
+                registry_meta_json TEXT,
+                extras_json TEXT
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy server_meta table");
+
+        initialize_server_tables(&pool)
+            .await
+            .expect("upgrade existing server tables");
+
+        let columns = sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('server_meta')")
+            .fetch_all(&pool)
+            .await
+            .expect("list server_meta columns");
+        assert!(columns.iter().any(|column| column == "upstream_name"));
+        assert!(columns.iter().any(|column| column == "upstream_title"));
     }
 }

@@ -5,7 +5,7 @@
 pub use self::{
     basic::{instance_list, server_details, server_list},
     capability::{server_cache_detail, server_cache_reset, server_capability_detail},
-    crud::{create_server, delete_server, import_servers, update_server},
+    crud::{create_server, delete_server, import_servers, remediate_server_namespace, update_server},
     instance::{check_health, get_instance, manage_instance},
     mgmt::{disable_server, enable_server, manage_server},
     oauth::{complete_oauth, configure_oauth, oauth_status, prepare_oauth, revoke_oauth, start_oauth},
@@ -42,7 +42,7 @@ pub(crate) mod shared {
     };
 
     pub use crate::{
-        api::{handlers::ApiError, models::server::ServerOperationData, routes::AppState},
+        api::{handlers::ApiError, routes::AppState},
         config::models::Server,
     };
 }

@@ -325,7 +325,10 @@ fn import_config_from_inspected_entry(
             url,
             env: Some(env),
             headers,
-            source: Some(ServerSource::new(ServerSourceType::Local, Some(client_identifier.to_string()))),
+            source: Some(ServerSource::new(
+                ServerSourceType::Local,
+                Some(client_identifier.to_string()),
+            )),
             meta: None,
         },
     ))
@@ -391,6 +394,10 @@ pub async fn import_batch(
     let existing = ExistingIndex::build(db_pool).await?;
 
     for (name, cfg) in items.into_iter() {
+        if let Err(error) = crate::config::server::validate_server_namespace(&name) {
+            outcome.failed.insert(name, error.to_string());
+            continue;
+        }
         let candidate = prepare_import_candidate(&cfg)?;
         if let Some(reason) = import_conflict_reason(&existing, &name, &candidate, &opts) {
             if record_conflict(&mut outcome, &name, reason, opts.conflict_policy) {
@@ -743,6 +750,9 @@ fn validate_server_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{cache::manager::CacheConfig, models::Config};
+    use tempfile::TempDir;
+    use tokio::sync::Mutex;
 
     fn server_entry(
         name: &str,
@@ -765,17 +775,20 @@ mod tests {
 
     #[test]
     fn client_config_import_plan_filters_out_mcpmate_self_entry() {
-        let plan = build_import_plan_from_entries([
-            server_entry("MCPMate", "stdio", Some("mcpmate-bridge"), None, None),
-            server_entry(
-                "context7",
-                "streamable_http",
-                None,
-                Some("http://127.0.0.1:8123/mcp"),
-                None,
-            ),
-            server_entry("shadcn-mcp-server", "unclassified", None, None, None),
-        ], "test-client");
+        let plan = build_import_plan_from_entries(
+            [
+                server_entry("MCPMate", "stdio", Some("mcpmate-bridge"), None, None),
+                server_entry(
+                    "context7",
+                    "streamable_http",
+                    None,
+                    Some("http://127.0.0.1:8123/mcp"),
+                    None,
+                ),
+                server_entry("shadcn-mcp-server", "unclassified", None, None, None),
+            ],
+            "test-client",
+        );
 
         assert!(!plan.items.contains_key("MCPMate"));
         let context7 = plan.items.get("context7").expect("context7 server entry");
@@ -788,14 +801,66 @@ mod tests {
 
     #[test]
     fn client_config_import_plan_reports_invalid_entries() {
-        let plan = build_import_plan_from_entries([
-            server_entry("broken", "unclassified", None, None, Some("config_invalid_entry")),
-            server_entry("valid", "stdio", Some("uvx"), None, None),
-        ], "test-client");
+        let plan = build_import_plan_from_entries(
+            [
+                server_entry("broken", "unclassified", None, None, Some("config_invalid_entry")),
+                server_entry("valid", "stdio", Some("uvx"), None, None),
+            ],
+            "test-client",
+        );
 
         assert!(plan.items.contains_key("valid"));
         assert_eq!(plan.skipped_servers.len(), 1);
         assert_eq!(plan.skipped_servers[0].name, "broken");
         assert!(matches!(plan.skipped_servers[0].reason, SkipReason::ConfigInvalidEntry));
+    }
+
+    #[tokio::test]
+    async fn import_batch_reports_non_canonical_namespace_without_writes() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        let temp_dir = TempDir::new().expect("create temporary cache directory");
+        let redb_cache = Arc::new(
+            RedbCacheManager::new(temp_dir.path().join("import.redb"), CacheConfig::default())
+                .expect("create cache manager"),
+        );
+        let connection_pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+            Arc::new(Config::default()),
+            None,
+        )));
+        let items = HashMap::from([(
+            "Sequential Thinking-v2".to_string(),
+            ServersImportConfig {
+                kind: "stdio".to_string(),
+                command: Some("server-command".to_string()),
+                args: None,
+                url: None,
+                env: None,
+                headers: None,
+                source: None,
+                meta: None,
+            },
+        )]);
+
+        let outcome = import_batch(
+            &pool,
+            &connection_pool,
+            &redb_cache,
+            items,
+            ImportOptions::dashboard_import(true, None),
+        )
+        .await
+        .expect("preview import");
+
+        assert!(outcome.imported.is_empty());
+        assert_eq!(outcome.failed.len(), 1);
+        assert!(outcome.failed["Sequential Thinking-v2"].contains("Suggested namespace: 'sequential_thinking_v2'"));
+        assert!(get_all_servers(&pool).await.expect("load servers").is_empty());
     }
 }

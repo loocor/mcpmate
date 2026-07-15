@@ -26,6 +26,7 @@ use mcpmate::inspector::{
 use mcpmate::system::metrics::MetricsCollector;
 
 const CREATE_SERVER_PATH: &str = "/api/mcp/servers/create";
+const PREVIEW_SERVER_PATH: &str = "/api/mcp/servers/preview";
 const TOOL_LIST_PATH: &str = "/api/mcp/inspector/tool/list";
 const TOOL_CALL_PATH: &str = "/api/mcp/inspector/tool/call";
 const RESOURCE_LIST_PATH: &str = "/api/mcp/inspector/resource/list";
@@ -218,6 +219,77 @@ for line in sys.stdin:
     path
 }
 
+fn write_slow_preview_fixture(temp_dir: &TempDir) -> PathBuf {
+    let path = temp_dir.path().join("slow_preview_fixture.py");
+    let script = r#"
+import json
+import sys
+import time
+
+delay_seconds = float(sys.argv[1])
+slow_methods = sys.argv[2].split(",")
+method_counts = {}
+delay_overrides = {}
+if len(sys.argv) > 3:
+    for override in sys.argv[3].split(","):
+        method, delay = override.rsplit("=", 1)
+        delay_overrides[method] = float(delay)
+
+def reply(request_id, result):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}) + "\n")
+    sys.stdout.flush()
+
+def wait_for(method):
+    method_counts[method] = method_counts.get(method, 0) + 1
+    indexed_method = method + ":" + str(method_counts[method])
+    if "all" in slow_methods or method in slow_methods or indexed_method in slow_methods:
+        delay = delay_overrides.get(indexed_method, delay_overrides.get(method, delay_seconds))
+        time.sleep(delay)
+
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    req = json.loads(line)
+    request_id = req.get("id")
+    method = req.get("method")
+    if request_id is None:
+        continue
+    wait_for(method)
+    if method == "initialize":
+        reply(request_id, {
+            "protocolVersion": "__PROTOCOL_VERSION__",
+            "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+            "serverInfo": {"name": "slow-preview-fixture", "version": "1.0.0"}
+        })
+    elif method == "tools/list":
+        reply(request_id, {"tools": [{
+            "name": "echo",
+            "description": "Echo a message.",
+            "inputSchema": {"type": "object", "properties": {}}
+        }]})
+    elif method == "prompts/list":
+        reply(request_id, {"prompts": [{"name": "hello", "description": "Say hello."}]})
+    elif method == "resources/list":
+        reply(request_id, {"resources": [{"uri": "test://hello", "name": "hello"}]})
+    elif method == "resources/templates/list":
+        reply(request_id, {"resourceTemplates": [{
+            "uriTemplate": "test://item/{id}",
+            "name": "item"
+        }]})
+    else:
+        sys.stdout.write(json.dumps({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": -32601, "message": "method not found"}
+        }) + "\n")
+        sys.stdout.flush()
+"#
+    .replace("__PROTOCOL_VERSION__", protocol::CURRENT_VERSION);
+
+    std::fs::write(&path, script).expect("write slow preview fixture");
+    path
+}
+
 async fn read_json_response(response: axum::response::Response) -> Value {
     let status = response.status();
     let bytes = to_bytes(response.into_body(), 1024 * 1024)
@@ -288,7 +360,7 @@ async fn create_stdio_fixture_server(
     let create_req = json_post_request(
         CREATE_SERVER_PATH,
         json!({
-            "name": "inspector-fixture",
+            "name": "inspector_fixture",
             "server_type": "stdio",
             "command": python.to_string_lossy(),
             "args": [fixture.to_string_lossy()]
@@ -375,12 +447,166 @@ fn native_validation_session_id(session_id: &str) -> String {
     format!("inspector_native_session::{session_id}")
 }
 
+#[tokio::test]
+async fn preview_timeout_is_applied_per_protocol_operation() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let fixture = write_slow_preview_fixture(&temp_dir);
+    let python = which::which("python3").expect("python3 is required for stdio MCP fixture");
+    let state = build_database_state(&temp_dir).await;
+    let app = Router::new()
+        .route(PREVIEW_SERVER_PATH, post(server::preview_servers))
+        .with_state(state);
+
+    let body = read_json_response(
+        app.oneshot(json_post_request(
+            PREVIEW_SERVER_PATH,
+            json!({
+                "timeout_ms": 300,
+                "include_details": true,
+                "servers": [
+                    {
+                        "name": "per_operation_deadline",
+                        "kind": "stdio",
+                        "command": python.to_string_lossy(),
+                        "args": [fixture.to_string_lossy(), "0.10", "all"]
+                    },
+                    {
+                        "name": "template_timeout",
+                        "kind": "stdio",
+                        "command": python.to_string_lossy(),
+                        "args": [fixture.to_string_lossy(), "0.60", "resources/templates/list"]
+                    }
+                ]
+            }),
+        ))
+        .await
+        .expect("preview response"),
+    )
+    .await;
+
+    assert_api_success(&body);
+    assert_eq!(
+        body.pointer("/data/items/0/ok").and_then(Value::as_bool),
+        Some(true),
+        "each successful protocol operation should receive the full timeout: {body}"
+    );
+    for pointer in [
+        "/data/items/0/tools/items/0/name",
+        "/data/items/0/prompts/items/0/name",
+        "/data/items/0/resources/items/0/name",
+        "/data/items/0/resource_templates/items/0/name",
+    ] {
+        assert!(body.pointer(pointer).is_some(), "missing {pointer}: {body}");
+    }
+
+    assert_eq!(body.pointer("/data/items/1/ok").and_then(Value::as_bool), Some(false));
+    let error = data_str(&body, "/data/items/1/error");
+    assert!(error.contains("resources/templates/list"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn proxy_list_connect_and_protocol_operation_receive_independent_timeouts() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let fixture = write_slow_preview_fixture(&temp_dir);
+    let python = which::which("python3").expect("python3 is required for stdio MCP fixture");
+    let state = build_database_state(&temp_dir).await;
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .with_state(state.clone());
+
+    let create_body = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                CREATE_SERVER_PATH,
+                json!({
+                    "name": "independent_list_timeout",
+                    "server_type": "stdio",
+                    "command": python.to_string_lossy(),
+                    "args": [
+                        fixture.to_string_lossy(),
+                        "0.00",
+                        "initialize,tools/list:2",
+                        "initialize=0.40,tools/list:2=1.20"
+                    ]
+                }),
+            ))
+            .await
+            .expect("create response"),
+    )
+    .await;
+    assert_api_success(&create_body);
+    let server_id = data_str(&create_body, "/data/id").to_string();
+
+    disconnect_server_instances(&state, &server_id).await;
+
+    let list_body = read_json_response(
+        app.clone()
+            .oneshot(get_request(format!(
+                "{TOOL_LIST_PATH}?server_id={server_id}&mode=proxy&refresh=true&timeout_ms=1500"
+            )))
+            .await
+            .expect("list response"),
+    )
+    .await;
+
+    assert_api_success(&list_body);
+    assert_eq!(data_u64(&list_body, "/data/total"), 1);
+
+    disconnect_server_instances(&state, &server_id).await;
+    let (timeout_status, timeout_body) = read_json_response_with_status(
+        app.oneshot(get_request(format!(
+            "{TOOL_LIST_PATH}?server_id={server_id}&mode=proxy&refresh=true&timeout_ms=100"
+        )))
+        .await
+        .expect("timeout response"),
+    )
+    .await;
+    assert_eq!(timeout_status, axum::http::StatusCode::REQUEST_TIMEOUT);
+    assert_eq!(timeout_body.pointer("/error/status").and_then(Value::as_u64), Some(408));
+    assert!(
+        data_str(&timeout_body, "/error/message").contains("server connect exceeded 100 ms"),
+        "unexpected timeout response: {timeout_body}"
+    );
+}
+
+async fn disconnect_server_instances(
+    state: &Arc<AppState>,
+    server_id: &str,
+) {
+    let mut pool = state.connection_pool.lock().await;
+    let instance_ids = pool
+        .get_all_server_instances()
+        .remove(server_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(instance_id, _)| instance_id)
+        .collect::<Vec<_>>();
+    for instance_id in instance_ids {
+        pool.disconnect(server_id, &instance_id)
+            .await
+            .expect("disconnect prepared instance");
+    }
+}
+
 async fn validation_session_exists(
     state: &Arc<AppState>,
     session_id: &str,
 ) -> bool {
     let pool = state.connection_pool.lock().await;
     pool.validation_sessions.contains_key(session_id)
+}
+
+async fn validation_session_contains_server(
+    state: &Arc<AppState>,
+    session_id: &str,
+    server_id: &str,
+) -> bool {
+    let pool = state.connection_pool.lock().await;
+    pool.validation_sessions
+        .get(session_id)
+        .is_some_and(|servers| servers.contains_key(server_id))
 }
 
 async fn temporary_validation_session_count(state: &Arc<AppState>) -> usize {
@@ -409,7 +635,7 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
     let create_req = json_post_request(
         CREATE_SERVER_PATH,
         json!({
-            "name": "inspector-fixture",
+            "name": "inspector_fixture",
             "server_type": "stdio",
             "command": python.to_string_lossy(),
             "args": [fixture.to_string_lossy()]
@@ -442,10 +668,15 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
     let resources_body = read_json_response(app.clone().oneshot(resources_req).await.unwrap()).await;
     assert_api_success(&resources_body);
     assert_eq!(data_u64(&resources_body, "/data/total"), 1);
+    let resource_uri = data_str(&resources_body, "/data/resources/0/uri");
+    assert_eq!(resource_uri, "inspector_fixture:test://hello");
 
-    let resource_read_req = get_request(format!(
-        "{RESOURCE_READ_PATH}?server_id={server_id}&mode=proxy&uri=test%3A%2F%2Fhello"
-    ));
+    let resource_read_query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("server_id", &server_id)
+        .append_pair("mode", "proxy")
+        .append_pair("uri", resource_uri)
+        .finish();
+    let resource_read_req = get_request(format!("{RESOURCE_READ_PATH}?{resource_read_query}"));
     let resource_read_body = read_json_response(app.oneshot(resource_read_req).await.unwrap()).await;
     assert_eq!(
         data_str(&resource_read_body, "/data/result/contents/0/text"),
@@ -473,6 +704,7 @@ async fn inspector_native_list_and_call_reuse_explicit_session() {
     let session_id = open_native_session(&app, &server_id).await;
     let validation_session = native_validation_session_id(&session_id);
     assert!(validation_session_exists(&state, &validation_session).await);
+    assert!(validation_session_contains_server(&state, &validation_session, &server_id).await);
     assert_eq!(temporary_validation_session_count(&state).await, 0);
 
     let session_list_req = get_request(format!(
@@ -482,6 +714,7 @@ async fn inspector_native_list_and_call_reuse_explicit_session() {
     assert_api_success(&session_list_body);
     assert_eq!(data_u64(&session_list_body, "/data/total"), 1);
     assert!(validation_session_exists(&state, &validation_session).await);
+    assert!(validation_session_contains_server(&state, &validation_session, &server_id).await);
     assert_eq!(temporary_validation_session_count(&state).await, 0);
 
     let stateless_list_req = get_request(format!(

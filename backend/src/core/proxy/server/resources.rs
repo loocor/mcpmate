@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{
@@ -47,13 +47,13 @@ pub(super) async fn list_resources(
         )
         .fetch_all(&db.pool)
         .await
-        .unwrap_or_default();
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
         let redb = &server.redb_cache;
         let pool = &server.connection_pool;
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        for (server_id, _server_name, capabilities) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -71,35 +71,28 @@ pub(super) async fn list_resources(
                 validation_session: None,
                 runtime_identity: client.runtime_identity(),
                 connection_selection: client.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
-            let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                    Ok(result) => {
-                        let mut out = Vec::new();
-                        if let Some(items) = result.items.into_resources() {
-                            for mut r in items {
-                                let unique_uri =
-                                    generate_unique_name(NamingKind::Resource, &server_name_cloned, &r.uri);
-                                r.raw.uri = unique_uri;
-                                out.push(r);
-                            }
-                        }
-                        (server_id, server_name_cloned, out)
-                    }
-                    Err(_) => (server_id, server_name_cloned, Vec::new()),
-                }
+                let result = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                    .await
+                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+                let resources = result.items.into_resources().ok_or_else(|| {
+                    McpError::internal_error("Resource listing returned a different capability kind", None)
+                })?;
+                Ok::<_, McpError>((server_id, resources))
             });
         }
 
-        for (server_id, server_name, mut v) in futures::stream::iter(tasks)
+        for result in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
+            let (server_id, mut v) = result?;
             if !unify_mode {
                 resources.append(&mut v);
                 continue;
@@ -107,10 +100,11 @@ pub(super) async fn list_resources(
             for resource in v.drain(..) {
                 let raw_resource_uri: String = crate::core::proxy::server::resolve_direct_surface_value(
                     NamingKind::Resource,
-                    &server_name,
+                    &server_id,
                     resource.uri.as_ref(),
                 )
-                .await;
+                .await
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
                 if crate::core::proxy::server::unify_directly_exposed_resource_allowed(
                     client.unify_workspace.as_ref(),
                     &unify_direct_exposure_eligible_server_ids,
@@ -184,13 +178,13 @@ pub(super) async fn list_resource_templates(
         )
         .fetch_all(&db.pool)
         .await
-        .unwrap_or_default();
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
         let redb = &server.redb_cache;
         let pool = &server.connection_pool;
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        for (server_id, _server_name, capabilities) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -208,48 +202,45 @@ pub(super) async fn list_resource_templates(
                 validation_session: None,
                 runtime_identity: client.runtime_identity(),
                 connection_selection: client.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
-            let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                    Ok(result) => {
-                        let mut out = Vec::new();
-                        if let Some(items) = result.items.into_resource_templates() {
-                            for mut t in items {
-                                let unique = generate_unique_name(
-                                    NamingKind::ResourceTemplate,
-                                    &server_name_cloned,
-                                    &t.uri_template,
-                                );
-                                t.raw.name = unique; // carry unique name for visibility filtering
-                                out.push(t);
-                            }
-                        }
-                        (server_id, out)
-                    }
-                    Err(_) => (server_id, Vec::new()),
-                }
+                let result = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                    .await
+                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+                let templates = result.items.into_resource_templates().ok_or_else(|| {
+                    McpError::internal_error("Resource template listing returned a different capability kind", None)
+                })?;
+                Ok::<_, McpError>((server_id, templates))
             });
         }
 
-        for (server_id, mut v) in futures::stream::iter(tasks)
+        for result in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
+            let (server_id, mut v) = result?;
             if !unify_mode {
                 resource_templates.append(&mut v);
                 continue;
             }
             for resource_template in v.drain(..) {
+                let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
+                    NamingKind::ResourceTemplate,
+                    &server_id,
+                    resource_template.name.as_ref(),
+                )
+                .await
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
                 if crate::core::proxy::server::unify_directly_exposed_template_allowed(
                     client.unify_workspace.as_ref(),
                     &unify_direct_exposure_eligible_server_ids,
                     &server_id,
-                    resource_template.uri_template.as_ref(),
+                    &raw_uri_template,
                 ) {
                     resource_templates.push(resource_template);
                 }
@@ -288,77 +279,21 @@ pub(super) async fn read_resource(
     let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     tracing::debug!("Reading resource: {}", request.uri);
 
-    let mut lookup_uri = request.uri.clone();
-    let mut server_filter: Option<String> = None;
-    if server.database.is_some() {
-        match resolve_unique_name(NamingKind::Resource, &request.uri).await {
-            Ok((server_name, upstream_uri)) => {
-                lookup_uri = upstream_uri;
-                if let Ok(Some(server_id)) = crate::core::capability::resolver::to_id(&server_name).await {
-                    server_filter = Some(server_id);
-                }
-            }
-            Err(err) => {
-                // Try scheme-based server hint: <scheme>://...
-                let mut hinted: Option<String> = None;
-                if let Some(pos) = request.uri.find("://") {
-                    let scheme = &request.uri[..pos];
-                    if let Ok(Some(sid)) = crate::core::capability::resolver::to_id(scheme).await {
-                        hinted = Some(sid);
-                    } else if let Some(db) = &server.database {
-                        // Resolve by templates: find server that owns a template using this scheme
-                        if let Ok(row) = sqlx::query_scalar::<_, String>(
-                            "SELECT sc.id FROM server_resource_templates srt JOIN server_config sc ON sc.id=srt.server_id WHERE srt.uri_template LIKE ? LIMIT 1",
-                        )
-                        .bind(format!("{}://%", scheme))
-                        .fetch_optional(&db.pool)
-                        .await
-                        {
-                            hinted = row;
-                        }
-                    }
-                }
-                if let Some(sid) = hinted {
-                    server_filter = Some(sid);
-                } else {
-                    tracing::trace!("Resource URI '{}' not unique; resolver error: {}", request.uri, err);
-                }
-            }
-        }
-    }
-
-    let resource_mapping = if let Some(server_id) = server_filter.clone() {
-        let mapping = {
-            let mut filter = HashSet::new();
-            filter.insert(server_id.clone());
-            crate::core::capability::facade::build_resource_mapping_filtered(
-                &server.connection_pool,
-                server.database.as_ref(),
-                Some(&filter),
-            )
-            .await
-        };
-        if mapping.contains_key(&lookup_uri) {
-            mapping
-        } else {
-            crate::core::capability::facade::build_resource_mapping(&server.connection_pool, server.database.as_ref())
-                .await
-        }
-    } else {
-        crate::core::capability::facade::build_resource_mapping(&server.connection_pool, server.database.as_ref()).await
-    };
-
-    let canonical_uri = if resource_mapping.contains_key(&request.uri) {
-        request.uri.clone()
-    } else if let Some(mapping) = resource_mapping.get(&lookup_uri) {
-        generate_unique_name(
-            NamingKind::Resource,
-            &mapping.server_name,
-            &mapping.upstream_resource_uri,
-        )
-    } else {
-        request.uri.clone()
-    };
+    let route = resolve_capability_route(NamingKind::Resource, &request.uri)
+        .await
+        .map_err(|error| McpError::internal_error(format!("Failed to resolve external resource URI: {error}"), None))?;
+    let server_filter = route.server_id;
+    let lookup_uri = route.upstream_value;
+    let canonical_uri = request.uri.clone();
+    let mut filter = HashSet::new();
+    filter.insert(server_filter.clone());
+    let resource_mapping = crate::core::capability::facade::build_resource_mapping_filtered(
+        &server.connection_pool,
+        server.database.as_ref(),
+        Some(&filter),
+    )
+    .await
+    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
     if unify_mode {
         let Some(db) = &server.database else {
@@ -369,23 +304,10 @@ pub(super) async fn read_resource(
         };
         let eligible_server_ids =
             crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
-        let resolved_server_id = match resolve_unique_name(NamingKind::Resource, &canonical_uri).await {
-            Ok((server_name, _)) => crate::core::capability::resolver::to_id(&server_name)
-                .await
-                .ok()
-                .flatten(),
-            Err(_) => None,
-        };
-        let Some(server_id) = resolved_server_id else {
-            return Err(McpError::invalid_params(
-                format!("Resource '{}' is not directly exposed for this client", canonical_uri),
-                None,
-            ));
-        };
         if !crate::core::proxy::server::unify_directly_exposed_resource_allowed(
             client.unify_workspace.as_ref(),
             &eligible_server_ids,
-            &server_id,
+            &server_filter,
             lookup_uri.as_ref(),
         ) {
             return Err(McpError::invalid_params(
@@ -420,15 +342,13 @@ pub(super) async fn read_resource(
         ));
     }
 
-    let connection_selection = server_filter
-        .as_ref()
-        .and_then(|server_id| client.connection_selection(server_id.clone()));
+    let connection_selection = client.connection_selection(server_filter.clone());
 
     match crate::core::capability::facade::read_upstream_resource(
         &server.connection_pool,
         &resource_mapping,
         &lookup_uri,
-        server_filter.as_deref(),
+        Some(&server_filter),
         connection_selection.as_ref(),
     )
     .await

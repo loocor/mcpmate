@@ -18,6 +18,7 @@ use crate::{
     core::capability::{
         CapabilityItem, CapabilityType,
         domain::{PromptCapability, ResourceCapability, ResourceTemplateCapability, ToolCapability},
+        naming::{NamingKind, load_external_identifier},
     },
 };
 
@@ -75,7 +76,10 @@ pub async fn capability_token_ledger(
 
     for p in profile_prompts {
         let live = query_unified_capabilities(&unified_query, &p.server_id, CapabilityType::Prompts, &inspect).await;
-        let payload = ledger_prompt_payload(live.as_deref(), &p)?;
+        let external_name = load_external_identifier(&db.pool, NamingKind::Prompt, &p.server_id, &p.prompt_name)
+            .await
+            .map_err(|error| ApiError::InternalError(error.to_string()))?;
+        let payload = ledger_prompt_payload(live.as_deref(), &p, &external_name)?;
         let row_id = p.id.clone().unwrap_or_default();
         items.push(CapabilityTokenLedgerRow {
             profile_row_id: row_id,
@@ -92,7 +96,10 @@ pub async fn capability_token_ledger(
 
     for r in profile_resources {
         let live = query_unified_capabilities(&unified_query, &r.server_id, CapabilityType::Resources, &inspect).await;
-        let payload = ledger_resource_payload(live.as_deref(), &r)?;
+        let external_uri = load_external_identifier(&db.pool, NamingKind::Resource, &r.server_id, &r.resource_uri)
+            .await
+            .map_err(|error| ApiError::InternalError(error.to_string()))?;
+        let payload = ledger_resource_payload(live.as_deref(), &r, &external_uri)?;
         let row_id = r.id.clone().unwrap_or_default();
         items.push(CapabilityTokenLedgerRow {
             profile_row_id: row_id,
@@ -115,7 +122,15 @@ pub async fn capability_token_ledger(
             &inspect,
         )
         .await;
-        let payload = ledger_template_payload(live.as_deref(), &tmpl)?;
+        let external_name = load_external_identifier(
+            &db.pool,
+            NamingKind::ResourceTemplate,
+            &tmpl.server_id,
+            &tmpl.resource_uri,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
+        let payload = ledger_template_payload(live.as_deref(), &tmpl, &external_name)?;
         let row_id = tmpl.id.clone().unwrap_or_default();
         items.push(CapabilityTokenLedgerRow {
             profile_row_id: row_id,
@@ -139,7 +154,7 @@ fn ledger_tool_payload(
     if let Some(items) = live {
         for item in items {
             if let CapabilityItem::Tool(tool) = item {
-                if tool_matches_profile(tool, &row.tool_name, &row.unique_name) {
+                if tool_matches_profile(tool, &row.unique_name) {
                     return serde_json::to_string(item)
                         .map_err(|e| ApiError::InternalError(format!("Failed to serialize tool capability: {e}")));
                 }
@@ -148,7 +163,7 @@ fn ledger_tool_payload(
     }
 
     let fallback = ToolCapability {
-        name: row.tool_name.clone(),
+        name: row.unique_name.clone(),
         description: row.description.clone(),
         input_schema: json!({}),
         unique_name: row.unique_name.clone(),
@@ -161,23 +176,20 @@ fn ledger_tool_payload(
 
 fn tool_matches_profile(
     tool: &ToolCapability,
-    tool_name: &str,
     unique_name: &str,
 ) -> bool {
-    tool.name == tool_name
-        || tool.unique_name == unique_name
-        || tool.name == unique_name
-        || tool.unique_name == tool_name
+    tool.name == unique_name || tool.unique_name == unique_name
 }
 
 fn ledger_prompt_payload(
     live: Option<&[CapabilityItem]>,
     row: &crate::config::models::ProfilePrompt,
+    external_name: &str,
 ) -> Result<String, ApiError> {
     if let Some(items) = live {
         for item in items {
             if let CapabilityItem::Prompt(p) = item {
-                if p.name == row.prompt_name {
+                if p.name == external_name || p.unique_name == external_name {
                     return serde_json::to_string(item)
                         .map_err(|e| ApiError::InternalError(format!("Failed to serialize prompt capability: {e}")));
                 }
@@ -186,10 +198,10 @@ fn ledger_prompt_payload(
     }
 
     let fallback = PromptCapability {
-        name: row.prompt_name.clone(),
+        name: external_name.to_string(),
         description: None,
         arguments: None,
-        unique_name: row.prompt_name.clone(),
+        unique_name: external_name.to_string(),
         enabled: row.enabled,
         icons: None,
     };
@@ -200,11 +212,12 @@ fn ledger_prompt_payload(
 fn ledger_resource_payload(
     live: Option<&[CapabilityItem]>,
     row: &crate::config::models::ProfileResource,
+    external_uri: &str,
 ) -> Result<String, ApiError> {
     if let Some(items) = live {
         for item in items {
             if let CapabilityItem::Resource(r) = item {
-                if r.uri == row.resource_uri {
+                if r.uri == external_uri || r.unique_uri == external_uri {
                     return serde_json::to_string(item)
                         .map_err(|e| ApiError::InternalError(format!("Failed to serialize resource capability: {e}")));
                 }
@@ -213,11 +226,11 @@ fn ledger_resource_payload(
     }
 
     let fallback = ResourceCapability {
-        uri: row.resource_uri.clone(),
+        uri: external_uri.to_string(),
         name: None,
         description: None,
         mime_type: None,
-        unique_uri: row.resource_uri.clone(),
+        unique_uri: external_uri.to_string(),
         enabled: row.enabled,
         icons: None,
     };
@@ -228,11 +241,12 @@ fn ledger_resource_payload(
 fn ledger_template_payload(
     live: Option<&[CapabilityItem]>,
     row: &crate::config::models::ProfileResource,
+    external_name: &str,
 ) -> Result<String, ApiError> {
     if let Some(items) = live {
         for item in items {
             if let CapabilityItem::ResourceTemplate(t) = item {
-                if t.uri_template == row.resource_uri {
+                if t.name.as_deref() == Some(external_name) || t.unique_template == external_name {
                     return serde_json::to_string(item)
                         .map_err(|e| ApiError::InternalError(format!("Failed to serialize template capability: {e}")));
                 }
@@ -242,12 +256,79 @@ fn ledger_template_payload(
 
     let fallback = ResourceTemplateCapability {
         uri_template: row.resource_uri.clone(),
-        name: None,
+        name: Some(external_name.to_string()),
         description: None,
         mime_type: None,
-        unique_template: row.resource_uri.clone(),
+        unique_template: external_name.to_string(),
         enabled: row.enabled,
     };
     serde_json::to_string(&CapabilityItem::ResourceTemplate(fallback))
         .map_err(|e| ApiError::InternalError(format!("Failed to serialize fallback template: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::*;
+
+    fn profile_resource(raw: &str) -> crate::config::models::ProfileResource {
+        crate::config::models::ProfileResource {
+            id: Some("profile-resource".to_string()),
+            profile_id: "profile".to_string(),
+            server_id: "server".to_string(),
+            server_name: "server".to_string(),
+            resource_uri: raw.to_string(),
+            enabled: true,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn fallback_payloads_expose_only_catalog_identifiers() {
+        let tool = crate::config::models::ProfileToolWithDetails {
+            id: "profile-tool".to_string(),
+            profile_id: "profile".to_string(),
+            server_tool_id: "server-tool".to_string(),
+            enabled: true,
+            created_at: None,
+            updated_at: None,
+            server_id: "server".to_string(),
+            server_name: "server".to_string(),
+            tool_name: "upstream_tool".to_string(),
+            unique_name: "server_tool".to_string(),
+            description: None,
+        };
+        let prompt = crate::config::models::ProfilePrompt {
+            id: Some("profile-prompt".to_string()),
+            profile_id: "profile".to_string(),
+            server_id: "server".to_string(),
+            server_name: "server".to_string(),
+            prompt_name: "upstream_prompt".to_string(),
+            enabled: true,
+            created_at: None,
+            updated_at: None,
+        };
+        let resource = profile_resource("file:///upstream");
+        let template = profile_resource("repo://{owner}/{name}");
+
+        let tool_payload: Value = serde_json::from_str(&ledger_tool_payload(None, &tool).unwrap()).unwrap();
+        let prompt_payload: Value =
+            serde_json::from_str(&ledger_prompt_payload(None, &prompt, "server_prompt").unwrap()).unwrap();
+        let resource_payload: Value =
+            serde_json::from_str(&ledger_resource_payload(None, &resource, "server_resource").unwrap()).unwrap();
+        let template_payload: Value =
+            serde_json::from_str(&ledger_template_payload(None, &template, "server_template").unwrap()).unwrap();
+
+        assert_eq!(tool_payload["name"], "server_tool");
+        assert_eq!(tool_payload["unique_name"], "server_tool");
+        assert_eq!(prompt_payload["name"], "server_prompt");
+        assert_eq!(prompt_payload["unique_name"], "server_prompt");
+        assert_eq!(resource_payload["uri"], "server_resource");
+        assert_eq!(resource_payload["unique_uri"], "server_resource");
+        assert_eq!(template_payload["name"], "server_template");
+        assert_eq!(template_payload["unique_template"], "server_template");
+        assert_eq!(template_payload["uri_template"], "repo://{owner}/{name}");
+    }
 }

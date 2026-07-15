@@ -27,6 +27,31 @@ pub struct CapabilityFetchOutcome<T> {
     pub failure: Option<CapabilityFetchFailure>,
 }
 
+pub fn require_complete_capability_fetch<T>(
+    operation: &str,
+    server_id: &str,
+    server_name: &str,
+    instance_id: &str,
+    outcome: CapabilityFetchOutcome<T>,
+) -> Result<Vec<T>> {
+    let Some(failure) = outcome.failure else {
+        return Ok(outcome.items);
+    };
+
+    let detail = match failure {
+        CapabilityFetchFailure::Timeout => "request timed out".to_string(),
+        CapabilityFetchFailure::Gone { message } | CapabilityFetchFailure::Other { message } => message,
+    };
+    Err(anyhow::anyhow!(
+        "Failed to complete '{}' for server '{}' ({}) instance '{}': {}",
+        operation,
+        server_name,
+        server_id,
+        instance_id,
+        detail
+    ))
+}
+
 fn looks_like_gone(msg_lower: &str) -> bool {
     msg_lower.contains("status: 404")
         || msg_lower.contains("status: 410")
@@ -114,6 +139,7 @@ where
                         instance_id,
                         msg
                     );
+                    failure = Some(CapabilityFetchFailure::Other { message: msg });
                 } else {
                     tracing::warn!(
                         "Failed fetching capability page from '{}' ({}) instance {}: {}",
@@ -146,5 +172,28 @@ where
     CapabilityFetchOutcome {
         items: results,
         failure,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CapabilityFetchFailure, CapabilityFetchOutcome, require_complete_capability_fetch};
+
+    #[test]
+    fn incomplete_paginated_inventory_never_returns_partial_items() {
+        let error = require_complete_capability_fetch(
+            "prompts/list",
+            "server-1",
+            "docs",
+            "instance-1",
+            CapabilityFetchOutcome {
+                items: vec!["first-page"],
+                failure: Some(CapabilityFetchFailure::Timeout),
+            },
+        )
+        .expect_err("partial inventory must fail closed");
+
+        assert!(error.to_string().contains("prompts/list"));
+        assert!(error.to_string().contains("server-1"));
     }
 }

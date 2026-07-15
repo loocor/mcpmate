@@ -3,24 +3,16 @@
 
 use anyhow::{Context, Result};
 use rmcp::model::Tool;
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Sqlite, Transaction};
 
 use crate::{
     config::models::ServerTool,
     core::cache::CachedToolInfo,
     core::capability::naming::{
-        NamingKind, ToolNamingPolicy, ensure_unique_name, ensure_unique_tool_name_with_policy,
-        infer_tool_naming_policy, strip_server_prefix,
+        NamingKind, begin_naming_transaction, reconcile_external_identifier_additions, reconcile_external_identifiers,
     },
     generate_id,
 };
-
-fn normalize_tool_name(
-    server_name: &str,
-    name: String,
-) -> String {
-    strip_server_prefix(NamingKind::Tool, server_name, &name).unwrap_or(name)
-}
 
 /// Add or update a server tool mapping
 #[derive(Debug, Clone)]
@@ -29,56 +21,23 @@ pub struct ServerToolUpsertResult {
     pub unique_name: String,
 }
 
-pub async fn upsert_server_tool(
-    pool: &Pool<Sqlite>,
+async fn upsert_server_tool_row(
+    tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
     server_name: &str,
     tool_name: &str,
+    unique_name: &str,
     description: Option<&str>,
-    policy: Option<&ToolNamingPolicy>,
 ) -> Result<ServerToolUpsertResult> {
-    tracing::debug!(
-        "Upserting server tool mapping: server_id={}, tool_name={}",
-        server_id,
-        tool_name
-    );
-
-    let unique_name = match policy {
-        Some(p) => ensure_unique_tool_name_with_policy(server_id, server_name, tool_name, Some(p))
-            .await
-            .context("Failed to ensure unique name for tool (policy)")?,
-        None => ensure_unique_name(NamingKind::Tool, server_id, server_name, tool_name)
-            .await
-            .context("Failed to ensure unique name for tool")?,
-    };
-
-    // Remove any stale duplicates that may have been created by legacy naming logic
-    sqlx::query(
-        r#"
-        DELETE FROM server_tools
-        WHERE server_id = ?
-          AND tool_name = ?
-          AND unique_name != ?
-        "#,
-    )
-    .bind(server_id)
-    .bind(tool_name)
-    .bind(&unique_name)
-    .execute(pool)
-    .await
-    .context("Failed to remove duplicate server tool entries")?;
-
-    // Check if the tool already exists
     let existing_id =
         sqlx::query_scalar::<_, String>("SELECT id FROM server_tools WHERE server_id = ? AND tool_name = ?")
             .bind(server_id)
             .bind(tool_name)
-            .fetch_optional(pool)
+            .fetch_optional(&mut **tx)
             .await
             .context("Failed to check existing server tool")?;
 
-    if let Some(id) = existing_id {
-        // Update existing tool
+    let tool_id = if let Some(id) = existing_id {
         sqlx::query(
             r#"
             UPDATE server_tools
@@ -87,45 +46,126 @@ pub async fn upsert_server_tool(
             "#,
         )
         .bind(server_name)
-        .bind(&unique_name)
+        .bind(unique_name)
         .bind(description)
         .bind(&id)
-        .execute(pool)
+        .execute(&mut **tx)
         .await
         .context("Failed to update server tool")?;
-
-        tracing::debug!("Updated server tool mapping: id={}, unique_name={}", id, unique_name);
-        Ok(ServerToolUpsertResult {
-            tool_id: id,
-            unique_name,
-        })
+        id
     } else {
-        // Insert new tool
-        let tool_id = generate_id!("stool");
-
+        let id = generate_id!("stool");
         sqlx::query(
             r#"
             INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description)
             VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
-        .bind(&tool_id)
+        .bind(&id)
         .bind(server_id)
         .bind(server_name)
         .bind(tool_name)
-        .bind(&unique_name)
+        .bind(unique_name)
         .bind(description)
-        .execute(pool)
+        .execute(&mut **tx)
         .await
         .context("Failed to insert server tool")?;
+        id
+    };
 
-        tracing::debug!(
-            "Created server tool mapping: id={}, unique_name={}",
-            tool_id,
-            unique_name
+    Ok(ServerToolUpsertResult {
+        tool_id,
+        unique_name: unique_name.to_string(),
+    })
+}
+
+async fn upsert_server_tools_batch(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    tools: &[(String, Option<String>)],
+) -> Result<(Vec<ServerToolUpsertResult>, bool)> {
+    let mut tx = begin_naming_transaction(pool)
+        .await
+        .context("Failed to begin server tool update")?;
+    let result = upsert_server_tools_batch_in_transaction(&mut tx, server_id, server_name, tools).await?;
+    tx.commit().await.context("Failed to commit server tool update")?;
+    Ok(result)
+}
+
+pub(crate) async fn upsert_server_tools_batch_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    tools: &[(String, Option<String>)],
+) -> Result<(Vec<ServerToolUpsertResult>, bool)> {
+    let inventory = tools.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+    let reconciliation = reconcile_external_identifiers(tx, NamingKind::Tool, server_id, server_name, &inventory)
+        .await
+        .context("Failed to reconcile external tool names")?;
+
+    let mut results = Vec::with_capacity(tools.len());
+    for (tool_name, description) in tools {
+        let unique_name = reconciliation.identifier_for(tool_name)?;
+        results.push(
+            upsert_server_tool_row(
+                tx,
+                server_id,
+                server_name,
+                tool_name,
+                unique_name,
+                description.as_deref(),
+            )
+            .await?,
         );
-        Ok(ServerToolUpsertResult { tool_id, unique_name })
     }
+    let catalog_changed = reconciliation.catalog_changed();
+    Ok((results, catalog_changed))
+}
+
+pub async fn upsert_server_tool(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    tool_name: &str,
+    description: Option<&str>,
+) -> Result<ServerToolUpsertResult> {
+    tracing::debug!(
+        "Upserting server tool mapping: server_id={}, tool_name={}",
+        server_id,
+        tool_name
+    );
+
+    let mut tx = begin_naming_transaction(pool)
+        .await
+        .context("Failed to begin server tool update")?;
+    let reconciliation = reconcile_external_identifier_additions(
+        &mut tx,
+        NamingKind::Tool,
+        server_id,
+        server_name,
+        &[tool_name.to_string()],
+    )
+    .await
+    .context("Failed to extend external tool inventory")?;
+    let result = upsert_server_tool_row(
+        &mut tx,
+        server_id,
+        server_name,
+        tool_name,
+        reconciliation.identifier_for(tool_name)?,
+        description,
+    )
+    .await?;
+    let catalog_changed = reconciliation.catalog_changed();
+    tx.commit().await.context("Failed to commit server tool update")?;
+    if catalog_changed {
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::CapabilityCatalogChanged {
+            server_id: server_id.to_string(),
+            server_name: server_name.to_string(),
+        });
+    }
+    Ok(result)
 }
 
 /// Get all server tools for a specific server
@@ -140,20 +180,6 @@ pub async fn get_server_tools(
         .context("Failed to fetch server tools")?;
 
     Ok(tools)
-}
-
-/// Get a server tool by unique name
-pub async fn get_server_tool_by_unique_name(
-    pool: &Pool<Sqlite>,
-    unique_name: &str,
-) -> Result<Option<ServerTool>> {
-    let tool = sqlx::query_as::<_, ServerTool>("SELECT * FROM server_tools WHERE unique_name = ?")
-        .bind(unique_name)
-        .fetch_optional(pool)
-        .await
-        .context("Failed to fetch server tool by unique name")?;
-
-    Ok(tool)
 }
 
 /// Get a server tool by server_id and tool_name
@@ -208,34 +234,20 @@ pub async fn batch_upsert_server_tools(
     server_name: &str,
     tools: &[(String, Option<String>)], // (tool_name, description)
 ) -> Result<Vec<String>> {
-    let mut tool_ids = Vec::new();
-
-    // Prepare normalized view and infer a policy for this batch
-    let normalized: Vec<(String, Option<&str>)> = tools
-        .iter()
-        .map(|(name, desc)| (normalize_tool_name(server_name, name.clone()), desc.as_deref()))
-        .collect();
-    let name_view: Vec<&str> = normalized.iter().map(|(n, _)| n.as_str()).collect();
-    let policy = infer_tool_naming_policy(server_name, name_view);
-
-    for (normalized_name, description) in normalized {
-        let outcome = upsert_server_tool(
-            pool,
-            server_id,
-            server_name,
-            &normalized_name,
-            description,
-            Some(&policy),
-        )
-        .await?;
-        tool_ids.push(outcome.tool_id);
-    }
+    let (results, catalog_changed) = upsert_server_tools_batch(pool, server_id, server_name, tools).await?;
+    let tool_ids = results.into_iter().map(|result| result.tool_id).collect::<Vec<_>>();
 
     tracing::debug!(
         "Batch upserted {} server tools for server_id={}",
         tool_ids.len(),
         server_id
     );
+    if catalog_changed {
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::CapabilityCatalogChanged {
+            server_id: server_id.to_string(),
+            server_name: server_name.to_string(),
+        });
+    }
 
     Ok(tool_ids)
 }
@@ -247,22 +259,24 @@ pub async fn assign_unique_names_to_tools(
     server_name: &str,
     tools: &mut [Tool],
 ) -> Result<()> {
-    // Infer policy from the visible tool set (names before unique assignment)
-    let name_view: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
-    let policy = infer_tool_naming_policy(server_name, name_view);
-
-    for tool in tools.iter_mut() {
-        let mut original_name = normalize_tool_name(server_name, tool.name.to_string());
-
-        if let Some(existing) = get_server_tool_by_unique_name(pool, &tool.name).await? {
-            if existing.server_id == server_id {
-                original_name = normalize_tool_name(server_name, existing.tool_name.clone());
-            }
-        }
-        let description = tool.description.as_ref().map(|d| d.as_ref());
-        let outcome =
-            upsert_server_tool(pool, server_id, server_name, &original_name, description, Some(&policy)).await?;
-        tool.name = std::borrow::Cow::Owned(outcome.unique_name);
+    let inventory = tools
+        .iter()
+        .map(|tool| {
+            (
+                tool.name.to_string(),
+                tool.description.as_ref().map(|description| description.to_string()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let (results, catalog_changed) = upsert_server_tools_batch(pool, server_id, server_name, &inventory).await?;
+    for (tool, result) in tools.iter_mut().zip(results) {
+        tool.name = std::borrow::Cow::Owned(result.unique_name);
+    }
+    if catalog_changed {
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::CapabilityCatalogChanged {
+            server_id: server_id.to_string(),
+            server_name: server_name.to_string(),
+        });
     }
 
     Ok(())
@@ -274,54 +288,92 @@ pub async fn assign_unique_names_to_cached_tools(
     server_id: &str,
     server_name: &str,
     tools: &mut [CachedToolInfo],
-) -> Result<()> {
-    let name_view: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-    let policy = infer_tool_naming_policy(server_name, name_view);
+) -> Result<bool> {
+    let mut tx = begin_naming_transaction(pool)
+        .await
+        .context("Failed to begin cached tool naming update")?;
+    let catalog_changed =
+        assign_unique_names_to_cached_tools_in_transaction(&mut tx, server_id, server_name, tools).await?;
+    tx.commit()
+        .await
+        .context("Failed to commit cached tool naming update")?;
+    Ok(catalog_changed)
+}
 
-    for tool in tools.iter_mut() {
-        let mut original_name = normalize_tool_name(server_name, tool.name.clone());
-
-        if let Some(unique_name) = tool.unique_name.as_ref() {
-            if let Some(existing) = get_server_tool_by_unique_name(pool, unique_name).await? {
-                if existing.server_id == server_id {
-                    original_name = normalize_tool_name(server_name, existing.tool_name.clone());
-                }
-            }
-        } else if let Some(existing) = get_server_tool_by_unique_name(pool, &tool.name).await? {
-            if existing.server_id == server_id {
-                original_name = normalize_tool_name(server_name, existing.tool_name.clone());
-            }
-        }
-
-        let outcome = upsert_server_tool(
-            pool,
-            server_id,
-            server_name,
-            &original_name,
-            tool.description.as_deref(),
-            Some(&policy),
-        )
-        .await?;
-        tool.name = original_name;
-        tool.unique_name = Some(outcome.unique_name);
+pub(crate) async fn assign_unique_names_to_cached_tools_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    tools: &mut [CachedToolInfo],
+) -> Result<bool> {
+    let inventory = tools
+        .iter()
+        .map(|tool| (tool.name.clone(), tool.description.clone()))
+        .collect::<Vec<_>>();
+    let (results, catalog_changed) =
+        upsert_server_tools_batch_in_transaction(tx, server_id, server_name, &inventory).await?;
+    for (tool, ((upstream_name, _), result)) in tools.iter_mut().zip(inventory.into_iter().zip(results)) {
+        tool.name = upstream_name;
+        tool.unique_name = Some(result.unique_name);
     }
 
-    Ok(())
+    Ok(catalog_changed)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_tool_name;
+    use chrono::Utc;
+    use sqlx::sqlite::SqlitePoolOptions;
 
-    #[test]
-    fn normalize_tool_name_strips_prefix() {
-        let result = normalize_tool_name("Gitmcp", "gitmcp_fetch".to_string());
-        assert_eq!(result, "fetch");
+    use super::*;
+
+    async fn test_pool() -> Pool<Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("initialize client table");
+        pool
     }
 
-    #[test]
-    fn normalize_tool_name_leaves_unprefixed() {
-        let result = normalize_tool_name("Playwright", "browser_click".to_string());
-        assert_eq!(result, "browser_click");
+    #[tokio::test]
+    async fn cached_tool_keeps_exact_upstream_name_and_stores_external_identifier() {
+        let pool = test_pool().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
+            .execute(&pool)
+            .await
+            .expect("insert server");
+        let mut tools = vec![CachedToolInfo {
+            name: "searxng_web_search".to_string(),
+            description: Some("Search the web".to_string()),
+            input_schema_json: r#"{"type":"object"}"#.to_string(),
+            output_schema_json: None,
+            unique_name: None,
+            icons: None,
+            enabled: true,
+            cached_at: Utc::now(),
+        }];
+
+        assign_unique_names_to_cached_tools(&pool, "server-a", "searxng", &mut tools)
+            .await
+            .expect("assign cached tool identity");
+
+        assert_eq!(tools[0].name, "searxng_web_search");
+        assert_eq!(tools[0].unique_name.as_deref(), Some("searxng_web_search"));
+        let mapping = get_server_tool(&pool, "server-a", "searxng_web_search")
+            .await
+            .expect("load mapping")
+            .expect("mapping exists");
+        assert_eq!(mapping.tool_name, "searxng_web_search");
+        assert_eq!(mapping.unique_name, "searxng_web_search");
     }
 }

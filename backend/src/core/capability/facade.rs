@@ -11,6 +11,7 @@ use super::{internal, prompts, resources};
 
 pub use super::internal::{
     CapabilityFetchFailure, CapabilityFetchOutcome, collect_capability_from_instance_peer, is_method_not_supported,
+    require_complete_capability_fetch,
 };
 pub use prompts::{PromptMapping, PromptTemplateMapping};
 pub use resources::{ResourceMapping, ResourceTemplateMapping};
@@ -31,7 +32,7 @@ pub fn capability_declared(
 pub async fn build_resource_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     database: Option<&Arc<Database>>,
-) -> HashMap<String, ResourceMapping> {
+) -> anyhow::Result<HashMap<String, ResourceMapping>> {
     resources::build_resource_mapping(connection_pool, database).await
 }
 
@@ -39,13 +40,13 @@ pub async fn build_resource_mapping_filtered(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     database: Option<&Arc<Database>>,
     enabled_server_ids: Option<&HashSet<String>>,
-) -> HashMap<String, ResourceMapping> {
+) -> anyhow::Result<HashMap<String, ResourceMapping>> {
     resources::build_resource_mapping_filtered(connection_pool, database, enabled_server_ids).await
 }
 
 pub async fn build_resource_template_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> Vec<ResourceTemplateMapping> {
+) -> anyhow::Result<Vec<ResourceTemplateMapping>> {
     resources::build_resource_template_mapping(connection_pool).await
 }
 
@@ -61,20 +62,20 @@ pub async fn read_upstream_resource(
 
 pub async fn build_prompt_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> HashMap<String, PromptMapping> {
+) -> anyhow::Result<HashMap<String, PromptMapping>> {
     prompts::build_prompt_mapping(connection_pool).await
 }
 
 pub async fn build_prompt_mapping_filtered(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     enabled_server_ids: Option<&HashSet<String>>,
-) -> HashMap<String, PromptMapping> {
+) -> anyhow::Result<HashMap<String, PromptMapping>> {
     prompts::build_prompt_mapping_filtered(connection_pool, enabled_server_ids).await
 }
 
 pub async fn build_prompt_template_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> Vec<PromptTemplateMapping> {
+) -> anyhow::Result<Vec<PromptTemplateMapping>> {
     prompts::build_prompt_template_mapping(connection_pool).await
 }
 

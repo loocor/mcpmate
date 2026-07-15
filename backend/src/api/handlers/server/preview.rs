@@ -8,6 +8,7 @@ use crate::api::models::server::{
     ServerCapabilityMeta, ServerPreviewData, ServerPreviewItemData, ServerPreviewItemReq, ServerPreviewReq,
     ServerPreviewResp, ServerPromptsData, ServerResourceTemplatesData, ServerResourcesData, ServerToolsData,
 };
+use crate::core::capability::naming::{NamingKind, plan_external_identifiers};
 use crate::core::models::MCPServerConfig;
 use crate::core::secrets::resolve_runtime_server_config_with_optional_resolver;
 use crate::core::secrets::store::LocalSecretStore;
@@ -93,27 +94,23 @@ async fn preview_one(
         }
     }
 
-    // Compute preview timeouts (fallbacks if not provided)
-    let stdio_timeout = timeout;
-    let http_to = timeout.map(|t| {
-        // Split a single timeout into connection/service/tools windows
-        // Connection: min(10s, total), Service+Tools: total
-        let conn = std::cmp::min(std::time::Duration::from_secs(10), t);
-        (conn, t, t)
-    });
-
-    let snap = crate::config::server::capabilities::discover_from_config_preview(
-        &item.name,
-        &cfg,
-        kind,
-        client,
-        http_to,
-        stdio_timeout,
-    )
-    .await;
+    // The shared Inspector timeout is a fresh deadline for each MCP operation.
+    let snap =
+        crate::config::server::capabilities::discover_from_config_preview(&item.name, &cfg, kind, client, timeout)
+            .await;
 
     match snap {
-        Ok(s) => build_item(item.name, s, include_details),
+        Ok(s) => {
+            if let (Some(pool), Some(server_id)) = (db_pool, item.server_id.as_deref()) {
+                if let Err(error) =
+                    crate::config::server::capabilities::persist_snapshot_server_info(pool, server_id, &s).await
+                {
+                    return empty_with_error(item.name, error.to_string());
+                }
+            }
+            build_item(item.name.clone(), s, include_details)
+                .unwrap_or_else(|error| empty_with_error(item.name, error.to_string()))
+        }
         Err(e) => empty_with_error(item.name, e.to_string()),
     }
 }
@@ -134,9 +131,42 @@ async fn resolve_preview_headers(
 
 fn build_item(
     name: String,
-    snap: crate::config::server::capabilities::CapabilitySnapshot,
+    mut snap: crate::config::server::capabilities::CapabilitySnapshot,
     include_details: bool,
-) -> ServerPreviewItemData {
+) -> anyhow::Result<ServerPreviewItemData> {
+    let tool_names = snap.tools.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>();
+    let tool_plan = plan_external_identifiers(NamingKind::Tool, &name, &tool_names)?;
+    for tool in &mut snap.tools {
+        tool.unique_name = tool_plan.get(&tool.name).cloned();
+    }
+    let prompt_plan = plan_external_identifiers(
+        NamingKind::Prompt,
+        &name,
+        &snap
+            .prompts
+            .iter()
+            .map(|prompt| prompt.name.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    let resource_plan = plan_external_identifiers(
+        NamingKind::Resource,
+        &name,
+        &snap
+            .resources
+            .iter()
+            .map(|resource| resource.uri.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    let template_plan = plan_external_identifiers(
+        NamingKind::ResourceTemplate,
+        &name,
+        &snap
+            .resource_templates
+            .iter()
+            .map(|template| template.uri_template.clone())
+            .collect::<Vec<_>>(),
+    )?;
+
     // tools
     let tool_items: Vec<serde_json::Value> = if include_details {
         snap.tools
@@ -154,6 +184,8 @@ fn build_item(
             .map(|r| {
                 serde_json::json!({
                     "uri": r.uri,
+                    "resource_uri": r.uri,
+                    "unique_uri": resource_plan.get(&r.uri),
                     "name": r.name,
                     "description": r.description,
                     "mime_type": r.mime_type,
@@ -172,6 +204,7 @@ fn build_item(
             .map(|t| {
                 serde_json::json!({
                     "uri_template": t.uri_template,
+                    "unique_uri_template": template_plan.get(&t.uri_template),
                     "name": t.name,
                     "description": t.description,
                     "mime_type": t.mime_type,
@@ -190,6 +223,8 @@ fn build_item(
             .map(|p| {
                 serde_json::json!({
                     "name": p.name,
+                    "prompt_name": p.name,
+                    "unique_name": prompt_plan.get(&p.name),
                     "description": p.description,
                     "arguments": p.arguments.iter().map(|a| serde_json::json!({
                         "name": a.name,
@@ -209,7 +244,7 @@ fn build_item(
         source: "live".to_string(),
     };
 
-    ServerPreviewItemData {
+    Ok(ServerPreviewItemData {
         name,
         ok: true,
         error: None,
@@ -233,7 +268,7 @@ fn build_item(
             state: "ok".to_string(),
             meta,
         },
-    }
+    })
 }
 
 fn empty_with_error(
@@ -279,6 +314,7 @@ mod tests {
         models::{ServerOAuthConfig, ServerOAuthToken},
         server::{init::initialize_server_tables, upsert_server_oauth_config, upsert_server_oauth_token},
     };
+    use crate::core::cache::{CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo};
     use crate::core::secrets::store::{SecretCreateInput, SecretKindInput};
     use crate::test_helpers::oauth_secret_origin;
     use chrono::{Duration, Utc};
@@ -300,6 +336,64 @@ mod tests {
             .expect("enable foreign keys");
         initialize_server_tables(&pool).await.expect("init server tables");
         pool
+    }
+
+    #[test]
+    fn preview_projects_all_capability_kinds_through_the_shared_naming_plan() {
+        let now = Utc::now();
+        let snapshot = crate::config::server::capabilities::CapabilitySnapshot {
+            tools: vec![CachedToolInfo {
+                name: "get_searxng_status".to_string(),
+                description: None,
+                input_schema_json: r#"{"type":"object"}"#.to_string(),
+                output_schema_json: None,
+                unique_name: None,
+                icons: None,
+                enabled: true,
+                cached_at: now,
+            }],
+            prompts: vec![CachedPromptInfo {
+                name: "searxng_summary".to_string(),
+                description: None,
+                arguments: Vec::new(),
+                icons: None,
+                enabled: true,
+                cached_at: now,
+            }],
+            resources: vec![CachedResourceInfo {
+                uri: "file:///status".to_string(),
+                name: Some("Status".to_string()),
+                description: None,
+                mime_type: None,
+                icons: None,
+                enabled: true,
+                cached_at: now,
+            }],
+            resource_templates: vec![CachedResourceTemplateInfo {
+                uri_template: "file:///{path}".to_string(),
+                name: Some("File".to_string()),
+                description: None,
+                mime_type: None,
+                enabled: true,
+                cached_at: now,
+            }],
+            protocol_version: None,
+            ..Default::default()
+        };
+
+        let preview = build_item("searxng".to_string(), snapshot, true).expect("build preview");
+
+        assert_eq!(preview.tools.items[0]["name"], "get_searxng_status");
+        assert_eq!(preview.tools.items[0]["unique_name"], "searxng_get_status");
+        assert_eq!(preview.prompts.items[0]["prompt_name"], "searxng_summary");
+        assert_eq!(preview.prompts.items[0]["unique_name"], "searxng_summary");
+        assert_eq!(preview.resources.items[0]["resource_uri"], "file:///status");
+        assert_eq!(preview.resources.items[0]["unique_uri"], "searxng:file:///status");
+        assert_eq!(preview.resource_templates.items[0]["uri_template"], "file:///{path}");
+        assert_eq!(
+            preview.resource_templates.items[0]["unique_uri_template"],
+            "searxng_file:///{path}"
+        );
     }
 
     async fn setup_secret_store(pool: sqlx::SqlitePool) -> (Arc<LocalSecretStore>, TempDir) {

@@ -5,6 +5,7 @@ use super::{common, shared::*};
 use crate::api::models::server::{
     InstanceListData, InstanceListReq, InstanceListResp, InstanceSummary, ServerCapabilitySummary, ServerDetailsData,
     ServerDetailsReq, ServerDetailsResp, ServerListData, ServerListReq, ServerListResp, ServerMetaInfo,
+    StandardServerInfo,
 };
 use axum::http::StatusCode;
 use sqlx::{Pool, Row, Sqlite};
@@ -206,6 +207,12 @@ async fn server_details_core(
     } else {
         None
     };
+    let namespace_issue = match id_opt.as_deref() {
+        Some(server_id) => common::load_namespace_issue(db_pool, server_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        None => None,
+    };
 
     let server_details = ServerDetailsData {
         id: id_opt,
@@ -222,6 +229,7 @@ async fn server_details_core(
         env: details.env,
         headers,
         meta: details.meta,
+        server_info: details.server_info,
         capability: details.capability.clone(),
         protocol_version: details.protocol_version.clone(),
         created_at,
@@ -232,6 +240,7 @@ async fn server_details_core(
         oauth_custody_state,
         oauth_requires_reconnect,
         oauth_issue,
+        namespace_issue,
     };
 
     Ok(ServerDetailsResp::success(server_details))
@@ -252,7 +261,7 @@ async fn server_list_core(
     let (instance_map, live_protocol_versions) = snapshot_runtime_state(state).await;
     let protocol_versions = load_cached_protocol_versions(state, &server_ids, live_protocol_versions).await;
     let capability_map = load_server_capabilities(db_pool, &server_ids).await;
-    let meta_map = load_server_meta_map(db_pool, &server_ids).await;
+    let (meta_map, server_info_map) = load_server_meta_maps(db_pool, &server_ids).await;
     let enabled_in_profile = load_enabled_server_ids(db_pool).await;
     let streamable_http_server_ids: Vec<String> = all_servers
         .iter()
@@ -287,6 +296,7 @@ async fn server_list_core(
     let mut instance_map = instance_map;
     let mut capability_map = capability_map;
     let mut meta_map = meta_map;
+    let mut server_info_map = server_info_map;
     let mut protocol_versions = protocol_versions;
     let mut headers_map = headers_map;
 
@@ -317,6 +327,7 @@ async fn server_list_core(
         let instances = instance_map.remove(&server_id).unwrap_or_default();
         let capability = capability_map.remove(&server_id);
         let meta = meta_map.remove(&server_id).flatten();
+        let server_info = server_info_map.remove(&server_id).flatten();
         let protocol_version = protocol_versions.remove(&server_id).flatten();
         let raw_headers = raw_headers_map.remove(&server_id);
         let headers = headers_map.remove(&server_id);
@@ -338,6 +349,9 @@ async fn server_list_core(
                 )
             })
             .unwrap_or_default();
+        let namespace_issue = common::load_namespace_issue(db_pool, &server_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         filtered_servers.push(ServerDetailsData {
             id: server.id.clone(),
@@ -354,6 +368,7 @@ async fn server_list_core(
             env: None,
             headers,
             meta,
+            server_info,
             capability,
             protocol_version,
             created_at,
@@ -364,6 +379,7 @@ async fn server_list_core(
             oauth_custody_state,
             oauth_requires_reconnect,
             oauth_issue,
+            namespace_issue,
         });
     }
 
@@ -622,12 +638,15 @@ async fn merge_capability_counts<F>(
     }
 }
 
-async fn load_server_meta_map(
+async fn load_server_meta_maps(
     pool: &Pool<Sqlite>,
     server_ids: &[String],
-) -> HashMap<String, Option<ServerMetaInfo>> {
+) -> (
+    HashMap<String, Option<ServerMetaInfo>>,
+    HashMap<String, Option<StandardServerInfo>>,
+) {
     if server_ids.is_empty() {
-        return HashMap::new();
+        return (HashMap::new(), HashMap::new());
     }
 
     let rows = match sqlx::query(
@@ -642,11 +661,12 @@ async fn load_server_meta_map(
         Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(error = %error, "Failed to load server metadata map for server list");
-            return HashMap::new();
+            return (HashMap::new(), HashMap::new());
         }
     };
 
     let mut meta_map = HashMap::new();
+    let mut server_info_map = HashMap::new();
     for row in rows {
         let server_meta: crate::config::models::ServerMeta = match sqlx::FromRow::from_row(&row) {
             Ok(meta) => meta,
@@ -656,9 +676,11 @@ async fn load_server_meta_map(
             }
         };
         let server_id = server_meta.server_id.clone();
+        let server_info = common::standard_server_info(&server_meta);
+        server_info_map.insert(server_id.clone(), server_info);
         meta_map.insert(server_id, build_server_meta_info(server_meta));
     }
-    meta_map
+    (meta_map, server_info_map)
 }
 
 fn build_server_meta_info(server_meta: crate::config::models::ServerMeta) -> Option<ServerMetaInfo> {
@@ -1385,7 +1407,7 @@ mod tests {
         for index in 0..count {
             let server = Server {
                 id: None,
-                name: format!("server-{index}"),
+                name: format!("server_{index}"),
                 server_type: ServerType::Stdio,
                 command: Some("echo".to_string()),
                 url: None,
@@ -1445,6 +1467,8 @@ mod tests {
             recommended_scenario: None,
             rating: None,
             icons_json: Some(r#"[{"src":"https://example.com/icon.png","mimeType":"image/png"}]"#.to_string()),
+            upstream_name: None,
+            upstream_title: None,
             server_version: None,
             protocol_version: None,
             created_at: None,
@@ -1460,20 +1484,12 @@ mod tests {
         pool: &sqlx::SqlitePool,
         server_id: &str,
     ) {
-        server::tools::upsert_server_tool(pool, server_id, "server-0", "tool-a", Some("tool"), None)
+        server::tools::upsert_server_tool(pool, server_id, "server_0", "tool-a", Some("tool"))
             .await
             .expect("insert tool");
-        sqlx::query(
-            "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind("sprm-test")
-        .bind(server_id)
-        .bind("server-0")
-        .bind("prompt-a")
-        .bind("server-0__prompt-a")
-        .execute(pool)
-        .await
-        .expect("insert prompt");
+        server::capabilities::upsert_shadow_prompt(pool, server_id, "server_0", "prompt-a", None)
+            .await
+            .expect("insert prompt");
     }
 
     async fn seed_profile_enablement(
@@ -1499,7 +1515,7 @@ mod tests {
         server_id: &str,
     ) {
         let mut pool = app_state.connection_pool.lock().await;
-        let mut instance = UpstreamConnection::new("server-0".to_string());
+        let mut instance = UpstreamConnection::new("server_0".to_string());
         instance.status = crate::core::foundation::types::ConnectionStatus::Ready;
         pool.connections.insert(
             server_id.to_string(),

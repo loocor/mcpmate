@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 
-/// Get server_name by server_id. If not found, returns "unknown". Spaces are replaced with underscores.
+/// Get the persisted MCPMate namespace by server ID.
 pub async fn get_server_name(
     pool: &Pool<Sqlite>,
     server_id: &str,
@@ -10,12 +10,12 @@ pub async fn get_server_name(
         .bind(server_id)
         .fetch_optional(pool)
         .await
-        .context("Failed to get server name")?
-        .unwrap_or_else(|| "unknown".to_string());
-    Ok(name.replace(' ', "_"))
+        .context("Failed to get server namespace")?
+        .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_id))?;
+    Ok(name)
 }
 
-/// Get server_name by server_id using a transaction. If not found, returns "unknown". Spaces are replaced with underscores.
+/// Get the persisted MCPMate namespace by server ID using a transaction.
 pub async fn get_server_name_with_tx(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
@@ -24,7 +24,7 @@ pub async fn get_server_name_with_tx(
         .bind(server_id)
         .fetch_optional(&mut **tx)
         .await
-        .context("Failed to get server name (tx)")?
-        .unwrap_or_else(|| "unknown".to_string());
-    Ok(name.replace(' ', "_"))
+        .context("Failed to get server namespace (tx)")?
+        .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_id))?;
+    Ok(name)
 }

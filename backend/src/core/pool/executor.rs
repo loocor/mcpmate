@@ -8,7 +8,7 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rmcp::model::{ServerCapabilities, Tool};
 use tracing;
 
@@ -330,6 +330,14 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
+        if let Some(database) = &self.database {
+            crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(
+                &database.pool,
+                server_id,
+            )
+            .await?;
+        }
+
         if let Some(remaining) = self.remaining_backoff(server_id) {
             tracing::warn!(
                 server_id = server_id,
@@ -434,7 +442,8 @@ impl UpstreamConnectionPool {
         .await?;
 
         // Update connection with service
-        self.update_connection(server_id, instance_id, service, tools, capabilities);
+        self.update_connection(server_id, instance_id, service, tools, capabilities)
+            .await?;
 
         // Update process ID if available
         if let Some(pid) = process_id {
@@ -592,7 +601,8 @@ impl UpstreamConnectionPool {
         // Build a friendly label for transport-layer logging: "name (id)" or just id
         let label = crate::core::capability::resolver::label_by_id(server_id).await;
         let (service, tools, capabilities) = connect_fn(label, server_config).await?;
-        self.update_connection(server_id, instance_id, service, tools, capabilities);
+        self.update_connection(server_id, instance_id, service, tools, capabilities)
+            .await?;
         Ok(())
     }
 
@@ -745,24 +755,14 @@ impl UpstreamConnectionPool {
     }
 
     /// Update connection with service and metadata
-    pub fn update_connection(
+    pub async fn update_connection(
         &mut self,
         server_id: &str,
         instance_id: &str,
         service: crate::core::transport::ClientService,
         tools: Vec<Tool>,
         capabilities: Option<rmcp::model::ServerCapabilities>,
-    ) {
-        // Early return if connection cannot be retrieved
-        let Ok(conn) = self.get_instance_mut(server_id, instance_id) else {
-            tracing::error!(
-                "Failed to update connection for '{}' instance '{}' - connection not found",
-                server_id,
-                instance_id
-            );
-            return;
-        };
-
+    ) -> Result<()> {
         // Check server capabilities
         let supports_resources = capabilities.as_ref().and_then(|caps| caps.resources.as_ref()).is_some();
         let supports_prompts = capabilities.as_ref().and_then(|caps| caps.prompts.as_ref()).is_some();
@@ -773,6 +773,23 @@ impl UpstreamConnectionPool {
 
         // Clone service for database sync operations
         let service_for_sync = service.peer().clone();
+
+        if let (Some(db), Some(peer)) = (&self.database, peer_info.as_ref()) {
+            crate::config::server::meta::update_server_info(
+                &db.pool,
+                server_id,
+                peer.server_info.name.clone(),
+                peer.server_info.title.clone(),
+                Some(peer.server_info.version.clone()),
+                peer.protocol_version.to_string(),
+            )
+            .await
+            .with_context(|| format!("Failed to persist standard server information for '{server_id}'"))?;
+        }
+
+        let conn = self
+            .get_instance_mut(server_id, instance_id)
+            .with_context(|| format!("Connection '{instance_id}' for server '{server_id}' was not found"))?;
 
         // Update connection properties
         // Set server_id on upstream client handler so notifications can be forwarded correctly
@@ -791,32 +808,15 @@ impl UpstreamConnectionPool {
 
         // Handle database sync (early return if no database)
         let Some(db) = &self.database else {
-            return; // No database available, skip sync operations
+            return Ok(()); // No database available, skip sync operations
         };
 
-        if let Some(peer) = peer_info.as_ref() {
+        if peer_info.is_some() {
             let db_clone = db.clone();
             let server_id_clone = server_id.to_string();
             let icons_for_update = server_icons_payload.clone();
-            let server_version = peer.server_info.version.clone();
-            let protocol_version = peer.protocol_version.to_string();
 
             tokio::spawn(async move {
-                if let Err(e) = crate::config::server::meta::update_server_versions(
-                    &db_clone.pool,
-                    &server_id_clone,
-                    Some(server_version.clone()),
-                    protocol_version.clone(),
-                )
-                .await
-                {
-                    tracing::warn!(
-                        server_id = %server_id_clone,
-                        error = %e,
-                        "Failed to upsert server version metadata"
-                    );
-                }
-
                 if let Err(e) =
                     crate::config::server::meta::update_server_icons(&db_clone.pool, &server_id_clone, icons_for_update)
                         .await
@@ -839,6 +839,7 @@ impl UpstreamConnectionPool {
             supports_resources,
             supports_prompts,
         );
+        Ok(())
     }
 
     /// Spawn database sync operations in background task
@@ -1041,6 +1042,9 @@ impl UpstreamConnectionPool {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
+        crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(&db.pool, server_id)
+            .await?;
+
         let config = crate::core::foundation::loader::load_pool_base_config(db, self.secret_store.clone()).await?;
 
         let Some(_server_config) = config.mcp_servers.get(server_id) else {
@@ -1102,6 +1106,25 @@ impl UpstreamConnectionPool {
 
         tracing::info!("Server '{}' disabled in all active profile and stopped", server_id);
         Ok(())
+    }
+
+    /// Immediately remove a capability-collision challenger from every
+    /// production exposure surface. The persisted namespace issue prevents
+    /// subsequent connection attempts until the namespace is remediated.
+    pub(crate) async fn block_server_after_capability_collision(
+        &mut self,
+        server_id: &str,
+    ) {
+        self.disconnect_all_instances(server_id).await;
+        self.connections.remove(server_id);
+        self.cancellation_tokens.remove(server_id);
+        self.remove_all_client_bound_connections_for_server(server_id);
+        self.remove_all_production_routes_for_server(server_id);
+
+        tracing::warn!(
+            server_id,
+            "Removed capability-collision challenger from production exposure"
+        );
     }
 
     /// Helper method to disconnect all instances of a server

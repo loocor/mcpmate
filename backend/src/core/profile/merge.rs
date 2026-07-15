@@ -95,12 +95,14 @@ impl ProfileMerger {
                 let rows: Vec<(String, String, String)> =
                     sqlx::query_as(&sql).fetch_all(&self.db.pool).await.unwrap_or_default();
                 let mut v = Vec::new();
-                for (_server_id, server_name_original, upstream_uri) in rows {
-                    let unique = crate::core::capability::naming::generate_unique_name(
+                for (server_id, _server_name_original, upstream_uri) in rows {
+                    let unique = crate::core::capability::naming::load_external_identifier(
+                        &self.db.pool,
                         crate::core::capability::naming::NamingKind::Resource,
-                        &server_name_original,
+                        &server_id,
                         &upstream_uri,
-                    );
+                    )
+                    .await?;
                     v.push(unique);
                 }
                 Some(v)
@@ -126,12 +128,14 @@ impl ProfileMerger {
                 let rows: Vec<(String, String, String)> =
                     sqlx::query_as(&sql).fetch_all(&self.db.pool).await.unwrap_or_default();
                 let mut v = Vec::new();
-                for (_server_id, server_name_original, prompt_name) in rows {
-                    let unique = crate::core::capability::naming::generate_unique_name(
+                for (server_id, _server_name_original, prompt_name) in rows {
+                    let unique = crate::core::capability::naming::load_external_identifier(
+                        &self.db.pool,
                         crate::core::capability::naming::NamingKind::Prompt,
-                        &server_name_original,
+                        &server_id,
                         &prompt_name,
-                    );
+                    )
+                    .await?;
                     v.push(unique);
                 }
                 Some(v)

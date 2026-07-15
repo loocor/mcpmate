@@ -35,7 +35,7 @@ use crate::api::models::server::{
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditStatus};
 use crate::core::cache::{CacheQuery, CacheScope, FreshnessLevel};
-use crate::core::capability::naming::{NamingKind, generate_unique_name};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 
 #[derive(Debug, Clone, Copy)]
 pub enum CapabilityType {
@@ -43,6 +43,266 @@ pub enum CapabilityType {
     Prompts,
     Resources,
     ResourceTemplates,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CapabilityType, ExtractedCapability, enrich_prompt_item, enrich_resource_item, enrich_resource_template_item,
+        enrich_tool_item, persist_extracted_inventory, resource_template_json_from_cached,
+    };
+    use crate::{
+        api::{handlers::server::common::ServerIdentification, routes::AppState},
+        config::database::Database,
+        core::{
+            cache::{CachedResourceTemplateInfo, CachedToolInfo, RedbCacheManager, manager::CacheConfig},
+            models::Config,
+            pool::UpstreamConnectionPool,
+            profile::ConfigApplicationStateManager,
+        },
+        inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
+        system::metrics::MetricsCollector,
+    };
+    use chrono::Utc;
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+    use tempfile::TempDir;
+    use tokio::sync::{Mutex, RwLock};
+
+    fn mapping(
+        upstream: &str,
+        external: &str,
+    ) -> HashMap<String, (String, String)> {
+        HashMap::from([(
+            upstream.to_string(),
+            ("capability-id".to_string(), external.to_string()),
+        )])
+    }
+
+    #[test]
+    fn management_tool_projection_uses_external_name_and_keeps_upstream_metadata() {
+        let projected = enrich_tool_item(
+            json!({ "name": "get_searxng_status" }),
+            &mapping("get_searxng_status", "searxng_get_status"),
+        )
+        .expect("project tool");
+
+        assert_eq!(projected["name"], "searxng_get_status");
+        assert_eq!(projected["unique_name"], "searxng_get_status");
+        assert_eq!(projected["tool_name"], "get_searxng_status");
+        assert_eq!(projected["id"], "capability-id");
+    }
+
+    #[test]
+    fn management_projections_resolve_already_external_values() {
+        let prompt =
+            enrich_prompt_item(json!({ "name": "docs_help" }), &mapping("help", "docs_help")).expect("project prompt");
+        let resource = enrich_resource_item(
+            json!({ "uri": "docs:file:///guide.md" }),
+            &mapping("file:///guide.md", "docs:file:///guide.md"),
+        )
+        .expect("project resource");
+        let template = enrich_resource_template_item(
+            json!({ "name": "docs_lookup_{id}", "uri_template": "lookup_{id}" }),
+            &mapping("lookup_{id}", "docs_lookup_{id}"),
+        )
+        .expect("project resource template");
+
+        assert_eq!(prompt["name"], "docs_help");
+        assert_eq!(prompt["prompt_name"], "help");
+        assert_eq!(resource["uri"], "docs:file:///guide.md");
+        assert_eq!(resource["resource_uri"], "file:///guide.md");
+        assert_eq!(template["name"], "docs_lookup_{id}");
+        assert_eq!(template["uri_template"], "lookup_{id}");
+        assert_eq!(template["unique_uri_template"], "docs_lookup_{id}");
+    }
+
+    #[test]
+    fn cached_resource_template_projection_skips_null_external_candidate() {
+        let fixtures = [
+            (
+                "demo://resource/dynamic/blob/{resourceId}",
+                "everything_demo://resource/dynamic/blob/{resourceId}",
+            ),
+            (
+                "demo://resource/dynamic/text/{resourceId}",
+                "everything_demo://resource/dynamic/text/{resourceId}",
+            ),
+        ];
+
+        for (upstream_template, external_template) in fixtures {
+            let cached_payload = resource_template_json_from_cached(CachedResourceTemplateInfo {
+                uri_template: upstream_template.to_string(),
+                name: Some("Dynamic resource".to_string()),
+                description: Some("Read a dynamic resource".to_string()),
+                mime_type: Some("application/octet-stream".to_string()),
+                enabled: true,
+                cached_at: Utc::now(),
+            });
+            assert!(cached_payload["unique_uri_template"].is_null());
+
+            let projected =
+                enrich_resource_template_item(cached_payload, &mapping(upstream_template, external_template))
+                    .expect("project cached resource template");
+
+            assert_eq!(projected["uri_template"], upstream_template);
+            assert_eq!(projected["unique_uri_template"], external_template);
+            assert_eq!(projected["id"], "capability-id");
+        }
+    }
+
+    #[tokio::test]
+    async fn naming_projection_fails_when_catalog_mapping_cannot_be_loaded() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("create test database");
+
+        let error = super::enrich_capability_items(
+            super::CapabilityType::Tools,
+            &pool,
+            "server-1",
+            vec![json!({ "name": "upstream_tool" })],
+        )
+        .await
+        .expect_err("missing capability catalog must not expose an upstream name");
+
+        assert!(error.to_string().contains("Failed to load tool naming mappings"));
+    }
+
+    #[tokio::test]
+    async fn naming_projection_rejects_an_unmapped_upstream_value() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("create test database");
+        sqlx::query("CREATE TABLE server_tools (server_id TEXT, tool_name TEXT, id TEXT, unique_name TEXT)")
+            .execute(&pool)
+            .await
+            .expect("create tool catalog");
+
+        let error = super::enrich_capability_items(
+            super::CapabilityType::Tools,
+            &pool,
+            "server-1",
+            vec![json!({ "name": "unmapped_upstream_tool" })],
+        )
+        .await
+        .expect_err("unmapped upstream values must not escape the connection pool");
+
+        assert!(error.to_string().contains("unmapped_upstream_tool"));
+    }
+
+    #[tokio::test]
+    async fn force_refresh_collision_records_namespace_remediation_issue() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect database");
+        crate::config::initialization::run_initialization(&pool)
+            .await
+            .expect("initialize schema");
+        for (server_id, namespace) in [("server-owner", "a"), ("server-challenger", "a_b")] {
+            sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
+                .bind(server_id)
+                .bind(namespace)
+                .execute(&pool)
+                .await
+                .expect("insert server");
+        }
+        crate::config::server::tools::upsert_server_tool(&pool, "server-owner", "a", "b_c", None)
+            .await
+            .expect("insert owner tool");
+
+        let database = Arc::new(Database {
+            pool: pool.clone(),
+            path: PathBuf::from(":memory:"),
+        });
+        let redb_cache = Arc::new(
+            RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default())
+                .expect("create cache"),
+        );
+        let state = Arc::new(AppState {
+            connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
+                Arc::new(Config::default()),
+                Some(database.clone()),
+            ))),
+            metrics_collector: Arc::new(MetricsCollector::new(Duration::from_secs(1))),
+            http_proxy: None,
+            profile_merge_service: None,
+            database: Some(database),
+            audit_database: None,
+            audit_service: None,
+            config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+            redb_cache,
+            unified_query: None,
+            client_service: None,
+            inspector_calls: Arc::new(InspectorCallRegistry::new()),
+            inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager: RwLock::new(None),
+            secret_store: RwLock::new(None),
+            secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
+                "test_unavailable",
+            )),
+        });
+        crate::config::server::capabilities::store_dual_write(
+            &pool,
+            &state.redb_cache,
+            "server-challenger",
+            "a_b",
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            None,
+        )
+        .await
+        .expect("store full baseline before scoped force refresh");
+        let extracted = ExtractedCapability {
+            tools: vec![CachedToolInfo {
+                name: "c".to_string(),
+                description: None,
+                input_schema_json: "{}".to_string(),
+                output_schema_json: None,
+                unique_name: None,
+                icons: None,
+                enabled: true,
+                cached_at: Utc::now(),
+            }],
+            ..ExtractedCapability::default()
+        };
+        let mut events = crate::core::events::EventBus::global().subscribe_async();
+
+        persist_extracted_inventory(
+            &state,
+            &ServerIdentification {
+                server_id: "server-challenger".to_string(),
+                server_name: "a_b".to_string(),
+            },
+            CapabilityType::Tools,
+            &extracted,
+        )
+        .await
+        .expect_err("force refresh collision must fail");
+
+        let issue = crate::config::server::namespace_repair::inspect_namespace_issue(&pool, "server-challenger")
+            .await
+            .expect("inspect issue");
+        assert!(
+            issue.is_some(),
+            "force refresh must record a Board-visible remediation issue"
+        );
+        let event = tokio::time::timeout(Duration::from_millis(100), events.recv())
+            .await
+            .expect("force refresh collision must publish a block event")
+            .expect("event channel must remain open");
+        assert!(matches!(
+            event,
+            crate::core::events::Event::CapabilityCollisionDetected { server_id, .. }
+                if server_id == "server-challenger"
+        ));
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,17 +331,16 @@ impl ExtractedCapability {
 pub async fn load_tool_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> HashMap<String, (String, String)> {
-    sqlx::query_as::<_, (String, String, String)>(
+) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT tool_name, id, unique_name FROM server_tools WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default()
+    .await?
     .into_iter()
     .map(|(name, id, unique_name)| (name, (id, unique_name)))
-    .collect()
+    .collect())
 }
 
 /// Load prompt name to (id, unique_name) mapping from database
@@ -95,17 +354,16 @@ pub async fn load_tool_mapping(
 pub async fn load_prompt_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> HashMap<String, (String, String)> {
-    sqlx::query_as::<_, (String, String, String)>(
+) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT prompt_name, id, unique_name FROM server_prompts WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default()
+    .await?
     .into_iter()
     .map(|(name, id, unique_name)| (name, (id, unique_name)))
-    .collect()
+    .collect())
 }
 
 /// Load resource URI to (id, unique_uri) mapping from database
@@ -119,33 +377,31 @@ pub async fn load_prompt_mapping(
 pub async fn load_resource_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> HashMap<String, (String, String)> {
-    sqlx::query_as::<_, (String, String, String)>(
+) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT resource_uri, id, unique_uri FROM server_resources WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default()
+    .await?
     .into_iter()
     .map(|(uri, id, unique_uri)| (uri, (id, unique_uri)))
-    .collect()
+    .collect())
 }
 
 pub async fn load_resource_template_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> HashMap<String, (String, String)> {
-    sqlx::query_as::<_, (String, String, String)>(
+) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String)>(
         r#"SELECT uri_template, id, unique_name FROM server_resource_templates WHERE server_id = ?"#,
     )
     .bind(server_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default()
+    .await?
     .into_iter()
     .map(|(tpl, id, unique_name)| (tpl, (id, unique_name)))
-    .collect()
+    .collect())
 }
 
 /// Return snapshot of the cache state for MCP server capabilities.
@@ -231,13 +487,22 @@ pub async fn server_capability_detail(
                 error = %error,
                 "Cached capability detail lookup failed"
             );
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return Err(error);
         }
     };
 
     let item = if let Some(item) = lookup.item {
         enrich_capability_items(capability_type, &db.pool, &server_info.server_id, vec![item])
             .await
+            .map_err(|error| {
+                tracing::error!(
+                    server_id = %server_info.server_id,
+                    kind = %request.kind,
+                    error = %error,
+                    "Capability naming projection failed"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
             .into_iter()
             .next()
     } else {
@@ -261,14 +526,18 @@ async fn cached_capability_detail_item(
     server_info: &ServerIdentification,
     capability_type: CapabilityType,
     key: &str,
-) -> Result<CapabilityDetailLookup, crate::core::cache::CacheError> {
+) -> Result<CapabilityDetailLookup, StatusCode> {
     let query = CacheQuery {
         server_id: server_info.server_id.clone(),
         freshness_level: FreshnessLevel::Cached,
         include_disabled: true,
         scope: CacheScope::shared_raw(),
     };
-    let cached = state.redb_cache.get_server_data(&query).await?;
+    let cached = state
+        .redb_cache
+        .get_server_data(&query)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let Some(data) = cached.data else {
         return Ok(CapabilityDetailLookup {
@@ -278,46 +547,68 @@ async fn cached_capability_detail_item(
         });
     };
 
-    let server_name = data.server_name.as_str();
+    let naming_kind = match capability_type {
+        CapabilityType::Tools => NamingKind::Tool,
+        CapabilityType::Prompts => NamingKind::Prompt,
+        CapabilityType::Resources => NamingKind::Resource,
+        CapabilityType::ResourceTemplates => NamingKind::ResourceTemplate,
+    };
+    let route = resolve_capability_route(naming_kind, key)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    if route.server_id != server_info.server_id {
+        return Ok(CapabilityDetailLookup {
+            item: None,
+            cache_hit: true,
+            source: "cache".to_string(),
+        });
+    }
+    let upstream_key = route.upstream_value;
     let item = match capability_type {
         CapabilityType::Tools => data
             .tools
             .into_iter()
-            .find(|tool| {
-                capability_key_matches(&tool.name, key, server_name, capability_type)
-                    || tool.unique_name.as_deref().is_some_and(|unique_name| {
-                        capability_key_matches(unique_name, key, server_name, capability_type)
-                    })
-            })
+            .find(|tool| capability_key_matches(&tool.name, &upstream_key))
             .map(|tool| tool_json_from_cached(&tool)),
         CapabilityType::Resources => data
             .resources
             .into_iter()
-            .find(|resource| {
-                capability_key_matches(&resource.uri, key, server_name, capability_type)
-                    || resource
-                        .name
-                        .as_deref()
-                        .is_some_and(|name| capability_key_matches(name, key, server_name, capability_type))
-            })
+            .find(|resource| capability_key_matches(&resource.uri, &upstream_key))
             .map(resource_json_from_cached),
         CapabilityType::Prompts => data
             .prompts
             .into_iter()
-            .find(|prompt| capability_key_matches(&prompt.name, key, server_name, capability_type))
+            .find(|prompt| capability_key_matches(&prompt.name, &upstream_key))
             .map(prompt_json_from_cached),
         CapabilityType::ResourceTemplates => data
             .resource_templates
             .into_iter()
-            .find(|template| {
-                capability_key_matches(&template.uri_template, key, server_name, capability_type)
-                    || template
-                        .name
-                        .as_deref()
-                        .is_some_and(|name| capability_key_matches(name, key, server_name, capability_type))
-            })
+            .find(|template| capability_key_matches(&template.uri_template, &upstream_key))
             .map(resource_template_json_from_cached),
-    };
+    }
+    .map(|mut item| {
+        if let Some(object) = item.as_object_mut() {
+            match capability_type {
+                CapabilityType::Tools => {
+                    object.insert("tool_name".to_string(), upstream_key.clone().into());
+                    object.insert("unique_name".to_string(), key.into());
+                }
+                CapabilityType::Prompts => {
+                    object.insert("prompt_name".to_string(), upstream_key.clone().into());
+                    object.insert("unique_name".to_string(), key.into());
+                }
+                CapabilityType::Resources => {
+                    object.insert("resource_uri".to_string(), upstream_key.clone().into());
+                    object.insert("unique_uri".to_string(), key.into());
+                }
+                CapabilityType::ResourceTemplates => {
+                    object.insert("uri_template".to_string(), upstream_key.clone().into());
+                    object.insert("unique_name".to_string(), key.into());
+                }
+            }
+        }
+        item
+    });
 
     Ok(CapabilityDetailLookup {
         item,
@@ -338,25 +629,10 @@ fn parse_capability_detail_type(kind: &str) -> Result<CapabilityType, StatusCode
 
 fn capability_key_matches(
     candidate: &str,
-    key: &str,
-    server_name: &str,
-    capability_type: CapabilityType,
+    upstream_key: &str,
 ) -> bool {
     let candidate = candidate.trim();
-    let key = key.trim();
-    if candidate == key {
-        return true;
-    }
-
-    let naming_kind = match capability_type {
-        CapabilityType::Tools => NamingKind::Tool,
-        CapabilityType::Prompts => NamingKind::Prompt,
-        CapabilityType::Resources => return false,
-        CapabilityType::ResourceTemplates => NamingKind::ResourceTemplate,
-    };
-
-    generate_unique_name(naming_kind, server_name, candidate) == key
-        || candidate == generate_unique_name(naming_kind, server_name, key)
+    candidate == upstream_key.trim()
 }
 
 const DEFAULT_LIMIT: usize = 50;
@@ -464,17 +740,24 @@ async fn cache_reset_core(state: &Arc<AppState>) -> Result<CacheResetResp, Statu
 fn enrich_tool_item(
     item: serde_json::Value,
     mapping: &HashMap<String, (String, String)>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
-    if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
-        if let Some((id, unique_name)) = mapping.get(name) {
-            if let Some(obj) = item.as_object_mut() {
-                obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
-                obj.insert("id".to_string(), serde_json::json!(id));
-            }
-        }
-    }
-    item
+    let presented_name = item
+        .get("tool_name")
+        .or_else(|| item.get("name"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| ApiError::InternalError("Tool response is missing a capability name".to_string()))?;
+    let (upstream_name, id, unique_name) = find_capability_mapping(mapping, presented_name).ok_or_else(|| {
+        ApiError::InternalError(format!("Tool '{presented_name}' has no persisted external identifier"))
+    })?;
+    let obj = item
+        .as_object_mut()
+        .ok_or_else(|| ApiError::InternalError("Tool response is not an object".to_string()))?;
+    obj.insert("name".to_string(), serde_json::json!(unique_name));
+    obj.insert("tool_name".to_string(), serde_json::json!(upstream_name));
+    obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
+    obj.insert("id".to_string(), serde_json::json!(id));
+    Ok(item)
 }
 
 /// Enrich prompt items with database identifiers
@@ -482,17 +765,26 @@ fn enrich_tool_item(
 fn enrich_prompt_item(
     item: serde_json::Value,
     mapping: &HashMap<String, (String, String)>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
-    if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
-        if let Some((id, unique_name)) = mapping.get(name) {
-            if let Some(obj) = item.as_object_mut() {
-                obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
-                obj.insert("id".to_string(), serde_json::json!(id));
-            }
-        }
-    }
-    item
+    let presented_name = item
+        .get("prompt_name")
+        .or_else(|| item.get("name"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| ApiError::InternalError("Prompt response is missing a capability name".to_string()))?;
+    let (upstream_name, id, unique_name) = find_capability_mapping(mapping, presented_name).ok_or_else(|| {
+        ApiError::InternalError(format!(
+            "Prompt '{presented_name}' has no persisted external identifier"
+        ))
+    })?;
+    let obj = item
+        .as_object_mut()
+        .ok_or_else(|| ApiError::InternalError("Prompt response is not an object".to_string()))?;
+    obj.insert("name".to_string(), serde_json::json!(unique_name));
+    obj.insert("prompt_name".to_string(), serde_json::json!(upstream_name));
+    obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
+    obj.insert("id".to_string(), serde_json::json!(id));
+    Ok(item)
 }
 
 /// Enrich resource items with database identifiers
@@ -500,17 +792,26 @@ fn enrich_prompt_item(
 fn enrich_resource_item(
     item: serde_json::Value,
     mapping: &HashMap<String, (String, String)>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
-    if let Some(uri) = item.get("uri").and_then(|x| x.as_str()) {
-        if let Some((id, unique_uri)) = mapping.get(uri) {
-            if let Some(obj) = item.as_object_mut() {
-                obj.insert("unique_uri".to_string(), serde_json::json!(unique_uri));
-                obj.insert("id".to_string(), serde_json::json!(id));
-            }
-        }
-    }
-    item
+    let presented_uri = item
+        .get("resource_uri")
+        .or_else(|| item.get("uri"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| ApiError::InternalError("Resource response is missing a URI".to_string()))?;
+    let (upstream_uri, id, unique_uri) = find_capability_mapping(mapping, presented_uri).ok_or_else(|| {
+        ApiError::InternalError(format!(
+            "Resource '{presented_uri}' has no persisted external identifier"
+        ))
+    })?;
+    let obj = item
+        .as_object_mut()
+        .ok_or_else(|| ApiError::InternalError("Resource response is not an object".to_string()))?;
+    obj.insert("uri".to_string(), serde_json::json!(unique_uri));
+    obj.insert("resource_uri".to_string(), serde_json::json!(upstream_uri));
+    obj.insert("unique_uri".to_string(), serde_json::json!(unique_uri));
+    obj.insert("id".to_string(), serde_json::json!(id));
+    Ok(item)
 }
 
 /// Enrich resource template items with database identifiers
@@ -518,17 +819,39 @@ fn enrich_resource_item(
 fn enrich_resource_template_item(
     item: serde_json::Value,
     mapping: &HashMap<String, (String, String)>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
-    if let Some(tpl) = item.get("uri_template").and_then(|x| x.as_str()) {
-        if let Some((id, unique_name)) = mapping.get(tpl) {
-            if let Some(obj) = item.as_object_mut() {
-                obj.insert("unique_uri_template".to_string(), serde_json::json!(unique_name));
-                obj.insert("id".to_string(), serde_json::json!(id));
-            }
-        }
-    }
-    item
+    let presented_template = ["unique_uri_template", "uri_template", "name"]
+        .into_iter()
+        .filter_map(|field| item.get(field).and_then(|value| value.as_str()))
+        .find(|value| !value.trim().is_empty())
+        .ok_or_else(|| ApiError::InternalError("Resource template response is missing a template".to_string()))?;
+    let (upstream_template, id, unique_name) =
+        find_capability_mapping(mapping, presented_template).ok_or_else(|| {
+            ApiError::InternalError(format!(
+                "Resource template '{presented_template}' has no persisted external identifier"
+            ))
+        })?;
+    let obj = item
+        .as_object_mut()
+        .ok_or_else(|| ApiError::InternalError("Resource template response is not an object".to_string()))?;
+    obj.insert("name".to_string(), serde_json::json!(unique_name));
+    obj.insert("uri_template".to_string(), serde_json::json!(upstream_template));
+    obj.insert("unique_uri_template".to_string(), serde_json::json!(unique_name));
+    obj.insert("id".to_string(), serde_json::json!(id));
+    Ok(item)
+}
+
+fn find_capability_mapping<'a>(
+    mapping: &'a HashMap<String, (String, String)>,
+    presented_value: &str,
+) -> Option<(&'a str, &'a str, &'a str)> {
+    mapping
+        .iter()
+        .find(|(upstream_value, (_, external_value))| {
+            upstream_value.as_str() == presented_value || external_value == presented_value
+        })
+        .map(|(upstream_value, (id, external_value))| (upstream_value.as_str(), id.as_str(), external_value.as_str()))
 }
 
 /// Enrich capability items with database-stored identifiers
@@ -549,34 +872,46 @@ pub async fn enrich_capability_items(
     pool: &Pool<Sqlite>,
     server_id: &str,
     items: Vec<serde_json::Value>,
-) -> Vec<serde_json::Value> {
-    match capability_type {
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    let enriched = match capability_type {
         CapabilityType::Tools => {
-            let mapping = load_tool_mapping(pool, server_id).await;
-            items.into_iter().map(|item| enrich_tool_item(item, &mapping)).collect()
+            let mapping = load_tool_mapping(pool, server_id)
+                .await
+                .map_err(|error| ApiError::InternalError(format!("Failed to load tool naming mappings: {error}")))?;
+            items
+                .into_iter()
+                .map(|item| enrich_tool_item(item, &mapping))
+                .collect::<Result<Vec<_>, _>>()?
         }
         CapabilityType::Prompts => {
-            let mapping = load_prompt_mapping(pool, server_id).await;
+            let mapping = load_prompt_mapping(pool, server_id)
+                .await
+                .map_err(|error| ApiError::InternalError(format!("Failed to load prompt naming mappings: {error}")))?;
             items
                 .into_iter()
                 .map(|item| enrich_prompt_item(item, &mapping))
-                .collect()
+                .collect::<Result<Vec<_>, _>>()?
         }
         CapabilityType::Resources => {
-            let mapping = load_resource_mapping(pool, server_id).await;
+            let mapping = load_resource_mapping(pool, server_id).await.map_err(|error| {
+                ApiError::InternalError(format!("Failed to load resource naming mappings: {error}"))
+            })?;
             items
                 .into_iter()
                 .map(|item| enrich_resource_item(item, &mapping))
-                .collect()
+                .collect::<Result<Vec<_>, _>>()?
         }
         CapabilityType::ResourceTemplates => {
-            let mapping = load_resource_template_mapping(pool, server_id).await;
+            let mapping = load_resource_template_mapping(pool, server_id).await.map_err(|error| {
+                ApiError::InternalError(format!("Failed to load resource template naming mappings: {error}"))
+            })?;
             items
                 .into_iter()
                 .map(|item| enrich_resource_template_item(item, &mapping))
-                .collect()
+                .collect::<Result<Vec<_>, _>>()?
         }
-    }
+    };
+    Ok(enriched)
 }
 
 pub fn respond_with_enriched(
@@ -934,21 +1269,41 @@ pub async fn extract_resource_templates_capability(
     })
 }
 
-/// Create temporary server instance for capability extraction during force refresh
-///
-/// This function handles force refresh requests by creating a temporary MCP server
-/// instance to extract fresh capability data when cache is stale or empty.
-///
-/// # Arguments
-/// * `state` - Application state containing connection pools and cache
-/// * `server_info` - Server identification information
-/// * `params` - Inspection parameters including refresh strategy
-/// * `capability_type` - Type of capability to extract
-///
-/// # Returns
-/// - `Ok(Some(Json))` - Successfully extracted and enriched capability data
-/// - `Ok(None)` - No force refresh requested or temporary instance creation failed
-/// - `Err(ApiError)` - Database or extraction error occurred
+/// Persist the authoritative inventory for one explicitly refreshed kind.
+async fn persist_extracted_inventory(
+    state: &Arc<AppState>,
+    server_info: &ServerIdentification,
+    capability_type: CapabilityType,
+    extracted: &ExtractedCapability,
+) -> Result<(), ApiError> {
+    let kinds = match capability_type {
+        CapabilityType::Tools => crate::core::pool::CapSyncFlags::TOOLS,
+        CapabilityType::Prompts => crate::core::pool::CapSyncFlags::PROMPTS,
+        CapabilityType::Resources => crate::core::pool::CapSyncFlags::RESOURCES,
+        CapabilityType::ResourceTemplates => crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES,
+    };
+    let db = get_database_from_state(state)?;
+    if let Err(error) = crate::config::server::capabilities::store_dual_write_for_kinds(
+        &db.pool,
+        &state.redb_cache,
+        &server_info.server_id,
+        &server_info.server_name,
+        extracted.tools.clone(),
+        extracted.resources.clone(),
+        extracted.prompts.clone(),
+        extracted.resource_templates.clone(),
+        None,
+        kinds,
+    )
+    .await
+    {
+        crate::config::server::namespace_repair::record_capability_collision_from_error(&db.pool, &error).await?;
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// Create a temporary server instance for capability extraction during force refresh.
 pub async fn create_temporary_instance_for_capability(
     state: &Arc<AppState>,
     server_info: &ServerIdentification,
@@ -976,40 +1331,18 @@ pub async fn create_temporary_instance_for_capability(
                 CapabilityType::ResourceTemplates => extract_resource_templates_capability(conn).await?,
             };
 
-            if !extracted.data.is_empty() {
-                if let Ok(db) = get_database_from_state(state) {
-                    let _ = crate::config::server::capabilities::store_dual_write(
-                        &db.pool,
-                        &state.redb_cache,
-                        &server_info.server_id,
-                        &server_info.server_name,
-                        extracted.tools.clone(),
-                        extracted.resources.clone(),
-                        extracted.prompts.clone(),
-                        extracted.resource_templates.clone(),
-                        None,
-                    )
-                    .await;
-                }
-            }
+            persist_extracted_inventory(state, server_info, capability_type, &extracted).await?;
 
-            if let Ok(db) = get_database_from_state(state) {
-                let enriched =
-                    enrich_capability_items(capability_type, &db.pool, &server_info.server_id, extracted.data).await;
-                return Ok(Some(respond_with_enriched(enriched, false, params.refresh, "runtime")));
-            }
-            return Ok(Some(respond_with_enriched(
-                Vec::new(),
-                false,
-                params.refresh,
-                "runtime",
-            )));
+            let db = get_database_from_state(state)?;
+            let enriched =
+                enrich_capability_items(capability_type, &db.pool, &server_info.server_id, extracted.data).await?;
+            return Ok(Some(respond_with_enriched(enriched, false, params.refresh, "runtime")));
         }
     }
 
     // Create temporary validation instance
     match pool
-        .get_or_create_validation_instance(&server_info.server_name, "api", std::time::Duration::from_secs(5 * 60))
+        .get_or_create_validation_instance(&server_info.server_id, "api", std::time::Duration::from_secs(5 * 60))
         .await
     {
         Ok(Some(validation_conn)) => {
@@ -1020,28 +1353,11 @@ pub async fn create_temporary_instance_for_capability(
                 CapabilityType::ResourceTemplates => extract_resource_templates_capability(validation_conn).await?,
             };
 
-            if !extracted.data.is_empty() {
-                if let Ok(db) = get_database_from_state(state) {
-                    let _ = crate::config::server::capabilities::store_dual_write(
-                        &db.pool,
-                        &state.redb_cache,
-                        &server_info.server_id,
-                        &server_info.server_name,
-                        extracted.tools.clone(),
-                        extracted.resources.clone(),
-                        extracted.prompts.clone(),
-                        extracted.resource_templates.clone(),
-                        None,
-                    )
-                    .await;
-                }
-            }
+            persist_extracted_inventory(state, server_info, capability_type, &extracted).await?;
 
-            let data = extracted.data;
-            let items = match get_database_from_state(state) {
-                Ok(db) => enrich_capability_items(capability_type, &db.pool, &server_info.server_id, data).await,
-                Err(_) => Vec::new(),
-            };
+            let db = get_database_from_state(state)?;
+            let items =
+                enrich_capability_items(capability_type, &db.pool, &server_info.server_id, extracted.data).await?;
 
             Ok(Some(respond_with_enriched(items, false, params.refresh, "temporary")))
         }

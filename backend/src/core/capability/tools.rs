@@ -13,7 +13,7 @@ use rmcp::model::{PaginatedRequestParams, Tool};
 use tokio::sync::Mutex;
 use tracing;
 
-use crate::core::capability::naming::{generate_tool_name_with_policy, infer_tool_naming_policy};
+use crate::core::capability::naming::{NamingKind, external_identifier};
 use crate::core::pool::UpstreamConnectionPool;
 
 /// Tool mapping information returned by builders.
@@ -106,32 +106,23 @@ pub async fn get_all_tools(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>)
     let mut all_tools = Vec::new();
 
     for (server_id, instances) in &pool.connections {
-        let server_name = match crate::core::capability::resolver::to_name(server_id).await {
-            Ok(Some(name)) => name,
-            _ => {
-                tracing::warn!("Server ID '{}' not found in resolver, skipping", server_id);
-                continue;
-            }
-        };
-
-        // Aggregate visible tool names across instances to infer a policy per server
-        let mut aggregated_names: Vec<&str> = Vec::new();
         for conn in instances.values() {
             if !conn.is_connected() {
                 continue;
             }
             for tool in &conn.tools {
-                aggregated_names.push(tool.name.as_ref());
-            }
-        }
-        let policy = infer_tool_naming_policy(&server_name, aggregated_names);
-
-        for conn in instances.values() {
-            if !conn.is_connected() {
-                continue;
-            }
-            for tool in &conn.tools {
-                let unique_name = generate_tool_name_with_policy(&server_name, &tool.name, &policy);
+                let unique_name = match external_identifier(NamingKind::Tool, server_id, &tool.name).await {
+                    Ok(name) => name,
+                    Err(error) => {
+                        tracing::warn!(
+                            server_id = %server_id,
+                            upstream_tool = %tool.name,
+                            error = %error,
+                            "Skipping unregistered upstream tool"
+                        );
+                        continue;
+                    }
+                };
                 let mut unique_tool = tool.clone();
                 unique_tool.name = unique_name.into();
                 all_tools.push(unique_tool);
@@ -231,12 +222,19 @@ async fn collect_tools_from_instance_peer(
         }
     }
 
-    // Infer policy for this server from the collected list
-    let name_view: Vec<&str> = raw_tools.iter().map(|t| t.name.as_ref()).collect();
-    let policy = infer_tool_naming_policy(&server_name, name_view);
-
     for tool in raw_tools.into_iter() {
-        let unique_name = generate_tool_name_with_policy(&server_name, &tool.name, &policy);
+        let unique_name = match external_identifier(NamingKind::Tool, &server_id, &tool.name).await {
+            Ok(name) => name,
+            Err(error) => {
+                tracing::warn!(
+                    server_id = %server_id,
+                    upstream_tool = %tool.name,
+                    error = %error,
+                    "Skipping unregistered upstream tool"
+                );
+                continue;
+            }
+        };
         let mut unique_tool = tool.clone();
         unique_tool.name = unique_name.clone().into();
 

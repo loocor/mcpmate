@@ -21,6 +21,7 @@ pub struct InspectorListQuery {
     pub mode: InspectorMode,
     #[serde(default)]
     pub refresh: bool,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -46,6 +47,7 @@ pub struct InspectorPromptGetReq {
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub mode: InspectorMode,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -57,6 +59,7 @@ pub struct InspectorResourceReadQuery {
     pub session_id: Option<String>,
     #[serde(default)]
     pub mode: InspectorMode,
+    pub timeout_ms: Option<u64>,
 }
 
 // ==============================
@@ -206,6 +209,7 @@ pub struct InspectorSessionOpenReq {
     pub server_name: Option<String>,
     #[serde(default)]
     pub mode: InspectorMode,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]
@@ -239,4 +243,38 @@ api_resp!(
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct InspectorCallEventsQuery {
     pub call_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InspectorListQuery, InspectorPromptGetReq, InspectorResourceReadQuery, InspectorSessionOpenReq};
+
+    #[test]
+    fn every_inspector_operation_accepts_an_independent_timeout() {
+        let list: InspectorListQuery = serde_json::from_value(serde_json::json!({
+            "server_id": "server-1",
+            "timeout_ms": 125
+        }))
+        .expect("deserialize list query");
+        let prompt: InspectorPromptGetReq = serde_json::from_value(serde_json::json!({
+            "name": "prompt",
+            "timeout_ms": 250
+        }))
+        .expect("deserialize prompt request");
+        let resource: InspectorResourceReadQuery = serde_json::from_value(serde_json::json!({
+            "uri": "file:///resource",
+            "timeout_ms": 500
+        }))
+        .expect("deserialize resource request");
+        let session: InspectorSessionOpenReq = serde_json::from_value(serde_json::json!({
+            "server_id": "server-1",
+            "timeout_ms": 1_000
+        }))
+        .expect("deserialize session request");
+
+        assert_eq!(list.timeout_ms, Some(125));
+        assert_eq!(prompt.timeout_ms, Some(250));
+        assert_eq!(resource.timeout_ms, Some(500));
+        assert_eq!(session.timeout_ms, Some(1_000));
+    }
 }

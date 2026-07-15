@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use crate::clients::models::{CapabilitySource, ClientCapabilityConfig, UnifyDirectExposureConfig};
 use crate::config::database::Database;
 use crate::config::profile::basic::get_active_profile;
-use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
+use crate::core::capability::naming::{NamingKind, external_resource_prefix, resolve_capability_route};
 use crate::core::profile::ProfileService;
 use crate::core::proxy::server::ClientContext;
 use crate::mcper::{HOSTED_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES};
@@ -536,14 +536,13 @@ impl ProfileVisibilityService {
         snapshot: &VisibilitySnapshot,
         unique_value: &str,
     ) -> Result<bool> {
-        let (server_name, _) = resolve_unique_name(kind, unique_value)
+        let route = resolve_capability_route(kind, unique_value)
             .await
             .with_context(|| format!("Failed to resolve canonical capability name '{unique_value}'"))?;
-        let server_id = crate::core::capability::resolver::to_id(&server_name)
-            .await
-            .with_context(|| format!("Failed to resolve server id for '{server_name}'"))?
-            .ok_or_else(|| anyhow!("Server '{server_name}' not found for canonical capability '{unique_value}'"))?;
-        Ok(snapshot.server_ids.iter().any(|candidate| candidate == &server_id))
+        Ok(snapshot
+            .server_ids
+            .iter()
+            .any(|candidate| candidate == &route.server_id))
     }
 
     async fn load_client_capability_config(
@@ -758,9 +757,12 @@ impl ProfileVisibilityService {
             let server_placeholders = repeat_placeholders(server_ids.len());
             let sql = format!(
                 r#"
-                SELECT DISTINCT sc.name, pr.resource_uri
+                SELECT DISTINCT sr.unique_uri
                 FROM profile_resource pr
                 JOIN server_config sc ON pr.server_id = sc.id
+                JOIN server_resources sr
+                  ON sr.server_id = pr.server_id
+                 AND sr.resource_uri = pr.resource_uri
                 WHERE pr.profile_id IN ({profile_placeholders})
                   AND pr.server_id IN ({server_placeholders})
                   AND pr.enabled = 1
@@ -768,7 +770,7 @@ impl ProfileVisibilityService {
                 "#,
             );
 
-            let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
             for profile_id in profile_ids {
                 query = query.bind(profile_id);
             }
@@ -781,9 +783,6 @@ impl ProfileVisibilityService {
                 .await
                 .context("Failed to load resource policy rows")?
                 .into_iter()
-                .map(|(server_name, resource_uri)| {
-                    generate_unique_name(NamingKind::Resource, &server_name, &resource_uri)
-                })
                 .collect()
         } else {
             query_unique_values(pool, "server_resources", "unique_uri", "server_id", server_ids)
@@ -810,9 +809,12 @@ impl ProfileVisibilityService {
             let server_placeholders = repeat_placeholders(server_ids.len());
             let sql = format!(
                 r#"
-                SELECT DISTINCT sc.name, prt.uri_template
+                SELECT DISTINCT sc.name, prt.uri_template, srt.unique_name
                 FROM profile_resource_template prt
                 JOIN server_config sc ON prt.server_id = sc.id
+                JOIN server_resource_templates srt
+                  ON srt.server_id = prt.server_id
+                 AND srt.uri_template = prt.uri_template
                 WHERE prt.profile_id IN ({profile_placeholders})
                   AND prt.server_id IN ({server_placeholders})
                   AND prt.enabled = 1
@@ -820,7 +822,7 @@ impl ProfileVisibilityService {
                 "#,
             );
 
-            let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+            let mut query = sqlx::query_as::<_, (String, String, String)>(&sql);
             for profile_id in profile_ids {
                 query = query.bind(profile_id);
             }
@@ -835,17 +837,15 @@ impl ProfileVisibilityService {
 
             let values = rows
                 .iter()
-                .map(|(server_name, uri_template)| {
-                    generate_unique_name(NamingKind::ResourceTemplate, server_name, uri_template)
-                })
+                .map(|(_, _, unique_name)| unique_name.clone())
                 .collect::<Vec<_>>();
             let prefixes = rows
                 .iter()
-                .map(|(server_name, uri_template)| {
+                .map(|(server_name, uri_template, _)| {
                     let prefix = crate::config::profile::resource_template::template_prefix(uri_template);
-                    generate_unique_name(NamingKind::Resource, server_name, prefix)
+                    external_resource_prefix(server_name, prefix)
                 })
-                .collect::<Vec<_>>();
+                .collect::<anyhow::Result<Vec<_>>>()?;
             (values, prefixes)
         } else {
             (
@@ -881,9 +881,12 @@ impl ProfileVisibilityService {
             let server_placeholders = repeat_placeholders(server_ids.len());
             let sql = format!(
                 r#"
-                SELECT DISTINCT sc.name, pp.prompt_name
+                SELECT DISTINCT sp.unique_name
                 FROM profile_prompt pp
                 JOIN server_config sc ON pp.server_id = sc.id
+                JOIN server_prompts sp
+                  ON sp.server_id = pp.server_id
+                 AND sp.prompt_name = pp.prompt_name
                 WHERE pp.profile_id IN ({profile_placeholders})
                   AND pp.server_id IN ({server_placeholders})
                   AND pp.enabled = 1
@@ -891,7 +894,7 @@ impl ProfileVisibilityService {
                 "#,
             );
 
-            let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
             for profile_id in profile_ids {
                 query = query.bind(profile_id);
             }
@@ -904,7 +907,6 @@ impl ProfileVisibilityService {
                 .await
                 .context("Failed to load prompt policy rows")?
                 .into_iter()
-                .map(|(server_name, prompt_name)| generate_unique_name(NamingKind::Prompt, &server_name, &prompt_name))
                 .collect()
         } else {
             query_unique_values(pool, "server_prompts", "unique_name", "server_id", server_ids)
@@ -1120,6 +1122,7 @@ mod tests {
         profile::{self, init::initialize_profile_tables},
         server::{self, init::initialize_server_tables},
     };
+    use crate::core::capability::naming::external_resource_prefix;
     use serial_test::serial;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
@@ -1180,26 +1183,14 @@ mod tests {
         server_name: &str,
         tool_name: &str,
     ) -> String {
-        let unique_name = generate_unique_name(NamingKind::Tool, server_name, tool_name);
-        sqlx::query(
-            r#"
-            INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description)
-            VALUES (?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(crate::generate_id!("stl"))
-        .bind(server_id)
-        .bind(server_name)
-        .bind(tool_name)
-        .bind(&unique_name)
-        .bind(Option::<String>::None)
-        .execute(&db.pool)
-        .await
-        .expect("insert server tool");
+        let result =
+            crate::config::server::tools::upsert_server_tool(&db.pool, server_id, server_name, tool_name, None)
+                .await
+                .expect("upsert server tool");
         profile::add_tool_to_profile(&db.pool, profile_id, server_id, tool_name, true)
             .await
             .expect("add tool to profile");
-        unique_name
+        result.unique_name
     }
 
     async fn seed_prompt(
@@ -1209,22 +1200,15 @@ mod tests {
         server_name: &str,
         prompt_name: &str,
     ) -> String {
-        let unique_name = generate_unique_name(NamingKind::Prompt, server_name, prompt_name);
-        sqlx::query(
-            r#"
-            INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name, description)
-            VALUES (?, ?, ?, ?, ?, ?)
-            "#,
+        let unique_name = crate::config::server::capabilities::upsert_shadow_prompt(
+            &db.pool,
+            server_id,
+            server_name,
+            prompt_name,
+            None,
         )
-        .bind(crate::generate_id!("sprm"))
-        .bind(server_id)
-        .bind(server_name)
-        .bind(prompt_name)
-        .bind(&unique_name)
-        .bind(Option::<String>::None)
-        .execute(&db.pool)
         .await
-        .expect("insert server prompt");
+        .expect("upsert server prompt");
 
         profile::add_prompt_to_profile(&db.pool, profile_id, server_id, prompt_name, true)
             .await
@@ -1239,24 +1223,17 @@ mod tests {
         server_name: &str,
         resource_uri: &str,
     ) -> String {
-        let unique_uri = generate_unique_name(NamingKind::Resource, server_name, resource_uri);
-        sqlx::query(
-            r#"
-            INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name, description, mime_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+        let unique_uri = crate::config::server::capabilities::upsert_shadow_resource(
+            &db.pool,
+            server_id,
+            server_name,
+            resource_uri,
+            None,
+            None,
+            None,
         )
-        .bind(crate::generate_id!("sres"))
-        .bind(server_id)
-        .bind(server_name)
-        .bind(resource_uri)
-        .bind(&unique_uri)
-        .bind(Option::<String>::None)
-        .bind(Option::<String>::None)
-        .bind(Option::<String>::None)
-        .execute(&db.pool)
         .await
-        .expect("insert server resource");
+        .expect("upsert server resource");
 
         profile::add_resource_to_profile(&db.pool, profile_id, server_id, resource_uri, true)
             .await
@@ -1271,23 +1248,16 @@ mod tests {
         server_name: &str,
         uri_template: &str,
     ) -> String {
-        let unique_name = generate_unique_name(NamingKind::ResourceTemplate, server_name, uri_template);
-        sqlx::query(
-            r#"
-            INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            "#,
+        let unique_name = crate::config::server::capabilities::upsert_shadow_resource_template(
+            &db.pool,
+            server_id,
+            server_name,
+            uri_template,
+            Some(uri_template),
+            None,
         )
-        .bind(crate::generate_id!("srt"))
-        .bind(server_id)
-        .bind(server_name)
-        .bind(uri_template)
-        .bind(&unique_name)
-        .bind(uri_template)
-        .bind(Option::<String>::None)
-        .execute(&db.pool)
         .await
-        .expect("insert server resource template");
+        .expect("upsert server resource template");
 
         profile::add_resource_template_to_profile(&db.pool, profile_id, server_id, uri_template, true)
             .await
@@ -1332,8 +1302,8 @@ mod tests {
 
         let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
         let inactive_profile_id = insert_profile(&db, "inactive", ProfileType::Shared, false).await;
-        let active_server_id = insert_server(&db, "active-server", "tools,prompts,resources").await;
-        let inactive_server_id = insert_server(&db, "inactive-server", "tools,prompts,resources").await;
+        let active_server_id = insert_server(&db, "active_server", "tools,prompts,resources").await;
+        let inactive_server_id = insert_server(&db, "inactive_server", "tools,prompts,resources").await;
 
         profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
             .await
@@ -1346,7 +1316,7 @@ mod tests {
             &db,
             &active_profile_id,
             &active_server_id,
-            "active-server",
+            "active_server",
             "tool_alpha",
         )
         .await;
@@ -1354,7 +1324,7 @@ mod tests {
             &db,
             &inactive_profile_id,
             &inactive_server_id,
-            "inactive-server",
+            "inactive_server",
             "tool_beta",
         )
         .await;
@@ -1380,8 +1350,8 @@ mod tests {
 
         let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
         let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
-        let active_server_id = insert_server(&db, "active-server", "tools").await;
-        let selected_server_id = insert_server(&db, "selected-server", "tools").await;
+        let active_server_id = insert_server(&db, "active_server", "tools").await;
+        let selected_server_id = insert_server(&db, "selected_server", "tools").await;
 
         profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
             .await
@@ -1394,7 +1364,7 @@ mod tests {
             &db,
             &selected_profile_id,
             &selected_server_id,
-            "selected-server",
+            "selected_server",
             "tool_selected",
         )
         .await;
@@ -1425,7 +1395,7 @@ mod tests {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
         let custom_profile_id = insert_profile(&db, "custom", ProfileType::HostApp, false).await;
-        let custom_server_id = insert_server(&db, "custom-server", "prompts").await;
+        let custom_server_id = insert_server(&db, "custom_server", "prompts").await;
 
         profile::add_server_to_profile(&db.pool, &custom_profile_id, &custom_server_id, true)
             .await
@@ -1435,7 +1405,7 @@ mod tests {
             &db,
             &custom_profile_id,
             &custom_server_id,
-            "custom-server",
+            "custom_server",
             "prompt_custom",
         )
         .await;
@@ -1466,20 +1436,20 @@ mod tests {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
         let profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
-        let allowed_server_id = insert_server(&db, "alpha-server", "tools,prompts,resources").await;
-        let denied_server_id = insert_server(&db, "beta-server", "tools,prompts,resources").await;
+        let allowed_server_id = insert_server(&db, "alpha_server", "tools,prompts,resources").await;
+        let denied_server_id = insert_server(&db, "beta_server", "tools,prompts,resources").await;
 
         profile::add_server_to_profile(&db.pool, &profile_id, &allowed_server_id, true)
             .await
             .expect("add allowed server");
 
-        let allowed_tool = seed_tool(&db, &profile_id, &allowed_server_id, "alpha-server", "tool_alpha").await;
-        let allowed_prompt = seed_prompt(&db, &profile_id, &allowed_server_id, "alpha-server", "prompt_alpha").await;
+        let allowed_tool = seed_tool(&db, &profile_id, &allowed_server_id, "alpha_server", "tool_alpha").await;
+        let allowed_prompt = seed_prompt(&db, &profile_id, &allowed_server_id, "alpha_server", "prompt_alpha").await;
         let _allowed_resource = seed_resource(
             &db,
             &profile_id,
             &allowed_server_id,
-            "alpha-server",
+            "alpha_server",
             "file://workspace/explicit.txt",
         )
         .await;
@@ -1487,63 +1457,41 @@ mod tests {
             &db,
             &profile_id,
             &allowed_server_id,
-            "alpha-server",
+            "alpha_server",
             "file://workspace/{path}",
         )
         .await;
 
-        let denied_tool = generate_unique_name(NamingKind::Tool, "beta-server", "tool_beta");
-        sqlx::query(
-            r#"
-            INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description)
-            VALUES (?, ?, ?, ?, ?, ?)
-            "#,
+        let denied_tool = crate::config::server::tools::upsert_server_tool(
+            &db.pool,
+            &denied_server_id,
+            "beta_server",
+            "tool_beta",
+            None,
         )
-        .bind(crate::generate_id!("stl"))
-        .bind(&denied_server_id)
-        .bind("beta-server")
-        .bind("tool_beta")
-        .bind(&denied_tool)
-        .bind(Option::<String>::None)
-        .execute(&db.pool)
         .await
-        .expect("insert denied tool");
-        let denied_prompt = generate_unique_name(NamingKind::Prompt, "beta-server", "prompt_beta");
-        let denied_resource = generate_unique_name(NamingKind::Resource, "beta-server", "file://other/file.txt");
-
-        sqlx::query(
-            r#"
-            INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name, description)
-            VALUES (?, ?, ?, ?, ?, ?)
-            "#,
+        .expect("upsert denied tool")
+        .unique_name;
+        let denied_prompt = crate::config::server::capabilities::upsert_shadow_prompt(
+            &db.pool,
+            &denied_server_id,
+            "beta_server",
+            "prompt_beta",
+            None,
         )
-        .bind(crate::generate_id!("sprm"))
-        .bind(&denied_server_id)
-        .bind("beta-server")
-        .bind("prompt_beta")
-        .bind(&denied_prompt)
-        .bind(Option::<String>::None)
-        .execute(&db.pool)
         .await
-        .expect("insert denied prompt");
-
-        sqlx::query(
-            r#"
-            INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name, description, mime_type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
+        .expect("upsert denied prompt");
+        let denied_resource = crate::config::server::capabilities::upsert_shadow_resource(
+            &db.pool,
+            &denied_server_id,
+            "beta_server",
+            "file://other/file.txt",
+            None,
+            None,
+            None,
         )
-        .bind(crate::generate_id!("sres"))
-        .bind(&denied_server_id)
-        .bind("beta-server")
-        .bind("file://other/file.txt")
-        .bind(&denied_resource)
-        .bind(Option::<String>::None)
-        .bind(Option::<String>::None)
-        .bind(Option::<String>::None)
-        .execute(&db.pool)
         .await
-        .expect("insert denied resource");
+        .expect("upsert denied resource");
 
         insert_client_config(&db, "client-d", CapabilitySource::Profiles, vec![profile_id], None).await;
 
@@ -1577,7 +1525,8 @@ mod tests {
                 .is_err()
         );
 
-        let dynamic_allowed = generate_unique_name(NamingKind::Resource, "alpha-server", "file://workspace/main.rs");
+        let dynamic_allowed = external_resource_prefix("alpha_server", "file://workspace/main.rs")
+            .expect("build external resource prefix");
         assert!(
             service
                 .assert_resource_allowed_with_snapshot(&snapshot, &dynamic_allowed)
@@ -1599,8 +1548,8 @@ mod tests {
 
         let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
         let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
-        let disabled_server_id = insert_server(&db, "disabled-server", "tools,prompts,resources").await;
-        let enabled_server_id = insert_server(&db, "enabled-server", "tools,prompts,resources").await;
+        let disabled_server_id = insert_server(&db, "disabled_server", "tools,prompts,resources").await;
+        let enabled_server_id = insert_server(&db, "enabled_server", "tools,prompts,resources").await;
 
         profile::add_server_to_profile(&db.pool, &active_profile_id, &disabled_server_id, true)
             .await
@@ -1613,7 +1562,7 @@ mod tests {
             &db,
             &active_profile_id,
             &disabled_server_id,
-            "disabled-server",
+            "disabled_server",
             "tool_disabled",
         )
         .await;
@@ -1621,7 +1570,7 @@ mod tests {
             &db,
             &selected_profile_id,
             &enabled_server_id,
-            "enabled-server",
+            "enabled_server",
             "tool_enabled",
         )
         .await;
