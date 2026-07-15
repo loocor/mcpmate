@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { serversApi } from "../lib/api";
-import { notifySuccess, notifyError } from "../lib/notify";
+import { notifyError, notifySuccess, notifyWarning } from "../lib/notify";
 import { startOAuthAccessFlow } from "../lib/oauth-callback-access";
 import { isRegistrySource } from "../lib/source";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
@@ -295,10 +295,15 @@ export function ServerEditDrawer({
 	const formRef = useRef<ServerInstallManualFormHandle>(null);
 	const [isRefreshing, setIsRefreshing] = useState(false);
 	const [unifyEligible, setUnifyEligible] = useState(false);
+	const [namespaceRemediationFeedback, setNamespaceRemediationFeedback] =
+		useState<string | null>(null);
+	const namespaceRemediationAllowed =
+		server?.namespace_issue?.remediation_allowed === true;
 
 	useEffect(() => {
 		if (isOpen && server) {
 			setUnifyEligible(server.unify_direct_exposure_eligible ?? false);
+			setNamespaceRemediationFeedback(null);
 		}
 	}, [isOpen, server]);
 
@@ -311,6 +316,32 @@ export function ServerEditDrawer({
 	const handleSubmit = useCallback(
 		async (draft: ServerInstallDraft) => {
 			if (!server) return;
+			const namespace = draft.name.trim();
+			if (namespaceRemediationAllowed) {
+				if (namespace === server.name) {
+					const message = t("detail.namespaceIssue.retryConflict");
+					setNamespaceRemediationFeedback(message);
+					throw new Error(message);
+				}
+				try {
+					const remediation = await serversApi.remediateNamespace(server.id, namespace);
+					if (remediation.data?.status === "remediated_pending") {
+						notifyWarning(
+							t("detail.namespaceIssue.pendingTitle"),
+							t("detail.namespaceIssue.pendingDescription"),
+						);
+					}
+					setNamespaceRemediationFeedback(null);
+				} catch (error) {
+					const message = t("detail.namespaceIssue.retryConflict");
+					setNamespaceRemediationFeedback(message);
+					notifyError(
+						t("detail.namespaceIssue.errorTitle"),
+						error instanceof Error ? error.message : String(error),
+					);
+					throw error;
+				}
+			}
 			const payload = draftToUpdateConfig(draft, initialDraft);
 			await onSubmit({
 				...payload,
@@ -318,7 +349,15 @@ export function ServerEditDrawer({
 			});
 			onUpdated?.();
 		},
-		[onSubmit, onUpdated, server, unifyEligible, initialDraft],
+		[
+			initialDraft,
+			namespaceRemediationAllowed,
+			onSubmit,
+			onUpdated,
+			server,
+			t,
+			unifyEligible,
+		],
 	);
 
 	const handleInitiateOAuth = useCallback(
@@ -443,8 +482,11 @@ export function ServerEditDrawer({
 			onSubmit={handleSubmit}
 			mode="edit"
 			serverId={server?.id}
+			namespaceRemediationAllowed={namespaceRemediationAllowed}
 			onInitiateOAuth={handleInitiateOAuth}
 			allowJsonEditing={false}
+			namespaceIssue={server?.namespace_issue}
+			namespaceIssueFeedback={namespaceRemediationFeedback}
 			initialDraft={initialDraft ?? undefined}
 			onRefreshFromRegistry={canRefreshFromRegistry ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}

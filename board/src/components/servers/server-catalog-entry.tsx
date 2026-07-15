@@ -3,6 +3,7 @@ import { memo, useCallback, useMemo, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
+import { getServerDisplayName } from "../../lib/server-display";
 import type { ServerSummary } from "../../lib/types";
 import { EntityCard } from "../entity-card";
 import { EntityListItem } from "../entity-list-item";
@@ -71,7 +72,7 @@ function buildCapabilityStats(
 }
 
 function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
-	const { t, i18n } = useTranslation("servers");
+	const { t } = useTranslation("servers");
 	const {
 		server,
 		statsLabels,
@@ -81,14 +82,15 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		enableServerDebug = false,
 		onOpenDebug,
 	} = props;
+	const displayName = getServerDisplayName(server);
 
-	const serverInitial = (server.name || server.id || "S")
+	const serverInitial = (displayName || server.id || "S")
 		.slice(0, 1)
 		.toUpperCase();
 	const iconSrc = server.icons?.[0]?.src;
-	const iconAlt = server.name
+	const iconAlt = displayName
 		? t("entity.iconAlt.named", {
-				name: server.name,
+				name: displayName,
 				defaultValue: "{{name}} icon",
 			})
 		: t("entity.iconAlt.fallback", { defaultValue: "Server icon" });
@@ -185,7 +187,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		}
 
 		return tags;
-	}, [i18n.language, server.server_type, t]);
+	}, [server.server_type, t]);
 
 	const unifyEligibilityDescriptionTag = renderUnifyEligibilityTag();
 	const unifyEligibilityTitleTag = renderUnifyEligibilityTag();
@@ -202,19 +204,38 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		[props.variant, server],
 	);
 
-	const statusBadge = useMemo(
-		() => (
+	const statusBadge = useMemo(() => {
+		const namespaceIssue = server.namespace_issue;
+		const namespaceIssueLabel = namespaceIssue
+			? t(
+					namespaceIssue.code === "capability_collision" ||
+						namespaceIssue.conflicts?.length
+						? "detail.namespaceIssue.statusConflict"
+						: "detail.namespaceIssue.statusInvalid",
+				)
+			: undefined;
+
+		return (
 			<StatusBadge
-				status={server.status}
-				instances={server.instances}
-				blinkOnError={["error", "unhealthy", "stopped", "failed"].includes(
-					(server.status || "").toLowerCase(),
-				)}
-				isServerEnabled={server.enabled}
+				status={namespaceIssue ? "pending" : server.status}
+				statusLabel={namespaceIssueLabel}
+				instances={namespaceIssue ? [] : server.instances}
+				blinkOnError={
+					!namespaceIssue &&
+					["error", "unhealthy", "stopped", "failed"].includes(
+						(server.status || "").toLowerCase(),
+					)
+				}
+				isServerEnabled={namespaceIssue ? false : server.enabled}
 			/>
-		),
-		[server.enabled, server.instances, server.status],
-	);
+		);
+	}, [
+		server.enabled,
+		server.instances,
+		server.namespace_issue,
+		server.status,
+		t,
+	]);
 
 	const stats = useMemo(
 		() => buildCapabilityStats(server, statsLabels),
@@ -251,7 +272,6 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 			</div>
 		);
 	}, [
-		i18n.language,
 		server.id,
 		server.meta?.description,
 		server.name,
@@ -283,7 +303,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		return (
 			<EntityListItem
 				id={server.id}
-				title={server.name}
+				title={displayName}
 				description={listDescription}
 				avatar={avatar}
 				titleBadges={
@@ -322,7 +342,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 	return (
 		<EntityCard
 			id={server.id}
-			title={server.name}
+			title={displayName}
 			description={gridDescription}
 			avatar={avatar}
 			stats={stats}

@@ -83,7 +83,12 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { auditApi, configSuitsApi, serversApi, useProfileTokenChartSource } from "../../lib/api";
+import {
+  auditApi,
+  configSuitsApi,
+  serversApi,
+  useProfileTokenChartSource,
+} from "../../lib/api";
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
@@ -97,10 +102,7 @@ import type {
 } from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 
-const PROFILE_DETAIL_TABS = [
-	"overview",
-	"capabilities",
-];
+const PROFILE_DETAIL_TABS = ["overview", "capabilities"];
 
 const ALL_CAPABILITY_SERVERS_ID = "__all_servers__";
 
@@ -140,21 +142,15 @@ function profileCapabilityDetailKey(
 	kind: CapabilityKind,
 ) {
 	if (kind === "tools") {
-		return firstCapabilityString(item, ["tool_name", "name", "unique_name"]);
+    return firstCapabilityString(item, ["unique_name"]);
 	}
 	if (kind === "resources") {
-		return firstCapabilityString(item, ["resource_uri", "uri", "name", "unique_uri"]);
+    return firstCapabilityString(item, ["unique_uri"]);
 	}
 	if (kind === "prompts") {
-		return firstCapabilityString(item, ["prompt_name", "name", "unique_name"]);
-	}
-	return firstCapabilityString(item, [
-		"uri_template",
-		"uriTemplate",
-		"uri",
-		"name",
-		"unique_uri_template",
-	]);
+    return firstCapabilityString(item, ["unique_name"]);
+  }
+  return firstCapabilityString(item, ["unique_uri_template"]);
 }
 
 function profileCapabilityKindLabel(
@@ -216,8 +212,12 @@ export function ProfileDetailPage() {
 	/** Refetch capability JSON payloads when server membership or live MCP definitions may have changed. */
 	const invalidateProfileCapabilityLedger = useCallback(() => {
 		if (profileId) {
-			void queryClient.invalidateQueries({ queryKey: ["capabilityTokenLedger", profileId] });
-			void queryClient.invalidateQueries({ queryKey: ["profileChartTokenEstimate", profileId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["capabilityTokenLedger", profileId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["profileChartTokenEstimate", profileId],
+      });
 		}
 	}, [profileId, queryClient]);
 
@@ -242,9 +242,8 @@ export function ProfileDetailPage() {
 	const [serverStatus, setServerStatus] = useState<
 		"all" | "enabled" | "disabled"
 	>("all");
-	const [selectedCapabilityServerId, setSelectedCapabilityServerId] = useState<
-		string
-	>(ALL_CAPABILITY_SERVERS_ID);
+  const [selectedCapabilityServerId, setSelectedCapabilityServerId] =
+    useState<string>(ALL_CAPABILITY_SERVERS_ID);
 	const [serverColumnWidth, setServerColumnWidth] = useState(300);
 	const [capabilityQuery, setCapabilityQuery] = useState("");
 	const [capabilityServerFilters, setCapabilityServerFilters] = useState<
@@ -359,13 +358,7 @@ export function ProfileDetailPage() {
 	};
 
 	const bulkCapabilitiesM = useMutation({
-		mutationFn: async ({
-			enable,
-			ids,
-		}: {
-			enable: boolean;
-			ids: string[];
-		}) => {
+    mutationFn: async ({ enable, ids }: { enable: boolean; ids: string[] }) => {
 			const grouped = ids.reduce(
 				(acc, key) => {
 					const capability = splitCapabilityKey(key);
@@ -441,13 +434,20 @@ export function ProfileDetailPage() {
 			serverBulk.exitBulkMode();
 			refreshProfileCapabilitySurface();
 			notifySuccess(
-				t("profiles:detail.messages.serversUpdated", { defaultValue: "Servers updated" }),
-				t("profiles:detail.messages.bulkOperationCompleted", { defaultValue: "Bulk operation completed" })
+        t("profiles:detail.messages.serversUpdated", {
+          defaultValue: "Servers updated",
+        }),
+        t("profiles:detail.messages.bulkOperationCompleted", {
+          defaultValue: "Bulk operation completed",
+        }),
 			);
 		},
-		onError: (e) => notifyError(
-			t("profiles:detail.messages.serversUpdateFailed", { defaultValue: "Servers update failed" }),
-			String(e)
+    onError: (e) =>
+      notifyError(
+        t("profiles:detail.messages.serversUpdateFailed", {
+          defaultValue: "Servers update failed",
+        }),
+        String(e),
 		),
 	});
 
@@ -609,13 +609,19 @@ export function ProfileDetailPage() {
 			queryClient.invalidateQueries({ queryKey: ["configSuit", profileId] });
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
 			notifySuccess(
-				t("profiles:detail.messages.profileActivated", { defaultValue: "Profile activated" }),
-				t("profiles:detail.messages.profileActivatedDescription", { defaultValue: "Profile has been successfully activated" }),
+        t("profiles:detail.messages.profileActivated", {
+          defaultValue: "Profile activated",
+        }),
+        t("profiles:detail.messages.profileActivatedDescription", {
+          defaultValue: "Profile has been successfully activated",
+        }),
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.activationFailed", { defaultValue: "Activation failed" }),
+        t("profiles:detail.messages.activationFailed", {
+          defaultValue: "Activation failed",
+        }),
 				`${t("profiles:detail.messages.activationFailedDescription", { defaultValue: "Failed to activate profile" })}: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -627,13 +633,19 @@ export function ProfileDetailPage() {
 			queryClient.invalidateQueries({ queryKey: ["configSuit", profileId] });
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
 			notifySuccess(
-				t("profiles:detail.messages.profileDeactivated", { defaultValue: "Profile deactivated" }),
-				t("profiles:detail.messages.profileDeactivatedDescription", { defaultValue: "Profile has been successfully deactivated" }),
+        t("profiles:detail.messages.profileDeactivated", {
+          defaultValue: "Profile deactivated",
+        }),
+        t("profiles:detail.messages.profileDeactivatedDescription", {
+          defaultValue: "Profile has been successfully deactivated",
+        }),
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.deactivationFailed", { defaultValue: "Deactivation failed" }),
+        t("profiles:detail.messages.deactivationFailed", {
+          defaultValue: "Deactivation failed",
+        }),
 				`${t("profiles:detail.messages.deactivationFailedDescription", { defaultValue: "Failed to deactivate profile" })}: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -642,21 +654,30 @@ export function ProfileDetailPage() {
 	// Delete profile mutation
 	const deleteSuitMutation = useMutation({
 		mutationFn: () => {
-			if (!profileId) return Promise.reject(t("profiles:detail.errors.noSuitId", { defaultValue: "No suit ID" }));
+      if (!profileId)
+        return Promise.reject(
+          t("profiles:detail.errors.noSuitId", { defaultValue: "No suit ID" }),
+        );
 			return configSuitsApi.deleteSuit(profileId);
 		},
 		onSuccess: () => {
 			// Invalidate queries to refresh the profiles list
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
 			notifySuccess(
-				t("profiles:detail.messages.profileDeleted", { defaultValue: "Profile deleted" }),
-				t("profiles:detail.messages.profileDeletedDescription", { defaultValue: "Profile has been successfully deleted" })
+        t("profiles:detail.messages.profileDeleted", {
+          defaultValue: "Profile deleted",
+        }),
+        t("profiles:detail.messages.profileDeletedDescription", {
+          defaultValue: "Profile has been successfully deleted",
+        }),
 			);
 			navigate("/profiles");
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.deleteFailed", { defaultValue: "Delete failed" }),
+        t("profiles:detail.messages.deleteFailed", {
+          defaultValue: "Delete failed",
+        }),
 				`Failed to delete profile: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -679,13 +700,17 @@ export function ProfileDetailPage() {
 			refreshProfileCapabilitySurface();
 
 			notifySuccess(
-				t("profiles:detail.messages.serverUpdated", { defaultValue: "Server updated" }),
-				"Server status has been updated"
+        t("profiles:detail.messages.serverUpdated", {
+          defaultValue: "Server updated",
+        }),
+        "Server status has been updated",
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.serverUpdateFailed", { defaultValue: "Server update failed" }),
+        t("profiles:detail.messages.serverUpdateFailed", {
+          defaultValue: "Server update failed",
+        }),
 				`Failed to update server: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -701,13 +726,17 @@ export function ProfileDetailPage() {
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
 			notifySuccess(
-				t("profiles:detail.messages.toolUpdated", { defaultValue: "Tool updated" }),
-				"Tool status has been updated"
+        t("profiles:detail.messages.toolUpdated", {
+          defaultValue: "Tool updated",
+        }),
+        "Tool status has been updated",
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.toolUpdateFailed", { defaultValue: "Tool update failed" }),
+        t("profiles:detail.messages.toolUpdateFailed", {
+          defaultValue: "Tool update failed",
+        }),
 				`Failed to update tool: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -729,13 +758,17 @@ export function ProfileDetailPage() {
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
 			notifySuccess(
-				t("profiles:detail.messages.resourceUpdated", { defaultValue: "Resource updated" }),
-				"Resource status has been updated"
+        t("profiles:detail.messages.resourceUpdated", {
+          defaultValue: "Resource updated",
+        }),
+        "Resource status has been updated",
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.resourceUpdateFailed", { defaultValue: "Resource update failed" }),
+        t("profiles:detail.messages.resourceUpdateFailed", {
+          defaultValue: "Resource update failed",
+        }),
 				`Failed to update resource: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -757,13 +790,17 @@ export function ProfileDetailPage() {
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
 			notifySuccess(
-				t("profiles:detail.messages.promptUpdated", { defaultValue: "Prompt updated" }),
-				"Prompt status has been updated"
+        t("profiles:detail.messages.promptUpdated", {
+          defaultValue: "Prompt updated",
+        }),
+        "Prompt status has been updated",
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.promptUpdateFailed", { defaultValue: "Prompt update failed" }),
+        t("profiles:detail.messages.promptUpdateFailed", {
+          defaultValue: "Prompt update failed",
+        }),
 				`Failed to update prompt: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -838,13 +875,19 @@ export function ProfileDetailPage() {
 		for (const p of prompts) {
 			m.set(p.id, p.enabled);
 		}
-		for (const tmpl of templates as ReadonlyArray<{ id: string; enabled: boolean }>) {
+    for (const tmpl of templates as ReadonlyArray<{
+      id: string;
+      enabled: boolean;
+    }>) {
 			m.set(tmpl.id, tmpl.enabled);
 		}
 		return m;
 	}, [servers, tools, resources, prompts, templates]);
 
-	const tokenChartSource = useProfileTokenChartSource(profileId, enabledByComponentId);
+  const tokenChartSource = useProfileTokenChartSource(
+    profileId,
+    enabledByComponentId,
+  );
 
 	// Global servers for availability(connected) calculation
 	const { data: globalServersResp } = useQuery({
@@ -925,7 +968,12 @@ export function ProfileDetailPage() {
 			candidates.find((server) => server.id === selectedCapabilityServerId) ??
 			null
 		);
-	}, [isAllCapabilityServersSelected, selectedCapabilityServerId, servers, visibleServers]);
+  }, [
+    isAllCapabilityServersSelected,
+    selectedCapabilityServerId,
+    servers,
+    visibleServers,
+  ]);
 
 	useEffect(() => {
 		if (isAllCapabilityServersSelected) {
@@ -937,7 +985,11 @@ export function ProfileDetailPage() {
 		if (!stillVisible) {
 			setSelectedCapabilityServerId(ALL_CAPABILITY_SERVERS_ID);
 		}
-	}, [isAllCapabilityServersSelected, selectedCapabilityServerId, visibleServers]);
+  }, [
+    isAllCapabilityServersSelected,
+    selectedCapabilityServerId,
+    visibleServers,
+  ]);
 
 	useEffect(() => {
 		if (!isAllCapabilityServersSelected) {
@@ -954,21 +1006,14 @@ export function ProfileDetailPage() {
 			nextFilters.length !== capabilityServerFilters.length ||
 			nextFilters.length === visibleServers.length
 		) {
-			if (
-				nextFilters.length === 0 &&
-				capabilityServerFilters.length === 0
-			) {
+      if (nextFilters.length === 0 && capabilityServerFilters.length === 0) {
 				return;
 			}
 			setCapabilityServerFilters(
 				nextFilters.length === visibleServers.length ? [] : nextFilters,
 			);
 		}
-	}, [
-		capabilityServerFilters,
-		isAllCapabilityServersSelected,
-		visibleServers,
-	]);
+  }, [capabilityServerFilters, isAllCapabilityServersSelected, visibleServers]);
 
 	const selectedCapabilityServerIds = useMemo(() => {
 		if (isAllCapabilityServersSelected) {
@@ -977,7 +1022,9 @@ export function ProfileDetailPage() {
 			}
 			return new Set(visibleServers.map((server) => server.id));
 		}
-		return new Set(selectedCapabilityServer ? [selectedCapabilityServer.id] : []);
+    return new Set(
+      selectedCapabilityServer ? [selectedCapabilityServer.id] : [],
+    );
 	}, [
 		capabilityServerFilters,
 		isAllCapabilityServersSelected,
@@ -1157,8 +1204,9 @@ export function ProfileDetailPage() {
 		}
 		if (capabilityServerFilters.length === 1) {
 			return (
-				visibleServers.find((server) => server.id === capabilityServerFilters[0])
-					?.name ??
+        visibleServers.find(
+          (server) => server.id === capabilityServerFilters[0],
+        )?.name ??
 				t("profiles:detail.placeholders.server", { defaultValue: "Server" })
 			);
 		}
@@ -1253,20 +1301,30 @@ export function ProfileDetailPage() {
 
 	// Template toggle mutations
 	const templateToggleMutation = useMutation({
-		mutationFn: ({ templateId, enable }: { templateId: string; enable: boolean }) =>
+    mutationFn: ({
+      templateId,
+      enable,
+    }: {
+      templateId: string;
+      enable: boolean;
+    }) =>
 			enable
 				? configSuitsApi.enableResourceTemplate(profileId!, templateId)
 				: configSuitsApi.disableResourceTemplate(profileId!, templateId),
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
 			notifySuccess(
-				t("profiles:detail.messages.templateUpdated", { defaultValue: "Template updated" }),
+        t("profiles:detail.messages.templateUpdated", {
+          defaultValue: "Template updated",
+        }),
 				"Template status has been updated",
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("profiles:detail.messages.templateUpdateFailed", { defaultValue: "Template update failed" }),
+        t("profiles:detail.messages.templateUpdateFailed", {
+          defaultValue: "Template update failed",
+        }),
 				`Failed to update template: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		},
@@ -1307,11 +1365,7 @@ export function ProfileDetailPage() {
 				return null;
 			}
 
-			const detail = await serversApi.getCapabilityDetail(
-				serverId,
-				kind,
-				key,
-			);
+      const detail = await serversApi.getCapabilityDetail(serverId, kind, key);
 			return (detail.item ?? null) as CapabilityRecord | null;
 		},
 		[],
@@ -1404,13 +1458,23 @@ export function ProfileDetailPage() {
 									{suit.is_active && (
 										<span className="flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
 											<Check className="mr-1 h-3 w-3" />
-											{t("profiles:detail.status.active", { defaultValue: "Active" })}
+                      {t("profiles:detail.status.active", {
+                        defaultValue: "Active",
+                      })}
 										</span>
 									)}
 									{suitRole === DEFAULT_ANCHOR_ROLE ? (
-										<Badge variant="outline">{t("profiles:badges.defaultAnchor", { defaultValue: "Default Anchor" })}</Badge>
+                    <Badge variant="outline">
+                      {t("profiles:badges.defaultAnchor", {
+                        defaultValue: "Default Anchor",
+                      })}
+                    </Badge>
 									) : suit.is_default ? (
-										<Badge variant="outline">{t("profiles:badges.inDefault", { defaultValue: "In Default" })}</Badge>
+                    <Badge variant="outline">
+                      {t("profiles:badges.inDefault", {
+                        defaultValue: "In Default",
+                      })}
+                    </Badge>
 									) : null}
 								</div>
 							</div>
@@ -1426,9 +1490,7 @@ export function ProfileDetailPage() {
 							isError={tokenChartSource.isError}
 							enabledByComponentId={enabledByComponentId}
 							estimateMethod={profileTokenEstimateMethod}
-							profileServerCount={
-								isLoadingServers ? undefined : servers.length
-							}
+              profileServerCount={isLoadingServers ? undefined : servers.length}
 						/>
 					) : null}
 				</div>
@@ -1438,7 +1500,9 @@ export function ProfileDetailPage() {
 				<Card>
 					<CardContent className="p-4">
 						<p className="text-center text-slate-500">
-							{t("profiles:detail.labels.profileId", { defaultValue: "Profile ID not provided" })}
+              {t("profiles:detail.labels.profileId", {
+                defaultValue: "Profile ID not provided",
+              })}
 						</p>
 					</CardContent>
 				</Card>
@@ -1456,9 +1520,15 @@ export function ProfileDetailPage() {
 				>
 					<div className="flex shrink-0 items-center justify-between">
 						<TabsList className="flex items-center gap-2">
-							<TabsTrigger value="overview">{t("profiles:detail.tabs.overview", { defaultValue: "Overview" })}</TabsTrigger>
+              <TabsTrigger value="overview">
+                {t("profiles:detail.tabs.overview", {
+                  defaultValue: "Overview",
+                })}
+              </TabsTrigger>
 							<TabsTrigger value="capabilities">
-								{t("profiles:detail.tabs.capabilities", { defaultValue: "Capabilities" })}
+                {t("profiles:detail.tabs.capabilities", {
+                  defaultValue: "Capabilities",
+                })}
 							</TabsTrigger>
 						</TabsList>
 						<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
@@ -1472,7 +1542,9 @@ export function ProfileDetailPage() {
 								<RefreshCw
 									className={`h-4 w-4 ${isRefetchingSuit ? "animate-spin" : ""}`}
 								/>
-								{t("profiles:detail.buttons.refresh", { defaultValue: "Refresh" })}
+                {t("profiles:detail.buttons.refresh", {
+                  defaultValue: "Refresh",
+                })}
 							</Button>
 							<Button
 								variant="outline"
@@ -1503,7 +1575,9 @@ export function ProfileDetailPage() {
 												className="gap-2"
 											>
 												<Trash2 className="h-4 w-4" />
-												{t("profiles:detail.buttons.delete", { defaultValue: "Delete" })}
+                        {t("profiles:detail.buttons.delete", {
+                          defaultValue: "Delete",
+                        })}
 											</Button>
 										</div>
 									)}
@@ -1517,36 +1591,59 @@ export function ProfileDetailPage() {
 												</Avatar>
 												<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
 													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.status", { defaultValue: "Status" })}
+                            {t("profiles:detail.labels.status", {
+                              defaultValue: "Status",
+                            })}
 													</span>
 													<Badge
 														variant="secondary"
-														className={`justify-self-start border px-2.5 py-0.5 leading-none min-h-[1.5rem] ${suit.is_active
+                            className={`justify-self-start border px-2.5 py-0.5 leading-none min-h-[1.5rem] ${
+                              suit.is_active
 															? "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-200"
 															: "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300"
 															}`}
 													>
-														{suit.is_active ? t("profiles:detail.status.active", { defaultValue: "Active" }) : t("profiles:detail.status.inactive", { defaultValue: "Inactive" })}
+                            {suit.is_active
+                              ? t("profiles:detail.status.active", {
+                                  defaultValue: "Active",
+                                })
+                              : t("profiles:detail.status.inactive", {
+                                  defaultValue: "Inactive",
+                                })}
 													</Badge>
 
 													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.type", { defaultValue: "Type" })}
+                            {t("profiles:detail.labels.type", {
+                              defaultValue: "Type",
+                            })}
 													</span>
 													<span className="font-mono text-sm leading-tight">
 														{t(`profiles:suitTypes.${suit.suit_type}`, {
-															defaultValue: formatProfileTypeLabel(suit.suit_type),
+                              defaultValue: formatProfileTypeLabel(
+                                suit.suit_type,
+                              ),
 														})}
 													</span>
 
 													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.multiSelect", { defaultValue: "Multi-select" })}
+                            {t("profiles:detail.labels.multiSelect", {
+                              defaultValue: "Multi-select",
+                            })}
 													</span>
 													<span className="text-sm leading-tight">
-														{suit.multi_select ? t("profiles:detail.status.yes", { defaultValue: "Yes" }) : t("profiles:detail.status.no", { defaultValue: "No" })}
+                            {suit.multi_select
+                              ? t("profiles:detail.status.yes", {
+                                  defaultValue: "Yes",
+                                })
+                              : t("profiles:detail.status.no", {
+                                  defaultValue: "No",
+                                })}
 													</span>
 
 													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.priority", { defaultValue: "Priority" })}
+                            {t("profiles:detail.labels.priority", {
+                              defaultValue: "Priority",
+                            })}
 													</span>
 													<span className="font-mono text-sm leading-tight">
 														{suit.priority}
@@ -1572,8 +1669,12 @@ export function ProfileDetailPage() {
 															<Play className="h-4 w-4" />
 														)}
 														{suit?.is_active
-															? t("profiles:detail.buttons.disable", { defaultValue: "Disable" })
-															: t("profiles:detail.buttons.enable", { defaultValue: "Enable" })}
+                              ? t("profiles:detail.buttons.disable", {
+                                  defaultValue: "Disable",
+                                })
+                              : t("profiles:detail.buttons.enable", {
+                                  defaultValue: "Enable",
+                                })}
 													</Button>
 												)}
 											</ButtonGroup>
@@ -1589,7 +1690,9 @@ export function ProfileDetailPage() {
 										onClick={() => setActiveTab("capabilities")}
 									>
 										<CardTitle className="text-sm">
-											{t("profiles:detail.labels.servers", { defaultValue: "Servers" })}
+                      {t("profiles:detail.labels.servers", {
+                        defaultValue: "Servers",
+                      })}
 										</CardTitle>
 									</CardHeader>
 									<CardContent>
@@ -1666,13 +1769,19 @@ export function ProfileDetailPage() {
 							</div>
 							{showProfileLiveLogs ? (
 								<AuditLogsPanel
-									title={t("profiles:detail.logs.title", { defaultValue: "Logs" })}
+                  title={t("profiles:detail.logs.title", {
+                    defaultValue: "Logs",
+                  })}
 									description={t("profiles:detail.logs.description", {
-										defaultValue: "Runtime and activity logs related to this profile.",
+                    defaultValue:
+                      "Runtime and activity logs related to this profile.",
 									})}
-									searchPlaceholder={t("profiles:detail.logs.searchPlaceholder", {
+                  searchPlaceholder={t(
+                    "profiles:detail.logs.searchPlaceholder",
+                    {
 										defaultValue: "Search logs...",
-									})}
+                    },
+                  )}
 									refreshLabel={t("profiles:detail.logs.refresh", {
 										defaultValue: "Refresh Logs",
 									})}
@@ -1727,7 +1836,10 @@ export function ProfileDetailPage() {
 						</div>
 					</TabsContent>
 
-					<TabsContent value="capabilities" className={DETAIL_TAB_CONTENT_CLASS}>
+          <TabsContent
+            value="capabilities"
+            className={DETAIL_TAB_CONTENT_CLASS}
+          >
 						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
 							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
 								<div
@@ -1746,10 +1858,13 @@ export function ProfileDetailPage() {
 												description={
 													serverBulk.isBulkMode
 														? bulkModeDescription(serverBulk.selectedCount)
-														: t("profiles:detail.descriptions.capabilityServers", {
+                            : t(
+                                "profiles:detail.descriptions.capabilityServers",
+                                {
 															defaultValue:
 																"Select a server to manage its profile capabilities.",
-														})
+                                },
+                              )
 												}
 												isBulkMode={serverBulk.isBulkMode}
 												onToggleBulkMode={serverBulk.toggleMode}
@@ -1853,9 +1968,12 @@ export function ProfileDetailPage() {
 																<div className="min-w-0">
 																	<div
 																		className="truncate font-medium text-slate-900 dark:text-slate-100"
-																		title={t("profiles:detail.labels.allServers", {
+                                  title={t(
+                                    "profiles:detail.labels.allServers",
+                                    {
 																			defaultValue: "All servers",
-																		})}
+                                    },
+                                  )}
 																	>
 																		{t("profiles:detail.labels.allServers", {
 																			defaultValue: "All servers",
@@ -1885,17 +2003,20 @@ export function ProfileDetailPage() {
 														{visibleServers.map((server) => {
 															const global = (
 																globalServers as ProfileGlobalServerSummary[]
-															).find(
-																(gs) => gs.name === server.name,
-															);
+                            ).find((gs) => gs.name === server.name);
 															const globalIcon = global?.icons?.[0]?.src;
 															const iconAlt =
 																global?.name || server.name || server.id;
-															const avatarFallback = (server.name || server.id || "S")
+                            const avatarFallback = (
+                              server.name ||
+                              server.id ||
+                              "S"
+                            )
 																.slice(0, 1)
 																.toUpperCase();
-															const counts =
-																capabilityCountsByServerId.get(server.id) ?? {
+                            const counts = capabilityCountsByServerId.get(
+                              server.id,
+                            ) ?? {
 																	enabled: 0,
 																	prompts: 0,
 																	resources: 0,
@@ -1923,9 +2044,14 @@ export function ProfileDetailPage() {
 																	key={server.id}
 																	interactive
 																	className={`group relative px-3 transition-colors ${serverItemStateClass}`}
-																	onClick={() => setSelectedCapabilityServerId(server.id)}
+                                onClick={() =>
+                                  setSelectedCapabilityServerId(server.id)
+                                }
 																	onKeyDown={(event) => {
-																		if (event.key === "Enter" || event.key === " ") {
+                                  if (
+                                    event.key === "Enter" ||
+                                    event.key === " "
+                                  ) {
 																			event.preventDefault();
 																			setSelectedCapabilityServerId(server.id);
 																		}
@@ -1951,7 +2077,9 @@ export function ProfileDetailPage() {
 																				<CachedAvatar
 																					src={globalIcon}
 																					alt={
-																						iconAlt ? `${iconAlt} icon` : undefined
+                                          iconAlt
+                                            ? `${iconAlt} icon`
+                                            : undefined
 																					}
 																					fallback={avatarFallback}
 																					size="sm"
@@ -1987,7 +2115,9 @@ export function ProfileDetailPage() {
 																							enable: enabled,
 																						})
 																					}
-																					disabled={serverToggleMutation.isPending}
+                                        disabled={
+                                          serverToggleMutation.isPending
+                                        }
 																				/>
 																			</div>
 																		}
@@ -2009,9 +2139,12 @@ export function ProfileDetailPage() {
 																			)}`}
 																		>
 																			{counts.enabled}/{counts.total}{" "}
-																			{t("profiles:detail.labels.enabledCapabilities", {
+                                      {t(
+                                        "profiles:detail.labels.enabledCapabilities",
+                                        {
 																				defaultValue: "enabled capabilities",
-																			})}
+                                        },
+                                      )}
 																		</div>
 																	</div>
 																</CapsuleStripeRowBody>
@@ -2031,9 +2164,12 @@ export function ProfileDetailPage() {
 
 									<button
 										type="button"
-										aria-label={t("profiles:detail.labels.resizeCapabilityColumns", {
+                    aria-label={t(
+                      "profiles:detail.labels.resizeCapabilityColumns",
+                      {
 											defaultValue: "Resize capability columns",
-										})}
+                      },
+                    )}
 										className="group flex cursor-col-resize items-center justify-center border-x border-border bg-muted/20 text-muted-foreground transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										onPointerDown={handleCapabilityDividerPointerDown}
 									>
@@ -2051,21 +2187,30 @@ export function ProfileDetailPage() {
 															})
 														: selectedCapabilityServer
 															? selectedCapabilityServer.name
-															: t("servers:detail.overview.labels.capabilities", {
+                              : t(
+                                  "servers:detail.overview.labels.capabilities",
+                                  {
 																	defaultValue: "Capabilities",
-																})
+                                  },
+                                )
 												}
 												description={
 													isAllCapabilityServersSelected
-														? t("profiles:detail.descriptions.allCapabilityGroups", {
+                            ? t(
+                                "profiles:detail.descriptions.allCapabilityGroups",
+                                {
 																defaultValue:
 																	"Manage tools, resources, prompts, and resource templates across the visible servers.",
-															})
+                                },
+                              )
 														: selectedCapabilityServer
-															? t("profiles:detail.descriptions.capabilityGroups", {
+                              ? t(
+                                  "profiles:detail.descriptions.capabilityGroups",
+                                  {
 																	defaultValue:
 																		"Manage tools, resources, prompts, and resource templates for the selected server.",
-																})
+                                  },
+                                )
 															: t("profiles:detail.emptyStates.selectServer", {
 																	defaultValue:
 																		"Select a server to inspect its capabilities.",
@@ -2201,21 +2346,20 @@ export function ProfileDetailPage() {
 													? (selectedServerTemplates as CapabilityRecord[])
 													: []
 											}
-											selectHintText={t("profiles:detail.emptyStates.selectServer", {
-												defaultValue: "Select a server to inspect its capabilities.",
-											})}
-											emptyText={t(
-												"servers:detail.capabilityList.emptyAll",
+                      selectHintText={t(
+                        "profiles:detail.emptyStates.selectServer",
 												{
 													defaultValue:
-														"No capabilities from this server",
+                            "Select a server to inspect its capabilities.",
 												},
 											)}
+                      emptyText={t("servers:detail.capabilityList.emptyAll", {
+                        defaultValue: "No capabilities from this server",
+                      })}
 											emptySearchText={t(
 												"servers:detail.capabilityList.emptyAll",
 												{
-													defaultValue:
-														"No capabilities from this server",
+                          defaultValue: "No capabilities from this server",
 												},
 											)}
 											renderFlatList={renderProfileFlatCapabilityList}
@@ -2225,8 +2369,6 @@ export function ProfileDetailPage() {
 							</CardContent>
 						</Card>
 					</TabsContent>
-
-
 				</Tabs>
 			) : (
 				<Card>
@@ -2285,7 +2427,13 @@ export function ProfileDetailPage() {
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 							disabled={deleteSuitMutation.isPending}
 						>
-							{deleteSuitMutation.isPending ? t("profiles:detail.buttons.deleting", { defaultValue: "Deleting..." }) : t("profiles:detail.buttons.delete", { defaultValue: "Delete" })}
+              {deleteSuitMutation.isPending
+                ? t("profiles:detail.buttons.deleting", {
+                    defaultValue: "Deleting...",
+                  })
+                : t("profiles:detail.buttons.delete", {
+                    defaultValue: "Delete",
+                  })}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

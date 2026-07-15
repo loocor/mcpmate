@@ -76,8 +76,10 @@ export const serversTranslations = {
 			},
 			delete: {
 				title: "Server deleted",
-				message: "Server {{serverId}}. Review Secure Store cleanup if it used stored secrets.",
-				cleanupReview: "Review Secure Store cleanup if this server used stored secrets.",
+        message:
+          "Server {{serverId}}. Review Secure Store cleanup if it used stored secrets.",
+        cleanupReview:
+          "Review Secure Store cleanup if this server used stored secrets.",
 				errorFallback: "Error deleting server",
 			},
 			genericError: {
@@ -168,7 +170,8 @@ export const serversTranslations = {
 			},
 			loading: {
 				title: "Loading server details",
-				description: "The service is responding, but its detail snapshot is still warming up.",
+        description:
+          "The service is responding, but its detail snapshot is still warming up.",
 			},
 			viewModes: {
 				browse: "Browse",
@@ -177,6 +180,8 @@ export const serversTranslations = {
 			overview: {
 				labels: {
 					service: "Service",
+					upstreamName: "Upstream name",
+					namespace: "Namespace",
 					runtime: "Runtime",
 					type: "Type",
 					auth: "Auth",
@@ -195,6 +200,36 @@ export const serversTranslations = {
 					disabled: "Disabled",
 					unifyEligible: "Direct Exposure Eligible",
 				},
+			},
+			namespaceIssue: {
+				title: "Namespace remediation required",
+				statusConflict: "Conflict",
+				statusInvalid: "Invalid namespace",
+				popoverCapabilityCollision:
+					"This namespace would produce capability names already owned by another server. Set a unique namespace manually.",
+				popoverCapabilityCollisionWithServer:
+					"This namespace would produce capability names already owned by the existing <server>{{namespace}}</server> server. Set a unique namespace manually.",
+				popoverLegacyCollision:
+					"Normalizing this namespace would duplicate an existing canonical server namespace. Set a unique namespace manually.",
+				popoverLegacyCollisionWithServer:
+					"Normalizing this namespace would conflict with the canonical namespace of the existing <server>{{namespace}}</server> server. Set a unique namespace manually.",
+				popoverInvalid:
+					"This namespace cannot be normalized safely. Set a unique lowercase snake_case namespace manually.",
+				retryConflict:
+					"This namespace still fails uniqueness validation. Choose another namespace and save again.",
+				description:
+					'The legacy namespace “{{namespace}}” cannot be exposed safely. Enter a unique canonical namespace to repair its references.',
+				capabilityCollision:
+					'The namespace “{{namespace}}” produces a capability name already used by another server. Enter a unique canonical namespace to repair the server without renaming individual capabilities.',
+				conflicts: "Conflicting namespace: {{namespaces}}",
+				inputLabel: "Replacement namespace",
+				action: "Repair",
+				success: "Namespace repaired",
+				pendingTitle: "Namespace repaired; refresh pending",
+				pendingDescription:
+					"The namespace change was committed, but runtime or cache refresh has not converged yet. Refresh the server details before retrying downstream calls.",
+				errorTitle: "Namespace repair failed",
+				iconLabel: "Namespace requires remediation",
 			},
 			deleteDialog: {
 				title: "Delete Server",
@@ -359,8 +394,7 @@ export const serversTranslations = {
 					},
 					notifications: {
 						savedTitle: "OAuth settings saved",
-						savedMessage:
-							"The server OAuth configuration has been updated.",
+            savedMessage: "The server OAuth configuration has been updated.",
 						saveFailedTitle: "Failed to save OAuth settings",
 						connectFailedTitle: "Unable to start OAuth",
 						revokedTitle: "OAuth token revoked",
@@ -536,6 +570,12 @@ export const serversTranslations = {
 					readOnlyTitleAfterOAuth:
 						"Editing server names is disabled after OAuth setup starts",
 				},
+				namespace: {
+					label: "Namespace",
+					placeholder: "e.g., local_mcp",
+          suggestionAction: "Use suggested namespace:",
+					importMapping: "{{original}} → {{namespace}}",
+				},
 				type: {
 					label: "Type",
 					options: {
@@ -619,16 +659,22 @@ export const serversTranslations = {
 				unifyEligibility: {
 					badge: "Advanced exposure control",
 					title: "Mark as Unify-eligible server",
-					description: "This option marks the server as eligible for direct exposure in Unify mode. Eligible servers can expose tools, prompts, resources, and templates directly to selected clients.",
+          description:
+            "This option marks the server as eligible for direct exposure in Unify mode. Eligible servers can expose tools, prompts, resources, and templates directly to selected clients.",
 					whatIsIt: "What is it?",
-					whatIsItDesc: "Enable this only when the server should be available for direct capability exposure in Unify instead of being reached only through the UCAN broker workflow.",
+          whatIsItDesc:
+            "Enable this only when the server should be available for direct capability exposure in Unify instead of being reached only through the UCAN broker workflow.",
 					whenToUse: "When to use it?",
-					whenToUseDesc: "Use this for servers that should allow direct exposure of key capabilities to selected Unify clients, such as memory, audit, or always-on context services.",
+          whenToUseDesc:
+            "Use this for servers that should allow direct exposure of key capabilities to selected Unify clients, such as memory, audit, or always-on context services.",
 					watchOut: "What to watch out for?",
-					watchOutDesc: "Do not enable this casually. Once a client selects direct exposure, capabilities from this server can bypass the UCAN-only path and enter the direct client context.",
+          watchOutDesc:
+            "Do not enable this casually. Once a client selects direct exposure, capabilities from this server can bypass the UCAN-only path and enter the direct client context.",
 					howToEnable: "How to enable it",
-				howToEnableDesc: "First mark the server as eligible here. Then open a Client in Unify mode and choose Server Level (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
-					toggleHint: "This only marks eligibility. Clients still decide whether and how to expose it.",
+          howToEnableDesc:
+            "First mark the server as eligible here. Then open a Client in Unify mode and choose Server Level (all capabilities) or Capability Level (selected tools/prompts/resources/templates).",
+          toggleHint:
+            "This only marks eligibility. Clients still decide whether and how to expose it.",
 				},
 			},
 			auth: {
@@ -646,7 +692,8 @@ export const serversTranslations = {
 						"OAuth callback listener is still initializing. Please try again in a moment.",
 					connectFailedTitle: "Unable to start OAuth",
 					revokedTitle: "OAuth token revoked",
-					revokedMessage: "Stored OAuth credentials were removed for this server.",
+          revokedMessage:
+            "Stored OAuth credentials were removed for this server.",
 					revokeFailedTitle: "Failed to revoke OAuth",
 					unknownError: "Unknown error",
 					state: {
@@ -679,7 +726,8 @@ export const serversTranslations = {
 						complete: "Authentication complete",
 						preparingMessage:
 							"Preparing OAuth flow and opening the authorization page…",
-						listenerPreparingMessage: "Preparing the desktop callback listener…",
+            listenerPreparingMessage:
+              "Preparing the desktop callback listener…",
 						awaitingMessage:
 							"Waiting for authorization to complete in the popup window…",
 						connectedMessage: "OAuth is connected for this server.",
@@ -697,11 +745,13 @@ export const serversTranslations = {
 						tokenEndpoint: "Token endpoint",
 						clientId: "Client ID",
 						clientSecret: "Client secret",
-						clientSecretPlaceholderExisting: "Leave blank to keep the stored secret",
+            clientSecretPlaceholderExisting:
+              "Leave blank to keep the stored secret",
 						clientSecretPlaceholderNew: "Optional for public clients",
 						scopes: "Scopes",
 						redirectUri: "Redirect URI",
-						placeholderAuthorizationEndpoint: "https://issuer.example.com/authorize",
+            placeholderAuthorizationEndpoint:
+              "https://issuer.example.com/authorize",
 						placeholderTokenEndpoint: "https://issuer.example.com/token",
 						placeholderScopes: "read write",
 					},
@@ -710,6 +760,12 @@ export const serversTranslations = {
 			},
 			errors: {
 				nameRequired: "Name is required",
+				namespaceRequired: "Namespace is required",
+				namespaceInvalid:
+					"Use 1–64 lowercase letters, digits, and single underscores; start with a letter.",
+				namespaceReviewTitle: "Review server namespaces",
+				namespaceReviewDescription:
+					"{{name}} does not have a canonical namespace. Apply the suggestion or edit it before previewing.",
 				kindRequired: "Select a server type",
 				urlInvalid: "Provide a valid URL",
 				commandRequired: "Command is required for stdio servers",
@@ -777,8 +833,7 @@ export const serversTranslations = {
 				filterCapabilities: "Filter capabilities...",
 				capabilitiesTitle: "Capabilities",
 				capabilitiesSummary: "Capabilities · {{summary}}",
-				emptyCapabilities:
-					"No capabilities discovered for this server.",
+        emptyCapabilities: "No capabilities discovered for this server.",
 				capabilities: {
 					tool: "tool",
 					tools: "tools",
@@ -1001,7 +1056,8 @@ export const serversTranslations = {
 			},
 			delete: {
 				title: "服务器已删除",
-				message: "服务器 {{serverId}}。如果它使用过已存储密钥，请复核安全存储清理。",
+        message:
+          "服务器 {{serverId}}。如果它使用过已存储密钥，请复核安全存储清理。",
 				cleanupReview: "如果此服务器使用过已存储密钥，请复核安全存储清理。",
 				errorFallback: "删除服务器时出错",
 			},
@@ -1102,6 +1158,8 @@ export const serversTranslations = {
 			overview: {
 				labels: {
 					service: "服务",
+					upstreamName: "上游名称",
+					namespace: "命名空间",
 					runtime: "运行时",
 					type: "类型",
 					auth: "鉴权",
@@ -1120,6 +1178,36 @@ export const serversTranslations = {
 					disabled: "已禁用",
 					unifyEligible: "直达暴露可用",
 				},
+			},
+			namespaceIssue: {
+				title: "需要修复命名空间",
+				statusConflict: "冲突",
+				statusInvalid: "命名空间不合规",
+				popoverCapabilityCollision:
+					"此命名空间会生成已被其他 Server 占用的能力名称，请手工设置唯一的 namespace。",
+				popoverCapabilityCollisionWithServer:
+					"此命名空间会生成已被现有 Server <server>{{namespace}}</server> 占用的能力名称。请手工设置唯一的 namespace。",
+				popoverLegacyCollision:
+					"此命名空间在尝试规范化后，会与已存在且合规的 Server 重名。请手工设置唯一的 namespace。",
+				popoverLegacyCollisionWithServer:
+					"规范化此命名空间后，将与现有 Server <server>{{namespace}}</server> 的合规命名空间冲突。请手工设置唯一的 namespace。",
+				popoverInvalid:
+					"此命名空间无法安全规范化，请手工设置唯一的小写 snake_case 命名空间。",
+				retryConflict:
+					"新的 namespace 仍无法通过唯一性验证，请继续修改后再次保存。",
+				description:
+					"历史命名空间“{{namespace}}”无法安全暴露。请输入一个唯一且合规的命名空间，系统会自动修复相关引用。",
+				capabilityCollision:
+					"命名空间“{{namespace}}”生成的能力名称已被其他服务器使用。请输入一个唯一且合规的命名空间，系统会在不修改单项能力名称的前提下完成修复。",
+				conflicts: "发生冲突的命名空间：{{namespaces}}",
+				inputLabel: "替换后的命名空间",
+				action: "修复",
+				success: "命名空间已修复",
+				pendingTitle: "命名空间已修复，刷新仍在进行",
+				pendingDescription:
+					"命名空间变更已经提交，但运行时或缓存尚未完成收敛。请刷新 Server 详情后再重试下游调用。",
+				errorTitle: "命名空间修复失败",
+				iconLabel: "命名空间需要修复",
 			},
 			deleteDialog: {
 				title: "删除服务器",
@@ -1255,8 +1343,7 @@ export const serversTranslations = {
 						tokenEndpoint: "令牌端点",
 						clientId: "Client ID",
 						clientSecret: "Client Secret",
-						clientSecretPlaceholderExisting:
-							"留空以保留当前已存储的密钥",
+            clientSecretPlaceholderExisting: "留空以保留当前已存储的密钥",
 						clientSecretPlaceholderNew: "公开客户端可选填",
 						scopes: "Scopes",
 						redirectUri: "回调 URI",
@@ -1359,8 +1446,7 @@ export const serversTranslations = {
 		},
 		manual: {
 			ingest: {
-				default:
-					"拖放或粘贴 JSON、TOML 或文本，或点击图标扫描本地配置",
+        default: "拖放或粘贴 JSON、TOML 或文本，或点击图标扫描本地配置",
 				parsingDropped: "正在解析拖入的文本",
 				parsingPasted: "正在解析粘贴的内容",
 				success: "服务器配置已成功载入",
@@ -1449,6 +1535,12 @@ export const serversTranslations = {
 					readOnlyTitle: "编辑模式下不可修改名称",
 					readOnlyTitleAfterOAuth: "OAuth 流程开始后不可修改名称",
 				},
+				namespace: {
+					label: "命名空间",
+					placeholder: "例如：local_mcp",
+          suggestionAction: "采用建议的命名空间：",
+					importMapping: "{{original}} → {{namespace}}",
+				},
 				type: {
 					label: "类型",
 					options: {
@@ -1532,16 +1624,22 @@ export const serversTranslations = {
 				unifyEligibility: {
 					badge: "高级暴露控制",
 					title: "标记为直达模式服务器",
-					description: "这个选项会将服务器标记为 Unify 模式下可直达暴露的候选。被选中的客户端可直接暴露该服务器的工具、提示、资源与模板。",
+          description:
+            "这个选项会将服务器标记为 Unify 模式下可直达暴露的候选。被选中的客户端可直接暴露该服务器的工具、提示、资源与模板。",
 					whatIsIt: "这是什么？",
-					whatIsItDesc: "仅当该服务器需要在 Unify 中支持直达能力暴露，而非仅通过 UCAN 代理路径访问时，才应启用。",
+          whatIsItDesc:
+            "仅当该服务器需要在 Unify 中支持直达能力暴露，而非仅通过 UCAN 代理路径访问时，才应启用。",
 					whenToUse: "什么时候使用？",
-					whenToUseDesc: "适用于 Memory、Audit 等需要向指定 Unify 客户端持续直达暴露关键能力的服务器。",
+          whenToUseDesc:
+            "适用于 Memory、Audit 等需要向指定 Unify 客户端持续直达暴露关键能力的服务器。",
 					watchOut: "需要注意什么？",
-					watchOutDesc: "不要把它当普通开关随手开启。一旦客户端启用直达暴露，该服务器能力可绕过纯 UCAN 路径，直接进入客户端上下文。",
+          watchOutDesc:
+            "不要把它当普通开关随手开启。一旦客户端启用直达暴露，该服务器能力可绕过纯 UCAN 路径，直接进入客户端上下文。",
 					howToEnable: "如何启用",
-				howToEnableDesc: "先在这里标记 eligible，再到 Unify 模式的 Client 中选择 Server Level（全部能力）或 Capability Level（按工具/提示/资源/模板选择）来决定暴露范围。",
-					toggleHint: "这里仅标记资格，真正是否暴露、如何暴露，由 Client 侧决定。",
+          howToEnableDesc:
+            "先在这里标记 eligible，再到 Unify 模式的 Client 中选择 Server Level（全部能力）或 Capability Level（按工具/提示/资源/模板选择）来决定暴露范围。",
+          toggleHint:
+            "这里仅标记资格，真正是否暴露、如何暴露，由 Client 侧决定。",
 				},
 			},
 			auth: {
@@ -1608,7 +1706,8 @@ export const serversTranslations = {
 						clientSecretPlaceholderNew: "公开客户端可留空",
 						scopes: "权限范围（Scopes）",
 						redirectUri: "重定向 URI",
-						placeholderAuthorizationEndpoint: "https://issuer.example.com/authorize",
+            placeholderAuthorizationEndpoint:
+              "https://issuer.example.com/authorize",
 						placeholderTokenEndpoint: "https://issuer.example.com/token",
 						placeholderScopes: "read write",
 					},
@@ -1617,6 +1716,12 @@ export const serversTranslations = {
 			},
 			errors: {
 				nameRequired: "名称为必填项",
+				namespaceRequired: "命名空间为必填项",
+				namespaceInvalid:
+					"请使用 1–64 位小写字母、数字和单个下划线，并以字母开头。",
+				namespaceReviewTitle: "请检查服务器命名空间",
+				namespaceReviewDescription:
+					"{{name}} 不是规范的命名空间，请采用建议或修改后再进行预览。",
 				kindRequired: "请选择服务器类型",
 				urlInvalid: "请输入合法的 URL",
 				commandRequired: "Stdio 服务器需要提供启动命令",
@@ -1733,10 +1838,8 @@ export const serversTranslations = {
 				},
 				skipNotice: {
 					titlePartial: "将跳过 {{count}} 个服务器",
-					descriptionAlreadyInstalled:
-						"这些服务器已在库中，不会再次导入。",
-					descriptionDuplicateName:
-						"这些服务器名称已被占用，不会再次导入。",
+          descriptionAlreadyInstalled: "这些服务器已在库中，不会再次导入。",
+          descriptionDuplicateName: "这些服务器名称已被占用，不会再次导入。",
 					descriptionMixed: "以下服务器不会导入，请查看各项原因。",
 				},
 				summary: {
@@ -1848,13 +1951,13 @@ export const serversTranslations = {
 					"Uni-Import を使うにはテキスト、JSON スニペット、URL、または設定ファイルをドロップしてください。",
 			},
 			importRejections: {
-				bundleDisabled:
-					"MCPB と DXT バンドルのインポートは現在無効です。",
+        bundleDisabled: "MCPB と DXT バンドルのインポートは現在無効です。",
 				fileTooLarge:
 					"ドロップされたファイルは {{maxMb}} MB のインポート上限を超えています。",
 				textTooLarge:
 					"ドロップされたテキストは {{maxMb}} MB のインポート上限を超えています。",
-				tooManyFiles: "一度にドロップできるファイルは {{maxFiles}} 個までです。",
+        tooManyFiles:
+          "一度にドロップできるファイルは {{maxFiles}} 個までです。",
 			},
 			importEmpty: {
 				title: "インポートできる内容がありません",
@@ -1884,8 +1987,10 @@ export const serversTranslations = {
 			},
 			delete: {
 				title: "サーバーを削除しました",
-				message: "サーバー {{serverId}}。保存済みシークレットを使用していた場合は Secure Store のクリーンアップを確認してください。",
-				cleanupReview: "このサーバーが保存済みシークレットを使用していた場合は Secure Store のクリーンアップを確認してください。",
+        message:
+          "サーバー {{serverId}}。保存済みシークレットを使用していた場合は Secure Store のクリーンアップを確認してください。",
+        cleanupReview:
+          "このサーバーが保存済みシークレットを使用していた場合は Secure Store のクリーンアップを確認してください。",
 				errorFallback: "サーバーの削除中にエラーが発生しました",
 			},
 			genericError: {
@@ -1928,8 +2033,7 @@ export const serversTranslations = {
 			tags: {
 				unifyEligible: "直接公開",
 			},
-			description: { 				serverLabel: "サーバー: {{name}}",
-			},
+      description: { serverLabel: "サーバー: {{name}}" },
 			connectionTags: {
 				stdio: "STDIO",
 				http: "HTTP",
@@ -1975,7 +2079,8 @@ export const serversTranslations = {
 			},
 			loading: {
 				title: "サーバー詳細を読み込み中",
-				description: "サービスは応答していますが、詳細スナップショットの準備に少し時間がかかっています。",
+        description:
+          "サービスは応答していますが、詳細スナップショットの準備に少し時間がかかっています。",
 			},
 			viewModes: {
 				browse: "閲覧",
@@ -1984,6 +2089,8 @@ export const serversTranslations = {
 			overview: {
 				labels: {
 					service: "サービス",
+					upstreamName: "アップストリーム名",
+					namespace: "名前空間",
 					runtime: "ランタイム",
 					type: "タイプ",
 					auth: "認証",
@@ -2002,6 +2109,36 @@ export const serversTranslations = {
 					disabled: "無効",
 					unifyEligible: "直接公開が利用可能",
 				},
+			},
+			namespaceIssue: {
+				title: "名前空間の修復が必要です",
+				statusConflict: "競合",
+				statusInvalid: "無効な名前空間",
+				popoverCapabilityCollision:
+					"この名前空間は別の Server が所有する機能名を生成します。一意の namespace を手動で指定してください。",
+				popoverCapabilityCollisionWithServer:
+					"この名前空間は既存の Server <server>{{namespace}}</server> が所有する機能名を生成します。一意の namespace を手動で指定してください。",
+				popoverLegacyCollision:
+					"この名前空間を正規化すると、既存の有効な Server と同じ名前になります。一意の namespace を手動で指定してください。",
+				popoverLegacyCollisionWithServer:
+					"この名前空間を正規化すると、既存の Server <server>{{namespace}}</server> の有効な名前空間と競合します。一意の namespace を手動で指定してください。",
+				popoverInvalid:
+					"この名前空間は安全に正規化できません。一意の小文字 snake_case を手動で指定してください。",
+				retryConflict:
+					"この namespace は一意性の検証に失敗しました。変更してから再度保存してください。",
+				description:
+					"従来の名前空間「{{namespace}}」は安全に公開できません。一意で規則に準拠した名前空間を入力すると、関連する参照が自動的に修復されます。",
+				capabilityCollision:
+					"名前空間「{{namespace}}」が生成する機能名は別のサーバーですでに使用されています。個々の機能名を変更せずに修復するには、一意で規則に準拠した名前空間を入力してください。",
+				conflicts: "競合する名前空間: {{namespaces}}",
+				inputLabel: "置換後の名前空間",
+				action: "修復",
+				success: "名前空間を修復しました",
+				pendingTitle: "名前空間を修復しました。更新は保留中です",
+				pendingDescription:
+					"名前空間の変更はコミットされましたが、ランタイムまたはキャッシュの更新はまだ完了していません。ダウンストリーム呼び出しを再試行する前に Server の詳細を更新してください。",
+				errorTitle: "名前空間の修復に失敗しました",
+				iconLabel: "名前空間の修復が必要です",
 			},
 			deleteDialog: {
 				title: "サーバーを削除",
@@ -2043,7 +2180,8 @@ export const serversTranslations = {
 			},
 			logs: {
 				title: "ログ",
-				description: "このサーバーに関連する実行ログとアクティビティログを表示します。",
+        description:
+          "このサーバーに関連する実行ログとアクティビティログを表示します。",
 				searchPlaceholder: "ログを検索...",
 				refresh: "ログを更新",
 				expand: "ログを展開",
@@ -2168,8 +2306,7 @@ export const serversTranslations = {
 					},
 					notifications: {
 						savedTitle: "OAuth 設定を保存しました",
-						savedMessage:
-							"このサーバーの OAuth 設定を更新しました。",
+            savedMessage: "このサーバーの OAuth 設定を更新しました。",
 						saveFailedTitle: "OAuth 設定の保存に失敗しました",
 						connectFailedTitle: "OAuth を開始できませんでした",
 						revokedTitle: "OAuth トークンを削除しました",
@@ -2346,6 +2483,12 @@ export const serversTranslations = {
 					readOnlyTitleAfterOAuth:
 						"OAuth のセットアップ開始後は名称を変更できません",
 				},
+				namespace: {
+					label: "名前空間",
+					placeholder: "例: local_mcp",
+          suggestionAction: "推奨される名前空間を使用:",
+					importMapping: "{{original}} → {{namespace}}",
+				},
 				type: {
 					label: "種別",
 					options: {
@@ -2429,16 +2572,22 @@ export const serversTranslations = {
 				unifyEligibility: {
 					badge: "高度な公開制御",
 					title: "Unify 直接公開対象としてマーク",
-					description: "このオプションは、サーバーを Unify モードで直接公開可能な候補としてマークします。選択されたクライアントには、ツール・プロンプト・リソース・テンプレートを直接公開できます。",
+          description:
+            "このオプションは、サーバーを Unify モードで直接公開可能な候補としてマークします。選択されたクライアントには、ツール・プロンプト・リソース・テンプレートを直接公開できます。",
 					whatIsIt: "これは何ですか？",
-					whatIsItDesc: "このサーバーを Unify で直接公開対象として扱い、UCAN ブローカー経由のみの到達に限定したくない場合に有効化してください。",
+          whatIsItDesc:
+            "このサーバーを Unify で直接公開対象として扱い、UCAN ブローカー経由のみの到達に限定したくない場合に有効化してください。",
 					whenToUse: "いつ使いますか？",
-					whenToUseDesc: "Memory、Audit など、選択した Unify クライアントに主要ケイパビリティを直接公開したいサーバーで使います。",
+          whenToUseDesc:
+            "Memory、Audit など、選択した Unify クライアントに主要ケイパビリティを直接公開したいサーバーで使います。",
 					watchOut: "注意点は？",
-					watchOutDesc: "通常の設定項目として気軽に有効化しないでください。クライアントが直接公開を選ぶと、このサーバーのケイパビリティは UCAN 専用経路を迂回してクライアントのコンテキストに入ります。",
+          watchOutDesc:
+            "通常の設定項目として気軽に有効化しないでください。クライアントが直接公開を選ぶと、このサーバーのケイパビリティは UCAN 専用経路を迂回してクライアントのコンテキストに入ります。",
 					howToEnable: "有効化手順",
-				howToEnableDesc: "まずここで eligible に設定し、次に Unify モードの Client で Server Level（全能力）または Capability Level（ツール/プロンプト/リソース/テンプレート単位）を選んで公開範囲を決めます。",
-					toggleHint: "ここでは資格だけを付与します。実際に公開するかどうか、どう公開するかは Client 側で決まります。",
+          howToEnableDesc:
+            "まずここで eligible に設定し、次に Unify モードの Client で Server Level（全能力）または Capability Level（ツール/プロンプト/リソース/テンプレート単位）を選んで公開範囲を決めます。",
+          toggleHint:
+            "ここでは資格だけを付与します。実際に公開するかどうか、どう公開するかは Client 側で決まります。",
 				},
 			},
 			auth: {
@@ -2456,7 +2605,8 @@ export const serversTranslations = {
 						"OAuth コールバックの待受けを初期化中です。しばらくしてから再度お試しください。",
 					connectFailedTitle: "OAuth を開始できませんでした",
 					revokedTitle: "OAuth トークンを削除しました",
-					revokedMessage: "このサーバーに保存されていた OAuth 資格情報を削除しました。",
+          revokedMessage:
+            "このサーバーに保存されていた OAuth 資格情報を削除しました。",
 					revokeFailedTitle: "OAuth の削除に失敗しました",
 					unknownError: "不明なエラー",
 					state: {
@@ -2487,9 +2637,9 @@ export const serversTranslations = {
 						register: "クライアント登録",
 						authorize: "認可",
 						complete: "認証完了",
-						preparingMessage:
-							"OAuth フローを準備し、認可ページを開いています…",
-						listenerPreparingMessage: "デスクトップのコールバック待受けを準備しています…",
+            preparingMessage: "OAuth フローを準備し、認可ページを開いています…",
+            listenerPreparingMessage:
+              "デスクトップのコールバック待受けを準備しています…",
 						awaitingMessage: "ポップアップで認可を完了するまでお待ちください…",
 						connectedMessage: "このサーバーの OAuth は接続済みです。",
 						errorMessage:
@@ -2506,11 +2656,13 @@ export const serversTranslations = {
 						tokenEndpoint: "トークンエンドポイント",
 						clientId: "クライアント ID",
 						clientSecret: "クライアントシークレット",
-						clientSecretPlaceholderExisting: "空欄のままにすると保存済みのシークレットを維持します",
+            clientSecretPlaceholderExisting:
+              "空欄のままにすると保存済みのシークレットを維持します",
 						clientSecretPlaceholderNew: "パブリッククライアントでは任意です",
 						scopes: "スコープ",
 						redirectUri: "リダイレクト URI",
-						placeholderAuthorizationEndpoint: "https://issuer.example.com/authorize",
+            placeholderAuthorizationEndpoint:
+              "https://issuer.example.com/authorize",
 						placeholderTokenEndpoint: "https://issuer.example.com/token",
 						placeholderScopes: "read write",
 					},
@@ -2519,6 +2671,12 @@ export const serversTranslations = {
 			},
 			errors: {
 				nameRequired: "名称は必須です",
+				namespaceRequired: "名前空間は必須です",
+				namespaceInvalid:
+					"1～64 文字の小文字、数字、単一のアンダースコアを使用し、文字で始めてください。",
+				namespaceReviewTitle: "サーバーの名前空間を確認してください",
+				namespaceReviewDescription:
+					"{{name}} は正規の名前空間ではありません。推奨値を適用するか、編集してからプレビューしてください。",
 				kindRequired: "サーバー種別を選択してください",
 				urlInvalid: "有効な URL を入力してください",
 				commandRequired: "Stdio サーバーにはコマンドが必要です",
@@ -2539,7 +2697,8 @@ export const serversTranslations = {
 			secrets: {
 				pick: "シークレットを使用",
 				title: "セキュアストアを使用",
-				description: "このランタイムフィールドにライトオンリーのプレースホルダーを挿入します。",
+        description:
+          "このランタイムフィールドにライトオンリーのプレースホルダーを挿入します。",
 				unavailablePick: "セキュアストアを使用できません",
 				unavailableTitle: "セキュアストアを使用できません",
 				unavailableDescription:
@@ -2578,16 +2737,14 @@ export const serversTranslations = {
 			},
 			preview: {
 				retry: "プレビューを再実行",
-				retryDescription:
-					"選択中のサーバーの機能プレビューを再生成します。",
+        retryDescription: "選択中のサーバーの機能プレビューを再生成します。",
 				generating: "機能プレビューを生成中…",
 				serverPickerLabel: "サーバー",
 				selectServer: "サーバーを選択",
 				filterCapabilities: "機能をフィルタ...",
 				capabilitiesTitle: "機能",
 				capabilitiesSummary: "機能 · {{summary}}",
-				emptyCapabilities:
-					"このサーバーでは機能が見つかりませんでした。",
+        emptyCapabilities: "このサーバーでは機能が見つかりませんでした。",
 				capabilities: {
 					tool: "ツール",
 					tools: "ツール",

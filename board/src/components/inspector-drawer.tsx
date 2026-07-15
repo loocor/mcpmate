@@ -45,7 +45,6 @@ import {
 } from "./ui/drawer";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { ScrollArea } from "./ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
 import {
@@ -219,12 +218,15 @@ const PROMPT_KIND_KEYS: Array<keyof CapabilityRecord> = [
 ];
 
 const RESOURCE_KIND_KEYS: Array<keyof CapabilityRecord> = [
+	"unique_uri",
 	"resource_uri",
 	"uri",
 	"name",
 ];
 
 const TEMPLATE_KIND_KEYS: Array<keyof CapabilityRecord> = [
+	"unique_uri_template",
+	"unique_name",
 	"uriTemplate",
 	"uri_template",
 	"name",
@@ -338,9 +340,9 @@ function pickToolNameForMode(
 	const toolName = toStringValue(source.tool_name);
 	const rawName = toStringValue(source.name);
 	if (mode === "proxy") {
-		return uniqueName || toolName || rawName || "";
+		return uniqueName || "";
 	}
-	return toolName || rawName || uniqueName || "";
+	return toolName || rawName || "";
 }
 
 function pickPromptNameForMode(
@@ -352,27 +354,42 @@ function pickPromptNameForMode(
 	const promptName = toStringValue(source.prompt_name);
 	const rawName = toStringValue(source.name);
 	if (mode === "proxy") {
-		return uniqueName || promptName || rawName || "";
+		return uniqueName || "";
 	}
-	return promptName || rawName || uniqueName || "";
+	return promptName || rawName || "";
 }
 
-function pickTemplateName(source: CapabilityRecord | null): string {
+function pickTemplateName(
+	source: CapabilityRecord | null,
+	mode: InspectorMode,
+): string {
+	if (!source) return "";
+	if (mode === "proxy") {
+		return (
+			toStringValue(source.unique_uri_template) ??
+			toStringValue(source.unique_name) ??
+			""
+		);
+	}
 	return (
-		toStringValue(source?.uriTemplate) ??
-		toStringValue(source?.uri_template) ??
-		toStringValue(source?.name) ??
+		toStringValue(source.uriTemplate) ??
+		toStringValue(source.uri_template) ??
 		""
 	);
 }
 
-function pickResourceUri(source: CapabilityRecord | null): string {
-	return (
-		toStringValue(source?.resource_uri) ??
-		toStringValue(source?.uri) ??
-		toStringValue(source?.name) ??
-		""
-	);
+function pickResourceUriForMode(
+	source: CapabilityRecord | null,
+	mode: InspectorMode,
+): string {
+	if (!source) return "";
+	const uniqueUri = toStringValue(source.unique_uri);
+	const resourceUri = toStringValue(source.resource_uri);
+	const rawUri = toStringValue(source.uri);
+	if (mode === "proxy") {
+		return uniqueUri || "";
+	}
+	return resourceUri || rawUri || "";
 }
 
 function normalizeCapabilityOptions(
@@ -623,6 +640,7 @@ export function InspectorDrawer({
 				mode: "native",
 				server_id: serverId,
 				server_name: serverName,
+				timeout_ms: timeoutMs,
 			})
 			.then((response) => {
 				if (!response?.success || !response.data) {
@@ -662,6 +680,7 @@ export function InspectorDrawer({
 		closeNativeSession,
 		serverId,
 		serverName,
+		timeoutMs,
 	]);
 
 	useEffect(() => {
@@ -984,9 +1003,9 @@ export function InspectorDrawer({
 		} else if (kind === "prompt") {
 			setName(pickPromptNameForMode(source, mode));
 		} else if (kind === "resource") {
-			setUri(pickResourceUri(source));
+			setUri(pickResourceUriForMode(source, mode));
 		} else if (kind === "template") {
-			setName(pickTemplateName(source));
+			setName(pickTemplateName(source, mode));
 		}
 	}, [open, currentItem, kind, mode]);
 
@@ -1073,6 +1092,7 @@ export function InspectorDrawer({
 				mode,
 				session_id: sessionId,
 				refresh: true,
+				timeout_ms: timeoutMs,
 			};
 			let resp: InspectorResponse<any> | undefined;
 			if (kind === "tool") {
@@ -1121,6 +1141,7 @@ export function InspectorDrawer({
 		serverId,
 		serverName,
 		t,
+		timeoutMs,
 	]);
 
 	const handleCapabilitySelect = useCallback(
@@ -1138,9 +1159,9 @@ export function InspectorDrawer({
 				else if (kind === "prompt") {
 					setName(pickPromptNameForMode(match, mode));
 				} else if (kind === "resource") {
-					setUri(pickResourceUri(match));
+					setUri(pickResourceUriForMode(match, mode));
 				} else if (kind === "template") {
-					setName(pickTemplateName(match));
+					setName(pickTemplateName(match, mode));
 				}
 			} else {
 				setOverrideItem(null);
@@ -1501,6 +1522,7 @@ export function InspectorDrawer({
 					mode,
 					arguments: args,
 					session_id: effectiveSessionId,
+					timeout_ms: timeoutMs,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
 					throw new Error(
@@ -1554,6 +1576,7 @@ export function InspectorDrawer({
 					server_name: serverName,
 					session_id: effectiveSessionId,
 					mode,
+					timeout_ms: timeoutMs,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
 					throw new Error(
@@ -1590,6 +1613,7 @@ export function InspectorDrawer({
 					server_name: serverName,
 					session_id: effectiveSessionId,
 					mode,
+					timeout_ms: timeoutMs,
 				})) as InspectorResponse<Record<string, unknown>>;
 				if (!resp?.success) {
 					throw new Error(
@@ -1923,14 +1947,10 @@ export function InspectorDrawer({
 													getLabel={(it) => {
 														const entry = it as CapabilityRecord;
 														if (kind === "template") {
-															return (toStringValue((entry as any).uriTemplate) ||
-																toStringValue((entry as any).uri_template) ||
-																toStringValue((entry as any).name) ||
+															return (pickTemplateName(entry, mode) ||
 																computeRecordKey(entry, kind)) as string;
 														}
-														return (toStringValue((entry as any).resource_uri) ||
-															toStringValue((entry as any).uri) ||
-															toStringValue((entry as any).name) ||
+														return (pickResourceUriForMode(entry, mode) ||
 															computeRecordKey(entry, kind)) as string;
 													}}
 													getDescription={(it) => {
@@ -1981,23 +2001,11 @@ export function InspectorDrawer({
 																	pickToolNameForMode(entry, mode) ||
 																	computeRecordKey(entry, kind)
 																);
-															} else {
-																const uniqueName = toStringValue(
-																	(entry as any).unique_name,
-																);
-																const promptName = toStringValue(
-																	(entry as any).prompt_name,
-																);
-																const rawName = toStringValue(
-																	(entry as any).name,
-																);
-																return (
-																	(mode === "proxy"
-																		? uniqueName || promptName || rawName
-																		: promptName || rawName || uniqueName) ||
-																	computeRecordKey(entry, kind)
-																);
 															}
+															return (
+																pickPromptNameForMode(entry, mode) ||
+																computeRecordKey(entry, kind)
+															);
 														}}
 														getDescription={(it) => {
 															const entry = it as CapabilityRecord;

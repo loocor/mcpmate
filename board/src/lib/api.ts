@@ -72,7 +72,9 @@ import type {
 	ServerListResp,
 	ServerListResponse,
 	ServerMetaInfo,
+	ServerNamespaceIssue,
 	ServerSource,
+  StandardServerInfo,
 	SecretDeleteResp,
 	SecretKind,
 	SecretListResp,
@@ -121,7 +123,9 @@ export const API_BASE_CHANGED_EVENT = "mcpmate:api-base-changed";
 
 const readEnvApiBaseUrl = (): string | null => {
 	const envBase =
-		typeof import.meta !== "undefined" ? import.meta.env?.VITE_API_BASE_URL : undefined;
+    typeof import.meta !== "undefined"
+      ? import.meta.env?.VITE_API_BASE_URL
+      : undefined;
 	if (typeof envBase !== "string") {
 		return null;
 	}
@@ -211,7 +215,9 @@ export function setApiBaseUrl(newBase: string | null | undefined) {
 				window.localStorage?.removeItem(API_BASE_OVERRIDE_KEY);
 			}
 			window.dispatchEvent(
-				new CustomEvent(API_BASE_CHANGED_EVENT, { detail: { apiBaseUrl: candidate } }),
+        new CustomEvent(API_BASE_CHANGED_EVENT, {
+          detail: { apiBaseUrl: candidate },
+        }),
 			);
 		} catch {
 			// ignore persistence errors
@@ -281,6 +287,7 @@ interface SuitTool {
 	id: string;
 	name?: string;
 	tool_name?: string;
+  unique_name?: string;
 	server_name: string;
 	description?: string;
 	enabled?: boolean;
@@ -303,7 +310,14 @@ type CapabilityDetailResult = {
 };
 
 function normalizeCapabilityListPayload(
-	resp: { success: boolean; data?: CapabilityListResult | null; error?: unknown | null } | null | undefined,
+  resp:
+    | {
+        success: boolean;
+        data?: CapabilityListResult | null;
+        error?: unknown | null;
+      }
+    | null
+    | undefined,
 ): CapabilityListResult {
 	if (!resp?.data) {
 		return {
@@ -320,7 +334,11 @@ function normalizeCapabilityListPayload(
 }
 
 function capabilityTransportErrorResult(): CapabilityListResult {
-	return { items: [], state: "transport_error", degraded_reason: "request_failed" };
+  return {
+    items: [],
+    state: "transport_error",
+    degraded_reason: "request_failed",
+  };
 }
 
 async function fetchCapabilityList(
@@ -483,14 +501,10 @@ const normalizeServerIcon = (icon: unknown): ServerIcon | null => {
 	if (!icon || typeof icon !== "object") return null;
 	const o = icon as Record<string, unknown>;
 	const src =
-		toTrimmedString(o.src) ||
-		toTrimmedString(o.url) ||
-		toTrimmedString(o.href);
+    toTrimmedString(o.src) || toTrimmedString(o.url) || toTrimmedString(o.href);
 	if (!src) return null;
 	const mimeType =
-		toTrimmedString(o.mime_type) ||
-		toTrimmedString(o.mimeType) ||
-		undefined;
+    toTrimmedString(o.mime_type) || toTrimmedString(o.mimeType) || undefined;
 	const sizes =
 		toTrimmedString(o.sizes) || toTrimmedString(o.size) || undefined;
 	const normalized: ServerIcon = { src };
@@ -507,7 +521,9 @@ const normalizeServerIconList = (icons: unknown): ServerIcon[] => {
 		.filter((icon): icon is ServerIcon => Boolean(icon));
 };
 
-const normalizeRepositoryInfo = (repo: unknown): RegistryRepositoryInfo | null => {
+const normalizeRepositoryInfo = (
+  repo: unknown,
+): RegistryRepositoryInfo | null => {
 	if (!repo) return null;
 	if (typeof repo === "string") {
 		const url = toTrimmedString(repo);
@@ -527,7 +543,9 @@ const normalizeRepositoryInfo = (repo: unknown): RegistryRepositoryInfo | null =
 	return Object.keys(info).length > 0 ? info : null;
 };
 
-export const normalizeServerMeta = (meta: unknown): ServerMetaInfo | undefined => {
+export const normalizeServerMeta = (
+  meta: unknown,
+): ServerMetaInfo | undefined => {
 	if (!meta || typeof meta !== "object") return undefined;
 	const m = meta as Record<string, unknown>;
 	const normalized: ServerMetaInfo = {};
@@ -739,7 +757,10 @@ const enrichServerRecord = <T extends Record<string, unknown>>(server: T) => {
 	};
 };
 
-function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): ServerDetail {
+function normalizeServerDetail(
+  enhanced: Record<string, unknown>,
+  id: string,
+): ServerDetail {
 	const enabledValue =
 		typeof enhanced?.enabled === "boolean"
 			? enhanced.enabled
@@ -801,7 +822,21 @@ function normalizeServerDetail(enhanced: Record<string, unknown>, id: string): S
 				? (enhanced.headers as Record<string, string>)
 				: undefined,
 		meta: normalizeServerMeta(enhanced?.meta),
+    server_info:
+      typeof detailRecord.server_info === "object" &&
+      detailRecord.server_info !== null
+        ? (detailRecord.server_info as StandardServerInfo)
+        : detailRecord.server_info === null
+          ? null
+          : undefined,
 		icons: normalizeServerIconList(enhanced?.icons),
+		namespace_issue:
+			typeof detailRecord.namespace_issue === "object" &&
+			detailRecord.namespace_issue !== null
+				? (detailRecord.namespace_issue as ServerNamespaceIssue)
+				: detailRecord.namespace_issue === null
+					? null
+					: undefined,
 	};
 }
 
@@ -810,7 +845,10 @@ type FetchApiOptions = RequestInit & {
 };
 
 // Core API request function
-async function fetchApi<T>(endpoint: string, options?: FetchApiOptions): Promise<T> {
+async function fetchApi<T>(
+  endpoint: string,
+  options?: FetchApiOptions,
+): Promise<T> {
 	const url = resolveApiUrl(endpoint);
 	const { logFailure = true, ...requestOptions } = options ?? {};
 	const headers =
@@ -904,13 +942,17 @@ export const secretsApi = {
 
 	get: async (alias: string): Promise<SecretMetadata> => {
 		const q = new URLSearchParams({ alias });
-		const resp = await fetchApi<SecretMetadataResp>(`/api/secrets/details?${q}`);
+    const resp = await fetchApi<SecretMetadataResp>(
+      `/api/secrets/details?${q}`,
+    );
 		return extractApiData(resp as ApiWrapper<SecretMetadata>);
 	},
 
 	listUsages: async (alias: string): Promise<SecretUsage[]> => {
 		const q = new URLSearchParams({ alias });
-		const resp = await fetchApi<SecretUsageListResp>(`/api/secrets/usages?${q}`);
+    const resp = await fetchApi<SecretUsageListResp>(
+      `/api/secrets/usages?${q}`,
+    );
 		return resp.data?.usages ?? [];
 	},
 
@@ -942,12 +984,17 @@ export const secretsApi = {
 		return extractApiData(resp as ApiWrapper<SecretMetadata>);
 	},
 
-	delete: async (alias: string, force = false): Promise<{ alias: string; deleted: boolean }> => {
+  delete: async (
+    alias: string,
+    force = false,
+  ): Promise<{ alias: string; deleted: boolean }> => {
 		const resp = await fetchApi<SecretDeleteResp>("/api/secrets/delete", {
 			method: "DELETE",
 			body: JSON.stringify({ alias, force }),
 		});
-		return extractApiData(resp as ApiWrapper<{ alias: string; deleted: boolean }>);
+    return extractApiData(
+      resp as ApiWrapper<{ alias: string; deleted: boolean }>,
+    );
 	},
 
 	unlock: async (passphrase: string): Promise<SecretStoreStatusData> => {
@@ -963,14 +1010,17 @@ export const secretsApi = {
 		newPassphrase: string,
 		confirm: string,
 	): Promise<SecretStoreStatusData> => {
-		const resp = await fetchApi<SecretStoreStatusResp>("/api/secrets/passphrase/rotate", {
+    const resp = await fetchApi<SecretStoreStatusResp>(
+      "/api/secrets/passphrase/rotate",
+      {
 			method: "POST",
 			body: JSON.stringify({
 				current_passphrase: currentPassphrase,
 				new_passphrase: newPassphrase,
 				confirm,
 			}),
-		});
+      },
+    );
 		return extractApiData(resp as ApiWrapper<SecretStoreStatusData>);
 	},
 
@@ -997,11 +1047,16 @@ export const secretsApi = {
 		if (options?.confirmationPhrase) {
 			body.confirmation_phrase = options.confirmationPhrase;
 		}
-		const resp = await fetchApi<ProviderSwitchResp>("/api/secrets/provider/switch", {
+    const resp = await fetchApi<ProviderSwitchResp>(
+      "/api/secrets/provider/switch",
+      {
 			method: "POST",
 			body: JSON.stringify(body),
-		});
-		const data = extractApiData(resp as ApiWrapper<{ new_status: SecretStoreStatusData }>);
+      },
+    );
+    const data = extractApiData(
+      resp as ApiWrapper<{ new_status: SecretStoreStatusData }>,
+    );
 		return data.new_status;
 	},
 
@@ -1011,7 +1066,9 @@ export const secretsApi = {
 		scope: string[];
 		has_password: boolean;
 	}> => {
-		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/status");
+    const resp = await fetchApi<PasswordStatusResp>(
+      "/api/secrets/password/status",
+    );
 		return extractApiData(
 			resp as ApiWrapper<{
 				enabled: boolean;
@@ -1030,14 +1087,19 @@ export const secretsApi = {
 			method: "POST",
 			body: JSON.stringify({ password, confirm, scope }),
 		});
-		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[] }>);
+    return extractApiData(
+      resp as ApiWrapper<{ enabled: boolean; scope: string[] }>,
+    );
 	},
 
 	verifyPassword: async (password: string): Promise<{ valid: boolean }> => {
-		const resp = await fetchApi<PasswordVerifyResp>("/api/secrets/password/verify", {
+    const resp = await fetchApi<PasswordVerifyResp>(
+      "/api/secrets/password/verify",
+      {
 			method: "POST",
 			body: JSON.stringify({ password }),
-		});
+      },
+    );
 		return extractApiData(resp as ApiWrapper<{ valid: boolean }>);
 	},
 
@@ -1046,30 +1108,63 @@ export const secretsApi = {
 		newPassword: string,
 		confirm: string,
 	): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
-		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/change", {
+    const resp = await fetchApi<PasswordStatusResp>(
+      "/api/secrets/password/change",
+      {
 			method: "POST",
-			body: JSON.stringify({ old_password: oldPassword, new_password: newPassword, confirm }),
-		});
-		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[]; has_password: boolean }>);
+        body: JSON.stringify({
+          old_password: oldPassword,
+          new_password: newPassword,
+          confirm,
+        }),
+      },
+    );
+    return extractApiData(
+      resp as ApiWrapper<{
+        enabled: boolean;
+        scope: string[];
+        has_password: boolean;
+      }>,
+    );
 	},
 
-	clearPassword: async (password: string): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
-		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/clear", {
+  clearPassword: async (
+    password: string,
+  ): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
+    const resp = await fetchApi<PasswordStatusResp>(
+      "/api/secrets/password/clear",
+      {
 			method: "POST",
 			body: JSON.stringify({ password }),
-		});
-		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[]; has_password: boolean }>);
+      },
+    );
+    return extractApiData(
+      resp as ApiWrapper<{
+        enabled: boolean;
+        scope: string[];
+        has_password: boolean;
+      }>,
+    );
 	},
 
 	updatePasswordScope: async (
 		scope: string[],
 		currentPassword: string,
 	): Promise<{ enabled: boolean; scope: string[]; has_password: boolean }> => {
-		const resp = await fetchApi<PasswordStatusResp>("/api/secrets/password/scope", {
+    const resp = await fetchApi<PasswordStatusResp>(
+      "/api/secrets/password/scope",
+      {
 			method: "POST",
 			body: JSON.stringify({ scope, current_password: currentPassword }),
-		});
-		return extractApiData(resp as ApiWrapper<{ enabled: boolean; scope: string[]; has_password: boolean }>);
+      },
+    );
+    return extractApiData(
+      resp as ApiWrapper<{
+        enabled: boolean;
+        scope: string[];
+        has_password: boolean;
+      }>,
+    );
 	},
 };
 
@@ -1134,7 +1229,7 @@ export const serversApi = {
 
 	saveOAuthConfig: async (
 		id: string,
-		config: Omit<OAuthConfigRequest, 'server_id'>,
+    config: Omit<OAuthConfigRequest, "server_id">,
 	): Promise<OAuthStatus> => {
 		const resp = await fetchApi<ApiWrapper<OAuthStatus>>(
 			"/api/mcp/servers/oauth/config",
@@ -1222,7 +1317,8 @@ export const serversApi = {
 			);
 		}
 
-		const officialMeta = entry._meta?.["io.modelcontextprotocol.registry/official"];
+    const officialMeta =
+      entry._meta?.["io.modelcontextprotocol.registry/official"];
 
 		return {
 			...current,
@@ -1233,7 +1329,11 @@ export const serversApi = {
 				repository: entry.repository,
 				icons: entry.icons,
 				_meta: entry._meta,
-				extras: { packages: entry.packages, remotes: entry.remotes, status: officialMeta?.status },
+        extras: {
+          packages: entry.packages,
+          remotes: entry.remotes,
+          status: officialMeta?.status,
+        },
 			},
 		};
 	},
@@ -1445,6 +1545,12 @@ export const serversApi = {
 		});
 	},
 
+	remediateNamespace: (serverId: string, namespace: string) =>
+		fetchApi<OperationResponseResp>("/api/mcp/servers/namespace/remediate", {
+			method: "POST",
+			body: JSON.stringify({ id: serverId, namespace }),
+		}),
+
 	deleteServer: (serverId: string) =>
 		fetchApi<ServerDetailsResp>("/api/mcp/servers/delete", {
 			method: "DELETE",
@@ -1471,7 +1577,11 @@ export const serversApi = {
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
 	): Promise<CapabilityListResult> =>
-		fetchCapabilityList("/api/mcp/servers/resources/templates", serverId, refresh),
+    fetchCapabilityList(
+      "/api/mcp/servers/resources/templates",
+      serverId,
+      refresh,
+    ),
 	getCapabilityDetail: fetchCapabilityDetail,
 
 	// Import servers from JSON-like configuration object, or from a registered client's config
@@ -1532,10 +1642,7 @@ export interface ImportStats {
 
 export function extractImportStats(
 	response:
-		| ApiWrapper<ServersImportData>
-		| ServersImportData
-		| null
-		| undefined,
+    ApiWrapper<ServersImportData> | ServersImportData | null | undefined,
 ): ImportStats {
 	let payload: ServersImportData | null = null;
 	if (response && typeof response === "object") {
@@ -1580,22 +1687,40 @@ export function extractImportStats(
 	};
 }
 
+interface InspectorTargetQuery {
+	server_id?: string;
+	server_name?: string;
+	session_id?: string;
+	mode?: "proxy" | "native";
+	timeout_ms?: number;
+}
+
+interface InspectorListQuery extends InspectorTargetQuery {
+	refresh?: boolean;
+}
+
+function createInspectorQuery(
+	query: InspectorListQuery,
+	initial?: Record<string, string>,
+): URLSearchParams {
+	const params = new URLSearchParams(initial);
+	if (query.server_id) params.set("server_id", query.server_id);
+	if (query.server_name) params.set("server_name", query.server_name);
+	if (query.session_id) params.set("session_id", query.session_id);
+	if (query.mode) params.set("mode", query.mode);
+	if (query.refresh != null) params.set("refresh", String(query.refresh));
+	if (query.timeout_ms != null) {
+		params.set("timeout_ms", String(query.timeout_ms));
+	}
+	return params;
+}
+
 // Inspector API
 export const inspectorApi = {
-	toolsList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
-		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
-		return fetchApi(`/api/mcp/inspector/tool/list?${qs}`);
+	toolsList: (query: InspectorListQuery) => {
+		return fetchApi(
+			`/api/mcp/inspector/tool/list?${createInspectorQuery(query)}`,
+		);
 	},
 	toolCall: (req: {
 		tool: string;
@@ -1638,6 +1763,7 @@ export const inspectorApi = {
 		mode: "proxy" | "native";
 		server_id?: string;
 		server_name?: string;
+		timeout_ms?: number;
 	}) =>
 		fetchApi<ApiWrapper<InspectorSessionOpenData>>(
 			`/api/mcp/inspector/session/open`,
@@ -1658,49 +1784,21 @@ export const inspectorApi = {
 		const wsBase = resolveWebSocketUrl();
 		return `${wsBase}/inspector/events?call_id=${encodeURIComponent(callId)}`;
 	},
-	resourcesList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
-		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
-		return fetchApi(`/api/mcp/inspector/resource/list?${qs}`);
+	resourcesList: (query: InspectorListQuery) => {
+		return fetchApi(
+			`/api/mcp/inspector/resource/list?${createInspectorQuery(query)}`,
+		);
 	},
-	resourceRead: (q: {
+	resourceRead: (query: InspectorTargetQuery & {
 		uri: string;
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
 	}) => {
-		const qs = new URLSearchParams({ uri: q.uri });
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		return fetchApi(`/api/mcp/inspector/resource/read?${qs}`);
+		const params = createInspectorQuery(query, { uri: query.uri });
+		return fetchApi(`/api/mcp/inspector/resource/read?${params}`);
 	},
-	promptsList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
-		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
-		return fetchApi(`/api/mcp/inspector/prompt/list?${qs}`);
+	promptsList: (query: InspectorListQuery) => {
+		return fetchApi(
+			`/api/mcp/inspector/prompt/list?${createInspectorQuery(query)}`,
+		);
 	},
 	promptGet: (req: {
 		name: string;
@@ -1709,25 +1807,16 @@ export const inspectorApi = {
 		session_id?: string;
 		arguments?: Record<string, unknown>;
 		mode?: "proxy" | "native";
+		timeout_ms?: number;
 	}) =>
 		fetchApi(`/api/mcp/inspector/prompt/get`, {
 			method: "POST",
 			body: JSON.stringify(req),
 		}),
-	templatesList: (q: {
-		server_id?: string;
-		server_name?: string;
-		session_id?: string;
-		mode?: "proxy" | "native";
-		refresh?: boolean;
-	}) => {
-		const qs = new URLSearchParams();
-		if (q.server_id) qs.set("server_id", q.server_id);
-		if (q.server_name) qs.set("server_name", q.server_name);
-		if (q.session_id) qs.set("session_id", q.session_id);
-		if (q.mode) qs.set("mode", q.mode);
-		if (q.refresh != null) qs.set("refresh", String(q.refresh));
-		return fetchApi(`/api/mcp/inspector/template/list?${qs}`);
+	templatesList: (query: InspectorListQuery) => {
+		return fetchApi(
+			`/api/mcp/inspector/template/list?${createInspectorQuery(query)}`,
+		);
 	},
 };
 
@@ -1758,10 +1847,14 @@ export const auditApi = {
 	},
 	details: async (id: number) => {
 		const qs = new URLSearchParams({ id: String(id) });
-		const resp = await fetchApi<AuditEventDetailsResp>(`/api/audit/events/details?${qs}`);
+    const resp = await fetchApi<AuditEventDetailsResp>(
+      `/api/audit/events/details?${qs}`,
+    );
 		const event = resp.data?.event;
 		if (!event) {
-			throw new Error(`Audit event details response missing event for id ${id}`);
+      throw new Error(
+        `Audit event details response missing event for id ${id}`,
+      );
 		}
 		return event;
 	},
@@ -1803,7 +1896,7 @@ export const toolsApi = {
 					const data = extractApiData(resp);
 					if (data?.tools) {
 						const tools = data.tools.map((tool: SuitTool) => ({
-							tool_name: tool.tool_name || tool.name || "",
+              tool_name: tool.unique_name || tool.name || "",
 							server_name: tool.server_name || "",
 							is_enabled: tool.is_enabled ?? tool.enabled ?? true,
 							description: tool.description || "",
@@ -1918,7 +2011,8 @@ export const systemApi = {
 				api_url: string;
 				mcp_http_url: string;
 				first_contact_behavior: "deny" | "review" | "allow" | string;
-				onboarding_policy: "auto_manage" | "require_approval" | "manual" | string;
+        onboarding_policy:
+          "auto_manage" | "require_approval" | "manual" | string;
 				inspector_timeout_ms: number;
 				default_config_mode: "unify" | "hosted" | "transparent" | string;
 			}>
@@ -1939,7 +2033,8 @@ export const systemApi = {
 				api_url: string;
 				mcp_http_url: string;
 				first_contact_behavior: "deny" | "review" | "allow" | string;
-				onboarding_policy: "auto_manage" | "require_approval" | "manual" | string;
+        onboarding_policy:
+          "auto_manage" | "require_approval" | "manual" | string;
 				inspector_timeout_ms: number;
 				default_config_mode: "unify" | "hosted" | "transparent" | string;
 			}>
@@ -2074,10 +2169,7 @@ export const configApi = {
 				if (Array.isArray(serversResponse?.servers)) {
 					config.servers = serversResponse.servers.map((server) => ({
 						name: server.name,
-						kind:
-							server.server_type === "stdio"
-								? "stdio"
-								: "streamable_http",
+            kind: server.server_type === "stdio" ? "stdio" : "streamable_http",
 						command: "",
 						command_path: undefined,
 						args: [],
@@ -2198,7 +2290,9 @@ export const configSuitsApi = {
 				}>
 			>("/api/mcp/profile/list");
 			const data = extractApiData(response);
-			const suits: ConfigSuit[] = (data.profile || []).map(profileRowToConfigSuit);
+      const suits: ConfigSuit[] = (data.profile || []).map(
+        profileRowToConfigSuit,
+      );
 			return { suits };
 		} catch (error) {
 			console.error("Failed to fetch config suits:", error);
@@ -2207,16 +2301,41 @@ export const configSuitsApi = {
 	},
 	// Server capabilities
 	listTools: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
-		return fetchConfigSuitCapabilityList("/api/mcp/servers/tools", serverId, refresh);
+    return fetchConfigSuitCapabilityList(
+      "/api/mcp/servers/tools",
+      serverId,
+      refresh,
+    );
 	},
-	listResources: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
-		return fetchConfigSuitCapabilityList("/api/mcp/servers/resources", serverId, refresh);
+  listResources: async (
+    serverId: string,
+    refresh?: "auto" | "force" | "cache",
+  ) => {
+    return fetchConfigSuitCapabilityList(
+      "/api/mcp/servers/resources",
+      serverId,
+      refresh,
+    );
 	},
-	listPrompts: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
-		return fetchConfigSuitCapabilityList("/api/mcp/servers/prompts", serverId, refresh);
+  listPrompts: async (
+    serverId: string,
+    refresh?: "auto" | "force" | "cache",
+  ) => {
+    return fetchConfigSuitCapabilityList(
+      "/api/mcp/servers/prompts",
+      serverId,
+      refresh,
+    );
 	},
-	listResourceTemplates: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
-		return fetchConfigSuitCapabilityList("/api/mcp/servers/resources/templates", serverId, refresh);
+  listResourceTemplates: async (
+    serverId: string,
+    refresh?: "auto" | "force" | "cache",
+  ) => {
+    return fetchConfigSuitCapabilityList(
+      "/api/mcp/servers/resources/templates",
+      serverId,
+      refresh,
+    );
 	},
 
 	getSuit: async (id: string): Promise<ConfigSuit> => {
@@ -2415,7 +2534,8 @@ export const configSuitsApi = {
 
 	// Component management operations
 	_manageComponent: (
-		endpoint: "servers" | "tools" | "resources" | "prompts" | "resource-templates",
+    endpoint:
+      "servers" | "tools" | "resources" | "prompts" | "resource-templates",
 		suitId: string,
 		componentId: string,
 		action: "enable" | "disable" | "remove",
@@ -2431,7 +2551,8 @@ export const configSuitsApi = {
 
 	// Batch manage multiple component ids in one request for reliability/perf
 	_manageComponentsBatch: (
-		endpoint: "servers" | "tools" | "resources" | "prompts" | "resource-templates",
+    endpoint:
+      "servers" | "tools" | "resources" | "prompts" | "resource-templates",
 		suitId: string,
 		componentIds: string[],
 		action: "enable" | "disable",
@@ -2480,7 +2601,12 @@ export const configSuitsApi = {
 	enableResourceTemplate: (suitId: string, id: string) =>
 		configSuitsApi._manageComponent("resource-templates", suitId, id, "enable"),
 	disableResourceTemplate: (suitId: string, id: string) =>
-		configSuitsApi._manageComponent("resource-templates", suitId, id, "disable"),
+    configSuitsApi._manageComponent(
+      "resource-templates",
+      suitId,
+      id,
+      "disable",
+    ),
 	bulkResourceTemplates: (
 		suitId: string,
 		ids: string[],
@@ -2657,10 +2783,13 @@ export const clientsApi = {
 			inspectTarget === "path"
 				? "/api/client/config-file-parse/inspect"
 				: "/api/client/config-file-parse/inspect-existing";
-		const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(path, {
+    const resp = await fetchApi<ApiWrapper<ClientConfigFileParseInspectResp>>(
+      path,
+      {
 			method: "POST",
 			body: JSON.stringify(body),
-		});
+      },
+    );
 		return extractApiData(resp);
 	},
 	getCapabilityConfig: async (identifier: string) => {
@@ -2836,12 +2965,14 @@ export const clientsApi = {
 		);
 		return extractApiData(resp);
 	},
-
 };
 
 // Token Estimate API
 export const tokenEstimateApi = {
-	getEstimate: async (profileId: string, capabilitySource?: string): Promise<TokenEstimateResponse> => {
+  getEstimate: async (
+    profileId: string,
+    capabilitySource?: string,
+  ): Promise<TokenEstimateResponse> => {
 		const params = new URLSearchParams({ profile_id: profileId });
 		if (capabilitySource) {
 			params.append("capability_source", capabilitySource);
@@ -2935,7 +3066,9 @@ export function useProfileTokenChartSource(
 		(ledgerMissingRoute && estimateQuery.isError);
 
 	const ledgerItems = ledgerQuery.data?.items;
-	const fallbackEstimate = ledgerMissingRoute ? (estimateQuery.data ?? null) : null;
+  const fallbackEstimate = ledgerMissingRoute
+    ? (estimateQuery.data ?? null)
+    : null;
 
 	return {
 		ledgerItems,
@@ -2948,23 +3081,36 @@ export function useProfileTokenChartSource(
 // LLM Provider API
 export const llmApi = {
 	listProviders: async (): Promise<LlmProviderConfig[]> => {
-		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig[] }>("/api/llm/providers");
+    const resp = await fetchApi<{
+      success: boolean;
+      data: LlmProviderConfig[];
+    }>("/api/llm/providers");
 		return resp.data ?? [];
 	},
 
-	createProvider: async (input: LlmProviderCreateInput): Promise<LlmProviderConfig> => {
-		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>("/api/llm/providers/create", {
+  createProvider: async (
+    input: LlmProviderCreateInput,
+  ): Promise<LlmProviderConfig> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>(
+      "/api/llm/providers/create",
+      {
 			method: "POST",
 			body: JSON.stringify(input),
-		});
+      },
+    );
 		return resp.data!;
 	},
 
-	updateProvider: async (input: LlmProviderUpdateInput): Promise<LlmProviderConfig> => {
-		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>("/api/llm/providers/update", {
+  updateProvider: async (
+    input: LlmProviderUpdateInput,
+  ): Promise<LlmProviderConfig> => {
+    const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig }>(
+      "/api/llm/providers/update",
+      {
 			method: "POST",
 			body: JSON.stringify(input),
-		});
+      },
+    );
 		return resp.data!;
 	},
 
@@ -2976,7 +3122,10 @@ export const llmApi = {
 	},
 
 	testProvider: async (id: string): Promise<LlmConnectivityResult> => {
-		const resp = await fetchApi<{ success: boolean; data: LlmConnectivityResult }>("/api/llm/providers/test", {
+    const resp = await fetchApi<{
+      success: boolean;
+      data: LlmConnectivityResult;
+    }>("/api/llm/providers/test", {
 			method: "POST",
 			body: JSON.stringify({ id }),
 		});
@@ -2984,15 +3133,23 @@ export const llmApi = {
 	},
 
 	listModels: async (id: string): Promise<string[]> => {
-		const resp = await fetchApi<{ success: boolean; data: { models: string[] } }>("/api/llm/providers/models", {
+    const resp = await fetchApi<{
+      success: boolean;
+      data: { models: string[] };
+    }>("/api/llm/providers/models", {
 			method: "POST",
 			body: JSON.stringify({ id }),
 		});
 		return resp.data?.models ?? [];
 	},
 
-	listModelsForConfig: async (input: LlmProviderModelPreviewInput): Promise<string[]> => {
-		const resp = await fetchApi<{ success: boolean; data: { models: string[] } }>("/api/llm/providers/models/preview", {
+  listModelsForConfig: async (
+    input: LlmProviderModelPreviewInput,
+  ): Promise<string[]> => {
+    const resp = await fetchApi<{
+      success: boolean;
+      data: { models: string[] };
+    }>("/api/llm/providers/models/preview", {
 			method: "POST",
 			body: JSON.stringify(input),
 		});
@@ -3000,7 +3157,10 @@ export const llmApi = {
 	},
 
 	getDefaultProvider: async (): Promise<LlmProviderConfig | null> => {
-		const resp = await fetchApi<{ success: boolean; data: LlmProviderConfig | null }>("/api/llm/providers/default");
+    const resp = await fetchApi<{
+      success: boolean;
+      data: LlmProviderConfig | null;
+    }>("/api/llm/providers/default");
 		return resp.data ?? null;
 	},
 

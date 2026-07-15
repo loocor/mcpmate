@@ -43,6 +43,30 @@ function collectStringPaths(value: unknown, prefix = ""): string[] {
 	);
 }
 
+function collectStrings(
+	value: unknown,
+	prefix = "",
+): Record<string, string> {
+	if (typeof value === "string") {
+		return { [prefix]: value };
+	}
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return {};
+	}
+
+	return Object.fromEntries(
+		Object.entries(value).flatMap(([key, child]) =>
+			Object.entries(collectStrings(child, prefix ? `${prefix}.${key}` : key)),
+		),
+	);
+}
+
+function interpolationVariables(value: string): string[] {
+	return [...value.matchAll(/{{\s*([^},\s]+)[^}]*}}/g)]
+		.map((match) => match[1])
+		.sort();
+}
+
 describe("i18n translations", () => {
 	test("keeps supported locale keys aligned for every namespace", () => {
 		for (const [namespace, translations] of Object.entries(namespaces)) {
@@ -61,6 +85,24 @@ describe("i18n translations", () => {
 					(path) => !pathsByLocale[locale].has(path),
 				);
 				expect(missing, `${namespace}/${locale}`).toEqual([]);
+			}
+		}
+	});
+
+	test("keeps interpolation variables aligned across supported locales", () => {
+		for (const [namespace, translations] of Object.entries(namespaces)) {
+			const stringsByLocale = Object.fromEntries(
+				locales.map((locale) => [locale, collectStrings(translations[locale])]),
+			);
+			const reference = stringsByLocale.en;
+			for (const path of Object.keys(reference)) {
+				const expected = interpolationVariables(reference[path]);
+				for (const locale of locales.slice(1)) {
+					expect(
+						interpolationVariables(stringsByLocale[locale][path]),
+						`${namespace}/${locale}/${path}`,
+					).toEqual(expected);
+				}
 			}
 		}
 	});

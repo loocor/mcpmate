@@ -113,31 +113,35 @@ export function ServerInstallDrawer({
 	): string => {
 		if (kind === "tools") {
 			return (
-				(item.tool_name as string | undefined) ||
-				(item.name as string | undefined) ||
 				(item.unique_name as string | undefined) ||
+        (item.name as string | undefined) ||
+        (item.tool_name as string | undefined) ||
 				(item.id as string | undefined) ||
 				"Tool"
 			);
 		}
 		if (kind === "resources") {
 			return (
-				(item.resource_uri as string | undefined) ||
+        (item.unique_uri as string | undefined) ||
 				(item.uri as string | undefined) ||
+        (item.resource_uri as string | undefined) ||
 				(item.name as string | undefined) ||
 				"Resource"
 			);
 		}
 		if (kind === "prompts") {
 			return (
-				(item.prompt_name as string | undefined) ||
+        (item.unique_name as string | undefined) ||
 				(item.name as string | undefined) ||
+        (item.prompt_name as string | undefined) ||
 				"Prompt"
 			);
 		}
 		return (
-			(item.uri_template as string | undefined) ||
+      (item.unique_uri_template as string | undefined) ||
+      (item.unique_name as string | undefined) ||
 			(item.name as string | undefined) ||
+      (item.uri_template as string | undefined) ||
 			"Template"
 		);
 	};
