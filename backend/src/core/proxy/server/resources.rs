@@ -35,6 +35,7 @@ pub(super) async fn list_resources(
         HashSet::new()
     };
     let mut resources: Vec<rmcp::model::Resource> = Vec::new();
+    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("resources");
 
     if let Some(db) = &server.database {
         let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
@@ -90,7 +91,6 @@ pub(super) async fn list_resources(
             });
         }
 
-        let mut aggregate = super::common::AggregateListStatus::new("resources");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
@@ -135,10 +135,12 @@ pub(super) async fn list_resources(
                 Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-        aggregate.finish()?;
     }
 
     resources = vis.filter_resources_with_snapshot(&snapshot, resources, Vec::new()).0;
+    aggregate
+        .finish_for_result(!resources.is_empty())
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
     // Apply pagination
     let page = server.paginator.paginate_resources(&_request, resources)?;
@@ -187,6 +189,7 @@ pub(super) async fn list_resource_templates(
     };
 
     let mut resource_templates: Vec<rmcp::model::ResourceTemplate> = Vec::new();
+    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("resource templates");
 
     if let Some(db) = &server.database {
         let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
@@ -242,7 +245,6 @@ pub(super) async fn list_resource_templates(
             });
         }
 
-        let mut aggregate = super::common::AggregateListStatus::new("resource templates");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
@@ -287,12 +289,14 @@ pub(super) async fn list_resource_templates(
                 Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-        aggregate.finish()?;
     }
 
     let resource_templates = vis
         .filter_resources_with_snapshot(&snapshot, Vec::new(), resource_templates)
         .1;
+    aggregate
+        .finish_for_result(!resource_templates.is_empty())
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
     // Apply pagination
     let page = server

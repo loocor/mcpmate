@@ -219,6 +219,38 @@ for line in sys.stdin:
     path
 }
 
+fn write_empty_tool_fixture(temp_dir: &TempDir) -> PathBuf {
+    let path = temp_dir.path().join("empty_tool_fixture.py");
+    let script = r#"
+import json
+import sys
+
+def reply(request_id, result):
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}) + "\n")
+    sys.stdout.flush()
+
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    req = json.loads(line)
+    request_id = req.get("id")
+    method = req.get("method")
+    if request_id is None:
+        continue
+    if method == "initialize":
+        reply(request_id, {
+            "protocolVersion": "__PROTOCOL_VERSION__",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "empty-tool-fixture", "version": "1.0.0"}
+        })
+    elif method == "tools/list":
+        reply(request_id, {"tools": []})
+"#
+    .replace("__PROTOCOL_VERSION__", protocol::CURRENT_VERSION);
+    std::fs::write(&path, script).expect("write empty tool fixture");
+    path
+}
+
 fn write_slow_preview_fixture(temp_dir: &TempDir) -> PathBuf {
     let path = temp_dir.path().join("slow_preview_fixture.py");
     let script = r#"
@@ -370,6 +402,45 @@ async fn create_stdio_fixture_server(
     let create_body = read_json_response(app.clone().oneshot(create_req).await.unwrap()).await;
     assert_api_success(&create_body);
     data_str(&create_body, "/data/id").to_string()
+}
+
+async fn seed_enabled_tool_server(
+    state: &Arc<AppState>,
+    server_id: &str,
+    server_name: &str,
+    command: &str,
+) {
+    let pool = &state.database.as_ref().expect("database state").pool;
+    let profile_id = format!("profile-{server_id}");
+    let profile_server_id = format!("profile-server-{server_id}");
+
+    sqlx::query("INSERT INTO profile (id, name, type, is_active) VALUES (?, ?, 'user', 1)")
+        .bind(&profile_id)
+        .bind(format!("Profile {server_id}"))
+        .execute(pool)
+        .await
+        .expect("insert active profile");
+    sqlx::query(
+        "INSERT INTO server_config (id, name, server_type, command, capabilities, enabled) \
+         VALUES (?, ?, 'stdio', ?, 'tools', 1)",
+    )
+    .bind(server_id)
+    .bind(server_name)
+    .bind(command)
+    .execute(pool)
+    .await
+    .expect("insert enabled server");
+    sqlx::query(
+        "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) \
+         VALUES (?, ?, ?, ?, 1)",
+    )
+    .bind(profile_server_id)
+    .bind(profile_id)
+    .bind(server_id)
+    .bind(server_name)
+    .execute(pool)
+    .await
+    .expect("insert enabled profile server");
 }
 
 async fn open_native_session(
@@ -568,6 +639,182 @@ async fn proxy_list_connect_and_protocol_operation_receive_independent_timeouts(
     assert!(
         data_str(&timeout_body, "/error/message").contains("server connect exceeded 100 ms"),
         "unexpected timeout response: {timeout_body}"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn proxy_aggregate_list_fails_when_every_eligible_server_fails() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+    seed_enabled_tool_server(
+        &state,
+        "aggregate-failure-server",
+        "aggregate_failure_server",
+        "/definitely/missing/mcp-server",
+    )
+    .await;
+    let app = Router::new()
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .with_state(state);
+
+    let (status, body) = read_json_response_with_status(
+        app.oneshot(get_request(format!(
+            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=100"
+        )))
+        .await
+        .expect("aggregate list response"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "unexpected response: {body}");
+    assert!(
+        data_str(&body, "/error/message").contains("All eligible upstream servers failed to list tools"),
+        "unexpected aggregate error: {body}"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn proxy_aggregate_list_keeps_successful_servers_when_one_server_fails() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .with_state(state.clone());
+    let healthy_server_id = create_stdio_fixture_server(&app, &temp_dir).await;
+    let pool = &state.database.as_ref().expect("database state").pool;
+    sqlx::query("INSERT INTO profile (id, name, type, is_active) VALUES ('profile-healthy', 'Healthy', 'user', 1)")
+        .execute(pool)
+        .await
+        .expect("insert healthy profile");
+    sqlx::query(
+        "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) \
+         VALUES ('profile-server-healthy', 'profile-healthy', ?, 'inspector_fixture', 1)",
+    )
+    .bind(&healthy_server_id)
+    .execute(pool)
+    .await
+    .expect("insert healthy profile server");
+    seed_enabled_tool_server(
+        &state,
+        "aggregate-partial-failure",
+        "aggregate_partial_failure",
+        "/definitely/missing/mcp-server",
+    )
+    .await;
+
+    let body = read_json_response(
+        app.oneshot(get_request(format!(
+            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=1000"
+        )))
+        .await
+        .expect("aggregate list response"),
+    )
+    .await;
+
+    assert_api_success(&body);
+    assert_eq!(data_u64(&body, "/data/total"), 1);
+    assert_eq!(data_str(&body, "/data/tools/0/name"), "inspector_fixture_echo");
+    assert!(
+        body.pointer("/data/meta")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| entries.iter().any(|entry| entry.get("error").is_some())),
+        "failed upstream should remain visible in Inspector metadata: {body}"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn proxy_aggregate_list_rejects_empty_results_from_partial_inventory() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+    let python = which::which("python3").expect("python3 is required for stdio MCP fixture");
+    let empty_fixture = write_empty_tool_fixture(&temp_dir);
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .with_state(state.clone());
+    let create_body = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                CREATE_SERVER_PATH,
+                json!({
+                    "name": "empty_tool_fixture",
+                    "server_type": "stdio",
+                    "command": python.to_string_lossy(),
+                    "args": [empty_fixture.to_string_lossy()]
+                }),
+            ))
+            .await
+            .expect("create empty fixture response"),
+    )
+    .await;
+    assert_api_success(&create_body);
+    let empty_server_id = data_str(&create_body, "/data/id");
+    let pool = &state.database.as_ref().expect("database state").pool;
+    sqlx::query("INSERT INTO profile (id, name, type, is_active) VALUES ('profile-empty', 'Empty', 'user', 1)")
+        .execute(pool)
+        .await
+        .expect("insert empty profile");
+    sqlx::query(
+        "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) \
+         VALUES ('profile-server-empty', 'profile-empty', ?, 'empty_tool_fixture', 1)",
+    )
+    .bind(empty_server_id)
+    .execute(pool)
+    .await
+    .expect("insert empty profile server");
+    seed_enabled_tool_server(
+        &state,
+        "aggregate-partial-empty-failure",
+        "aggregate_partial_empty_failure",
+        "/definitely/missing/mcp-server",
+    )
+    .await;
+
+    let (status, body) = read_json_response_with_status(
+        app.oneshot(get_request(format!(
+            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=1000"
+        )))
+        .await
+        .expect("aggregate list response"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "unexpected response: {body}");
+    assert!(
+        data_str(&body, "/error/message").contains("listing is incomplete"),
+        "unexpected incomplete aggregate error: {body}"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn proxy_aggregate_list_surfaces_server_query_failures() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+    let pool = &state.database.as_ref().expect("database state").pool;
+    sqlx::query("DROP TABLE profile_server")
+        .execute(pool)
+        .await
+        .expect("drop profile server table");
+    let app = Router::new()
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .with_state(state);
+
+    let (status, body) = read_json_response_with_status(
+        app.oneshot(get_request(format!("{TOOL_LIST_PATH}?mode=proxy")))
+            .await
+            .expect("aggregate list response"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "unexpected response: {body}");
+    assert!(
+        data_str(&body, "/error/message").contains("profile_server"),
+        "unexpected aggregate query error: {body}"
     );
 }
 

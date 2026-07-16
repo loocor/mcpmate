@@ -76,6 +76,15 @@ impl CapabilityKind {
         }
     }
 
+    fn label(self) -> &'static str {
+        match self {
+            CapabilityKind::Tools => "tools",
+            CapabilityKind::Prompts => "prompts",
+            CapabilityKind::Resources => "resources",
+            CapabilityKind::ResourceTemplates => "resource templates",
+        }
+    }
+
     fn extractor(self) -> fn(capability::runtime::ListResult) -> Vec<Value> {
         match self {
             CapabilityKind::Tools => extract_tools,
@@ -716,12 +725,16 @@ async fn list_capability_payload(
                 )
                 .fetch_all(&db.pool)
                 .await
-                .unwrap_or_default();
+                .map_err(|error| {
+                    ApiError::InternalError(format!(
+                        "Failed to load enabled servers for Inspector aggregate: {error}"
+                    ))
+                })?;
 
                 let mut tasks = Vec::new();
                 let redb = state.redb_cache.clone();
                 let pool = state.connection_pool.clone();
-                for (server_id, _name, caps) in enabled_servers {
+                for (server_id, server_name, caps) in enabled_servers {
                     if !supports_capability(caps.as_deref(), capability_type) {
                         continue;
                     }
@@ -744,24 +757,32 @@ async fn list_capability_payload(
                             extractor,
                         )
                         .await
-                        .map(|(values, meta)| (sid.clone(), values, meta))
-                        .map_err(|err| (sid.clone(), err))
+                        .map(|(values, meta)| (sid.clone(), server_name.clone(), values, meta))
+                        .map_err(|err| (sid.clone(), server_name.clone(), err))
                     });
                 }
 
+                let mut aggregate = capability::aggregate::AggregateListStatus::new(kind.label());
                 for outcome in futures::stream::iter(tasks)
                     .buffer_unordered(capability::facade::concurrency_limit())
                     .collect::<Vec<_>>()
                     .await
                 {
                     match outcome {
-                        Ok((_, mut values, meta)) => {
+                        Ok((_, _, mut values, meta)) => {
+                            aggregate.record_success();
                             meta_entries.push(meta);
                             items.append(&mut values);
                         }
-                        Err((sid, err)) => meta_entries.push(meta_error(&sid, &err.to_string())),
+                        Err((server_id, server_name, error)) => {
+                            aggregate.record_failure(&server_id, &server_name, &error);
+                            meta_entries.push(meta_error(&server_id, &error.to_string()));
+                        }
                     }
                 }
+                aggregate
+                    .finish_for_result(!items.is_empty())
+                    .map_err(|error| ApiError::ServiceUnavailable(error.to_string()))?;
             }
         }
         InspectorMode::Native => {

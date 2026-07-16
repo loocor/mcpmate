@@ -75,6 +75,7 @@ pub(super) async fn list_tools(
     };
 
     let mut tools: Vec<rmcp::model::Tool> = Vec::new();
+    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("tools");
 
     if let Some(db) = &server.database {
         let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
@@ -127,7 +128,6 @@ pub(super) async fn list_tools(
             });
         }
 
-        let mut aggregate = super::common::AggregateListStatus::new("tools");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
@@ -172,7 +172,6 @@ pub(super) async fn list_tools(
                 Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-        aggregate.finish()?;
     }
 
     tools = vis.filter_tools_with_snapshot(&snapshot, tools);
@@ -195,6 +194,9 @@ pub(super) async fn list_tools(
         .collect::<Vec<_>>();
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);
+    aggregate
+        .finish_for_result(!tools.is_empty())
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
     // Apply pagination (natural sort inside paginator)
     let page = server.paginator.paginate_tools(&_request, tools)?;

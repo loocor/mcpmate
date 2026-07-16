@@ -41,6 +41,7 @@ pub(super) async fn list_prompts(
         HashSet::new()
     };
     let mut prompts: Vec<rmcp::model::Prompt> = Vec::new();
+    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("prompts");
 
     if let Some(db) = &server.database {
         let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
@@ -97,7 +98,6 @@ pub(super) async fn list_prompts(
             });
         }
 
-        let mut aggregate = super::common::AggregateListStatus::new("prompts");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
@@ -142,7 +142,6 @@ pub(super) async fn list_prompts(
                 Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-        aggregate.finish()?;
     }
 
     prompts = vis.filter_prompts_with_snapshot(&snapshot, prompts);
@@ -154,6 +153,9 @@ pub(super) async fn list_prompts(
             .into_iter()
             .filter(|prompt| builtin_prompt_allowed(client.config_mode.as_deref(), prompt.name.as_ref())),
     );
+    aggregate
+        .finish_for_result(!prompts.is_empty())
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
     // Apply pagination
     let page = server.paginator.paginate_prompts(&_request, prompts)?;

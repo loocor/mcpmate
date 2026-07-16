@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::config::database::Database;
 use crate::core::cache::manager::RedbCacheManager;
+use crate::core::capability::aggregate::AggregateListStatus;
 use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::core::foundation::types::ConnectionStatus;
 use crate::core::pool::UpstreamConnectionPool;
@@ -32,6 +33,35 @@ use super::{
 use crate::clients::models::CapabilitySource;
 use crate::common::profile::ProfileType;
 use crate::config::profile as profile_repo;
+
+fn ensure_catalog_result_is_authoritative(
+    has_usable_entries: bool,
+    kind_filter: Option<&[String]>,
+    aggregates: &[(&str, &AggregateListStatus)],
+) -> Result<()> {
+    if has_usable_entries {
+        return Ok(());
+    }
+
+    let requested_kinds = kind_filter.map(|kinds| kinds.iter().map(String::as_str).collect::<HashSet<_>>());
+    let failures = aggregates
+        .iter()
+        .filter(|(kind, _)| {
+            requested_kinds
+                .as_ref()
+                .is_none_or(|requested| requested.contains(kind))
+        })
+        .filter_map(|(_, aggregate)| aggregate.failure_summary())
+        .collect::<Vec<_>>();
+
+    if !failures.is_empty() {
+        return Err(anyhow!(
+            "The requested capability catalog is incomplete: {}",
+            failures.join("; ")
+        ));
+    }
+    Ok(())
+}
 
 /// Structured error response for UCAN tools, designed for LLM parsing and recovery.
 #[derive(Debug, Clone, Serialize)]
@@ -832,6 +862,30 @@ struct VisibleResourceTemplateEntry {
     resource_template: ResourceTemplate,
 }
 
+struct VisibleListing<T> {
+    entries: Vec<T>,
+    aggregate: AggregateListStatus,
+}
+
+impl<T> VisibleListing<T> {
+    fn finish(self) -> Result<Vec<T>> {
+        self.aggregate.finish_for_result(!self.entries.is_empty())?;
+        Ok(self.entries)
+    }
+
+    fn find_authoritatively(
+        self,
+        predicate: impl FnMut(&T) -> bool,
+    ) -> Result<Option<T>> {
+        let found = self.entries.into_iter().find(predicate);
+        if found.is_none() {
+            self.aggregate.finish()?;
+            self.aggregate.ensure_complete()?;
+        }
+        Ok(found)
+    }
+}
+
 fn retain_brokered_tools(
     context: &ClientBuiltinContext,
     eligible_server_ids: &HashSet<String>,
@@ -971,10 +1025,22 @@ impl BrokerService {
         let prompt_config = self.ucan_prompt_config().await;
         let enrich_enabled = prompt_config.catalog_enrich_from_source;
 
-        let tools = self.visible_tools(context).await?;
-        let prompts = self.visible_prompts(context).await?;
-        let resources = self.visible_resources(context).await?;
-        let resource_templates = self.visible_resource_templates(context).await?;
+        let VisibleListing {
+            entries: tools,
+            aggregate: tools_aggregate,
+        } = self.visible_tools_listing(context).await?;
+        let VisibleListing {
+            entries: prompts,
+            aggregate: prompts_aggregate,
+        } = self.visible_prompts_listing(context).await?;
+        let VisibleListing {
+            entries: resources,
+            aggregate: resources_aggregate,
+        } = self.visible_resources_listing(context).await?;
+        let VisibleListing {
+            entries: resource_templates,
+            aggregate: resource_templates_aggregate,
+        } = self.visible_resource_templates_listing(context).await?;
 
         let all_server_ids: Vec<String> = {
             let mut ids = HashSet::new();
@@ -1160,6 +1226,17 @@ impl BrokerService {
                 allowed_kinds.contains(kind_str)
             });
         }
+
+        ensure_catalog_result_is_authoritative(
+            !summaries.is_empty(),
+            kind_filter,
+            &[
+                ("tool", &tools_aggregate),
+                ("prompt", &prompts_aggregate),
+                ("resource", &resources_aggregate),
+                ("resource_template", &resource_templates_aggregate),
+            ],
+        )?;
 
         let page_size = page_size.clamp(1, 50);
         let page_size = page_size.clamp(1, prompt_config.catalog_page_size_max.max(1));
@@ -1684,10 +1761,10 @@ impl BrokerService {
         }
     }
 
-    async fn visible_tools(
+    async fn visible_tools_listing(
         &self,
         context: &ClientBuiltinContext,
-    ) -> Result<Vec<VisibleToolEntry>> {
+    ) -> Result<VisibleListing<VisibleToolEntry>> {
         let client_context = context.as_client_context();
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility
@@ -1741,32 +1818,43 @@ impl BrokerService {
         }
 
         let mut visible = Vec::new();
+        let mut aggregate = AggregateListStatus::new("tools");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let result = result.with_context(|| format!("Failed to list tools for server '{server_id}'"))?;
-            let tools = result
-                .items
-                .into_tools()
-                .ok_or_else(|| anyhow!("Tool listing returned a different capability kind for server '{server_id}'"))?;
-            for tool in tools {
-                let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Tool,
-                    &server_id,
-                    tool.name.as_ref(),
-                )
-                .await?;
-                visible.push(VisibleToolEntry {
-                    server_id: server_id.clone(),
-                    server_name: server_name.clone(),
-                    raw_tool_name,
-                    tool,
-                });
+            let server_tools = async {
+                let result = result.with_context(|| format!("Failed to list tools for server '{server_id}'"))?;
+                let tools = result.items.into_tools().ok_or_else(|| {
+                    anyhow!("Tool listing returned a different capability kind for server '{server_id}'")
+                })?;
+                let mut entries = Vec::with_capacity(tools.len());
+                for tool in tools {
+                    let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Tool,
+                        &server_id,
+                        tool.name.as_ref(),
+                    )
+                    .await?;
+                    entries.push(VisibleToolEntry {
+                        server_id: server_id.clone(),
+                        server_name: server_name.clone(),
+                        raw_tool_name,
+                        tool,
+                    });
+                }
+                Ok::<_, anyhow::Error>(entries)
+            }
+            .await;
+            match server_tools {
+                Ok(entries) => {
+                    aggregate.record_success();
+                    visible.extend(entries);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-
         let filtered_names = visibility
             .filter_tools_with_snapshot(&snapshot, visible.iter().map(|entry| entry.tool.clone()).collect())
             .into_iter()
@@ -1780,7 +1868,17 @@ impl BrokerService {
                 .then_with(|| left.tool.name.as_ref().cmp(right.tool.name.as_ref()))
         });
 
-        Ok(visible)
+        Ok(VisibleListing {
+            entries: visible,
+            aggregate,
+        })
+    }
+
+    async fn visible_tools(
+        &self,
+        context: &ClientBuiltinContext,
+    ) -> Result<Vec<VisibleToolEntry>> {
+        self.visible_tools_listing(context).await?.finish()
     }
 
     async fn find_visible_tool(
@@ -1788,14 +1886,15 @@ impl BrokerService {
         context: &ClientBuiltinContext,
         tool_name: &str,
     ) -> Result<Option<VisibleToolEntry>> {
-        let tools = self.visible_tools(context).await?;
-        Ok(tools.into_iter().find(|entry| entry.tool.name.as_ref() == tool_name))
+        self.visible_tools_listing(context)
+            .await?
+            .find_authoritatively(|entry| entry.tool.name.as_ref() == tool_name)
     }
 
-    async fn visible_prompts(
+    async fn visible_prompts_listing(
         &self,
         context: &ClientBuiltinContext,
-    ) -> Result<Vec<VisiblePromptEntry>> {
+    ) -> Result<VisibleListing<VisiblePromptEntry>> {
         let client_context = context.as_client_context();
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility
@@ -1850,32 +1949,44 @@ impl BrokerService {
         }
 
         let mut visible = Vec::new();
+        let mut aggregate = AggregateListStatus::new("prompts");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let result = result.with_context(|| format!("Failed to list prompts for server '{server_id}'"))?;
-            let prompts = result.items.into_prompts().ok_or_else(|| {
-                anyhow!("Prompt listing returned a different capability kind for server '{server_id}'")
-            })?;
-            for prompt in prompts {
-                let presented_name = prompt.name.to_string();
-                let raw_prompt_name = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Prompt,
-                    &server_id,
-                    &presented_name,
-                )
-                .await?;
-                visible.push(VisiblePromptEntry {
-                    server_id: server_id.clone(),
-                    server_name: server_name.clone(),
-                    raw_prompt_name,
-                    prompt,
-                });
+            let server_prompts = async {
+                let result = result.with_context(|| format!("Failed to list prompts for server '{server_id}'"))?;
+                let prompts = result.items.into_prompts().ok_or_else(|| {
+                    anyhow!("Prompt listing returned a different capability kind for server '{server_id}'")
+                })?;
+                let mut entries = Vec::with_capacity(prompts.len());
+                for prompt in prompts {
+                    let presented_name = prompt.name.to_string();
+                    let raw_prompt_name = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Prompt,
+                        &server_id,
+                        &presented_name,
+                    )
+                    .await?;
+                    entries.push(VisiblePromptEntry {
+                        server_id: server_id.clone(),
+                        server_name: server_name.clone(),
+                        raw_prompt_name,
+                        prompt,
+                    });
+                }
+                Ok::<_, anyhow::Error>(entries)
+            }
+            .await;
+            match server_prompts {
+                Ok(entries) => {
+                    aggregate.record_success();
+                    visible.extend(entries);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-
         let filtered_names = visibility
             .filter_prompts_with_snapshot(&snapshot, visible.iter().map(|entry| entry.prompt.clone()).collect())
             .into_iter()
@@ -1889,7 +2000,17 @@ impl BrokerService {
                 .then_with(|| left.prompt.name.as_str().cmp(right.prompt.name.as_str()))
         });
 
-        Ok(visible)
+        Ok(VisibleListing {
+            entries: visible,
+            aggregate,
+        })
+    }
+
+    async fn visible_prompts(
+        &self,
+        context: &ClientBuiltinContext,
+    ) -> Result<Vec<VisiblePromptEntry>> {
+        self.visible_prompts_listing(context).await?.finish()
     }
 
     async fn find_visible_prompt(
@@ -1897,16 +2018,15 @@ impl BrokerService {
         context: &ClientBuiltinContext,
         prompt_name: &str,
     ) -> Result<Option<VisiblePromptEntry>> {
-        let prompts = self.visible_prompts(context).await?;
-        Ok(prompts
-            .into_iter()
-            .find(|entry| entry.prompt.name.as_str() == prompt_name))
+        self.visible_prompts_listing(context)
+            .await?
+            .find_authoritatively(|entry| entry.prompt.name.as_str() == prompt_name)
     }
 
-    async fn visible_resources(
+    async fn visible_resources_listing(
         &self,
         context: &ClientBuiltinContext,
-    ) -> Result<Vec<VisibleResourceEntry>> {
+    ) -> Result<VisibleListing<VisibleResourceEntry>> {
         let client_context = context.as_client_context();
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility
@@ -1961,32 +2081,44 @@ impl BrokerService {
         }
 
         let mut visible = Vec::new();
+        let mut aggregate = AggregateListStatus::new("resources");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let result = result.with_context(|| format!("Failed to list resources for server '{server_id}'"))?;
-            let resources = result.items.into_resources().ok_or_else(|| {
-                anyhow!("Resource listing returned a different capability kind for server '{server_id}'")
-            })?;
-            for resource in resources {
-                let presented_uri = resource.uri.to_string();
-                let raw_resource_uri = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Resource,
-                    &server_id,
-                    &presented_uri,
-                )
-                .await?;
-                visible.push(VisibleResourceEntry {
-                    server_id: server_id.clone(),
-                    server_name: server_name.clone(),
-                    raw_resource_uri,
-                    resource,
-                });
+            let server_resources = async {
+                let result = result.with_context(|| format!("Failed to list resources for server '{server_id}'"))?;
+                let resources = result.items.into_resources().ok_or_else(|| {
+                    anyhow!("Resource listing returned a different capability kind for server '{server_id}'")
+                })?;
+                let mut entries = Vec::with_capacity(resources.len());
+                for resource in resources {
+                    let presented_uri = resource.uri.to_string();
+                    let raw_resource_uri = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Resource,
+                        &server_id,
+                        &presented_uri,
+                    )
+                    .await?;
+                    entries.push(VisibleResourceEntry {
+                        server_id: server_id.clone(),
+                        server_name: server_name.clone(),
+                        raw_resource_uri,
+                        resource,
+                    });
+                }
+                Ok::<_, anyhow::Error>(entries)
+            }
+            .await;
+            match server_resources {
+                Ok(entries) => {
+                    aggregate.record_success();
+                    visible.extend(entries);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-
         let filtered_names = visibility
             .filter_resources_with_snapshot(
                 &snapshot,
@@ -2005,7 +2137,17 @@ impl BrokerService {
                 .then_with(|| left.resource.uri.as_str().cmp(right.resource.uri.as_str()))
         });
 
-        Ok(visible)
+        Ok(VisibleListing {
+            entries: visible,
+            aggregate,
+        })
+    }
+
+    async fn visible_resources(
+        &self,
+        context: &ClientBuiltinContext,
+    ) -> Result<Vec<VisibleResourceEntry>> {
+        self.visible_resources_listing(context).await?.finish()
     }
 
     async fn find_visible_resource(
@@ -2013,16 +2155,15 @@ impl BrokerService {
         context: &ClientBuiltinContext,
         resource_name: &str,
     ) -> Result<Option<VisibleResourceEntry>> {
-        let resources = self.visible_resources(context).await?;
-        Ok(resources
-            .into_iter()
-            .find(|entry| entry.resource.uri.as_str() == resource_name))
+        self.visible_resources_listing(context)
+            .await?
+            .find_authoritatively(|entry| entry.resource.uri.as_str() == resource_name)
     }
 
-    async fn visible_resource_templates(
+    async fn visible_resource_templates_listing(
         &self,
         context: &ClientBuiltinContext,
-    ) -> Result<Vec<VisibleResourceTemplateEntry>> {
+    ) -> Result<VisibleListing<VisibleResourceTemplateEntry>> {
         let client_context = context.as_client_context();
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility
@@ -2077,32 +2218,44 @@ impl BrokerService {
         }
 
         let mut visible = Vec::new();
+        let mut aggregate = AggregateListStatus::new("resource templates");
         for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let result =
-                result.with_context(|| format!("Failed to list resource templates for server '{server_id}'"))?;
-            let templates = result.items.into_resource_templates().ok_or_else(|| {
-                anyhow!("Resource template listing returned a different capability kind for server '{server_id}'")
-            })?;
-            for resource_template in templates {
-                let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::ResourceTemplate,
-                    &server_id,
-                    resource_template.name.as_ref(),
-                )
-                .await?;
-                visible.push(VisibleResourceTemplateEntry {
-                    server_id: server_id.clone(),
-                    server_name: server_name.clone(),
-                    raw_uri_template,
-                    resource_template,
-                });
+            let server_templates = async {
+                let result =
+                    result.with_context(|| format!("Failed to list resource templates for server '{server_id}'"))?;
+                let templates = result.items.into_resource_templates().ok_or_else(|| {
+                    anyhow!("Resource template listing returned a different capability kind for server '{server_id}'")
+                })?;
+                let mut entries = Vec::with_capacity(templates.len());
+                for resource_template in templates {
+                    let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::ResourceTemplate,
+                        &server_id,
+                        resource_template.name.as_ref(),
+                    )
+                    .await?;
+                    entries.push(VisibleResourceTemplateEntry {
+                        server_id: server_id.clone(),
+                        server_name: server_name.clone(),
+                        raw_uri_template,
+                        resource_template,
+                    });
+                }
+                Ok::<_, anyhow::Error>(entries)
+            }
+            .await;
+            match server_templates {
+                Ok(entries) => {
+                    aggregate.record_success();
+                    visible.extend(entries);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
-
         let filtered_names = visibility
             .filter_resources_with_snapshot(
                 &snapshot,
@@ -2124,7 +2277,17 @@ impl BrokerService {
             })
         });
 
-        Ok(visible)
+        Ok(VisibleListing {
+            entries: visible,
+            aggregate,
+        })
+    }
+
+    async fn visible_resource_templates(
+        &self,
+        context: &ClientBuiltinContext,
+    ) -> Result<Vec<VisibleResourceTemplateEntry>> {
+        self.visible_resource_templates_listing(context).await?.finish()
     }
 
     async fn find_visible_resource_template(
@@ -2132,10 +2295,9 @@ impl BrokerService {
         context: &ClientBuiltinContext,
         template_name: &str,
     ) -> Result<Option<VisibleResourceTemplateEntry>> {
-        let templates = self.visible_resource_templates(context).await?;
-        Ok(templates
-            .into_iter()
-            .find(|entry| entry.resource_template.name.as_str() == template_name))
+        self.visible_resource_templates_listing(context)
+            .await?
+            .find_authoritatively(|entry| entry.resource_template.name.as_str() == template_name)
     }
 
     async fn broker_prompt_call(
@@ -2838,11 +3000,11 @@ fn call_requirements_for_prompt(prompt: &rmcp::model::Prompt) -> CallRequirement
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientBuiltinContext, UcanDetailLevel, UcanError, UcanPromptRepository, VisiblePromptEntry,
+        ClientBuiltinContext, UcanDetailLevel, UcanError, UcanPromptRepository, VisibleListing, VisiblePromptEntry,
         VisibleResourceEntry, VisibleResourceTemplateEntry, VisibleToolEntry, capitalize_kind, compact_description,
-        extract_description_from_value, find_similar_names, levenshtein_distance, profile_capabilities_visible,
-        retain_brokered_prompts, retain_brokered_resource_templates, retain_brokered_resources, retain_brokered_tools,
-        tool_details_value,
+        ensure_catalog_result_is_authoritative, extract_description_from_value, find_similar_names,
+        levenshtein_distance, profile_capabilities_visible, retain_brokered_prompts,
+        retain_brokered_resource_templates, retain_brokered_resources, retain_brokered_tools, tool_details_value,
     };
     use crate::clients::models::{
         CapabilitySource, UnifyDirectExposureConfig, UnifyDirectPromptSurface, UnifyDirectResourceSurface,
@@ -2869,6 +3031,50 @@ mod tests {
             custom_profile_id: None,
             unify_workspace: None,
         }
+    }
+
+    #[test]
+    fn catalog_keeps_usable_entries_when_an_upstream_listing_fails() {
+        let mut templates = crate::core::capability::aggregate::AggregateListStatus::new("resource templates");
+        templates.record_failure("server-a", "alpha", "offline");
+        let tools = crate::core::capability::aggregate::AggregateListStatus::new("tools");
+
+        assert!(
+            ensure_catalog_result_is_authoritative(true, None, &[("tool", &tools), ("resource_template", &templates)],)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn catalog_rejects_empty_results_when_a_requested_listing_is_incomplete() {
+        let mut templates = crate::core::capability::aggregate::AggregateListStatus::new("resource templates");
+        templates.record_failure("server-a", "alpha", "offline");
+        templates.record_success();
+
+        assert!(ensure_catalog_result_is_authoritative(false, None, &[("resource_template", &templates)]).is_err());
+        assert!(
+            ensure_catalog_result_is_authoritative(
+                false,
+                Some(&["tool".to_string()]),
+                &[("resource_template", &templates)],
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn authoritative_lookup_does_not_report_missing_from_partial_inventory() {
+        let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("tools");
+        aggregate.record_failure("server-a", "alpha", "offline");
+        aggregate.record_success();
+
+        let missing = VisibleListing {
+            entries: vec!["echo"],
+            aggregate,
+        }
+        .find_authoritatively(|name| *name == "missing");
+
+        assert!(missing.is_err());
     }
 
     #[test]

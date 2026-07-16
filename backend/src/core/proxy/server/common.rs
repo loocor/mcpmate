@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use rmcp::{
-    ErrorData as McpError, RoleServer, Service,
+    RoleServer, Service,
     model::InitializeRequestParams,
     service::RequestContext,
     transport::{
@@ -15,58 +15,6 @@ use std::sync::Arc;
 use crate::clients::models::{UnifyDirectExposureConfig, UnifyRouteMode};
 use crate::common::constants::client_headers;
 use crate::core::capability::naming::{NamingKind, resolve_capability_route};
-
-pub(super) struct AggregateListStatus {
-    capability: &'static str,
-    attempted: usize,
-    failures: Vec<String>,
-}
-
-impl AggregateListStatus {
-    pub(super) fn new(capability: &'static str) -> Self {
-        Self {
-            capability,
-            attempted: 0,
-            failures: Vec::new(),
-        }
-    }
-
-    pub(super) fn record_success(&mut self) {
-        self.attempted += 1;
-    }
-
-    pub(super) fn record_failure(
-        &mut self,
-        server_id: &str,
-        server_name: &str,
-        error: impl std::fmt::Display,
-    ) {
-        self.attempted += 1;
-        let failure = format!("{server_name} ({server_id}): {error}");
-        tracing::warn!(
-            capability = self.capability,
-            server_id,
-            server_name,
-            error = %error,
-            "Skipping failed upstream capability listing"
-        );
-        self.failures.push(failure);
-    }
-
-    pub(super) fn finish(self) -> Result<(), McpError> {
-        if self.attempted > 0 && self.attempted == self.failures.len() {
-            return Err(McpError::internal_error(
-                format!(
-                    "All eligible upstream servers failed to list {}: {}",
-                    self.capability,
-                    self.failures.join("; ")
-                ),
-                None,
-            ));
-        }
-        Ok(())
-    }
-}
 
 /// Determine whether a server declares a given capability token
 pub fn supports_capability(
@@ -942,24 +890,6 @@ mod tests {
     use super::*;
     use axum::http::{Request, header::HeaderValue};
     use rmcp::model::{ClientCapabilities, Implementation, ProtocolVersion};
-
-    #[test]
-    fn aggregate_listing_allows_partial_success() {
-        let mut status = AggregateListStatus::new("tools");
-        status.record_failure("server-a", "alpha", "offline");
-        status.record_success();
-
-        assert!(status.finish().is_ok());
-    }
-
-    #[test]
-    fn aggregate_listing_fails_when_every_upstream_fails() {
-        let mut status = AggregateListStatus::new("tools");
-        status.record_failure("server-a", "alpha", "offline");
-        status.record_failure("server-b", "beta", "timeout");
-
-        assert!(status.finish().is_err());
-    }
 
     fn build_initialize(name: &str) -> InitializeRequestParams {
         InitializeRequestParams::new(ClientCapabilities::default(), Implementation::new(name, "1.0.0"))
