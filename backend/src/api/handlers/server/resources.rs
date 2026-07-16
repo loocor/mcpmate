@@ -17,7 +17,7 @@ use crate::api::{
 };
 
 use super::capability::{CapabilityType, enrich_capability_items, respond_with_enriched};
-use super::common::{create_inspect_response, get_database_from_state};
+use super::common::create_inspect_response;
 
 /// Helper function to convert Json response to ServerResourcesResp
 fn json_to_server_resources_resp(json_response: axum::Json<serde_json::Value>) -> ServerResourcesData {
@@ -149,10 +149,10 @@ async fn server_resources_core(
             validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
             runtime_identity: None,
             connection_selection: None,
+            name_domain: crate::core::capability::runtime::NameDomain::External,
         })
         .await;
 
-    // TODO: unify resource naming/unique URI strategy to prevent collisions (parity with tools naming module)
     match list_result {
         Ok(list_result) => {
             let crate::core::capability::runtime::ListResult { items, meta } = list_result;
@@ -163,33 +163,36 @@ async fn server_resources_core(
                         .map(|resource| serde_json::to_value(resource).unwrap_or(serde_json::Value::Null))
                         .collect();
 
-                    if let Ok(db) = get_database_from_state(app_state) {
-                        let enriched = enrich_capability_items(
-                            CapabilityType::Resources,
-                            &db.pool,
-                            &server_info.server_id,
-                            json_items.clone(),
-                        )
-                        .await;
-                        let response_data =
-                            respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
-                        let resources_resp = json_to_server_resources_resp(response_data);
-                        return Ok(ServerResourcesResp::success(resources_resp));
-                    }
-
+                    let enriched = enrich_capability_items(
+                        CapabilityType::Resources,
+                        &db.pool,
+                        &server_info.server_id,
+                        json_items,
+                    )
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(
+                            server_id = %server_info.server_id,
+                            error = %error,
+                            "Resource naming projection failed"
+                        );
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
                     let response_data =
-                        create_inspect_response(json_items, meta.cache_hit, params.refresh, meta.source.as_str());
+                        respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
                     let resources_resp = json_to_server_resources_resp(response_data);
                     return Ok(ServerResourcesResp::success(resources_resp));
                 }
             } else {
-                tracing::warn!("Capability runtime returned non-resource items for resource capability");
+                tracing::error!("Capability runtime returned non-resource items for resource capability");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
 
             // Temporary instance fallback is handled by CapabilityService; handler remains unaware of pool
         }
         Err(e) => {
             tracing::error!("Failed to list resources via unified entry: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -240,13 +243,18 @@ async fn server_resource_templates_core(
         return Ok(ServerResourceTemplatesResp::success(templates_resp));
     }
 
-    // Use capability runtime pipeline (REDB-first)
+    // Use CapabilityService (REDB-first → runtime → optional temporary via pool)
     let refresh = match params.refresh {
         Some(super::common::RefreshStrategy::Force) => Some(crate::core::capability::runtime::RefreshStrategy::Force),
         _ => Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
     };
-    let list_result = crate::core::capability::runtime::list(
-        &crate::core::capability::runtime::ListCtx {
+    let service = crate::core::capability::CapabilityService::new(
+        app_state.redb_cache.clone(),
+        app_state.connection_pool.clone(),
+        db.clone(),
+    );
+    let list_result = service
+        .list(&crate::core::capability::runtime::ListCtx {
             capability: crate::core::capability::CapabilityType::ResourceTemplates,
             server_id: server_info.server_id.clone(),
             refresh,
@@ -254,14 +262,10 @@ async fn server_resource_templates_core(
             validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
             runtime_identity: None,
             connection_selection: None,
-        },
-        &app_state.redb_cache,
-        &app_state.connection_pool,
-        &db,
-    )
-    .await;
+            name_domain: crate::core::capability::runtime::NameDomain::External,
+        })
+        .await;
     match list_result {
-        // TODO: align resource template naming with generalized naming module when extended beyond tools
         Ok(list_result) => {
             let crate::core::capability::runtime::ListResult { items, meta } = list_result;
             if let Some(template_items) = items.into_resource_templates() {
@@ -271,44 +275,29 @@ async fn server_resource_templates_core(
                         .map(|template| serde_json::to_value(template).unwrap_or(serde_json::Value::Null))
                         .collect();
 
-                    if let Ok(db) = get_database_from_state(app_state) {
-                        let enriched = enrich_capability_items(
-                            CapabilityType::ResourceTemplates,
-                            &db.pool,
-                            &server_info.server_id,
-                            json_items.clone(),
-                        )
-                        .await;
-                        let response_data =
-                            respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
-                        let templates_resp = json_to_server_resource_templates_resp(response_data);
-                        return Ok(ServerResourceTemplatesResp::success(templates_resp));
-                    }
-
+                    let enriched = enrich_capability_items(
+                        CapabilityType::ResourceTemplates,
+                        &db.pool,
+                        &server_info.server_id,
+                        json_items,
+                    )
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(
+                            server_id = %server_info.server_id,
+                            error = %error,
+                            "Resource template naming projection failed"
+                        );
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    })?;
                     let response_data =
-                        create_inspect_response(json_items, meta.cache_hit, params.refresh, meta.source.as_str());
+                        respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
                     let templates_resp = json_to_server_resource_templates_resp(response_data);
                     return Ok(ServerResourceTemplatesResp::success(templates_resp));
                 }
             } else {
-                tracing::warn!("Capability runtime returned non-template items for resource template capability");
-            }
-
-            let should_try_temp = !meta.had_peer;
-            if should_try_temp {
-                if let Some(response) = super::capability::create_temporary_instance_for_capability(
-                    app_state,
-                    &server_info,
-                    &params,
-                    super::capability::CapabilityType::ResourceTemplates,
-                    should_try_temp,
-                )
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                {
-                    let templates_resp = json_to_server_resource_templates_resp(response);
-                    return Ok(ServerResourceTemplatesResp::success(templates_resp));
-                }
+                tracing::error!("Capability runtime returned non-template items for resource template capability");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
 
             let response_data = create_inspect_response(
@@ -321,15 +310,8 @@ async fn server_resource_templates_core(
             Ok(ServerResourceTemplatesResp::success(templates_resp))
         }
         Err(e) => {
-            tracing::error!("Failed to list resource templates via unified entry: {}", e);
-            let response_data = create_inspect_response(
-                Vec::new(),
-                false,
-                params.refresh,
-                crate::common::constants::strategies::NONE,
-            );
-            let templates_resp = json_to_server_resource_templates_resp(response_data);
-            Ok(ServerResourceTemplatesResp::success(templates_resp))
+            tracing::error!("Failed to list resource templates via capability service: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }

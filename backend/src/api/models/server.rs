@@ -307,6 +307,18 @@ pub struct ServerCapabilitySummary {
     pub resource_templates_count: u32,
 }
 
+/// Standard upstream server identity observed during MCP initialize.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Default)]
+#[schemars(description = "Read-only serverInfo advertised by the upstream MCP server")]
+pub struct StandardServerInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
 /// Server details response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server details response")]
@@ -341,6 +353,9 @@ pub struct ServerDetailsData {
     pub headers: Option<HashMap<String, String>>,
     /// Server metadata
     pub meta: Option<ServerMetaInfo>,
+    /// Standard read-only identity advertised by the upstream server
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_info: Option<StandardServerInfo>,
     /// Capability summary including support flags and counts
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability: Option<ServerCapabilitySummary>,
@@ -367,6 +382,32 @@ pub struct ServerDetailsData {
     /// OAuth custody or readiness issue surfaced by backend status checks
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oauth_issue: Option<crate::core::oauth::types::OAuthStatusIssue>,
+    /// Remediation state for a non-canonical legacy namespace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace_issue: Option<ServerNamespaceIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ServerNamespaceConflict {
+    pub server_id: String,
+    pub namespace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ServerNamespaceIssue {
+    pub code: String,
+    pub current_namespace: String,
+    pub remediation_allowed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_namespace: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<ServerNamespaceConflict>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ServerNamespaceRemediationReq {
+    pub id: String,
+    pub namespace: String,
 }
 
 /// Repository information compatible with the MCP registry schema
@@ -710,10 +751,10 @@ pub struct ServerListData {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Request parameters for creating a MCP server")]
 pub struct ServerCreateReq {
-    /// Server name
+    /// Immutable MCPMate-managed server namespace
     ///
-    /// Must be a unique identifier for identifying this server in the system
-    #[schemars(description = "Server's unique name identifier")]
+    /// Must be canonical lowercase snake case and unique within MCPMate.
+    #[schemars(description = "Immutable MCPMate server namespace")]
     pub name: String,
 
     /// Server type
@@ -783,6 +824,7 @@ pub struct ServerCreateReq {
 /// Request parameters for updating an existing MCP server configuration. If updating the server type, it must strictly use standard formats.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Request parameters for updating MCP server")]
+#[serde(deny_unknown_fields)]
 pub struct ServerUpdateReq {
     /// Server ID
     /// Unique identifier of the server to be updated
@@ -845,6 +887,23 @@ pub struct ServerUpdateReq {
     #[serde(default)]
     #[schemars(description = "Whether this server is eligible for Unify direct exposure")]
     pub unify_direct_exposure_eligible: Option<bool>,
+}
+
+#[cfg(test)]
+mod server_update_request_tests {
+    use super::ServerUpdateReq;
+
+    #[test]
+    fn update_request_rejects_namespace_changes() {
+        for field in ["name", "namespace"] {
+            let mut payload = serde_json::json!({ "id": "server-a" });
+            payload[field] = serde_json::json!("renamed_namespace");
+            let error = serde_json::from_value::<ServerUpdateReq>(payload)
+                .expect_err("namespace is not part of the update contract");
+
+            assert!(error.to_string().contains(&format!("unknown field `{field}`")));
+        }
+    }
 }
 
 /// Import servers request

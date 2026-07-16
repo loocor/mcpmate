@@ -367,6 +367,10 @@ pub struct ServerMeta {
     pub rating: Option<i32>,
     /// JSON-serialized list of server icons (rmcp::model::Icon)
     pub icons_json: Option<String>,
+    /// Upstream implementation name observed during MCP initialize
+    pub upstream_name: Option<String>,
+    /// Upstream implementation title observed during MCP initialize
+    pub upstream_title: Option<String>,
     /// Upstream server version (from Implementation.version)
     pub server_version: Option<String>,
     /// MCP protocol version advertised by the server
@@ -389,6 +393,8 @@ impl ServerMeta {
             description: None,
             extras_json: None,
             icons_json: None,
+            upstream_name: None,
+            upstream_title: None,
             protocol_version: None,
             rating: None,
             recommended_scenario: None,

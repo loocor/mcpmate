@@ -11,8 +11,8 @@ use std::sync::Arc;
 use tracing;
 
 use super::UpstreamConnectionPool;
-use crate::common::sync::SyncHelper;
-use crate::config::server::capabilities::store_dual_write;
+use crate::common::sync::{SyncHelper, SyncResult};
+use crate::config::server::capabilities::store_dual_write_for_kinds;
 use crate::core::cache::{
     CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo, PromptArgument, RedbCacheManager,
 };
@@ -179,6 +179,9 @@ impl UpstreamConnectionPool {
         let mut cached_resources: Vec<CachedResourceInfo> = Vec::new();
         let mut cached_prompts: Vec<CachedPromptInfo> = Vec::new();
         let mut cached_templates: Vec<CachedResourceTemplateInfo> = Vec::new();
+        let mut discovered_tools: Vec<Tool> = Vec::new();
+        let mut discovered_resource_uris: Vec<String> = Vec::new();
+        let mut discovered_prompts: Vec<rmcp::model::Prompt> = Vec::new();
 
         // TOOLS - unified pattern
         if flags.contains(CapSyncFlags::TOOLS) {
@@ -189,21 +192,6 @@ impl UpstreamConnectionPool {
             };
 
             if !tools.is_empty() {
-                let mut tools = tools;
-                crate::config::server::tools::assign_unique_names_to_tools(
-                    &db.pool,
-                    &resolved_server_id,
-                    &server_name,
-                    &mut tools,
-                )
-                .await?;
-
-                // Only sync to profile_* when there are profiles bound to this server
-                if !profile_data.is_empty() {
-                    Self::sync_tools_to_database_internal(db, &resolved_server_id, &server_name, &tools, &profile_data)
-                        .await?;
-                }
-
                 let now = Utc::now();
                 cached_tools.extend(tools.iter().map(|tool| {
                     let schema = tool.schema_as_json_value();
@@ -222,6 +210,7 @@ impl UpstreamConnectionPool {
                         cached_at: now,
                     }
                 }));
+                discovered_tools = tools;
             } else {
                 tracing::debug!(
                     "No tools fetched for server '{}' (ID: {}), skipping tools sync",
@@ -237,17 +226,6 @@ impl UpstreamConnectionPool {
 
             if !resources.is_empty() {
                 let resource_uris: Vec<String> = resources.iter().map(|r| r.uri.clone()).collect();
-                if !profile_data.is_empty() {
-                    Self::sync_resources_to_database_internal(
-                        db,
-                        &resolved_server_id,
-                        &server_name,
-                        &resource_uris,
-                        &profile_data,
-                    )
-                    .await?;
-                }
-
                 let now = Utc::now();
                 cached_resources.extend(resources.iter().map(|resource| CachedResourceInfo {
                     uri: resource.uri.clone(),
@@ -258,6 +236,7 @@ impl UpstreamConnectionPool {
                     enabled: true,
                     cached_at: now,
                 }));
+                discovered_resource_uris = resource_uris;
             } else {
                 tracing::debug!(
                     "No resources fetched for server '{}' (ID: {}), skipping resources sync",
@@ -272,17 +251,6 @@ impl UpstreamConnectionPool {
             let prompts = Self::fetch_prompts_from_service(service, &server_name, instance_id).await?;
 
             if !prompts.is_empty() {
-                if !profile_data.is_empty() {
-                    Self::sync_prompts_to_database_internal(
-                        db,
-                        &resolved_server_id,
-                        &server_name,
-                        &prompts,
-                        &profile_data,
-                    )
-                    .await?;
-                }
-
                 let now = Utc::now();
                 cached_prompts.extend(prompts.iter().map(|prompt| {
                     CachedPromptInfo {
@@ -304,6 +272,7 @@ impl UpstreamConnectionPool {
                         cached_at: now,
                     }
                 }));
+                discovered_prompts = prompts;
             } else {
                 tracing::debug!(
                     "No prompts fetched for server '{}' (ID: {}), skipping prompts sync",
@@ -353,40 +322,66 @@ impl UpstreamConnectionPool {
             }
         }
 
+        if let Ok(cache_manager) = RedbCacheManager::global() {
+            let persist_result = store_dual_write_for_kinds(
+                &db.pool,
+                cache_manager.as_ref(),
+                &resolved_server_id,
+                &server_name,
+                cached_tools,
+                cached_resources,
+                cached_prompts,
+                cached_templates,
+                protocol_version,
+                flags,
+            )
+            .await;
+            if let Err(error) = persist_result {
+                crate::config::server::namespace_repair::record_capability_collision_from_error(&db.pool, &error)
+                    .await?;
+                return Err(error).context("Failed to persist authoritative capability inventories");
+            }
+        }
+
+        if !profile_data.is_empty() {
+            if !discovered_tools.is_empty() {
+                Self::sync_tools_to_database_internal(
+                    db,
+                    &resolved_server_id,
+                    &server_name,
+                    &discovered_tools,
+                    &profile_data,
+                )
+                .await?;
+            }
+            if !discovered_resource_uris.is_empty() {
+                Self::sync_resources_to_database_internal(
+                    db,
+                    &resolved_server_id,
+                    &server_name,
+                    &discovered_resource_uris,
+                    &profile_data,
+                )
+                .await?;
+            }
+            if !discovered_prompts.is_empty() {
+                Self::sync_prompts_to_database_internal(
+                    db,
+                    &resolved_server_id,
+                    &server_name,
+                    &discovered_prompts,
+                    &profile_data,
+                )
+                .await?;
+            }
+        }
+
         tracing::debug!(
             "Successfully synced capabilities (flags: {:?}) from server '{}' (ID: {})",
             flags,
             server_name,
             server_id
         );
-
-        if !(cached_tools.is_empty()
-            && cached_resources.is_empty()
-            && cached_prompts.is_empty()
-            && cached_templates.is_empty())
-        {
-            if let Ok(cache_manager) = RedbCacheManager::global() {
-                if let Err(e) = store_dual_write(
-                    &db.pool,
-                    cache_manager.as_ref(),
-                    &resolved_server_id,
-                    &server_name,
-                    cached_tools,
-                    cached_resources,
-                    cached_prompts,
-                    cached_templates,
-                    protocol_version,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        server_id = %server_id,
-                        error = %e,
-                        "Failed to store capability snapshot to REDB"
-                    );
-                }
-            }
-        }
 
         // Ensure refreshing marker is cleared even if nothing was written
         if let Ok(cache_manager) = RedbCacheManager::global() {
@@ -419,7 +414,7 @@ impl UpstreamConnectionPool {
             })
             .collect();
 
-        let _sync_result = SyncHelper::execute_concurrent_sync(
+        let sync_result = SyncHelper::execute_concurrent_sync(
             sync_items,
             "tools_to_profile",
             4, // max concurrent operations
@@ -429,7 +424,22 @@ impl UpstreamConnectionPool {
         )
         .await;
 
-        Ok(())
+        Self::ensure_profile_sync_succeeded("tools", sync_result)
+    }
+
+    fn ensure_profile_sync_succeeded(
+        capability: &str,
+        result: SyncResult,
+    ) -> AnyhowResult<()> {
+        if result.failed == 0 {
+            return Ok(());
+        }
+
+        Err(anyhow::anyhow!(
+            "Failed to sync {capability} to {} profile(s): {}",
+            result.failed,
+            result.errors.join("; ")
+        ))
     }
 
     /// Internal method to sync resources to database using unified pattern
@@ -611,72 +621,37 @@ impl UpstreamConnectionPool {
             .filter(|t| t.server_id == *server_id)
             .map(|t| t.tool_name.clone())
             .collect();
-        let existing_unique_tool_names: std::collections::HashSet<String> = existing_tools
-            .iter()
-            .filter(|t| t.server_id == *server_id)
-            .map(|t| t.unique_name.clone())
-            .collect();
-
         // Add new tools to the profile
         for tool in tools {
             let incoming_tool_name = tool.name.to_string();
 
-            // Skip if tool already exists in this profile (raw name or unique name).
-            let already_exists = existing_tool_names.contains(&incoming_tool_name)
-                || existing_unique_tool_names.contains(&incoming_tool_name);
-            if already_exists {
+            // Upstream synchronization only compares exact capability names.
+            if existing_tool_names.contains(&incoming_tool_name) {
                 continue;
             }
 
-            // Normalize incoming names to canonical server tool_name before existence check.
-            // This avoids re-enabling disabled tools when upstream returns unique names.
-            let unique_lookup = crate::config::server::tools::get_server_tool_by_unique_name(pool, &incoming_tool_name)
-                .await
-                .context("Failed to lookup tool by unique name during pool sync")?;
-            let normalized_tool_name = match unique_lookup {
-                Some(existing) if existing.server_id == server_id => existing.tool_name,
-                Some(_) => incoming_tool_name.clone(),
-                None => {
-                    if let Some(stripped) = crate::core::capability::naming::strip_server_prefix(
-                        crate::core::capability::naming::NamingKind::Tool,
-                        server_name,
-                        &incoming_tool_name,
-                    ) {
-                        stripped
-                    } else {
-                        incoming_tool_name.clone()
-                    }
-                }
-            };
+            // Pool synchronization receives exact names from the upstream connection.
+            let normalized_tool_name = incoming_tool_name.clone();
 
             if existing_tool_names.contains(&normalized_tool_name) {
                 continue;
             }
 
-            // Add missing tools to the profile (enabled by default)
-            match crate::config::profile::add_tool_to_profile(pool, profile_id, server_id, &normalized_tool_name, true)
+            crate::config::profile::add_tool_to_profile(pool, profile_id, server_id, &normalized_tool_name, true)
                 .await
-            {
-                Ok(_) => {
-                    tracing::debug!(
-                        "Added tool '{}' (incoming '{}') from server '{}' to profile '{}'",
-                        normalized_tool_name,
-                        incoming_tool_name,
-                        server_name,
-                        profile_name
-                    );
-                }
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to add tool '{}' (incoming '{}') from server '{}' to profile '{}': {}",
-                        normalized_tool_name,
-                        incoming_tool_name,
-                        server_name,
-                        profile_name,
-                        e
-                    );
-                }
-            }
+                .with_context(|| {
+                    format!(
+                        "Failed to add tool '{}' (incoming '{}') from server '{}' to profile '{}'",
+                        normalized_tool_name, incoming_tool_name, server_name, profile_name
+                    )
+                })?;
+            tracing::debug!(
+                "Added tool '{}' (incoming '{}') from server '{}' to profile '{}'",
+                normalized_tool_name,
+                incoming_tool_name,
+                server_name,
+                profile_name
+            );
         }
         Ok(())
     }
@@ -792,5 +767,85 @@ impl UpstreamConnectionPool {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
+    use rmcp::model::Tool;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::UpstreamConnectionPool;
+
+    async fn setup_profile_sync_database() -> Arc<crate::config::database::Database> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect database");
+        crate::config::initialization::run_initialization(&pool)
+            .await
+            .expect("initialize schema");
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
+            .execute(&pool)
+            .await
+            .expect("insert server");
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-a', 'Profile A', '', 'shared', 1, 1, 1, 0)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert profile");
+        Arc::new(crate::config::database::Database {
+            pool,
+            path: PathBuf::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn tool_profile_sync_propagates_missing_catalog_error() {
+        let db = setup_profile_sync_database().await;
+        let tool = Tool::new("read", "Read", Arc::new(serde_json::Map::new()));
+
+        let error = UpstreamConnectionPool::sync_tools_to_database_internal(
+            &db,
+            "server-a",
+            "docs",
+            &[tool],
+            &[("profile-a".to_string(), "Profile A".to_string())],
+        )
+        .await
+        .expect_err("profile sync must not hide a missing catalog tool");
+
+        assert!(error.to_string().contains("Failed to add tool 'read'"));
+    }
+
+    #[tokio::test]
+    async fn tool_profile_sync_succeeds_after_catalog_persistence() {
+        let db = setup_profile_sync_database().await;
+        crate::config::server::tools::upsert_server_tool(&db.pool, "server-a", "docs", "read", None)
+            .await
+            .expect("persist authoritative catalog tool");
+        let tool = Tool::new("read", "Read", Arc::new(serde_json::Map::new()));
+
+        UpstreamConnectionPool::sync_tools_to_database_internal(
+            &db,
+            "server-a",
+            "docs",
+            &[tool],
+            &[("profile-a".to_string(), "Profile A".to_string())],
+        )
+        .await
+        .expect("sync profile after catalog persistence");
+
+        let upstream_name: String = sqlx::query_scalar(
+            "SELECT st.tool_name FROM profile_tool pt JOIN server_tools st ON st.id = pt.server_tool_id WHERE pt.profile_id = 'profile-a'",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .expect("load linked profile tool");
+        assert_eq!(upstream_name, "read");
     }
 }

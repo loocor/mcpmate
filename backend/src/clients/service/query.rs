@@ -207,7 +207,7 @@ impl ClientConfigService {
         metadata.insert("runtime".to_string(), json!(defaults::RUNTIME));
 
         Ok(ServerTemplateInput {
-            name: sanitize_server_name(&row.name),
+            name: row.name.clone(),
             display_name: Some(row.name),
             transport,
             command: row.command,
@@ -218,10 +218,6 @@ impl ClientConfigService {
             metadata,
         })
     }
-}
-
-fn sanitize_server_name(name: &str) -> String {
-    name.replace(' ', "_")
 }
 
 #[cfg(test)]

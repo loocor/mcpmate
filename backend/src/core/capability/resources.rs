@@ -16,6 +16,7 @@ use tracing;
 
 use crate::core::capability::facade::{
     collect_capability_from_instance_peer, concurrency_limit, is_method_not_supported,
+    require_complete_capability_fetch,
 };
 use crate::core::pool::{UpstreamConnection, UpstreamConnectionPool};
 
@@ -179,7 +180,7 @@ pub async fn get_resource_status(
 pub async fn build_resource_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     database: Option<&Arc<crate::config::database::Database>>,
-) -> HashMap<String, ResourceMapping> {
+) -> Result<HashMap<String, ResourceMapping>> {
     build_resource_mapping_filtered(connection_pool, database, None).await
 }
 
@@ -187,7 +188,7 @@ pub async fn build_resource_mapping_filtered(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     database: Option<&Arc<crate::config::database::Database>>,
     enabled_server_ids: Option<&HashSet<String>>,
-) -> HashMap<String, ResourceMapping> {
+) -> Result<HashMap<String, ResourceMapping>> {
     let snapshot = {
         let pool = connection_pool.lock().await;
         pool.get_snapshot()
@@ -250,7 +251,13 @@ pub async fn build_resource_mapping_filtered(
                     is_method_not_supported,
                 )
                 .await;
-                let mappings = outcome.items;
+                let mappings = require_complete_capability_fetch(
+                    "resources/list",
+                    &server_id_clone,
+                    &server_name,
+                    &instance_id_clone,
+                    outcome,
+                )?;
 
                 if let Some(db) = database_clone {
                     let mut filtered = Vec::new();
@@ -265,21 +272,22 @@ pub async fn build_resource_mapping_filtered(
                             filtered.push(item);
                         }
                     }
-                    filtered
+                    Ok(filtered)
                 } else {
-                    mappings
+                    Ok(mappings)
                 }
             });
         }
     }
 
-    let results: Vec<Vec<ResourceMapping>> = futures::stream::iter(tasks)
+    let results: Vec<Result<Vec<ResourceMapping>>> = futures::stream::iter(tasks)
         .buffer_unordered(concurrency_limit())
         .collect()
         .await;
 
     let mut resource_mapping: HashMap<String, ResourceMapping> = HashMap::new();
     for resources in results {
+        let resources = resources?;
         for resource in resources {
             let uri = &resource.upstream_resource_uri;
             if let Some(existing) = resource_mapping.get(uri) {
@@ -298,12 +306,12 @@ pub async fn build_resource_mapping_filtered(
     }
 
     tracing::debug!("Built resource mapping with {} resources", resource_mapping.len());
-    resource_mapping
+    Ok(resource_mapping)
 }
 
 pub async fn build_resource_template_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> Vec<ResourceTemplateMapping> {
+) -> Result<Vec<ResourceTemplateMapping>> {
     let snapshot = {
         let pool = connection_pool.lock().await;
         pool.get_snapshot()
@@ -355,21 +363,28 @@ pub async fn build_resource_template_mapping(
                 )
                 .await;
 
-                outcome.items
+                require_complete_capability_fetch(
+                    "resources/templates/list",
+                    &server_id_cloned,
+                    &server_name,
+                    &instance_id,
+                    outcome,
+                )
             });
         }
     }
 
-    let results: Vec<Vec<ResourceTemplateMapping>> = futures::stream::iter(tasks)
+    let results: Vec<Result<Vec<ResourceTemplateMapping>>> = futures::stream::iter(tasks)
         .buffer_unordered(concurrency_limit())
         .collect()
         .await;
 
     let mut templates = Vec::new();
-    for mut mapping in results {
+    for mapping in results {
+        let mut mapping = mapping?;
         templates.append(&mut mapping);
     }
-    templates
+    Ok(templates)
 }
 
 pub async fn read_upstream_resource(

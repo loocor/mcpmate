@@ -1,7 +1,7 @@
 //! Cache CRUD operations implementation
 
 use anyhow::Result;
-use redb::{Database, ReadableMultimapTable, ReadableTable};
+use redb::{Database, ReadableMultimapTable, ReadableTable, WriteTransaction};
 use tracing::debug;
 
 use super::{schema::*, types::*};
@@ -27,71 +27,161 @@ impl<'a> CacheOperations<'a> {
         format!("{}#{}#{}", server_id, instance_key, scope.key_suffix())
     }
 
-    /// Store server data in cache
-    pub fn store_server_data(
+    fn store_server_data_in_transaction(
         &self,
+        write_txn: &WriteTransaction,
         server_data: &CachedServerData,
-    ) -> Result<(), CacheError> {
-        let write_txn = self.db.begin_write()?;
+    ) -> Result<String, CacheError> {
         let cache_key = self.generate_cache_key(
             &server_data.server_id,
             &server_data.instance_type(),
             server_data.scope(),
         );
 
-        {
-            // Store main server data using composite key (server_id + instance_type)
-            let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
-            let serialized = bincode::serialize(server_data)?;
-            servers_table.insert(cache_key.as_str(), serialized.as_slice())?;
+        // Store main server data using composite key (server_id + instance_type)
+        let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
+        let serialized = bincode::serialize(server_data)?;
+        servers_table.insert(cache_key.as_str(), serialized.as_slice())?;
+        drop(servers_table);
 
-            // Store individual tools with indexing
-            let mut tools_table = write_txn.open_table(TOOLS_TABLE)?;
-            let mut tools_index = write_txn.open_multimap_table(SERVER_TOOLS_INDEX)?;
+        // Store individual tools with indexing
+        let mut tools_table = write_txn.open_table(TOOLS_TABLE)?;
+        let mut tools_index = write_txn.open_multimap_table(SERVER_TOOLS_INDEX)?;
+        for tool in &server_data.tools {
+            let key = (server_data.server_id.as_str(), tool.name.as_str());
+            let serialized = bincode::serialize(tool)?;
+            tools_table.insert(key, serialized.as_slice())?;
+            tools_index.insert(&*server_data.server_id, &*tool.name)?;
+        }
+        drop(tools_index);
+        drop(tools_table);
 
-            for tool in &server_data.tools {
-                let key = (server_data.server_id.as_str(), tool.name.as_str());
-                let serialized = bincode::serialize(tool)?;
-                tools_table.insert(key, serialized.as_slice())?;
-                tools_index.insert(&*server_data.server_id, &*tool.name)?;
-            }
+        // Store individual resources with indexing
+        let mut resources_table = write_txn.open_table(RESOURCES_TABLE)?;
+        let mut resources_index = write_txn.open_multimap_table(SERVER_RESOURCES_INDEX)?;
+        for resource in &server_data.resources {
+            let key = (server_data.server_id.as_str(), resource.uri.as_str());
+            let serialized = bincode::serialize(resource)?;
+            resources_table.insert(key, serialized.as_slice())?;
+            resources_index.insert(&*server_data.server_id, &*resource.uri)?;
+        }
+        drop(resources_index);
+        drop(resources_table);
 
-            // Store individual resources with indexing
-            let mut resources_table = write_txn.open_table(RESOURCES_TABLE)?;
-            let mut resources_index = write_txn.open_multimap_table(SERVER_RESOURCES_INDEX)?;
+        // Store individual prompts with indexing
+        let mut prompts_table = write_txn.open_table(PROMPTS_TABLE)?;
+        let mut prompts_index = write_txn.open_multimap_table(SERVER_PROMPTS_INDEX)?;
+        for prompt in &server_data.prompts {
+            let key = (server_data.server_id.as_str(), prompt.name.as_str());
+            let serialized = bincode::serialize(prompt)?;
+            prompts_table.insert(key, serialized.as_slice())?;
+            prompts_index.insert(&*server_data.server_id, &*prompt.name)?;
+        }
+        drop(prompts_index);
+        drop(prompts_table);
 
-            for resource in &server_data.resources {
-                let key = (server_data.server_id.as_str(), resource.uri.as_str());
-                let serialized = bincode::serialize(resource)?;
-                resources_table.insert(key, serialized.as_slice())?;
-                resources_index.insert(&*server_data.server_id, &*resource.uri)?;
-            }
-
-            // Store individual prompts with indexing
-            let mut prompts_table = write_txn.open_table(PROMPTS_TABLE)?;
-            let mut prompts_index = write_txn.open_multimap_table(SERVER_PROMPTS_INDEX)?;
-
-            for prompt in &server_data.prompts {
-                let key = (server_data.server_id.as_str(), prompt.name.as_str());
-                let serialized = bincode::serialize(prompt)?;
-                prompts_table.insert(key, serialized.as_slice())?;
-                prompts_index.insert(&*server_data.server_id, &*prompt.name)?;
-            }
-
-            // Store resource templates with indexing
-            let mut templates_table = write_txn.open_table(RESOURCE_TEMPLATES_TABLE)?;
-            let mut templates_index = write_txn.open_multimap_table(SERVER_RESOURCE_TEMPLATES_INDEX)?;
-
-            for template in &server_data.resource_templates {
-                let key = (server_data.server_id.as_str(), template.uri_template.as_str());
-                let serialized = bincode::serialize(template)?;
-                templates_table.insert(key, serialized.as_slice())?;
-                templates_index.insert(&*server_data.server_id, &*template.uri_template)?;
-            }
+        // Store resource templates with indexing
+        let mut templates_table = write_txn.open_table(RESOURCE_TEMPLATES_TABLE)?;
+        let mut templates_index = write_txn.open_multimap_table(SERVER_RESOURCE_TEMPLATES_INDEX)?;
+        for template in &server_data.resource_templates {
+            let key = (server_data.server_id.as_str(), template.uri_template.as_str());
+            let serialized = bincode::serialize(template)?;
+            templates_table.insert(key, serialized.as_slice())?;
+            templates_index.insert(&*server_data.server_id, &*template.uri_template)?;
         }
 
+        Ok(cache_key)
+    }
+
+    fn remove_server_capability_data_in_transaction(
+        &self,
+        write_txn: &WriteTransaction,
+        server_id: &str,
+    ) -> Result<(), CacheError> {
+        // Remove main server data (keys are composite: "{server_id}#{instance}")
+        let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
+        let keys: Vec<String> = servers_table
+            .iter()?
+            .map(|item| {
+                let (key, _) = item?;
+                Ok(key.value().to_string())
+            })
+            .collect::<Result<Vec<_>, CacheError>>()?;
+        for key in keys {
+            if key == server_id || key.starts_with(&format!("{}#", server_id)) {
+                servers_table.remove(key.as_str())?;
+            }
+        }
+        drop(servers_table);
+
+        let mut tools_table = write_txn.open_table(TOOLS_TABLE)?;
+        let mut tools_index = write_txn.open_multimap_table(SERVER_TOOLS_INDEX)?;
+        let tool_names = tools_index.get(server_id)?;
+        for tool_name_result in tool_names {
+            let tool_name = tool_name_result?;
+            tools_table.remove((server_id, tool_name.value()))?;
+        }
+        tools_index.remove_all(server_id)?;
+        drop(tools_index);
+        drop(tools_table);
+
+        let mut resources_table = write_txn.open_table(RESOURCES_TABLE)?;
+        let mut resources_index = write_txn.open_multimap_table(SERVER_RESOURCES_INDEX)?;
+        let resource_uris = resources_index.get(server_id)?;
+        for resource_uri_result in resource_uris {
+            let resource_uri = resource_uri_result?;
+            resources_table.remove((server_id, resource_uri.value()))?;
+        }
+        resources_index.remove_all(server_id)?;
+        drop(resources_index);
+        drop(resources_table);
+
+        let mut prompts_table = write_txn.open_table(PROMPTS_TABLE)?;
+        let mut prompts_index = write_txn.open_multimap_table(SERVER_PROMPTS_INDEX)?;
+        let prompt_names = prompts_index.get(server_id)?;
+        for prompt_name_result in prompt_names {
+            let prompt_name = prompt_name_result?;
+            prompts_table.remove((server_id, prompt_name.value()))?;
+        }
+        prompts_index.remove_all(server_id)?;
+        drop(prompts_index);
+        drop(prompts_table);
+
+        let mut templates_table = write_txn.open_table(RESOURCE_TEMPLATES_TABLE)?;
+        let mut templates_index = write_txn.open_multimap_table(SERVER_RESOURCE_TEMPLATES_INDEX)?;
+        let template_uris = templates_index.get(server_id)?;
+        for template_uri_result in template_uris {
+            let template_uri = template_uri_result?;
+            templates_table.remove((server_id, template_uri.value()))?;
+        }
+        templates_index.remove_all(server_id)?;
+
+        Ok(())
+    }
+
+    /// Store server data in cache
+    pub fn store_server_data(
+        &self,
+        server_data: &CachedServerData,
+    ) -> Result<(), CacheError> {
+        let write_txn = self.db.begin_write()?;
+        let cache_key = self.store_server_data_in_transaction(&write_txn, server_data)?;
         write_txn.commit()?;
         tracing::info!("[CACHE][STORE] key={} server_id={}", cache_key, server_data.server_id);
+        Ok(())
+    }
+
+    /// Atomically replace all capability cache entries for a server while
+    /// preserving its independently managed fingerprint.
+    pub fn replace_server_data(
+        &self,
+        server_data: &CachedServerData,
+    ) -> Result<(), CacheError> {
+        let write_txn = self.db.begin_write()?;
+        self.remove_server_capability_data_in_transaction(&write_txn, &server_data.server_id)?;
+        let cache_key = self.store_server_data_in_transaction(&write_txn, server_data)?;
+        write_txn.commit()?;
+        tracing::info!("[CACHE][REPLACE] key={} server_id={}", cache_key, server_data.server_id);
         Ok(())
     }
 
@@ -239,75 +329,10 @@ impl<'a> CacheOperations<'a> {
         server_id: &str,
     ) -> Result<(), CacheError> {
         let write_txn = self.db.begin_write()?;
-
-        {
-            // Remove main server data (keys are composite: "{server_id}#{instance}")
-            let mut servers_table = write_txn.open_table(SERVERS_TABLE)?;
-            let keys: Vec<String> = servers_table
-                .iter()?
-                .map(|item| {
-                    let (key, _) = item?;
-                    Ok(key.value().to_string())
-                })
-                .collect::<Result<Vec<_>, CacheError>>()?;
-            for k in keys {
-                if k == server_id || k.starts_with(&format!("{}#", server_id)) {
-                    servers_table.remove(&*k)?;
-                }
-            }
-
-            // Remove tools
-            let mut tools_table = write_txn.open_table(TOOLS_TABLE)?;
-            let mut tools_index = write_txn.open_multimap_table(SERVER_TOOLS_INDEX)?;
-
-            let tool_names = tools_index.get(server_id)?;
-            for tool_name_result in tool_names {
-                let tool_name = tool_name_result?;
-                let key = (server_id, tool_name.value());
-                tools_table.remove(key)?;
-            }
-            tools_index.remove_all(server_id)?;
-
-            // Remove resources
-            let mut resources_table = write_txn.open_table(RESOURCES_TABLE)?;
-            let mut resources_index = write_txn.open_multimap_table(SERVER_RESOURCES_INDEX)?;
-
-            let resource_uris = resources_index.get(server_id)?;
-            for resource_uri_result in resource_uris {
-                let resource_uri = resource_uri_result?;
-                let key = (server_id, resource_uri.value());
-                resources_table.remove(key)?;
-            }
-            resources_index.remove_all(server_id)?;
-
-            // Remove prompts
-            let mut prompts_table = write_txn.open_table(PROMPTS_TABLE)?;
-            let mut prompts_index = write_txn.open_multimap_table(SERVER_PROMPTS_INDEX)?;
-
-            let prompt_names = prompts_index.get(server_id)?;
-            for prompt_name_result in prompt_names {
-                let prompt_name = prompt_name_result?;
-                let key = (server_id, prompt_name.value());
-                prompts_table.remove(key)?;
-            }
-            prompts_index.remove_all(server_id)?;
-
-            // Remove resource templates
-            let mut templates_table = write_txn.open_table(RESOURCE_TEMPLATES_TABLE)?;
-            let mut templates_index = write_txn.open_multimap_table(SERVER_RESOURCE_TEMPLATES_INDEX)?;
-
-            let template_uris = templates_index.get(server_id)?;
-            for template_uri_result in template_uris {
-                let template_uri = template_uri_result?;
-                let key = (server_id, template_uri.value());
-                templates_table.remove(key)?;
-            }
-            templates_index.remove_all(server_id)?;
-
-            // Remove fingerprint
-            let mut fingerprints_table = write_txn.open_table(FINGERPRINTS_TABLE)?;
-            fingerprints_table.remove(server_id)?;
-        }
+        self.remove_server_capability_data_in_transaction(&write_txn, server_id)?;
+        let mut fingerprints_table = write_txn.open_table(FINGERPRINTS_TABLE)?;
+        fingerprints_table.remove(server_id)?;
+        drop(fingerprints_table);
 
         write_txn.commit()?;
         debug!("Removed server data for: {}", server_id);

@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::capability::naming::{NamingKind, generate_unique_name, resolve_unique_name};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::mcper::builtin::ClientBuiltinContext;
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
@@ -41,6 +41,7 @@ pub(super) async fn list_prompts(
         HashSet::new()
     };
     let mut prompts: Vec<rmcp::model::Prompt> = Vec::new();
+    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("prompts");
 
     if let Some(db) = &server.database {
         let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
@@ -53,7 +54,7 @@ pub(super) async fn list_prompts(
         )
         .fetch_all(&db.pool)
         .await
-        .unwrap_or_default();
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
         let redb = &server.redb_cache;
         let pool = &server.connection_pool;
@@ -77,54 +78,68 @@ pub(super) async fn list_prompts(
                 validation_session: None,
                 runtime_identity: client.runtime_identity(),
                 connection_selection: client.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
             let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                    Ok(result) => {
-                        let mut out = Vec::new();
-                        if let Some(items) = result.items.into_prompts() {
-                            for mut p in items {
-                                let unique_name =
-                                    generate_unique_name(NamingKind::Prompt, &server_name_cloned, &p.name);
-                                p.name = unique_name;
-                                out.push(p);
-                            }
-                        }
-                        (server_id, server_name_cloned, out)
-                    }
-                    Err(_) => (server_id, server_name_cloned, Vec::new()),
-                }
+                let prompts = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| {
+                        result
+                            .items
+                            .into_prompts()
+                            .ok_or_else(|| "Prompt listing returned a different capability kind".to_string())
+                    });
+                (server_id, server_name_cloned, prompts)
             });
         }
 
-        for (server_id, server_name, mut v) in futures::stream::iter(tasks)
+        for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            if !unify_mode {
-                prompts.append(&mut v);
-                continue;
-            }
-            for prompt in v.drain(..) {
-                let raw_prompt_name: String = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Prompt,
-                    &server_name,
-                    prompt.name.as_ref(),
-                )
-                .await;
-                if crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
-                    client.unify_workspace.as_ref(),
-                    &unify_direct_exposure_eligible_server_ids,
-                    &server_id,
-                    raw_prompt_name.as_ref(),
-                ) {
-                    prompts.push(prompt);
+            let prompt_batch = match result {
+                Ok(prompt_batch) => prompt_batch,
+                Err(error) => {
+                    aggregate.record_failure(&server_id, &server_name, error);
+                    continue;
                 }
+            };
+            let server_prompts = async {
+                if !unify_mode {
+                    return Ok(prompt_batch);
+                }
+                let mut exposed = Vec::new();
+                for prompt in prompt_batch {
+                    let raw_prompt_name = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Prompt,
+                        &server_id,
+                        prompt.name.as_ref(),
+                    )
+                    .await?;
+                    if crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
+                        client.unify_workspace.as_ref(),
+                        &unify_direct_exposure_eligible_server_ids,
+                        &server_id,
+                        raw_prompt_name.as_ref(),
+                    ) {
+                        exposed.push(prompt);
+                    }
+                }
+                Ok::<_, anyhow::Error>(exposed)
+            }
+            .await;
+            match server_prompts {
+                Ok(server_prompts) => {
+                    aggregate.record_success();
+                    prompts.extend(server_prompts);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
     }
@@ -138,6 +153,9 @@ pub(super) async fn list_prompts(
             .into_iter()
             .filter(|prompt| builtin_prompt_allowed(client.config_mode.as_deref(), prompt.name.as_ref())),
     );
+    aggregate
+        .finish_for_result(!prompts.is_empty())
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
     // Apply pagination
     let page = server.paginator.paginate_prompts(&_request, prompts)?;
@@ -192,48 +210,27 @@ pub(super) async fn get_prompt(
         }
     }
 
-    let mut lookup_name = request.name.clone();
-    let mut server_filter: Option<String> = None;
-    if server.database.is_some() {
-        match resolve_unique_name(NamingKind::Prompt, &request.name).await {
-            Ok((server_name, upstream_name)) => {
-                lookup_name = upstream_name;
-                if let Ok(Some(server_id)) = crate::core::capability::resolver::to_id(&server_name).await {
-                    server_filter = Some(server_id);
-                }
-            }
-            Err(err) => {
-                tracing::trace!(
-                    "Prompt '{}' does not require unique-name resolution (resolve error: {})",
-                    request.name,
-                    err
-                );
-            }
-        }
+    let route = resolve_capability_route(NamingKind::Prompt, &request.name)
+        .await
+        .map_err(|error| McpError::internal_error(format!("Failed to resolve external prompt name: {error}"), None))?;
+    let server_filter = route.server_id;
+    let lookup_name = route.upstream_value;
+    let canonical_name = request.name.clone();
+    let mut filter = HashSet::new();
+    filter.insert(server_filter.clone());
+    let prompt_mapping =
+        crate::core::capability::facade::build_prompt_mapping_filtered(&server.connection_pool, Some(&filter))
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+    if !prompt_mapping.contains_key(&lookup_name) {
+        return Err(McpError::invalid_params(
+            format!(
+                "Prompt '{}' is not available from its routed upstream server",
+                canonical_name
+            ),
+            None,
+        ));
     }
-
-    let prompt_mapping = if let Some(server_id) = server_filter.clone() {
-        let mapping = {
-            let mut filter = HashSet::new();
-            filter.insert(server_id.clone());
-            crate::core::capability::facade::build_prompt_mapping_filtered(&server.connection_pool, Some(&filter)).await
-        };
-        if mapping.contains_key(&lookup_name) {
-            mapping
-        } else {
-            crate::core::capability::facade::build_prompt_mapping(&server.connection_pool).await
-        }
-    } else {
-        crate::core::capability::facade::build_prompt_mapping(&server.connection_pool).await
-    };
-
-    let canonical_name = if prompt_mapping.contains_key(&request.name) {
-        request.name.clone()
-    } else if let Some(mapping) = prompt_mapping.get(&lookup_name) {
-        generate_unique_name(NamingKind::Prompt, &mapping.server_name, &mapping.upstream_prompt_name)
-    } else {
-        request.name.clone()
-    };
 
     if unify_mode {
         let Some(db) = &server.database else {
@@ -244,23 +241,10 @@ pub(super) async fn get_prompt(
         };
         let eligible_server_ids =
             crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
-        let resolved_server_id = match resolve_unique_name(NamingKind::Prompt, &canonical_name).await {
-            Ok((server_name, _)) => crate::core::capability::resolver::to_id(&server_name)
-                .await
-                .ok()
-                .flatten(),
-            Err(_) => None,
-        };
-        let Some(server_id) = resolved_server_id else {
-            return Err(McpError::invalid_params(
-                format!("Prompt '{}' is not directly exposed for this client", canonical_name),
-                None,
-            ));
-        };
         if !crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
             client.unify_workspace.as_ref(),
             &eligible_server_ids,
-            &server_id,
+            &server_filter,
             lookup_name.as_ref(),
         ) {
             return Err(McpError::invalid_params(
@@ -291,16 +275,14 @@ pub(super) async fn get_prompt(
         ));
     }
 
-    let connection_selection = server_filter
-        .as_ref()
-        .and_then(|server_id| client.connection_selection(server_id.clone()));
+    let connection_selection = client.connection_selection(server_filter.clone());
 
     match crate::core::capability::facade::get_upstream_prompt(
         &server.connection_pool,
         &prompt_mapping,
         &lookup_name,
         request.arguments,
-        server_filter.as_deref(),
+        Some(&server_filter),
         connection_selection.as_ref(),
     )
     .await

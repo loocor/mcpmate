@@ -172,12 +172,12 @@ mod tests {
 
     const TEST_MCP_CONFIG: &str = r#"{
         "mcpServers": {
-            "Context7": {
+            "context7": {
                 "command": "npx",
                 "args": ["-y", "@upstash/context7-mcp@latest"],
                 "type": "stdio"
             },
-            "Gitmcp": {
+            "gitmcp": {
                 "url": "https://gitmcp.io/modelcontextprotocol/rust-sdk",
                 "type": "streamable_http"
             }

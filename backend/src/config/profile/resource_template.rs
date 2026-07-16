@@ -33,7 +33,7 @@ pub async fn add_resource_template_to_profile(
     .context("Failed to get existing resource template enabled status")?;
 
     // Server name (safe version)
-    let server_name = crate::config::operations::server::get_server_name_safe(pool, server_id)
+    let server_name = crate::config::operations::server::get_server_namespace(pool, server_id)
         .await
         .context("Failed to get server name")?;
 

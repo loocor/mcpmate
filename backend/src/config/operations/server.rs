@@ -5,63 +5,22 @@ use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use tracing;
 
-use crate::common::database::fetch_scalar;
-
-/// Get server name by server ID with underscore replacement for safe usage
+/// Get the persisted MCPMate namespace by server ID.
 ///
-/// This function retrieves the server name from the database and replaces spaces
-/// with underscores to make it safe for use in various contexts.
+/// This function returns the canonical value stored in `server_config.name`.
 ///
 /// # Arguments
 /// * `pool` - Database connection pool
 /// * `server_id` - Server ID to look up
 ///
 /// # Returns
-/// * `Ok(server_name)` - Server name with spaces replaced by underscores
+/// * `Ok(server_name)` - Persisted MCPMate namespace
 /// * `Err(_)` - If server not found or database error
-pub async fn get_server_name_safe(
+pub async fn get_server_namespace(
     pool: &Pool<Sqlite>,
     server_id: &str,
 ) -> Result<String> {
-    tracing::debug!("Getting safe server name for server ID: {}", server_id);
-
-    let server_name: Option<String> = fetch_scalar(pool, "server_config", "name", "id", server_id).await?;
-
-    match server_name {
-        Some(name) => {
-            let safe_name = name.replace(' ', "_"); // Replace spaces with underscores
-            tracing::debug!(
-                "Found server name '{}' for ID {}, safe name: '{}'",
-                name,
-                server_id,
-                safe_name
-            );
-            Ok(safe_name)
-        }
-        None => {
-            tracing::warn!("Server ID {} not found, using 'unknown' as server_name", server_id);
-            Ok("unknown".to_string())
-        }
-    }
-}
-
-/// Get original server name by server ID without any modifications
-///
-/// This function retrieves the original server name from the database without
-/// any modifications like underscore replacement.
-///
-/// # Arguments
-/// * `pool` - Database connection pool
-/// * `server_id` - Server ID to look up
-///
-/// # Returns
-/// * `Ok(server_name)` - Original server name
-/// * `Err(_)` - If server not found or database error
-pub async fn get_server_name_original(
-    pool: &Pool<Sqlite>,
-    server_id: &str,
-) -> Result<String> {
-    tracing::debug!("Getting original server name for server ID: {}", server_id);
+    tracing::debug!("Getting server namespace for server ID: {}", server_id);
 
     let server_name = sqlx::query_scalar::<_, String>(
         r#"

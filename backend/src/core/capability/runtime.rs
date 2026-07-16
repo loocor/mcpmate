@@ -14,7 +14,7 @@ use crate::core::cache::{
 use crate::core::capability::internal::{
     CapabilityFetchFailure, capability_declared, collect_capability_from_instance_peer, is_method_not_supported,
 };
-use crate::core::capability::naming::{NamingKind, generate_unique_name};
+use crate::core::capability::naming::NamingKind;
 use crate::core::capability::{CapabilityType, ConnectionSelection, RuntimeIdentity};
 use crate::core::pool::{CapSyncFlags, FailureKind, UpstreamConnectionPool};
 
@@ -44,6 +44,16 @@ pub struct ListCtx {
     pub validation_session: Option<String>,
     pub runtime_identity: Option<RuntimeIdentity>,
     pub connection_selection: Option<ConnectionSelection>,
+    pub name_domain: NameDomain,
+}
+
+/// Selects which capability identifier domain a listing surface exposes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NameDomain {
+    /// Exact identifiers reported by the upstream MCP server.
+    Upstream,
+    /// Stable MCPMate identifiers exposed outside the connection pool.
+    External,
 }
 
 /// Context for capability call operations.
@@ -63,6 +73,18 @@ pub struct CallCtx {
 pub enum RefreshStrategy {
     CacheFirst,
     Force,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CapabilityPeerError {
+    #[error("No connected capability peer for server '{server_id}'")]
+    Runtime { server_id: String },
+    #[error("Validation session '{session_id}' has no connected peer for server '{server_id}'")]
+    Validation { server_id: String, session_id: String },
+}
+
+pub(crate) fn is_missing_peer_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<CapabilityPeerError>().is_some()
 }
 
 impl RefreshStrategy {
@@ -152,7 +174,6 @@ fn cached_items_from_data(
     data: CachedServerData,
 ) -> CapabilityItems {
     let CachedServerData {
-        server_name,
         tools,
         resources,
         prompts,
@@ -161,12 +182,7 @@ fn cached_items_from_data(
     } = data;
 
     match capability {
-        CapabilityType::Tools => CapabilityItems::Tools(
-            tools
-                .into_iter()
-                .filter_map(|tool| convert_cached_tool(&server_name, tool))
-                .collect(),
-        ),
+        CapabilityType::Tools => CapabilityItems::Tools(tools.into_iter().filter_map(convert_cached_tool).collect()),
         CapabilityType::Prompts => CapabilityItems::Prompts(prompts.into_iter().map(convert_cached_prompt).collect()),
         CapabilityType::Resources => {
             CapabilityItems::Resources(resources.into_iter().filter_map(convert_cached_resource).collect())
@@ -262,6 +278,32 @@ fn runtime_failure_from_capability(failure: Option<CapabilityFetchFailure>) -> O
     })
 }
 
+fn runtime_inventory_failure_error(
+    capability: CapabilityType,
+    failure: &RuntimeFailure,
+) -> anyhow::Error {
+    let operation = match capability {
+        CapabilityType::Tools => "tools/list",
+        CapabilityType::Prompts => "prompts/list",
+        CapabilityType::Resources => "resources/list",
+        CapabilityType::ResourceTemplates => "resources/templates/list",
+    };
+    match failure.kind {
+        RuntimeFailureKind::Timeout => anyhow::anyhow!("Upstream {operation} timed out"),
+        RuntimeFailureKind::SessionGone => anyhow::anyhow!(
+            "Upstream {operation} session is no longer available: {}",
+            failure.message.as_deref().unwrap_or("session closed")
+        ),
+        RuntimeFailureKind::Other => anyhow::anyhow!(
+            "Upstream {operation} failed: {}",
+            failure
+                .message
+                .as_deref()
+                .unwrap_or("unknown protocol or transport error")
+        ),
+    }
+}
+
 /// Execute a capability list operation (REDB-first, runtime fallback, async sync).
 pub async fn list(
     ctx: &ListCtx,
@@ -301,7 +343,14 @@ async fn list_impl(
         if let Ok(result) = redb.get_server_data(&cache_query).await {
             if result.cache_hit {
                 if let Some(data) = result.data {
-                    let items = cached_items_from_data(ctx.capability, data);
+                    let items = project_cached_items(
+                        database,
+                        &ctx.server_id,
+                        cached_items_from_data(ctx.capability, data),
+                        &derived_scope,
+                        ctx.name_domain,
+                    )
+                    .await?;
                     if !items.is_empty() {
                         return Ok(ListResult {
                             items,
@@ -360,7 +409,13 @@ async fn list_impl(
             if let Ok(result) = redb.get_server_data(&shared_raw_query).await {
                 if result.cache_hit {
                     if let Some(data) = result.data {
-                        let items = cached_items_from_data(ctx.capability, data);
+                        let items = project_external_items(
+                            database,
+                            &ctx.server_id,
+                            cached_items_from_data(ctx.capability, data),
+                            ctx.name_domain,
+                        )
+                        .await?;
                         if !items.is_empty() {
                             tracing::debug!(
                                 server_id = %ctx.server_id,
@@ -389,64 +444,69 @@ async fn list_impl(
             Ok(Some(n)) => n,
             _ => ctx.server_id.clone(),
         };
-        let snap = pool_guard.get_snapshot();
-        let mut peer_opt = None;
-        let mut instance_id_opt = None;
-        let mut instance_source = OperationSource::Runtime;
-        if let Some(selection) = ctx.connection_selection.as_ref() {
-            if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(selection) {
-                if let Some(instances) = snap.get(&ctx.server_id) {
-                    if let Some((iid, _status, _res, _prm, peer)) =
-                        instances.iter().find(|(candidate_id, st, _, _, p)| {
-                            **candidate_id == selected_instance_id
-                                && matches!(st, crate::core::foundation::types::ConnectionStatus::Ready)
-                                && p.is_some()
-                        })
-                    {
+        if let Some(session_id) = ctx.validation_session.as_ref() {
+            let peer = pool_guard
+                .validation_sessions
+                .get(session_id)
+                .and_then(|session_servers| session_servers.get(&ctx.server_id))
+                .and_then(|connection| {
+                    connection
+                        .service
+                        .as_ref()
+                        .map(|service| (service.peer().clone(), connection.id.clone()))
+                });
+            match peer {
+                Some((peer, instance_id)) => (Some(peer), Some(instance_id), name, OperationSource::Temporary),
+                None => (None, None, name, OperationSource::Temporary),
+            }
+        } else {
+            let snap = pool_guard.get_snapshot();
+            let mut peer_opt = None;
+            let mut instance_id_opt = None;
+            if let Some(selection) = ctx.connection_selection.as_ref() {
+                if let Ok(Some(selected_instance_id)) = pool_guard.select_ready_instance_id(selection) {
+                    if let Some(instances) = snap.get(&ctx.server_id) {
+                        if let Some((iid, _status, _res, _prm, peer)) =
+                            instances.iter().find(|(candidate_id, st, _, _, p)| {
+                                **candidate_id == selected_instance_id
+                                    && matches!(st, crate::core::foundation::types::ConnectionStatus::Ready)
+                                    && p.is_some()
+                            })
+                        {
+                            peer_opt = peer.clone();
+                            instance_id_opt = Some(iid.clone());
+                        }
+                    }
+                }
+            }
+            if let Some(instances) = snap.get(&ctx.server_id) {
+                if peer_opt.is_none() {
+                    if let Some((iid, _status, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
+                        matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
+                    }) {
                         peer_opt = peer.clone();
                         instance_id_opt = Some(iid.clone());
                     }
                 }
             }
+            (peer_opt, instance_id_opt, name, OperationSource::Runtime)
         }
-        if let Some(instances) = snap.get(&ctx.server_id) {
-            if peer_opt.is_none() {
-                if let Some((iid, _status, _res, _prm, peer)) = instances.iter().find(|(_, st, _, _, p)| {
-                    matches!(st, crate::core::foundation::types::ConnectionStatus::Ready) && p.is_some()
-                }) {
-                    peer_opt = peer.clone();
-                    instance_id_opt = Some(iid.clone());
-                }
-            }
-        }
-        if peer_opt.is_none() {
-            if let Some(session_id) = ctx.validation_session.as_ref() {
-                if let Some(session_servers) = pool_guard.validation_sessions.get(session_id) {
-                    if let Some(conn) = session_servers.get(&name) {
-                        if let Some(service) = conn.service.as_ref() {
-                            peer_opt = Some(service.peer().clone());
-                            instance_id_opt = Some(conn.id.clone());
-                            instance_source = OperationSource::Temporary;
-                        }
-                    }
-                }
-            }
-        }
-        (peer_opt, instance_id_opt, name, instance_source)
     };
 
     let peer = match peer_opt {
         Some(p) => p,
         None => {
-            return Ok(ListResult {
-                items: CapabilityItems::Resources(Vec::new()),
-                meta: Meta {
-                    cache_hit: false,
-                    source: OperationSource::Runtime.as_str().to_string(),
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    had_peer: false,
-                },
-            });
+            if let Some(session_id) = ctx.validation_session.as_ref() {
+                return Err(CapabilityPeerError::Validation {
+                    server_id: ctx.server_id.clone(),
+                    session_id: session_id.clone(),
+                }
+                .into());
+            }
+            return Err(CapabilityPeerError::Runtime {
+                server_id: ctx.server_id.clone(),
+            }
+            .into());
         }
     };
     let instance_id = instance_id_opt.unwrap_or_else(|| "default".to_string());
@@ -468,7 +528,9 @@ async fn list_impl(
     let (mut result, runtime_failure) = list_with_instance(ctx, instance, timeout, database.clone()).await?;
     result.meta.duration_ms = start.elapsed().as_millis() as u64;
     if let Some(failure) = runtime_failure {
+        let error = runtime_inventory_failure_error(ctx.capability, &failure);
         handle_runtime_failure(pool, &ctx.server_id, &result.meta.source, failure).await;
+        return Err(error);
     }
     Ok(result)
 }
@@ -492,6 +554,7 @@ async fn list_with_instance(
         &server_name,
         &instance_id,
         database.clone(),
+        ctx.name_domain,
     )
     .await?;
 
@@ -501,7 +564,15 @@ async fn list_with_instance(
         let instance_id = instance_id.clone();
         let peer = peer.clone();
         tokio::spawn(async move {
-            let _ = UpstreamConnectionPool::sync_capabilities(&db, &server_id, &instance_id, &peer, flags, None).await;
+            if let Err(error) =
+                UpstreamConnectionPool::sync_capabilities(&db, &server_id, &instance_id, &peer, flags, None).await
+            {
+                tracing::error!(
+                    server_id,
+                    error = %error,
+                    "Runtime capability write-back failed"
+                );
+            }
         });
     }
 
@@ -560,6 +631,7 @@ async fn fetch_runtime_items(
     server_name: &str,
     instance_id: &str,
     database: Arc<Database>,
+    name_domain: NameDomain,
 ) -> Result<(CapabilityItems, CapSyncFlags, Option<RuntimeFailure>)> {
     match capability {
         CapabilityType::Tools => {
@@ -586,7 +658,10 @@ async fn fetch_runtime_items(
             )
             .await;
             let runtime_failure = runtime_failure_from_capability(out.failure);
-            let items = ensure_tool_unique_names(&database, server_id, server_name, out.items).await?;
+            if runtime_failure.is_some() {
+                return Ok((CapabilityItems::Tools(Vec::new()), CapSyncFlags::TOOLS, runtime_failure));
+            }
+            let items = ensure_tool_unique_names(&database, server_id, server_name, out.items, name_domain).await?;
             Ok((CapabilityItems::Tools(items), CapSyncFlags::TOOLS, runtime_failure))
         }
         CapabilityType::Prompts => {
@@ -614,11 +689,16 @@ async fn fetch_runtime_items(
                 is_method_not_supported,
             )
             .await;
-            Ok((
-                CapabilityItems::Prompts(out.items),
-                CapSyncFlags::PROMPTS,
-                runtime_failure_from_capability(out.failure),
-            ))
+            let runtime_failure = runtime_failure_from_capability(out.failure);
+            if runtime_failure.is_some() {
+                return Ok((
+                    CapabilityItems::Prompts(Vec::new()),
+                    CapSyncFlags::PROMPTS,
+                    runtime_failure,
+                ));
+            }
+            let items = ensure_prompt_unique_names(&database, server_id, server_name, out.items, name_domain).await?;
+            Ok((CapabilityItems::Prompts(items), CapSyncFlags::PROMPTS, None))
         }
         CapabilityType::Resources => {
             let fetch_page = move |p: Peer<RoleClient>,
@@ -645,11 +725,16 @@ async fn fetch_runtime_items(
                 is_method_not_supported,
             )
             .await;
-            Ok((
-                CapabilityItems::Resources(out.items),
-                CapSyncFlags::RESOURCES,
-                runtime_failure_from_capability(out.failure),
-            ))
+            let runtime_failure = runtime_failure_from_capability(out.failure);
+            if runtime_failure.is_some() {
+                return Ok((
+                    CapabilityItems::Resources(Vec::new()),
+                    CapSyncFlags::RESOURCES,
+                    runtime_failure,
+                ));
+            }
+            let items = ensure_resource_unique_names(&database, server_id, server_name, out.items, name_domain).await?;
+            Ok((CapabilityItems::Resources(items), CapSyncFlags::RESOURCES, None))
         }
         CapabilityType::ResourceTemplates => {
             let fetch_page = move |p: Peer<RoleClient>,
@@ -678,10 +763,21 @@ async fn fetch_runtime_items(
                 is_method_not_supported,
             )
             .await;
+            let runtime_failure = runtime_failure_from_capability(out.failure);
+            if runtime_failure.is_some() {
+                return Ok((
+                    CapabilityItems::ResourceTemplates(Vec::new()),
+                    CapSyncFlags::RESOURCE_TEMPLATES,
+                    runtime_failure,
+                ));
+            }
+            let items =
+                ensure_resource_template_unique_names(&database, server_id, server_name, out.items, name_domain)
+                    .await?;
             Ok((
-                CapabilityItems::ResourceTemplates(out.items),
+                CapabilityItems::ResourceTemplates(items),
                 CapSyncFlags::RESOURCE_TEMPLATES,
-                runtime_failure_from_capability(out.failure),
+                None,
             ))
         }
     }
@@ -899,24 +995,17 @@ fn convert_cached_resource_template(cached: CachedResourceTemplateInfo) -> Optio
     Some(rmcp::model::ResourceTemplate { raw, annotations: None })
 }
 
-fn convert_cached_tool(
-    server_name: &str,
-    cached: CachedToolInfo,
-) -> Option<rmcp::model::Tool> {
+fn convert_cached_tool(cached: CachedToolInfo) -> Option<rmcp::model::Tool> {
     let schema_value: serde_json::Value = serde_json::from_str(&cached.input_schema_json).ok()?;
     let schema_object = schema_value.as_object()?.clone();
-    let unique_name = cached
-        .unique_name
-        .clone()
-        .unwrap_or_else(|| generate_unique_name(NamingKind::Tool, server_name, &cached.name));
     let mut tool = if let Some(description) = cached.description.map(std::borrow::Cow::Owned) {
         rmcp::model::Tool::new(
-            std::borrow::Cow::Owned(unique_name),
+            std::borrow::Cow::Owned(cached.name),
             description,
             Arc::new(schema_object),
         )
     } else {
-        rmcp::model::Tool::new_with_raw(std::borrow::Cow::Owned(unique_name), None, Arc::new(schema_object))
+        rmcp::model::Tool::new_with_raw(std::borrow::Cow::Owned(cached.name), None, Arc::new(schema_object))
     };
     if let Some(icons) = cached.icons {
         tool = tool.with_icons(icons);
@@ -961,7 +1050,7 @@ fn convert_items_to_cached(
                         description: tool.description.clone().map(|d| d.into_owned()),
                         input_schema_json,
                         output_schema_json,
-                        unique_name: None,
+                        unique_name: Some(tool.name.to_string()),
                         icons: tool.icons.clone(),
                         enabled: true,
                         cached_at: now,
@@ -1029,19 +1118,216 @@ async fn ensure_tool_unique_names(
     server_id: &str,
     server_name: &str,
     mut tools: Vec<rmcp::model::Tool>,
+    name_domain: NameDomain,
 ) -> anyhow::Result<Vec<rmcp::model::Tool>> {
+    let upstream_names = tools.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>();
     crate::config::server::tools::assign_unique_names_to_tools(&database.pool, server_id, server_name, &mut tools)
         .await
         .context("Failed to assign unique tool names")?;
+    if name_domain == NameDomain::Upstream {
+        for (tool, upstream_name) in tools.iter_mut().zip(upstream_names) {
+            tool.name = upstream_name;
+        }
+    }
     Ok(tools)
+}
+
+async fn ensure_prompt_unique_names(
+    database: &Arc<Database>,
+    server_id: &str,
+    server_name: &str,
+    mut prompts: Vec<rmcp::model::Prompt>,
+    name_domain: NameDomain,
+) -> anyhow::Result<Vec<rmcp::model::Prompt>> {
+    let upstream_names = prompts.iter().map(|prompt| prompt.name.clone()).collect::<Vec<_>>();
+    let cached = convert_items_to_cached(&CapabilityItems::Prompts(prompts.clone()), CapabilityType::Prompts);
+    crate::config::server::capabilities::upsert_shadow_prompts_batch(
+        &database.pool,
+        server_id,
+        server_name,
+        &cached.prompts,
+    )
+    .await
+    .context("Failed to assign external prompt names")?;
+    if name_domain == NameDomain::External {
+        for (prompt, upstream_name) in prompts.iter_mut().zip(upstream_names) {
+            prompt.name = crate::core::capability::naming::load_external_identifier(
+                &database.pool,
+                NamingKind::Prompt,
+                server_id,
+                &upstream_name,
+            )
+            .await?;
+        }
+    }
+    Ok(prompts)
+}
+
+async fn ensure_resource_unique_names(
+    database: &Arc<Database>,
+    server_id: &str,
+    server_name: &str,
+    mut resources: Vec<rmcp::model::Resource>,
+    name_domain: NameDomain,
+) -> anyhow::Result<Vec<rmcp::model::Resource>> {
+    let upstream_uris = resources
+        .iter()
+        .map(|resource| resource.uri.clone())
+        .collect::<Vec<_>>();
+    let cached = convert_items_to_cached(
+        &CapabilityItems::Resources(resources.clone()),
+        CapabilityType::Resources,
+    );
+    crate::config::server::capabilities::upsert_shadow_resources_batch(
+        &database.pool,
+        server_id,
+        server_name,
+        &cached.resources,
+    )
+    .await
+    .context("Failed to assign external resource URIs")?;
+    if name_domain == NameDomain::External {
+        for (resource, upstream_uri) in resources.iter_mut().zip(upstream_uris) {
+            resource.raw.uri = crate::core::capability::naming::load_external_identifier(
+                &database.pool,
+                NamingKind::Resource,
+                server_id,
+                &upstream_uri,
+            )
+            .await?;
+        }
+    }
+    Ok(resources)
+}
+
+async fn ensure_resource_template_unique_names(
+    database: &Arc<Database>,
+    server_id: &str,
+    server_name: &str,
+    mut templates: Vec<rmcp::model::ResourceTemplate>,
+    name_domain: NameDomain,
+) -> anyhow::Result<Vec<rmcp::model::ResourceTemplate>> {
+    let upstream_templates = templates
+        .iter()
+        .map(|template| template.uri_template.clone())
+        .collect::<Vec<_>>();
+    let cached = convert_items_to_cached(
+        &CapabilityItems::ResourceTemplates(templates.clone()),
+        CapabilityType::ResourceTemplates,
+    );
+    crate::config::server::capabilities::upsert_shadow_resource_templates_batch(
+        &database.pool,
+        server_id,
+        server_name,
+        &cached.resource_templates,
+    )
+    .await
+    .context("Failed to assign external resource template names")?;
+    if name_domain == NameDomain::External {
+        for (template, upstream_template) in templates.iter_mut().zip(upstream_templates) {
+            template.raw.name = crate::core::capability::naming::load_external_identifier(
+                &database.pool,
+                NamingKind::ResourceTemplate,
+                server_id,
+                &upstream_template,
+            )
+            .await?;
+        }
+    }
+    Ok(templates)
+}
+
+async fn project_external_items(
+    database: &Arc<Database>,
+    server_id: &str,
+    mut items: CapabilityItems,
+    name_domain: NameDomain,
+) -> Result<CapabilityItems> {
+    if name_domain == NameDomain::Upstream {
+        return Ok(items);
+    }
+
+    match &mut items {
+        CapabilityItems::Tools(tools) => {
+            for tool in tools {
+                tool.name = crate::core::capability::naming::load_external_identifier(
+                    &database.pool,
+                    NamingKind::Tool,
+                    server_id,
+                    &tool.name,
+                )
+                .await?
+                .into();
+            }
+        }
+        CapabilityItems::Prompts(prompts) => {
+            for prompt in prompts {
+                prompt.name = crate::core::capability::naming::load_external_identifier(
+                    &database.pool,
+                    NamingKind::Prompt,
+                    server_id,
+                    &prompt.name,
+                )
+                .await?;
+            }
+        }
+        CapabilityItems::Resources(resources) => {
+            for resource in resources {
+                resource.raw.uri = crate::core::capability::naming::load_external_identifier(
+                    &database.pool,
+                    NamingKind::Resource,
+                    server_id,
+                    &resource.uri,
+                )
+                .await?;
+            }
+        }
+        CapabilityItems::ResourceTemplates(templates) => {
+            for template in templates {
+                let upstream_template = template.uri_template.to_string();
+                template.raw.name = crate::core::capability::naming::load_external_identifier(
+                    &database.pool,
+                    NamingKind::ResourceTemplate,
+                    server_id,
+                    &upstream_template,
+                )
+                .await?;
+            }
+        }
+    }
+
+    Ok(items)
+}
+
+async fn project_cached_items(
+    database: &Arc<Database>,
+    server_id: &str,
+    items: CapabilityItems,
+    scope: &CacheScope,
+    name_domain: NameDomain,
+) -> Result<CapabilityItems> {
+    if scope.is_client_filtered() {
+        if name_domain != NameDomain::External {
+            return Err(anyhow::anyhow!(
+                "Client-filtered capability caches cannot serve the upstream name domain"
+            ));
+        }
+        return Ok(items);
+    }
+
+    project_external_items(database, server_id, items, name_domain).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::common::constants::protocol;
-    use crate::core::cache::{CacheScope, CachedServerData, CachedToolInfo};
+    use crate::core::cache::{CacheScope, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo};
+    use crate::core::models::Config;
     use chrono::Utc;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     fn make_test_cached_data(
         server_id: &str,
@@ -1060,7 +1346,7 @@ mod tests {
                     description: Some(format!("Test tool {}", i)),
                     input_schema_json: r#"{"type":"object"}"#.to_string(),
                     output_schema_json: None,
-                    unique_name: None,
+                    unique_name: Some(format!("test-server_tool_{i}")),
                     icons: None,
                     enabled: true,
                     cached_at: now,
@@ -1073,6 +1359,76 @@ mod tests {
             fingerprint: "test-fingerprint".to_string(),
             scope,
         }
+    }
+
+    async fn test_database() -> Arc<Database> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+        Arc::new(Database {
+            pool,
+            path: PathBuf::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn force_list_without_a_peer_returns_an_explicit_error() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+        let cache_dir = TempDir::new().expect("create cache directory");
+        let redb = Arc::new(
+            RedbCacheManager::new(
+                cache_dir.path().join("runtime-no-peer.redb"),
+                crate::core::cache::manager::CacheConfig::default(),
+            )
+            .expect("create cache manager"),
+        );
+        let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+            Arc::new(Config::default()),
+            Some(database.clone()),
+        )));
+        let ctx = ListCtx {
+            capability: CapabilityType::Tools,
+            server_id: "server-a".to_string(),
+            refresh: Some(RefreshStrategy::Force),
+            timeout: None,
+            validation_session: Some("validation-a".to_string()),
+            runtime_identity: None,
+            connection_selection: None,
+            name_domain: NameDomain::Upstream,
+        };
+
+        let error = list(&ctx, &redb, &pool, &database)
+            .await
+            .expect_err("a missing validation peer must not look like an empty inventory");
+
+        assert!(error.to_string().contains("validation-a"));
+        assert!(error.to_string().contains("server-a"));
+    }
+
+    #[test]
+    fn runtime_inventory_failure_is_reported_with_the_operation_name() {
+        let error = runtime_inventory_failure_error(
+            CapabilityType::ResourceTemplates,
+            &RuntimeFailure {
+                kind: RuntimeFailureKind::Timeout,
+                message: None,
+            },
+        );
+
+        assert!(error.to_string().contains("resources/templates/list"));
+        assert!(error.to_string().contains("timed out"));
     }
 
     #[test]
@@ -1135,11 +1491,157 @@ mod tests {
         match items {
             CapabilityItems::Tools(tools) => {
                 assert_eq!(tools.len(), 3);
-                // Tools get unique names via generate_unique_name when unique_name is None
-                assert!(tools[0].name.as_ref().contains("tool_0"));
+                assert_eq!(tools[0].name.as_ref(), "tool_0");
             }
             _ => panic!("Expected Tools variant"),
         }
+    }
+
+    #[tokio::test]
+    async fn cached_tools_project_to_explicit_name_domains() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+        crate::config::server::tools::upsert_server_tool(
+            &database.pool,
+            "server-a",
+            "searxng",
+            "get_searxng_status",
+            None,
+        )
+        .await
+        .expect("insert tool identity");
+
+        let mut data = make_test_cached_data("server-a", CacheScope::shared_raw(), 0);
+        data.tools = vec![CachedToolInfo {
+            name: "get_searxng_status".to_string(),
+            description: None,
+            input_schema_json: r#"{"type":"object"}"#.to_string(),
+            output_schema_json: None,
+            unique_name: Some("searxng_get_status".to_string()),
+            icons: None,
+            enabled: true,
+            cached_at: Utc::now(),
+        }];
+
+        let upstream = project_external_items(
+            &database,
+            "server-a",
+            cached_items_from_data(CapabilityType::Tools, data.clone()),
+            NameDomain::Upstream,
+        )
+        .await
+        .expect("project upstream domain");
+        let external = project_external_items(
+            &database,
+            "server-a",
+            cached_items_from_data(CapabilityType::Tools, data),
+            NameDomain::External,
+        )
+        .await
+        .expect("project external domain");
+
+        assert_eq!(upstream.into_tools().unwrap()[0].name.as_ref(), "get_searxng_status");
+        assert_eq!(external.into_tools().unwrap()[0].name.as_ref(), "searxng_get_status");
+    }
+
+    #[tokio::test]
+    async fn external_projection_rejects_missing_canonical_identifier() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+
+        let data = make_test_cached_data("server-a", CacheScope::shared_raw(), 1);
+        let error = project_external_items(
+            &database,
+            "server-a",
+            cached_items_from_data(CapabilityType::Tools, data),
+            NameDomain::External,
+        )
+        .await
+        .expect_err("proxy projection must fail without a canonical identifier");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Exact upstream Tool capability 'tool_0' is not registered for server 'server-a'")
+        );
+    }
+
+    #[tokio::test]
+    async fn client_filtered_cache_does_not_externalize_tools_twice() {
+        let database = test_database().await;
+        let scope = CacheScope::client_filtered("server-a#client".to_string(), "surface-a".to_string());
+        let mut data = make_test_cached_data("server-a", scope.clone(), 0);
+        data.tools = vec![CachedToolInfo {
+            name: "searxng_get_status".to_string(),
+            description: None,
+            input_schema_json: r#"{"type":"object"}"#.to_string(),
+            output_schema_json: None,
+            unique_name: Some("searxng_get_status".to_string()),
+            icons: None,
+            enabled: true,
+            cached_at: Utc::now(),
+        }];
+
+        let projected = project_cached_items(
+            &database,
+            "server-a",
+            cached_items_from_data(CapabilityType::Tools, data),
+            &scope,
+            NameDomain::External,
+        )
+        .await
+        .expect("reuse client-facing projection");
+
+        assert_eq!(projected.into_tools().unwrap()[0].name.as_ref(), "searxng_get_status");
+    }
+
+    #[tokio::test]
+    async fn raw_resource_template_cache_projects_name_without_rewriting_uri_template() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-docs', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+        crate::config::server::capabilities::upsert_shadow_resource_template(
+            &database.pool,
+            "server-docs",
+            "docs",
+            "file:///{path}",
+            Some("Files"),
+            None,
+        )
+        .await
+        .expect("insert resource template identity");
+
+        let mut data = make_test_cached_data("server-docs", CacheScope::shared_raw(), 0);
+        data.resource_templates = vec![CachedResourceTemplateInfo {
+            uri_template: "file:///{path}".to_string(),
+            name: Some("Files".to_string()),
+            description: None,
+            mime_type: None,
+            enabled: true,
+            cached_at: Utc::now(),
+        }];
+
+        let projected = project_cached_items(
+            &database,
+            "server-docs",
+            cached_items_from_data(CapabilityType::ResourceTemplates, data),
+            &CacheScope::shared_raw(),
+            NameDomain::External,
+        )
+        .await
+        .expect("project resource template");
+        let template = &projected.into_resource_templates().unwrap()[0];
+
+        assert_eq!(template.name.as_str(), "docs_file:///{path}");
+        assert_eq!(template.uri_template.as_str(), "file:///{path}");
     }
 
     #[test]

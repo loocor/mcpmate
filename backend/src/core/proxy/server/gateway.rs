@@ -3,8 +3,8 @@ use crate::{
     audit::AuditService,
     clients::models::FirstContactBehavior,
     clients::service::ClientConfigService,
-    common::startup_diagnostics::{self, StartupDegradedEvent, component},
     common::constants::protocol,
+    common::startup_diagnostics::{self, StartupDegradedEvent, component},
     config::audit_database::AuditDatabase,
     config::database::Database,
     core::{pool::UpstreamConnectionPool, transport::TransportType},
@@ -841,6 +841,9 @@ impl ProxyServer {
         if let Some(profile_service) = &self.profile_service {
             handlers.set_profile_service(profile_service.clone());
         }
+        if let Some(client_config_service) = &self.client_config_service {
+            handlers.set_client_config_service(client_config_service.clone());
+        }
         handlers.set_connection_pool(self.connection_pool.clone());
         if let Some(database) = &self.database {
             let event_capability_manager = Arc::new(crate::core::events::EventDrivenCapabilityManager::new(
@@ -1350,42 +1353,27 @@ impl ServerHandler for ProxyServer {
         let client = self.resolve_bound_client_context(&_context).await?;
         let session_id = self.require_session_id(&client)?;
         let unique_uri = request.uri;
-        let server_id_opt = if let Ok((server_name, _)) = crate::core::capability::naming::resolve_unique_name(
+        let route = crate::core::capability::naming::resolve_capability_route(
             crate::core::capability::naming::NamingKind::Resource,
             &unique_uri,
         )
         .await
-        {
-            crate::core::capability::resolver::to_id(&server_name)
-                .await
-                .ok()
-                .flatten()
-        } else {
-            None
-        };
+        .map_err(|error| {
+            rmcp::ErrorData::invalid_params(format!("Failed to resolve external resource URI: {error}"), None)
+        })?;
+        let server_id = route.server_id;
 
-        if let Some(server_id) = server_id_opt {
-            self.resource_subscriptions
-                .insert((session_id.clone(), unique_uri.clone()), server_id.clone());
-            let entry = self.server_resource_index.entry(server_id.clone()).or_default();
-            entry.insert((session_id.clone(), unique_uri.clone()));
-            tracing::info!(
-                server_id = %server_id,
-                session_id = %session_id,
-                client_id = %client.client_id,
-                uri = %unique_uri,
-                "Subscribed resource updates"
-            );
-        } else {
-            self.resource_subscriptions
-                .insert((session_id.clone(), unique_uri.clone()), String::new());
-            tracing::warn!(
-                session_id = %session_id,
-                client_id = %client.client_id,
-                uri = %unique_uri,
-                "Subscribed without resolvable server id"
-            );
-        }
+        self.resource_subscriptions
+            .insert((session_id.clone(), unique_uri.clone()), server_id.clone());
+        let entry = self.server_resource_index.entry(server_id.clone()).or_default();
+        entry.insert((session_id.clone(), unique_uri.clone()));
+        tracing::info!(
+            server_id = %server_id,
+            session_id = %session_id,
+            client_id = %client.client_id,
+            uri = %unique_uri,
+            "Subscribed resource updates"
+        );
         Ok(())
     }
 

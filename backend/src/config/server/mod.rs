@@ -11,6 +11,8 @@ pub mod headers;
 pub mod import;
 pub mod init;
 pub mod meta;
+pub mod namespace;
+pub mod namespace_repair;
 pub mod oauth;
 pub mod preview;
 pub mod tools;
@@ -23,6 +25,7 @@ pub use headers::{
     replace_server_headers, upsert_server_headers,
 };
 pub use meta::{get_server_meta, upsert_server_meta};
+pub use namespace::{NamespaceValidationError, suggest_server_namespace, validate_server_namespace};
 pub use oauth::{
     delete_server_oauth_config, delete_server_oauth_token, get_all_oauth_configs, get_all_oauth_tokens,
     get_effective_server_headers, get_server_oauth_config, get_server_oauth_token, has_manual_authorization_header,

@@ -1,7 +1,11 @@
 import { z } from "zod";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import type { ServerIngestPayload } from "../../lib/install-normalizer";
-import type { OAuthConfigRequest } from "../../lib/types";
+import type {
+	OAuthConfigRequest,
+	ServerNamespaceIssue,
+} from "../../lib/types";
+import { isCanonicalServerNamespace } from "../../lib/server-namespace";
 import type { SegmentOption } from "../ui/segment";
 
 // Constants
@@ -54,9 +58,10 @@ export const urlParamSchema = z.object({
 
 const SECRET_PLACEHOLDER_PATTERN = /\[\[secret:[^\]]+\]\]/g;
 
-export const manualServerSchema = z
+function createServerFormSchema(validateNamespace: boolean) {
+	return z
 	.object({
-		name: z.string().min(1, "manual.errors.nameRequired"),
+		name: z.string().min(1, "manual.errors.namespaceRequired"),
 		kind: z.enum(["stdio", "sse", "streamable_http"], {
 			required_error: "manual.errors.kindRequired",
 		}),
@@ -88,6 +93,13 @@ export const manualServerSchema = z
 		meta_repository_id: z.string().optional(),
 	})
 	.superRefine((value, ctx) => {
+		if (validateNamespace && !isCanonicalServerNamespace(value.name)) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "manual.errors.namespaceInvalid",
+				path: ["name"],
+			});
+		}
 		const kind = value.kind;
 		const command = value.command?.trim();
 		const url = value.url?.trim();
@@ -118,6 +130,10 @@ export const manualServerSchema = z
 			}
 		}
 	});
+}
+
+export const manualServerSchema = createServerFormSchema(true);
+export const editServerSchema = createServerFormSchema(false);
 
 // Type definitions
 export type ManualServerFormValues = z.infer<typeof manualServerSchema>;
@@ -187,6 +203,8 @@ export interface ServerInstallManualFormProps {
 	mode?: "create" | "edit" | "market";
 	/** Server ID for Edit flow OAuth */
 	serverId?: string;
+	/** Allow the edit flow to repair a reported namespace issue. */
+	namespaceRemediationAllowed?: boolean;
 	/** Callback for OAuth initiation */
 	onInitiateOAuth?: (config: OAuthConfigRequest) => Promise<void>;
 	onAuthModeChange?: (mode: "header" | "oauth") => void;
@@ -194,6 +212,10 @@ export interface ServerInstallManualFormProps {
 	initialDraft?: ServerInstallDraft | null;
 	/** Allow users to modify the JSON representation. Defaults to true in create mode. */
 	allowJsonEditing?: boolean;
+	/** Existing namespace issue shown by the edit flow. */
+	namespaceIssue?: ServerNamespaceIssue | null;
+	/** Updated guidance after a namespace remediation attempt fails. */
+	namespaceIssueFeedback?: string | null;
 	/** Market mode specific props */
 	onPreview?: () => void;
 	onImport?: () => void;

@@ -4,7 +4,7 @@
 //! configuration merging, tool checking and other functions
 
 use crate::config::database::Database;
-use crate::core::foundation::error::{CoreError, CoreResult};
+use crate::core::foundation::error::CoreResult;
 use crate::core::profile::merge::ProfileMerger;
 use crate::core::profile::types::*;
 use std::sync::Arc;
@@ -158,46 +158,5 @@ impl ProfileService {
             return m.allowed_prompt_set();
         }
         None
-    }
-
-    /// Resolve a tool name to server and original tool name
-    ///
-    /// This function resolves a unique tool name to the server name and original tool name
-    /// using the profile.
-    ///
-    /// # Arguments
-    /// * `tool_name` - The tool name to resolve
-    ///
-    /// # Returns
-    /// * `Result<(String, String)>` - (server_name, original_tool_name)
-    pub async fn resolve_tool_name(
-        &self,
-        tool_name: &str,
-    ) -> CoreResult<(String, String)> {
-        // Implement tool name resolution using profile
-        tracing::debug!("Resolving tool name '{}'", tool_name);
-
-        let merge_result = self.get_or_create_merge_result().await?;
-
-        // Find the tool in the merged configuration
-        for tool_config in &merge_result.tools {
-            if tool_config.tool_name == tool_name && tool_config.enabled {
-                // Get the first enabled server for this tool
-                if let Some(server_id) = tool_config.server_ids.first() {
-                    // Find the server name from the merged servers
-                    for server_config in &merge_result.servers {
-                        if server_config.server_id == *server_id {
-                            return Ok((server_config.name.clone(), tool_name.to_string()));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Tool not found in any enabled configuration
-        Err(CoreError::generic_error(
-            &format!("Tool '{}' not found in any enabled profile", tool_name),
-            None,
-        ))
     }
 }

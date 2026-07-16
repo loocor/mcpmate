@@ -16,7 +16,7 @@ pub async fn preview_capabilities(
     url: Option<String>,
     args: Option<Vec<String>>,
     env: Option<HashMap<String, String>>,
-    _timeout: Option<Duration>,
+    timeout: Option<Duration>,
 ) -> Result<crate::config::server::capabilities::CapabilitySnapshot> {
     tracing::info!(
         target: "mcpmate::config::server::preview",
@@ -33,6 +33,6 @@ pub async fn preview_capabilities(
         env,
         headers: None,
     };
-    // Reuse existing discovery (no dual-write, no pool)
-    crate::config::server::capabilities::discover_from_config(name, &cfg, kind).await
+    // Reuse the authoritative Preview discovery pipeline (no dual-write, no pool).
+    crate::config::server::capabilities::discover_from_config_preview(name, &cfg, kind, None, timeout).await
 }

@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
 	AlertTriangle,
 	ArrowLeft,
 	ChevronRight,
@@ -47,6 +48,12 @@ import {
 	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
 import {
+	isCanonicalServerNamespace,
+	namespaceInputIsReadOnly,
+	serverNamespaceImportPreview,
+	suggestServerNamespace,
+} from "../../lib/server-namespace";
+import {
 	compactKeyValueFields,
 	shouldAppendKeyValueRow,
 } from "../../lib/key-value-fields";
@@ -60,10 +67,7 @@ import {
 	type CapabilityPreviewFlatItem,
 	type CapabilityPreviewKind,
 } from "../capability-preview-list";
-import {
-	InlineSecretCreate,
-	useInlineSecretCreateField,
-} from "../secrets";
+import { InlineSecretCreate, useInlineSecretCreateField } from "../secrets";
 import {
 	BulkSelectionCheckbox,
 	BulkSelectionHeader,
@@ -91,6 +95,7 @@ import {
 } from "../ui/drawer";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Segment } from "../ui/segment";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
@@ -135,6 +140,7 @@ import { ServerConfigJsonPanel } from "./server-config-json-panel";
 import {
 	breathingAnimation,
 	DEFAULT_INGEST_MESSAGE,
+	editServerSchema,
 	type ManualServerFormValues,
 	manualServerSchema,
 	type ServerInstallManualFormHandle,
@@ -342,7 +348,7 @@ export const ServerInstallWizard = forwardRef(
 			getValues,
 			trigger,
 		} = useForm<ManualServerFormValues>({
-			resolver: zodResolver(manualServerSchema),
+			resolver: zodResolver(isEditMode ? editServerSchema : manualServerSchema),
 			defaultValues: buildFormValuesFromState(createInitialFormState()),
 		});
 
@@ -525,6 +531,9 @@ export const ServerInstallWizard = forwardRef(
 		const watchedEnv = watch("env");
 		const watchedHeaders = watch("headers");
 		const watchedUrlParams = watch("urlParams");
+		const [namespaceOriginalInput, setNamespaceOriginalInput] = useState<
+			string | null
+		>(null);
 		const ingestMessages = useMemo(
 			() => ({
 				defaultMessage: t("manual.ingest.default", {
@@ -562,17 +571,45 @@ export const ServerInstallWizard = forwardRef(
 		const importInFlightRef = useRef(false);
 		const wizardSessionEpochRef = useRef(0);
 		const pendingImportServerRef = useRef<string | null>(null);
-		const [pendingImportServerId, setPendingImportServerId] =
-			useState<string | null>(null);
+		const [pendingImportServerId, setPendingImportServerId] = useState<
+			string | null
+		>(null);
+    let namespaceMode: "create" | "edit" | "market" = "create";
+    if (isEditMode) {
+      namespaceMode = "edit";
+    } else if (isImportMode) {
+      namespaceMode = "market";
+    }
+		const namespaceReadOnly = namespaceInputIsReadOnly(
+			namespaceMode,
+			Boolean(pendingImportServerId),
+		);
+		const namespaceSuggestion = useMemo(() => {
+			if (!watchedName || isCanonicalServerNamespace(watchedName)) return null;
+			return suggestServerNamespace(watchedName);
+		}, [watchedName]);
+    const namespaceErrorMessage = errors.name
+      ? t(errors.name.message ?? "manual.errors.namespaceInvalid")
+      : null;
+		useEffect(() => {
+			if (
+				namespaceOriginalInput &&
+				suggestServerNamespace(namespaceOriginalInput) !== watchedName
+			) {
+				setNamespaceOriginalInput(null);
+			}
+		}, [namespaceOriginalInput, watchedName]);
 		const [isImportActionPending, setIsImportActionPending] = useState(false);
-		const [selectedAuthMode, setSelectedAuthMode] =
-			useState<"header" | "oauth">("header");
+		const [selectedAuthMode, setSelectedAuthMode] = useState<
+			"header" | "oauth"
+		>("header");
 		const suggestedAuthMode = useMemo<"header" | "oauth">(() => {
 			if (!isImportMode || isStdio) {
 				return "header";
 			}
 			const hasAuthorizationHeader = (watchedHeaders ?? []).some((entry) => {
-				const key = typeof entry?.key === "string" ? entry.key.trim().toLowerCase() : "";
+				const key =
+					typeof entry?.key === "string" ? entry.key.trim().toLowerCase() : "";
 				return key === "authorization";
 			});
 			return hasAuthorizationHeader ? "header" : "oauth";
@@ -627,7 +664,8 @@ export const ServerInstallWizard = forwardRef(
 		const resolveImportTargetProfileId = useCallback(async () => {
 			const autoAddTargetProfileId = await resolveAutoAddTargetProfileId({
 				autoAddEnabled:
-					useAppStore.getState().dashboardSettings.autoAddServerToDefaultProfile,
+					useAppStore.getState().dashboardSettings
+						.autoAddServerToDefaultProfile,
 			});
 			return installPipeline.state.targetProfileId ?? autoAddTargetProfileId;
 		}, [installPipeline.state.targetProfileId]);
@@ -692,7 +730,11 @@ export const ServerInstallWizard = forwardRef(
 					return false;
 				}
 				try {
-					await completePendingPublishImport(draft, publishedServerId, targetProfileId);
+					await completePendingPublishImport(
+						draft,
+						publishedServerId,
+						targetProfileId,
+					);
 					clearPendingImportState();
 				} catch (error) {
 					pendingImportServerRef.current = publishedServerId;
@@ -789,12 +831,9 @@ export const ServerInstallWizard = forwardRef(
 			[buildJsonPayloadFromValues, getValues, setJsonError, setJsonText],
 		);
 
-		const formStateFromDraft = useCallback(
-			(draft: ServerInstallDraft) => {
+		const formStateFromDraft = useCallback((draft: ServerInstallDraft) => {
 				return draftToFormState(draft);
-			},
-			[],
-		);
+		}, []);
 
 		const loadDraftIntoForm = useCallback(
 			(draft: ServerInstallDraft) => {
@@ -804,6 +843,7 @@ export const ServerInstallWizard = forwardRef(
 				setViewMode("form");
 				setJsonError(null);
 				setUiActiveTab("core");
+				setNamespaceOriginalInput(draft.originalName ?? null);
 			},
 			[
 				buildFormValuesFromState,
@@ -925,6 +965,7 @@ export const ServerInstallWizard = forwardRef(
 			setJsonError(null);
 			resetBulkUIState();
 			setPendingImportServerId(null);
+			setNamespaceOriginalInput(null);
 		}, [
 			installPipeline,
 			createInitialFormState,
@@ -1039,13 +1080,12 @@ export const ServerInstallWizard = forwardRef(
 					(candidate) => ({
 						name: candidate.name,
 						kind:
-							candidate.kind === "sse" ||
-								candidate.kind === "streamable_http"
+							candidate.kind === "sse" || candidate.kind === "streamable_http"
 								? candidate.kind
 								: "stdio",
 						command:
 							candidate.kind === "stdio"
-								? candidate.command ?? undefined
+								? (candidate.command ?? undefined)
 								: undefined,
 						args: candidate.args?.length ? candidate.args : undefined,
 						env:
@@ -1122,14 +1162,26 @@ export const ServerInstallWizard = forwardRef(
 					setIsDropZoneCollapsed(false);
 				}
 			},
-			[ingestEnabled, ingestError, isDropZoneCollapsed, isIngestSuccess, resetIngestState, setIsDropZoneCollapsed],
+			[
+				ingestEnabled,
+				ingestError,
+				isDropZoneCollapsed,
+				isIngestSuccess,
+				resetIngestState,
+				setIsDropZoneCollapsed,
+			],
 		);
 
 		const handleDropZoneFocus = useCallback(() => {
 			if (!ingestEnabled || !isDropZoneCollapsed) return;
 			resetIngestState();
 			setIsDropZoneCollapsed(false);
-		}, [ingestEnabled, isDropZoneCollapsed, resetIngestState, setIsDropZoneCollapsed]);
+		}, [
+			ingestEnabled,
+			isDropZoneCollapsed,
+			resetIngestState,
+			setIsDropZoneCollapsed,
+		]);
 
 		const handleContentFocus = useCallback(
 			(event: FocusEvent<HTMLDivElement>) => {
@@ -1238,6 +1290,7 @@ export const ServerInstallWizard = forwardRef(
 
 				return {
 					name: values.name.trim(),
+					originalName: namespaceOriginalInput ?? undefined,
 					serverId: pendingImportServerRef.current ?? undefined,
 					source: initialDraft?.source,
 					kind: values.kind,
@@ -1250,7 +1303,7 @@ export const ServerInstallWizard = forwardRef(
 					meta: Object.keys(meta).length ? meta : undefined,
 				};
 			},
-			[initialDraft?.source],
+			[initialDraft?.source, namespaceOriginalInput],
 		);
 
 		const persistActiveDraft = useCallback(() => {
@@ -1301,6 +1354,18 @@ export const ServerInstallWizard = forwardRef(
 						);
 						return;
 					}
+					const invalidNamespaceDraft = selectedDrafts.find(
+						(draft) => !isCanonicalServerNamespace(draft.name),
+					);
+					if (invalidNamespaceDraft) {
+						notifyError(
+							t("manual.errors.namespaceReviewTitle"),
+							t("manual.errors.namespaceReviewDescription", {
+								name: invalidNamespaceDraft.name,
+							}),
+						);
+						return;
+					}
 					installPipeline.setDraftCollection(nextDrafts, "ingest");
 					installPipeline.setSelectedDraftNames(Array.from(selectedNames));
 					previewInFlightRef.current = true;
@@ -1343,7 +1408,8 @@ export const ServerInstallWizard = forwardRef(
 						installPipeline.setPreviewLoading(true);
 						const hiddenServerId = pendingImportServerRef.current;
 						try {
-							const [tools, resources, prompts, resourceTemplates] = await Promise.all([
+							const [tools, resources, prompts, resourceTemplates] =
+								await Promise.all([
 								serversApi.listTools(hiddenServerId, "force"),
 								serversApi.listResources(hiddenServerId, "force"),
 								serversApi.listPrompts(hiddenServerId, "force"),
@@ -1375,7 +1441,9 @@ export const ServerInstallWizard = forwardRef(
 								return;
 							}
 							const message =
-								error instanceof Error ? error.message : "Preview request failed";
+								error instanceof Error
+									? error.message
+									: "Preview request failed";
 							installPipeline.setPreviewError(message);
 							notifyError("Preview failed", message);
 						} finally {
@@ -1638,12 +1706,7 @@ export const ServerInstallWizard = forwardRef(
 					void installPipeline.performDryRun();
 				}
 			}
-		}, [
-			currentStep,
-			isEditMode,
-			installPipeline,
-			pendingImportServerId,
-		]);
+		}, [currentStep, isEditMode, installPipeline, pendingImportServerId]);
 
 		// Expose methods via ref
 		useImperativeHandle(ref, () => ({
@@ -1705,7 +1768,13 @@ export const ServerInstallWizard = forwardRef(
 						),
 					t,
 				}),
-			[bulkSelection, installPipeline.state.drafts, installPipeline.state.selectedDraftNames, installPipeline.setSelectedDraftNames, t],
+			[
+				bulkSelection,
+				installPipeline.state.drafts,
+				installPipeline.state.selectedDraftNames,
+				installPipeline.setSelectedDraftNames,
+				t,
+			],
 		);
 
 		const toggleDraftSelection = useCallback(
@@ -1730,12 +1799,7 @@ export const ServerInstallWizard = forwardRef(
 				setActiveDraftName(draft.name);
 				setBulkDraftView("detail");
 			},
-			[
-				activeDraftName,
-				bulkDraftView,
-				loadDraftIntoForm,
-				persistActiveDraft,
-			],
+			[activeDraftName, bulkDraftView, loadDraftIntoForm, persistActiveDraft],
 		);
 
 		const returnToBulkList = useCallback(() => {
@@ -1771,6 +1835,13 @@ export const ServerInstallWizard = forwardRef(
 			const endpoint = draftEndpointSummary(draft);
 			const draftIcon = draft.meta?.icons?.[0]?.src;
 			const draftDescription = draft.meta?.description?.trim();
+			const namespaceImportPreview = serverNamespaceImportPreview(
+				draft.originalName,
+				draft.name,
+			);
+			const draftNamespaceSuggestion = isCanonicalServerNamespace(draft.name)
+				? null
+				: suggestServerNamespace(draft.name);
 			const avatarFallback = (draft.name || "S").slice(0, 1).toUpperCase();
 			const isConfigureBulkMode =
 				options.mode === "configure" && bulkSelection.isBulkMode;
@@ -1784,6 +1855,21 @@ export const ServerInstallWizard = forwardRef(
 					return;
 				}
 				void previewDraftByName(draft.name);
+			};
+			const applyDraftNamespaceSuggestion = (
+				event: React.MouseEvent<HTMLButtonElement>,
+			) => {
+				event.preventDefault();
+				event.stopPropagation();
+				if (!draftNamespaceSuggestion) return;
+				installPipeline.updateDraft(
+					{
+						...draft,
+						name: draftNamespaceSuggestion,
+						originalName: draft.originalName ?? draft.name,
+					},
+					draft.name,
+				);
 			};
 			return (
 				<CapsuleStripeListItem
@@ -1827,6 +1913,36 @@ export const ServerInstallWizard = forwardRef(
 								<h3 className="font-medium text-slate-900 dark:text-slate-100">
 									{toTitleCase(draft.name)}
 								</h3>
+								{namespaceImportPreview ? (
+									<p className="text-xs text-muted-foreground">
+										{t("manual.fields.namespace.importMapping", {
+											original: namespaceImportPreview.original,
+											namespace: namespaceImportPreview.namespace,
+										})}
+									</p>
+								) : draftNamespaceSuggestion ? (
+									<div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+										<span>
+											{t("manual.fields.namespace.importMapping", {
+												original: draft.name,
+												namespace: draftNamespaceSuggestion,
+											})}
+										</span>
+										<Button
+											type="button"
+											variant="link"
+											size="sm"
+											className="h-auto p-0 text-xs"
+											onClick={applyDraftNamespaceSuggestion}
+										>
+											{t("manual.fields.namespace.applySuggestion")}
+										</Button>
+									</div>
+								) : !isCanonicalServerNamespace(draft.name) ? (
+									<p className="text-xs text-red-600">
+										{t("manual.errors.namespaceInvalid")}
+									</p>
+								) : null}
 								<p className="truncate text-sm text-slate-500">
 									{endpoint ||
 										t("manual.bulk.missingEndpoint", {
@@ -1951,7 +2067,9 @@ export const ServerInstallWizard = forwardRef(
 									onKeyDown={(e) => {
 										if (e.key === "Enter" || e.key === " ") {
 											e.preventDefault();
-											handleDropZoneClick(e as unknown as MouseEvent<HTMLDivElement>);
+											handleDropZoneClick(
+												e as unknown as MouseEvent<HTMLDivElement>,
+											);
 										}
 									}}
 									onDragOver={(e) => {
@@ -2001,11 +2119,14 @@ export const ServerInstallWizard = forwardRef(
 									className="w-full"
 								>
 									<div
-										className={`w-full ${isDropZoneCollapsed ? "h-10" : "h-[18vh]"
-											} flex items-center justify-center gap-1 rounded-lg border border-dashed transition-all duration-300 ${isDropZoneCollapsed
+										className={`w-full ${
+											isDropZoneCollapsed ? "h-10" : "h-[18vh]"
+										} flex items-center justify-center gap-1 rounded-lg border border-dashed transition-all duration-300 ${
+											isDropZoneCollapsed
 												? "flex-row px-4 py-0 border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
 												: "flex-col py-2 border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
-											} ${ingestError
+										} ${
+											ingestError
 												? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
 												: isIngestSuccess
 													? "border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-900/20"
@@ -2065,7 +2186,8 @@ export const ServerInstallWizard = forwardRef(
 											</TooltipProvider>
 										)}
 										<p
-											className={`text-sm ${ingestError
+											className={`text-sm ${
+												ingestError
 												? "text-red-600 dark:text-red-400"
 												: isIngestSuccess
 													? "text-green-600 dark:text-green-400"
@@ -2140,10 +2262,7 @@ export const ServerInstallWizard = forwardRef(
 											</TabsTrigger>
 										</TabsList>
 
-										<TabsContent
-											value="core"
-											className={FORM_TAB_SHELL_CLASS}
-										>
+										<TabsContent value="core" className={FORM_TAB_SHELL_CLASS}>
 											<CoreConfigTabPanel
 												viewMode={viewMode}
 												onViewModeChange={handleModeChange}
@@ -2152,50 +2271,104 @@ export const ServerInstallWizard = forwardRef(
 													<>
 														<div className="space-y-4">
 															<div className="flex items-center gap-4">
-																<Label htmlFor={nameId} className="w-20 text-right">
-																	{t("manual.fields.name.label", {
-																		defaultValue: "Name",
-																	})}
+																<Label
+																	htmlFor={nameId}
+																	className="w-20 text-right"
+																>
+																	{t("manual.fields.namespace.label")}
 																</Label>
 																<div className="flex-1">
+                                  <div className="relative">
 																	<Input
 																		id={nameId}
 																		{...register("name")}
 																		placeholder={t(
-																			"manual.fields.name.placeholder",
-																			{
-																				defaultValue: "e.g., local-mcp",
-																			},
+																			"manual.fields.namespace.placeholder",
 																		)}
-																		readOnly={isEditMode || Boolean(pendingImportServerId)}
-																		aria-readonly={isEditMode || Boolean(pendingImportServerId)}
-																		title={
-																			isEditMode || Boolean(pendingImportServerId)
-																				? pendingImportServerId
-																					? t("manual.fields.name.readOnlyTitleAfterOAuth", {
-																						defaultValue:
-																							"Editing server names is disabled after OAuth setup starts",
-																					})
-																					: t("manual.fields.name.readOnlyTitle", {
-																						defaultValue: "Editing server names is disabled",
-																					})
-																				: undefined
+																		readOnly={namespaceReadOnly}
+																		aria-readonly={namespaceReadOnly}
+                                      aria-invalid={Boolean(errors.name)}
+                                      className={cn(
+                                        namespaceReadOnly &&
+                                          "cursor-not-allowed bg-muted text-muted-foreground",
+                                        errors.name && "pr-10",
+                                      )}
+                                    />
+                                    {!namespaceReadOnly &&
+                                    namespaceErrorMessage ? (
+                                      <Popover>
+                                        <TooltipProvider delayDuration={200}>
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <PopoverTrigger asChild>
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="icon"
+                                                  className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-destructive"
+                                                  aria-label={
+                                                    namespaceErrorMessage
 																		}
-																		className={
-																			isEditMode || Boolean(pendingImportServerId)
-																				? "cursor-not-allowed bg-muted text-muted-foreground"
-																				: undefined
-																		}
+                                                >
+                                                  <AlertCircle
+                                                    className="h-4 w-4"
+                                                    aria-hidden
 																	/>
-																	{errors.name && (
-																		<p className="text-xs text-red-500">
-																			{errors.name.message}
+                                                </Button>
+                                              </PopoverTrigger>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top">
+                                              {namespaceErrorMessage}
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        </TooltipProvider>
+                                        <PopoverContent
+                                          side="top"
+                                          align="end"
+                                          className="w-80 p-3"
+                                        >
+                                          <p className="text-sm text-muted-foreground">
+                                            {namespaceErrorMessage}
+                                            {namespaceSuggestion ? (
+                                              <>
+                                                {" "}
+																				{t(
+                                                  "manual.fields.namespace.suggestionAction",
+                                                )}{" "}
+                                                <button
+																				type="button"
+                                                  className="font-semibold text-foreground underline-offset-4 hover:underline"
+																				onClick={() => {
+																					setNamespaceOriginalInput(
+                                                      (current) =>
+                                                        current ?? watchedName,
+																					);
+																					setValue(
+																						"name",
+																						namespaceSuggestion,
+																						{
+																							shouldDirty: true,
+																							shouldValidate: true,
+																						},
+																					);
+																				}}
+																			>
+                                                  {namespaceSuggestion}
+                                                </button>
+                                              </>
+																	) : null}
 																		</p>
-																	)}
+                                        </PopoverContent>
+                                      </Popover>
+                                    ) : null}
+                                  </div>
 																</div>
 															</div>
 															<div className="flex items-center gap-4">
-																<Label htmlFor={kindId} className="w-20 text-right">
+																<Label
+																	htmlFor={kindId}
+																	className="w-20 text-right"
+																>
 																	{t("manual.fields.type.label", {
 																		defaultValue: "Type",
 																	})}
@@ -2250,7 +2423,10 @@ export const ServerInstallWizard = forwardRef(
 															suggestedAuthMode={suggestedAuthMode}
 															onAuthModeChange={setSelectedAuthMode}
 															onOAuthConnected={(serverId) => {
-																if (isEditMode || pendingImportServerRef.current !== serverId) {
+																if (
+																	isEditMode ||
+																	pendingImportServerRef.current !== serverId
+																) {
 																	return;
 																}
 																void handlePreview({
@@ -2259,17 +2435,24 @@ export const ServerInstallWizard = forwardRef(
 																});
 															}}
 															onInitiateOAuth={async (config) => {
+																const namespaceValid = await trigger("name", {
+																	shouldFocus: true,
+																});
+																if (!namespaceValid) {
+																	throw new Error(
+																		t("manual.errors.namespaceInvalid"),
+																	);
+																}
 																const formValues = getValues();
 																const draft = toDraftFromValues(formValues);
 																if (!draft.name) {
 																	throw new Error(
-																		t("manual.errors.nameRequired", {
-																			defaultValue: "Name is required",
-																		}),
+																		t("manual.errors.namespaceRequired"),
 																	);
 																}
 
-																let targetServerId = pendingImportServerRef.current;
+																let targetServerId =
+																	pendingImportServerRef.current;
 																if (!isEditMode) {
 																	if (targetServerId) {
 																		await serversApi.updateServer(
@@ -2280,7 +2463,8 @@ export const ServerInstallWizard = forwardRef(
 																			}),
 																		);
 																	} else {
-																		const created = await serversApi.createServer(
+																		const created =
+																			await serversApi.createServer(
 																			draftToServerConfig(draft, {
 																				pending_import: true,
 																				enabled: false,
@@ -2289,23 +2473,32 @@ export const ServerInstallWizard = forwardRef(
 																		targetServerId = created.data?.id ?? null;
 																		if (!targetServerId) {
 																			throw new Error(
-																				t("manual.errors.oauthDraftServerFailed", {
-																					defaultValue: "Failed to create OAuth draft server",
-																				}),
+																				t(
+																					"manual.errors.oauthDraftServerFailed",
+																					{
+																						defaultValue:
+																							"Failed to create OAuth draft server",
+																					},
+																				),
 																			);
 																		}
-																		pendingImportServerRef.current = targetServerId;
+																		pendingImportServerRef.current =
+																			targetServerId;
 																		setPendingImportServerId(targetServerId);
 																	}
 																} else if (!targetServerId) {
 																	throw new Error(
 																		t("manual.errors.oauthServerIdRequired", {
-																			defaultValue: "Server ID is required to initiate OAuth",
+																			defaultValue:
+																				"Server ID is required to initiate OAuth",
 																		}),
 																	);
 																}
 
-																await startOAuthAccessFlow(targetServerId, config);
+																await startOAuthAccessFlow(
+																	targetServerId,
+																	config,
+																);
 															}}
 														/>
 
@@ -2344,7 +2537,8 @@ export const ServerInstallWizard = forwardRef(
 															onCreateSecret={onCreateSecret}
 															secretOriginBase={secretOriginBase}
 															getRowKeyAt={(index) =>
-																watchedUrlParams?.[index]?.key?.trim() || undefined
+																watchedUrlParams?.[index]?.key?.trim() ||
+																undefined
 															}
 														/>
 
@@ -2370,7 +2564,8 @@ export const ServerInstallWizard = forwardRef(
 															onCreateSecret={onCreateSecret}
 															secretOriginBase={secretOriginBase}
 															getRowKeyAt={(index) =>
-																watchedHeaders?.[index]?.key?.trim() || undefined
+																watchedHeaders?.[index]?.key?.trim() ||
+																undefined
 															}
 														/>
 													</>
@@ -2424,9 +2619,9 @@ export const ServerInstallWizard = forwardRef(
 
 		const previewItemsByName = useMemo(() => {
 			const map = new Map<string, ImportPreviewItem>();
-			const previewData = installPipeline.state.previewState as
-				| { data?: { items?: unknown[] } }
-				| null;
+			const previewData = installPipeline.state.previewState as {
+				data?: { items?: unknown[] };
+			} | null;
 			const items = previewData?.data?.items;
 			if (Array.isArray(items)) {
 				for (const entry of items) {
@@ -2487,10 +2682,7 @@ export const ServerInstallWizard = forwardRef(
 					defaultValue: "{{count}} Types",
 				});
 			}
-			const toggleCapabilityKindFilter = (
-				value: string,
-				checked: boolean,
-			) => {
+			const toggleCapabilityKindFilter = (value: string, checked: boolean) => {
 				setCapabilityKindFilters((current) => {
 					const next = new Set(current);
 					if (checked) {
@@ -2624,9 +2816,7 @@ export const ServerInstallWizard = forwardRef(
 							}
 
 							const activeName =
-								activePreviewName ??
-								selectedDrafts[0]?.name ??
-								null;
+								activePreviewName ?? selectedDrafts[0]?.name ?? null;
 							const activeDraft =
 								selectedDrafts.find((draft) => draft.name === activeName) ??
 								selectedDrafts[0] ??
@@ -2708,10 +2898,10 @@ export const ServerInstallWizard = forwardRef(
 			const effectiveSkippedCount = hiddenPreviewReady ? 0 : dryRunSkippedCount;
 			const canProceedWithImport =
 				hiddenPreviewReady ||
-				!isDryRunLoading &&
+				(!isDryRunLoading &&
 				!dryRunError &&
 				dryRunResult &&
-				dryRunImportableCount > 0;
+					dryRunImportableCount > 0);
 			const successSteps: Array<{ label: string; action: NextStepAction }> =
 				selectedProfileName
 					? [
@@ -2887,13 +3077,10 @@ export const ServerInstallWizard = forwardRef(
 											: skippedOnly
 												? [
 													{
-														label: t(
-															"wizard.result.skipSteps.useExisting",
-															{
+															label: t("wizard.result.skipSteps.useExisting", {
 																defaultValue:
 																	"Close this drawer and start using the existing server.",
-															},
-														),
+															}),
 														action: "close" as NextStepAction,
 													},
 													{
@@ -3053,7 +3240,9 @@ export const ServerInstallWizard = forwardRef(
 
 								<div className="pt-20">
 									{renderNextSteps(
-										importResult.success !== false ? successSteps : failureSteps,
+										importResult.success !== false
+											? successSteps
+											: failureSteps,
 									)}
 								</div>
 							</div>
@@ -3079,8 +3268,7 @@ export const ServerInstallWizard = forwardRef(
 			);
 		};
 
-		const isFlexFillStep =
-			currentStep === "form" || currentStep === "preview";
+		const isFlexFillStep = currentStep === "form" || currentStep === "preview";
 		const detectedServerCount = installPipeline.state.drafts.length;
 		const headerPluralCount = detectedServerCount > 1 ? detectedServerCount : 1;
 		const isImportBusy =
@@ -3123,7 +3311,9 @@ export const ServerInstallWizard = forwardRef(
 								<div className="min-w-0 flex-1 space-y-1 text-left">
 									<DrawerTitle className="flex items-center gap-2">
 										{isEditMode
-											? t("wizard.header.editTitle", { defaultValue: "Edit Server" })
+											? t("wizard.header.editTitle", {
+													defaultValue: "Edit Server",
+												})
 											: t("wizard.header.addTitle", {
 												count: headerPluralCount,
 												defaultValue:
@@ -3164,7 +3354,11 @@ export const ServerInstallWizard = forwardRef(
 													<RotateCcw className="h-4 w-4" />
 												</Button>
 											</TooltipTrigger>
-											<TooltipContent side="bottom" align="end" className="max-w-xs">
+											<TooltipContent
+												side="bottom"
+												align="end"
+												className="max-w-xs"
+											>
 												<p className="font-medium">
 													{t("wizard.buttons.reset", {
 														defaultValue: "Reset form",
@@ -3225,7 +3419,11 @@ export const ServerInstallWizard = forwardRef(
 													)}
 												</Button>
 											</TooltipTrigger>
-											<TooltipContent side="bottom" align="end" className="max-w-xs">
+											<TooltipContent
+												side="bottom"
+												align="end"
+												className="max-w-xs"
+											>
 												<p className="font-medium">
 													{installPipeline.state.isPreviewLoading
 														? t("wizard.buttons.previewing", {
@@ -3262,7 +3460,8 @@ export const ServerInstallWizard = forwardRef(
 													type="button"
 													onClick={() => handleStepChange(step.id)}
 													disabled={!canNavigate || isSubmitting}
-													className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${isActive
+													className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
+														isActive
 														? "bg-primary text-primary-foreground"
 														: canNavigate
 															? "bg-slate-200 text-slate-600 hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 cursor-pointer"
@@ -3278,7 +3477,8 @@ export const ServerInstallWizard = forwardRef(
 													className="flex flex-col text-left transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
 												>
 													<span
-														className={`text-sm font-medium ${isActive
+														className={`text-sm font-medium ${
+															isActive
 															? "text-primary"
 															: canNavigate
 																? "text-slate-600 dark:text-slate-300"

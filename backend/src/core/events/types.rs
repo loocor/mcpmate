@@ -103,6 +103,44 @@ pub enum Event {
         client_id: String,
     },
 
+    /// One server's persisted external capability catalog changed.
+    CapabilityCatalogChanged {
+        /// Stable MCPMate server ID.
+        server_id: String,
+        /// Canonical server namespace.
+        server_name: String,
+    },
+
+    /// An external capability identifier collision blocked one challenger.
+    CapabilityCollisionDetected {
+        /// Stable MCPMate ID of the challenger that must be blocked.
+        server_id: String,
+        /// Stable MCPMate ID of the existing owner that remains available.
+        conflicting_server_id: String,
+        /// Colliding canonical external capability identifier.
+        external_identifier: String,
+    },
+
+    /// A legacy server namespace was canonicalized before downstream exposure.
+    ServerNamespaceRepaired {
+        /// Stable MCPMate server ID.
+        server_id: String,
+        /// Previously persisted namespace.
+        old_namespace: String,
+        /// Canonical namespace now persisted.
+        new_namespace: String,
+        /// Committed repair outcome.
+        outcome: String,
+        /// Number of Tool identifiers changed.
+        tool_changes: usize,
+        /// Number of Prompt identifiers changed.
+        prompt_changes: usize,
+        /// Number of Resource identifiers changed.
+        resource_changes: usize,
+        /// Number of Resource Template identifiers changed.
+        template_changes: usize,
+    },
+
     /// Database was initialized or changed
     DatabaseChanged,
 

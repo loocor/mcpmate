@@ -432,6 +432,28 @@ pub async fn load_pool_base_config(
     Ok(config)
 }
 
+pub async fn load_server_config_strict(
+    db: &Database,
+    server_id: &str,
+    secret_store: Option<Arc<LocalSecretStore>>,
+) -> Result<(Server, MCPServerConfig)> {
+    let server = crate::config::server::get_server_by_id(&db.pool, server_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Server '{server_id}' not found"))?;
+    let mut config = build_config_from_servers(
+        db,
+        std::slice::from_ref(&server),
+        secret_store,
+        ConfigBuildPolicy::Strict,
+    )
+    .await?;
+    let server_config = config
+        .mcp_servers
+        .remove(server_id)
+        .ok_or_else(|| anyhow::anyhow!("Server '{server_id}' could not be materialized for validation"))?;
+    Ok((server, server_config))
+}
+
 /// Load pool base configuration for core startup.
 ///
 /// Uses [`ConfigBuildPolicy::DegradePerServer`]: per-server args, env, and header/OAuth failures

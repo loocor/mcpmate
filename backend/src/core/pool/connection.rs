@@ -610,34 +610,32 @@ impl UpstreamConnectionPool {
     /// 3. Instance will be destroyed after use (handled by caller)
     pub async fn get_or_create_validation_instance(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         session_id: &str,
         _ttl: Duration, // TTL not used for validation instances per requirements
     ) -> Result<Option<&types::UpstreamConnection>, anyhow::Error> {
         // Check if server connection already exists in this session
         if let Some(session_servers) = self.validation_sessions.get(session_id) {
-            if session_servers.contains_key(server_name) {
+            if session_servers.contains_key(server_id) {
                 return Ok(self
                     .validation_sessions
                     .get(session_id)
-                    .and_then(|session| session.get(server_name)));
+                    .and_then(|session| session.get(server_id)));
             }
         }
 
         // Create temporary validation instance
-        let connection = self
-            .create_temporary_validation_instance(server_name, session_id)
-            .await?;
+        let connection = self.create_temporary_validation_instance(server_id, session_id).await?;
 
         // Store in validation_sessions
         let session_servers = self.validation_sessions.entry(session_id.to_string()).or_default();
-        session_servers.insert(server_name.to_string(), connection);
+        session_servers.insert(server_id.to_string(), connection);
 
         // Return reference to the stored connection
         Ok(self
             .validation_sessions
             .get(session_id)
-            .and_then(|session| session.get(server_name)))
+            .and_then(|session| session.get(server_id)))
     }
 
     /// Create a temporary validation instance for a server
@@ -646,10 +644,10 @@ impl UpstreamConnectionPool {
     /// and then immediately destroyed. It does not affect the server's enabled status.
     async fn create_temporary_validation_instance(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         session_id: &str,
     ) -> Result<types::UpstreamConnection, anyhow::Error> {
-        tracing::info!("Creating temporary validation instance for server: {}", server_name);
+        tracing::info!("Creating temporary validation instance for server ID: {}", server_id);
 
         // Get database connection
         let db = self
@@ -658,9 +656,12 @@ impl UpstreamConnectionPool {
             .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
 
         // Get server configuration from database
-        let server = crate::config::server::get_server(&db.pool, server_name)
+        crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(&db.pool, server_id)
+            .await?;
+        let server = crate::config::server::get_server_by_id(&db.pool, server_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' disappeared after namespace repair", server_id))?;
+        let server_name = server.name.as_str();
 
         let failure_key = format!(
             "validation:{}",
@@ -803,11 +804,11 @@ impl UpstreamConnectionPool {
     /// This implements the "immediate cleanup" part of the create-use-destroy lifecycle
     pub async fn destroy_validation_instance(
         &mut self,
-        server_name: &str,
+        server_id: &str,
         session_id: &str,
     ) -> Result<(), anyhow::Error> {
         if let Some(session_servers) = self.validation_sessions.get_mut(session_id) {
-            if let Some(mut connection) = session_servers.remove(server_name) {
+            if let Some(mut connection) = session_servers.remove(server_id) {
                 // Best-effort graceful shutdown: ask running service to cancel before dropping pipes.
                 if let Some(service) = connection.service.as_ref() {
                     // Use cancellation token to request shutdown without taking ownership
@@ -817,7 +818,7 @@ impl UpstreamConnectionPool {
                 if connection.is_connected() {
                     connection.update_disconnected();
                 }
-                tracing::info!("Destroyed validation instance for server '{}'", server_name);
+                tracing::info!("Destroyed validation instance for server ID '{}'", server_id);
             }
         }
 

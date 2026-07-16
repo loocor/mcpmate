@@ -435,7 +435,7 @@ pub struct ProfileToolData {
     /// Tool name (original name from upstream server)
     pub tool_name: String,
     /// Unique name for external display and routing
-    pub unique_name: Option<String>,
+    pub unique_name: String,
     /// Tool description from the cached server capability snapshot
     pub description: Option<String>,
     /// Whether the tool is enabled in this profile
@@ -455,6 +455,8 @@ pub struct ProfileResourceData {
     pub server_name: String,
     /// Resource URI (original URI from upstream server)
     pub resource_uri: String,
+    /// External resource identifier used for selection and routing
+    pub unique_uri: String,
     /// Resource description from the cached server capability snapshot
     pub description: Option<String>,
     /// Whether the resource is enabled in this profile
@@ -474,6 +476,8 @@ pub struct ProfileResourceTemplateData {
     pub server_name: String,
     /// Resource URI template (original template from upstream server)
     pub uri_template: String,
+    /// External resource template identifier used for selection and routing
+    pub unique_uri_template: String,
     /// Resource template description from the cached server capability snapshot
     pub description: Option<String>,
     /// Whether the template is enabled in this profile
@@ -493,6 +497,8 @@ pub struct ProfilePromptData {
     pub server_name: String,
     /// Prompt name (original name from upstream server)
     pub prompt_name: String,
+    /// External prompt identifier used for selection and routing
+    pub unique_name: String,
     /// Prompt description from the cached server capability snapshot
     pub description: Option<String>,
     /// Whether the prompt is enabled in this profile

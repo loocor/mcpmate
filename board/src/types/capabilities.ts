@@ -23,6 +23,8 @@ export type CapabilityRecord = Record<string, unknown> & {
 	description?: unknown;
 	server_name?: unknown;
 	unique_name?: unknown;
+  unique_uri?: unknown;
+  unique_uri_template?: unknown;
 	tool_name?: unknown;
 	prompt_name?: unknown;
 	name?: unknown;
@@ -31,6 +33,7 @@ export type CapabilityRecord = Record<string, unknown> & {
 
 export interface CapabilityMapItem<T> {
 	title: string;
+	upstreamIdentifier?: string;
 	subtitle?: string;
 	description?: string;
 	server?: string;

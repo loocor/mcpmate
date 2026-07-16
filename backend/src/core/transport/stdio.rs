@@ -211,19 +211,56 @@ pub async fn connect_stdio_server(
     Option<ServerCapabilities>,
     Option<u32>,
 )> {
+    connect_stdio_server_inner(server_name, server_config, ct, database_pool, None).await
+}
+
+pub async fn connect_stdio_server_with_timeouts(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    ct: CancellationToken,
+    database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+    connection_timeout: std::time::Duration,
+    tools_timeout: std::time::Duration,
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+    Option<u32>,
+)> {
+    connect_stdio_server_inner(
+        server_name,
+        server_config,
+        ct,
+        database_pool,
+        Some((connection_timeout, tools_timeout)),
+    )
+    .await
+}
+
+async fn connect_stdio_server_inner(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    ct: CancellationToken,
+    database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+    custom_timeouts: Option<(std::time::Duration, std::time::Duration)>,
+) -> Result<(
+    crate::core::transport::ClientService,
+    Vec<Tool>,
+    Option<ServerCapabilities>,
+    Option<u32>,
+)> {
     // Prepare command — unified resolver handles managed + enriched PATH
     let (mut cmd, transformed_command) = prepare_server_command(server_config).await?;
 
     // Setup environment variables
     setup_command_environment(&mut cmd, server_config, &transformed_command, database_pool).await?;
 
-    // Determine appropriate timeouts
     let command = server_config
         .command
         .as_ref()
         .expect("command already validated in prepare_server_command");
-    let connection_timeout = get_connection_timeout(command);
-    let tools_timeout = get_tools_timeout(command);
+    let (connection_timeout, tools_timeout) =
+        custom_timeouts.unwrap_or_else(|| (get_connection_timeout(command), get_tools_timeout(command)));
 
     tracing::debug!(
         "Using timeouts for '{}': connection={}s, tools={}s",

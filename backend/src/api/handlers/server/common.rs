@@ -7,7 +7,10 @@ use std::{collections::HashMap, convert::TryInto, sync::Arc};
 use crate::{
     api::{
         handlers::ApiError,
-        models::server::{InstanceSummary, ServerCapabilitySummary, ServerIcon, ServerMetaInfo},
+        models::server::{
+            InstanceSummary, ServerCapabilitySummary, ServerIcon, ServerMetaInfo, ServerNamespaceConflict,
+            ServerNamespaceIssue, StandardServerInfo,
+        },
         routes::AppState,
     },
     config::{database::Database, server},
@@ -129,11 +132,64 @@ pub struct ServerDetails {
     pub args: Option<Vec<String>>,
     pub env: Option<HashMap<String, String>>,
     pub meta: Option<ServerMetaInfo>,
+    pub server_info: Option<StandardServerInfo>,
     pub globally_enabled: bool,
     pub enabled_in_profile: bool,
     pub instances: Vec<InstanceSummary>,
     pub capability: Option<ServerCapabilitySummary>,
     pub protocol_version: Option<String>,
+}
+
+pub(super) fn standard_server_info(server_meta: &crate::config::models::ServerMeta) -> Option<StandardServerInfo> {
+    if server_meta.upstream_name.is_none()
+        && server_meta.upstream_title.is_none()
+        && server_meta.server_version.is_none()
+    {
+        return None;
+    }
+
+    Some(StandardServerInfo {
+        name: server_meta.upstream_name.clone(),
+        title: server_meta.upstream_title.clone(),
+        version: server_meta.server_version.clone(),
+    })
+}
+
+pub(super) async fn load_namespace_issue(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> anyhow::Result<Option<ServerNamespaceIssue>> {
+    let issue = crate::config::server::namespace_repair::inspect_namespace_issue(pool, server_id).await?;
+    Ok(issue.map(|issue| {
+        let code = match issue.kind {
+            crate::config::server::namespace_repair::NamespaceIssueKind::CapabilityCollision => "capability_collision",
+            crate::config::server::namespace_repair::NamespaceIssueKind::InvalidNamespace
+                if !issue.conflicts.is_empty() =>
+            {
+                "namespace_conflict"
+            }
+            crate::config::server::namespace_repair::NamespaceIssueKind::InvalidNamespace
+                if issue.suggested_namespace.is_none() =>
+            {
+                "manual_remediation_required"
+            }
+            crate::config::server::namespace_repair::NamespaceIssueKind::InvalidNamespace => "pending_repair",
+        };
+        ServerNamespaceIssue {
+            code: code.to_string(),
+            current_namespace: issue.current_namespace,
+            remediation_allowed: true,
+            suggested_namespace: issue.suggested_namespace,
+            conflicts: issue
+                .conflicts
+                .into_iter()
+                .map(|conflict| ServerNamespaceConflict {
+                    server_id: conflict.server_id,
+                    namespace: conflict.namespace,
+                })
+                .collect(),
+        }
+    }))
 }
 
 /// Resolve server identifier (name or ID) to complete server information
@@ -216,6 +272,7 @@ pub async fn get_complete_server_details(
     if !server_id.is_empty() {
         match server::get_server_meta(pool, server_id).await {
             Ok(Some(server_meta)) => {
+                details.server_info = standard_server_info(&server_meta);
                 let icons = match server_meta.icons_json.as_deref() {
                     Some(raw) => match parse_server_icons(raw) {
                         Ok(list) => list,
@@ -868,9 +925,9 @@ pub fn create_inspect_response(
     }))
 }
 
-/// Try to enrich capability items with database mappings, fallback to plain response if DB unavailable
+/// Enrich capability items with their authoritative external identifiers.
 #[inline]
-pub async fn try_enrich_or_fallback(
+pub async fn enrich_capability_response(
     state: &Arc<AppState>,
     capability_type: super::capability::CapabilityType,
     server_id: &str,
@@ -879,13 +936,9 @@ pub async fn try_enrich_or_fallback(
     refresh: Option<RefreshStrategy>,
     strategy: &str,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
-    if let Ok(db) = get_database_from_state(state) {
-        let enriched =
-            super::capability::enrich_capability_items(capability_type, &db.pool, server_id, processed).await;
-        Ok(super::capability::respond_with_enriched(
-            enriched, cache_hit, refresh, strategy,
-        ))
-    } else {
-        Ok(create_inspect_response(processed, cache_hit, refresh, strategy))
-    }
+    let db = get_database_from_state(state)?;
+    let enriched = super::capability::enrich_capability_items(capability_type, &db.pool, server_id, processed).await?;
+    Ok(super::capability::respond_with_enriched(
+        enriched, cache_hit, refresh, strategy,
+    ))
 }

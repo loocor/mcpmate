@@ -54,7 +54,14 @@ impl ServerSyncManager {
     ) -> Result<()> {
         tracing::debug!("Starting server synchronization from active profile");
 
-        let config = self.load_pool_base_configuration(pool.secret_store.clone()).await?;
+        let blocked_server_ids = self.repair_enabled_server_namespaces().await?;
+        for server_id in &blocked_server_ids {
+            pool.block_server_after_capability_collision(server_id).await;
+        }
+        let mut config = self.load_pool_base_configuration(pool.secret_store.clone()).await?;
+        config
+            .mcp_servers
+            .retain(|server_id, _| !blocked_server_ids.contains(server_id));
 
         // Step 2: Update connection pool configuration
         pool.set_config(Arc::new(config))?;
@@ -69,13 +76,43 @@ impl ServerSyncManager {
         Ok(())
     }
 
+    async fn repair_enabled_server_namespaces(&self) -> Result<HashSet<String>> {
+        let server_ids =
+            sqlx::query_scalar::<_, String>("SELECT id FROM server_config WHERE enabled = 1 ORDER BY created_at, id")
+                .fetch_all(&self.database.pool)
+                .await
+                .context("Failed to load enabled servers for namespace activation gate")?;
+        let mut blocked = HashSet::new();
+        for server_id in server_ids {
+            if let Err(error) = crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(
+                &self.database.pool,
+                &server_id,
+            )
+            .await
+            {
+                if !crate::config::server::namespace_repair::is_namespace_exposure_blocked(&error) {
+                    return Err(error)
+                        .with_context(|| format!("Namespace activation gate failed for server '{server_id}'"));
+                }
+                tracing::error!(
+                    server_id = %server_id,
+                    error = %error,
+                    "Blocking server activation because its namespace could not be canonicalized"
+                );
+                blocked.insert(server_id);
+            }
+        }
+        Ok(blocked)
+    }
+
     async fn load_pool_base_configuration(
         &self,
         secret_store: Option<Arc<LocalSecretStore>>,
     ) -> Result<Config> {
         tracing::debug!("Loading server configuration from globally enabled pool base source");
 
-        let config = crate::core::foundation::loader::load_pool_base_config(&self.database, secret_store).await
+        let config = crate::core::foundation::loader::load_pool_base_config(&self.database, secret_store)
+            .await
             .context("Failed to load pool base configuration")?;
 
         tracing::debug!("Loaded configuration with {} servers", config.mcp_servers.len());
@@ -192,8 +229,12 @@ impl ServerSyncManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::initialization::run_initialization, core::models::Config};
+    use crate::{
+        config::initialization::run_initialization,
+        core::{models::Config, pool::types::ProductionRouteKey},
+    };
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::collections::HashMap;
     use tempfile::TempDir;
 
     async fn create_test_database() -> (TempDir, Arc<Database>) {
@@ -240,7 +281,7 @@ mod tests {
         insert_server(&database.pool, "server-global", "Global Server", true).await;
 
         let mut pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()));
-        let sync_manager = ServerSyncManager::new(database);
+        let sync_manager = ServerSyncManager::new(database.clone());
 
         sync_manager
             .sync_servers_from_active_profile(&mut pool)
@@ -249,6 +290,111 @@ mod tests {
 
         assert!(pool.config.mcp_servers.contains_key("server-global"));
         assert!(pool.connections.contains_key("server-global"));
+        let namespace: String = sqlx::query_scalar("SELECT name FROM server_config WHERE id = 'server-global'")
+            .fetch_one(&database.pool)
+            .await
+            .expect("load canonicalized namespace");
+        assert_eq!(namespace, "global_server");
+    }
+
+    #[tokio::test]
+    async fn sync_blocks_only_legacy_server_with_namespace_collision() {
+        let (_temp_dir, database) = create_test_database().await;
+        insert_server(&database.pool, "server-canonical", "global_server", true).await;
+        insert_server(&database.pool, "server-legacy", "Global Server", true).await;
+
+        let mut pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()));
+        let sync_manager = ServerSyncManager::new(database);
+
+        sync_manager
+            .sync_servers_from_active_profile(&mut pool)
+            .await
+            .expect("unrelated canonical server should still synchronize");
+
+        assert!(pool.config.mcp_servers.contains_key("server-canonical"));
+        assert!(pool.connections.contains_key("server-canonical"));
+        assert!(!pool.config.mcp_servers.contains_key("server-legacy"));
+        assert!(!pool.connections.contains_key("server-legacy"));
+    }
+
+    #[tokio::test]
+    async fn sync_propagates_namespace_gate_infrastructure_errors_without_blocking_server() {
+        let (_temp_dir, database) = create_test_database().await;
+        insert_server(&database.pool, "server-canonical", "global_server", true).await;
+        sqlx::query("DROP TABLE server_namespace_issue")
+            .execute(&database.pool)
+            .await
+            .expect("remove namespace issue table to simulate storage failure");
+
+        let mut pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()));
+        pool.connections.insert(
+            "server-canonical".to_string(),
+            HashMap::from([(
+                "existing".to_string(),
+                crate::core::pool::UpstreamConnection::new("server-canonical".to_string()),
+            )]),
+        );
+
+        let error = ServerSyncManager::new(database)
+            .sync_servers_from_active_profile(&mut pool)
+            .await
+            .expect_err("storage failure must abort synchronization instead of blocking the server");
+
+        assert!(
+            error
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("namespace activation gate")
+        );
+        assert!(pool.connections.contains_key("server-canonical"));
+    }
+
+    #[tokio::test]
+    async fn sync_removes_all_exposure_for_capability_collision_challenger() {
+        let (_temp_dir, database) = create_test_database().await;
+        insert_server(&database.pool, "server-owner", "a", true).await;
+        insert_server(&database.pool, "server-challenger", "a_b", true).await;
+        crate::config::server::namespace_repair::record_capability_collision(
+            &database.pool,
+            &crate::core::capability::naming::ExternalIdentifierCollision {
+                kind: crate::core::capability::naming::NamingKind::Tool,
+                external_identifier: "a_b_c".to_string(),
+                server_id: "server-challenger".to_string(),
+                upstream_value: "c".to_string(),
+                conflicting_server_id: "server-owner".to_string(),
+                conflicting_upstream_value: "b_c".to_string(),
+            },
+        )
+        .await
+        .expect("record collision");
+
+        let mut pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()));
+        pool.connections.insert(
+            "server-challenger".to_string(),
+            HashMap::from([(
+                "challenger-default".to_string(),
+                crate::core::pool::UpstreamConnection::new("server-challenger".to_string()),
+            )]),
+        );
+        pool.client_bound_connections.insert(
+            ("server-challenger".to_string(), "client-a".to_string()),
+            HashMap::from([(
+                "challenger-client".to_string(),
+                crate::core::pool::UpstreamConnection::new("server-challenger".to_string()),
+            )]),
+        );
+        let route = ProductionRouteKey::per_client("server-challenger", "client-a");
+        pool.production_routes
+            .insert(route.clone(), "challenger-client".to_string());
+
+        ServerSyncManager::new(database)
+            .sync_servers_from_active_profile(&mut pool)
+            .await
+            .expect("sync with collision blocker");
+
+        assert!(!pool.connections.contains_key("server-challenger"));
+        assert!(!pool.has_affinity_bound_connection("server-challenger", "client-a"));
+        assert!(!pool.production_routes.contains_key(&route));
     }
 }
 

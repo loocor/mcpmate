@@ -1842,18 +1842,9 @@ mod tests {
         .expect("insert unify server");
 
         for tool_name in tool_names {
-            sqlx::query(
-                "INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description) VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(format!("{id}-tool-{tool_name}"))
-            .bind(id)
-            .bind(name)
-            .bind(tool_name)
-            .bind(format!("{}_{}", name.to_lowercase().replace(' ', "_"), tool_name))
-            .bind(Some("tool"))
-            .execute(pool)
-            .await
-            .expect("insert server tool");
+            crate::config::server::tools::upsert_server_tool(pool, id, name, tool_name, Some("tool"))
+                .await
+                .expect("insert server tool");
         }
     }
 
@@ -1867,45 +1858,34 @@ mod tests {
     ) {
         crate::core::capability::naming::initialize(pool.clone());
         for prompt_name in prompt_names {
-            sqlx::query(
-                "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(format!("{server_id}-prompt-{prompt_name}"))
-            .bind(server_id)
-            .bind(server_name)
-            .bind(prompt_name)
-            .bind(format!("{}_{}", server_name.to_lowercase().replace(' ', "_"), prompt_name))
-            .execute(pool)
-            .await
-            .expect("insert server prompt");
+            crate::config::server::capabilities::upsert_shadow_prompt(pool, server_id, server_name, prompt_name, None)
+                .await
+                .expect("insert server prompt");
         }
 
         for resource_uri in resource_uris {
-            sqlx::query(
-                "INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri, name) VALUES (?, ?, ?, ?, ?, ?)",
+            crate::config::server::capabilities::upsert_shadow_resource(
+                pool,
+                server_id,
+                server_name,
+                resource_uri,
+                Some(resource_uri),
+                None,
+                None,
             )
-            .bind(format!("{server_id}-resource-{resource_uri}"))
-            .bind(server_id)
-            .bind(server_name)
-            .bind(resource_uri)
-            .bind(format!("{}:{}", server_name.to_lowercase().replace(' ', "_"), resource_uri))
-            .bind(resource_uri)
-            .execute(pool)
             .await
             .expect("insert server resource");
         }
 
         for template_uri in template_uris {
-            sqlx::query(
-                "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name) VALUES (?, ?, ?, ?, ?, ?)",
+            crate::config::server::capabilities::upsert_shadow_resource_template(
+                pool,
+                server_id,
+                server_name,
+                template_uri,
+                Some(template_uri),
+                None,
             )
-            .bind(format!("{server_id}-template-{template_uri}"))
-            .bind(server_id)
-            .bind(server_name)
-            .bind(template_uri)
-            .bind(format!("{}_{}", server_name.to_lowercase().replace(' ', "_"), template_uri))
-            .bind(template_uri)
-            .execute(pool)
             .await
             .expect("insert server resource template");
         }
@@ -2021,7 +2001,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-eligible",
-            "Eligible Server",
+            "eligible_server",
             true,
             &["tool-a", "tool-b"],
         )
@@ -2080,16 +2060,13 @@ mod tests {
         assert_eq!(stored_intent["server_ids"], serde_json::json!(["server-eligible"]));
         assert!(stored_intent.get("selected_tool_surfaces").is_none());
 
-        sqlx::query(
-            "INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name, description) VALUES (?, ?, ?, ?, ?, ?)",
+        crate::config::server::tools::upsert_server_tool(
+            &context.db_pool,
+            "server-eligible",
+            "eligible_server",
+            "tool-c",
+            Some("tool"),
         )
-        .bind("server-eligible-tool-tool-c")
-        .bind("server-eligible")
-        .bind("Eligible Server")
-        .bind("tool-c")
-        .bind("eligible_server_tool-c")
-        .bind(Some("tool"))
-        .execute(&context.db_pool)
         .await
         .expect("insert refreshed server tool");
 
@@ -2122,7 +2099,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-late-enable",
-            "Late Enable Server",
+            "late_enable_server",
             true,
             &["tool-a"],
         )
@@ -2209,7 +2186,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-tools",
-            "Tool Server",
+            "tool_server",
             true,
             &["tool-a", "tool-b"],
         )
@@ -2248,11 +2225,11 @@ mod tests {
     #[tokio::test]
     async fn capability_config_roundtrips_unify_prompt_resource_and_template_selection() {
         let context = create_test_context().await;
-        insert_unify_server(&context.db_pool, "server-mixed", "Mixed Server", true, &["tool-a"]).await;
+        insert_unify_server(&context.db_pool, "server-mixed", "mixed_server", true, &["tool-a"]).await;
         insert_unify_non_tool_capabilities(
             &context.db_pool,
             "server-mixed",
-            "Mixed Server",
+            "mixed_server",
             &["prompt-a"],
             &["resource-a"],
             &["template-a"],
@@ -2335,7 +2312,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-global-only",
-            "Global Only Server",
+            "global_only_server",
             true,
             &["tool-a", "tool-b"],
         )
@@ -2510,7 +2487,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-eligible",
-            "Eligible Server",
+            "eligible_server",
             true,
             &["tool-a"],
         )
@@ -2518,7 +2495,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-ineligible",
-            "Ineligible Server",
+            "ineligible_server",
             false,
             &["tool-x"],
         )
@@ -2602,7 +2579,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-prune-level",
-            "Prune Level Server",
+            "prune_level_server",
             true,
             &["tool-a"],
         )
@@ -2669,7 +2646,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-prune-capabilities",
-            "Prune Capability Server",
+            "prune_capability_server",
             true,
             &["tool-a"],
         )
@@ -2677,7 +2654,7 @@ mod tests {
         insert_unify_non_tool_capabilities(
             &context.db_pool,
             "server-prune-capabilities",
-            "Prune Capability Server",
+            "prune_capability_server",
             &["prompt-a"],
             &["resource-a"],
             &["template-a"],
@@ -2772,7 +2749,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-disable-level",
-            "Disable Level Server",
+            "disable_level_server",
             true,
             &["tool-a"],
         )
@@ -2826,7 +2803,7 @@ mod tests {
         insert_unify_server(
             &context.db_pool,
             "server-disable-capabilities",
-            "Disable Capability Server",
+            "disable_capability_server",
             true,
             &["tool-a"],
         )
@@ -2834,7 +2811,7 @@ mod tests {
         insert_unify_non_tool_capabilities(
             &context.db_pool,
             "server-disable-capabilities",
-            "Disable Capability Server",
+            "disable_capability_server",
             &["prompt-a"],
             &["resource-a"],
             &["template-a"],

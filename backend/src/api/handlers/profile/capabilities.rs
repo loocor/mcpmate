@@ -10,6 +10,7 @@ use crate::api::models::profile::{
     ProfileToolData, ProfileToolsListData, ProfileToolsListResp,
 };
 use crate::core::capability::descriptions::load_cached_capability_descriptions;
+use crate::core::capability::naming::{NamingKind, load_external_identifier};
 use serde_json::{Map, Value};
 
 type CapabilityAuditDetails = Value;
@@ -73,12 +74,17 @@ pub async fn prompts_list(
     for config in prompt_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
         let description = descriptions.prompt(&config.server_id, &config.prompt_name);
+        let unique_name =
+            load_external_identifier(&db.pool, NamingKind::Prompt, &config.server_id, &config.prompt_name)
+                .await
+                .map_err(|error| ApiError::InternalError(error.to_string()))?;
 
         prompts.push(ProfilePromptData {
             id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             prompt_name: config.prompt_name.clone(),
+            unique_name,
             description,
             enabled: config.enabled,
             allowed_operations,
@@ -128,12 +134,17 @@ pub async fn resources_list(
     for config in resource_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
         let description = descriptions.resource(&config.server_id, &config.resource_uri);
+        let unique_uri =
+            load_external_identifier(&db.pool, NamingKind::Resource, &config.server_id, &config.resource_uri)
+                .await
+                .map_err(|error| ApiError::InternalError(error.to_string()))?;
 
         resources.push(ProfileResourceData {
             id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             resource_uri: config.resource_uri.clone(),
+            unique_uri,
             description,
             enabled: config.enabled,
             allowed_operations,
@@ -229,11 +240,20 @@ pub async fn resource_templates_list(
     for config in template_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
         let description = descriptions.template(&config.server_id, &config.resource_uri);
+        let unique_uri_template = load_external_identifier(
+            &db.pool,
+            NamingKind::ResourceTemplate,
+            &config.server_id,
+            &config.resource_uri,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
         templates.push(ProfileResourceTemplateData {
             id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             uri_template: config.resource_uri.clone(),
+            unique_uri_template,
             description,
             enabled: config.enabled,
             allowed_operations,
@@ -290,7 +310,7 @@ pub async fn tools_list(
                 server_id: tool_config.server_id.clone(),
                 server_name: server.name,
                 tool_name: tool_config.tool_name.clone(),
-                unique_name: Some(tool_config.unique_name.clone()),
+                unique_name: tool_config.unique_name.clone(),
                 description,
                 enabled: tool_config.enabled,
                 allowed_operations: vec!["enable".to_string(), "disable".to_string()],

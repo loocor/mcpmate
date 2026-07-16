@@ -17,6 +17,7 @@ use tracing;
 
 use crate::core::capability::facade::{
     collect_capability_from_instance_peer, concurrency_limit, is_method_not_supported,
+    require_complete_capability_fetch,
 };
 use crate::core::pool::{UpstreamConnection, UpstreamConnectionPool};
 
@@ -160,14 +161,14 @@ pub async fn get_prompt_status(
 
 pub async fn build_prompt_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> HashMap<String, PromptMapping> {
+) -> Result<HashMap<String, PromptMapping>> {
     build_prompt_mapping_filtered(connection_pool, None).await
 }
 
 pub async fn build_prompt_mapping_filtered(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     enabled_server_ids: Option<&HashSet<String>>,
-) -> HashMap<String, PromptMapping> {
+) -> Result<HashMap<String, PromptMapping>> {
     let snapshot = {
         let pool = connection_pool.lock().await;
         pool.get_snapshot()
@@ -230,18 +231,25 @@ pub async fn build_prompt_mapping_filtered(
                 )
                 .await;
 
-                outcome.items
+                require_complete_capability_fetch(
+                    "prompts/list",
+                    &server_id_clone,
+                    &server_name,
+                    &instance_id_clone,
+                    outcome,
+                )
             });
         }
     }
 
-    let results: Vec<Vec<PromptMapping>> = futures::stream::iter(tasks)
+    let results: Vec<Result<Vec<PromptMapping>>> = futures::stream::iter(tasks)
         .buffer_unordered(concurrency_limit())
         .collect()
         .await;
 
     let mut prompt_mapping: HashMap<String, PromptMapping> = HashMap::new();
     for prompts in results {
+        let prompts = prompts?;
         for prompt in prompts {
             let name = &prompt.prompt.name;
             if let Some(existing) = prompt_mapping.get(name) {
@@ -258,12 +266,12 @@ pub async fn build_prompt_mapping_filtered(
     }
 
     tracing::debug!("Built prompt mapping with {} prompts", prompt_mapping.len());
-    prompt_mapping
+    Ok(prompt_mapping)
 }
 
 pub async fn build_prompt_template_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
-) -> Vec<PromptTemplateMapping> {
+) -> Result<Vec<PromptTemplateMapping>> {
     let snapshot = {
         let pool = connection_pool.lock().await;
         pool.get_snapshot()
@@ -313,29 +321,30 @@ pub async fn build_prompt_template_mapping(
                 )
                 .await;
 
-                outcome.items
+                require_complete_capability_fetch("prompts/list", &server_id_clone, &server_name, &instance_id, outcome)
             });
         }
     }
 
-    let results: Vec<Vec<PromptTemplateMapping>> = futures::stream::iter(tasks)
+    let results: Vec<Result<Vec<PromptTemplateMapping>>> = futures::stream::iter(tasks)
         .buffer_unordered(concurrency_limit())
         .collect()
         .await;
 
     let mut templates = Vec::new();
-    for mut mapping in results {
+    for mapping in results {
+        let mut mapping = mapping?;
         templates.append(&mut mapping);
     }
-    templates
+    Ok(templates)
 }
 
-pub async fn get_all_prompts(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>) -> Vec<Prompt> {
-    build_prompt_mapping(connection_pool)
-        .await
+pub async fn get_all_prompts(connection_pool: &Arc<Mutex<UpstreamConnectionPool>>) -> Result<Vec<Prompt>> {
+    Ok(build_prompt_mapping(connection_pool)
+        .await?
         .into_values()
         .map(|mapping| mapping.prompt)
-        .collect()
+        .collect())
 }
 
 pub async fn get_upstream_prompt(
@@ -350,7 +359,7 @@ pub async fn get_upstream_prompt(
 
     validate_prompt_name(prompt_name)?;
 
-    let mapping_opt = prompt_mapping.get(prompt_name);
+    let mapping_opt = select_prompt_mapping(prompt_mapping, prompt_name, target_server_id);
     if let Some(mapping) = mapping_opt {
         tracing::debug!(
             "Routing prompt request for '{}' to instance {} (server: {})",
@@ -448,6 +457,19 @@ pub async fn get_upstream_prompt(
     Ok(result)
 }
 
+fn select_prompt_mapping<'a>(
+    prompt_mapping: &'a HashMap<String, PromptMapping>,
+    prompt_name: &str,
+    target_server_id: Option<&str>,
+) -> Option<&'a PromptMapping> {
+    prompt_mapping.get(prompt_name).filter(|mapping| {
+        let Some(target_server_id) = target_server_id else {
+            return true;
+        };
+        mapping.server_id.as_deref() == Some(target_server_id)
+    })
+}
+
 pub async fn get_upstream_prompt_direct(
     connection: &UpstreamConnection,
     prompt_name: &str,
@@ -506,4 +528,42 @@ pub fn validate_prompt_name(prompt_name: &str) -> Result<()> {
         return Err(anyhow!("Prompt name is too long"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use rmcp::model::Prompt;
+
+    use super::{PromptMapping, select_prompt_mapping};
+
+    #[test]
+    fn target_server_rejects_same_name_mapping_from_another_server() {
+        let mapping = PromptMapping {
+            server_name: "server_a".to_string(),
+            server_id: Some("server-a-id".to_string()),
+            instance_id: "instance-a".to_string(),
+            prompt: Prompt::new("review", None::<String>, None),
+            upstream_prompt_name: "review".to_string(),
+        };
+        let prompt_mapping = HashMap::from([("review".to_string(), mapping)]);
+
+        assert!(select_prompt_mapping(&prompt_mapping, "review", Some("server-b-id")).is_none());
+        assert!(select_prompt_mapping(&prompt_mapping, "review", Some("server-a-id")).is_some());
+    }
+
+    #[test]
+    fn target_server_rejects_mapping_without_server_id() {
+        let mapping = PromptMapping {
+            server_name: "server-a-id".to_string(),
+            server_id: None,
+            instance_id: "instance-a".to_string(),
+            prompt: Prompt::new("review", None::<String>, None),
+            upstream_prompt_name: "review".to_string(),
+        };
+        let prompt_mapping = HashMap::from([("review".to_string(), mapping)]);
+
+        assert!(select_prompt_mapping(&prompt_mapping, "review", Some("server-a-id")).is_none());
+    }
 }

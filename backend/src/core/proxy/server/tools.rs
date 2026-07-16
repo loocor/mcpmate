@@ -1,6 +1,6 @@
 use super::*;
 use crate::clients::models::CapabilitySource;
-use crate::core::capability::naming::{NamingKind, resolve_unique_name};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::mcper::builtin::ClientBuiltinContext;
 use crate::mcper::{
     HOSTED_BUILTIN_TOOL_NAMES, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ADD_TOOL,
@@ -75,6 +75,7 @@ pub(super) async fn list_tools(
     };
 
     let mut tools: Vec<rmcp::model::Tool> = Vec::new();
+    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("tools");
 
     if let Some(db) = &server.database {
         let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
@@ -87,7 +88,7 @@ pub(super) async fn list_tools(
         )
         .fetch_all(&db.pool)
         .await
-        .unwrap_or_default();
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
         let redb = &server.redb_cache;
         let pool = &server.connection_pool;
@@ -108,41 +109,67 @@ pub(super) async fn list_tools(
                 validation_session: None,
                 runtime_identity: client.runtime_identity(),
                 connection_selection: client.connection_selection(server_id.clone()),
+                name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
             tasks.push(async move {
-                let tools = match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db).await {
-                    Ok(result) => result.items.into_tools().unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                };
+                let tools = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| {
+                        result
+                            .items
+                            .into_tools()
+                            .ok_or_else(|| "Tool listing returned a different capability kind".to_string())
+                    });
                 (server_id, server_name, tools)
             });
         }
 
-        for (server_id, server_name, tool_batch) in futures::stream::iter(tasks)
+        for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            for tool in tool_batch {
-                let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Tool,
-                    &server_name,
-                    tool.name.as_ref(),
-                )
-                .await;
-                let expose_directly = !unify_mode
-                    || crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            let tool_batch = match result {
+                Ok(tool_batch) => tool_batch,
+                Err(error) => {
+                    aggregate.record_failure(&server_id, &server_name, error);
+                    continue;
+                }
+            };
+            let server_tools = async {
+                if !unify_mode {
+                    return Ok(tool_batch);
+                }
+                let mut exposed = Vec::new();
+                for tool in tool_batch {
+                    let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Tool,
+                        &server_id,
+                        tool.name.as_ref(),
+                    )
+                    .await?;
+                    if crate::core::proxy::server::unify_directly_exposed_tool_allowed(
                         client.unify_workspace.as_ref(),
                         &unify_direct_exposure_eligible_server_ids,
                         &server_id,
                         raw_tool_name.as_ref(),
-                    );
-                if expose_directly {
-                    tools.push(tool);
+                    ) {
+                        exposed.push(tool);
+                    }
                 }
+                Ok::<_, anyhow::Error>(exposed)
+            }
+            .await;
+            match server_tools {
+                Ok(server_tools) => {
+                    aggregate.record_success();
+                    tools.extend(server_tools);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
     }
@@ -167,6 +194,9 @@ pub(super) async fn list_tools(
         .collect::<Vec<_>>();
     tracing::debug!("Including {} builtin service tools", builtin_tools.len());
     tools.extend(builtin_tools);
+    aggregate
+        .finish_for_result(!tools.is_empty())
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
     // Apply pagination (natural sort inside paginator)
     let page = server.paginator.paginate_tools(&_request, tools)?;
@@ -321,31 +351,20 @@ pub(super) async fn call_tool(
         ));
     }
 
-    let (server_name, original_tool_name) =
-        resolve_unique_name(NamingKind::Tool, &request.name)
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    call_id = %call_id,
-                    tool = %request.name,
-                    error = %e,
-                    "ProxyServer::call_tool failed to resolve unique name"
-                );
-                McpError::internal_error(format!("Failed to resolve unique tool name: {}", e), None)
-            })?;
-    let server_id = crate::core::capability::resolver::to_id(&server_name)
+    let route = resolve_capability_route(NamingKind::Tool, &request.name)
         .await
-        .ok()
-        .flatten()
-        .ok_or_else(|| {
+        .map_err(|e| {
             tracing::error!(
                 call_id = %call_id,
                 tool = %request.name,
-                server_name = %server_name,
-                "ProxyServer::call_tool missing server id for mapping"
+                error = %e,
+                "ProxyServer::call_tool failed to resolve unique name"
             );
-            McpError::internal_error("Server not found for tool mapping".to_string(), None)
+            McpError::internal_error(format!("Failed to resolve unique tool name: {}", e), None)
         })?;
+    let server_id = route.server_id;
+    let server_name = route.server_name;
+    let original_tool_name = route.upstream_value;
 
     let directly_exposed = if matches!(client.config_mode.as_deref(), Some("unify")) {
         let db = server

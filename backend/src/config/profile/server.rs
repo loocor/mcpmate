@@ -61,7 +61,7 @@ pub async fn add_server_to_profile(
     let association_id = generate_id!("ssrv");
 
     // Get the server name
-    let server_name = match sqlx::query_scalar::<_, String>(
+    let server_name = sqlx::query_scalar::<_, String>(
         r#"
         SELECT name FROM server_config
         WHERE id = ?
@@ -70,14 +70,8 @@ pub async fn add_server_to_profile(
     .bind(server_id)
     .fetch_optional(pool)
     .await
-    .context("Failed to get server name")?
-    {
-        Some(name) => name.replace(' ', "_"), // Replace spaces with underscores
-        None => {
-            tracing::warn!("Server ID {} not found, using 'unknown' as server_name", server_id);
-            "unknown".to_string()
-        }
-    };
+    .context("Failed to get server namespace")?
+    .ok_or_else(|| anyhow::anyhow!("Server '{}' not found while adding it to a profile", server_id))?;
 
     // Check if the server already exists in the profile and get its current enabled status
     let existing_enabled = sqlx::query_scalar::<_, bool>(&format!(

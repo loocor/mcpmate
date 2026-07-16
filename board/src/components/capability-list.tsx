@@ -38,9 +38,7 @@ import {
 import { Card, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
-import {
-	TooltipProvider,
-} from "./ui/tooltip";
+import { TooltipProvider } from "./ui/tooltip";
 import { SchemaTable } from "./schema-table";
 import { TruncatedText } from "./truncated-text";
 import {
@@ -214,6 +212,7 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 		const args = toArguments(record.arguments);
 		return {
 			title,
+			upstreamIdentifier: name && name !== title ? name : undefined,
 			subtitle: undefined, // Remove original tool name display
 			description,
 			server: asString(record.server_name),
@@ -226,14 +225,17 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 	}
 
 	if (kind === "resources") {
+		const upstreamUri = asString(record.resource_uri) || asString(record.uri);
 		const title =
-			asString(record.resource_uri) ||
-			asString(record.uri) ||
+			asString(record.unique_uri) ||
+			upstreamUri ||
 			asString(record.name) ||
 			"Resource";
 		const description = normalizeMultiline(asString(record.description));
 		return {
 			title,
+			upstreamIdentifier:
+				upstreamUri && upstreamUri !== title ? upstreamUri : undefined,
 			subtitle: asString(record.name),
 			server: asString(record.server_name),
 			mime: asString(record.mime_type),
@@ -244,12 +246,15 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 	}
 
 	if (kind === "prompts") {
+		const upstreamName = asString(record.prompt_name) || asString(record.name);
 		const title =
-			asString(record.prompt_name) || asString(record.name) || "Prompt";
+			asString(record.unique_name) || upstreamName || "Prompt";
 		const description = normalizeMultiline(asString(record.description));
 		const args = toArguments(record.arguments);
 		return {
 			title,
+			upstreamIdentifier:
+				upstreamName && upstreamName !== title ? upstreamName : undefined,
 			server: asString(record.server_name),
 			description,
 			args,
@@ -259,11 +264,21 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 	}
 
 	// Templates: show concise row like other capabilities, with server only
-	const uriTemplate = asString(record.uriTemplate) ?? asString(record.uri_template);
+	const uriTemplate =
+		asString(record.unique_uri_template) ??
+		asString(record.unique_name) ??
+		asString(record.uriTemplate) ??
+		asString(record.uri_template);
 	const title = uriTemplate || asString(record.name) || "Template";
+	const upstreamTemplate =
+		asString(record.uriTemplate) || asString(record.uri_template);
 	const description = normalizeMultiline(asString(record.description));
 	return {
 		title,
+		upstreamIdentifier:
+			upstreamTemplate && upstreamTemplate !== title
+				? upstreamTemplate
+				: undefined,
 		subtitle: undefined,
 		server: asString(record.server_name),
 		description,
@@ -291,7 +306,8 @@ const INTERACTIVE_TARGET_SELECTOR =
 	"button, a, input, textarea, select, [role=button]";
 
 function hasActiveTextSelection(): boolean {
-	const selection = typeof window !== "undefined" ? window.getSelection() : null;
+  const selection =
+    typeof window !== "undefined" ? window.getSelection() : null;
 	return Boolean(selection?.toString().trim());
 }
 
@@ -344,16 +360,22 @@ export function CapabilityList<T = CapabilityRecord>({
 }: CapabilityListProps<T>) {
 	const [internalFilter, setInternalFilter] = useState("");
 	const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
-	const [lazyDetailsById, setLazyDetailsById] = useState<Record<string, CapabilityRecord | null>>({});
-	const [lazyDetailsLoadingById, setLazyDetailsLoadingById] = useState<Record<string, boolean>>({});
-	const [lazyDetailsErrorById, setLazyDetailsErrorById] = useState<Record<string, string | null>>({});
+  const [lazyDetailsById, setLazyDetailsById] = useState<
+    Record<string, CapabilityRecord | null>
+  >({});
+  const [lazyDetailsLoadingById, setLazyDetailsLoadingById] = useState<
+    Record<string, boolean>
+  >({});
+  const [lazyDetailsErrorById, setLazyDetailsErrorById] = useState<
+    Record<string, string | null>
+  >({});
 	const search = filterText ?? internalFilter;
 	const showRawJson = useAppStore(
 		(state) => state.dashboardSettings.showRawCapabilityJson,
 	);
 	const { t } = useTranslation();
 
-	const useCapsule = capsule ?? (context === "server");
+  const useCapsule = capsule ?? context === "server";
 	const shouldClickToToggleDetails = clickToToggleDetails ?? true;
 
 	useEffect(() => {
@@ -375,7 +397,8 @@ export function CapabilityList<T = CapabilityRecord>({
 		[items, kind, getKind],
 	);
 	const data = useMemo(
-		() => mappedItems
+    () =>
+      mappedItems
 			.filter(({ mapped }) => matchText(mapped, search))
 			.sort((a, b) => a.mapped.title.localeCompare(b.mapped.title)),
 		[mappedItems, search],
@@ -671,7 +694,7 @@ export function CapabilityList<T = CapabilityRecord>({
 							: undefined
 					}
 				>
-					{mapped.title}
+					<span title={mapped.upstreamIdentifier}>{mapped.title}</span>
 					{mapped.subtitle ? (
 						<span className="ml-2 text-xs text-slate-500">
 							{mapped.subtitle}
@@ -745,7 +768,10 @@ export function CapabilityList<T = CapabilityRecord>({
 
 		const actionSection = (
 			<div
-				className={`ml-auto flex items-start gap-2 ${hoverActions ? "opacity-0 group-hover:opacity-100 transition-opacity" : ""
+        className={`ml-auto flex items-start gap-2 ${
+          hoverActions
+            ? "opacity-0 group-hover:opacity-100 transition-opacity"
+            : ""
 					}`}
 			>
 				{actions}
@@ -757,7 +783,8 @@ export function CapabilityList<T = CapabilityRecord>({
 				<CapsuleStripeListItem
 					key={id}
 					interactive={isRowInteractive}
-					className={`group relative px-3 transition-colors ${isSelected
+          className={`group relative px-3 transition-colors ${
+            isSelected
 						? "bg-primary/10 ring-1 ring-slate-200/80 dark:ring-slate-700/60"
 						: ""
 						}`}
@@ -880,10 +907,7 @@ export function CapabilityList<T = CapabilityRecord>({
 	});
 
 	const body = scrollContainedBody ? (
-		<CardListScrollBody
-			className={scrollBodyClassName}
-			scrollLocked={loading}
-		>
+    <CardListScrollBody className={scrollBodyClassName} scrollLocked={loading}>
 			{list}
 		</CardListScrollBody>
 	) : (
@@ -892,15 +916,9 @@ export function CapabilityList<T = CapabilityRecord>({
 
 	return (
 		<Card
-			className={
-				scrollContainedBody
-					? CAPABILITY_SCROLL_CARD_CLASS
-					: undefined
-			}
-		>
-			<CardHeader
-				className={scrollContainedBody ? "shrink-0" : undefined}
+      className={scrollContainedBody ? CAPABILITY_SCROLL_CARD_CLASS : undefined}
 			>
+      <CardHeader className={scrollContainedBody ? "shrink-0" : undefined}>
 				<div className="flex items-center justify-between gap-2">
 					<CardTitle>{title ?? kindLabel}</CardTitle>
 					{showSearch ? (

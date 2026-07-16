@@ -52,17 +52,35 @@ export interface ServerMetaInfo {
 
 /** Discriminated source type for a server's origin. */
 export type ServerSourceType =
-  | "registry"
-  | "catalog"
-  | "browser"
-  | "portal"
-  | "local"
-  | "other";
+  "registry" | "catalog" | "browser" | "portal" | "local" | "other";
 
 /** Structured origin record attached to a server. */
 export interface ServerSource {
   type: ServerSourceType;
   ref?: string;
+}
+
+export interface StandardServerInfo {
+  name?: string | null;
+  title?: string | null;
+  version?: string | null;
+}
+
+export interface ServerNamespaceConflict {
+  server_id: string;
+  namespace: string;
+}
+
+export interface ServerNamespaceIssue {
+  code:
+    | "namespace_conflict"
+    | "manual_remediation_required"
+    | "pending_repair"
+    | "capability_collision";
+  current_namespace: string;
+  suggested_namespace?: string | null;
+  conflicts?: ServerNamespaceConflict[];
+  remediation_allowed?: boolean;
 }
 
 export interface ServerSummary {
@@ -81,6 +99,7 @@ export interface ServerSummary {
   instance_count?: number;
   instances?: InstanceSummary[];
   meta?: ServerMetaInfo;
+  server_info?: StandardServerInfo | null;
   icons?: ServerIcon[];
   capability?: ServerCapabilitySummary;
   capabilities?: ServerCapabilitySummary;
@@ -92,6 +111,7 @@ export interface ServerSummary {
   oauth_custody_state?: OAuthStatus["custody_state"] | null;
   oauth_requires_reconnect?: boolean | null;
   oauth_issue?: OAuthStatus["issue"] | null;
+  namespace_issue?: ServerNamespaceIssue | null;
 }
 
 export interface ServerListResponse {
@@ -326,7 +346,6 @@ export type AuditAction =
   | "runtime_cache_reset"
   | "audit_policy_update"
   | "inspector_timeout_update";
-
 
 export interface AuditEventRecord {
   id?: number | null;
@@ -571,7 +590,7 @@ export interface MCPConfig {
  * - "streamable_http": HTTP-based server
  */
 export interface MCPServerConfig {
-  /** Server name */
+  /** Immutable MCPMate-managed server namespace. */
   name: string;
 
   /** Direct server type accepted by the backend CRUD API. */
@@ -625,14 +644,10 @@ export type SecretKind =
   | "header_value";
 
 export type SwitchableSecretStoreProviderMode =
-  | "operating_system"
-  | "passphrase"
-  | "local_file";
+  "operating_system" | "passphrase" | "local_file";
 
 export type SecretStoreProviderMode =
-  | SwitchableSecretStoreProviderMode
-  | "development"
-  | "custom";
+  SwitchableSecretStoreProviderMode | "development" | "custom";
 
 /** Known secure-store issue reason codes emitted by the backend. */
 export const SECRET_STORE_REASON_CODES = [
@@ -650,8 +665,7 @@ export const SECRET_STORE_REASON_CODES = [
   "initialization_failed",
 ] as const;
 
-export type SecretStoreReasonCode =
-  (typeof SECRET_STORE_REASON_CODES)[number];
+export type SecretStoreReasonCode = (typeof SECRET_STORE_REASON_CODES)[number];
 
 export type SecretStoreIssueReasonCode = SecretStoreReasonCode | "unknown";
 
@@ -878,7 +892,7 @@ export interface ConfigSuitTool {
   server_id: string;
   server_name: string;
   tool_name: string;
-  unique_name?: string;
+  unique_name: string;
   description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
@@ -895,6 +909,7 @@ export interface ConfigSuitResource {
   server_id: string;
   server_name: string;
   resource_uri: string;
+  unique_uri: string;
   description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
@@ -911,6 +926,7 @@ export interface ConfigSuitResourceTemplate {
   server_id: string;
   server_name: string;
   uri_template: string;
+  unique_uri_template: string;
   description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
@@ -927,6 +943,7 @@ export interface ConfigSuitPrompt {
   server_id: string;
   server_name: string;
   prompt_name: string;
+  unique_name: string;
   description?: string | null;
   enabled: boolean;
   allowed_operations: string[];
@@ -1236,7 +1253,8 @@ export interface ClientRecordReviewReq {
 }
 
 export type ClientConfigFileState = "with_config_file" | "without_config_file";
-export type ClientRegistrationOrigin = "manual" | "config_detection" | "runtime_initialize" | string;
+export type ClientRegistrationOrigin =
+  "manual" | "config_detection" | "runtime_initialize" | string;
 
 export interface DefaultClientPolicyData {
   config_mode: string;
@@ -1253,10 +1271,7 @@ export interface DefaultClientPolicyResp {
 // Client config details
 export type ClientConfigMode = "unify" | "hosted" | "transparent" | string;
 export type ClientCapabilitySourceSelection =
-  | "default"
-  | "profile"
-  | "custom"
-  | string;
+  "default" | "profile" | "custom" | string;
 export type ClientConfigSelected =
   | "default"
   | { profile: { profile_id: string } }
@@ -1365,7 +1380,11 @@ export interface UnifyDirectExposureConfig {
   diagnostics?: {
     invalid_server_ids?: string[];
     invalid_capability_ids?: string[];
-    invalid_tool_surfaces?: { server_id: string; tool_name: string; reason: string }[];
+    invalid_tool_surfaces?: {
+      server_id: string;
+      tool_name: string;
+      reason: string;
+    }[];
     invalid_prompt_surfaces?: {
       server_id: string;
       prompt_name: string;
@@ -1537,7 +1556,8 @@ export interface CapabilityTokenLedgerResponse {
 export interface OAuthStatus {
   server_id: string;
   configured: boolean;
-  state?: "not_configured" | "disconnected" | "connected" | "expired" | string | null;
+  state?:
+    "not_configured" | "disconnected" | "connected" | "expired" | string | null;
   authorization_endpoint?: string | null;
   token_endpoint?: string | null;
   client_id?: string | null;
@@ -1546,7 +1566,8 @@ export interface OAuthStatus {
   has_client_secret?: boolean | null;
   manual_authorization_override?: boolean | null;
   expires_at?: string | null;
-  custody_state?: "missing" | "secure" | "legacy_plaintext" | "unavailable" | string | null;
+  custody_state?:
+    "missing" | "secure" | "legacy_plaintext" | "unavailable" | string | null;
   requires_reconnect?: boolean | null;
   issue?: {
     code: string;
@@ -1611,13 +1632,11 @@ interface ClientConfigFileParseDraftPayload {
   config_file_parse?: ClientConfigFileParse;
 }
 
-export interface ClientConfigFileParseInspectReq
-  extends ClientConfigFileParseDraftPayload {
+export interface ClientConfigFileParseInspectReq extends ClientConfigFileParseDraftPayload {
   config_path: string;
 }
 
-export interface ClientConfigFileParseInspectExistingReq
-  extends ClientConfigFileParseDraftPayload {
+export interface ClientConfigFileParseInspectExistingReq extends ClientConfigFileParseDraftPayload {
   identifier: string;
 }
 
@@ -1658,7 +1677,8 @@ export interface LlmProviderThinkingConfig {
 export interface LlmProviderConfig {
   id: string;
   name: string;
-  provider_type: "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
+  provider_type:
+    "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
   base_url: string;
   model_id: string;
   has_api_key: boolean;
@@ -1670,7 +1690,8 @@ export interface LlmProviderConfig {
 
 export interface LlmProviderCreateInput {
   name: string;
-  provider_type: "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
+  provider_type:
+    "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
   base_url: string;
   model_id: string;
   api_key?: string;
@@ -1683,7 +1704,8 @@ export interface LlmProviderCreateInput {
 
 export interface LlmProviderModelPreviewInput {
   provider_id?: string;
-  provider_type: "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
+  provider_type:
+    "openai_chat" | "openai_responses" | "anthropic" | "openai_compatible";
   base_url: string;
   model_id: string;
   api_key?: string;

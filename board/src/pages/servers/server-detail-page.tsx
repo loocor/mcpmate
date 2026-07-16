@@ -1,14 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Edit3,
+	AlertTriangle,
 	Loader2,
 	Play,
 	Power,
 	PowerOff,
 	RefreshCw,
 	Trash2,
+	Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
@@ -44,7 +52,6 @@ import {
 	AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { CachedAvatar } from "../../components/cached-avatar";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonGroup } from "../../components/ui/button-group";
 import {
@@ -59,19 +66,14 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import {
-	auditApi,
-	serversApi,
-} from "../../lib/api";
+import { auditApi, serversApi } from "../../lib/api";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
+import { getServerDisplayName } from "../../lib/server-display";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
-import type {
-	ServerCapabilitySummary,
-	ServerDetail,
-} from "../../lib/types";
+import type { ServerCapabilitySummary, ServerDetail } from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 
 const readLegacyCapability = (
@@ -127,7 +129,8 @@ const SERVER_CAPABILITY_KINDS: CapabilityPreviewKind[] = [
 
 const readCapabilityIdentifier = (value: unknown): string | undefined => {
 	if (typeof value === "string" && value.trim()) return value;
-	if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
 	return undefined;
 };
 
@@ -135,13 +138,8 @@ const serverCapabilityItemId = (item: ServerFlatCapabilityItem): string => {
 	const key =
 		readCapabilityIdentifier(item.id) ??
 		readCapabilityIdentifier(item.unique_name) ??
-		readCapabilityIdentifier(item.tool_name) ??
-		readCapabilityIdentifier(item.prompt_name) ??
-		readCapabilityIdentifier(item.resource_uri) ??
-		readCapabilityIdentifier(item.uri) ??
-		readCapabilityIdentifier(item.uriTemplate) ??
-		readCapabilityIdentifier(item.uri_template) ??
-		readCapabilityIdentifier(item.name) ??
+    readCapabilityIdentifier(item.unique_uri) ??
+    readCapabilityIdentifier(item.unique_uri_template) ??
 		"unknown";
 	return `${item.__serverCapabilityKind}:${key}`;
 };
@@ -164,21 +162,15 @@ function serverCapabilityDetailKey(
 	kind: CapabilityPreviewKind,
 ) {
 	if (kind === "tools") {
-		return firstCapabilityString(item, ["tool_name", "name", "unique_name"]);
+    return firstCapabilityString(item, ["unique_name"]);
 	}
 	if (kind === "resources") {
-		return firstCapabilityString(item, ["resource_uri", "uri", "name", "unique_uri"]);
+    return firstCapabilityString(item, ["unique_uri"]);
 	}
 	if (kind === "prompts") {
-		return firstCapabilityString(item, ["prompt_name", "name", "unique_name"]);
+    return firstCapabilityString(item, ["unique_name"]);
 	}
-	return firstCapabilityString(item, [
-		"uri_template",
-		"uriTemplate",
-		"uri",
-		"name",
-		"unique_uri_template",
-	]);
+  return firstCapabilityString(item, ["unique_uri_template"]);
 }
 
 function toCapabilityPreviewKind(
@@ -228,9 +220,9 @@ function capabilityKindLabel(
 
 const overviewMetadataGridClass =
 	"grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 text-sm leading-5";
-const overviewMetadataLabelClass =
-	"text-xs uppercase leading-5 text-slate-500";
-const overviewMetadataValueClass = "min-w-0 text-left text-sm leading-5";
+const overviewMetadataLabelClass = "text-xs uppercase leading-5 text-slate-500";
+const overviewMetadataValueClass =
+	"min-w-0 text-left text-sm leading-5 text-slate-600 dark:text-slate-300";
 function OverviewMetadataRow({
 	label,
 	children,
@@ -549,15 +541,21 @@ export function ServerDetailPage() {
 		}
 	};
 
-	const serverDisplayName = server?.name || serverId;
+	const serverDisplayName = server ? getServerDisplayName(server) : serverId;
+	const namespaceIssueStatusLabel = server?.namespace_issue
+		? t(
+				server.namespace_issue.code === "capability_collision" ||
+					server.namespace_issue.conflicts?.length
+					? "detail.namespaceIssue.statusConflict"
+					: "detail.namespaceIssue.statusInvalid",
+			)
+		: undefined;
 	const primaryIconSrc = server?.icons?.[0]?.src;
 	const primaryIconAlt = primaryIconSrc
 		? `${serverDisplayName} icon`
 		: undefined;
-	const serverDescription = server?.meta?.description?.trim();
 	const serverCategory = (server?.meta as Record<string, unknown>)?.category as
-		| string
-		| undefined;
+    string | undefined;
 	const serverScenario = (server?.meta as Record<string, unknown>)
 		?.recommendedScenario as string | undefined;
 	const capabilitySummary = server
@@ -569,10 +567,13 @@ export function ServerDetailPage() {
 	const protocolVersion =
 		server?.protocol_version ?? readLegacyString(server, "protocolVersion");
 	const serverVersion =
-		server?.server_version ?? readLegacyString(server, "serverVersion");
+		server?.server_info?.version ??
+		server?.server_version ??
+		readLegacyString(server, "serverVersion");
 	const defaultTab = "overview";
 	const validTabs = ["overview", "capabilities"];
-	const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } = useUrlTab({
+  const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } =
+    useUrlTab({
 		paramName: "tab",
 		defaultTab,
 		validTabs,
@@ -697,7 +698,13 @@ export function ServerDetailPage() {
 					<h2 className="text-3xl font-bold tracking-tight">
 						{serverDisplayName}
 					</h2>
-					{server ? (
+					{server?.namespace_issue ? (
+						<StatusBadge
+							status="pending"
+							statusLabel={namespaceIssueStatusLabel}
+							isServerEnabled={false}
+						/>
+					) : server ? (
 						<StatusBadge
 							status={runtimeStatus}
 							instances={server.instances || []}
@@ -784,14 +791,20 @@ export function ServerDetailPage() {
 							</Button>
 							<Button
 								size="sm"
-								variant="outline"
+								variant={server.namespace_issue ? "warning" : "outline"}
 								onClick={() => setIsEditOpen(true)}
 								className={overviewActionButtonClass}
 							>
-								<Edit3 className="h-4 w-4" />
-								{t("detail.actions.edit", {
-									defaultValue: "Edit",
-								})}
+								{server.namespace_issue ? (
+									<Wrench className="h-4 w-4" />
+								) : (
+									<Edit3 className="h-4 w-4" />
+								)}
+								{server.namespace_issue
+									? t("detail.namespaceIssue.action")
+									: t("detail.actions.edit", {
+											defaultValue: "Edit",
+										})}
 							</Button>
 						</ButtonGroup>
 					</div>
@@ -819,53 +832,35 @@ export function ServerDetailPage() {
 															fallback={serverDisplayName || "?"}
 															className="text-sm"
 														/>
-														<div className={`min-w-0 flex-1 ${overviewMetadataGridClass}`}>
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.service", {
-																	defaultValue: "Service",
-																})}
+                          <div
+                            className={`min-w-0 flex-1 ${overviewMetadataGridClass}`}
 															>
-																<div className="flex flex-wrap items-center gap-2">
-																	<span
-																		className={
-																			serverEnabled
-																				? "text-emerald-700 dark:text-emerald-300"
-																				: "text-slate-600 dark:text-slate-300"
-																		}
-																	>
-																		{serverEnabled
-																			? t("detail.overview.status.enabled", {
-																				defaultValue: "Enabled",
-																			})
-																			: t("detail.overview.status.disabled", {
-																				defaultValue: "Disabled",
-																			})}
-																	</span>
-																	{server.unify_direct_exposure_eligible ? (
-																		<Badge
-																			variant="secondary"
-																			className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
-																		>
-																			{t("detail.overview.status.unifyEligible", {
-																				defaultValue: "Direct Exposure Eligible",
-																			})}
-																		</Badge>
-																	) : null}
-																</div>
-															</OverviewMetadataRow>
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.runtime", {
-																	defaultValue: "Runtime",
-																})}
+												<OverviewMetadataRow
+													label={t("detail.overview.labels.upstreamName")}
 															>
-																<StatusBadge
-																	status={runtimeStatus}
-																	instances={server.instances || []}
-																	isServerEnabled={serverEnabled}
-																	appearance="plain"
-																/>
-															</OverviewMetadataRow>
-															<OverviewMetadataRow
+													{server.server_info?.name?.trim() || "—"}
+												</OverviewMetadataRow>
+										<OverviewMetadataRow
+											label={t("detail.overview.labels.namespace")}
+													>
+									{server.namespace_issue ? (
+										<Button
+											type="button"
+											variant="ghost"
+											onClick={() => setIsEditOpen(true)}
+											className="h-auto p-0 font-normal text-inherit hover:bg-transparent hover:text-inherit"
+										>
+											{server.name}
+											<AlertTriangle
+												className="ml-2 h-4 w-4 text-destructive"
+												aria-label={t("detail.namespaceIssue.iconLabel")}
+											/>
+										</Button>
+									) : (
+										server.name
+									)}
+										</OverviewMetadataRow>
+														<OverviewMetadataRow
 																label={t("detail.overview.labels.type", {
 																	defaultValue: "Type",
 																})}
@@ -892,9 +887,7 @@ export function ServerDetailPage() {
 																		defaultValue: "Protocol",
 																	})}
 																>
-																	<span className="font-mono text-slate-600 dark:text-slate-300">
-																		{protocolVersion}
-																	</span>
+													{protocolVersion}
 																</OverviewMetadataRow>
 															) : null}
 															{serverVersion ? (
@@ -903,32 +896,21 @@ export function ServerDetailPage() {
 																		defaultValue: "Version",
 																	})}
 																>
-																	<span className="font-mono text-slate-600 dark:text-slate-300">
-																		{serverVersion}
-																	</span>
+													{serverVersion}
 																</OverviewMetadataRow>
 															) : null}
 															{capabilityOverviewText ? (
 																<OverviewMetadataRow
-																	label={t("detail.overview.labels.capabilities", {
+                                label={t(
+                                  "detail.overview.labels.capabilities",
+                                  {
 																		defaultValue: "Capabilities",
-																	})}
+                                  },
+                                )}
 																	multiline
 																>
 																	<span className="text-slate-600 dark:text-slate-300">
 																		{capabilityOverviewText}
-																	</span>
-																</OverviewMetadataRow>
-															) : null}
-															{serverDescription ? (
-																<OverviewMetadataRow
-																	label={t("detail.overview.labels.description", {
-																		defaultValue: "Description",
-																	})}
-																	multiline
-																>
-																	<span className="text-slate-600 dark:text-slate-300">
-																		{serverDescription}
 																	</span>
 																</OverviewMetadataRow>
 															) : null}
@@ -961,7 +943,7 @@ export function ServerDetailPage() {
 																	})}
 																	multiline
 																>
-																	<span className="break-all font-mono">
+															<span className="break-all">
 																		{server.command}
 																	</span>
 																</OverviewMetadataRow>
@@ -971,7 +953,7 @@ export function ServerDetailPage() {
 																	defaultValue: "Repository",
 																})}
 															>
-																<span className="font-mono text-slate-500">—</span>
+																	—
 															</OverviewMetadataRow>
 														</div>
 													</div>
@@ -1109,15 +1091,22 @@ export function ServerDetailPage() {
 											onFirstPage={handleServerLogsFirstPage}
 											onNextPage={handleServerLogsNextPage}
 											onLastPage={() => void handleServerLogsLastPage()}
-											expandLabel={t("detail.logs.expand", { defaultValue: "Expand Logs" })}
-											collapseLabel={t("detail.logs.collapse", { defaultValue: "Collapse Logs" })}
+                    expandLabel={t("detail.logs.expand", {
+                      defaultValue: "Expand Logs",
+                    })}
+                    collapseLabel={t("detail.logs.collapse", {
+                      defaultValue: "Collapse Logs",
+                    })}
 										/>
 									) : null}
 								</div>
 							)}
 					</TabsContent>
 
-					<TabsContent value="capabilities" className={DETAIL_TAB_CONTENT_CLASS}>
+          <TabsContent
+            value="capabilities"
+            className={DETAIL_TAB_CONTENT_CLASS}
+          >
 						<ServerCapabilitiesPanel
 							serverId={serverId}
 							enableInspect={enableServerDebug}
@@ -1143,11 +1132,7 @@ export function ServerDetailPage() {
 	);
 }
 
-function ServerCapabilityTabsHeader({
-	serverId,
-}: {
-	serverId: string;
-}) {
+function ServerCapabilityTabsHeader({ serverId }: { serverId: string }) {
 	const { t } = useTranslation("servers");
 	const toolsQ = useQuery({
 		queryKey: ["server-cap", "tools", serverId],
@@ -1347,10 +1332,12 @@ function ServerCapabilitiesPanel({
 	const renderServerFlatCapabilityList = (
 		items: CapabilityPreviewFlatItem[],
 	): ReactNode => {
-		const flatItems: ServerFlatCapabilityItem[] = items.map(({ kind, item }) => ({
+    const flatItems: ServerFlatCapabilityItem[] = items.map(
+      ({ kind, item }) => ({
 			...item,
 			__serverCapabilityKind: kind,
-		}));
+      }),
+    );
 
 		return (
 			<CapabilityList<ServerFlatCapabilityItem>

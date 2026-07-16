@@ -4,6 +4,7 @@ import {
 	shouldAppendKeyValueRow,
 } from "../../lib/key-value-fields";
 import {
+	AlertCircle,
 	ClipboardPaste,
 	Loader2,
 	RotateCcw,
@@ -21,22 +22,26 @@ import {
 	useState,
 } from "react";
 import { useFieldArray, useForm, useWatch } from "react-hook-form";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
+import { readClipboardText } from "../../lib/clipboard";
 import { cn } from "../../lib/utils";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { parseJsonDrafts } from "../../lib/install-normalizer";
 import { isTauriEnvironmentSync } from "../../lib/platform";
 import { formatRedactedJsonPreviewValue } from "../../lib/secure-field";
 import {
+	isCanonicalServerNamespace,
+	namespaceInputIsReadOnly,
+	suggestServerNamespace,
+} from "../../lib/server-namespace";
+import {
 	canIngestFromDataTransfer,
 	extractPayloadFromDataTransfer,
 	formatServerUniImportTransferError,
 } from "../../lib/server-uni-import-transfer";
 import type { SecretOrigin } from "../../lib/types";
-import {
-	InlineSecretCreate,
-	useInlineSecretCreateField,
-} from "../secrets";
+import { InlineSecretCreate, useInlineSecretCreateField } from "../secrets";
 import { Button } from "../ui/button";
 import {
 	Drawer,
@@ -48,8 +53,15 @@ import {
 } from "../ui/drawer";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Segment } from "../ui/segment";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "../ui/tooltip";
 import {
 	CommandField,
 	HttpHeaders,
@@ -79,6 +91,7 @@ import { ServerConfigJsonPanel } from "./server-config-json-panel";
 import {
 	breathingAnimation,
 	DEFAULT_INGEST_MESSAGE,
+	editServerSchema,
 	type ManualServerFormValues,
 	manualServerSchema,
 	type ServerInstallManualFormHandle,
@@ -113,9 +126,12 @@ export const ServerInstallManualForm = forwardRef<
 			mode = "create",
 			initialDraft,
 			allowJsonEditing,
+			namespaceIssue,
+			namespaceIssueFeedback,
 			onPreview,
 			allowProgrammaticIngest = false,
 			serverId,
+			namespaceRemediationAllowed = false,
 			onInitiateOAuth,
 			extraTab,
 		}: ServerInstallManualFormProps,
@@ -150,13 +166,17 @@ export const ServerInstallManualForm = forwardRef<
 			control,
 			handleSubmit,
 			register,
-			formState: { errors, isSubmitting },
+			formState: { dirtyFields, errors, isSubmitting },
 			reset,
 			watch,
 			setValue,
 			getValues,
 		} = useForm<ManualServerFormValues>({
-			resolver: zodResolver(manualServerSchema),
+			resolver: zodResolver(
+				isEditMode && !namespaceRemediationAllowed
+					? editServerSchema
+					: manualServerSchema,
+			),
 			shouldUnregister: false,
 			defaultValues: {
 				name: "",
@@ -313,6 +333,61 @@ export const ServerInstallManualForm = forwardRef<
 		const watchedEnv = useWatch({ control, name: "env" });
 		const watchedHeaders = useWatch({ control, name: "headers" });
 		const watchedUrlParams = useWatch({ control, name: "urlParams" });
+		const namespaceReadOnly = namespaceInputIsReadOnly(
+			mode,
+			false,
+			namespaceRemediationAllowed,
+		);
+		const namespaceSuggestion = useMemo(() => {
+			if (!watchedName || isCanonicalServerNamespace(watchedName)) return null;
+			return suggestServerNamespace(watchedName);
+		}, [watchedName]);
+		const namespaceErrorMessage = errors.name
+			? t(errors.name.message ?? "manual.errors.namespaceInvalid")
+			: null;
+		const namespaceIssueMessage = namespaceIssue
+			? t(
+				namespaceIssue.code === "capability_collision"
+					? "detail.namespaceIssue.popoverCapabilityCollision"
+					: namespaceIssue.conflicts?.length
+						? "detail.namespaceIssue.popoverLegacyCollision"
+						: "detail.namespaceIssue.popoverInvalid",
+				{ namespace: namespaceIssue.current_namespace },
+			)
+			: null;
+		const namespaceCandidateChanged = Boolean(
+			namespaceIssue && dirtyFields.name,
+		);
+		const namespaceCandidateValidationMessage = namespaceCandidateChanged
+			? !watchedName?.trim()
+				? t("manual.errors.namespaceRequired")
+				: !isCanonicalServerNamespace(watchedName)
+					? t("manual.errors.namespaceInvalid")
+					: null
+			: null;
+		const namespaceWarningMessage =
+			namespaceCandidateValidationMessage ??
+			namespaceIssueFeedback ??
+			(namespaceCandidateChanged ? null : namespaceIssueMessage) ??
+			(namespaceIssue ? null : namespaceErrorMessage);
+		const namespaceConflict = namespaceIssue?.conflicts?.[0] ?? null;
+		const showNamespaceConflictDetails = Boolean(
+			namespaceIssue &&
+			!namespaceCandidateChanged &&
+			!namespaceIssueFeedback &&
+			namespaceConflict,
+		);
+		const [namespacePopoverOpen, setNamespacePopoverOpen] = useState(false);
+
+		useEffect(() => {
+			if (!isOpen) {
+				setNamespacePopoverOpen(false);
+				return;
+			}
+			if (namespaceIssue || namespaceIssueFeedback) {
+				setNamespacePopoverOpen(true);
+			}
+		}, [isOpen, namespaceIssue, namespaceIssueFeedback]);
 
 		const secretOriginBase = useMemo<SecretOrigin>(
 			() => ({
@@ -524,13 +599,8 @@ export const ServerInstallManualForm = forwardRef<
 			defaultValue: "Meta information",
 		});
 		const tabsMetaWip = t("manual.tabs.metaWip", { defaultValue: "WIP" });
-		const nameLabel = t("manual.fields.name.label", { defaultValue: "Name" });
-		const namePlaceholder = t("manual.fields.name.placeholder", {
-			defaultValue: "e.g., local-mcp",
-		});
-		const nameReadOnlyTitle = t("manual.fields.name.readOnlyTitle", {
-			defaultValue: "Editing server names is disabled",
-		});
+		const nameLabel = t("manual.fields.namespace.label");
+		const namePlaceholder = t("manual.fields.namespace.placeholder");
 		const typeLabel = t("manual.fields.type.label", { defaultValue: "Type" });
 		const jsonLabel = t("manual.fields.json.label", {
 			defaultValue: "Server JSON",
@@ -699,6 +769,7 @@ export const ServerInstallManualForm = forwardRef<
 				ingestMessages.parsingPasted,
 				isDropZoneCollapsed,
 				isIngesting,
+				setIngestMessage,
 			],
 		);
 
@@ -759,7 +830,9 @@ export const ServerInstallManualForm = forwardRef<
 			event.stopPropagation();
 			setIsDragOver(false);
 			try {
-				const payload = await extractPayloadFromDataTransfer(event.dataTransfer);
+				const payload = await extractPayloadFromDataTransfer(
+					event.dataTransfer,
+				);
 				if (payload) {
 					setIngestMessage(ingestMessages.parsingDropped);
 					await handleIngestPayload(payload);
@@ -945,7 +1018,6 @@ export const ServerInstallManualForm = forwardRef<
 			}
 		};
 
-
 		const isCoreJsonPanel = isCoreJsonView(activeTab, viewMode);
 
 		return (
@@ -1010,8 +1082,8 @@ export const ServerInstallManualForm = forwardRef<
 								>
 									<div
 										className={`w-full h-full flex items-center justify-center gap-4 rounded-lg border border-dashed transition-all duration-300 ${isDropZoneCollapsed
-											? "flex-row px-4 py-2 border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
-											: "flex-col py-8 border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
+												? "flex-row px-4 py-2 border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
+												: "flex-col py-8 border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/40"
 											} ${ingestError
 												? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20"
 												: isIngestSuccess
@@ -1048,8 +1120,8 @@ export const ServerInstallManualForm = forwardRef<
 										>
 											<p
 												className={`leading-relaxed transition-all duration-300 ${isDropZoneCollapsed
-													? "text-sm max-w-none"
-													: "max-w-none px-4 text-sm"
+														? "text-sm max-w-none"
+														: "max-w-none px-4 text-sm"
 													} ${ingestError
 														? "text-red-600 dark:text-red-400"
 														: isIngestSuccess
@@ -1076,7 +1148,9 @@ export const ServerInstallManualForm = forwardRef<
 							) : null}
 
 							{/* Main Content Area */}
-							<div className={installFormBodyClass(ingestEnabled, isCoreJsonPanel)}>
+							<div
+								className={installFormBodyClass(ingestEnabled, isCoreJsonPanel)}
+							>
 								<Tabs
 									value={activeTab}
 									onValueChange={setActiveTab}
@@ -1087,7 +1161,9 @@ export const ServerInstallManualForm = forwardRef<
 									>
 										<TabsTrigger value="core">{tabsCoreLabel}</TabsTrigger>
 										{extraTab && (
-											<TabsTrigger value={extraTab.value}>{extraTab.label}</TabsTrigger>
+											<TabsTrigger value={extraTab.value}>
+												{extraTab.label}
+											</TabsTrigger>
 										)}
 										<TabsTrigger value="meta">
 											{tabsMetaLabel} <sup>({tabsMetaWip})</sup>
@@ -1103,34 +1179,127 @@ export const ServerInstallManualForm = forwardRef<
 												<>
 													<div className="space-y-4">
 														<div className="flex items-center gap-4">
-															<Label htmlFor={nameId} className="w-20 text-right">
+															<Label
+																htmlFor={nameId}
+																className="w-20 text-right"
+															>
 																{nameLabel}
 															</Label>
 															<div className="flex-1">
-																<Input
-																	id={nameId}
-																	{...register("name")}
-																	placeholder={namePlaceholder}
-																	readOnly={isEditMode}
-																	aria-readonly={isEditMode}
-																	title={isEditMode ? nameReadOnlyTitle : undefined}
-																	className={
-																		isEditMode
-																			? "cursor-not-allowed bg-muted text-muted-foreground"
-																			: undefined
-																	}
-																/>
-																{errors.name && (
-																	<p className="text-xs text-red-500">
-																		{t(errors.name.message ?? "", {
-																			defaultValue: errors.name.message,
-																		})}
-																	</p>
-																)}
+																<div className="relative">
+																	<Input
+																		id={nameId}
+																		{...register("name")}
+																		placeholder={namePlaceholder}
+																		readOnly={namespaceReadOnly}
+																		aria-readonly={namespaceReadOnly}
+																		aria-invalid={Boolean(namespaceWarningMessage)}
+																		className={cn(
+																			namespaceReadOnly &&
+																			"cursor-not-allowed bg-muted text-muted-foreground",
+																			namespaceWarningMessage &&
+																			"border-destructive pr-10 ring-2 ring-destructive/20 focus-visible:ring-destructive",
+																		)}
+																	/>
+																	{!namespaceReadOnly && namespaceWarningMessage ? (
+																		<Popover
+																			open={namespacePopoverOpen}
+																			onOpenChange={setNamespacePopoverOpen}
+																		>
+																			<TooltipProvider delayDuration={200}>
+																				<Tooltip open={namespacePopoverOpen ? false : undefined}>
+																					<TooltipTrigger asChild>
+																						<PopoverTrigger asChild>
+																							<Button
+																								type="button"
+																								variant="ghost"
+																								size="icon"
+																								className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 text-destructive"
+																								aria-label={namespaceWarningMessage}
+																							>
+																								<AlertCircle className="h-4 w-4" aria-hidden />
+																							</Button>
+																						</PopoverTrigger>
+																					</TooltipTrigger>
+																					<TooltipContent
+																						side="top"
+																						className={cn(
+																							namespaceIssue &&
+																							"border-amber-500 bg-amber-500 text-white dark:border-amber-600 dark:bg-amber-600",
+																						)}
+																					>
+																						{namespaceWarningMessage}
+																					</TooltipContent>
+																				</Tooltip>
+																			</TooltipProvider>
+																			<PopoverContent
+																				side="top"
+																				align="end"
+																				className={cn(
+																					"w-80 p-3",
+																					namespaceIssue &&
+																					"border-amber-500 bg-amber-500 text-white dark:border-amber-600 dark:bg-amber-600",
+																				)}
+																			>
+																				<p
+																					className={cn(
+																						"text-sm text-muted-foreground",
+																						namespaceIssue && "text-white",
+																					)}
+																				>
+																							{showNamespaceConflictDetails && namespaceIssue && namespaceConflict ? (
+																						<Trans
+																							ns="servers"
+																							i18nKey={
+																								namespaceIssue.code === "capability_collision"
+																									? "detail.namespaceIssue.popoverCapabilityCollisionWithServer"
+																									: "detail.namespaceIssue.popoverLegacyCollisionWithServer"
+																							}
+																							values={{
+																										namespace: namespaceConflict.namespace,
+																							}}
+																							components={{
+																								server: (
+																									<Link
+																											to={`/servers/${namespaceConflict.server_id}`}
+																										onClick={onClose}
+																										className="font-semibold text-white underline underline-offset-4"
+																									/>
+																								),
+																							}}
+																						/>
+																					) : namespaceSuggestion ? (
+																						<>
+																							{namespaceWarningMessage} {" "}
+																							{t("manual.fields.namespace.suggestionAction")} {" "}
+																							<button
+																								type="button"
+																								className="font-semibold text-inherit underline-offset-4 hover:underline"
+																								onClick={() =>
+																									setValue("name", namespaceSuggestion, {
+																										shouldDirty: true,
+																										shouldValidate: true,
+																									})
+																								}
+																							>
+																								{namespaceSuggestion}
+																							</button>
+																						</>
+																					) : (
+																						namespaceWarningMessage
+																					)}
+																				</p>
+																			</PopoverContent>
+																		</Popover>
+																	) : null}
+																</div>
 															</div>
 														</div>
 														<div className="flex items-center gap-4">
-															<Label htmlFor={kindId} className="w-20 text-right">
+															<Label
+																htmlFor={kindId}
+																className="w-20 text-right"
+															>
 																{typeLabel}
 															</Label>
 															<div className="flex-1">
@@ -1219,7 +1388,8 @@ export const ServerInstallManualForm = forwardRef<
 														onCreateSecret={onCreateSecret}
 														secretOriginBase={secretOriginBase}
 														getRowKeyAt={(index) =>
-															watchedUrlParams?.[index]?.key?.trim() || undefined
+															watchedUrlParams?.[index]?.key?.trim() ||
+															undefined
 														}
 													/>
 
@@ -1257,7 +1427,6 @@ export const ServerInstallManualForm = forwardRef<
 											}
 										/>
 									</TabsContent>
-
 
 									{extraTab ? (
 										<TabsContent
@@ -1314,7 +1483,9 @@ export const ServerInstallManualForm = forwardRef<
 												) : (
 													<RefreshCw className="mr-2 h-4 w-4" />
 												)}
-												{t("manual.refreshFromRegistry", { defaultValue: "Refresh from Registry" })}
+												{t("manual.refreshFromRegistry", {
+													defaultValue: "Refresh from Registry",
+												})}
 											</Button>
 										)}
 										{isMarketMode ? (

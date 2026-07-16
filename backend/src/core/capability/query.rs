@@ -220,6 +220,7 @@ impl UnifiedQueryService {
             validation_session: validation_session(context),
             runtime_identity: None,
             connection_selection: None,
+            name_domain: crate::core::capability::runtime::NameDomain::External,
         }
     }
 }
@@ -366,7 +367,7 @@ fn prompt_to_capability(prompt: rmcp::model::Prompt) -> CapabilityItem {
 
 fn template_to_capability(template: rmcp::model::ResourceTemplate) -> CapabilityItem {
     let rmcp::model::Annotated { raw, .. } = template;
-    let unique_template = raw.uri_template.clone();
+    let unique_template = raw.name.clone();
     CapabilityItem::ResourceTemplate(ResourceTemplateCapability {
         uri_template: raw.uri_template,
         name: Some(raw.name),

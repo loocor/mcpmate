@@ -75,10 +75,7 @@ impl UnifiedQueryIntegration {
         let database = app_state.database.clone()?;
 
         Some(Arc::new(UnifiedQueryAdapter::from_components(
-            cache,
-            pool,
-            database,
-            app_state,
+            cache, pool, database, app_state,
         )))
     }
 }

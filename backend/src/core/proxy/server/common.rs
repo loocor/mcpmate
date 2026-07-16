@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::clients::models::{UnifyDirectExposureConfig, UnifyRouteMode};
 use crate::common::constants::client_headers;
-use crate::core::capability::naming::{NamingKind, normalize_server_name, resolve_unique_name, strip_server_prefix};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 
 /// Determine whether a server declares a given capability token
 pub fn supports_capability(
@@ -136,18 +136,22 @@ pub fn unify_directly_exposed_template_allowed(
     }
 }
 
-pub async fn resolve_direct_surface_value(
+pub(crate) async fn resolve_direct_surface_value(
     kind: NamingKind,
-    server_name: &str,
+    server_id: &str,
     presented_value: &str,
-) -> String {
-    if let Ok((resolved_server_name, raw_value)) = resolve_unique_name(kind, presented_value).await {
-        if normalize_server_name(&resolved_server_name) == normalize_server_name(server_name) {
-            return raw_value;
-        }
+) -> Result<String> {
+    let route = resolve_capability_route(kind, presented_value).await?;
+    if route.server_id != server_id {
+        return Err(anyhow!(
+            "External {:?} identifier '{}' belongs to server '{}', not '{}'",
+            kind,
+            presented_value,
+            route.server_id,
+            server_id
+        ));
     }
-
-    strip_server_prefix(kind, server_name, presented_value).unwrap_or_else(|| presented_value.to_string())
+    Ok(route.upstream_value)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
