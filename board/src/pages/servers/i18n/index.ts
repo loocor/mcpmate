@@ -573,7 +573,8 @@ export const serversTranslations = {
 				namespace: {
 					label: "Namespace",
 					placeholder: "e.g., local_mcp",
-          suggestionAction: "Use suggested namespace:",
+					suggestionAction: "Use suggested namespace:",
+					applySuggestion: "Apply suggestion",
 					importMapping: "{{original}} → {{namespace}}",
 				},
 				type: {
@@ -1538,7 +1539,8 @@ export const serversTranslations = {
 				namespace: {
 					label: "命名空间",
 					placeholder: "例如：local_mcp",
-          suggestionAction: "采用建议的命名空间：",
+					suggestionAction: "采用建议的命名空间：",
+					applySuggestion: "采用建议",
 					importMapping: "{{original}} → {{namespace}}",
 				},
 				type: {
@@ -2486,7 +2488,8 @@ export const serversTranslations = {
 				namespace: {
 					label: "名前空間",
 					placeholder: "例: local_mcp",
-          suggestionAction: "推奨される名前空間を使用:",
+					suggestionAction: "推奨される名前空間を使用:",
+					applySuggestion: "候補を適用",
 					importMapping: "{{original}} → {{namespace}}",
 				},
 				type: {

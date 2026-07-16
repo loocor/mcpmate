@@ -1548,6 +1548,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn external_projection_rejects_missing_canonical_identifier() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+
+        let data = make_test_cached_data("server-a", CacheScope::shared_raw(), 1);
+        let error = project_external_items(
+            &database,
+            "server-a",
+            cached_items_from_data(CapabilityType::Tools, data),
+            NameDomain::External,
+        )
+        .await
+        .expect_err("proxy projection must fail without a canonical identifier");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Exact upstream Tool capability 'tool_0' is not registered for server 'server-a'")
+        );
+    }
+
+    #[tokio::test]
     async fn client_filtered_cache_does_not_externalize_tools_twice() {
         let database = test_database().await;
         let scope = CacheScope::client_filtered("server-a#client".to_string(), "surface-a".to_string());

@@ -53,7 +53,7 @@ pub(super) async fn list_resources(
         let pool = &server.connection_pool;
 
         let mut tasks = Vec::new();
-        for (server_id, _server_name, capabilities) in enabled_servers {
+        for (server_id, server_name, capabilities) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -77,44 +77,65 @@ pub(super) async fn list_resources(
             let pool = pool.clone();
             let db = db.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                let resources = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
                     .await
-                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                let resources = result.items.into_resources().ok_or_else(|| {
-                    McpError::internal_error("Resource listing returned a different capability kind", None)
-                })?;
-                Ok::<_, McpError>((server_id, resources))
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| {
+                        result
+                            .items
+                            .into_resources()
+                            .ok_or_else(|| "Resource listing returned a different capability kind".to_string())
+                    });
+                (server_id, server_name, resources)
             });
         }
 
-        for result in futures::stream::iter(tasks)
+        let mut aggregate = super::common::AggregateListStatus::new("resources");
+        for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let (server_id, mut v) = result?;
-            if !unify_mode {
-                resources.append(&mut v);
-                continue;
-            }
-            for resource in v.drain(..) {
-                let raw_resource_uri: String = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Resource,
-                    &server_id,
-                    resource.uri.as_ref(),
-                )
-                .await
-                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                if crate::core::proxy::server::unify_directly_exposed_resource_allowed(
-                    client.unify_workspace.as_ref(),
-                    &unify_direct_exposure_eligible_server_ids,
-                    &server_id,
-                    raw_resource_uri.as_ref(),
-                ) {
-                    resources.push(resource);
+            let resource_batch = match result {
+                Ok(resource_batch) => resource_batch,
+                Err(error) => {
+                    aggregate.record_failure(&server_id, &server_name, error);
+                    continue;
                 }
+            };
+            let server_resources = async {
+                if !unify_mode {
+                    return Ok(resource_batch);
+                }
+                let mut exposed = Vec::new();
+                for resource in resource_batch {
+                    let raw_resource_uri = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Resource,
+                        &server_id,
+                        resource.uri.as_ref(),
+                    )
+                    .await?;
+                    if crate::core::proxy::server::unify_directly_exposed_resource_allowed(
+                        client.unify_workspace.as_ref(),
+                        &unify_direct_exposure_eligible_server_ids,
+                        &server_id,
+                        raw_resource_uri.as_ref(),
+                    ) {
+                        exposed.push(resource);
+                    }
+                }
+                Ok::<_, anyhow::Error>(exposed)
+            }
+            .await;
+            match server_resources {
+                Ok(server_resources) => {
+                    aggregate.record_success();
+                    resources.extend(server_resources);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
+        aggregate.finish()?;
     }
 
     resources = vis.filter_resources_with_snapshot(&snapshot, resources, Vec::new()).0;
@@ -184,7 +205,7 @@ pub(super) async fn list_resource_templates(
         let pool = &server.connection_pool;
 
         let mut tasks = Vec::new();
-        for (server_id, _server_name, capabilities) in enabled_servers {
+        for (server_id, server_name, capabilities) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
@@ -208,44 +229,65 @@ pub(super) async fn list_resource_templates(
             let pool = pool.clone();
             let db = db.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                let templates = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
                     .await
-                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                let templates = result.items.into_resource_templates().ok_or_else(|| {
-                    McpError::internal_error("Resource template listing returned a different capability kind", None)
-                })?;
-                Ok::<_, McpError>((server_id, templates))
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| {
+                        result
+                            .items
+                            .into_resource_templates()
+                            .ok_or_else(|| "Resource template listing returned a different capability kind".to_string())
+                    });
+                (server_id, server_name, templates)
             });
         }
 
-        for result in futures::stream::iter(tasks)
+        let mut aggregate = super::common::AggregateListStatus::new("resource templates");
+        for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let (server_id, mut v) = result?;
-            if !unify_mode {
-                resource_templates.append(&mut v);
-                continue;
-            }
-            for resource_template in v.drain(..) {
-                let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::ResourceTemplate,
-                    &server_id,
-                    resource_template.name.as_ref(),
-                )
-                .await
-                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                if crate::core::proxy::server::unify_directly_exposed_template_allowed(
-                    client.unify_workspace.as_ref(),
-                    &unify_direct_exposure_eligible_server_ids,
-                    &server_id,
-                    &raw_uri_template,
-                ) {
-                    resource_templates.push(resource_template);
+            let template_batch = match result {
+                Ok(template_batch) => template_batch,
+                Err(error) => {
+                    aggregate.record_failure(&server_id, &server_name, error);
+                    continue;
                 }
+            };
+            let server_templates = async {
+                if !unify_mode {
+                    return Ok(template_batch);
+                }
+                let mut exposed = Vec::new();
+                for resource_template in template_batch {
+                    let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::ResourceTemplate,
+                        &server_id,
+                        resource_template.name.as_ref(),
+                    )
+                    .await?;
+                    if crate::core::proxy::server::unify_directly_exposed_template_allowed(
+                        client.unify_workspace.as_ref(),
+                        &unify_direct_exposure_eligible_server_ids,
+                        &server_id,
+                        &raw_uri_template,
+                    ) {
+                        exposed.push(resource_template);
+                    }
+                }
+                Ok::<_, anyhow::Error>(exposed)
+            }
+            .await;
+            match server_templates {
+                Ok(server_templates) => {
+                    aggregate.record_success();
+                    resource_templates.extend(server_templates);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
+        aggregate.finish()?;
     }
 
     let resource_templates = vis

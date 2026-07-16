@@ -466,7 +466,7 @@ fn select_prompt_mapping<'a>(
         let Some(target_server_id) = target_server_id else {
             return true;
         };
-        mapping.server_id.as_deref().unwrap_or(&mapping.server_name) == target_server_id
+        mapping.server_id.as_deref() == Some(target_server_id)
     })
 }
 
@@ -551,5 +551,19 @@ mod tests {
 
         assert!(select_prompt_mapping(&prompt_mapping, "review", Some("server-b-id")).is_none());
         assert!(select_prompt_mapping(&prompt_mapping, "review", Some("server-a-id")).is_some());
+    }
+
+    #[test]
+    fn target_server_rejects_mapping_without_server_id() {
+        let mapping = PromptMapping {
+            server_name: "server-a-id".to_string(),
+            server_id: None,
+            instance_id: "instance-a".to_string(),
+            prompt: Prompt::new("review", None::<String>, None),
+            upstream_prompt_name: "review".to_string(),
+        };
+        let prompt_mapping = HashMap::from([("review".to_string(), mapping)]);
+
+        assert!(select_prompt_mapping(&prompt_mapping, "review", Some("server-a-id")).is_none());
     }
 }

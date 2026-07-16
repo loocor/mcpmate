@@ -84,44 +84,65 @@ pub(super) async fn list_prompts(
             let db = db.clone();
             let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                let prompts = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
                     .await
-                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                let prompts = result.items.into_prompts().ok_or_else(|| {
-                    McpError::internal_error("Prompt listing returned a different capability kind", None)
-                })?;
-                Ok::<_, McpError>((server_id, server_name_cloned, prompts))
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| {
+                        result
+                            .items
+                            .into_prompts()
+                            .ok_or_else(|| "Prompt listing returned a different capability kind".to_string())
+                    });
+                (server_id, server_name_cloned, prompts)
             });
         }
 
-        for result in futures::stream::iter(tasks)
+        let mut aggregate = super::common::AggregateListStatus::new("prompts");
+        for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let (server_id, _server_name, mut v) = result?;
-            if !unify_mode {
-                prompts.append(&mut v);
-                continue;
-            }
-            for prompt in v.drain(..) {
-                let raw_prompt_name: String = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Prompt,
-                    &server_id,
-                    prompt.name.as_ref(),
-                )
-                .await
-                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                if crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
-                    client.unify_workspace.as_ref(),
-                    &unify_direct_exposure_eligible_server_ids,
-                    &server_id,
-                    raw_prompt_name.as_ref(),
-                ) {
-                    prompts.push(prompt);
+            let prompt_batch = match result {
+                Ok(prompt_batch) => prompt_batch,
+                Err(error) => {
+                    aggregate.record_failure(&server_id, &server_name, error);
+                    continue;
                 }
+            };
+            let server_prompts = async {
+                if !unify_mode {
+                    return Ok(prompt_batch);
+                }
+                let mut exposed = Vec::new();
+                for prompt in prompt_batch {
+                    let raw_prompt_name = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Prompt,
+                        &server_id,
+                        prompt.name.as_ref(),
+                    )
+                    .await?;
+                    if crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
+                        client.unify_workspace.as_ref(),
+                        &unify_direct_exposure_eligible_server_ids,
+                        &server_id,
+                        raw_prompt_name.as_ref(),
+                    ) {
+                        exposed.push(prompt);
+                    }
+                }
+                Ok::<_, anyhow::Error>(exposed)
+            }
+            .await;
+            match server_prompts {
+                Ok(server_prompts) => {
+                    aggregate.record_success();
+                    prompts.extend(server_prompts);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
+        aggregate.finish()?;
     }
 
     prompts = vis.filter_prompts_with_snapshot(&snapshot, prompts);

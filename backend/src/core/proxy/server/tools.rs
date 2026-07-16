@@ -114,42 +114,65 @@ pub(super) async fn list_tools(
             let pool = pool.clone();
             let db = db.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                let tools = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
                     .await
-                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                let tools = result.items.into_tools().ok_or_else(|| {
-                    McpError::internal_error("Tool listing returned a different capability kind", None)
-                })?;
-                Ok::<_, McpError>((server_id, server_name, tools))
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| {
+                        result
+                            .items
+                            .into_tools()
+                            .ok_or_else(|| "Tool listing returned a different capability kind".to_string())
+                    });
+                (server_id, server_name, tools)
             });
         }
 
-        for result in futures::stream::iter(tasks)
+        let mut aggregate = super::common::AggregateListStatus::new("tools");
+        for (server_id, server_name, result) in futures::stream::iter(tasks)
             .buffer_unordered(crate::core::capability::facade::concurrency_limit())
             .collect::<Vec<_>>()
             .await
         {
-            let (server_id, _server_name, tool_batch) = result?;
-            for tool in tool_batch {
-                let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
-                    NamingKind::Tool,
-                    &server_id,
-                    tool.name.as_ref(),
-                )
-                .await
-                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-                let expose_directly = !unify_mode
-                    || crate::core::proxy::server::unify_directly_exposed_tool_allowed(
+            let tool_batch = match result {
+                Ok(tool_batch) => tool_batch,
+                Err(error) => {
+                    aggregate.record_failure(&server_id, &server_name, error);
+                    continue;
+                }
+            };
+            let server_tools = async {
+                if !unify_mode {
+                    return Ok(tool_batch);
+                }
+                let mut exposed = Vec::new();
+                for tool in tool_batch {
+                    let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::Tool,
+                        &server_id,
+                        tool.name.as_ref(),
+                    )
+                    .await?;
+                    if crate::core::proxy::server::unify_directly_exposed_tool_allowed(
                         client.unify_workspace.as_ref(),
                         &unify_direct_exposure_eligible_server_ids,
                         &server_id,
                         raw_tool_name.as_ref(),
-                    );
-                if expose_directly {
-                    tools.push(tool);
+                    ) {
+                        exposed.push(tool);
+                    }
                 }
+                Ok::<_, anyhow::Error>(exposed)
+            }
+            .await;
+            match server_tools {
+                Ok(server_tools) => {
+                    aggregate.record_success();
+                    tools.extend(server_tools);
+                }
+                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
             }
         }
+        aggregate.finish()?;
     }
 
     tools = vis.filter_tools_with_snapshot(&snapshot, tools);

@@ -243,13 +243,18 @@ async fn server_resource_templates_core(
         return Ok(ServerResourceTemplatesResp::success(templates_resp));
     }
 
-    // Use capability runtime pipeline (REDB-first)
+    // Use CapabilityService (REDB-first → runtime → optional temporary via pool)
     let refresh = match params.refresh {
         Some(super::common::RefreshStrategy::Force) => Some(crate::core::capability::runtime::RefreshStrategy::Force),
         _ => Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
     };
-    let list_result = crate::core::capability::runtime::list(
-        &crate::core::capability::runtime::ListCtx {
+    let service = crate::core::capability::CapabilityService::new(
+        app_state.redb_cache.clone(),
+        app_state.connection_pool.clone(),
+        db.clone(),
+    );
+    let list_result = service
+        .list(&crate::core::capability::runtime::ListCtx {
             capability: crate::core::capability::CapabilityType::ResourceTemplates,
             server_id: server_info.server_id.clone(),
             refresh,
@@ -258,12 +263,8 @@ async fn server_resource_templates_core(
             runtime_identity: None,
             connection_selection: None,
             name_domain: crate::core::capability::runtime::NameDomain::External,
-        },
-        &app_state.redb_cache,
-        &app_state.connection_pool,
-        &db,
-    )
-    .await;
+        })
+        .await;
     match list_result {
         Ok(list_result) => {
             let crate::core::capability::runtime::ListResult { items, meta } = list_result;
@@ -299,23 +300,6 @@ async fn server_resource_templates_core(
                 return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
 
-            let should_try_temp = !meta.had_peer;
-            if should_try_temp {
-                if let Some(response) = super::capability::create_temporary_instance_for_capability(
-                    app_state,
-                    &server_info,
-                    &params,
-                    super::capability::CapabilityType::ResourceTemplates,
-                    should_try_temp,
-                )
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                {
-                    let templates_resp = json_to_server_resource_templates_resp(response);
-                    return Ok(ServerResourceTemplatesResp::success(templates_resp));
-                }
-            }
-
             let response_data = create_inspect_response(
                 Vec::new(),
                 false,
@@ -326,7 +310,7 @@ async fn server_resource_templates_core(
             Ok(ServerResourceTemplatesResp::success(templates_resp))
         }
         Err(e) => {
-            tracing::error!("Failed to list resource templates via unified entry: {}", e);
+            tracing::error!("Failed to list resource templates via capability service: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
