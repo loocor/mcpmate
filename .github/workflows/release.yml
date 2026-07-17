@@ -731,3 +731,62 @@ jobs:
             artifacts/*.msi.zip
             artifacts/signatures.zip
             artifacts/update.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Synchronize exact-tag download manifest
+        env:
+          DOWNLOADS_WORKFLOW_TOKEN: ${{ secrets.DOWNLOADS_WORKFLOW_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          bun packaging/desktop/sync-release-downloads.ts \
+            --tag "$RELEASE_TAG" \
+            --auth-origin "https://auth.mcp.umate.ai" \
+            --public-origin "https://public.mcp.umate.ai" \
+            --output artifacts/release-manifest-v2.json
+
+      - name: Render tracked release downloads
+        run: |
+          set -euo pipefail
+
+          bun packaging/desktop/render-release-downloads.ts \
+            --manifest artifacts/release-manifest-v2.json \
+            --notes artifacts/release-notes.md \
+            --tag "$RELEASE_TAG" \
+            --output artifacts/release-notes.md
+
+      - name: Update GitHub Release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release edit "$RELEASE_TAG" \
+            --repo "$RELEASE_REPO" \
+            --notes-file artifacts/release-notes.md
+
+      - name: Dispatch Homebrew Tap update
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          test -n "$GH_TOKEN" || { echo "missing HOMEBREW_TAP_TOKEN" >&2; exit 1; }
+          manifest_url=$(
+            bun -e '
+              const tag = process.env.RELEASE_TAG;
+              if (!tag) throw new Error("missing RELEASE_TAG");
+              process.stdout.write(
+                new URL(`/downloads/releases/${encodeURIComponent(tag)}`, "https://public.mcp.umate.ai").toString(),
+              );
+            '
+          )
+          jq -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg manifest_url "$manifest_url" \
+            '{event_type: "mcpmate_release", client_payload: {tag: $tag, manifest_url: $manifest_url}}' \
+            | gh api --method POST "repos/loocor/homebrew-tap/dispatches" --input -
