@@ -1113,6 +1113,31 @@ async fn inspector_template_read_rejects_invalid_expansion_inputs_as_bad_request
 }
 
 #[tokio::test]
+async fn inspector_proxy_template_read_names_its_database_requirement() {
+    let app = Router::new()
+        .route(TEMPLATE_READ_PATH, post(inspector::template_read))
+        .with_state(build_test_state());
+
+    let response = app
+        .oneshot(json_post_request(
+            TEMPLATE_READ_PATH,
+            json!({
+                "uri_template": "test://dynamic/{resourceId}",
+                "mode": "proxy",
+                "server_id": "missing-database",
+            }),
+        ))
+        .await
+        .expect("template read response");
+    let (status, body) = read_json_response_with_status(response).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        data_str(&body, "/error/message"),
+        "Proxy Inspector template routing requires database access"
+    );
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn inspector_native_list_and_call_reuse_explicit_session() {
     let temp_dir = TempDir::new().expect("temp dir");

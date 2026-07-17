@@ -339,7 +339,7 @@ pub async fn template_read(
 ) -> Result<Value, ApiError> {
     if req.mode == InspectorMode::Proxy {
         let database = state.database.as_ref().ok_or_else(|| {
-            ApiError::InternalError("Proxy Inspector resource routing requires database access".into())
+            ApiError::InternalError("Proxy Inspector template routing requires database access".into())
         })?;
         let registered: Option<String> =
             sqlx::query_scalar("SELECT uri_template FROM server_resource_templates WHERE unique_name = ?")

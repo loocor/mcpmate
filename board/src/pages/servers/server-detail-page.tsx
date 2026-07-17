@@ -71,6 +71,7 @@ import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-stat
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { mergeCapabilityInspectorItem } from "../../lib/capability-detail";
+import { collectLoadedInspectorOptions } from "../../lib/inspector-operation";
 import { getServerDisplayName } from "../../lib/server-display";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
@@ -1273,12 +1274,13 @@ function ServerCapabilitiesPanel({
 		item: ServerFlatCapabilityItem,
 	): ReactNode => {
 		const inspectorKind = toInspectorKind(item.__serverCapabilityKind);
-		const capabilityOptionsByKind: InspectorTarget["capabilityOptionsByKind"] = {
-			tool: toolsQ.data?.items ?? [],
-			resource: resourcesQ.data?.items ?? [],
-			prompt: promptsQ.data?.items ?? [],
-			template: templatesQ.data?.items ?? [],
-		};
+		const capabilityOptionsByKind: InspectorTarget["capabilityOptionsByKind"] =
+			collectLoadedInspectorOptions({
+				tool: toolsQ.data?.items,
+				resource: resourcesQ.data?.items,
+				prompt: promptsQ.data?.items,
+				template: templatesQ.data?.items,
+			});
 
 		return (
 			<Button

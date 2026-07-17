@@ -6,6 +6,19 @@ export type InspectorOperationKind =
 
 export type InspectorOperationMode = "native" | "proxy";
 
+export function collectLoadedInspectorOptions<T>(
+	options: Partial<Record<InspectorOperationKind, T[] | undefined>>,
+): Partial<Record<InspectorOperationKind, T[]>> {
+	const loaded: Partial<Record<InspectorOperationKind, T[]>> = {};
+	for (const kind of ["tool", "prompt", "resource", "template"] as const) {
+		const optionList = options[kind];
+		if (optionList !== undefined) {
+			loaded[kind] = optionList;
+		}
+	}
+	return loaded;
+}
+
 const OPERATION_LABEL_KEYS: Record<InspectorOperationKind, string> = {
 	tool: "modes.toolCall",
 	prompt: "modes.getPrompt",

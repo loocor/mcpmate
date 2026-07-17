@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+	collectLoadedInspectorOptions,
 	getInspectorModeIdentity,
 	getInspectorOperationLabelKey,
 	getInspectorPrimaryActionKey,
@@ -12,6 +13,20 @@ import {
 } from "./inspector-operation";
 
 describe("Inspector operation helpers", () => {
+	test("omits Inspector options for capability kinds that have not loaded", () => {
+		const options = collectLoadedInspectorOptions({
+			tool: [{ name: "echo" }],
+			resource: undefined,
+			prompt: [],
+			template: undefined,
+		});
+
+		expect(options).toEqual({
+			tool: [{ name: "echo" }],
+			prompt: [],
+		});
+	});
+
 	test("auto-loads each available Inspector capability list once", () => {
 		expect(
 			shouldAutoLoadInspectorOptions({
