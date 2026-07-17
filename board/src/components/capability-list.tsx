@@ -15,6 +15,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../lib/store";
+import { resolveCapabilityRawPayload } from "../lib/capability-detail";
 import { cn } from "../lib/utils";
 import { BulkSelectionCheckbox } from "./bulk-selection";
 import type {
@@ -238,7 +239,7 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 				upstreamUri && upstreamUri !== title ? upstreamUri : undefined,
 			subtitle: asString(record.name),
 			server: asString(record.server_name),
-			mime: asString(record.mime_type),
+			mime: asString(record.mimeType) || asString(record.mime_type),
 			description,
 			raw: item,
 			icon: extractIconSrc(record),
@@ -271,7 +272,7 @@ function mapItem<T>(kind: CapabilityKind, item: T): CapabilityMapItem<T> {
 		asString(record.uri_template);
 	const title = uriTemplate || asString(record.name) || "Template";
 	const upstreamTemplate =
-		asString(record.uriTemplate) || asString(record.uri_template);
+		asString(record.uri_template) || asString(record.uriTemplate);
 	const description = normalizeMultiline(asString(record.description));
 	return {
 		title,
@@ -443,9 +444,13 @@ export function CapabilityList<T = CapabilityRecord>({
 				...lazyDetails,
 			} as CapabilityRecord)
 			: null;
-		const detailsMapped = mergedDetailsRecord
+		const mappedDetails = mergedDetailsRecord
 			? mapItem(itemKind, mergedDetailsRecord as T)
 			: mapped;
+		const detailsMapped = {
+			...mappedDetails,
+			raw: resolveCapabilityRawPayload(item, lazyDetails, Boolean(loadDetails)),
+		};
 
 		const ensureLazyDetails = () => {
 			if (!loadDetails || hasLazyDetails || lazyDetailsLoading) {

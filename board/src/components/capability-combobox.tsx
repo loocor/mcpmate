@@ -11,6 +11,7 @@ import {
   CommandList,
 } from "./ui/command";
 import { ChevronDown } from "lucide-react";
+import { shouldOfferCustomCapabilityValue } from "../lib/inspector-operation";
 import { cn } from "../lib/utils";
 
 export type CapabilityKind = "tool" | "prompt" | "resource" | "template";
@@ -38,6 +39,8 @@ export interface CapabilityComboboxProps<T extends CapabilityRecordLike = Capabi
   getKey: (item: T) => string;
   getLabel: (item: T) => string;
   getDescription?: (item: T) => string | undefined;
+  allowCustomValue?: boolean;
+  getCustomValueLabel?: (value: string) => string;
 }
 
 export function CapabilityCombobox<T extends CapabilityRecordLike>(props: CapabilityComboboxProps<T>) {
@@ -61,9 +64,12 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
     getKey,
     getLabel,
     getDescription,
+    allowCustomValue = false,
+    getCustomValueLabel,
   } = props;
 
   const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const [menuWidth, setMenuWidth] = React.useState<number | undefined>(undefined);
 
@@ -96,11 +102,29 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
     return items.find((it) => getKey(it) === value);
   }, [items, value, getKey]);
 
-  const selectedLabel = selectedItem ? getLabel(selectedItem) : "";
+  const selectedLabel = selectedItem
+    ? getLabel(selectedItem)
+    : allowCustomValue
+      ? value ?? ""
+      : "";
   const selectedTrailing = selectedItem ? renderTriggerTrailing?.(selectedItem) : null;
+  const listedValues = React.useMemo(
+    () => items.flatMap((entry) => [getKey(entry), getLabel(entry)]),
+    [getKey, getLabel, items],
+  );
+  const customCandidate = query.trim();
+  const showCustomCandidate =
+    allowCustomValue &&
+    shouldOfferCustomCapabilityValue(customCandidate, listedValues);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setQuery("");
+      }}
+    >
       <PopoverTrigger asChild>
         <Button
           ref={triggerRef}
@@ -145,7 +169,11 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
         style={menuWidth ? { width: `${menuWidth}px` } : undefined}
       >
         <Command className={menuBleed ? "rounded-none" : undefined}>
-          <CommandInput placeholder={placeholder} />
+          <CommandInput
+            placeholder={placeholder}
+            value={query}
+            onValueChange={setQuery}
+          />
           <CommandList
             className={
               menuBleed
@@ -167,6 +195,32 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
                 "p-0 [&_[cmdk-group-items]]:m-0 [&_[cmdk-group-items]]:w-full [&_[cmdk-group-items]]:p-0",
               )}
             >
+              {showCustomCandidate ? (
+                <CommandItem
+                  value={customCandidate}
+                  className={cn(
+                    "group py-2.5",
+                    menuBleed ? "w-full rounded-none px-0" : "px-4",
+                    menuItemClassName,
+                  )}
+                  onSelect={() => {
+                    onChange(customCandidate);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                >
+                  <div
+                    className={cn(
+                      "flex w-full min-w-0 items-center gap-3",
+                      menuBleed && "px-4",
+                    )}
+                  >
+                    <span className="truncate font-medium text-slate-900 dark:text-slate-100 group-hover:text-accent-foreground group-aria-selected:text-accent-foreground">
+                      {getCustomValueLabel?.(customCandidate) ?? customCandidate}
+                    </span>
+                  </div>
+                </CommandItem>
+              ) : null}
               {items.map((entry, index) => {
                 const key = getKey(entry) || `index:${index}`;
                 const label = getLabel(entry) || key;

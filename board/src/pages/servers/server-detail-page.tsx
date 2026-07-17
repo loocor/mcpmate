@@ -70,6 +70,7 @@ import { auditApi, serversApi } from "../../lib/api";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
+import { mergeCapabilityInspectorItem } from "../../lib/capability-detail";
 import { getServerDisplayName } from "../../lib/server-display";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
@@ -113,7 +114,9 @@ interface CapabilityListResponse {
 type InspectorTarget = {
 	kind: "tool" | "resource" | "prompt" | "template";
 	item: CapabilityRecord | null;
-	capabilityOptions?: CapabilityRecord[];
+	capabilityOptionsByKind?: Partial<
+		Record<"tool" | "resource" | "prompt" | "template", CapabilityRecord[]>
+	>;
 };
 
 type ServerFlatCapabilityItem = CapabilityRecord & {
@@ -466,7 +469,7 @@ export function ServerDetailPage() {
 		async (
 			kind: InspectorTarget["kind"],
 			item: CapabilityRecord | null,
-			capabilityOptions?: CapabilityRecord[],
+			capabilityOptionsByKind?: InspectorTarget["capabilityOptionsByKind"],
 		) => {
 			let detailItem = item;
 			if (item && serverId) {
@@ -479,7 +482,10 @@ export function ServerDetailPage() {
 							detailKind,
 							key,
 						);
-						detailItem = (detail.item ?? item) as CapabilityRecord;
+						detailItem = mergeCapabilityInspectorItem(
+							item,
+							(detail.item ?? null) as CapabilityRecord | null,
+						);
 					} catch (error) {
 						notifyError(
 							t("detail.inspector.messages.detailLoadFailed", {
@@ -491,7 +497,7 @@ export function ServerDetailPage() {
 					}
 				}
 			}
-			setInspector({ kind, item: detailItem, capabilityOptions });
+			setInspector({ kind, item: detailItem, capabilityOptionsByKind });
 		},
 		[serverId, t],
 	);
@@ -1126,7 +1132,7 @@ export function ServerDetailPage() {
 				serverName={server?.name}
 				kind={inspector?.kind ?? "tool"}
 				item={inspector?.item ?? null}
-				capabilityOptions={inspector?.capabilityOptions}
+				capabilityOptionsByKind={inspector?.capabilityOptionsByKind}
 			/>
 		</div>
 	);
@@ -1182,7 +1188,7 @@ function ServerCapabilitiesPanel({
 		onInspect: (
 			kind: InspectorTarget["kind"],
 			item: CapabilityRecord | null,
-			capabilityOptions?: CapabilityRecord[],
+			capabilityOptionsByKind?: InspectorTarget["capabilityOptionsByKind"],
 		) => void | Promise<void>;
 	}) {
 	const [search, setSearch] = useState("");
@@ -1267,14 +1273,12 @@ function ServerCapabilitiesPanel({
 		item: ServerFlatCapabilityItem,
 	): ReactNode => {
 		const inspectorKind = toInspectorKind(item.__serverCapabilityKind);
-		const capabilityOptions =
-			item.__serverCapabilityKind === "tools"
-				? toolsQ.data?.items
-				: item.__serverCapabilityKind === "resources"
-					? resourcesQ.data?.items
-					: item.__serverCapabilityKind === "prompts"
-						? promptsQ.data?.items
-						: templatesQ.data?.items;
+		const capabilityOptionsByKind: InspectorTarget["capabilityOptionsByKind"] = {
+			tool: toolsQ.data?.items ?? [],
+			resource: resourcesQ.data?.items ?? [],
+			prompt: promptsQ.data?.items ?? [],
+			template: templatesQ.data?.items ?? [],
+		};
 
 		return (
 			<Button
@@ -1283,7 +1287,7 @@ function ServerCapabilitiesPanel({
 				variant="outline"
 				className="gap-1"
 				onClick={() =>
-					void onInspect(inspectorKind, item, capabilityOptions ?? [])
+					void onInspect(inspectorKind, item, capabilityOptionsByKind)
 				}
 			>
 				<Play className="h-3.5 w-3.5" />
