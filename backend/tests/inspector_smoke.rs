@@ -31,6 +31,8 @@ const TOOL_LIST_PATH: &str = "/api/mcp/inspector/tool/list";
 const TOOL_CALL_PATH: &str = "/api/mcp/inspector/tool/call";
 const RESOURCE_LIST_PATH: &str = "/api/mcp/inspector/resource/list";
 const RESOURCE_READ_PATH: &str = "/api/mcp/inspector/resource/read";
+const TEMPLATE_LIST_PATH: &str = "/api/mcp/inspector/template/list";
+const TEMPLATE_READ_PATH: &str = "/api/mcp/inspector/template/read";
 const SESSION_OPEN_PATH: &str = "/api/mcp/inspector/session/open";
 const SESSION_CLOSE_PATH: &str = "/api/mcp/inspector/session/close";
 const TEMPORARY_NATIVE_VALIDATION_SESSION_PREFIX: &str = "INSPNATIVE";
@@ -194,17 +196,25 @@ for line in sys.stdin:
             }]
         })
     elif method == "resources/read":
+        uri = req.get("params", {}).get("uri", "")
+        resource_id = uri.rsplit("/", 1)[-1] if uri.startswith("test://dynamic/") else None
         reply(request_id, {
             "contents": [{
-                "uri": "test://hello",
+                "uri": uri,
                 "mimeType": "text/plain",
-                "text": "hello from resource"
+                "text": "dynamic resource " + resource_id if resource_id is not None else "hello from resource"
             }]
         })
     elif method == "prompts/list":
         reply(request_id, {"prompts": []})
     elif method == "resources/templates/list":
-        reply(request_id, {"resourceTemplates": []})
+        reply(request_id, {
+            "resourceTemplates": [{
+                "uriTemplate": "test://dynamic/{resourceId}",
+                "name": "dynamic",
+                "mimeType": "text/plain"
+            }]
+        })
     else:
         sys.stdout.write(json.dumps({
             "jsonrpc": "2.0",
@@ -877,6 +887,8 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
         .route(TOOL_LIST_PATH, get(inspector::tools_list))
         .route(RESOURCE_LIST_PATH, get(inspector::resources_list))
         .route(RESOURCE_READ_PATH, get(inspector::resource_read))
+        .route(TEMPLATE_LIST_PATH, get(inspector::templates_list))
+        .route(TEMPLATE_READ_PATH, post(inspector::template_read))
         .with_state(state);
 
     let create_req = json_post_request(
@@ -916,7 +928,8 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
     assert_api_success(&resources_body);
     assert_eq!(data_u64(&resources_body, "/data/total"), 1);
     let resource_uri = data_str(&resources_body, "/data/resources/0/uri");
-    assert_eq!(resource_uri, "inspector_fixture:test://hello");
+    let expected_resource_uri = "mcpmate://resources/inspector_fixture/test/hello";
+    assert_eq!(resource_uri, expected_resource_uri);
 
     let resource_read_query = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("server_id", &server_id)
@@ -924,13 +937,179 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
         .append_pair("uri", resource_uri)
         .finish();
     let resource_read_req = get_request(format!("{RESOURCE_READ_PATH}?{resource_read_query}"));
-    let resource_read_body = read_json_response(app.oneshot(resource_read_req).await.unwrap()).await;
+    let resource_read_body = read_json_response(app.clone().oneshot(resource_read_req).await.unwrap()).await;
     assert_eq!(
         data_str(&resource_read_body, "/data/result/contents/0/text"),
         "hello from resource"
     );
 
+    let native_templates_req = get_request(format!(
+        "{TEMPLATE_LIST_PATH}?server_id={server_id}&mode=native&refresh=true"
+    ));
+    let native_templates_body = read_json_response(app.clone().oneshot(native_templates_req).await.unwrap()).await;
+    assert_api_success(&native_templates_body);
+    assert_eq!(
+        data_str(&native_templates_body, "/data/templates/0/uriTemplate"),
+        "test://dynamic/{resourceId}"
+    );
+
+    let proxy_templates_req = get_request(format!(
+        "{TEMPLATE_LIST_PATH}?server_id={server_id}&mode=proxy&refresh=true"
+    ));
+    let proxy_templates_body = read_json_response(app.clone().oneshot(proxy_templates_req).await.unwrap()).await;
+    assert_api_success(&proxy_templates_body);
+    let canonical_template = data_str(&proxy_templates_body, "/data/templates/0/uriTemplate");
+    assert_eq!(
+        canonical_template,
+        "mcpmate://resources/template/inspector_fixture/test/dynamic/{resourceId}"
+    );
+
+    let template_read_response = app
+        .clone()
+        .oneshot(json_post_request(
+            TEMPLATE_READ_PATH,
+            json!({
+                "uri_template": canonical_template,
+                "arguments": { "resourceId": 42 },
+                "mode": "proxy",
+                "server_id": server_id,
+            }),
+        ))
+        .await
+        .expect("proxy template read response");
+    assert_eq!(template_read_response.status(), StatusCode::OK);
+    let template_read_body = read_json_response(template_read_response).await;
+    assert_api_success(&template_read_body);
+    assert_eq!(
+        data_str(&template_read_body, "/data/expanded_uri"),
+        "mcpmate://resources/template/inspector_fixture/test/dynamic/42"
+    );
+    assert_eq!(
+        data_str(&template_read_body, "/data/result/contents/0/uri"),
+        "mcpmate://resources/template/inspector_fixture/test/dynamic/42"
+    );
+    assert_eq!(
+        data_str(&template_read_body, "/data/result/contents/0/text"),
+        "dynamic resource 42"
+    );
+
+    let unknown_template_response = app
+        .clone()
+        .oneshot(json_post_request(
+            TEMPLATE_READ_PATH,
+            json!({
+                "uri_template": "mcpmate://resources/template/inspector_fixture/test/dynamic/42",
+                "arguments": {},
+                "mode": "proxy",
+                "server_id": server_id,
+            }),
+        ))
+        .await
+        .expect("unknown proxy template response");
+    assert_eq!(unknown_template_response.status(), StatusCode::BAD_REQUEST);
+
+    let proxy_dynamic_uri = canonical_template.replace("{resourceId}", "42");
+    let proxy_dynamic_query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("server_id", &server_id)
+        .append_pair("mode", "proxy")
+        .append_pair("uri", &proxy_dynamic_uri)
+        .finish();
+    let proxy_dynamic_req = get_request(format!("{RESOURCE_READ_PATH}?{proxy_dynamic_query}"));
+    let proxy_dynamic_body = read_json_response(app.clone().oneshot(proxy_dynamic_req).await.unwrap()).await;
+    assert_api_success(&proxy_dynamic_body);
+    assert_eq!(
+        data_str(&proxy_dynamic_body, "/data/result/contents/0/uri"),
+        proxy_dynamic_uri
+    );
+    assert_eq!(
+        data_str(&proxy_dynamic_body, "/data/result/contents/0/text"),
+        "dynamic resource 42"
+    );
+
+    let native_dynamic_query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("server_id", &server_id)
+        .append_pair("mode", "native")
+        .append_pair("uri", "test://dynamic/42")
+        .finish();
+    let native_dynamic_req = get_request(format!("{RESOURCE_READ_PATH}?{native_dynamic_query}"));
+    let native_dynamic_body = read_json_response(app.oneshot(native_dynamic_req).await.unwrap()).await;
+    assert_api_success(&native_dynamic_body);
+    assert_eq!(
+        data_str(&native_dynamic_body, "/data/result/contents/0/uri"),
+        "test://dynamic/42"
+    );
+    assert_eq!(
+        data_str(&native_dynamic_body, "/data/result/contents/0/text"),
+        "dynamic resource 42"
+    );
+
     mcpmate::core::capability::resolver::clear_cache().await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn inspector_template_read_expands_and_reads_the_native_template() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TEMPLATE_READ_PATH, post(inspector::template_read))
+        .with_state(state);
+    let server_id = create_stdio_fixture_server(&app, &temp_dir).await;
+
+    let response = app
+        .oneshot(json_post_request(
+            TEMPLATE_READ_PATH,
+            json!({
+                "uri_template": "test://dynamic/{resourceId}",
+                "arguments": { "resourceId": 42 },
+                "mode": "native",
+                "server_id": server_id,
+            }),
+        ))
+        .await
+        .expect("template read response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json_response(response).await;
+
+    assert_api_success(&body);
+    assert_eq!(data_str(&body, "/data/expanded_uri"), "test://dynamic/42");
+    assert_eq!(data_str(&body, "/data/result/contents/0/text"), "dynamic resource 42");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn inspector_template_read_rejects_invalid_expansion_inputs_as_bad_requests() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TEMPLATE_READ_PATH, post(inspector::template_read))
+        .with_state(state);
+    let server_id = create_stdio_fixture_server(&app, &temp_dir).await;
+
+    for (uri_template, arguments) in [
+        ("test://dynamic/{resourceId", json!({ "resourceId": 42 })),
+        ("test://dynamic/{resourceId}", json!({ "unexpected": 42 })),
+        ("test://dynamic/{resourceId}", json!({ "resourceId": [["nested"]] })),
+        ("relative/{resourceId}", json!({ "resourceId": 42 })),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(json_post_request(
+                TEMPLATE_READ_PATH,
+                json!({
+                    "uri_template": uri_template,
+                    "arguments": arguments,
+                    "mode": "native",
+                    "server_id": server_id,
+                }),
+            ))
+            .await
+            .expect("invalid template read response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "template: {uri_template}");
+    }
 }
 
 #[tokio::test]
