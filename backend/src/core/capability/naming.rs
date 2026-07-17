@@ -258,7 +258,7 @@ fn generate_unique_name(
     value: &str,
 ) -> Result<String> {
     match kind {
-        NamingKind::Tool | NamingKind::Prompt | NamingKind::ResourceTemplate => {
+        NamingKind::Tool | NamingKind::Prompt => {
             let normalized = canonical_namespace(server_name)?;
             let value = remove_namespace_tokens(server_name, value)?;
             let value = remove_boundary_token_overlap(&normalized, &value);
@@ -268,14 +268,9 @@ fn generate_unique_name(
                 Ok(format!("{normalized}_{value}"))
             }
         }
-        NamingKind::Resource => {
-            let normalized = canonical_namespace(server_name)?;
-            let prefix = format!("{normalized}:");
-            if value.to_lowercase().starts_with(&prefix) {
-                Ok(value.to_string())
-            } else {
-                Ok(format!("{normalized}:{value}"))
-            }
+        NamingKind::Resource => crate::core::capability::resource_uri::encode_resource_uri(server_name, value),
+        NamingKind::ResourceTemplate => {
+            crate::core::capability::resource_uri::encode_resource_template(server_name, value)
         }
     }
 }
@@ -287,14 +282,10 @@ fn generate_complete_name(
 ) -> Result<String> {
     let namespace = canonical_namespace(server_name)?;
     match kind {
-        NamingKind::Tool | NamingKind::Prompt | NamingKind::ResourceTemplate => Ok(format!("{namespace}_{value}")),
-        NamingKind::Resource => {
-            let prefix = format!("{namespace}:");
-            if value.starts_with(&prefix) {
-                Ok(value.to_string())
-            } else {
-                Ok(format!("{prefix}{value}"))
-            }
+        NamingKind::Tool | NamingKind::Prompt => Ok(format!("{namespace}_{value}")),
+        NamingKind::Resource => crate::core::capability::resource_uri::encode_resource_uri(&namespace, value),
+        NamingKind::ResourceTemplate => {
+            crate::core::capability::resource_uri::encode_resource_template(&namespace, value)
         }
     }
 }
@@ -310,6 +301,20 @@ pub(crate) fn plan_external_identifiers(
     upstream_values: &[String],
 ) -> Result<BTreeMap<String, String>> {
     canonical_namespace(server_name)?;
+
+    if matches!(kind, NamingKind::Resource | NamingKind::ResourceTemplate) {
+        let address_kind = match kind {
+            NamingKind::Resource => crate::core::capability::resource_uri::ResourceAddressKind::Static,
+            NamingKind::ResourceTemplate => crate::core::capability::resource_uri::ResourceAddressKind::Template,
+            NamingKind::Tool | NamingKind::Prompt => unreachable!(),
+        };
+        return crate::core::capability::resource_uri::plan_resource_addresses(
+            address_kind,
+            server_name,
+            upstream_values,
+            &BTreeMap::new(),
+        );
+    }
 
     let mut exact_values = HashSet::new();
     let mut preferred_groups = BTreeMap::<String, Vec<&String>>::new();
@@ -351,17 +356,6 @@ pub(crate) fn plan_external_identifiers(
     }
 
     Ok(plan)
-}
-
-/// Derive the existing resource-authorization prefix for template output.
-///
-/// This is not a client routing entrypoint: concrete external resources still
-/// resolve through the persisted catalog.
-pub(in crate::core) fn external_resource_prefix(
-    server_name: &str,
-    upstream_prefix: &str,
-) -> Result<String> {
-    generate_unique_name(NamingKind::Resource, server_name, upstream_prefix)
 }
 
 /// Resolve an external capability identifier to its exact upstream route.
@@ -546,7 +540,43 @@ async fn reconcile_external_identifiers_internal(
     } else {
         upstream_values.to_vec()
     };
-    let identifiers = plan_external_identifiers(kind, server_name, &complete_inventory)?;
+    let identifiers = if matches!(kind, NamingKind::Resource | NamingKind::ResourceTemplate) {
+        let address_kind = match kind {
+            NamingKind::Resource => crate::core::capability::resource_uri::ResourceAddressKind::Static,
+            NamingKind::ResourceTemplate => crate::core::capability::resource_uri::ResourceAddressKind::Template,
+            NamingKind::Tool | NamingKind::Prompt => unreachable!(),
+        };
+        let mut retained = rows
+            .iter()
+            .map(|row| (row.upstream_value.clone(), row.old_external.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut reserved_routes = BTreeSet::new();
+        if kind == NamingKind::Resource {
+            let issued_rows = sqlx::query_as::<_, (String, String, String, String)>(
+                "SELECT id, server_id, resource_uri, unique_uri FROM server_issued_resources ORDER BY server_id, resource_uri",
+            )
+            .fetch_all(&mut **tx)
+            .await
+            .context("Failed to load issued routes during Resource inventory reconciliation")?;
+            let inventory = complete_inventory.iter().collect::<HashSet<_>>();
+            for (_id, issued_server_id, upstream_uri, external_uri) in issued_rows {
+                if issued_server_id == server_id && inventory.contains(&upstream_uri) {
+                    retained.insert(upstream_uri, external_uri);
+                } else {
+                    reserved_routes.insert(external_uri);
+                }
+            }
+        }
+        crate::core::capability::resource_uri::plan_resource_addresses_with_reserved(
+            address_kind,
+            server_name,
+            &complete_inventory,
+            &retained,
+            &reserved_routes,
+        )?
+    } else {
+        plan_external_identifiers(kind, server_name, &complete_inventory)?
+    };
     let persisted_values = rows
         .iter()
         .map(|row| row.upstream_value.as_str())
@@ -633,17 +663,30 @@ async fn reconcile_external_identifiers_internal(
 
     let mut changes = Vec::with_capacity(changed_rows.len());
     for (row, desired) in changed_rows {
-        let update = format!(
-            "UPDATE {} SET {} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            kind.table(),
-            kind.unique_column()
-        );
-        sqlx::query(&update)
+        if kind == NamingKind::ResourceTemplate {
+            let route_uri = crate::core::capability::resource_uri::template_match_key(desired)?;
+            sqlx::query(
+                "UPDATE server_resource_templates SET unique_name = ?, route_uri = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            )
             .bind(desired)
+            .bind(route_uri)
             .bind(&row.id)
             .execute(&mut **tx)
             .await
             .with_context(|| format!("Failed to finalize {:?} identifier rebuild for row '{}'", kind, row.id))?;
+        } else {
+            let update = format!(
+                "UPDATE {} SET {} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                kind.table(),
+                kind.unique_column()
+            );
+            sqlx::query(&update)
+                .bind(desired)
+                .bind(&row.id)
+                .execute(&mut **tx)
+                .await
+                .with_context(|| format!("Failed to finalize {:?} identifier rebuild for row '{}'", kind, row.id))?;
+        }
         changes.push(ExternalIdentifierChange {
             kind,
             server_id: row.server_id.clone(),
@@ -833,7 +876,8 @@ mod tests {
             "CREATE TABLE server_tools (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, server_name TEXT NOT NULL, tool_name TEXT NOT NULL, unique_name TEXT NOT NULL UNIQUE, updated_at TEXT)",
             "CREATE TABLE server_prompts (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, server_name TEXT NOT NULL, prompt_name TEXT NOT NULL, unique_name TEXT NOT NULL UNIQUE, updated_at TEXT)",
             "CREATE TABLE server_resources (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, server_name TEXT NOT NULL, resource_uri TEXT NOT NULL, unique_uri TEXT NOT NULL UNIQUE, updated_at TEXT)",
-            "CREATE TABLE server_resource_templates (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, server_name TEXT NOT NULL, uri_template TEXT NOT NULL, unique_name TEXT NOT NULL UNIQUE, updated_at TEXT)",
+            "CREATE TABLE server_resource_templates (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, server_name TEXT NOT NULL, uri_template TEXT NOT NULL, unique_name TEXT NOT NULL UNIQUE, route_uri TEXT UNIQUE, updated_at TEXT)",
+            "CREATE TABLE server_issued_resources (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, server_name TEXT NOT NULL, resource_uri TEXT NOT NULL, unique_uri TEXT NOT NULL UNIQUE, created_at TEXT, last_seen_at TEXT)",
             "CREATE TABLE profile_prompt (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, server_id TEXT NOT NULL, server_name TEXT NOT NULL, prompt_name TEXT NOT NULL, enabled BOOLEAN NOT NULL)",
             "CREATE TABLE profile_resource (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, server_id TEXT NOT NULL, server_name TEXT NOT NULL, resource_uri TEXT NOT NULL, enabled BOOLEAN NOT NULL)",
             "CREATE TABLE profile_resource_template (id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, server_id TEXT NOT NULL, server_name TEXT NOT NULL, uri_template TEXT NOT NULL, enabled BOOLEAN NOT NULL)",
@@ -960,19 +1004,96 @@ mod tests {
     }
 
     #[test]
-    fn resource_names_remain_namespaced_uris() {
+    fn resources_use_the_canonical_resource_address_space() {
         assert_eq!(
             generated(NamingKind::Resource, "docs", "file:///guide.md"),
-            "docs:file:///guide.md"
+            "mcpmate://resources/docs/file/guide.md"
         );
     }
 
     #[test]
-    fn resource_templates_use_the_same_namespace_pipeline() {
+    fn resource_templates_use_the_canonical_template_address_space() {
         assert_eq!(
-            generated(NamingKind::ResourceTemplate, "docs", "docs_file:///{path}"),
-            "docs_file:///{path}"
+            generated(NamingKind::ResourceTemplate, "docs", "file:///{path}"),
+            "mcpmate://resources/template/docs/file/{path}"
         );
+    }
+
+    #[tokio::test]
+    async fn resource_reconciliation_keeps_retained_alias_when_new_inventory_collides() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("resource-1")
+        .bind("server-a")
+        .bind("everything")
+        .bind("demo://resource/status")
+        .bind("mcpmate://resources/everything/demo/status")
+        .execute(&pool)
+        .await
+        .expect("insert retained resource mapping");
+
+        let mut tx = pool.begin().await.expect("begin resource reconciliation");
+        let reconciliation = reconcile_external_identifiers(
+            &mut tx,
+            NamingKind::Resource,
+            "server-a",
+            "everything",
+            &[
+                "demo://resource/status".to_string(),
+                "demo://resources/status".to_string(),
+            ],
+        )
+        .await
+        .expect("reconcile colliding resource inventory");
+
+        assert_eq!(
+            reconciliation
+                .identifier_for("demo://resource/status")
+                .expect("retained resource identifier"),
+            "mcpmate://resources/everything/demo/status"
+        );
+        assert_ne!(
+            reconciliation
+                .identifier_for("demo://resources/status")
+                .expect("new resource identifier"),
+            "mcpmate://resources/everything/demo/status"
+        );
+    }
+
+    #[tokio::test]
+    async fn template_reconciliation_updates_route_base_with_external_identity() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, route_uri) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("template-1")
+        .bind("server-a")
+        .bind("legacy")
+        .bind("demo://resource/dynamic/{resourceId}")
+        .bind("mcpmate://resources/template/legacy/demo/dynamic/{resourceId}")
+        .bind("mcpmate://resources/template/legacy/demo/dynamic/{}")
+        .execute(&pool)
+        .await
+        .expect("insert legacy template mapping");
+
+        let mut tx = pool.begin().await.expect("begin template reconciliation");
+        reconcile_external_identifier_additions(&mut tx, NamingKind::ResourceTemplate, "server-a", "everything", &[])
+            .await
+            .expect("reconcile template namespace");
+        tx.commit().await.expect("commit template reconciliation");
+
+        let (unique_name, route_uri): (String, String) =
+            sqlx::query_as("SELECT unique_name, route_uri FROM server_resource_templates WHERE id = 'template-1'")
+                .fetch_one(&pool)
+                .await
+                .expect("load reconciled template mapping");
+        assert_eq!(
+            unique_name,
+            "mcpmate://resources/template/everything/demo/dynamic/{resourceId}"
+        );
+        assert_eq!(route_uri, "mcpmate://resources/template/everything/demo/dynamic/{}");
     }
 
     #[test]
@@ -1209,14 +1330,14 @@ mod tests {
             "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES ('prompt-2', 'server-a', 'docs', 'summary', 'docs_summary')",
             "INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri) VALUES ('resource-1', 'server-a', 'docs', 'file:///guide.md', 'docs:file:///guide.md')",
             "INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri) VALUES ('resource-2', 'server-a', 'docs', 'file:///readme.md', 'docs:file:///readme.md')",
-            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name) VALUES ('template-1', 'server-a', 'docs', 'docs://{id}', 'docs://{id}')",
-            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name) VALUES ('template-2', 'server-a', 'docs', 'files://{path}', 'files://{path}')",
+            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name) VALUES ('template-1', 'server-a', 'docs', 'docs://resource/{id}', 'docs://resource/{id}')",
+            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name) VALUES ('template-2', 'server-a', 'docs', 'files://resource/{path}', 'files://resource/{path}')",
             "INSERT INTO profile_prompt (id, profile_id, server_id, server_name, prompt_name, enabled) VALUES ('profile-prompt-1', 'profile-1', 'server-a', 'docs', 'help', 1)",
             "INSERT INTO profile_prompt (id, profile_id, server_id, server_name, prompt_name, enabled) VALUES ('profile-prompt-2', 'profile-1', 'server-a', 'docs', 'summary', 1)",
             "INSERT INTO profile_resource (id, profile_id, server_id, server_name, resource_uri, enabled) VALUES ('profile-resource-1', 'profile-1', 'server-a', 'docs', 'file:///guide.md', 1)",
             "INSERT INTO profile_resource (id, profile_id, server_id, server_name, resource_uri, enabled) VALUES ('profile-resource-2', 'profile-1', 'server-a', 'docs', 'file:///readme.md', 1)",
-            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-1', 'profile-1', 'server-a', 'docs', 'docs://{id}', 1)",
-            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-2', 'profile-1', 'server-a', 'docs', 'files://{path}', 1)",
+            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-1', 'profile-1', 'server-a', 'docs', 'docs://resource/{id}', 1)",
+            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-2', 'profile-1', 'server-a', 'docs', 'files://resource/{path}', 1)",
         ] {
             sqlx::query(statement)
                 .execute(&pool)
@@ -1228,7 +1349,7 @@ mod tests {
         for (kind, retained) in [
             (NamingKind::Prompt, "summary"),
             (NamingKind::Resource, "file:///readme.md"),
-            (NamingKind::ResourceTemplate, "files://{path}"),
+            (NamingKind::ResourceTemplate, "files://resource/{path}"),
         ] {
             reconcile_external_identifiers(&mut tx, kind, "server-a", "docs", &[retained.to_string()])
                 .await
@@ -1239,7 +1360,7 @@ mod tests {
         for (table, value_column, retained) in [
             ("profile_prompt", "prompt_name", "summary"),
             ("profile_resource", "resource_uri", "file:///readme.md"),
-            ("profile_resource_template", "uri_template", "files://{path}"),
+            ("profile_resource_template", "uri_template", "files://resource/{path}"),
         ] {
             let values: Vec<String> = sqlx::query_scalar(&format!("SELECT {value_column} FROM {table}"))
                 .fetch_all(&pool)

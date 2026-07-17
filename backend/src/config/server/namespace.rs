@@ -2,6 +2,7 @@ use std::fmt;
 
 pub const MAX_SERVER_NAMESPACE_LEN: usize = 64;
 pub const SERVER_NAMESPACE_PATTERN: &str = "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$";
+const RESERVED_SERVER_NAMESPACES: &[&str] = &["template"];
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NamespaceValidationError {
@@ -40,6 +41,8 @@ pub fn validate_server_namespace(namespace: &str) -> Result<(), NamespaceValidat
         Some("the namespace cannot be empty")
     } else if namespace.len() > MAX_SERVER_NAMESPACE_LEN {
         Some("the namespace is too long")
+    } else if RESERVED_SERVER_NAMESPACES.contains(&namespace) {
+        Some("the namespace is reserved by the MCPMate resource address space")
     } else if !is_canonical_server_namespace(namespace) {
         Some("the namespace is not canonical")
     } else {
@@ -78,7 +81,8 @@ pub fn suggest_server_namespace(input: &str) -> Option<String> {
         }
     }
 
-    is_canonical_server_namespace(&suggestion).then_some(suggestion)
+    (is_canonical_server_namespace(&suggestion) && !RESERVED_SERVER_NAMESPACES.contains(&suggestion.as_str()))
+        .then_some(suggestion)
 }
 
 fn is_canonical_server_namespace(namespace: &str) -> bool {
@@ -144,6 +148,7 @@ mod tests {
             "server_",
             "server.name",
             "序列思考",
+            "template",
             "",
         ] {
             assert!(
@@ -151,6 +156,14 @@ mod tests {
                 "namespace '{namespace}' must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn reserved_resource_route_segment_has_no_namespace_suggestion() {
+        let error = validate_server_namespace("template").expect_err("reserved namespace must fail");
+
+        assert_eq!(error.suggestion(), None);
+        assert!(error.to_string().contains("reserved"));
     }
 
     #[test]

@@ -84,6 +84,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sysinfo = "0.30.5"
 url = "2.5"
+iri-string = "0.7.8"
+regex = "1"
+percent-encoding = "2"
 zip = "2.1"
 sqlx = { version = "0.8.1", features = [
   "runtime-tokio",
