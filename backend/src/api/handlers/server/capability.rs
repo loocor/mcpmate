@@ -49,13 +49,17 @@ pub enum CapabilityType {
 mod tests {
     use super::{
         CapabilityType, ExtractedCapability, enrich_prompt_item, enrich_resource_item, enrich_resource_template_item,
-        enrich_tool_item, persist_extracted_inventory, resource_template_json_from_cached,
+        enrich_tool_item, persist_extracted_inventory, prompt_json, resource_json, resource_template_json,
+        resource_template_json_from_cached, tool_json,
     };
     use crate::{
         api::{handlers::server::common::ServerIdentification, routes::AppState},
         config::database::Database,
         core::{
-            cache::{CachedResourceTemplateInfo, CachedToolInfo, RedbCacheManager, manager::CacheConfig},
+            cache::{
+                CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo, RedbCacheManager,
+                manager::CacheConfig,
+            },
             models::Config,
             pool::UpstreamConnectionPool,
             profile::ConfigApplicationStateManager,
@@ -81,6 +85,128 @@ mod tests {
     }
 
     #[test]
+    fn cached_detail_json_uses_standard_mcp_wire_fields() {
+        let tool = tool_json(
+            "everything_get-tiny-image",
+            Some("Returns a tiny image".to_string()),
+            json!({ "type": "object" }),
+            Some(json!({ "type": "object" })),
+            None,
+        );
+        assert_eq!(tool["name"], "everything_get-tiny-image");
+        assert_eq!(tool["inputSchema"], json!({ "type": "object" }));
+        assert_eq!(tool["outputSchema"], json!({ "type": "object" }));
+        assert!(tool.get("input_schema").is_none());
+        assert!(tool.get("output_schema").is_none());
+        assert!(tool.get("unique_name").is_none());
+        assert!(tool.get("id").is_none());
+
+        let resource = resource_json(
+            "mcpmate://resources/everything/demo/static/document/architecture.md",
+            Some("architecture.md".to_string()),
+            Some("Architecture document".to_string()),
+            Some("text/markdown".to_string()),
+            None,
+        );
+        assert_eq!(resource["mimeType"], "text/markdown");
+        assert!(resource.get("mime_type").is_none());
+        assert!(resource.get("unique_uri").is_none());
+        assert!(resource.get("id").is_none());
+
+        let template = resource_template_json(
+            "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}",
+            Some("Dynamic Text Resource".to_string()),
+            Some("Dynamic text".to_string()),
+            Some("text/plain".to_string()),
+        );
+        assert_eq!(
+            template["uriTemplate"],
+            "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}"
+        );
+        assert_eq!(template["mimeType"], "text/plain");
+        assert!(template.get("uri_template").is_none());
+        assert!(template.get("unique_uri_template").is_none());
+        assert!(template.get("id").is_none());
+
+        let prompt = prompt_json(
+            "everything_args-prompt",
+            Some("Prompt with arguments".to_string()),
+            vec![crate::core::cache::PromptArgument {
+                name: "message".to_string(),
+                description: Some("Message".to_string()),
+                required: true,
+            }],
+            None,
+        );
+        assert_eq!(prompt["name"], "everything_args-prompt");
+        assert!(prompt.get("unique_name").is_none());
+        assert!(prompt.get("id").is_none());
+    }
+
+    #[test]
+    fn cached_detail_projection_uses_external_identifiers() {
+        let cached_at = Utc::now();
+        let tool = super::tool_json_from_cached(
+            &CachedToolInfo {
+                name: "get-tiny-image".to_string(),
+                description: None,
+                input_schema_json: r#"{"type":"object"}"#.to_string(),
+                output_schema_json: None,
+                unique_name: None,
+                icons: None,
+                enabled: true,
+                cached_at,
+            },
+            "everything_get-tiny-image",
+        );
+        let prompt = super::prompt_json_from_cached(
+            CachedPromptInfo {
+                name: "args-prompt".to_string(),
+                description: None,
+                arguments: Vec::new(),
+                icons: None,
+                enabled: true,
+                cached_at,
+            },
+            "everything_args-prompt",
+        );
+        let resource = super::resource_json_from_cached(
+            CachedResourceInfo {
+                uri: "demo://resource/static/document/architecture.md".to_string(),
+                name: Some("architecture.md".to_string()),
+                description: None,
+                mime_type: Some("text/markdown".to_string()),
+                icons: None,
+                enabled: true,
+                cached_at,
+            },
+            "mcpmate://resources/everything/demo/static/document/architecture.md",
+        );
+        let template = resource_template_json_from_cached(
+            CachedResourceTemplateInfo {
+                uri_template: "demo://resource/dynamic/text/{resourceId}".to_string(),
+                name: Some("Dynamic Text Resource".to_string()),
+                description: None,
+                mime_type: Some("text/plain".to_string()),
+                enabled: true,
+                cached_at,
+            },
+            "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}",
+        );
+
+        assert_eq!(tool["name"], "everything_get-tiny-image");
+        assert_eq!(prompt["name"], "everything_args-prompt");
+        assert_eq!(
+            resource["uri"],
+            "mcpmate://resources/everything/demo/static/document/architecture.md"
+        );
+        assert_eq!(
+            template["uriTemplate"],
+            "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}"
+        );
+    }
+
+    #[test]
     fn management_tool_projection_uses_external_name_and_keeps_upstream_metadata() {
         let projected = enrich_tool_item(
             json!({ "name": "get_searxng_status" }),
@@ -96,51 +222,94 @@ mod tests {
 
     #[test]
     fn management_projections_resolve_already_external_values() {
+        let canonical_resource = crate::core::capability::resource_uri::encode_resource_uri("docs", "file:///guide.md")
+            .expect("encode resource");
+        let upstream_template = "demo://resource/lookup/{id}";
+        let canonical_template =
+            crate::core::capability::resource_uri::encode_resource_template("docs", upstream_template)
+                .expect("encode resource template");
         let prompt =
             enrich_prompt_item(json!({ "name": "docs_help" }), &mapping("help", "docs_help")).expect("project prompt");
         let resource = enrich_resource_item(
-            json!({ "uri": "docs:file:///guide.md" }),
-            &mapping("file:///guide.md", "docs:file:///guide.md"),
+            json!({ "uri": canonical_resource }),
+            &mapping("file:///guide.md", &canonical_resource),
         )
         .expect("project resource");
         let template = enrich_resource_template_item(
-            json!({ "name": "docs_lookup_{id}", "uri_template": "lookup_{id}" }),
-            &mapping("lookup_{id}", "docs_lookup_{id}"),
+            json!({ "name": "Lookup", "uri_template": upstream_template }),
+            &mapping(upstream_template, &canonical_template),
         )
         .expect("project resource template");
 
         assert_eq!(prompt["name"], "docs_help");
         assert_eq!(prompt["prompt_name"], "help");
-        assert_eq!(resource["uri"], "docs:file:///guide.md");
+        assert_eq!(resource["uri"], canonical_resource);
         assert_eq!(resource["resource_uri"], "file:///guide.md");
-        assert_eq!(template["name"], "docs_lookup_{id}");
-        assert_eq!(template["uri_template"], "lookup_{id}");
-        assert_eq!(template["unique_uri_template"], "docs_lookup_{id}");
+        assert_eq!(template["name"], "Lookup");
+        assert_eq!(template["uri_template"], upstream_template);
+        assert_eq!(template["unique_uri_template"], canonical_template);
     }
 
     #[test]
-    fn cached_resource_template_projection_skips_null_external_candidate() {
+    fn management_resource_template_projection_accepts_rmcp_wire_shape() {
+        let upstream_template = "demo://resource/dynamic/text/{resourceId}";
+        let canonical_template = "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}".to_string();
+        let template = rmcp::model::ResourceTemplate {
+            raw: rmcp::model::RawResourceTemplate::new(canonical_template.clone(), "Dynamic Text Resource"),
+            annotations: None,
+        };
+        let wire_item = serde_json::to_value(template).expect("serialize RMCP resource template");
+
+        assert_eq!(wire_item["uriTemplate"], canonical_template);
+        let projected = enrich_resource_template_item(wire_item, &mapping(upstream_template, &canonical_template))
+            .expect("project RMCP resource template");
+
+        assert_eq!(projected["name"], "Dynamic Text Resource");
+        assert_eq!(projected["uri_template"], upstream_template);
+        assert_eq!(projected["unique_uri_template"], canonical_template);
+        assert_eq!(projected["id"], "capability-id");
+    }
+
+    #[test]
+    fn management_resource_template_projection_rejects_display_name_as_identity() {
+        let display_name = "demo://resource/dynamic/text/{resourceId}";
+        let result = enrich_resource_template_item(
+            json!({ "name": display_name }),
+            &mapping(
+                display_name,
+                "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}",
+            ),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cached_resource_template_protocol_projection_accepts_external_identifier() {
         let fixtures = [
             (
                 "demo://resource/dynamic/blob/{resourceId}",
-                "everything_demo://resource/dynamic/blob/{resourceId}",
+                "mcpmate://resources/template/everything/demo/dynamic/blob/{resourceId}",
             ),
             (
                 "demo://resource/dynamic/text/{resourceId}",
-                "everything_demo://resource/dynamic/text/{resourceId}",
+                "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}",
             ),
         ];
 
         for (upstream_template, external_template) in fixtures {
-            let cached_payload = resource_template_json_from_cached(CachedResourceTemplateInfo {
-                uri_template: upstream_template.to_string(),
-                name: Some("Dynamic resource".to_string()),
-                description: Some("Read a dynamic resource".to_string()),
-                mime_type: Some("application/octet-stream".to_string()),
-                enabled: true,
-                cached_at: Utc::now(),
-            });
-            assert!(cached_payload["unique_uri_template"].is_null());
+            let cached_payload = resource_template_json_from_cached(
+                CachedResourceTemplateInfo {
+                    uri_template: upstream_template.to_string(),
+                    name: Some("Dynamic resource".to_string()),
+                    description: Some("Read a dynamic resource".to_string()),
+                    mime_type: Some("application/octet-stream".to_string()),
+                    enabled: true,
+                    cached_at: Utc::now(),
+                },
+                external_template,
+            );
+            assert_eq!(cached_payload["uriTemplate"], external_template);
 
             let projected =
                 enrich_resource_template_item(cached_payload, &mapping(upstream_template, external_template))
@@ -475,7 +644,7 @@ pub async fn server_capability_detail(
         include_meta: None,
         timeout: None,
     };
-    let (db, server_info, _) = get_server_info_for_inspect(&state, &request.id, &query).await?;
+    let (_db, server_info, _) = get_server_info_for_inspect(&state, &request.id, &query).await?;
     let capability_type = parse_capability_detail_type(&request.kind)?;
     let lookup = match cached_capability_detail_item(&state, &server_info, capability_type, key).await {
         Ok(lookup) => lookup,
@@ -491,23 +660,7 @@ pub async fn server_capability_detail(
         }
     };
 
-    let item = if let Some(item) = lookup.item {
-        enrich_capability_items(capability_type, &db.pool, &server_info.server_id, vec![item])
-            .await
-            .map_err(|error| {
-                tracing::error!(
-                    server_id = %server_info.server_id,
-                    kind = %request.kind,
-                    error = %error,
-                    "Capability naming projection failed"
-                );
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?
-            .into_iter()
-            .next()
-    } else {
-        None
-    };
+    let item = lookup.item;
 
     let state_name = if item.is_some() { "ok" } else { "missing" };
     Ok(Json(ServerCapabilityDetailResp::success(ServerCapabilityDetailData {
@@ -569,46 +722,23 @@ async fn cached_capability_detail_item(
             .tools
             .into_iter()
             .find(|tool| capability_key_matches(&tool.name, &upstream_key))
-            .map(|tool| tool_json_from_cached(&tool)),
+            .map(|tool| tool_json_from_cached(&tool, key)),
         CapabilityType::Resources => data
             .resources
             .into_iter()
             .find(|resource| capability_key_matches(&resource.uri, &upstream_key))
-            .map(resource_json_from_cached),
+            .map(|resource| resource_json_from_cached(resource, key)),
         CapabilityType::Prompts => data
             .prompts
             .into_iter()
             .find(|prompt| capability_key_matches(&prompt.name, &upstream_key))
-            .map(prompt_json_from_cached),
+            .map(|prompt| prompt_json_from_cached(prompt, key)),
         CapabilityType::ResourceTemplates => data
             .resource_templates
             .into_iter()
             .find(|template| capability_key_matches(&template.uri_template, &upstream_key))
-            .map(resource_template_json_from_cached),
-    }
-    .map(|mut item| {
-        if let Some(object) = item.as_object_mut() {
-            match capability_type {
-                CapabilityType::Tools => {
-                    object.insert("tool_name".to_string(), upstream_key.clone().into());
-                    object.insert("unique_name".to_string(), key.into());
-                }
-                CapabilityType::Prompts => {
-                    object.insert("prompt_name".to_string(), upstream_key.clone().into());
-                    object.insert("unique_name".to_string(), key.into());
-                }
-                CapabilityType::Resources => {
-                    object.insert("resource_uri".to_string(), upstream_key.clone().into());
-                    object.insert("unique_uri".to_string(), key.into());
-                }
-                CapabilityType::ResourceTemplates => {
-                    object.insert("uri_template".to_string(), upstream_key.clone().into());
-                    object.insert("unique_name".to_string(), key.into());
-                }
-            }
-        }
-        item
-    });
+            .map(|template| resource_template_json_from_cached(template, key)),
+    };
 
     Ok(CapabilityDetailLookup {
         item,
@@ -821,7 +951,7 @@ fn enrich_resource_template_item(
     mapping: &HashMap<String, (String, String)>,
 ) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
-    let presented_template = ["unique_uri_template", "uri_template", "name"]
+    let presented_template = ["unique_uri_template", "uri_template", "uriTemplate"]
         .into_iter()
         .filter_map(|field| item.get(field).and_then(|value| value.as_str()))
         .find(|value| !value.trim().is_empty())
@@ -835,7 +965,6 @@ fn enrich_resource_template_item(
     let obj = item
         .as_object_mut()
         .ok_or_else(|| ApiError::InternalError("Resource template response is not an object".to_string()))?;
-    obj.insert("name".to_string(), serde_json::json!(unique_name));
     obj.insert("uri_template".to_string(), serde_json::json!(upstream_template));
     obj.insert("unique_uri_template".to_string(), serde_json::json!(unique_name));
     obj.insert("id".to_string(), serde_json::json!(id));
@@ -929,33 +1058,36 @@ pub fn tool_json(
     description: Option<String>,
     input_schema: serde_json::Value,
     output_schema: Option<serde_json::Value>,
-    unique_name: Option<String>,
-    id: Option<String>,
     icons: Option<Vec<Icon>>,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "name": name,
-        "description": description,
-        "input_schema": input_schema,
-        "output_schema": output_schema,
-        "unique_name": unique_name,
-        "id": id,
-        "icons": icons,
-    })
+    let mut item = Map::from_iter([
+        ("name".to_string(), name.into()),
+        ("inputSchema".to_string(), input_schema),
+    ]);
+    insert_optional_json(&mut item, "description", description);
+    insert_optional_json(&mut item, "outputSchema", output_schema);
+    insert_optional_json(&mut item, "icons", icons);
+    Value::Object(item)
 }
 
-pub fn tool_json_from_cached(t: &crate::core::cache::CachedToolInfo) -> serde_json::Value {
+pub fn tool_json_from_cached(
+    t: &crate::core::cache::CachedToolInfo,
+    external_name: &str,
+) -> serde_json::Value {
     let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
     let out = t.output_schema();
-    tool_json(
-        &t.name,
-        t.description.clone(),
-        schema,
-        out,
-        t.unique_name.clone(),
-        None,
-        t.icons.clone(),
-    )
+    tool_json(external_name, t.description.clone(), schema, out, t.icons.clone())
+}
+
+pub fn tool_management_json_from_cached(t: &crate::core::cache::CachedToolInfo) -> serde_json::Value {
+    serde_json::json!({
+        "name": t.name,
+        "description": t.description,
+        "input_schema": t.input_schema().unwrap_or_else(|_| serde_json::json!({})),
+        "output_schema": t.output_schema(),
+        "unique_name": t.unique_name,
+        "icons": t.icons,
+    })
 }
 
 pub fn resource_json(
@@ -963,23 +1095,23 @@ pub fn resource_json(
     name: Option<String>,
     description: Option<String>,
     mime_type: Option<String>,
-    unique_uri: Option<String>,
-    id: Option<String>,
     icons: Option<Vec<Icon>>,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "uri": uri,
-        "name": name,
-        "description": description,
-        "mime_type": mime_type,
-        "unique_uri": unique_uri,
-        "id": id,
-        "icons": icons,
-    })
+    let mut item = Map::from_iter([
+        ("uri".to_string(), uri.into()),
+        ("name".to_string(), name.unwrap_or_else(|| uri.to_string()).into()),
+    ]);
+    insert_optional_json(&mut item, "description", description);
+    insert_optional_json(&mut item, "mimeType", mime_type);
+    insert_optional_json(&mut item, "icons", icons);
+    Value::Object(item)
 }
 
-pub fn resource_json_from_cached(r: crate::core::cache::CachedResourceInfo) -> serde_json::Value {
-    resource_json(&r.uri, r.name, r.description, r.mime_type, None, None, r.icons)
+pub fn resource_json_from_cached(
+    r: crate::core::cache::CachedResourceInfo,
+    external_uri: &str,
+) -> serde_json::Value {
+    resource_json(external_uri, r.name, r.description, r.mime_type, r.icons)
 }
 
 pub fn resource_template_json(
@@ -987,29 +1119,30 @@ pub fn resource_template_json(
     name: Option<String>,
     description: Option<String>,
     mime_type: Option<String>,
-    unique_uri_template: Option<String>,
-    id: Option<String>,
 ) -> serde_json::Value {
-    serde_json::json!({
-        "uri_template": uri_template,
-        "name": name,
-        "description": description,
-        "mime_type": mime_type,
-        "unique_uri_template": unique_uri_template,
-        "id": id,
-    })
+    let mut item = Map::from_iter([
+        ("uriTemplate".to_string(), uri_template.into()),
+        (
+            "name".to_string(),
+            name.unwrap_or_else(|| uri_template.to_string()).into(),
+        ),
+    ]);
+    insert_optional_json(&mut item, "description", description);
+    insert_optional_json(&mut item, "mimeType", mime_type);
+    Value::Object(item)
 }
 
-pub fn resource_template_json_from_cached(t: crate::core::cache::CachedResourceTemplateInfo) -> serde_json::Value {
-    resource_template_json(&t.uri_template, t.name, t.description, t.mime_type, None, None)
+pub fn resource_template_json_from_cached(
+    t: crate::core::cache::CachedResourceTemplateInfo,
+    external_uri_template: &str,
+) -> serde_json::Value {
+    resource_template_json(external_uri_template, t.name, t.description, t.mime_type)
 }
 
 pub fn prompt_json(
     name: &str,
     description: Option<String>,
     arguments: Vec<crate::core::cache::PromptArgument>,
-    unique_name: Option<String>,
-    id: Option<String>,
     icons: Option<Vec<Icon>>,
 ) -> serde_json::Value {
     let args: Vec<serde_json::Value> = arguments
@@ -1023,25 +1156,40 @@ pub fn prompt_json(
         })
         .collect();
 
-    serde_json::json!({
-        "name": name,
-        "description": description,
-        "arguments": args,
-        "unique_name": unique_name,
-        "id": id,
-        "icons": icons,
-    })
+    let mut item = Map::from_iter([("name".to_string(), name.into())]);
+    insert_optional_json(&mut item, "description", description);
+    if !args.is_empty() {
+        item.insert("arguments".to_string(), args.into());
+    }
+    insert_optional_json(&mut item, "icons", icons);
+    Value::Object(item)
 }
 
-pub fn prompt_json_from_cached(p: crate::core::cache::CachedPromptInfo) -> serde_json::Value {
+pub fn prompt_json_from_cached(
+    p: crate::core::cache::CachedPromptInfo,
+    external_name: &str,
+) -> serde_json::Value {
     prompt_json(
-        &p.name,
+        external_name,
         p.description.clone(),
         p.arguments.clone(),
-        None,
-        None,
         p.icons.clone(),
     )
+}
+
+fn insert_optional_json<T>(
+    item: &mut Map<String, Value>,
+    key: &str,
+    value: Option<T>,
+) where
+    T: serde::Serialize,
+{
+    if let Some(value) = value {
+        item.insert(
+            key.to_string(),
+            serde_json::to_value(value).expect("MCP capability fields must serialize"),
+        );
+    }
 }
 
 pub async fn extract_tools_capability(
