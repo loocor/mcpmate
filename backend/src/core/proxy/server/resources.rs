@@ -1,5 +1,8 @@
 use super::*;
-use crate::core::capability::naming::{NamingKind, resolve_capability_route};
+use crate::core::capability::naming::NamingKind;
+use crate::core::capability::resource_registry::{
+    ResolvedResourceRoute, resolve_resource_route, rewrite_read_resource_result,
+};
 use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{
@@ -8,6 +11,103 @@ use rmcp::model::{
 };
 use rmcp::service::RequestContext;
 use std::collections::HashSet;
+
+#[derive(Debug)]
+pub(super) struct ResolvedExternalResourceTarget {
+    pub(super) server_id: String,
+    pub(super) route: ResolvedResourceRoute,
+}
+
+impl ResolvedExternalResourceTarget {
+    pub(super) fn upstream_uri(&self) -> &str {
+        &self.route.upstream_uri
+    }
+
+    pub(super) fn canonical_uri(&self) -> &str {
+        &self.route.external_uri
+    }
+}
+
+pub(super) async fn resolve_external_resource_target(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    external_uri: &str,
+) -> anyhow::Result<ResolvedExternalResourceTarget> {
+    let route = resolve_resource_route(pool, external_uri).await?;
+    let server_id = route.server_id.clone();
+    Ok(ResolvedExternalResourceTarget { server_id, route })
+}
+
+pub(super) async fn resolve_authorized_external_resource_target(
+    server: &ProxyServer,
+    client: &crate::core::proxy::server::common::ClientContext,
+    external_uri: &str,
+) -> Result<ResolvedExternalResourceTarget, McpError> {
+    let Some(db) = &server.database else {
+        return Err(McpError::internal_error(
+            "Resource routing requires database-backed registry metadata".to_string(),
+            None,
+        ));
+    };
+    let target = resolve_external_resource_target(&db.pool, external_uri)
+        .await
+        .map_err(|error| McpError::invalid_params(format!("Invalid external resource URI: {error}"), None))?;
+    let canonical_uri = target.canonical_uri().to_string();
+
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
+        let eligible_server_ids =
+            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
+        if !crate::core::proxy::server::unify_directly_exposed_resource_route_allowed(
+            client.unify_workspace.as_ref(),
+            &eligible_server_ids,
+            &target.server_id,
+            &target.route,
+        ) {
+            return Err(McpError::invalid_params(
+                format!("Resource '{canonical_uri}' is not directly exposed for this client"),
+                None,
+            ));
+        }
+    }
+
+    let visibility = crate::core::profile::visibility::ProfileVisibilityService::new(
+        server.database.clone(),
+        server.profile_service.clone(),
+    );
+    let snapshot = visibility
+        .resolve_snapshot_for_client(client)
+        .await
+        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+    if let Err(error) = visibility
+        .assert_resource_allowed_with_snapshot(&snapshot, &canonical_uri)
+        .await
+    {
+        tracing::warn!(
+            resource = %canonical_uri,
+            client_id = %client.client_id,
+            profile_id = ?client.profile_id,
+            error = %error,
+            "External resource access denied by visibility policy"
+        );
+        return Err(McpError::invalid_params(
+            format!("Resource '{canonical_uri}' is not available for this client"),
+            None,
+        ));
+    }
+
+    Ok(target)
+}
+
+fn map_resource_read_error(error: anyhow::Error) -> McpError {
+    for source in error.chain() {
+        if let Some(rmcp::service::ServiceError::McpError(upstream)) =
+            source.downcast_ref::<rmcp::service::ServiceError>()
+            && upstream.code == rmcp::model::ErrorCode::RESOURCE_NOT_FOUND
+        {
+            return upstream.clone();
+        }
+    }
+    McpError::internal_error(error.to_string(), None)
+}
 
 pub(super) async fn list_resources(
     server: &ProxyServer,
@@ -266,7 +366,7 @@ pub(super) async fn list_resource_templates(
                     let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
                         NamingKind::ResourceTemplate,
                         &server_id,
-                        resource_template.name.as_ref(),
+                        resource_template.uri_template.as_ref(),
                     )
                     .await?;
                     if crate::core::proxy::server::unify_directly_exposed_template_allowed(
@@ -322,87 +422,139 @@ pub(super) async fn read_resource(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ReadResourceResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
     tracing::debug!("Reading resource: {}", request.uri);
 
-    let route = resolve_capability_route(NamingKind::Resource, &request.uri)
-        .await
-        .map_err(|error| McpError::internal_error(format!("Failed to resolve external resource URI: {error}"), None))?;
-    let server_filter = route.server_id;
-    let lookup_uri = route.upstream_value;
-    let canonical_uri = request.uri.clone();
-    let mut filter = HashSet::new();
-    filter.insert(server_filter.clone());
-    let resource_mapping = crate::core::capability::facade::build_resource_mapping_filtered(
-        &server.connection_pool,
-        server.database.as_ref(),
-        Some(&filter),
-    )
-    .await
-    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-    if unify_mode {
-        let Some(db) = &server.database else {
-            return Err(McpError::invalid_params(
-                "Unify resource direct exposure requires database-backed server metadata".to_string(),
-                None,
-            ));
-        };
-        let eligible_server_ids =
-            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
-        if !crate::core::proxy::server::unify_directly_exposed_resource_allowed(
-            client.unify_workspace.as_ref(),
-            &eligible_server_ids,
-            &server_filter,
-            lookup_uri.as_ref(),
-        ) {
-            return Err(McpError::invalid_params(
-                format!("Resource '{}' is not directly exposed for this client", canonical_uri),
-                None,
-            ));
-        }
-    }
-
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let snapshot = vis
-        .resolve_snapshot_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    if let Err(error) = vis
-        .assert_resource_allowed_with_snapshot(&snapshot, &canonical_uri)
-        .await
-    {
-        tracing::warn!(
-            resource = %canonical_uri,
-            client_id = %client.client_id,
-            profile_id = ?client.profile_id,
-            error = %error,
-            "ProxyServer::read_resource denied by visibility policy"
-        );
-        return Err(McpError::invalid_params(
-            format!("Resource '{}' is not available for this client", canonical_uri),
-            None,
-        ));
-    }
+    let target = resolve_authorized_external_resource_target(server, &client, &request.uri).await?;
+    let server_filter = target.server_id.clone();
+    let lookup_uri = target.upstream_uri().to_string();
 
     let connection_selection = client.connection_selection(server_filter.clone());
 
-    match crate::core::capability::facade::read_upstream_resource(
+    match crate::core::capability::facade::read_routed_resource(
         &server.connection_pool,
-        &resource_mapping,
+        &server_filter,
         &lookup_uri,
-        Some(&server_filter),
         connection_selection.as_ref(),
     )
     .await
     {
-        Ok(result) => Ok(result),
+        Ok(mut result) => {
+            let db = server.database.as_ref().ok_or_else(|| {
+                McpError::internal_error(
+                    "Resource response projection requires registry metadata".to_string(),
+                    None,
+                )
+            })?;
+            rewrite_read_resource_result(&db.pool, &target.route, &mut result)
+                .await
+                .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+            Ok(result)
+        }
         Err(e) => {
             tracing::error!("Failed to read resource '{}': {}", request.uri, e);
-            Err(McpError::internal_error(e.to_string(), None))
+            Err(map_resource_read_error(e))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn route_pool() -> sqlx::Pool<sqlx::Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect route database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'everything', 'stdio')")
+            .execute(&pool)
+            .await
+            .expect("insert server");
+        pool
+    }
+
+    #[tokio::test]
+    async fn canonical_static_resource_resolves_from_registry() {
+        let pool = route_pool().await;
+        let canonical = crate::config::server::capabilities::upsert_shadow_resource(
+            &pool,
+            "server-a",
+            "everything",
+            "demo://resource/static/document/architecture.md",
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("insert listed resource");
+
+        let target = resolve_external_resource_target(&pool, &canonical)
+            .await
+            .expect("resolve resource target");
+
+        assert_eq!(target.server_id, "server-a");
+        assert_eq!(target.upstream_uri(), "demo://resource/static/document/architecture.md");
+        assert_eq!(target.canonical_uri(), canonical);
+    }
+
+    #[tokio::test]
+    async fn template_derived_resource_resolves_from_registry_without_static_row() {
+        let pool = route_pool().await;
+        let template = crate::config::server::capabilities::upsert_shadow_resource_template(
+            &pool,
+            "server-a",
+            "everything",
+            "demo://resource/dynamic/text/{resourceId}",
+            Some("Dynamic Text Resource"),
+            None,
+        )
+        .await
+        .expect("insert template route");
+        let canonical = template.replace("{resourceId}", "42");
+
+        let target = resolve_external_resource_target(&pool, &canonical)
+            .await
+            .expect("resolve template target");
+
+        assert_eq!(target.server_id, "server-a");
+        assert_eq!(target.upstream_uri(), "demo://resource/dynamic/text/42");
+    }
+
+    #[tokio::test]
+    async fn raw_or_unknown_external_resource_routes_fail_closed() {
+        let pool = route_pool().await;
+        assert!(
+            resolve_external_resource_target(&pool, "file:///guide.md")
+                .await
+                .is_err()
+        );
+        assert!(
+            resolve_external_resource_target(&pool, "mcpmate://resources/everything/ZGVtbzovL3Jlc291cmNlL3N0YXRpYw",)
+                .await
+                .is_err()
+        );
+
+        assert!(
+            resolve_external_resource_target(&pool, "mcpmate://resources/everything/demo/static/document/missing.md",)
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn resource_not_found_error_code_survives_proxy_mapping() {
+        let upstream = rmcp::ErrorData::resource_not_found("missing", None);
+        let error = anyhow::Error::new(rmcp::service::ServiceError::McpError(upstream.clone()))
+            .context("Failed to read resource from upstream server");
+
+        assert_eq!(map_resource_read_error(error), upstream);
     }
 }

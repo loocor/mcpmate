@@ -214,6 +214,7 @@ pub(super) async fn get_prompt(
         .await
         .map_err(|error| McpError::internal_error(format!("Failed to resolve external prompt name: {error}"), None))?;
     let server_filter = route.server_id;
+    let server_name = route.server_name;
     let lookup_name = route.upstream_value;
     let canonical_name = request.name.clone();
     let mut filter = HashSet::new();
@@ -287,7 +288,20 @@ pub(super) async fn get_prompt(
     )
     .await
     {
-        Ok(result) => Ok(result),
+        Ok(mut result) => {
+            let database = server.database.as_ref().ok_or_else(|| {
+                McpError::internal_error("Prompt result projection requires registry metadata".to_string(), None)
+            })?;
+            crate::core::capability::resource_uri::rewrite_get_prompt_result(
+                &database.pool,
+                &server_filter,
+                &server_name,
+                &mut result,
+            )
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+            Ok(result)
+        }
         Err(e) => {
             tracing::error!("Failed to get prompt '{}': {}", request.name, e);
             Err(McpError::internal_error(e.to_string(), None))

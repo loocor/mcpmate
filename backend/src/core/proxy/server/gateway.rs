@@ -1352,16 +1352,9 @@ impl ServerHandler for ProxyServer {
         self.enforce_origin_if_present(&_context)?;
         let client = self.resolve_bound_client_context(&_context).await?;
         let session_id = self.require_session_id(&client)?;
-        let unique_uri = request.uri;
-        let route = crate::core::capability::naming::resolve_capability_route(
-            crate::core::capability::naming::NamingKind::Resource,
-            &unique_uri,
-        )
-        .await
-        .map_err(|error| {
-            rmcp::ErrorData::invalid_params(format!("Failed to resolve external resource URI: {error}"), None)
-        })?;
-        let server_id = route.server_id;
+        let target = super::resources::resolve_authorized_external_resource_target(self, &client, &request.uri).await?;
+        let unique_uri = target.canonical_uri().to_string();
+        let server_id = target.server_id;
 
         self.resource_subscriptions
             .insert((session_id.clone(), unique_uri.clone()), server_id.clone());
@@ -1386,6 +1379,9 @@ impl ServerHandler for ProxyServer {
         self.enforce_origin_if_present(&_context)?;
         let client = self.resolve_bound_client_context(&_context).await?;
         let session_id = self.require_session_id(&client)?;
+        crate::core::capability::resource_registry::validate_external_resource_uri(&request.uri).map_err(|error| {
+            rmcp::ErrorData::invalid_params(format!("Invalid canonical resource URI: {error}"), None)
+        })?;
         let unique_uri = request.uri;
         if let Some((_, server_id)) = self
             .resource_subscriptions
@@ -1714,10 +1710,391 @@ mod tests {
         initialize_client_table, initialize_system_settings, set_default_client_config_mode,
     };
     use crate::config::database::Database;
+    use crate::config::models::{Profile, Server};
     use crate::core::models::Config;
     use crate::core::proxy::server::common::{ClientIdentitySource, ClientTransport};
+    use axum::http::Request;
+    use rmcp::ServiceExt;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
+
+    #[derive(Clone)]
+    struct SubscriptionContextServer;
+
+    impl rmcp::ServerHandler for SubscriptionContextServer {}
+
+    #[derive(Clone)]
+    struct SubscriptionResourceServer;
+
+    impl rmcp::ServerHandler for SubscriptionResourceServer {
+        fn get_info(&self) -> rmcp::model::ServerInfo {
+            rmcp::model::ServerInfo::new(rmcp::model::ServerCapabilities::builder().enable_resources().build())
+        }
+
+        async fn list_resources(
+            &self,
+            _request: Option<rmcp::model::PaginatedRequestParams>,
+            _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        ) -> Result<rmcp::model::ListResourcesResult, rmcp::ErrorData> {
+            Err(rmcp::ErrorData::internal_error(
+                "Intentional resources/list failure".to_string(),
+                None,
+            ))
+        }
+
+        async fn read_resource(
+            &self,
+            request: ReadResourceRequestParams,
+            _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        ) -> Result<ReadResourceResult, rmcp::ErrorData> {
+            Ok(ReadResourceResult::new(vec![rmcp::model::ResourceContents::text(
+                format!("read:{}", request.uri),
+                request.uri,
+            )]))
+        }
+    }
+
+    async fn install_subscription_resource_connection(
+        server: &ProxyServer,
+        server_id: &str,
+    ) {
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        tokio::spawn(async move {
+            let service = SubscriptionResourceServer
+                .serve(server_transport)
+                .await
+                .expect("serve subscription resource");
+            service.waiting().await.expect("wait for subscription resource");
+        });
+        let handler = crate::core::transport::client::UpstreamClientHandler::new("subscription-resource".to_string());
+        let service = handler
+            .serve(client_transport)
+            .await
+            .expect("connect subscription resource");
+        let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+        let mut connection = crate::core::pool::UpstreamConnection::new("subscription_docs".to_string());
+        let instance_id = connection.id.clone();
+        connection.update_connected(service, Vec::new(), capabilities);
+
+        let mut pool = server.connection_pool.lock().await;
+        pool.connections
+            .entry(server_id.to_string())
+            .or_default()
+            .insert(instance_id.clone(), connection);
+        pool.production_routes
+            .insert(crate::core::pool::ProductionRouteKey::shareable(server_id), instance_id);
+    }
+
+    async fn subscription_request_context(
+        client_id: &str,
+        session_id: &str,
+    ) -> (
+        rmcp::service::RequestContext<rmcp::RoleServer>,
+        rmcp::service::RunningService<rmcp::RoleClient, ()>,
+        rmcp::service::RunningService<rmcp::RoleServer, SubscriptionContextServer>,
+    ) {
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let server_task = tokio::spawn(async move {
+            SubscriptionContextServer
+                .serve(server_transport)
+                .await
+                .expect("serve context peer")
+        });
+        let client_service = ().serve(client_transport).await.expect("connect context client");
+        let server_service = server_task.await.expect("join context server");
+        let mut context = rmcp::service::RequestContext::new(
+            rmcp::model::RequestId::String("subscription-test".into()),
+            server_service.peer().clone(),
+        );
+        let request = Request::builder()
+            .uri(format!("/mcp?client_id={client_id}"))
+            .header("mcp-session-id", session_id)
+            .body(())
+            .expect("build request parts");
+        context.extensions.insert(request.into_parts().0);
+        (context, client_service, server_service)
+    }
+
+    async fn create_subscription_test_server() -> (TempDir, sqlx::SqlitePool, ProxyServer, String, String) {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::config::initialization::run_initialization(&pool)
+            .await
+            .expect("initialize database");
+        crate::core::capability::naming::initialize(pool.clone());
+
+        let mut upstream = Server::new(
+            "subscription_docs".to_string(),
+            crate::common::server::ServerType::Stdio,
+        );
+        upstream.capabilities = Some("resources".to_string());
+        upstream.unify_direct_exposure_eligible = true;
+        let server_id = crate::config::server::upsert_server(&pool, &upstream)
+            .await
+            .expect("insert subscription server");
+        crate::core::capability::resolver::upsert(&server_id, "subscription_docs").await;
+
+        let mut profile = Profile::new(
+            "Subscription Profile".to_string(),
+            crate::common::profile::ProfileType::Shared,
+        );
+        profile.is_active = true;
+        let profile_id = crate::config::profile::upsert_profile(&pool, &profile)
+            .await
+            .expect("insert subscription profile");
+        crate::config::profile::add_server_to_profile(&pool, &profile_id, &server_id, true)
+            .await
+            .expect("add server to profile");
+        crate::config::server::capabilities::upsert_shadow_resource_template(
+            &pool,
+            &server_id,
+            "subscription_docs",
+            "fixture://documents/{path}",
+            Some("Documents"),
+            None,
+        )
+        .await
+        .expect("insert subscription template catalog row");
+        crate::config::profile::add_resource_template_to_profile(
+            &pool,
+            &profile_id,
+            &server_id,
+            "fixture://documents/{path}",
+            true,
+        )
+        .await
+        .expect("add template to profile");
+
+        let database = Arc::new(Database {
+            pool: pool.clone(),
+            path: temp_dir.path().join("test.db"),
+        });
+        let mut server = ProxyServer::new(Arc::new(Config::default()));
+        server.database = Some(database);
+        (temp_dir, pool, server, server_id, profile_id)
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn canonical_resource_subscription_targets_resolve_static_and_template_routes() {
+        let (_temp_dir, pool, _server, server_id, _profile_id) = create_subscription_test_server().await;
+        let static_uri = crate::config::server::capabilities::upsert_shadow_resource(
+            &pool,
+            &server_id,
+            "subscription_docs",
+            "file:///guide.md",
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("insert static resource");
+        let template_uri = crate::config::server::capabilities::upsert_shadow_resource_template(
+            &pool,
+            &server_id,
+            "subscription_docs",
+            "file:///{path}",
+            Some("Files"),
+            None,
+        )
+        .await
+        .expect("insert template resource")
+        .replace("{path}", "guide.md");
+
+        assert_eq!(
+            crate::core::proxy::server::resources::resolve_external_resource_target(&pool, &static_uri)
+                .await
+                .expect("resolve static resource")
+                .server_id,
+            server_id
+        );
+        assert_eq!(
+            crate::core::proxy::server::resources::resolve_external_resource_target(&pool, &template_uri)
+                .await
+                .expect("resolve template resource")
+                .server_id,
+            server_id
+        );
+        assert!(
+            crate::core::proxy::server::resources::resolve_external_resource_target(&pool, "file:///guide.md")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resource_subscription_handler_reuses_visibility_and_canonical_routing() {
+        let (_temp_dir, _pool, server, server_id, profile_id) = create_subscription_test_server().await;
+        let hosted_session = "hosted-subscription";
+        let hosted_client = ClientContext {
+            client_id: "hosted-client".to_string(),
+            session_id: Some(hosted_session.to_string()),
+            profile_id: Some(profile_id),
+            config_mode: Some("hosted".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(hosted_session, &hosted_client)
+            .await
+            .expect("bind hosted client");
+        let (hosted_context, _hosted_client_service, _hosted_server_service) =
+            subscription_request_context("hosted-client", hosted_session).await;
+        server
+            .downstream_clients
+            .insert(hosted_session.to_string(), hosted_context.peer.clone());
+
+        let template = crate::core::capability::resource_uri::encode_resource_template(
+            "subscription_docs",
+            "fixture://documents/{path}",
+        )
+        .expect("encode selected template");
+        let allowed_uri = template.replace("{path}", "guide.md");
+        rmcp::ServerHandler::subscribe(
+            &server,
+            SubscribeRequestParams::new(allowed_uri.clone()),
+            hosted_context.clone(),
+        )
+        .await
+        .expect("subscribe selected template resource");
+        assert!(
+            server
+                .resource_subscriptions
+                .contains_key(&(hosted_session.to_string(), allowed_uri.clone()))
+        );
+        assert_eq!(server.notify_resource_updates_for_server(&server_id).await, 1);
+
+        let denied_uri = crate::core::capability::resource_uri::encode_resource_uri(
+            "subscription_docs",
+            "fixture://private/secret.md",
+        )
+        .expect("encode denied resource");
+        assert!(
+            rmcp::ServerHandler::subscribe(&server, SubscribeRequestParams::new(denied_uri), hosted_context.clone(),)
+                .await
+                .is_err()
+        );
+        assert!(
+            rmcp::ServerHandler::subscribe(
+                &server,
+                SubscribeRequestParams::new("fixture://documents/guide.md"),
+                hosted_context.clone(),
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            rmcp::ServerHandler::unsubscribe(
+                &server,
+                UnsubscribeRequestParams::new("fixture://documents/guide.md"),
+                hosted_context.clone(),
+            )
+            .await
+            .is_err()
+        );
+
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+        rmcp::ServerHandler::unsubscribe(
+            &server,
+            UnsubscribeRequestParams::new(allowed_uri.clone()),
+            hosted_context,
+        )
+        .await
+        .expect("unsubscribe after resolver removal");
+        assert!(
+            !server
+                .resource_subscriptions
+                .contains_key(&(hosted_session.to_string(), allowed_uri))
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn unify_resource_subscription_accepts_only_selected_template_routes() {
+        let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let session_id = "unify-subscription";
+        let workspace = crate::clients::models::UnifyDirectExposureConfig {
+            route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+            selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
+                server_id: server_id.clone(),
+                uri_template: "fixture://documents/{path}".to_string(),
+            }],
+            ..Default::default()
+        };
+        let client = ClientContext {
+            client_id: "unify-client".to_string(),
+            session_id: Some(session_id.to_string()),
+            profile_id: None,
+            config_mode: Some("unify".to_string()),
+            unify_workspace: Some(workspace),
+            surface_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(session_id, &client)
+            .await
+            .expect("bind unify client");
+        let (context, _client_service, _server_service) =
+            subscription_request_context("unify-client", session_id).await;
+        install_subscription_resource_connection(&server, &server_id).await;
+
+        let selected = crate::core::capability::resource_uri::encode_resource_template(
+            "subscription_docs",
+            "fixture://documents/{path}",
+        )
+        .expect("encode selected template")
+        .replace("{path}", "guide.md");
+        rmcp::ServerHandler::subscribe(&server, SubscribeRequestParams::new(selected.clone()), context.clone())
+            .await
+            .expect("subscribe selected unify template");
+        let result = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new(
+                crate::core::capability::resource_uri::encode_resource_template(
+                    "subscription_docs",
+                    "fixture://documents/{path}",
+                )
+                .expect("encode selected read template")
+                .replace("{path}", "guide.md"),
+            ),
+            context.clone(),
+        )
+        .await
+        .expect("read selected unify template without resources/list");
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            rmcp::model::ResourceContents::TextResourceContents { uri, text, .. } => {
+                assert_eq!(uri, &selected);
+                assert_eq!(text, "read:fixture://documents/guide.md");
+            }
+            rmcp::model::ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+        }
+
+        let unselected = crate::core::capability::resource_uri::encode_resource_template(
+            "subscription_docs",
+            "fixture://private/{path}",
+        )
+        .expect("encode unselected template")
+        .replace("{path}", "secret.md");
+        assert!(
+            rmcp::ServerHandler::subscribe(&server, SubscribeRequestParams::new(unselected), context,)
+                .await
+                .is_err()
+        );
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
 
     struct TestServerState {
         downstream_clients: Arc<dashmap::DashMap<String, rmcp::service::Peer<rmcp::RoleServer>>>,
