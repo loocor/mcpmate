@@ -190,6 +190,8 @@ runtime list           # 列出已安装的运行时
 
 > **注意**：macOS 构建已加入签名与公证，以减少系统安全提示并提升安装包可信度。
 
+macOS 和 Linux 用户也可以通过 `brew install --cask loocor/tap/mcpmate@beta` 安装 Homebrew Beta 版本；更新和卸载方式请查看[安装指南](https://mcp.umate.ai/docs/zh/installation#homebrew)。
+
 ### 方式二：从源码构建
 
 **前置要求**：[Rust](https://www.rust-lang.org/tools/install) 工具链 1.85+、[Node.js](https://nodejs.org/) 18+ 或 [Bun](https://bun.sh/)、SQLite 3
@@ -260,7 +262,7 @@ Coming soon。线上环境将允许你在无需本地部署的情况下，探索
 1. **发现到安装链路打磨** — 继续收紧浏览器扩展、服务源、README 与来源元数据流程
 2. **基于账户体系的配置数据备份与恢复**
 3. **以 Skills 模式封装的配置集**
-4. **跨平台发布就绪** — 覆盖主要桌面操作系统稳定性、容器化部署与 Homebrew 安装支持
+4. **Standalone Inspector** — 提供聚焦的 MCP Server 连接、能力发现与调用验证入口
 
 ## 🤝 贡献
 

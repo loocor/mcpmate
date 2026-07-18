@@ -174,6 +174,7 @@ const zh = {
   "download.read_guide": "查看指南",
   "download.github.desc": "可从源码构建，或在 GitHub 跟进最新开发。",
   "download.nightly.cta": "打开 Nightly 通道",
+  "download.homebrew.hero_cta": "也可通过 Homebrew 进行安装",
 
   "browserExtensions.inlineLabel": "浏览器扩展：",
   "browserExtensions.footerLabel": "浏览器插件",

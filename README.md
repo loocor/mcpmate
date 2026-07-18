@@ -190,6 +190,8 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 > **Note**: macOS builds are signed and notarized to reduce system security prompts and improve package trust.
 
+macOS and Linux users can also install the Homebrew Beta cask with `brew install --cask loocor/tap/mcpmate@beta`. See the [Installation guide](https://mcp.umate.ai/docs/en/installation#homebrew) for updates and uninstall steps.
+
 ### Option B: Build from Source
 
 **Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) 1.85+, [Node.js](https://nodejs.org/) 18+ or [Bun](https://bun.sh/), SQLite 3
@@ -260,7 +262,7 @@ See [AGENTS.md](./AGENTS.md) for development guidelines, coding standards, and c
 1. **Discovery-to-install polish** — tighter browser extension, Market, README, and source-metadata flows
 2. **Account-based configuration backup & restore**
 3. **Skills-mode packaged profiles**
-4. **Cross-platform release readiness** — desktop OS stability, container-based deployment, and Homebrew installation support
+4. **Standalone Inspector** — a focused path for MCP server connection, capability discovery, and call verification
 
 ## 🤝 Contributing
 

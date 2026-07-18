@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { ArrowRight, ChevronDown, Download, ExternalLink } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 import { useLatestGitHubRelease } from '../../hooks/useLatestGitHubRelease';
 import { BROWSER_EXTENSION_LINKS } from '../../lib/browser-extensions';
@@ -47,21 +48,16 @@ function getArchitectureLabelKey(architecture: DesktopArchitecture): DesktopBuil
   return architecture === 'arm64' ? 'download.arch_arm64' : 'download.arch_x64';
 }
 
-function formatPlatformList(platforms: string[], language: string): string {
-  if (platforms.length < 2) {
-    return platforms[0] ?? '';
+function getInstallationPath(language: string): string {
+  if (language === 'zh') {
+    return '/docs/zh/installation';
   }
 
-  if (language === 'zh' || language === 'ja') {
-    return platforms.join('、');
+  if (language === 'ja') {
+    return '/docs/ja/installation';
   }
 
-  return `${platforms.slice(0, -1).join(', ')} and ${platforms[platforms.length - 1]}`;
-}
-
-function formatAlternativePlatforms(currentPlatform: DesktopPlatform, language: string, t: (key: string) => string): string {
-  const alternatives = PLATFORM_DOWNLOADS.filter((platform) => platform.id !== currentPlatform).map((platform) => t(platform.labelKey));
-  return formatPlatformList(alternatives, language);
+  return '/docs/en/installation';
 }
 
 function getTiltTransform(event: React.MouseEvent<HTMLDivElement>, element: HTMLDivElement): string {
@@ -189,12 +185,6 @@ function Hero(): JSX.Element {
   } else if (isDesktopDownload && selectedPlatform) {
     primaryDownloadLabel = t('download.cta_for').replace('{platform}', t(selectedPlatform.labelKey));
   }
-  const downloadSupportLabel = isDesktopDownload && selectedPlatform
-    ? t('download.also_available_for').replace(
-        '{platforms}',
-        formatAlternativePlatforms(selectedPlatform.id, language, t),
-      )
-    : t('download.desktop_note');
   const downloadMenuStateClass = downloadMenuOpen
     ? 'pointer-events-auto visible translate-y-0'
     : 'pointer-events-none invisible translate-y-1';
@@ -321,7 +311,12 @@ function Hero(): JSX.Element {
                     </div>
                   </div>
                 </div>
-                <p className="text-center text-xs leading-tight section-muted-soft">{downloadSupportLabel}</p>
+                <Link
+                  to={`${getInstallationPath(language)}#homebrew`}
+                  className="text-center text-xs font-medium leading-tight text-brand-accent transition-colors hover:text-brand-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent"
+                >
+                  {t('download.homebrew.hero_cta')}
+                </Link>
                 <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-center text-xs leading-tight section-muted-soft">
                   <span>{t('browserExtensions.inlineLabel')}</span>
                   {BROWSER_EXTENSION_LINKS.map((link, index) => (

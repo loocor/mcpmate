@@ -188,6 +188,7 @@ const en = {
 	"download.read_guide": "Read the Guide",
 	"download.github.desc": "Build from source or follow the latest development on GitHub.",
 	"download.nightly.cta": "Open nightly channel",
+	"download.homebrew.hero_cta": "Also available through Homebrew",
 
 	"browserExtensions.inlineLabel": "Browser extension:",
 	"browserExtensions.footerLabel": "Browser Extensions",

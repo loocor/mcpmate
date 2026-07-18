@@ -18,6 +18,11 @@ const currentFocus = [
 		description:
 			"一次配置变更前后都应该有足够证据：可读的来源上下文、dry-run 校验、凭证就绪状态、运行时状态，以及便于支持排障的诊断材料。",
 	},
+	{
+		title: "构建 Standalone Inspector",
+		description:
+			"提供一个聚焦的 Inspector 入口，让用户无需先进入完整管理流程，就能连接 MCP Server、发现能力并验证调用。",
+	},
 ];
 
 const nextBets = [

@@ -18,6 +18,11 @@ const currentFocus = [
 		description:
 			"The setup path should show enough evidence before and after a change: readable source context, dry-run checks, credential readiness, runtime state, and support-friendly diagnostics.",
 	},
+	{
+		title: "Build a Standalone Inspector",
+		description:
+			"A focused Inspector entry point should make it possible to connect to an MCP Server, discover its capabilities, and verify calls without first entering the full management workflow.",
+	},
 ];
 
 const nextBets = [

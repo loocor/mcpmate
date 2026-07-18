@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check:homebrew-reachability": "bun scripts/check-homebrew-reachability.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },

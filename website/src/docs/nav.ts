@@ -117,6 +117,14 @@ export const docsNav: DocNav[] = [
 						component: () => import("./pages/en/GuidesOverview"),
 					},
 					{
+						id: "installation",
+						path: "/docs/en/installation",
+						title: "Installation",
+						summary: "Install, update, and uninstall MCPMate.",
+						keywords: ["desktop", "homebrew", "brew", "install", "update", "uninstall"],
+						component: () => import("./pages/en/Installation"),
+					},
+					{
 						id: "onboarding",
 						path: "/docs/en/onboarding",
 						title: "Onboarding",
@@ -384,6 +392,14 @@ export const docsNav: DocNav[] = [
 						component: () => import("./pages/zh/GuidesOverview"),
 					},
 					{
+						id: "installation",
+						path: "/docs/zh/installation",
+						title: "安装",
+						summary: "安装、更新和卸载 MCPMate。",
+						keywords: ["桌面应用", "homebrew", "brew", "安装", "更新", "卸载"],
+						component: () => import("./pages/zh/Installation"),
+					},
+					{
 						id: "onboarding",
 						path: "/docs/zh/onboarding",
 						title: "引导流程",
@@ -646,6 +662,14 @@ export const docsNav: DocNav[] = [
 						title: "概要",
 						summary: "MCPMate を効率的に使いこなす",
 						component: () => import("./pages/ja/GuidesOverview"),
+					},
+					{
+						id: "installation",
+						path: "/docs/ja/installation",
+						title: "インストール",
+						summary: "MCPMate のインストール、更新、アンインストール。",
+						keywords: ["デスクトップ", "homebrew", "brew", "インストール", "更新", "アンインストール"],
+						component: () => import("./pages/ja/Installation"),
 					},
 					{
 						id: "onboarding",
