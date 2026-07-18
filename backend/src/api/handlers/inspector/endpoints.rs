@@ -19,10 +19,10 @@ use crate::api::models::inspector::{
     InspectorPromptGetResp, InspectorPromptsListData, InspectorPromptsListResp, InspectorResourceReadData,
     InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListData, InspectorResourcesListResp,
     InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
-    InspectorSessionOpenResp, InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData,
-    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallReq,
-    InspectorToolCallResp, InspectorToolCallStartData, InspectorToolCallStartResp, InspectorToolsListData,
-    InspectorToolsListResp,
+    InspectorSessionOpenResp, InspectorTemplateReadData, InspectorTemplateReadReq, InspectorTemplateReadResp,
+    InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData, InspectorToolCallCancelReq,
+    InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallReq, InspectorToolCallResp,
+    InspectorToolCallStartData, InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
 };
 use crate::api::routes::AppState;
 use crate::inspector::{calls::CallSubscription, service};
@@ -443,6 +443,33 @@ pub async fn resource_read(
         result,
         server_id,
         elapsed_ms,
+    })))
+}
+
+pub async fn template_read(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorTemplateReadReq>,
+) -> Result<Json<InspectorTemplateReadResp>, ApiError> {
+    let v = service::template_read(&state, &req).await?;
+    let result = v
+        .get("result")
+        .cloned()
+        .ok_or_else(|| ApiError::InternalError("Inspector template read did not return a result".into()))?;
+    let server_id = v.get("server_id").and_then(Value::as_str).map(str::to_string);
+    let elapsed_ms = v
+        .get("elapsed_ms")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ApiError::InternalError("Inspector template read did not return elapsed_ms".into()))?;
+    let expanded_uri = v
+        .get("expanded_uri")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::InternalError("Inspector template read did not return an expanded URI".into()))?
+        .to_string();
+    Ok(Json(InspectorTemplateReadResp::success(InspectorTemplateReadData {
+        result,
+        server_id,
+        elapsed_ms,
+        expanded_uri,
     })))
 }
 

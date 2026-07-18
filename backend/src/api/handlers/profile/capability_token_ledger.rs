@@ -246,7 +246,7 @@ fn ledger_template_payload(
     if let Some(items) = live {
         for item in items {
             if let CapabilityItem::ResourceTemplate(t) = item {
-                if t.name.as_deref() == Some(external_name) || t.unique_template == external_name {
+                if t.uri_template == external_name || t.unique_template == external_name {
                     return serde_json::to_string(item)
                         .map_err(|e| ApiError::InternalError(format!("Failed to serialize template capability: {e}")));
                 }
@@ -255,7 +255,7 @@ fn ledger_template_payload(
     }
 
     let fallback = ResourceTemplateCapability {
-        uri_template: row.resource_uri.clone(),
+        uri_template: external_name.to_string(),
         name: Some(external_name.to_string()),
         description: None,
         mime_type: None,
@@ -329,6 +329,53 @@ mod tests {
         assert_eq!(resource_payload["unique_uri"], "server_resource");
         assert_eq!(template_payload["name"], "server_template");
         assert_eq!(template_payload["unique_template"], "server_template");
-        assert_eq!(template_payload["uri_template"], "repo://{owner}/{name}");
+        assert_eq!(template_payload["uri_template"], "server_template");
+    }
+
+    #[test]
+    fn live_template_payload_matches_uri_template_instead_of_display_name() {
+        let external_template = "mcpmate://resources/template/docs/file/{path}";
+        let display_name = "File";
+        let live = vec![CapabilityItem::ResourceTemplate(ResourceTemplateCapability {
+            uri_template: external_template.to_string(),
+            name: Some(display_name.to_string()),
+            description: Some("Read a file".to_string()),
+            mime_type: None,
+            unique_template: external_template.to_string(),
+            enabled: true,
+        })];
+        let row = profile_resource("file:///{path}");
+
+        let payload: Value = serde_json::from_str(
+            &ledger_template_payload(Some(&live), &row, external_template).expect("serialize live template"),
+        )
+        .expect("parse live template payload");
+
+        assert_eq!(payload["uri_template"], external_template);
+        assert_eq!(payload["unique_template"], external_template);
+        assert_eq!(payload["name"], display_name);
+    }
+
+    #[test]
+    fn live_template_payload_does_not_match_display_name_as_identity() {
+        let external_template = "mcpmate://resources/template/docs/file/{path}";
+        let live = vec![CapabilityItem::ResourceTemplate(ResourceTemplateCapability {
+            uri_template: "mcpmate://resources/template/docs/other/{path}".to_string(),
+            name: Some(external_template.to_string()),
+            description: Some("Wrong template".to_string()),
+            mime_type: None,
+            unique_template: "mcpmate://resources/template/docs/other/{path}".to_string(),
+            enabled: true,
+        })];
+        let row = profile_resource("file:///{path}");
+
+        let payload: Value = serde_json::from_str(
+            &ledger_template_payload(Some(&live), &row, external_template).expect("serialize fallback template"),
+        )
+        .expect("parse fallback template payload");
+
+        assert_eq!(payload["uri_template"], external_template);
+        assert_eq!(payload["unique_template"], external_template);
+        assert_ne!(payload["description"], "Wrong template");
     }
 }

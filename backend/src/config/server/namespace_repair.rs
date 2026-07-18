@@ -365,6 +365,8 @@ async fn repair_namespace(
             .with_context(|| format!("Failed to update denormalized namespace in {table}"))?;
     }
 
+    crate::core::capability::resource_registry::remap_issued_resource_routes(&mut tx, server_id, &candidate).await?;
+
     let identifier_changes = if let Some(snapshot) = snapshot {
         crate::config::server::capabilities::apply_snapshot_catalog_in_transaction(
             &mut tx, server_id, &candidate, snapshot,
@@ -541,11 +543,17 @@ mod tests {
         .await
         .expect("insert resource");
         sqlx::query(
-            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name) VALUES ('template-1', 'server-legacy', 'Sequential Thinking', 'lookup_{id}', 'old_template', 'Lookup')",
+            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name) VALUES ('template-1', 'server-legacy', 'Sequential Thinking', 'demo://resource/lookup/{id}', 'old_template', 'Lookup')",
         )
         .execute(pool)
         .await
         .expect("insert resource template");
+        sqlx::query(
+            "INSERT INTO server_issued_resources (id, server_id, server_name, resource_uri, unique_uri) VALUES ('issued-1', 'server-legacy', 'Sequential Thinking', 'file:///guide.md', 'old_issued_resource')",
+        )
+        .execute(pool)
+        .await
+        .expect("insert issued resource");
 
         sqlx::query(
             "INSERT INTO profile_tool (id, profile_id, server_tool_id, enabled) VALUES ('profile-tool-1', 'profile-1', 'tool-1', 0)",
@@ -566,7 +574,7 @@ mod tests {
         .await
         .expect("insert profile resource");
         sqlx::query(
-            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-1', 'profile-1', 'server-legacy', 'Sequential Thinking', 'lookup_{id}', 0)",
+            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-1', 'profile-1', 'server-legacy', 'Sequential Thinking', 'demo://resource/lookup/{id}', 0)",
         )
         .execute(pool)
         .await
@@ -880,6 +888,7 @@ mod tests {
             "server_prompts",
             "server_resources",
             "server_resource_templates",
+            "server_issued_resources",
             "profile_prompt",
             "profile_resource",
             "profile_resource_template",
@@ -892,34 +901,69 @@ mod tests {
             assert!(values.iter().all(|value| value == "sequential_thinking"), "{table}");
         }
 
+        let (issued_upstream, issued_external): (String, String) =
+            sqlx::query_as("SELECT resource_uri, unique_uri FROM server_issued_resources WHERE id = 'issued-1'")
+                .fetch_one(&pool)
+                .await
+                .expect("load repaired issued resource");
+        assert_eq!(issued_upstream, "file:///guide.md");
+        assert_eq!(
+            issued_external,
+            crate::core::capability::resource_uri::encode_resource_uri("sequential_thinking", "file:///guide.md",)
+                .expect("encode repaired issued resource")
+        );
+        let listed_external: String = sqlx::query_scalar(
+            "SELECT unique_uri FROM server_resources WHERE server_id = 'server-legacy' AND resource_uri = 'file:///guide.md'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load repaired overlapping listed resource");
+        assert_eq!(
+            listed_external, issued_external,
+            "overlapping listed and issued rows must share one canonical URI"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_issued_resources WHERE id = 'issued-1'",)
+                .fetch_one(&pool)
+                .await
+                .expect("count repaired overlapping issued resource"),
+            1,
+            "namespace repair must retain the overlapping issued row"
+        );
+
         let capability_rows = [
             (
                 "server_tools",
                 "tool_name",
                 "unique_name",
-                "get_sequential_thinking_status",
-                "sequential_thinking_get_status",
+                "get_sequential_thinking_status".to_string(),
+                "sequential_thinking_get_status".to_string(),
             ),
             (
                 "server_prompts",
                 "prompt_name",
                 "unique_name",
-                "sequential_thinking_help",
-                "sequential_thinking_help",
+                "sequential_thinking_help".to_string(),
+                "sequential_thinking_help".to_string(),
             ),
             (
                 "server_resources",
                 "resource_uri",
                 "unique_uri",
-                "file:///guide.md",
-                "sequential_thinking:file:///guide.md",
+                "file:///guide.md".to_string(),
+                crate::core::capability::resource_uri::encode_resource_uri("sequential_thinking", "file:///guide.md")
+                    .expect("encode repaired resource"),
             ),
             (
                 "server_resource_templates",
                 "uri_template",
                 "unique_name",
-                "lookup_{id}",
-                "sequential_thinking_lookup_{id}",
+                "demo://resource/lookup/{id}".to_string(),
+                crate::core::capability::resource_uri::encode_resource_template(
+                    "sequential_thinking",
+                    "demo://resource/lookup/{id}",
+                )
+                .expect("encode repaired template"),
             ),
         ];
         for (table, upstream_column, external_column, upstream, external) in capability_rows {
@@ -953,9 +997,19 @@ mod tests {
         assert_eq!(intent.capability_ids.prompt_ids, ["sequential_thinking_help"]);
         assert_eq!(
             intent.capability_ids.resource_ids,
-            ["sequential_thinking:file:///guide.md"]
+            [
+                crate::core::capability::resource_uri::encode_resource_uri("sequential_thinking", "file:///guide.md",)
+                    .expect("encode rewritten resource intent")
+            ]
         );
-        assert_eq!(intent.capability_ids.template_ids, ["sequential_thinking_lookup_{id}"]);
+        assert_eq!(
+            intent.capability_ids.template_ids,
+            [crate::core::capability::resource_uri::encode_resource_template(
+                "sequential_thinking",
+                "demo://resource/lookup/{id}",
+            )
+            .expect("encode rewritten template intent")]
+        );
 
         let second = ensure_canonical_namespace_before_exposure(&pool, "server-legacy")
             .await

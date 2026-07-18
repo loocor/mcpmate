@@ -5,8 +5,7 @@ use crate::api::models::client::{
 use crate::clients::ClientConfigService;
 use crate::clients::analyzer::{ConfigAnalysis, ConfigInspectionReport, inspect_config_content};
 use crate::clients::models::{
-    AttachmentState, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat,
-    canonical_config_transport_key,
+    AttachmentState, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat, canonical_config_transport_key,
 };
 use crate::clients::service::core::ClientStateRow;
 use crate::clients::service::rules::ConfigRuleInspection;
@@ -78,8 +77,7 @@ pub(super) async fn detect_mcpmate_in_client_config(
     Some(inspected.analysis.mcpmate_present)
 }
 
-pub(crate) const ATTACH_OVERWRITE_WARNING: &str =
-    "MCPMate entry already present in config file; attach will overwrite";
+pub(crate) const ATTACH_OVERWRITE_WARNING: &str = "MCPMate entry already present in config file; attach will overwrite";
 
 pub(crate) const DETACH_NO_EFFECT_WARNING: &str =
     "MCPMate entry not found in config file; detach has no effect on file content";
@@ -321,11 +319,8 @@ mod file_guard_tests {
 
     #[test]
     fn derive_attachment_state_requires_local_config_target_before_file_truth() {
-        let state = ClientStateRow::test_attachment_fixture(
-            "manual",
-            Some("~/.cursor/mcp.json"),
-            Some("not_applicable"),
-        );
+        let state =
+            ClientStateRow::test_attachment_fixture("manual", Some("~/.cursor/mcp.json"), Some("not_applicable"));
         let analysis = ConfigAnalysis {
             mcpmate_present: true,
             ..ConfigAnalysis::default()
@@ -374,14 +369,8 @@ mod file_guard_tests {
                 (Some(true), AttachmentState::NotApplicable),
                 Err(ClientFileGuardRejection::NonApplicableDbState),
             ),
-            (
-                (Some(false), AttachmentState::Attached),
-                Ok(None),
-            ),
-            (
-                (Some(false), AttachmentState::Detached),
-                Ok(None),
-            ),
+            ((Some(false), AttachmentState::Attached), Ok(None)),
+            ((Some(false), AttachmentState::Detached), Ok(None)),
             (
                 (Some(false), AttachmentState::NotApplicable),
                 Err(ClientFileGuardRejection::NonApplicableDbState),
@@ -408,14 +397,8 @@ mod file_guard_tests {
     #[test]
     fn evaluate_client_detach_file_guard_matrix() {
         let cases = [
-            (
-                (Some(true), AttachmentState::Attached),
-                Ok(None),
-            ),
-            (
-                (Some(true), AttachmentState::Detached),
-                Ok(None),
-            ),
+            ((Some(true), AttachmentState::Attached), Ok(None)),
+            ((Some(true), AttachmentState::Detached), Ok(None)),
             (
                 (Some(true), AttachmentState::NotApplicable),
                 Err(ClientFileGuardRejection::NonApplicableDbState),

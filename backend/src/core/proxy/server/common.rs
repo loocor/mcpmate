@@ -116,6 +116,23 @@ pub fn unify_directly_exposed_resource_allowed(
     }
 }
 
+pub(crate) fn unify_directly_exposed_resource_route_allowed(
+    workspace: Option<&UnifyDirectExposureConfig>,
+    eligible_server_ids: &HashSet<String>,
+    server_id: &str,
+    route: &crate::core::capability::resource_registry::ResolvedResourceRoute,
+) -> bool {
+    match &route.source {
+        crate::core::capability::resource_registry::ResourceRouteSource::Template { upstream_template, .. } => {
+            unify_directly_exposed_template_allowed(workspace, eligible_server_ids, server_id, upstream_template)
+        }
+        crate::core::capability::resource_registry::ResourceRouteSource::Listed
+        | crate::core::capability::resource_registry::ResourceRouteSource::Issued => {
+            unify_directly_exposed_resource_allowed(workspace, eligible_server_ids, server_id, &route.upstream_uri)
+        }
+    }
+}
+
 pub fn unify_directly_exposed_template_allowed(
     workspace: Option<&UnifyDirectExposureConfig>,
     eligible_server_ids: &HashSet<String>,
@@ -890,6 +907,86 @@ mod tests {
     use super::*;
     use axum::http::{Request, header::HeaderValue};
     use rmcp::model::{ClientCapabilities, Implementation, ProtocolVersion};
+
+    #[test]
+    fn unify_direct_resource_access_matches_the_route_kind() {
+        let server_id = "server-docs";
+        let eligible = HashSet::from([server_id.to_string()]);
+        let workspace = crate::clients::models::UnifyDirectExposureConfig {
+            route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+            selected_resource_surfaces: vec![crate::clients::models::UnifyDirectResourceSurface {
+                server_id: server_id.to_string(),
+                resource_uri: "file:///static.md".to_string(),
+            }],
+            selected_template_surfaces: vec![crate::clients::models::UnifyDirectTemplateSurface {
+                server_id: server_id.to_string(),
+                uri_template: "file:///{path}".to_string(),
+            }],
+            ..Default::default()
+        };
+        let static_route = crate::core::capability::resource_registry::ResolvedResourceRoute {
+            server_id: server_id.to_string(),
+            server_name: "docs".to_string(),
+            external_uri: "mcpmate://resources/docs/file/static.md".to_string(),
+            upstream_uri: "file:///static.md".to_string(),
+            source: crate::core::capability::resource_registry::ResourceRouteSource::Listed,
+        };
+        let template_route = crate::core::capability::resource_registry::ResolvedResourceRoute {
+            server_id: server_id.to_string(),
+            server_name: "docs".to_string(),
+            external_uri: "mcpmate://resources/template/docs/file?path=guide.md".to_string(),
+            upstream_uri: "file:///guide.md".to_string(),
+            source: crate::core::capability::resource_registry::ResourceRouteSource::Template {
+                upstream_template: "file:///{path}".to_string(),
+                arguments: std::collections::BTreeMap::from([("path".to_string(), "guide.md".to_string())]),
+            },
+        };
+        let denied_template = crate::core::capability::resource_registry::ResolvedResourceRoute {
+            server_id: server_id.to_string(),
+            server_name: "docs".to_string(),
+            external_uri: "mcpmate://resources/template/docs/file?slug=guide".to_string(),
+            upstream_uri: "file:///guide.md".to_string(),
+            source: crate::core::capability::resource_registry::ResourceRouteSource::Template {
+                upstream_template: "file:///{slug}.md".to_string(),
+                arguments: std::collections::BTreeMap::from([("slug".to_string(), "guide".to_string())]),
+            },
+        };
+
+        assert!(unify_directly_exposed_resource_route_allowed(
+            Some(&workspace),
+            &eligible,
+            server_id,
+            &static_route,
+        ));
+        assert!(unify_directly_exposed_resource_route_allowed(
+            Some(&workspace),
+            &eligible,
+            server_id,
+            &template_route,
+        ));
+        assert!(!unify_directly_exposed_resource_route_allowed(
+            Some(&workspace),
+            &eligible,
+            server_id,
+            &denied_template,
+        ));
+        assert!(!unify_directly_exposed_resource_route_allowed(
+            None,
+            &eligible,
+            server_id,
+            &static_route,
+        ));
+        let broker_only = crate::clients::models::UnifyDirectExposureConfig {
+            route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
+            ..workspace.clone()
+        };
+        assert!(!unify_directly_exposed_resource_route_allowed(
+            Some(&broker_only),
+            &eligible,
+            server_id,
+            &static_route,
+        ));
+    }
 
     fn build_initialize(name: &str) -> InitializeRequestParams {
         InitializeRequestParams::new(ClientCapabilities::default(), Implementation::new(name, "1.0.0"))

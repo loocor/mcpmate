@@ -12,7 +12,10 @@ use crate::{
         models::token_estimate::{CapTypeEstimate, TokenBreakdownResponse, TokenEstimateQuery, TokenEstimateResponse},
     },
     core::{
-        capability::{CapabilityItem, CapabilityType},
+        capability::{
+            CapabilityItem, CapabilityType,
+            naming::{NamingKind, load_external_identifier},
+        },
         token_estimate,
     },
 };
@@ -189,7 +192,7 @@ async fn get_enabled_tools_for_profile(
     Ok(tools
         .into_iter()
         .filter(|tool| tool.enabled)
-        .map(|tool| (tool.server_id, tool.tool_name))
+        .map(|tool| (tool.server_id, tool.unique_name))
         .collect())
 }
 
@@ -201,10 +204,14 @@ async fn get_enabled_prompts_for_profile(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get enabled prompts: {e}")))?;
 
-    Ok(prompts
-        .into_iter()
-        .map(|prompt| (prompt.server_id, prompt.prompt_name))
-        .collect())
+    let mut keys = HashSet::new();
+    for prompt in prompts {
+        let external_name = load_external_identifier(pool, NamingKind::Prompt, &prompt.server_id, &prompt.prompt_name)
+            .await
+            .map_err(|error| ApiError::InternalError(error.to_string()))?;
+        keys.insert((prompt.server_id, external_name));
+    }
+    Ok(keys)
 }
 
 async fn get_enabled_resources_for_profile(
@@ -215,10 +222,15 @@ async fn get_enabled_resources_for_profile(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get enabled resources: {e}")))?;
 
-    Ok(resources
-        .into_iter()
-        .map(|resource| (resource.server_id, resource.resource_uri))
-        .collect())
+    let mut keys = HashSet::new();
+    for resource in resources {
+        let external_uri =
+            load_external_identifier(pool, NamingKind::Resource, &resource.server_id, &resource.resource_uri)
+                .await
+                .map_err(|error| ApiError::InternalError(error.to_string()))?;
+        keys.insert((resource.server_id, external_uri));
+    }
+    Ok(keys)
 }
 
 async fn get_enabled_resource_templates_for_profile(
@@ -229,8 +241,94 @@ async fn get_enabled_resource_templates_for_profile(
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get enabled resource templates: {e}")))?;
 
-    Ok(templates
-        .into_iter()
-        .map(|template| (template.server_id, template.resource_uri))
-        .collect())
+    let mut keys = HashSet::new();
+    for template in templates {
+        let external_template = load_external_identifier(
+            pool,
+            NamingKind::ResourceTemplate,
+            &template.server_id,
+            &template.resource_uri,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
+        keys.insert((template.server_id, external_template));
+    }
+    Ok(keys)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::{
+        get_enabled_prompts_for_profile, get_enabled_resource_templates_for_profile, get_enabled_resources_for_profile,
+        get_enabled_tools_for_profile,
+    };
+
+    #[tokio::test]
+    async fn enabled_profile_keys_use_external_capability_identifiers() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create test database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+
+        for statement in [
+            "INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')",
+            "INSERT INTO profile (id, name, type) VALUES ('profile-a', 'Profile A', 'shared')",
+            "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) VALUES ('profile-server-a', 'profile-a', 'server-a', 'docs', 1)",
+            "INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name) VALUES ('tool-a', 'server-a', 'docs', 'read', 'docs_read')",
+            "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES ('prompt-a', 'server-a', 'docs', 'review', 'docs_review')",
+            "INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri) VALUES ('resource-a', 'server-a', 'docs', 'file:///guide.md', 'mcpmate://resources/docs/file/guide.md')",
+            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, route_uri, name) VALUES ('template-a', 'server-a', 'docs', 'file:///{path}', 'mcpmate://resources/template/docs/file/{path}', 'mcpmate://resources/template/docs/file/{}', 'File')",
+            "INSERT INTO profile_tool (id, profile_id, server_tool_id, enabled) VALUES ('profile-tool-a', 'profile-a', 'tool-a', 1)",
+            "INSERT INTO profile_prompt (id, profile_id, server_id, server_name, prompt_name, enabled) VALUES ('profile-prompt-a', 'profile-a', 'server-a', 'docs', 'review', 1)",
+            "INSERT INTO profile_resource (id, profile_id, server_id, server_name, resource_uri, enabled) VALUES ('profile-resource-a', 'profile-a', 'server-a', 'docs', 'file:///guide.md', 1)",
+            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-a', 'profile-a', 'server-a', 'docs', 'file:///{path}', 1)",
+        ] {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .expect("insert capability fixture");
+        }
+
+        assert_eq!(
+            get_enabled_tools_for_profile(&pool, "profile-a")
+                .await
+                .expect("load enabled tools"),
+            HashSet::from([("server-a".to_string(), "docs_read".to_string())])
+        );
+        assert_eq!(
+            get_enabled_prompts_for_profile(&pool, "profile-a")
+                .await
+                .expect("load enabled prompts"),
+            HashSet::from([("server-a".to_string(), "docs_review".to_string())])
+        );
+        assert_eq!(
+            get_enabled_resources_for_profile(&pool, "profile-a")
+                .await
+                .expect("load enabled resources"),
+            HashSet::from([(
+                "server-a".to_string(),
+                "mcpmate://resources/docs/file/guide.md".to_string(),
+            )])
+        );
+        assert_eq!(
+            get_enabled_resource_templates_for_profile(&pool, "profile-a")
+                .await
+                .expect("load enabled resource templates"),
+            HashSet::from([(
+                "server-a".to_string(),
+                "mcpmate://resources/template/docs/file/{path}".to_string(),
+            )])
+        );
+    }
 }

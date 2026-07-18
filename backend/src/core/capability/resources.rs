@@ -517,6 +517,22 @@ pub async fn read_upstream_resource(
     Ok(result)
 }
 
+pub async fn read_routed_resource(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    server_id: &str,
+    upstream_uri: &str,
+    connection_selection: Option<&crate::core::capability::ConnectionSelection>,
+) -> Result<ReadResourceResult> {
+    read_upstream_resource(
+        connection_pool,
+        &HashMap::new(),
+        upstream_uri,
+        Some(server_id),
+        connection_selection,
+    )
+    .await
+}
+
 /// Read a resource directly from a specific upstream connection (native/direct path)
 pub async fn read_upstream_resource_direct(
     connection: &UpstreamConnection,
@@ -560,4 +576,96 @@ pub fn validate_resource_uri(uri: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use rmcp::model::{ListResourcesResult, ServerCapabilities, ServerInfo};
+    use rmcp::{ServerHandler, ServiceExt};
+
+    #[derive(Clone, Default)]
+    struct DirectReadFixture {
+        list_calls: Arc<AtomicUsize>,
+        read_calls: Arc<AtomicUsize>,
+    }
+
+    impl ServerHandler for DirectReadFixture {
+        fn get_info(&self) -> ServerInfo {
+            ServerInfo::new(ServerCapabilities::builder().enable_resources().build())
+        }
+
+        async fn list_resources(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        ) -> std::result::Result<ListResourcesResult, rmcp::ErrorData> {
+            self.list_calls.fetch_add(1, Ordering::SeqCst);
+            Err(rmcp::ErrorData::internal_error(
+                "Intentional resources/list failure".to_string(),
+                None,
+            ))
+        }
+
+        async fn read_resource(
+            &self,
+            request: ReadResourceRequestParams,
+            _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        ) -> std::result::Result<ReadResourceResult, rmcp::ErrorData> {
+            self.read_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ReadResourceResult::new(vec![rmcp::model::ResourceContents::text(
+                "ok",
+                request.uri,
+            )]))
+        }
+    }
+
+    #[tokio::test]
+    async fn routed_read_succeeds_without_calling_resources_list() {
+        let fixture = DirectReadFixture::default();
+        let list_calls = fixture.list_calls.clone();
+        let read_calls = fixture.read_calls.clone();
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        tokio::spawn(async move {
+            let service = fixture.serve(server_transport).await.expect("serve fixture");
+            service.waiting().await.expect("wait for fixture");
+        });
+
+        let handler = crate::core::transport::client::UpstreamClientHandler::new("direct-read-fixture".to_string());
+        let service = handler.serve(client_transport).await.expect("connect fixture");
+        let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+        let mut connection = UpstreamConnection::new("direct-read-fixture".to_string());
+        let instance_id = connection.id.clone();
+        connection.update_connected(service, Vec::new(), capabilities);
+
+        let mut pool = UpstreamConnectionPool::new(Arc::new(crate::core::models::Config::default()), None);
+        pool.connections
+            .entry("server-direct-read".to_string())
+            .or_default()
+            .insert(instance_id.clone(), connection);
+        pool.production_routes.insert(
+            crate::core::pool::ProductionRouteKey::shareable("server-direct-read"),
+            instance_id,
+        );
+        let pool = Arc::new(Mutex::new(pool));
+        let selection = crate::core::capability::ConnectionSelection {
+            server_id: "server-direct-read".to_string(),
+            affinity_key: crate::core::capability::AffinityKey::Default,
+        };
+
+        let result = read_routed_resource(
+            &pool,
+            "server-direct-read",
+            "fixture://documents/guide.md",
+            Some(&selection),
+        )
+        .await
+        .expect("read routed resource");
+
+        assert_eq!(list_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(read_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.contents.len(), 1);
+    }
 }

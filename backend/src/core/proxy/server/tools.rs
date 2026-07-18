@@ -537,7 +537,18 @@ pub(super) async fn call_tool(
     server.unregister_call_session(&token, &req_id);
 
     match resp {
-        Ok(rmcp::model::ServerResult::CallToolResult(result)) => {
+        Ok(rmcp::model::ServerResult::CallToolResult(mut result)) => {
+            let database = server.database.as_ref().ok_or_else(|| {
+                McpError::internal_error("Tool result projection requires registry metadata".to_string(), None)
+            })?;
+            crate::core::capability::resource_uri::rewrite_call_tool_result(
+                &database.pool,
+                &server_id,
+                &server_name,
+                &mut result,
+            )
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
             tracing::info!(
                 call_id = %call_id,
                 tool = %request.name,

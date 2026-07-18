@@ -21,6 +21,8 @@ pub async fn initialize_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
     create_server_resources_index(pool).await?;
     create_server_resource_templates_table(pool).await?;
     create_server_resource_templates_index(pool).await?;
+    create_server_issued_resources_table(pool).await?;
+    create_server_issued_resources_index(pool).await?;
     create_profile_tool_table(pool).await?;
     create_profile_tool_index(pool).await?;
     create_profile_resource_table(pool).await?;
@@ -359,13 +361,15 @@ async fn create_server_resource_templates_table(pool: &Pool<Sqlite>) -> Result<(
             server_name TEXT NOT NULL,
             uri_template TEXT NOT NULL,
             unique_name TEXT NOT NULL,
+            route_uri TEXT,
             name TEXT NOT NULL,
             description TEXT,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
             UNIQUE(server_id, uri_template),
-            UNIQUE(unique_name)
+            UNIQUE(unique_name),
+            UNIQUE(route_uri)
         )
         "#,
     )
@@ -412,6 +416,19 @@ async fn create_server_resource_templates_index(pool: &Pool<Sqlite>) -> Result<(
         anyhow::anyhow!("Failed to create index on server_resource_templates unique_name: {}", e)
     })?;
 
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_server_resource_templates_route_uri
+        ON server_resource_templates(route_uri)
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create index on server_resource_templates route_uri: {}", e);
+        anyhow::anyhow!("Failed to create index on server_resource_templates route_uri: {}", e)
+    })?;
+
     // Index for lookup by server_name
     sqlx::query(
         r#"
@@ -427,6 +444,55 @@ async fn create_server_resource_templates_index(pool: &Pool<Sqlite>) -> Result<(
     })?;
 
     tracing::debug!("Indexes on server_resource_templates table created or already exists");
+    Ok(())
+}
+
+async fn create_server_issued_resources_table(pool: &Pool<Sqlite>) -> Result<()> {
+    tracing::debug!("Creating server_issued_resources table if it doesn't exist");
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS server_issued_resources (
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL,
+            server_name TEXT NOT NULL,
+            resource_uri TEXT NOT NULL,
+            unique_uri TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
+            UNIQUE(server_id, resource_uri),
+            UNIQUE(unique_uri)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        tracing::error!("Failed to create server_issued_resources table: {}", error);
+        anyhow::anyhow!("Failed to create server_issued_resources table: {}", error)
+    })?;
+
+    Ok(())
+}
+
+async fn create_server_issued_resources_index(pool: &Pool<Sqlite>) -> Result<()> {
+    for statement in [
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_server_issued_resources_lookup
+        ON server_issued_resources(server_id, resource_uri)
+        "#,
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_server_issued_resources_unique_uri
+        ON server_issued_resources(unique_uri)
+        "#,
+    ] {
+        sqlx::query(statement).execute(pool).await.map_err(|error| {
+            tracing::error!("Failed to create server_issued_resources index: {}", error);
+            anyhow::anyhow!("Failed to create server_issued_resources index: {}", error)
+        })?;
+    }
+
     Ok(())
 }
 
@@ -668,6 +734,7 @@ async fn verify_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
         tables::SERVER_PROMPTS,
         tables::SERVER_RESOURCES,
         tables::SERVER_RESOURCE_TEMPLATES,
+        "server_issued_resources",
         tables::PROFILE_TOOL,
         tables::PROFILE_RESOURCE,
         tables::PROFILE_RESOURCE_TEMPLATE,
@@ -692,4 +759,69 @@ async fn verify_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn resource_registry_schema_contains_template_routes_and_issued_resources() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+
+        let template_columns =
+            sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('server_resource_templates')")
+                .fetch_all(&pool)
+                .await
+                .expect("load template columns");
+        assert!(template_columns.iter().any(|column| column == "route_uri"));
+
+        let issued_columns =
+            sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('server_issued_resources')")
+                .fetch_all(&pool)
+                .await
+                .expect("load issued resource columns");
+        for expected in [
+            "id",
+            "server_id",
+            "server_name",
+            "resource_uri",
+            "unique_uri",
+            "created_at",
+            "last_seen_at",
+        ] {
+            assert!(
+                issued_columns.iter().any(|column| column == expected),
+                "missing issued resource column {expected}"
+            );
+        }
+
+        let issued_indexes =
+            sqlx::query_scalar::<_, String>("SELECT name FROM pragma_index_list('server_issued_resources')")
+                .fetch_all(&pool)
+                .await
+                .expect("load issued resource indexes");
+        assert!(
+            issued_indexes
+                .iter()
+                .any(|index| index == "idx_server_issued_resources_lookup")
+        );
+        assert!(
+            issued_indexes
+                .iter()
+                .any(|index| index == "idx_server_issued_resources_unique_uri")
+        );
+    }
 }

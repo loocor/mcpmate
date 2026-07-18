@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 use crate::clients::models::{CapabilitySource, ClientCapabilityConfig, UnifyDirectExposureConfig};
 use crate::config::database::Database;
 use crate::config::profile::basic::get_active_profile;
-use crate::core::capability::naming::{NamingKind, external_resource_prefix, resolve_capability_route};
+use crate::core::capability::naming::{NamingKind, resolve_capability_route};
+use crate::core::capability::resource_registry::{ResourceRouteSource, resolve_resource_route};
 use crate::core::profile::ProfileService;
 use crate::core::proxy::server::ClientContext;
 use crate::mcper::{HOSTED_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES};
@@ -67,7 +68,6 @@ pub struct VisibilitySnapshot {
     pub allowed_resources: HashSet<String>,
     pub allowed_resource_templates: HashSet<String>,
     pub allowed_prompts: HashSet<String>,
-    allowed_resource_prefixes: HashSet<String>,
     has_tool_policy: bool,
     has_resource_policy: bool,
     has_resource_template_policy: bool,
@@ -86,7 +86,6 @@ struct ResolvedPolicies {
     allowed_resources: HashSet<String>,
     allowed_resource_templates: HashSet<String>,
     allowed_prompts: HashSet<String>,
-    allowed_resource_prefixes: HashSet<String>,
     has_tool_policy: bool,
     has_resource_policy: bool,
     has_resource_template_policy: bool,
@@ -204,7 +203,7 @@ impl ProfileVisibilityService {
         let (allowed_tools, has_tool_policy) = self.resolve_allowed_tools(pool, server_ids, profile_ids).await?;
         let (allowed_resources, has_resource_policy) =
             self.resolve_allowed_resources(pool, server_ids, profile_ids).await?;
-        let (allowed_resource_templates, allowed_resource_prefixes, has_resource_template_policy) = self
+        let (allowed_resource_templates, has_resource_template_policy) = self
             .resolve_allowed_resource_templates(pool, server_ids, profile_ids)
             .await?;
         let (allowed_prompts, has_prompt_policy) = self.resolve_allowed_prompts(pool, server_ids, profile_ids).await?;
@@ -214,7 +213,6 @@ impl ProfileVisibilityService {
             allowed_resources,
             allowed_resource_templates,
             allowed_prompts,
-            allowed_resource_prefixes,
             has_tool_policy,
             has_resource_policy,
             has_resource_template_policy,
@@ -423,7 +421,11 @@ impl ProfileVisibilityService {
         }
 
         if snapshot.has_resource_template_policy {
-            templates.retain(|template| snapshot.allowed_resource_templates.contains(template.raw.name.as_str()));
+            templates.retain(|template| {
+                snapshot
+                    .allowed_resource_templates
+                    .contains(template.raw.uri_template.as_str())
+            });
         }
 
         (resources, templates)
@@ -505,12 +507,41 @@ impl ProfileVisibilityService {
             return Ok(false);
         }
 
-        if snapshot.has_resource_policy || snapshot.has_resource_template_policy {
-            return Ok(resource_allowed_from_snapshot(snapshot, unique_resource_uri));
+        let db = self
+            .db
+            .as_ref()
+            .context("Profile visibility requires database access")?;
+        let route = match resolve_resource_route(&db.pool, unique_resource_uri).await {
+            Ok(route) => route,
+            Err(_) => return Ok(false),
+        };
+        if !snapshot
+            .server_ids
+            .iter()
+            .any(|candidate| candidate == &route.server_id)
+        {
+            return Ok(false);
         }
-
-        self.snapshot_allows_server(NamingKind::Resource, snapshot, unique_resource_uri)
-            .await
+        if snapshot.has_resource_policy || snapshot.has_resource_template_policy {
+            if snapshot.has_resource_policy && snapshot.allowed_resources.contains(unique_resource_uri) {
+                return Ok(true);
+            }
+            if snapshot.has_resource_template_policy {
+                let ResourceRouteSource::Template { upstream_template, .. } = &route.source else {
+                    return Ok(false);
+                };
+                let external_template = crate::core::capability::naming::load_external_identifier(
+                    &db.pool,
+                    NamingKind::ResourceTemplate,
+                    &route.server_id,
+                    upstream_template,
+                )
+                .await?;
+                return Ok(snapshot.allowed_resource_templates.contains(&external_template));
+            }
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     async fn snapshot_allows_prompt(
@@ -798,18 +829,18 @@ impl ProfileVisibilityService {
         pool: &sqlx::Pool<sqlx::Sqlite>,
         server_ids: &[String],
         profile_ids: &[String],
-    ) -> Result<(HashSet<String>, HashSet<String>, bool)> {
+    ) -> Result<(HashSet<String>, bool)> {
         if server_ids.is_empty() {
-            return Ok((HashSet::new(), HashSet::new(), false));
+            return Ok((HashSet::new(), false));
         }
 
         let has_policy = has_profile_rows(pool, "profile_resource_template", profile_ids).await?;
-        let (values, prefixes) = if has_policy {
+        let values = if has_policy {
             let profile_placeholders = repeat_placeholders(profile_ids.len());
             let server_placeholders = repeat_placeholders(server_ids.len());
             let sql = format!(
                 r#"
-                SELECT DISTINCT sc.name, prt.uri_template, srt.unique_name
+                SELECT DISTINCT srt.unique_name
                 FROM profile_resource_template prt
                 JOIN server_config sc ON prt.server_id = sc.id
                 JOIN server_resource_templates srt
@@ -822,7 +853,7 @@ impl ProfileVisibilityService {
                 "#,
             );
 
-            let mut query = sqlx::query_as::<_, (String, String, String)>(&sql);
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
             for profile_id in profile_ids {
                 query = query.bind(profile_id);
             }
@@ -830,39 +861,23 @@ impl ProfileVisibilityService {
                 query = query.bind(server_id);
             }
 
-            let rows = query
+            query
                 .fetch_all(pool)
                 .await
-                .context("Failed to load resource template policy rows")?;
-
-            let values = rows
-                .iter()
-                .map(|(_, _, unique_name)| unique_name.clone())
-                .collect::<Vec<_>>();
-            let prefixes = rows
-                .iter()
-                .map(|(server_name, uri_template, _)| {
-                    let prefix = crate::config::profile::resource_template::template_prefix(uri_template);
-                    external_resource_prefix(server_name, prefix)
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            (values, prefixes)
+                .context("Failed to load resource template policy rows")?
         } else {
-            (
-                query_unique_values(
-                    pool,
-                    "server_resource_templates",
-                    "unique_name",
-                    "server_id",
-                    server_ids,
-                )
-                .await
-                .context("Failed to load visible resource templates for snapshot")?,
-                Vec::new(),
+            query_unique_values(
+                pool,
+                "server_resource_templates",
+                "unique_name",
+                "server_id",
+                server_ids,
             )
+            .await
+            .context("Failed to load visible resource templates for snapshot")?
         };
 
-        Ok((values.into_iter().collect(), prefixes.into_iter().collect(), has_policy))
+        Ok((values.into_iter().collect(), has_policy))
     }
 
     async fn resolve_allowed_prompts(
@@ -941,15 +956,6 @@ fn resource_allowed_from_snapshot(
         return true;
     }
 
-    if snapshot.has_resource_template_policy
-        && snapshot
-            .allowed_resource_prefixes
-            .iter()
-            .any(|prefix| unique_uri.starts_with(prefix))
-    {
-        return true;
-    }
-
     false
 }
 
@@ -1016,7 +1022,6 @@ fn compute_surface_fingerprint(
         allowed_tools: &policies.allowed_tools,
         allowed_resources: &policies.allowed_resources,
         allowed_resource_templates: &policies.allowed_resource_templates,
-        allowed_resource_prefixes: &policies.allowed_resource_prefixes,
         allowed_prompts: &policies.allowed_prompts,
         policy_flags: policies.policy_flags(),
         config_mode,
@@ -1041,7 +1046,6 @@ fn build_snapshot(
         allowed_resources: policies.allowed_resources,
         allowed_resource_templates: policies.allowed_resource_templates,
         allowed_prompts: policies.allowed_prompts,
-        allowed_resource_prefixes: policies.allowed_resource_prefixes,
         has_tool_policy: policies.has_tool_policy,
         has_resource_policy: policies.has_resource_policy,
         has_resource_template_policy: policies.has_resource_template_policy,
@@ -1054,7 +1058,6 @@ struct SurfaceFingerprintInput<'a> {
     allowed_tools: &'a HashSet<String>,
     allowed_resources: &'a HashSet<String>,
     allowed_resource_templates: &'a HashSet<String>,
-    allowed_resource_prefixes: &'a HashSet<String>,
     allowed_prompts: &'a HashSet<String>,
     policy_flags: [bool; 4],
     config_mode: Option<&'a str>,
@@ -1072,8 +1075,6 @@ fn compute_surface_hash(input: SurfaceFingerprintInput<'_>) -> String {
     hasher.update(sorted_values(input.allowed_resources).join("\u{1f}"));
     hasher.update([0]);
     hasher.update(sorted_values(input.allowed_resource_templates).join("\u{1f}"));
-    hasher.update([0]);
-    hasher.update(sorted_values(input.allowed_resource_prefixes).join("\u{1f}"));
     hasher.update([0]);
     hasher.update(sorted_values(input.allowed_prompts).join("\u{1f}"));
     hasher.update([0]);
@@ -1122,7 +1123,7 @@ mod tests {
         profile::{self, init::initialize_profile_tables},
         server::{self, init::initialize_server_tables},
     };
-    use crate::core::capability::naming::external_resource_prefix;
+    use crate::core::capability::resource_uri::{encode_resource_template, encode_resource_uri};
     use serial_test::serial;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
@@ -1438,6 +1439,8 @@ mod tests {
         let profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
         let allowed_server_id = insert_server(&db, "alpha_server", "tools,prompts,resources").await;
         let denied_server_id = insert_server(&db, "beta_server", "tools,prompts,resources").await;
+        crate::core::capability::resolver::upsert(&allowed_server_id, "alpha_server").await;
+        crate::core::capability::resolver::upsert(&denied_server_id, "beta_server").await;
 
         profile::add_server_to_profile(&db.pool, &profile_id, &allowed_server_id, true)
             .await
@@ -1453,7 +1456,7 @@ mod tests {
             "file://workspace/explicit.txt",
         )
         .await;
-        let _allowed_template = seed_resource_template(
+        let allowed_template = seed_resource_template(
             &db,
             &profile_id,
             &allowed_server_id,
@@ -1525,13 +1528,62 @@ mod tests {
                 .is_err()
         );
 
-        let dynamic_allowed = external_resource_prefix("alpha_server", "file://workspace/main.rs")
-            .expect("build external resource prefix");
+        let dynamic_allowed = encode_resource_template("alpha_server", "file://workspace/{path}")
+            .expect("encode allowed template")
+            .replace("{path}", "main.rs");
         assert!(
             service
                 .assert_resource_allowed_with_snapshot(&snapshot, &dynamic_allowed)
                 .await
                 .is_ok()
+        );
+        assert!(snapshot.allowed_resource_templates.contains(&allowed_template));
+
+        let unrelated_dynamic = encode_resource_template("alpha_server", "file://other/{path}")
+            .expect("encode unrelated template")
+            .replace("{path}", "main.rs");
+        assert!(
+            service
+                .assert_resource_allowed_with_snapshot(&snapshot, &unrelated_dynamic)
+                .await
+                .is_err()
+        );
+        let unknown_namespace =
+            encode_resource_uri("unknown_server", "file:///guide.md").expect("encode unknown namespace resource");
+        assert!(
+            service
+                .assert_resource_allowed_with_snapshot(&snapshot, &unknown_namespace)
+                .await
+                .is_err()
+        );
+        assert!(
+            service
+                .assert_resource_allowed_with_snapshot(&snapshot, "file:///guide.md")
+                .await
+                .is_err()
+        );
+
+        let explicit_allowed =
+            encode_resource_uri("alpha_server", "file://workspace/explicit.txt").expect("encode explicit resource");
+        assert!(
+            service
+                .assert_resource_allowed_with_snapshot(&snapshot, &explicit_allowed)
+                .await
+                .is_ok()
+        );
+        let issued_resource = crate::core::capability::resource_registry::issue_resource_route(
+            &db.pool,
+            &allowed_server_id,
+            "alpha_server",
+            "file://workspace/generated.txt",
+        )
+        .await
+        .expect("issue dynamic resource route");
+        assert!(
+            service
+                .assert_resource_allowed_with_snapshot(&snapshot, &issued_resource)
+                .await
+                .is_err()
         );
         assert!(
             service
@@ -1539,6 +1591,8 @@ mod tests {
                 .await
                 .is_err()
         );
+        crate::core::capability::resolver::remove_by_id(&allowed_server_id).await;
+        crate::core::capability::resolver::remove_by_id(&denied_server_id).await;
     }
 
     #[tokio::test]

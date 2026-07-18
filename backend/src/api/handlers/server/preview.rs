@@ -157,21 +157,19 @@ fn build_item(
             .map(|resource| resource.uri.clone())
             .collect::<Vec<_>>(),
     )?;
-    let template_plan = plan_external_identifiers(
-        NamingKind::ResourceTemplate,
-        &name,
-        &snap
-            .resource_templates
-            .iter()
-            .map(|template| template.uri_template.clone())
-            .collect::<Vec<_>>(),
-    )?;
+    let mut projectable_templates = Vec::new();
+    for template in &snap.resource_templates {
+        if crate::core::capability::resource_uri::resource_template_is_projectable(&name, &template.uri_template)? {
+            projectable_templates.push(template.uri_template.clone());
+        }
+    }
+    let template_plan = plan_external_identifiers(NamingKind::ResourceTemplate, &name, &projectable_templates)?;
 
     // tools
     let tool_items: Vec<serde_json::Value> = if include_details {
         snap.tools
             .iter()
-            .map(super::capability::tool_json_from_cached)
+            .map(super::capability::tool_management_json_from_cached)
             .collect()
     } else {
         Vec::new()
@@ -388,12 +386,37 @@ mod tests {
         assert_eq!(preview.prompts.items[0]["prompt_name"], "searxng_summary");
         assert_eq!(preview.prompts.items[0]["unique_name"], "searxng_summary");
         assert_eq!(preview.resources.items[0]["resource_uri"], "file:///status");
-        assert_eq!(preview.resources.items[0]["unique_uri"], "searxng:file:///status");
+        assert_eq!(
+            preview.resources.items[0]["unique_uri"],
+            crate::core::capability::resource_uri::encode_resource_uri("searxng", "file:///status")
+                .expect("encode resource")
+        );
         assert_eq!(preview.resource_templates.items[0]["uri_template"], "file:///{path}");
         assert_eq!(
             preview.resource_templates.items[0]["unique_uri_template"],
-            "searxng_file:///{path}"
+            crate::core::capability::resource_uri::encode_resource_template("searxng", "file:///{path}")
+                .expect("encode resource template")
         );
+    }
+
+    #[test]
+    fn preview_keeps_upstream_templates_when_external_projection_is_unavailable() {
+        let snapshot = crate::config::server::capabilities::CapabilitySnapshot {
+            resource_templates: vec![CachedResourceTemplateInfo {
+                uri_template: "file:///{+path}".to_string(),
+                name: Some("Reserved Files".to_string()),
+                description: None,
+                mime_type: None,
+                enabled: true,
+                cached_at: Utc::now(),
+            }],
+            ..Default::default()
+        };
+
+        let preview = build_item("docs".to_string(), snapshot, true).expect("build upstream preview");
+
+        assert_eq!(preview.resource_templates.items[0]["uri_template"], "file:///{+path}");
+        assert!(preview.resource_templates.items[0]["unique_uri_template"].is_null());
     }
 
     async fn setup_secret_store(pool: sqlx::SqlitePool) -> (Arc<LocalSecretStore>, TempDir) {

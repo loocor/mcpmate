@@ -1204,9 +1204,12 @@ async fn ensure_resource_template_unique_names(
     database: &Arc<Database>,
     server_id: &str,
     server_name: &str,
-    mut templates: Vec<rmcp::model::ResourceTemplate>,
+    templates: Vec<rmcp::model::ResourceTemplate>,
     name_domain: NameDomain,
 ) -> anyhow::Result<Vec<rmcp::model::ResourceTemplate>> {
+    if name_domain == NameDomain::Upstream {
+        return Ok(templates);
+    }
     let upstream_templates = templates
         .iter()
         .map(|template| template.uri_template.clone())
@@ -1223,18 +1226,21 @@ async fn ensure_resource_template_unique_names(
     )
     .await
     .context("Failed to assign external resource template names")?;
-    if name_domain == NameDomain::External {
-        for (template, upstream_template) in templates.iter_mut().zip(upstream_templates) {
-            template.raw.name = crate::core::capability::naming::load_external_identifier(
-                &database.pool,
-                NamingKind::ResourceTemplate,
-                server_id,
-                &upstream_template,
-            )
-            .await?;
+    let mut projected = Vec::with_capacity(templates.len());
+    for (mut template, upstream_template) in templates.into_iter().zip(upstream_templates) {
+        if !crate::core::capability::resource_uri::resource_template_is_projectable(server_name, &upstream_template)? {
+            continue;
         }
+        template.raw.uri_template = crate::core::capability::naming::load_external_identifier(
+            &database.pool,
+            NamingKind::ResourceTemplate,
+            server_id,
+            &upstream_template,
+        )
+        .await?;
+        projected.push(template);
     }
-    Ok(templates)
+    Ok(projected)
 }
 
 async fn project_external_items(
@@ -1283,16 +1289,31 @@ async fn project_external_items(
             }
         }
         CapabilityItems::ResourceTemplates(templates) => {
-            for template in templates {
+            let server_name = sqlx::query_scalar::<_, String>("SELECT name FROM server_config WHERE id = ?")
+                .bind(server_id)
+                .fetch_optional(&database.pool)
+                .await
+                .context("Failed to load server namespace for Resource Template projection")?
+                .with_context(|| format!("Server '{server_id}' not found"))?;
+            let mut projected = Vec::with_capacity(templates.len());
+            for mut template in std::mem::take(templates) {
                 let upstream_template = template.uri_template.to_string();
-                template.raw.name = crate::core::capability::naming::load_external_identifier(
+                if !crate::core::capability::resource_uri::resource_template_is_projectable(
+                    &server_name,
+                    &upstream_template,
+                )? {
+                    continue;
+                }
+                template.raw.uri_template = crate::core::capability::naming::load_external_identifier(
                     &database.pool,
                     NamingKind::ResourceTemplate,
                     server_id,
                     &upstream_template,
                 )
                 .await?;
+                projected.push(template);
             }
+            *templates = projected;
         }
     }
 
@@ -1602,7 +1623,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn raw_resource_template_cache_projects_name_without_rewriting_uri_template() {
+    async fn raw_resource_template_cache_projects_uri_template_without_rewriting_name() {
         let database = test_database().await;
         sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-docs', 'docs', 'stdio')")
             .execute(&database.pool)
@@ -1640,8 +1661,176 @@ mod tests {
         .expect("project resource template");
         let template = &projected.into_resource_templates().unwrap()[0];
 
-        assert_eq!(template.name.as_str(), "docs_file:///{path}");
-        assert_eq!(template.uri_template.as_str(), "file:///{path}");
+        assert_eq!(template.name.as_str(), "Files");
+        assert_eq!(
+            template.uri_template.as_str(),
+            "mcpmate://resources/template/docs/file/{path}"
+        );
+    }
+
+    #[tokio::test]
+    async fn raw_cache_external_projection_excludes_unprojectable_templates() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-docs', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+        crate::config::server::capabilities::upsert_shadow_resource_template(
+            &database.pool,
+            "server-docs",
+            "docs",
+            "file:///{path}",
+            Some("Files"),
+            None,
+        )
+        .await
+        .expect("insert projected resource template identity");
+
+        let mut data = make_test_cached_data("server-docs", CacheScope::shared_raw(), 0);
+        data.resource_templates = vec![
+            CachedResourceTemplateInfo {
+                uri_template: "file:///{path}".to_string(),
+                name: Some("Files".to_string()),
+                description: None,
+                mime_type: None,
+                enabled: true,
+                cached_at: Utc::now(),
+            },
+            CachedResourceTemplateInfo {
+                uri_template: "file:///{+path}".to_string(),
+                name: Some("Reserved Files".to_string()),
+                description: None,
+                mime_type: None,
+                enabled: true,
+                cached_at: Utc::now(),
+            },
+        ];
+
+        let projected = project_cached_items(
+            &database,
+            "server-docs",
+            cached_items_from_data(CapabilityType::ResourceTemplates, data),
+            &CacheScope::shared_raw(),
+            NameDomain::External,
+        )
+        .await
+        .expect("project only canonical resource templates");
+        let templates = projected.into_resource_templates().unwrap();
+
+        assert_eq!(templates.len(), 1);
+        assert_eq!(
+            templates[0].uri_template.as_str(),
+            "mcpmate://resources/template/docs/file/{path}"
+        );
+    }
+
+    #[tokio::test]
+    async fn upstream_resource_templates_do_not_require_external_projection() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-docs', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+        let upstream_template = "file:///{+path}";
+        let templates = vec![rmcp::model::ResourceTemplate {
+            raw: rmcp::model::RawResourceTemplate::new(upstream_template, "Files"),
+            annotations: None,
+        }];
+
+        let result =
+            ensure_resource_template_unique_names(&database, "server-docs", "docs", templates, NameDomain::Upstream)
+                .await
+                .expect("accept exact upstream resource template");
+
+        assert_eq!(result[0].uri_template.as_str(), upstream_template);
+    }
+
+    #[tokio::test]
+    async fn external_resource_templates_exclude_only_unprojectable_entries() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-docs', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+        let templates = vec![
+            rmcp::model::ResourceTemplate {
+                raw: rmcp::model::RawResourceTemplate::new("file:///{path}", "Files"),
+                annotations: None,
+            },
+            rmcp::model::ResourceTemplate {
+                raw: rmcp::model::RawResourceTemplate::new("file:///{+path}", "Reserved Files"),
+                annotations: None,
+            },
+        ];
+
+        let result =
+            ensure_resource_template_unique_names(&database, "server-docs", "docs", templates, NameDomain::External)
+                .await
+                .expect("project supported templates without exposing raw fallbacks");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].uri_template.as_str(),
+            "mcpmate://resources/template/docs/file/{path}"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_and_cached_resource_projection_share_registry_identity() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-docs', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server");
+        crate::config::server::capabilities::upsert_shadow_resource(
+            &database.pool,
+            "server-docs",
+            "docs",
+            "demo://resource/static/document/architecture.md",
+            Some("Architecture"),
+            None,
+            Some("text/markdown"),
+        )
+        .await
+        .expect("insert resource identity");
+        crate::config::server::capabilities::upsert_shadow_resource_template(
+            &database.pool,
+            "server-docs",
+            "docs",
+            "demo://resource/dynamic/text/{resourceId}",
+            Some("Dynamic Text Resource"),
+            None,
+        )
+        .await
+        .expect("insert template identity");
+
+        let upstream_resources = CapabilityItems::Resources(vec![rmcp::model::Resource {
+            raw: rmcp::model::RawResource::new("demo://resource/static/document/architecture.md", "Architecture"),
+            annotations: None,
+        }]);
+        let upstream_templates = CapabilityItems::ResourceTemplates(vec![rmcp::model::ResourceTemplate {
+            raw: rmcp::model::RawResourceTemplate::new(
+                "demo://resource/dynamic/text/{resourceId}",
+                "Dynamic Text Resource",
+            ),
+            annotations: None,
+        }]);
+
+        for items in [upstream_resources, upstream_templates] {
+            let live = project_external_items(&database, "server-docs", items.clone(), NameDomain::External)
+                .await
+                .expect("project live capability items");
+            let cached = project_cached_items(
+                &database,
+                "server-docs",
+                items,
+                &CacheScope::shared_raw(),
+                NameDomain::External,
+            )
+            .await
+            .expect("project cached capability items");
+            assert_eq!(format!("{live:?}"), format!("{cached:?}"));
+        }
     }
 
     #[test]

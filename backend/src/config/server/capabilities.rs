@@ -667,13 +667,15 @@ async fn upsert_shadow_resource_template_row(
     description: Option<&str>,
 ) -> Result<()> {
     let id = crate::generate_id!("srst");
+    let route_uri = crate::core::capability::resource_uri::template_match_key(unique_name)?;
     sqlx::query(
         r#"
-        INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name, description)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, route_uri, name, description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(server_id, uri_template) DO UPDATE SET
             server_name = excluded.server_name,
             unique_name = excluded.unique_name,
+            route_uri = excluded.route_uri,
             name = excluded.name,
             description = excluded.description,
             updated_at = CURRENT_TIMESTAMP
@@ -684,6 +686,7 @@ async fn upsert_shadow_resource_template_row(
     .bind(server_name)
     .bind(uri_template)
     .bind(unique_name)
+    .bind(route_uri)
     .bind(name)
     .bind(description)
     .execute(&mut **tx)
@@ -840,13 +843,27 @@ pub(crate) async fn upsert_shadow_resource_templates_batch_in_transaction(
     server_name: &str,
     templates: &[CachedResourceTemplateInfo],
 ) -> Result<bool> {
-    let inventory = templates
+    let mut projectable_templates = Vec::new();
+    for template in templates {
+        if crate::core::capability::resource_uri::resource_template_is_projectable(server_name, &template.uri_template)?
+        {
+            projectable_templates.push(template);
+        } else {
+            tracing::warn!(
+                server_id,
+                server_name,
+                upstream_template = %template.uri_template,
+                "Resource Template remains available upstream but cannot enter the canonical address space"
+            );
+        }
+    }
+    let inventory = projectable_templates
         .iter()
         .map(|template| template.uri_template.clone())
         .collect::<Vec<_>>();
     let reconciliation =
         reconcile_external_identifiers(tx, NamingKind::ResourceTemplate, server_id, server_name, &inventory).await?;
-    for template in templates {
+    for template in projectable_templates {
         upsert_shadow_resource_template_row(
             tx,
             server_id,
@@ -1755,6 +1772,53 @@ mod tests {
         pool
     }
 
+    #[tokio::test]
+    async fn raw_snapshot_keeps_templates_that_cannot_enter_external_projection() {
+        let pool = capability_store_pool().await;
+        let cache_dir = TempDir::new().expect("create cache directory");
+        let redb = RedbCacheManager::new(
+            cache_dir.path().join("resource-template-projection.redb"),
+            crate::core::cache::manager::CacheConfig::default(),
+        )
+        .expect("create cache manager");
+
+        store_dual_write(
+            &pool,
+            &redb,
+            "server-a",
+            "docs",
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![cached_template("file:///{path}"), cached_template("file:///{+path}")],
+            Some("2025-11-25".to_string()),
+        )
+        .await
+        .expect("store raw templates independently from external projection");
+
+        let cached = redb
+            .get_server_data(&CacheQuery {
+                server_id: "server-a".to_string(),
+                freshness_level: FreshnessLevel::Cached,
+                include_disabled: true,
+                scope: CacheScope::shared_raw(),
+            })
+            .await
+            .expect("read raw snapshot")
+            .data
+            .expect("raw snapshot exists");
+        assert_eq!(cached.resource_templates.len(), 2);
+
+        let projected = sqlx::query_scalar::<_, String>(
+            "SELECT uri_template FROM server_resource_templates WHERE server_id = ? ORDER BY uri_template",
+        )
+        .bind("server-a")
+        .fetch_all(&pool)
+        .await
+        .expect("load projected templates");
+        assert_eq!(projected, vec!["file:///{path}".to_string()]);
+    }
+
     fn cached_tool(name: &str) -> CachedToolInfo {
         CachedToolInfo {
             name: name.to_string(),
@@ -2405,6 +2469,13 @@ mod tests {
         assert_eq!(cached.prompts[0].name, "get_searxng_help");
         assert_eq!(cached.resources[0].uri, "file:///searxng/status");
         assert_eq!(cached.resource_templates[0].uri_template, "searxng://status/{id}");
+        let (unique_name, route_uri): (String, String) =
+            sqlx::query_as("SELECT unique_name, route_uri FROM server_resource_templates WHERE server_id = 'server-a'")
+                .fetch_one(&pool)
+                .await
+                .expect("load persisted template route");
+        assert_eq!(unique_name, "mcpmate://resources/template/searxng/searxng/status/{id}");
+        assert_eq!(route_uri, "mcpmate://resources/template/searxng/searxng/status/{}");
     }
 
     #[tokio::test]
@@ -2439,6 +2510,12 @@ mod tests {
         upsert_shadow_resource_template(&pool, "server-a", "docs", "file:///{path}", Some("Files"), None)
             .await
             .expect("insert template");
+        sqlx::query(
+            "INSERT INTO server_issued_resources (id, server_id, server_name, resource_uri, unique_uri) VALUES ('issued-1', 'server-a', 'docs', 'file:///generated', 'mcpmate://resources/docs/file/generated')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert issued resource route");
         let cache_dir = TempDir::new().expect("create cache directory");
         let redb = RedbCacheManager::new(
             cache_dir.path().join("empty-capability.redb"),
@@ -2473,6 +2550,131 @@ mod tests {
                 .expect("count catalog rows");
             assert_eq!(count, 0, "{table} retained stale capability rows");
         }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_issued_resources WHERE server_id = 'server-a'",)
+                .fetch_one(&pool)
+                .await
+                .expect("count issued resource routes"),
+            1,
+            "authoritative resources/list reconciliation must not delete issued routes"
+        );
+    }
+
+    #[tokio::test]
+    async fn issued_resource_routes_survive_inventory_churn_without_route_churn() {
+        let pool = capability_store_pool().await;
+        let issued_upstream = "demo://resource/generated";
+        let issued_uri = crate::core::capability::resource_registry::issue_resource_route(
+            &pool,
+            "server-a",
+            "docs",
+            issued_upstream,
+        )
+        .await
+        .expect("issue dynamic resource route");
+        assert_eq!(issued_uri, "mcpmate://resources/docs/demo/generated");
+
+        let listed_upstream = "demo://resources/generated";
+        upsert_shadow_resources_batch(&pool, "server-a", "docs", &[cached_resource(listed_upstream)])
+            .await
+            .expect("persist colliding listed resource");
+
+        let listed_uri: String = sqlx::query_scalar("SELECT unique_uri FROM server_resources WHERE resource_uri = ?")
+            .bind(listed_upstream)
+            .fetch_one(&pool)
+            .await
+            .expect("load listed resource URI");
+        assert_ne!(listed_uri, issued_uri);
+        assert_eq!(
+            crate::core::capability::resource_registry::resolve_resource_route(&pool, &issued_uri)
+                .await
+                .expect("resolve preserved issued route")
+                .upstream_uri,
+            issued_upstream
+        );
+
+        upsert_shadow_resources_batch(
+            &pool,
+            "server-a",
+            "docs",
+            &[cached_resource(issued_upstream), cached_resource(listed_upstream)],
+        )
+        .await
+        .expect("promote issued resource into listed inventory");
+
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT unique_uri FROM server_resources WHERE resource_uri = ?")
+                .bind(issued_upstream)
+                .fetch_one(&pool)
+                .await
+                .expect("load promoted listed resource"),
+            issued_uri
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM server_issued_resources WHERE server_id = 'server-a' AND resource_uri = ?",
+            )
+            .bind(issued_upstream)
+            .fetch_one(&pool)
+            .await
+            .expect("count retained issued routes"),
+            1,
+            "listing an issued upstream URI must retain its issued route"
+        );
+        assert_eq!(
+            crate::core::capability::resource_registry::resolve_resource_route(&pool, &issued_uri)
+                .await
+                .expect("resolve listed route before inventory removal")
+                .source,
+            crate::core::capability::resource_registry::ResourceRouteSource::Listed
+        );
+
+        upsert_shadow_resources_batch(&pool, "server-a", "docs", &[cached_resource(listed_upstream)])
+            .await
+            .expect("remove issued resource from authoritative inventory");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_resources WHERE resource_uri = ?")
+                .bind(issued_upstream)
+                .fetch_one(&pool)
+                .await
+                .expect("count removed listed resource"),
+            0
+        );
+        assert_eq!(
+            crate::core::capability::resource_registry::resolve_resource_route(&pool, &issued_uri)
+                .await
+                .expect("resolve preserved issued route after inventory removal")
+                .source,
+            crate::core::capability::resource_registry::ResourceRouteSource::Issued
+        );
+
+        upsert_shadow_resources_batch(
+            &pool,
+            "server-a",
+            "docs",
+            &[cached_resource(issued_upstream), cached_resource(listed_upstream)],
+        )
+        .await
+        .expect("relist issued resource");
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT unique_uri FROM server_resources WHERE resource_uri = ?")
+                .bind(issued_upstream)
+                .fetch_one(&pool)
+                .await
+                .expect("load relisted resource URI"),
+            issued_uri,
+            "relisting must reuse the original canonical URI"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM server_issued_resources WHERE server_id = 'server-a' AND resource_uri = ?",
+            )
+            .bind(issued_upstream)
+            .fetch_one(&pool)
+            .await
+            .expect("count issued routes after relisting"),
+            1
+        );
     }
 
     #[tokio::test]

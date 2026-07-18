@@ -108,6 +108,55 @@ pub struct RegisteredCall {
     pub completion: oneshot::Receiver<InspectorTerminal>,
 }
 
+#[derive(Debug, Clone)]
+pub enum InspectorResultProjection {
+    Upstream,
+    ExternalResourceUris {
+        registry_pool: sqlx::Pool<sqlx::Sqlite>,
+        server_id: String,
+        namespace: String,
+    },
+}
+
+async fn project_call_tool_result(
+    projection: &InspectorResultProjection,
+    result: &mut rmcp::model::CallToolResult,
+) -> anyhow::Result<()> {
+    match projection {
+        InspectorResultProjection::Upstream => Ok(()),
+        InspectorResultProjection::ExternalResourceUris {
+            registry_pool,
+            server_id,
+            namespace,
+        } => {
+            crate::core::capability::resource_uri::rewrite_call_tool_result(registry_pool, server_id, namespace, result)
+                .await
+        }
+    }
+}
+
+pub(crate) async fn project_prompt_result(
+    projection: &InspectorResultProjection,
+    result: &mut rmcp::model::GetPromptResult,
+) -> anyhow::Result<()> {
+    match projection {
+        InspectorResultProjection::Upstream => Ok(()),
+        InspectorResultProjection::ExternalResourceUris {
+            registry_pool,
+            server_id,
+            namespace,
+        } => {
+            crate::core::capability::resource_uri::rewrite_get_prompt_result(
+                registry_pool,
+                server_id,
+                namespace,
+                result,
+            )
+            .await
+        }
+    }
+}
+
 struct CallEntry {
     call_id: String,
     server_id: String,
@@ -160,6 +209,7 @@ impl InspectorCallRegistry {
         mode: InspectorMode,
         session_id: Option<String>,
         handle: RequestHandle<RoleClient>,
+        projection: InspectorResultProjection,
     ) -> RegisteredCall {
         let progress_key = token_key(&handle.progress_token);
         let request_key = request_key(&handle.id);
@@ -207,7 +257,7 @@ impl InspectorCallRegistry {
         });
 
         // Spawn worker task to await response / cancel
-        tokio::spawn(call_worker(self.clone(), entry.clone(), handle, cancel_rx));
+        tokio::spawn(call_worker(self.clone(), entry.clone(), handle, cancel_rx, projection));
 
         let info = InspectorCallInfo {
             call_id,
@@ -424,6 +474,7 @@ async fn call_worker(
     entry: Arc<CallEntry>,
     handle: RequestHandle<RoleClient>,
     mut cancel_rx: mpsc::Receiver<CancelCommand>,
+    projection: InspectorResultProjection,
 ) {
     let started_at = entry.started_at;
     let server_id = entry.server_id.clone();
@@ -462,14 +513,22 @@ async fn call_worker(
             );
 
             match resp {
-                Ok(ServerResult::CallToolResult(res)) => {
+                Ok(ServerResult::CallToolResult(mut res)) => {
                     tracing::info!(
                         call_id = %call_id,
                         "Inspector call succeeded with CallToolResult"
                     );
-                    let value = serde_json::to_value(res).unwrap_or(Value::Null);
-                    let elapsed_ms = started_at.elapsed().as_millis() as u64;
-                    InspectorTerminal::Result { result: value, elapsed_ms, server_id }
+                    match project_call_tool_result(&projection, &mut res).await {
+                        Ok(()) => {
+                            let value = serde_json::to_value(res).unwrap_or(Value::Null);
+                            let elapsed_ms = started_at.elapsed().as_millis() as u64;
+                            InspectorTerminal::Result { result: value, elapsed_ms, server_id }
+                        }
+                        Err(error) => InspectorTerminal::Error {
+                            message: format!("Failed to project Inspector tool result: {error}"),
+                            server_id,
+                        },
+                    }
                 }
                 Ok(other) => {
                     let msg = format!("Unexpected server result: {:?}", other);
@@ -517,4 +576,150 @@ async fn call_worker(
         call_id = %call_id,
         "Inspector call_worker completed"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::{
+        AnnotateAble, CallToolResult, Content, GetPromptResult, PromptMessage, PromptMessageContent, PromptMessageRole,
+        RawResource, ResourceContents,
+    };
+
+    async fn external_projection() -> InspectorResultProjection {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect registry database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-docs', 'docs', 'stdio')")
+            .execute(&pool)
+            .await
+            .expect("insert server");
+        InspectorResultProjection::ExternalResourceUris {
+            registry_pool: pool,
+            server_id: "server-docs".to_string(),
+            namespace: "docs".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_projection_rewrites_typed_resource_links() {
+        let mut result = CallToolResult::success(vec![Content::resource_link(RawResource::new(
+            "file:///guide.md",
+            "guide",
+        ))]);
+        result.content.push(Content::resource(ResourceContents::text(
+            "embedded",
+            "file:///embedded.md",
+        )));
+
+        project_call_tool_result(&external_projection().await, &mut result)
+            .await
+            .expect("project proxy result");
+
+        let uri = &result.content[0].as_resource_link().expect("resource link").uri;
+        assert!(uri.starts_with("mcpmate://resources/docs/"));
+        match &result.content[1].as_resource().expect("embedded resource").resource {
+            ResourceContents::TextResourceContents { uri, .. } => {
+                assert!(uri.starts_with("mcpmate://resources/docs/"));
+            }
+            ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+        }
+    }
+
+    #[tokio::test]
+    async fn native_projection_preserves_upstream_resource_links() {
+        let mut result = CallToolResult::success(vec![Content::resource_link(RawResource::new(
+            "file:///guide.md",
+            "guide",
+        ))]);
+        result.content.push(Content::resource(ResourceContents::text(
+            "embedded",
+            "file:///embedded.md",
+        )));
+
+        project_call_tool_result(&InspectorResultProjection::Upstream, &mut result)
+            .await
+            .expect("preserve native result");
+
+        assert_eq!(
+            result.content[0].as_resource_link().expect("resource link").uri,
+            "file:///guide.md"
+        );
+        match &result.content[1].as_resource().expect("embedded resource").resource {
+            ResourceContents::TextResourceContents { uri, .. } => assert_eq!(uri, "file:///embedded.md"),
+            ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+        }
+    }
+
+    fn prompt_result_with_typed_resources() -> GetPromptResult {
+        GetPromptResult::new(vec![
+            PromptMessage::new_resource_link(
+                PromptMessageRole::User,
+                RawResource::new("file:///prompt-link.md", "prompt link").no_annotation(),
+            ),
+            PromptMessage::new_resource(
+                PromptMessageRole::Assistant,
+                "file:///prompt-embedded.md".to_string(),
+                Some("text/markdown".to_string()),
+                Some("embedded".to_string()),
+                None,
+                None,
+                None,
+            ),
+        ])
+    }
+
+    #[tokio::test]
+    async fn proxy_prompt_projection_rewrites_typed_resource_content() {
+        let mut result = prompt_result_with_typed_resources();
+        project_prompt_result(&external_projection().await, &mut result)
+            .await
+            .expect("project proxy prompt");
+
+        match &result.messages[0].content {
+            PromptMessageContent::ResourceLink { link } => {
+                assert!(link.uri.starts_with("mcpmate://resources/docs/"));
+            }
+            _ => panic!("expected prompt resource link"),
+        }
+        match &result.messages[1].content {
+            PromptMessageContent::Resource { resource } => match &resource.resource {
+                ResourceContents::TextResourceContents { uri, .. } => {
+                    assert!(uri.starts_with("mcpmate://resources/docs/"));
+                }
+                ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            },
+            _ => panic!("expected embedded prompt resource"),
+        }
+    }
+
+    #[tokio::test]
+    async fn native_prompt_projection_preserves_upstream_resource_content() {
+        let mut result = prompt_result_with_typed_resources();
+        project_prompt_result(&InspectorResultProjection::Upstream, &mut result)
+            .await
+            .expect("preserve native prompt");
+
+        match &result.messages[0].content {
+            PromptMessageContent::ResourceLink { link } => assert_eq!(link.uri, "file:///prompt-link.md"),
+            _ => panic!("expected prompt resource link"),
+        }
+        match &result.messages[1].content {
+            PromptMessageContent::Resource { resource } => match &resource.resource {
+                ResourceContents::TextResourceContents { uri, .. } => {
+                    assert_eq!(uri, "file:///prompt-embedded.md");
+                }
+                ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            },
+            _ => panic!("expected embedded prompt resource"),
+        }
+    }
 }

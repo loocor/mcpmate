@@ -62,6 +62,19 @@ pub struct InspectorResourceReadQuery {
     pub timeout_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InspectorTemplateReadReq {
+    pub uri_template: String,
+    pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    pub mode: InspectorMode,
+    pub server_id: Option<String>,
+    pub server_name: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    pub timeout_ms: Option<u64>,
+}
+
 // ==============================
 // Strongly-typed response models (for OpenAPI and clients)
 // ==============================
@@ -152,6 +165,20 @@ api_resp!(
     InspectorResourceReadResp,
     InspectorResourceReadData,
     "Inspector resource read response"
+);
+
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+pub struct InspectorTemplateReadData {
+    pub result: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    pub elapsed_ms: u64,
+    pub expanded_uri: String,
+}
+api_resp!(
+    InspectorTemplateReadResp,
+    InspectorTemplateReadData,
+    "Inspector resource template read response"
 );
 
 #[derive(Debug, Clone, serde::Serialize, JsonSchema)]

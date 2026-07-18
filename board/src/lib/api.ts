@@ -1699,6 +1699,16 @@ interface InspectorListQuery extends InspectorTargetQuery {
 	refresh?: boolean;
 }
 
+export interface InspectorTemplateReadRequest {
+	uri_template: string;
+	arguments?: Record<string, unknown>;
+	mode?: "proxy" | "native";
+	server_id?: string;
+	server_name?: string;
+	session_id?: string;
+	timeout_ms?: number;
+}
+
 function createInspectorQuery(
 	query: InspectorListQuery,
 	initial?: Record<string, string>,
@@ -1795,6 +1805,11 @@ export const inspectorApi = {
 		const params = createInspectorQuery(query, { uri: query.uri });
 		return fetchApi(`/api/mcp/inspector/resource/read?${params}`);
 	},
+	templateRead: (req: InspectorTemplateReadRequest) =>
+		fetchApi(`/api/mcp/inspector/template/read`, {
+			method: "POST",
+			body: JSON.stringify(req),
+		}),
 	promptsList: (query: InspectorListQuery) => {
 		return fetchApi(
 			`/api/mcp/inspector/prompt/list?${createInspectorQuery(query)}`,

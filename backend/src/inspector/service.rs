@@ -18,13 +18,15 @@ use tokio::time::Duration;
 use crate::api::handlers::ApiError;
 use crate::api::models::inspector::{
     InspectorListQuery, InspectorMode, InspectorPromptGetReq, InspectorResourceReadQuery, InspectorSessionCloseReq,
-    InspectorSessionOpenData, InspectorSessionOpenReq, InspectorToolCallReq,
+    InspectorSessionOpenData, InspectorSessionOpenReq, InspectorTemplateReadReq, InspectorToolCallReq,
 };
 use crate::api::routes::AppState;
 use crate::core::capability;
 use crate::core::capability::resolver;
 use crate::core::proxy::server::supports_capability;
-use crate::inspector::calls::{InspectorCallInfo, InspectorCallRegistry, InspectorTerminal, RegisteredCall};
+use crate::inspector::calls::{
+    InspectorCallInfo, InspectorCallRegistry, InspectorResultProjection, InspectorTerminal, RegisteredCall,
+};
 
 const NATIVE_VALIDATION_SESSION_TTL: Duration = Duration::from_secs(300);
 
@@ -185,12 +187,13 @@ pub async fn prompt_get(
                 .await
                 .map_err(map_anyhow)?;
             let server_id = route.server_id;
+            let namespace = route.server_name;
             let upstream_name = route.upstream_value;
             let server_filter = HashSet::from([server_id.clone()]);
 
             ensure_proxy_connection(state, &server_id, timeout).await?;
 
-            let res = run_inspector_operation(timeout, "prompts/get", async {
+            let mut res = run_inspector_operation(timeout, "prompts/get", async {
                 let mapping =
                     capability::facade::build_prompt_mapping_filtered(&state.connection_pool, Some(&server_filter))
                         .await
@@ -207,6 +210,20 @@ pub async fn prompt_get(
                 .map_err(map_anyhow)
             })
             .await?;
+            let database = state
+                .database
+                .as_ref()
+                .ok_or_else(|| ApiError::InternalError("Proxy Inspector projection requires database access".into()))?;
+            crate::inspector::calls::project_prompt_result(
+                &InspectorResultProjection::ExternalResourceUris {
+                    registry_pool: database.pool.clone(),
+                    server_id: server_id.clone(),
+                    namespace,
+                },
+                &mut res,
+            )
+            .await
+            .map_err(map_anyhow)?;
 
             Ok(json!({
                 "result": res,
@@ -229,7 +246,10 @@ pub async fn prompt_get(
             if let Some(cleanup) = cleanup {
                 cleanup.cleanup().await;
             }
-            let res = res?;
+            let mut res = res?;
+            crate::inspector::calls::project_prompt_result(&InspectorResultProjection::Upstream, &mut res)
+                .await
+                .map_err(map_anyhow)?;
             Ok(json!({
                 "result": res,
                 "server_id": server_id,
@@ -247,12 +267,15 @@ pub async fn resource_read(
     let start = Instant::now();
     match req.mode {
         InspectorMode::Proxy => {
-            let route =
-                capability::naming::resolve_capability_route(capability::naming::NamingKind::Resource, &req.uri)
-                    .await
-                    .map_err(map_anyhow)?;
-            let server_filter = Some(route.server_id);
-            let upstream_uri = route.upstream_value;
+            let database = state.database.as_ref().ok_or_else(|| {
+                ApiError::InternalError("Proxy Inspector resource routing requires database access".into())
+            })?;
+            let route = capability::resource_registry::resolve_resource_route(&database.pool, &req.uri)
+                .await
+                .map_err(map_anyhow)?;
+            let server_id = route.server_id.clone();
+            let upstream_uri = route.upstream_uri.clone();
+            let server_filter = Some(server_id);
 
             ensure_proxy_connection(
                 state,
@@ -263,33 +286,22 @@ pub async fn resource_read(
             )
             .await?;
 
-            let res = run_inspector_operation(timeout, "resources/read", async {
-                let mapping = if let Some(sid) = &server_filter {
-                    let mut filter: HashSet<String> = HashSet::new();
-                    filter.insert(sid.clone());
-                    capability::facade::build_resource_mapping_filtered(
-                        &state.connection_pool,
-                        state.database.as_ref(),
-                        Some(&filter),
-                    )
-                    .await
-                    .map_err(map_anyhow)?
-                } else {
-                    capability::facade::build_resource_mapping(&state.connection_pool, state.database.as_ref())
-                        .await
-                        .map_err(map_anyhow)?
-                };
-                capability::facade::read_upstream_resource(
+            let mut res = run_inspector_operation(timeout, "resources/read", async {
+                capability::facade::read_routed_resource(
                     &state.connection_pool,
-                    &mapping,
+                    server_filter
+                        .as_deref()
+                        .expect("resolved resource route has a server id"),
                     &upstream_uri,
-                    server_filter.as_deref(),
                     None,
                 )
                 .await
                 .map_err(map_anyhow)
             })
             .await?;
+            capability::resource_registry::rewrite_read_resource_result(&database.pool, &route, &mut res)
+                .await
+                .map_err(map_anyhow)?;
             Ok(json!({
                 "result": res,
                 "server_id": server_filter,
@@ -319,6 +331,51 @@ pub async fn resource_read(
             }))
         }
     }
+}
+
+pub async fn template_read(
+    state: &AppState,
+    req: &InspectorTemplateReadReq,
+) -> Result<Value, ApiError> {
+    if req.mode == InspectorMode::Proxy {
+        let database = state.database.as_ref().ok_or_else(|| {
+            ApiError::InternalError("Proxy Inspector template routing requires database access".into())
+        })?;
+        let registered: Option<String> =
+            sqlx::query_scalar("SELECT uri_template FROM server_resource_templates WHERE unique_name = ?")
+                .bind(&req.uri_template)
+                .fetch_optional(&database.pool)
+                .await
+                .map_err(|error| map_anyhow(error.into()))?;
+        if registered.is_none() {
+            return Err(ApiError::BadRequest(format!(
+                "Proxy Inspector template '{}' is not registered",
+                req.uri_template
+            )));
+        }
+    }
+
+    let expanded_uri = crate::inspector::template::expand_resource_template(&req.uri_template, req.arguments.as_ref())
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    let result = resource_read(
+        state,
+        &InspectorResourceReadQuery {
+            uri: expanded_uri.clone(),
+            server_id: req.server_id.clone(),
+            server_name: req.server_name.clone(),
+            session_id: req.session_id.clone(),
+            mode: req.mode,
+            timeout_ms: req.timeout_ms,
+        },
+    )
+    .await?;
+    let mut response = result
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::InternalError("Inspector resource read did not return an object response".into()))?;
+    response.insert("expanded_uri".to_string(), Value::String(expanded_uri));
+    Ok(Value::Object(response))
 }
 
 pub async fn call_tool(
@@ -515,12 +572,24 @@ async fn start_tool_call_internal_with_timeout(
             None
         };
 
-    let (server_id, upstream_tool_name) = match req.mode {
+    let (server_id, upstream_tool_name, result_projection) = match req.mode {
         InspectorMode::Proxy => {
             let route = capability::naming::resolve_capability_route(capability::naming::NamingKind::Tool, &req.tool)
                 .await
                 .map_err(map_anyhow)?;
-            (route.server_id, route.upstream_value)
+            let database = state
+                .database
+                .as_ref()
+                .ok_or_else(|| ApiError::InternalError("Proxy Inspector projection requires database access".into()))?;
+            (
+                route.server_id.clone(),
+                route.upstream_value,
+                InspectorResultProjection::ExternalResourceUris {
+                    registry_pool: database.pool.clone(),
+                    server_id: route.server_id,
+                    namespace: route.server_name,
+                },
+            )
         }
         InspectorMode::Native => {
             let sid = if let Some(session) = &active_session {
@@ -528,7 +597,7 @@ async fn start_tool_call_internal_with_timeout(
             } else {
                 resolve_server(&req.server_id, &req.server_name).await?
             };
-            (sid.clone(), req.tool.clone())
+            (sid.clone(), req.tool.clone(), InspectorResultProjection::Upstream)
         }
     };
 
@@ -600,7 +669,14 @@ async fn start_tool_call_internal_with_timeout(
 
     let RegisteredCall { info, completion } = state
         .inspector_calls
-        .start_call(call_id, server_id.clone(), req.mode, req.session_id.clone(), handle)
+        .start_call(
+            call_id,
+            server_id.clone(),
+            req.mode,
+            req.session_id.clone(),
+            handle,
+            result_projection,
+        )
         .await;
 
     Ok(PreparedCall {

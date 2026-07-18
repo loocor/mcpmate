@@ -367,7 +367,7 @@ fn prompt_to_capability(prompt: rmcp::model::Prompt) -> CapabilityItem {
 
 fn template_to_capability(template: rmcp::model::ResourceTemplate) -> CapabilityItem {
     let rmcp::model::Annotated { raw, .. } = template;
-    let unique_template = raw.name.clone();
+    let unique_template = raw.uri_template.clone();
     CapabilityItem::ResourceTemplate(ResourceTemplateCapability {
         uri_template: raw.uri_template,
         name: Some(raw.name),
@@ -376,4 +376,26 @@ fn template_to_capability(template: rmcp::model::ResourceTemplate) -> Capability
         unique_template,
         enabled: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_template_identity_uses_uri_template_not_display_name() {
+        let external_template = "mcpmate://resources/template/docs/file/{path}";
+        let template = rmcp::model::ResourceTemplate {
+            raw: rmcp::model::RawResourceTemplate::new(external_template, "File"),
+            annotations: None,
+        };
+
+        let CapabilityItem::ResourceTemplate(projected) = template_to_capability(template) else {
+            panic!("expected resource template capability");
+        };
+
+        assert_eq!(projected.uri_template, external_template);
+        assert_eq!(projected.unique_template, external_template);
+        assert_eq!(projected.name.as_deref(), Some("File"));
+    }
 }

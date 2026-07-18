@@ -1891,6 +1891,16 @@ mod tests {
         }
     }
 
+    fn canonical_test_resource(namespace: &str) -> String {
+        crate::core::capability::resource_uri::encode_resource_uri(namespace, "test://resource-a")
+            .expect("encode test resource")
+    }
+
+    fn canonical_test_template(namespace: &str) -> String {
+        crate::core::capability::resource_uri::encode_resource_template(namespace, "test:///{id}")
+            .expect("encode test resource template")
+    }
+
     #[tokio::test]
     async fn update_capability_config_returns_updated_payload() {
         let context = create_test_context().await;
@@ -2231,8 +2241,8 @@ mod tests {
             "server-mixed",
             "mixed_server",
             &["prompt-a"],
-            &["resource-a"],
-            &["template-a"],
+            &["test://resource-a"],
+            &["test:///{id}"],
         )
         .await;
 
@@ -2247,8 +2257,8 @@ mod tests {
                     server_ids: Vec::new(),
                     capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
                         prompt_ids: vec!["mixed_server_prompt-a".to_string()],
-                        resource_ids: vec!["mixed_server:resource-a".to_string()],
-                        template_ids: vec!["mixed_server_template-a".to_string()],
+                        resource_ids: vec![canonical_test_resource("mixed_server")],
+                        template_ids: vec![canonical_test_template("mixed_server")],
                         ..Default::default()
                     },
                 }),
@@ -2273,7 +2283,7 @@ mod tests {
                 .selected_resource_surfaces,
             vec![crate::clients::models::UnifyDirectResourceSurface {
                 server_id: "server-mixed".to_string(),
-                resource_uri: "resource-a".to_string(),
+                resource_uri: "test://resource-a".to_string(),
             }]
         );
         assert_eq!(
@@ -2282,7 +2292,7 @@ mod tests {
                 .selected_template_surfaces,
             vec![crate::clients::models::UnifyDirectTemplateSurface {
                 server_id: "server-mixed".to_string(),
-                uri_template: "template-a".to_string(),
+                uri_template: "test:///{id}".to_string(),
             }]
         );
         assert!(
@@ -2656,8 +2666,8 @@ mod tests {
             "server-prune-capabilities",
             "prune_capability_server",
             &["prompt-a"],
-            &["resource-a"],
-            &["template-a"],
+            &["test://resource-a"],
+            &["test:///{id}"],
         )
         .await;
 
@@ -2673,8 +2683,8 @@ mod tests {
                     capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
                         tool_ids: vec!["prune_capability_server_tool-a".to_string()],
                         prompt_ids: vec!["prune_capability_server_prompt-a".to_string()],
-                        resource_ids: vec!["prune_capability_server:resource-a".to_string()],
-                        template_ids: vec!["prune_capability_server_template-a".to_string()],
+                        resource_ids: vec![canonical_test_resource("prune_capability_server")],
+                        template_ids: vec![canonical_test_template("prune_capability_server")],
                     },
                 }),
             }),
@@ -2813,8 +2823,8 @@ mod tests {
             "server-disable-capabilities",
             "disable_capability_server",
             &["prompt-a"],
-            &["resource-a"],
-            &["template-a"],
+            &["test://resource-a"],
+            &["test:///{id}"],
         )
         .await;
 
@@ -2830,8 +2840,8 @@ mod tests {
                     capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
                         tool_ids: vec!["disable_capability_server_tool-a".to_string()],
                         prompt_ids: vec!["disable_capability_server_prompt-a".to_string()],
-                        resource_ids: vec!["disable_capability_server:resource-a".to_string()],
-                        template_ids: vec!["disable_capability_server_template-a".to_string()],
+                        resource_ids: vec![canonical_test_resource("disable_capability_server")],
+                        template_ids: vec![canonical_test_template("disable_capability_server")],
                     },
                 }),
             }),

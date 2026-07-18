@@ -13,6 +13,8 @@ pub mod naming;
 pub mod prompts;
 pub mod query;
 pub mod resolver;
+pub(crate) mod resource_registry;
+pub(crate) mod resource_uri;
 pub mod resources;
 pub mod runtime;
 pub mod service;

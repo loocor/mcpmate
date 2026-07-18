@@ -231,7 +231,7 @@ impl UcanError {
                 "Resource template '{}' cannot be invoked directly.",
                 template_name
             ),
-            recovery_hint: "Use mcpmate_ucan_details to inspect the template and extract URI construction rules. Template-derived URIs are not directly invocable through mcpmate_ucan_call unless they appear in the surface directory as concrete resources.".to_string(),
+            recovery_hint: "Use mcpmate_ucan_details to inspect the canonical URI template, expand its RFC 6570 variables, then call the resulting URI with capability_kind=resource.".to_string(),
             alternatives: Vec::new(),
             retry_eligible: false,
         }
@@ -545,7 +545,8 @@ fn default_workflow_hints_resource() -> Vec<String> {
 fn default_workflow_hints_resource_template() -> Vec<String> {
     vec![
         "Resource templates are not directly invocable.".to_string(),
-        "Use template output as guidance and call only concrete resources listed in the surface directory.".to_string(),
+        "Expand the canonical template variables, then call the resulting URI with capability_kind=resource."
+            .to_string(),
     ]
 }
 
@@ -1125,7 +1126,7 @@ impl BrokerService {
             resource_templates.into_iter().map(|entry| {
                 let source = get_enrichment(&entry.server_id);
                 SurfaceDirectoryItem {
-                    capability_name: entry.resource_template.name.to_string(),
+                    capability_name: entry.resource_template.uri_template.to_string(),
                     capability_kind: SurfaceKind::ResourceTemplate,
                     summary: compact_description(extract_description_from_value(&entry.resource_template).as_deref()),
                     action: "inspect_first",
@@ -1133,7 +1134,7 @@ impl BrokerService {
                     server_id: entry.server_id,
                     server_name: entry.server_name,
                     interaction_mode: "application_context_template",
-                    detail_hint: "Inspect template rules first. Template-derived URIs are only callable if they appear as concrete resources in catalog.",
+                    detail_hint: "Inspect the canonical URI template, expand its RFC 6570 variables, then call the resulting URI as a resource.",
                     source,
                 }
             }),
@@ -1316,7 +1317,7 @@ impl BrokerService {
                 .visible_resource_templates(context)
                 .await?
                 .into_iter()
-                .map(|entry| entry.resource_template.name.to_string())
+                .map(|entry| entry.resource_template.uri_template.to_string())
                 .collect(),
             SurfaceKind::Profile => {
                 if !profile_capabilities_visible(context) {
@@ -1448,7 +1449,7 @@ impl BrokerService {
                             .await;
                         SurfaceDetailsResponse {
                             capability_kind,
-                            capability_name: template.resource_template.name.to_string(),
+                            capability_name: template.resource_template.uri_template.to_string(),
                             server_id: template.server_id,
                             server_name: template.server_name,
                             detail_level,
@@ -1623,9 +1624,9 @@ impl BrokerService {
         if related.len() < 5 && exclude_kind != SurfaceKind::ResourceTemplate {
             if let Ok(templates) = self.visible_resource_templates(context).await {
                 for entry in templates.iter().take(50) {
-                    if entry.server_id == server_id && entry.resource_template.name.as_str() != exclude_name {
+                    if entry.server_id == server_id && entry.resource_template.uri_template.as_str() != exclude_name {
                         related.push(RelatedSurfaceItem {
-                            capability_name: entry.resource_template.name.to_string(),
+                            capability_name: entry.resource_template.uri_template.to_string(),
                             capability_kind: SurfaceKind::ResourceTemplate,
                             summary: compact_description(
                                 extract_description_from_value(&entry.resource_template).as_deref(),
@@ -1746,7 +1747,16 @@ impl BrokerService {
             .context("Failed to send Unify broker tool call")?;
 
         match handle.await_response().await {
-            Ok(rmcp::model::ServerResult::CallToolResult(result)) => Ok(result),
+            Ok(rmcp::model::ServerResult::CallToolResult(mut result)) => {
+                crate::core::capability::resource_uri::rewrite_call_tool_result(
+                    &self.database.pool,
+                    &server_id,
+                    &server_name,
+                    &mut result,
+                )
+                .await?;
+                Ok(result)
+            }
             Ok(other) => {
                 Ok(UcanError::upstream_error("tool", tool_name, &format!("{:?}", other)).to_call_tool_result())
             }
@@ -2235,7 +2245,7 @@ impl BrokerService {
                     let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
                         NamingKind::ResourceTemplate,
                         &server_id,
-                        resource_template.name.as_ref(),
+                        resource_template.uri_template.as_ref(),
                     )
                     .await?;
                     entries.push(VisibleResourceTemplateEntry {
@@ -2264,16 +2274,16 @@ impl BrokerService {
             )
             .1
             .into_iter()
-            .map(|template| template.name.to_string())
+            .map(|template| template.uri_template.to_string())
             .collect::<HashSet<_>>();
-        visible.retain(|entry| filtered_names.contains(entry.resource_template.name.as_str()));
+        visible.retain(|entry| filtered_names.contains(entry.resource_template.uri_template.as_str()));
         retain_brokered_resource_templates(context, &eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name.cmp(&right.server_name).then_with(|| {
                 left.resource_template
-                    .name
+                    .uri_template
                     .as_str()
-                    .cmp(right.resource_template.name.as_str())
+                    .cmp(right.resource_template.uri_template.as_str())
             })
         });
 
@@ -2297,7 +2307,7 @@ impl BrokerService {
     ) -> Result<Option<VisibleResourceTemplateEntry>> {
         self.visible_resource_templates_listing(context)
             .await?
-            .find_authoritatively(|entry| entry.resource_template.name.as_str() == template_name)
+            .find_authoritatively(|entry| entry.resource_template.uri_template.as_str() == template_name)
     }
 
     async fn broker_prompt_call(
@@ -2338,6 +2348,7 @@ impl BrokerService {
             .await
             .with_context(|| format!("Failed to resolve unique prompt '{}'", prompt_name))?;
         let server_id = route.server_id;
+        let server_name = route.server_name;
         let upstream_prompt_name = route.upstream_value;
 
         let filter: HashSet<_> = std::iter::once(server_id.clone()).collect();
@@ -2356,9 +2367,18 @@ impl BrokerService {
         )
         .await
         {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(
-                serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
-            )])),
+            Ok(mut result) => {
+                crate::core::capability::resource_uri::rewrite_get_prompt_result(
+                    &self.database.pool,
+                    &server_id,
+                    &server_name,
+                    &mut result,
+                )
+                .await?;
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
+                )]))
+            }
             Err(e) => Ok(UcanError::upstream_error("prompt", prompt_name, &e.to_string()).to_call_tool_result()),
         }
     }
@@ -2382,33 +2402,32 @@ impl BrokerService {
             return Ok(UcanError::visibility_denied("resource", resource_uri).to_call_tool_result());
         }
 
-        let route = resolve_capability_route(NamingKind::Resource, resource_uri)
-            .await
-            .with_context(|| format!("Failed to resolve unique resource '{}'", resource_uri))?;
-        let server_id = route.server_id;
-        let upstream_resource_uri = route.upstream_value;
+        let route =
+            crate::core::capability::resource_registry::resolve_resource_route(&self.database.pool, resource_uri)
+                .await
+                .with_context(|| format!("Failed to resolve canonical resource URI '{}'", resource_uri))?;
+        let server_id = route.server_id.clone();
+        let upstream_resource_uri = route.upstream_uri.clone();
 
-        let filter: HashSet<_> = std::iter::once(server_id.clone()).collect();
-        let resource_mapping = crate::core::capability::facade::build_resource_mapping_filtered(
+        match crate::core::capability::facade::read_routed_resource(
             &self.connection_pool,
-            Some(&self.database),
-            Some(&filter),
-        )
-        .await
-        .context("Failed to build routed resource inventory")?;
-
-        match crate::core::capability::facade::read_upstream_resource(
-            &self.connection_pool,
-            &resource_mapping,
+            &server_id,
             &upstream_resource_uri,
-            Some(server_id.as_str()),
             client_context.connection_selection(server_id.clone()).as_ref(),
         )
         .await
         {
-            Ok(result) => Ok(CallToolResult::success(vec![Content::text(
-                serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
-            )])),
+            Ok(mut result) => {
+                crate::core::capability::resource_registry::rewrite_read_resource_result(
+                    &self.database.pool,
+                    &route,
+                    &mut result,
+                )
+                .await?;
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
+                )]))
+            }
             Err(e) => Ok(UcanError::upstream_error("resource", resource_uri, &e.to_string()).to_call_tool_result()),
         }
     }
@@ -2899,11 +2918,11 @@ fn resource_template_details_value(
         UcanDetailLevel::Summary => Ok(serde_json::json!({
             "description": extract_description_from_value(resource_template),
             "uri_template": resource_template.uri_template,
-            "usage": "Inspect URI construction rules from this template. Template-derived URIs are not directly invocable unless listed in catalog as concrete resources.",
+            "usage": "This template is not directly invocable. Expand its canonical RFC 6570 variables, then call the resulting URI with capability_kind=resource.",
         })),
         UcanDetailLevel::Full => Ok(serde_json::json!({
             "template": serde_json::to_value(resource_template).context("Serialize resource template detail")?,
-            "usage": "Use this template as URI construction guidance. Broker calls require concrete resources that are present in catalog."
+            "usage": "Expand this canonical URI template and call the resulting URI with capability_kind=resource."
         })),
     }
 }
@@ -3305,7 +3324,7 @@ mod tests {
         assert_eq!(error.error_code, "resource_template_not_invocable");
         assert!(error.message.contains("file:///{path}"));
         assert!(!error.retry_eligible);
-        assert!(error.recovery_hint.contains("not directly invocable"));
+        assert!(error.recovery_hint.contains("capability_kind=resource"));
     }
 
     #[test]

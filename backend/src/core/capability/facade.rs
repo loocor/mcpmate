@@ -60,6 +60,15 @@ pub async fn read_upstream_resource(
     resources::read_upstream_resource(connection_pool, mapping, uri, target_server_id, connection_selection).await
 }
 
+pub async fn read_routed_resource(
+    connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    server_id: &str,
+    upstream_uri: &str,
+    connection_selection: Option<&crate::core::capability::ConnectionSelection>,
+) -> anyhow::Result<rmcp::model::ReadResourceResult> {
+    resources::read_routed_resource(connection_pool, server_id, upstream_uri, connection_selection).await
+}
+
 pub async fn build_prompt_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>
 ) -> anyhow::Result<HashMap<String, PromptMapping>> {

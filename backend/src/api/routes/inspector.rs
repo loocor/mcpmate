@@ -4,9 +4,9 @@ use crate::api::handlers::inspector;
 use crate::api::models::inspector::{
     InspectorListQuery, InspectorPromptGetReq, InspectorPromptGetResp, InspectorPromptsListResp,
     InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListResp, InspectorSessionCloseReq,
-    InspectorSessionCloseResp, InspectorSessionOpenReq, InspectorSessionOpenResp, InspectorTemplatesListResp,
-    InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallReq, InspectorToolCallResp,
-    InspectorToolCallStartResp, InspectorToolsListResp,
+    InspectorSessionCloseResp, InspectorSessionOpenReq, InspectorSessionOpenResp, InspectorTemplateReadReq,
+    InspectorTemplateReadResp, InspectorTemplatesListResp, InspectorToolCallCancelReq, InspectorToolCallCancelResp,
+    InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartResp, InspectorToolsListResp,
 };
 use crate::{aide_wrapper_payload, aide_wrapper_query};
 use aide::axum::{
@@ -64,6 +64,12 @@ aide_wrapper_query!(
     "Inspector: read resource"
 );
 aide_wrapper_payload!(
+    inspector::template_read,
+    InspectorTemplateReadReq,
+    InspectorTemplateReadResp,
+    "Inspector: read resource template"
+);
+aide_wrapper_payload!(
     inspector::prompt_get,
     InspectorPromptGetReq,
     InspectorPromptGetResp,
@@ -109,6 +115,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/inspector/template/list",
             get_with(templates_list_aide, templates_list_docs),
+        )
+        .api_route(
+            "/mcp/inspector/template/read",
+            post_with(template_read_aide, template_read_docs),
         )
         // prompts
         .api_route(
