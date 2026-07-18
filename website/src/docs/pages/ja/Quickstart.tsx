@@ -1,30 +1,34 @@
 import { useMemo } from "react";
-import DocLayout from "../../layout/DocLayout";
-import { H2, H3, P, Ul, Li } from "../../components/Headings";
-import Callout from "../../components/Callout";
+import { Link } from "react-router-dom";
 import SchemaOrg from "../../../components/SchemaOrg";
 import { buildHowTo } from "../../../utils/schema";
+import Callout from "../../components/Callout";
+import CommunityLinks from "../../components/CommunityLinks";
+import CopyableInlineCode from "../../components/CopyableInlineCode";
+import DesktopDownloadList from "../../components/DesktopDownloadList";
+import { H2, Li, P, Ul } from "../../components/Headings";
+import DocLayout from "../../layout/DocLayout";
 
 const howToSteps = [
 	{
-		name: "デスクトップインストーラを入手",
-		text: "まずは GitHub Releases から利用中のプラットフォーム向けインストーラを取得します。macOS、Windows、Linux の各ビルドはいずれも現在 Beta です。",
+		name: "MCPMate をインストールして起動する",
+		text: "プラットフォームに合うデスクトップパッケージをダウンロードし、MCPMate を開きます。",
 	},
 	{
-		name: "MCPMate を起動",
-		text: "アプリを開くと、同梱されたローカルプロキシが起動します。ダッシュボードに加えて、8080 番ポートの REST API と 8000 番ポートの MCP エンドポイントが利用可能になります。",
+		name: "オンボーディングを完了する",
+		text: "既存のクライアントと Server を検出し、利用する設定を確認します。",
 	},
 	{
-		name: "MCP サーバーを取り込む",
-		text: "組み込みマーケットを使うか、JSON/TOML スニペットまたは複数サーバー設定 bundle を取り込むか、既存クライアントから設定を引き継ぐことができます。",
+		name: "最初の Server を追加する",
+		text: "Market から Server を選ぶか既存の MCP 設定をインポートし、導入前に内容を確認します。",
 	},
 	{
-		name: "プロファイルを整える",
-		text: "Default プロファイルを開き、使いたいサーバーを追加したうえで、ツール、プロンプト、リソースをワークフローに合わせて切り替えます。",
+		name: "クライアントへ接続する",
+		text: "Default プロファイルを使って、検出された AI クライアントに Server を公開します。",
 	},
 	{
-		name: "クライアントへ展開",
-		text: "クライアントページでエディタが検出されていることを確認し、Hosted、Unify、Transparent のいずれかを選んでからプロファイルを適用し、エディタ内で確認します。",
+		name: "接続を確認する",
+		text: "クライアントで簡単な MCP 操作を実行し、Server の機能が利用できることを確認します。",
 	},
 ];
 
@@ -32,9 +36,8 @@ export default function Quickstart() {
 	const howTo = useMemo(
 		() =>
 			buildHowTo({
-				name: "MCPMate のセットアップ方法",
-				description:
-					"GitHub Releases から MCPMate をすばやく立ち上げ、その後サーバー追加、プロファイル準備、クライアント展開まで進めるためのガイドです。",
+				name: "MCPMate クイックスタート",
+				description: "MCPMate をインストールし、最初の MCP Server を AI クライアントで利用できるようにします。",
 				steps: howToSteps,
 			}),
 		[],
@@ -42,123 +45,65 @@ export default function Quickstart() {
 
 	return (
 		<DocLayout
-			meta={{ title: "クイックスタート", description: "MCPMate のインストール、設定、実行" }}
+			meta={{
+				title: "クイックスタート",
+				description: "MCPMate のインストールから最初の MCP Server の確認までを短い手順で進めます。",
+			}}
 		>
 			<SchemaOrg schema={howTo} />
-			<P>
-				いま始めるなら、いちばん早い入口は GitHub の公式 Releases にあるデスクトップ版です。起動したら、そのままサーバー追加、プロファイル整理、エディタへの反映まで一気に進められます。
-			</P>
+			<P>このガイドでは、MCPMate をインストールし、初回設定を完了して、ひとつの Server が AI クライアントで動作するまでの最短ルートを説明します。</P>
 
-			<H2>まずはデスクトップアプリから</H2>
-			<Callout type="info" title="最短ルート">
-				現時点でいちばん手早い方法は、GitHub Releases にある公式デスクトップインストーラを使うことです：
-				https://github.com/loocor/mcpmate/releases
+			<H2>デスクトップアプリから始める</H2>
+			<P>OS とプロセッサーに合うインストーラーを選んでください。以下のリンクは MCPMate の追跡可能なダウンロードサービスを経由し、現在のリリース成果物を取得します。</P>
+			<DesktopDownloadList locale="ja" />
+			<Callout type="info" title="Homebrew も利用できます">
+				macOS と Linux では{" "}
+				<CopyableInlineCode
+					copyLabel="コマンドをコピー"
+					copiedLabel="コピーしました"
+					errorLabel="コピーできませんでした"
+				>
+					brew install --cask loocor/tap/mcpmate@beta
+				</CopyableInlineCode>{" "}
+				を実行します。対応システム、更新、アンインストール方法は{" "}
+				<Link className="font-medium underline" to="/docs/ja/installation">
+					インストールガイド
+				</Link>
+				を参照してください。
 			</Callout>
+
+			<H2>オンボーディングを完了する</H2>
 			<Ul>
-				<Li>Releases ページを開き、利用するプラットフォーム向けのインストーラを選びます。</Li>
-				<Li>
-					macOS、Windows、Linux の各インストーラはいずれも現在 Beta です。クロスプラットフォームのデスクトップ体験を磨きながら、ダウンロード可能な状態で提供しています。
-				</Li>
-				<Li>
-					macOS ビルドは署名と公証に対応し、システムのセキュリティ警告を減らし、配布パッケージの信頼性を高めます。
-				</Li>
-				<Li>
-					インストール後に MCPMate を起動します。デスクトップアプリにはダッシュボードとローカルプロキシが同梱されているため、ひとつの入口から始められます。
-				</Li>
+				<Li>インストール後に MCPMate を開き、ウェルカム画面の手順を進めます。</Li>
+				<Li>このマシンで検出された AI クライアントと MCP Server を確認します。</Li>
+				<Li>利用する既存設定を残します。初めて MCP を使う場合は、スターター Server を選ぶこともできます。</Li>
 			</Ul>
 
-			<H3>フルコントロールが必要ならソースからビルド</H3>
-			<Ul>
-				<Li>システムに Rust 1.75+ と Node.js 18+（または Bun）をインストールします。</Li>
-				<Li>リポジトリをクローン：<code>git clone https://github.com/loocor/mcpmate.git</code></Li>
-				<Li>バックエンドへ移動：<code>cd mcpmate/backend</code></Li>
-				<Li>ビルドと実行：<code>cargo run --release</code></Li>
-				<Li>プロキシは REST API を 8080 番ポート、MCP エンドポイントを 8000 番ポートで起動します。</Li>
-			</Ul>
-
-			<H3>ソースからダッシュボードを動かす</H3>
-			<Ul>
-				<Li>ダッシュボードへ移動：<code>cd mcpmate/board</code></Li>
-				<Li>依存関係をインストール：<code>bun install</code></Li>
-				<Li>開発サーバーを起動：<code>bun run dev</code></Li>
-				<Li>http://localhost:5173 を開くと管理ダッシュボードに入れます。</Li>
-			</Ul>
-
-			<H2>Web とデスクトップ、どちらで使うか</H2>
-			<P>
-				同じ Board UI を 2 つのシェルで使えます。プロキシをどう運用したいかに合わせて選んでください。
-			</P>
+			<H2>最初の Server を追加する</H2>
 			<Ul>
 				<Li>
-					<strong>ブラウザ + 開発プロキシ</strong> &mdash; Vite が UI を配信し、API リクエストは <code>http://127.0.0.1:8080</code>（または上書きしたベース URL）へ向かいます。フロントエンドやバックエンドを別々に反復したいコントリビューター向けです。
+					<strong>Market</strong> で Server を選ぶか、<strong>Servers</strong> で既存の設定をインポートします。
+				</Li>
+				<Li>検出されたコマンド、引数、必要な値を確認します。</Li>
+				<Li>プレビュー確認を実行し、問題がなければインストールします。</Li>
+			</Ul>
+
+			<H2>クライアントへ接続する</H2>
+			<Ul>
+				<Li>
+					<strong>Profiles</strong> で <strong>Default</strong> を開き、追加した Server が含まれていることを確認します。
 				</Li>
 				<Li>
-					<strong>Tauri デスクトップ（macOS, Windows, Linux）</strong> &mdash; ダッシュボードとローカルプロキシをひとまとめにします。公式インストーラは GitHub Releases で配布されています。サイドバーの <strong>アカウント</strong> は、将来のクラウド連携に向けた macOS 上の任意 GitHub サインインを受け付けます。アプリ内の <strong>ドキュメント</strong> ボタンからは、表示中のページに対応する <code>mcp.umate.ai</code> のガイドを開けます。
+					<strong>Clients</strong> で検出済みの AI アプリを選び、MCPMate が推奨する設定で Default プロファイルを適用します。
 				</Li>
 			</Ul>
 
-			<H2>Core と UI を分離して動かす</H2>
-			<P>
-				MCPMate を別マシンで動かしたい場合や、単に分離デプロイの方が扱いやすい場合は、コアサービスと UI シェルを切り離せます。
-			</P>
-			<Ul>
-				<Li>対象ホストでバックエンドを起動し、使う予定の REST / MCP ポートを公開します。</Li>
-				<Li>ローカル一体型バンドルの代わりに、ダッシュボードシェル（Web またはデスクトップ）をそのバックエンドへ接続します。</Li>
-				<Li>設定 → システム で API / MCP ポートを確認し、エンドポイント変更時の再起動コマンドをコピーします。</Li>
-			</Ul>
+			<H2>最初の機能を確認する</H2>
+			<P>接続した AI クライアントを開くか再起動し、Server が提供する簡単な操作をひとつ実行します。クライアントがその機能を表示して呼び出せれば、最初の設定は完了です。</P>
 
-			<H2>MCP サーバーを取り込む</H2>
-			<P>サーバー定義が今どこにあるかに合わせて、いちばん自然な導入経路を選んでください。</P>
-			<H3>組み込みマーケットを使う</H3>
-			<Ul>
-				<Li>左サイドバーから <strong>マーケット</strong> を開きます。</Li>
-				<Li>サーバーを検索または絞り込み、<strong>インストール</strong> を選んでワークスペースへ追加します。</Li>
-			</Ul>
-			<H3>外部バンドルをドラッグ＆ドロップ</H3>
-			<Ul>
-				<Li><strong>サーバー</strong> から <strong>追加</strong> を選び、MCP バンドルや JSON / TOML スニペットをウィンドウへドロップします。</Li>
-				<Li>プレビューを確認してからインポートを確定し、サーバーエントリを作成します。</Li>
-			</Ul>
-			<H3>既存クライアントからインポート</H3>
-			<Ul>
-				<Li><strong>クライアント</strong> を開き、検出済みクライアントを選びます。</Li>
-				<Li><strong>クライアントからインポート</strong> を使って、既存の MCP 設定を MCPMate に取り込みます。</Li>
-			</Ul>
-
-			<H2>実際の作業に合わせてプロファイルを整える</H2>
-			<P>
-				プロファイルは、クライアントに公開するサーバーや能力を決めます。MCPMate には <strong>Default</strong> プロファイルが同梱されており、用途ごとにさらに増やせます。
-			</P>
-			<Ul>
-				<Li><strong>プロファイル</strong> に移動し、<strong>Default</strong> プロファイルを開きます。</Li>
-				<Li>インストールしたサーバーを追加し、必要なツール、プロンプト、リソースを有効または無効にします。</Li>
-				<Li><strong>新規プロファイル</strong> を使って、執筆用やデータ探索用などの追加プリセットを作成し、有効化する能力を調整します。</Li>
-			</Ul>
-
-			<H2>クライアントへプロファイルを反映する</H2>
-			<Ul>
-				<Li><strong>クライアント</strong> で、使用中のエディタが <strong>検出済み</strong> として表示されていることを確認します。出てこない場合は、クライアントの再インストールやパス確認を行ってください。</Li>
-				<Li>そのクライアントに MCPMate から MCP 設定を書き戻したい場合は、New / Edit ドロワー内で、実在して書き込み可能なローカル設定ファイルを指しているか先に確認してください。MCPMate は書き込み先として使う前にそのパスを検証します。</Li>
-				<Li><strong>Hosted</strong> モードではダッシュボード管理のプロファイル切り替えが使えます。セッション内の組み込み制御を優先したい場合は <strong>Unify</strong> を選びます。<strong>Transparent</strong> モードは設定ファイルを書き込むだけで、プロファイルをその場で切り替えることはできません。</Li>
-				<Li>準備したプロファイルを選択して適用し、エディタで MCP コマンドを実行してツールが見えることを確認します。</Li>
-			</Ul>
-
-			<H2>ランタイムで詰まったら</H2>
-			<Ul>
-				<Li>サーバーの起動に失敗したり、ツールがエラーを返したりする場合は、<strong>ランタイム</strong> ページを開きます。</Li>
-				<Li><strong>インストール / 修復</strong> を使って Node.js、uv、Bun など必要なランタイムを整え、古い状態が疑わしい場合は同じページからキャッシュをクリアしてください。</Li>
-			</Ul>
-
-			<H2>監査ログで変更を追う</H2>
-			<Ul>
-				<Li><strong>監査ログ</strong> ページを開くと、プロファイル、クライアント、サーバーの操作を確認できます。</Li>
-				<Li>アクション種別や時間帯で絞り込めば、いつ何が変わったかを追いやすくなります。</Li>
-			</Ul>
-
-			<H2>最新状態を保ち、貢献する</H2>
-			<P>
-				デスクトップ版を使う場合は、最新インストーラとリリースノートの確認先として GitHub Releases を使ってください。ソースから MCPMate を動かしている場合は、GitHub から最新変更を pull して再ビルドします。問題の報告や改善提案は、Issue や Pull Request で歓迎しています。
-			</P>
+			<H2>コミュニティに参加する</H2>
+			<P>使い方について相談したり、活用例や改善してほしい点を共有したりできます。</P>
+			<CommunityLinks locale="ja" />
 		</DocLayout>
 	);
 }

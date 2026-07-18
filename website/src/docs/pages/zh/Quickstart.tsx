@@ -1,162 +1,105 @@
 import { useMemo } from "react";
-import DocLayout from "../../layout/DocLayout";
-import { H2, H3, P, Ul, Li } from "../../components/Headings";
-import Callout from "../../components/Callout";
+import { Link } from "react-router-dom";
 import SchemaOrg from "../../../components/SchemaOrg";
 import { buildHowTo } from "../../../utils/schema";
+import Callout from "../../components/Callout";
+import CommunityLinks from "../../components/CommunityLinks";
+import CopyableInlineCode from "../../components/CopyableInlineCode";
+import DesktopDownloadList from "../../components/DesktopDownloadList";
+import { H2, Li, P, Ul } from "../../components/Headings";
+import DocLayout from "../../layout/DocLayout";
 
 const howToSteps = [
 	{
-		name: "下载桌面应用",
-		text: "先到 GitHub Releases 下载适合你平台的安装包。macOS、Windows 与 Linux 构建目前均为 Beta 状态。",
+		name: "安装并启动 MCPMate",
+		text: "下载与你的平台匹配的桌面安装包，完成安装并打开 MCPMate。",
 	},
 	{
-		name: "启动 MCPMate",
-		text: "打开应用，让它自动启动内置的本地代理。你会同时得到仪表盘、8080 端口上的 REST API，以及 8000 端口上的 MCP 端点。",
+		name: "完成引导流程",
+		text: "让 MCPMate 检测已有客户端和 Server，并确认需要保留的设置。",
 	},
 	{
-		name: "接入 MCP 服务",
-		text: "可以浏览内置服务源、导入 JSON/TOML 片段或多服务器配置包，或直接从已有客户端拉取服务配置。",
+		name: "添加第一个 Server",
+		text: "从 Market 选择 Server，或导入已有 MCP 配置，并在安装前完成检查。",
 	},
 	{
-		name: "整理配置集",
-		text: "打开默认配置集，加入所需服务，并按当前任务启用或禁用工具、提示、资源。",
+		name: "连接客户端",
+		text: "通过 Default 配置集把 Server 提供给已检测到的 AI 客户端。",
 	},
 	{
-		name: "发布到客户端",
-		text: "在客户端页面确认编辑器已被检测，选择托管、统一或透明模式，然后应用配置集并回到编辑器验证。",
+		name: "验证连接",
+		text: "在客户端中调用一个简单的 MCP 能力，确认 Server 已经可用。",
 	},
 ];
 
-export default function QuickstartZH() {
+export default function Quickstart() {
 	const howTo = useMemo(
 		() =>
 			buildHowTo({
-				name: "如何设置 MCPMate",
-				description:
-					"从 GitHub Releases 快速启动 MCPMate，再逐步接入服务、整理配置集并发布到客户端的分步指南。",
+				name: "MCPMate 快速开始",
+				description: "安装 MCPMate，完成引导，添加一个 MCP Server，并在 AI 客户端中使用它。",
 				steps: howToSteps,
 			}),
 		[],
 	);
 
 	return (
-		<DocLayout meta={{ title: "快速开始", description: "安装、配置并运行 MCPMate" }}>
+		<DocLayout
+			meta={{
+				title: "快速开始",
+				description: "从安装 MCPMate 到验证第一个 MCP Server，只需几个步骤。",
+			}}
+		>
 			<SchemaOrg schema={howTo} />
-			<P>
-				目前最快的起步方式，是直接从 GitHub Releases 安装桌面版。启动后，你就可以在同一个控制台里接入服务、整理配置集，并把它们发布到编辑器里。
-			</P>
+			<P>这份指南只走一条最短路径：安装 MCPMate、完成首次引导、添加一个 Server，并确认它能在你的 AI 客户端中正常工作。</P>
 
-			<H2>先从桌面应用开始</H2>
-			<Callout type="info" title="当前最快的路径">
-				现在最直接的方式，是使用 GitHub Releases 上的官方桌面安装包：
-				https://github.com/loocor/mcpmate/releases
+			<H2>从桌面应用开始</H2>
+			<P>请选择与你的操作系统和处理器匹配的安装包。以下链接使用 MCPMate 的下载统计跳转服务，并指向当前版本的发布产物。</P>
+			<DesktopDownloadList locale="zh" />
+			<Callout type="info" title="也可以使用 Homebrew">
+				macOS 和 Linux 用户可以直接运行{" "}
+				<CopyableInlineCode copyLabel="复制命令" copiedLabel="已复制" errorLabel="复制失败">
+					brew install --cask loocor/tap/mcpmate@beta
+				</CopyableInlineCode>
+				。支持的系统、更新和卸载方式请查看{" "}
+				<Link className="font-medium underline" to="/docs/zh/installation">
+					安装指南
+				</Link>
+				。
 			</Callout>
+
+			<H2>完成引导流程</H2>
 			<Ul>
-				<Li>打开 Releases 页面，选择适合你平台的安装包。</Li>
-				<Li>
-					macOS、Windows 与 Linux 安装包目前均为 Beta 状态，可下载使用，同时跨平台桌面体验仍在持续打磨。
-				</Li>
-				<Li>
-					macOS 构建已加入签名与公证，以减少系统安全提示并提升安装包可信度。
-				</Li>
-				<Li>
-					安装后启动 MCPMate。桌面应用会把仪表盘与本地代理一起打包好，让你从一个入口就能开始管理。
-				</Li>
+				<Li>安装后打开 MCPMate，并继续欢迎页面中的引导步骤。</Li>
+				<Li>检查 MCPMate 在本机发现的 AI 客户端和 MCP Server。</Li>
+				<Li>保留你希望继续使用的现有设置；如果是第一次使用 MCP，也可以直接选择一个入门 Server。</Li>
 			</Ul>
 
-			<H3>需要完全自控时再从源码构建</H3>
-			<Ul>
-				<Li>先安装 Rust 1.75+ 与 Node.js 18+（或 Bun）。</Li>
-				<Li>克隆仓库：<code>git clone https://github.com/loocor/mcpmate.git</code></Li>
-				<Li>进入后端目录：<code>cd mcpmate/backend</code></Li>
-				<Li>构建并运行：<code>cargo run --release</code></Li>
-				<Li>代理启动后，REST API 位于 8080 端口，MCP 端点位于 8000 端口。</Li>
-			</Ul>
-
-			<H3>从源码运行仪表盘</H3>
-			<Ul>
-				<Li>进入前端目录：<code>cd mcpmate/board</code></Li>
-				<Li>安装依赖：<code>bun install</code></Li>
-				<Li>启动开发服务器：<code>bun run dev</code></Li>
-				<Li>打开 http://localhost:5173 访问管理仪表盘。</Li>
-			</Ul>
-
-			<H2>选择外壳：Web 还是桌面版</H2>
-			<P>
-				同一套 Board 界面可以运行在两种外壳里。你可以按自己希望如何运行代理来选择。
-			</P>
+			<H2>添加第一个 Server</H2>
 			<Ul>
 				<Li>
-					<strong>浏览器 + 开发代理</strong>：Vite 提供前端界面，请求默认发往 <code>http://127.0.0.1:8080</code>（或你覆盖后的 API 基址）。适合前后端分开迭代开发。
+					打开 <strong>Market</strong> 选择一个 Server，或者进入 <strong>Servers</strong> 导入已有配置。
+				</Li>
+				<Li>检查识别出的命令、参数和必填信息。</Li>
+				<Li>运行预览检查，确认无误后完成安装。</Li>
+			</Ul>
+
+			<H2>连接到客户端</H2>
+			<Ul>
+				<Li>
+					打开 <strong>Profiles</strong>，选择 <strong>Default</strong>，确认其中已经包含刚添加的 Server。
 				</Li>
 				<Li>
-					<strong>Tauri 桌面应用（macOS / Windows / Linux）</strong>：将仪表盘与本地代理打包在一起，官方安装包发布于 GitHub Releases。侧栏的 <strong>账户</strong> 在 macOS 上支持可选的 GitHub 登录，为后续云端相关能力预留身份；应用内的 <strong>文档</strong> 按钮会打开 <code>mcp.umate.ai</code> 上与当前页面对应的指南。
+					打开 <strong>Clients</strong>，选择已检测到的 AI 应用，并按照 MCPMate 推荐的设置应用 Default 配置集。
 				</Li>
 			</Ul>
 
-			<H2>分离运行核心服务与 UI</H2>
-			<P>
-				如果你希望把 MCPMate 放到另一台机器上运行，或者只是更偏好拆分部署，也可以把核心服务与 UI 外壳解耦。
-			</P>
-			<Ul>
-				<Li>在目标主机上启动后端，并暴露你计划使用的 REST / MCP 端口。</Li>
-				<Li>让 Web 控制台或桌面壳连接这个后端，而不是只运行本地一体化实例。</Li>
-				<Li>在“设置 → 系统”中核对 API / MCP 端口，并在端点变化后复制重启命令。</Li>
-			</Ul>
+			<H2>验证第一个能力</H2>
+			<P>打开或重新启动已连接的 AI 客户端，让它执行一个由该 Server 提供的简单操作。当客户端能够看到并调用这个能力时，首次设置就完成了。</P>
 
-			<H2>把 MCP 服务接入 MCPMate</H2>
-			<P>按你现有配置所在的位置，选择最顺手的导入路径即可。</P>
-			<H3>浏览内置服务源</H3>
-			<Ul>
-				<Li>从左侧导航打开 <strong>服务源</strong>。</Li>
-				<Li>搜索或筛选目标服务，点击 <strong>安装</strong> 即可加入工作区。</Li>
-			</Ul>
-			<H3>拖拽导入外部 Bundle</H3>
-			<Ul>
-				<Li>在 <strong>服务器</strong> 页面点击 <strong>新增</strong>，把 MCP Bundle 或 JSON / TOML 片段拖入窗口。</Li>
-				<Li>确认预览信息无误后提交，服务条目就会被创建出来。</Li>
-			</Ul>
-			<H3>从已有客户端导入</H3>
-			<Ul>
-				<Li>打开 <strong>客户端</strong> 页面，选择一个已检测到的客户端。</Li>
-				<Li>使用 <strong>从客户端导入</strong>，把原先在客户端里的 MCP 配置带回 MCPMate。</Li>
-			</Ul>
-
-			<H2>按真实任务组织配置集</H2>
-			<P>
-				配置集决定了客户端最终能看到哪些服务与能力。MCPMate 默认附带一个 <strong>默认</strong> 配置集，你也可以围绕不同工作流再建更多。
-			</P>
-			<Ul>
-				<Li>进入 <strong>配置集</strong> 页面，打开 <strong>默认</strong> 配置集。</Li>
-				<Li>加入刚刚安装的服务，并按任务需要启用或禁用工具、提示、资源。</Li>
-				<Li>通过 <strong>新建配置集</strong> 创建额外预设，例如写作、数据探索或调试场景。</Li>
-			</Ul>
-
-			<H2>把配置集发布到客户端</H2>
-			<Ul>
-				<Li>确认你的编辑器在 <strong>客户端</strong> 页面中显示为 <strong>已检测</strong>。</Li>
-				<Li>如果该客户端需要允许 MCPMate 回写自身的 MCP 配置，请先在 New / Edit 抽屉中确认路径指向真实且可写的本地配置文件；MCPMate 会先校验，再把它作为写入目标。</Li>
-				<Li>使用 <strong>托管模式</strong> 可由仪表盘直接切换配置集；如果你更希望使用会话内建控制，可选 <strong>统一模式</strong>；<strong>透明模式</strong> 只负责写入配置文件，不支持就地切换。</Li>
-				<Li>选择准备好的配置集并应用，然后回到编辑器触发一次 MCP 命令，确认工具已经出现。</Li>
-			</Ul>
-
-			<H2>运行时出问题时</H2>
-			<Ul>
-				<Li>如果服务启动失败或工具返回错误，先打开 <strong>运行时</strong> 页面。</Li>
-				<Li>使用 <strong>安装 / 修复</strong> 补齐 Node.js、uv、Bun 等依赖；如果怀疑缓存陈旧，也可以在同一页清理缓存。</Li>
-			</Ul>
-
-			<H2>用审计日志追踪变更</H2>
-			<Ul>
-				<Li>进入 <strong>审计日志</strong> 页面，查看配置集、客户端、服务器相关操作。</Li>
-				<Li>按动作类型与时间范围筛选，更快定位是谁在什么时候改了什么。</Li>
-			</Ul>
-
-			<H2>保持更新，也欢迎贡献</H2>
-			<P>
-				如果你使用桌面版，请以 GitHub Releases 作为最新安装包与发布说明的首选来源；如果你从源码运行 MCPMate，请拉取最新代码后重新构建。遇到问题或有改进想法，也欢迎提交 issue 或 pull request。
-			</P>
+			<H2>加入社区</H2>
+			<P>获取帮助、分享你的使用方式，或者告诉我们接下来应该改进什么。</P>
+			<CommunityLinks locale="zh" />
 		</DocLayout>
 	);
 }
