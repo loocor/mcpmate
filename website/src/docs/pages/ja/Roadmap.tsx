@@ -18,6 +18,11 @@ const currentFocus = [
 		description:
 			"変更の前後で、読みやすい source context、dry-run checks、credential readiness、runtime state、support-friendly diagnostics を確認できる状態にします。",
 	},
+	{
+		title: "Standalone Inspector を構築する",
+		description:
+			"管理ワークフロー全体へ入る前でも、MCP Server への接続、能力発見、呼び出し検証を行える、目的を絞った Inspector の入口を提供します。",
+	},
 ];
 
 const nextBets = [

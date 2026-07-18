@@ -190,6 +190,8 @@ MCP proxy activity のための構造化運用ログです。MCP 操作と管理
 
 > **Note**: macOS builds は署名と notarization 済みで、システムのセキュリティプロンプトを減らし、パッケージの信頼性を高めます。
 
+macOS と Linux では `brew install --cask loocor/tap/mcpmate@beta` で Homebrew Beta 版もインストールできます。更新とアンインストールについては[インストールガイド](https://mcp.umate.ai/docs/ja/installation#homebrew)を参照してください。
+
 ### Option B: ソースからビルド
 
 **Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) 1.85+、[Node.js](https://nodejs.org/) 18+ または [Bun](https://bun.sh/)、SQLite 3
@@ -260,7 +262,7 @@ Coming soon. ローカルセットアップなしで dashboard、profiles、clie
 1. **Discovery-to-install polish** — browser extension、Market、README、source metadata flow をさらに磨き込みます
 2. **Account-based configuration backup & restore**
 3. **Skills-mode packaged profiles**
-4. **Cross-platform release readiness** — desktop OS stability、container-based deployment、Homebrew installation support
+4. **Standalone Inspector** — MCP Server の接続、能力発見、呼び出し検証に集中できる独立した入口
 
 ## 🤝 コントリビュート
 
