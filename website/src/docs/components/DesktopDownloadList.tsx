@@ -1,5 +1,4 @@
 import { Download, RefreshCw } from "lucide-react";
-import { useMemo } from "react";
 import { useLatestGitHubRelease } from "../../hooks/useLatestGitHubRelease";
 import { trackMCPMateEvents } from "../../utils/analytics";
 import {
@@ -99,13 +98,10 @@ export default function DesktopDownloadList({
 }: DesktopDownloadListProps): JSX.Element {
 	const releaseState = useLatestGitHubRelease();
 	const labels = copy[locale];
-	const rows = useMemo(() => {
-		if (releaseState.status === "ok") {
-			return attachAssetsToBuildRows(releaseState.latest);
-		}
-
-		return DESKTOP_BUILD_ROWS.map((row) => ({ ...row }));
-	}, [releaseState]);
+	const rows =
+		releaseState.status === "ok"
+			? attachAssetsToBuildRows(releaseState.latest)
+			: DESKTOP_BUILD_ROWS.map((row) => ({ ...row }));
 
 	return (
 		<div className="not-prose overflow-hidden rounded-lg border border-brand-border bg-brand-elevated">
