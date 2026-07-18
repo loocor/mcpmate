@@ -185,6 +185,7 @@ const ja = {
 	"download.read_guide": "ガイドを見る",
 	"download.github.desc": "ソースからビルドするか、GitHub で最新の開発状況を確認できます。",
 	"download.nightly.cta": "Nightly チャンネルを開く",
+	"download.homebrew.hero_cta": "Homebrew からもインストールできます",
 
 	"browserExtensions.inlineLabel": "ブラウザー拡張：",
 	"browserExtensions.footerLabel": "ブラウザー拡張機能",
