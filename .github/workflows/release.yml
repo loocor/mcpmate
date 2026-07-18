@@ -28,7 +28,35 @@ jobs:
   validate-tag:
     name: Validate release tag
     runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.classify.outputs.tag }}
+      version: ${{ steps.classify.outputs.version }}
+      release-channel: ${{ steps.classify.outputs.release-channel }}
+      app-version: ${{ steps.classify.outputs.app-version }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Classify supported release tag
+        id: classify
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          classification=$(bun packaging/desktop/release-tag.ts --tag "$RELEASE_TAG")
+          echo "tag=$(jq -r '.tag' <<< "$classification")" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r '.version' <<< "$classification")" >> "$GITHUB_OUTPUT"
+          echo "release-channel=$(jq -r '.releaseChannel' <<< "$classification")" >> "$GITHUB_OUTPUT"
+          echo "app-version=$(jq -r '.appVersion' <<< "$classification")" >> "$GITHUB_OUTPUT"
+
       - name: Validate dispatch tag
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -40,9 +68,15 @@ jobs:
             exit 1
           fi
 
-      - name: Skip tag validation on push
-        if: github.event_name != 'workflow_dispatch'
-        run: echo "Skipping tag validation for push trigger."
+      - name: Validate distribution credentials
+        env:
+          DOWNLOADS_WORKFLOW_TOKEN: ${{ secrets.DOWNLOADS_WORKFLOW_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          test -n "$DOWNLOADS_WORKFLOW_TOKEN" || { echo "missing DOWNLOADS_WORKFLOW_TOKEN" >&2; exit 1; }
+          test -n "$HOMEBREW_TAP_TOKEN" || { echo "missing HOMEBREW_TAP_TOKEN" >&2; exit 1; }
 
   # ---------------------------------------------------------------------------
   # Desktop builds — one per platform/arch target
@@ -76,7 +110,7 @@ jobs:
       - name: Inject version from tag
         uses: ./.github/actions/inject-version
         with:
-          release-tag: ${{ github.event.inputs.tag || github.ref_name }}
+          release-tag: ${{ needs.validate-tag.outputs.tag }}
 
       - name: Validate macOS signing/notarization secrets
         env:
@@ -242,13 +276,12 @@ jobs:
 
       - name: Normalize macOS artifact names
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          APP_VERSION: ${{ needs.validate-tag.outputs.app-version }}
           TARGET_ARCH: ${{ matrix.arch }}
         run: |
           shopt -s nullglob
 
-          VERSION="${RELEASE_TAG#v}"
-          VERSION="${VERSION%%-*}"
+          VERSION="$APP_VERSION"
           case "$TARGET_ARCH" in
             aarch64) ARCH_SUFFIX="aarch64" ;;
             x64) ARCH_SUFFIX="x86_64" ;;
@@ -291,13 +324,10 @@ jobs:
           - arch: x64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
-            experimental: false
           - arch: arm64
             runner: windows-11-arm
             target: aarch64-pc-windows-msvc
-            experimental: true
     runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.experimental }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -313,7 +343,7 @@ jobs:
       - name: Inject version from tag
         uses: ./.github/actions/inject-version
         with:
-          release-tag: ${{ github.event.inputs.tag || github.ref_name }}
+          release-tag: ${{ needs.validate-tag.outputs.tag }}
 
       - name: Build Windows installers
         env:
@@ -345,23 +375,17 @@ jobs:
           output-dir: "${{ github.workspace }}/updater"
           platform: windows
 
-      - name: Validate updater artifacts for stable target
+      - name: Validate updater artifacts
         shell: bash
         env:
           TARGET_ARCH: ${{ matrix.arch }}
-          EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
           HAS_UPDATER: ${{ steps.collect-updater.outputs.has-updater }}
         run: |
           if [[ "$HAS_UPDATER" == "true" ]]; then
             exit 0
           fi
 
-          if [[ "$EXPERIMENTAL_TARGET" == "true" ]]; then
-            echo "::warning::No updater artifacts found for experimental Windows ${TARGET_ARCH} target"
-            exit 0
-          fi
-
-          echo "::error::No updater artifacts found for stable Windows ${TARGET_ARCH} target" >&2
+          echo "::error::No updater artifacts found for Windows ${TARGET_ARCH} target" >&2
           exit 1
 
       - name: Collect installer artifacts
@@ -370,7 +394,6 @@ jobs:
         env:
           TARGET_TRIPLE: ${{ matrix.target }}
           TARGET_ARCH: ${{ matrix.arch }}
-          EXPERIMENTAL_TARGET: ${{ matrix.experimental }}
         run: |
           mkdir -p installers
 
@@ -385,8 +408,6 @@ jobs:
           if [[ "$found" == "true" ]]; then
             echo "Collected installer artifacts:"
             ls -lh installers/
-          elif [[ "$EXPERIMENTAL_TARGET" == "true" ]]; then
-            echo "::warning::No installer artifacts found for experimental Windows ${TARGET_ARCH} target"
           else
             echo "::error::No installer artifacts found for Windows ${TARGET_ARCH} target" >&2
             exit 1
@@ -447,7 +468,7 @@ jobs:
       - name: Inject version from tag
         uses: ./.github/actions/inject-version
         with:
-          release-tag: ${{ github.event.inputs.tag || github.ref_name }}
+          release-tag: ${{ needs.validate-tag.outputs.tag }}
 
       - name: Build Linux bundles
         env:
@@ -497,10 +518,12 @@ jobs:
   # ---------------------------------------------------------------------------
   release:
     name: Publish Release
-    needs: [build-macos, build-windows, build-linux]
+    needs: [validate-tag, build-macos, build-windows, build-linux]
     runs-on: ubuntu-22.04
     env:
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
+      RELEASE_CHANNEL: ${{ needs.validate-tag.outputs.release-channel }}
+      APP_VERSION: ${{ needs.validate-tag.outputs.app-version }}
       RELEASE_REPO: ${{ github.repository }}
     steps:
       - name: Checkout
@@ -519,8 +542,7 @@ jobs:
 
       - name: Normalize release asset names
         run: |
-          VERSION="${RELEASE_TAG#v}"
-          VERSION="${VERSION%%-*}"
+          VERSION="$APP_VERSION"
 
           rename_pair() {
             local old_name="$1"
@@ -547,11 +569,8 @@ jobs:
           find artifacts -type f | sort
 
       - name: Assert required release assets
-        env:
-          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          VERSION="${RELEASE_TAG#v}"
-          VERSION="${VERSION%%-*}"
+          VERSION="$APP_VERSION"
 
           required_assets=(
             "MCPMate_${VERSION}_macos_aarch64.dmg"
@@ -561,6 +580,7 @@ jobs:
             "MCPMate_${VERSION}_macos_x86_64.app.tar.gz"
             "MCPMate_${VERSION}_macos_x86_64.app.tar.gz.sig"
             "MCPMate_${VERSION}_windows_x64.msi"
+            "MCPMate_${VERSION}_windows_arm64.msi"
             "MCPMate_${VERSION}_linux_x64.AppImage"
             "MCPMate_${VERSION}_linux_x64.AppImage.sig"
             "MCPMate_${VERSION}_linux_x64.deb"
@@ -591,21 +611,18 @@ jobs:
             missing=1
           fi
 
-          arm64_msi="artifacts/MCPMate_${VERSION}_windows_arm64.msi"
           arm64_msi_zip="artifacts/MCPMate_${VERSION}_windows_arm64.msi.zip"
           arm64_msi_sig="artifacts/MCPMate_${VERSION}_windows_arm64.msi.sig"
           arm64_msi_zip_sig="artifacts/MCPMate_${VERSION}_windows_arm64.msi.zip.sig"
 
-          if [[ ! -f "$arm64_msi" ]]; then
-            echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi"
-          fi
-
           if [[ ! -f "$arm64_msi_sig" && ! -f "$arm64_msi_zip_sig" ]]; then
-            echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi.sig or MCPMate_${VERSION}_windows_arm64.msi.zip.sig"
+            echo "::error::Missing required release asset: MCPMate_${VERSION}_windows_arm64.msi.sig or MCPMate_${VERSION}_windows_arm64.msi.zip.sig" >&2
+            missing=1
           fi
 
           if [[ -f "$arm64_msi_zip_sig" && ! -f "$arm64_msi_zip" ]]; then
-            echo "::warning::Experimental asset not found: MCPMate_${VERSION}_windows_arm64.msi.zip"
+            echo "::error::Missing required release asset: MCPMate_${VERSION}_windows_arm64.msi.zip" >&2
+            missing=1
           fi
 
           if [[ "$missing" -ne 0 ]]; then
@@ -616,8 +633,7 @@ jobs:
         run: |
           chmod +x packaging/desktop/generate-update-manifest.sh
 
-          VERSION="${RELEASE_TAG#v}"
-          VERSION="${VERSION%%-*}"
+          VERSION="$APP_VERSION"
 
           MANIFEST_ARGS=(--version "$VERSION" --output artifacts/update.json)
 
@@ -719,7 +735,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           draft: false
-          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+          prerelease: ${{ env.RELEASE_CHANNEL == 'beta' }}
           body_path: artifacts/release-notes.md
           files: |
             artifacts/*.dmg
@@ -731,3 +747,50 @@ jobs:
             artifacts/*.msi.zip
             artifacts/signatures.zip
             artifacts/update.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Synchronize exact-tag download manifest
+        env:
+          DOWNLOADS_WORKFLOW_TOKEN: ${{ secrets.DOWNLOADS_WORKFLOW_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          bun packaging/desktop/sync-release-downloads.ts \
+            --tag "$RELEASE_TAG" \
+            --auth-origin "https://auth.mcp.umate.ai" \
+            --public-origin "https://public.mcp.umate.ai" \
+            --output artifacts/release-manifest-v2.json
+
+      - name: Render tracked release downloads
+        run: |
+          set -euo pipefail
+
+          bun packaging/desktop/render-release-downloads.ts \
+            --manifest artifacts/release-manifest-v2.json \
+            --notes artifacts/release-notes.md \
+            --tag "$RELEASE_TAG" \
+            --output artifacts/release-notes.md
+
+      - name: Update GitHub Release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release edit "$RELEASE_TAG" \
+            --repo "$RELEASE_REPO" \
+            --notes-file artifacts/release-notes.md
+
+      - name: Dispatch Homebrew Tap update
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          bun packaging/desktop/dispatch-homebrew-tap.ts \
+            --tag "$RELEASE_TAG" \
+            --manifest-url "https://public.mcp.umate.ai/downloads/releases/$RELEASE_TAG"

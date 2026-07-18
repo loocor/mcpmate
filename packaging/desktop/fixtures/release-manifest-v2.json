@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 2,
+  "tag": "v0.3.4-beta",
+  "version": "0.3.4-beta",
+  "releaseChannel": "beta",
+  "releaseName": "MCPMate 0.3.4 beta",
+  "releaseUrl": "https://github.com/loocor/mcpmate/releases/tag/v0.3.4-beta",
+  "publishedAt": "2026-07-17T08:00:00Z",
+  "fetchedAt": "2026-07-17T08:02:00Z",
+  "assets": {
+    "macos-arm64-dmg": {
+      "key": "macos-arm64-dmg",
+      "platform": "macos",
+      "arch": "arm64",
+      "format": "dmg",
+      "name": "MCPMate_0.3.4_macos_aarch64.dmg",
+      "githubAssetId": 1,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_macos_aarch64.dmg",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/macos-arm64-dmg",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/macos-arm64-dmg",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "macos-x64-dmg": {
+      "key": "macos-x64-dmg",
+      "platform": "macos",
+      "arch": "x64",
+      "format": "dmg",
+      "name": "MCPMate_0.3.4_macos_x86_64.dmg",
+      "githubAssetId": 2,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_macos_x86_64.dmg",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/macos-x64-dmg",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/macos-x64-dmg",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "windows-arm64-msi": {
+      "key": "windows-arm64-msi",
+      "platform": "windows",
+      "arch": "arm64",
+      "format": "msi",
+      "name": "MCPMate_0.3.4_windows_arm64.msi",
+      "githubAssetId": 3,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_windows_arm64.msi",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/windows-arm64-msi",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/windows-arm64-msi",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "windows-x64-msi": {
+      "key": "windows-x64-msi",
+      "platform": "windows",
+      "arch": "x64",
+      "format": "msi",
+      "name": "MCPMate_0.3.4_windows_x64.msi",
+      "githubAssetId": 4,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_windows_x64.msi",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/windows-x64-msi",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/windows-x64-msi",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "linux-arm64-appimage": {
+      "key": "linux-arm64-appimage",
+      "platform": "linux",
+      "arch": "arm64",
+      "format": "appimage",
+      "name": "MCPMate_0.3.4_linux_arm64.AppImage",
+      "githubAssetId": 5,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_linux_arm64.AppImage",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/linux-arm64-appimage",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/linux-arm64-appimage",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "linux-x64-appimage": {
+      "key": "linux-x64-appimage",
+      "platform": "linux",
+      "arch": "x64",
+      "format": "appimage",
+      "name": "MCPMate_0.3.4_linux_x64.AppImage",
+      "githubAssetId": 6,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_linux_x64.AppImage",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/linux-x64-appimage",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/linux-x64-appimage",
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "linux-arm64-deb": {
+      "key": "linux-arm64-deb",
+      "platform": "linux",
+      "arch": "arm64",
+      "format": "deb",
+      "name": "MCPMate_0.3.4_linux_arm64.deb",
+      "githubAssetId": 7,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_linux_arm64.deb",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/linux-arm64-deb",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/linux-arm64-deb",
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "linux-x64-deb": {
+      "key": "linux-x64-deb",
+      "platform": "linux",
+      "arch": "x64",
+      "format": "deb",
+      "name": "MCPMate_0.3.4_linux_x64.deb",
+      "githubAssetId": 8,
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_linux_x64.deb",
+      "githubReleaseUrl": "https://public.mcp.umate.ai/downloads/releases/v0.3.4-beta/linux-x64-deb",
+      "homebrewUrl": "https://public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/linux-x64-deb",
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    "signatures": {
+      "name": "signatures.zip",
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/signatures.zip"
+    },
+    "updater-manifest": {
+      "name": "update.json",
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/update.json"
+    },
+    "macos-arm64-updater": {
+      "name": "MCPMate_0.3.4_macos_aarch64.app.tar.gz",
+      "githubUrl": "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_0.3.4_macos_aarch64.app.tar.gz"
+    }
+  }
+}
