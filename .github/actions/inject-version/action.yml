@@ -1,12 +1,12 @@
 # Composite action: Inject version into tauri.conf.json
-# Handles version extraction from tag or release input
+# Separates tag-driven release versions from configured non-release versions
 
 name: Inject Version
-description: Extract version from git tag or workflow input and inject into tauri.conf.json
+description: Resolve an app-compatible version and inject it into tauri.conf.json
 
 inputs:
   release-tag:
-    description: "Release tag (e.g., v0.1.0). If empty, uses github.ref_name"
+    description: "Supported release tag. If empty, use the configured version for a non-release build."
     required: false
     default: ""
 
@@ -30,23 +30,18 @@ runs:
           exit 1
         fi
 
-        # Determine release tag
         RELEASE_TAG="${{ inputs.release-tag }}"
-        if [[ -z "$RELEASE_TAG" ]]; then
-          RELEASE_TAG="${{ github.ref_name }}"
+        if [[ -n "$RELEASE_TAG" ]]; then
+          CLASSIFICATION=$(bun packaging/desktop/release-tag.ts --tag "$RELEASE_TAG")
+          VERSION=$(jq -r '.appVersion' <<< "$CLASSIFICATION")
+        else
+          CONFIGURED_VERSION=$(jq -r '.version' "$CONF")
+          VERSION=$(bun packaging/desktop/release-tag.ts --configured-version "$CONFIGURED_VERSION")
         fi
 
-        # Extract version (remove v prefix and any pre-release suffix)
-        VERSION="${RELEASE_TAG#v}"
-        VERSION="${VERSION%%-*}"
-
-        # If the extracted version is not valid semver (e.g. a branch name
-        # like "refactor/feature"), fall back to the version already in
-        # tauri.conf.json and just strip its pre-release suffix.
-        if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-          echo "Resolved tag '$VERSION' is not semver; reading from $CONF instead"
-          VERSION=$(jq -r '.version' "$CONF")
-          VERSION="${VERSION%%-*}"
+        if ! echo "$VERSION" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+          echo "::error::Resolved app version is not a numeric SemVer version: $VERSION" >&2
+          exit 1
         fi
 
         jq --arg v "$VERSION" '.version = $v' "$CONF" > "$CONF.tmp"

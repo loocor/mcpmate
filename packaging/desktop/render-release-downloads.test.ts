@@ -160,7 +160,7 @@ describe("renderReleaseNotes", () => {
     }
   });
 
-  test("accepts internal prerelease hyphens allowed by the Admin exact-tag contract", async () => {
+  test("rejects arbitrary prerelease identifiers outside the stable and beta contract", async () => {
     const manifest = await manifestFixture();
     manifest.tag = "v1.2.3-alpha--preview.1";
     manifest.version = "1.2.3-alpha--preview.1";
@@ -171,8 +171,44 @@ describe("renderReleaseNotes", () => {
       }
     }
 
-    expect(renderReleaseNotes(generatedNotes, manifest, "v1.2.3-alpha--preview.1")).toContain(
-      "/downloads/releases/v1.2.3-alpha--preview.1/macos-arm64-dmg",
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v1.2.3-alpha--preview.1")).toThrow(
+      "Invalid expected release tag: v1.2.3-alpha--preview.1",
+    );
+  });
+
+  test("accepts a stable manifest with a matching release channel", async () => {
+    const manifest = await manifestFixture();
+    manifest.tag = "v1.2.3";
+    manifest.version = "1.2.3";
+    manifest.releaseChannel = "stable";
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    for (const asset of Object.values(assets)) {
+      for (const field of ["name", "githubUrl", "githubReleaseUrl", "homebrewUrl"]) {
+        if (typeof asset[field] === "string") {
+          asset[field] = asset[field]
+            .replaceAll("v0.3.4-beta", "v1.2.3")
+            .replaceAll("0.3.4", "1.2.3");
+        }
+      }
+    }
+
+    expect(renderReleaseNotes(generatedNotes, manifest, "v1.2.3")).toContain(
+      "/downloads/releases/v1.2.3/macos-arm64-dmg",
+    );
+  });
+
+  test.each([
+    ["v1.2.3", "beta"],
+    ["v1.2.3-beta", "stable"],
+    ["v1.2.3-beta.1", "nightly"],
+  ])("rejects a tag and releaseChannel mismatch: %s / %s", async (tag, releaseChannel) => {
+    const manifest = await manifestFixture();
+    manifest.tag = tag;
+    manifest.version = tag.slice(1);
+    manifest.releaseChannel = releaseChannel;
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, tag)).toThrow(
+      "Manifest releaseChannel does not match tag",
     );
   });
 
@@ -186,6 +222,42 @@ describe("renderReleaseNotes", () => {
     );
   });
 
+  test("rejects an uppercase SHA-256 outside the Admin v2 contract", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"].sha256 = "A".repeat(64);
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Invalid SHA-256 for asset: macos-arm64-dmg",
+    );
+  });
+
+  test.each([
+    ["key", "linux-x64-deb"],
+    ["platform", "linux"],
+    ["arch", "x64"],
+    ["format", "deb"],
+    ["name", "MCPMate_0.3.4_linux_x64.deb"],
+  ])("rejects a required asset with mismatched %s metadata", async (field, value) => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"][field] = value;
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Manifest asset metadata is invalid: macos-arm64-dmg",
+    );
+  });
+
+  test("rejects a required asset mapped to another exact-tag GitHub file", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"].githubUrl = assets["linux-x64-deb"].githubUrl;
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Manifest githubUrl is invalid: macos-arm64-dmg",
+    );
+  });
+
   test("fails when githubReleaseUrl is a raw GitHub asset URL", async () => {
     const manifest = await manifestFixture();
     const assets = manifest.assets as Record<string, Record<string, unknown>>;
@@ -193,6 +265,60 @@ describe("renderReleaseNotes", () => {
 
     expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
       "Invalid githubReleaseUrl for asset: macos-arm64-dmg",
+    );
+  });
+
+  test("fails when githubReleaseUrl uses a foreign origin", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"].githubReleaseUrl =
+      "https://downloads.example.com/downloads/releases/v0.3.4-beta/macos-arm64-dmg";
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Invalid githubReleaseUrl for asset: macos-arm64-dmg",
+    );
+  });
+
+  test("fails when githubReleaseUrl contains user information", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"].githubReleaseUrl =
+      "https://user:password@public.mcp.umate.ai/downloads/releases/v0.3.4-beta/macos-arm64-dmg";
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Invalid githubReleaseUrl for asset: macos-arm64-dmg",
+    );
+  });
+
+  test("fails when a required homebrewUrl is missing", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    delete assets["macos-arm64-dmg"].homebrewUrl;
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Invalid homebrewUrl for asset: macos-arm64-dmg",
+    );
+  });
+
+  test("fails when homebrewUrl uses a foreign origin", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"].homebrewUrl =
+      "https://downloads.example.com/downloads/homebrew/v0.3.4-beta/macos-arm64-dmg";
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Invalid homebrewUrl for asset: macos-arm64-dmg",
+    );
+  });
+
+  test("fails when homebrewUrl contains user information", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"].homebrewUrl =
+      "https://user:password@public.mcp.umate.ai/downloads/homebrew/v0.3.4-beta/macos-arm64-dmg";
+
+    expect(() => renderReleaseNotes(generatedNotes, manifest, "v0.3.4-beta")).toThrow(
+      "Invalid homebrewUrl for asset: macos-arm64-dmg",
     );
   });
 

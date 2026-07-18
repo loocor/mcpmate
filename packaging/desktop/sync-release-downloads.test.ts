@@ -12,10 +12,12 @@ async function manifestFixture(): Promise<Record<string, unknown>> {
   const manifest = structuredClone(await Bun.file(fixtureUrl).json()) as Record<string, unknown>;
   const assets = manifest.assets as Record<string, Record<string, unknown>>;
   for (const asset of Object.values(assets)) {
-    if (typeof asset.githubReleaseUrl === "string") {
-      const trackedUrl = new URL(asset.githubReleaseUrl);
-      trackedUrl.host = "public.example";
-      asset.githubReleaseUrl = trackedUrl.toString();
+    for (const field of ["githubReleaseUrl", "homebrewUrl"]) {
+      if (typeof asset[field] === "string") {
+        const trackedUrl = new URL(asset[field]);
+        trackedUrl.host = "public.example";
+        asset[field] = trackedUrl.toString();
+      }
     }
   }
   return manifest;
@@ -39,12 +41,14 @@ function successfulFetch(manifest: Record<string, unknown>, requests: Array<{ ur
     if (url.endsWith("/refresh")) {
       return response({ ok: true });
     }
-    if (url === "https://public.example/downloads/releases/v0.3.4-beta") {
+    if (url === `https://public.example/downloads/releases/${manifest.tag}`) {
       return response(manifest);
     }
 
     const assets = manifest.assets as Record<string, Record<string, unknown>>;
-    const asset = Object.values(assets).find((candidate) => candidate.githubReleaseUrl === url);
+    const asset = Object.values(assets).find(
+      (candidate) => candidate.githubReleaseUrl === url || candidate.homebrewUrl === url,
+    );
     if (!asset || typeof asset.githubUrl !== "string") {
       throw new Error(`Unexpected request: ${url}`);
     }
@@ -86,9 +90,65 @@ describe("synchronizeReleaseDownloads", () => {
       url: "https://public.example/downloads/releases/v0.3.4-beta",
       init: undefined,
     });
-    expect(requests.slice(2)).toHaveLength(8);
+    expect(requests.slice(2)).toHaveLength(16);
     expect(requests.slice(2).every((request) => request.init?.redirect === "manual")).toBe(true);
     expect(JSON.parse(await readFile(outputPath, "utf8"))).toEqual(manifest);
+  });
+
+  test("synchronizes a stable exact-tag manifest with a matching channel", async () => {
+    const manifest = await manifestFixture();
+    manifest.tag = "v1.2.3";
+    manifest.version = "1.2.3";
+    manifest.releaseChannel = "stable";
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    for (const asset of Object.values(assets)) {
+      for (const field of ["name", "githubUrl", "githubReleaseUrl", "homebrewUrl"]) {
+        if (typeof asset[field] === "string") {
+          asset[field] = asset[field]
+            .replaceAll("v0.3.4-beta", "v1.2.3")
+            .replaceAll("0.3.4", "1.2.3");
+        }
+      }
+    }
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    await synchronizeReleaseDownloads(
+      {
+        tag: "v1.2.3",
+        authOrigin: "https://auth.example",
+        publicOrigin: "https://public.example",
+        outputPath: await createOutputPath(),
+      },
+      {
+        env: { DOWNLOADS_WORKFLOW_TOKEN: "test-token" },
+        fetch: successfulFetch(manifest, requests),
+      },
+    );
+
+    expect(requests[0].url).toBe("https://auth.example/internal/downloads/releases/v1.2.3/refresh");
+    expect(requests[1].url).toBe("https://public.example/downloads/releases/v1.2.3");
+  });
+
+  test("rejects a manifest channel mismatch before validating redirects", async () => {
+    const manifest = await manifestFixture();
+    manifest.releaseChannel = "stable";
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+
+    await expect(
+      synchronizeReleaseDownloads(
+        {
+          tag: "v0.3.4-beta",
+          authOrigin: "https://auth.example",
+          publicOrigin: "https://public.example",
+          outputPath: await createOutputPath(),
+        },
+        {
+          env: { DOWNLOADS_WORKFLOW_TOKEN: "test-token" },
+          fetch: successfulFetch(manifest, requests),
+        },
+      ),
+    ).rejects.toThrow("Manifest releaseChannel does not match tag");
+    expect(requests).toHaveLength(2);
   });
 
   test("fails before network access when DOWNLOADS_WORKFLOW_TOKEN is missing", async () => {
@@ -286,7 +346,7 @@ describe("synchronizeReleaseDownloads", () => {
           fetch: successfulFetch(manifest, []),
         },
       ),
-    ).rejects.toThrow("must use the configured public origin and exact asset path");
+    ).rejects.toThrow("Invalid githubReleaseUrl for asset: macos-arm64-dmg");
   });
 
   test("rejects userinfo in a required githubReleaseUrl", async () => {
@@ -308,7 +368,55 @@ describe("synchronizeReleaseDownloads", () => {
           fetch: successfulFetch(manifest, []),
         },
       ),
-    ).rejects.toThrow("must use the configured public origin and exact asset path");
+    ).rejects.toThrow("Invalid githubReleaseUrl for asset: macos-arm64-dmg");
+  });
+
+  test("rejects a required homebrewUrl on a foreign HTTPS origin", async () => {
+    const manifest = await manifestFixture();
+    const assets = manifest.assets as Record<string, Record<string, unknown>>;
+    assets["macos-arm64-dmg"].homebrewUrl =
+      "https://downloads.example.invalid/downloads/homebrew/v0.3.4-beta/macos-arm64-dmg";
+
+    await expect(
+      synchronizeReleaseDownloads(
+        {
+          tag: "v0.3.4-beta",
+          authOrigin: "https://auth.example",
+          publicOrigin: "https://public.example",
+          outputPath: await createOutputPath(),
+        },
+        {
+          env: { DOWNLOADS_WORKFLOW_TOKEN: "test-token" },
+          fetch: successfulFetch(manifest, []),
+        },
+      ),
+    ).rejects.toThrow("Invalid homebrewUrl for asset: macos-arm64-dmg");
+  });
+
+  test("requires each Homebrew redirect Location to equal the manifest githubUrl", async () => {
+    const manifest = await manifestFixture();
+    const fetch = successfulFetch(manifest, []);
+
+    await expect(
+      synchronizeReleaseDownloads(
+        {
+          tag: "v0.3.4-beta",
+          authOrigin: "https://auth.example",
+          publicOrigin: "https://public.example",
+          outputPath: await createOutputPath(),
+        },
+        {
+          env: { DOWNLOADS_WORKFLOW_TOKEN: "test-token" },
+          fetch: async (input, init) =>
+            input.toString().includes("/downloads/homebrew/")
+              ? response("", 302, {
+                  location:
+                    "https://github.com/loocor/mcpmate/releases/download/v0.3.4-beta/MCPMate_wrong.dmg",
+                })
+              : fetch(input, init),
+        },
+      ),
+    ).rejects.toThrow("does not match manifest githubUrl");
   });
 
   test("rejects githubUrl targets outside the MCPMate repository and exact tag", async () => {
@@ -331,7 +439,7 @@ describe("synchronizeReleaseDownloads", () => {
           },
           { env: { DOWNLOADS_WORKFLOW_TOKEN: "test-token" }, fetch },
         ),
-      ).rejects.toThrow("is not an exact-tag MCPMate GitHub asset URL");
+      ).rejects.toThrow("Manifest githubUrl is invalid: macos-arm64-dmg");
     }
   });
 
@@ -384,7 +492,7 @@ describe("synchronizeReleaseDownloads", () => {
       },
     );
 
-    expect(requests).toHaveLength(10);
+    expect(requests).toHaveLength(18);
     expect(JSON.parse(await readFile(outputPath, "utf8"))).toEqual(manifest);
   });
 });
