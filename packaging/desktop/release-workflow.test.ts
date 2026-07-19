@@ -74,18 +74,23 @@ describe("release workflow contract", () => {
   test("gates GitHub Release publishing on the reusable Docker workflow", async () => {
     const releaseWorkflow = await Bun.file(releaseWorkflowUrl).text();
     const dockerWorkflow = await Bun.file(dockerWorkflowUrl).text();
+    const dockerJobStart = releaseWorkflow.indexOf("  publish-docker:");
+    const releaseJobStart = releaseWorkflow.indexOf("  release:");
+
+    expect(dockerJobStart).toBeGreaterThanOrEqual(0);
+    expect(releaseJobStart).toBeGreaterThan(dockerJobStart);
+
     const dockerJob = releaseWorkflow.slice(
-      releaseWorkflow.indexOf("  publish-docker:"),
-      releaseWorkflow.indexOf("  release:"),
+      dockerJobStart,
+      releaseJobStart,
     );
-    const releaseJob = releaseWorkflow.slice(releaseWorkflow.indexOf("  release:"));
+    const releaseJob = releaseWorkflow.slice(releaseJobStart);
 
     expect(dockerWorkflow).toContain("  workflow_call:");
     expect(dockerWorkflow).toContain("  pull_request:\n    branches:\n      - main");
     expect(dockerWorkflow.match(/default: false/g)).toHaveLength(2);
     expect(dockerWorkflow).not.toContain('    tags:\n      - "v*"');
     expect(dockerWorkflow).toContain("uses: dtolnay/rust-toolchain@1.97.1");
-    expect(dockerWorkflow).toContain("ref: ${{ inputs.release_tag || github.ref }}");
     expect(dockerWorkflow).toContain("enable=${{ inputs.push_image == true }}");
     expect(dockerWorkflow).toContain("push: ${{ inputs.push_image == true }}");
     expect(dockerJob).toContain("uses: ./.github/workflows/docker-publish.yml");
@@ -95,6 +100,41 @@ describe("release workflow contract", () => {
     expect(releaseJob).toContain(
       "needs: [validate-tag, build-macos, build-windows, build-linux, publish-docker]",
     );
+  });
+
+  test("pins Docker validation and publishing to immutable commits", async () => {
+    const workflow = await Bun.file(dockerWorkflowUrl).text();
+
+    expect(workflow.match(/ref: refs\/tags\/\$\{\{ inputs\.release_tag \}\}/g)).toHaveLength(2);
+    expect(workflow).toContain("ref: ${{ github.sha }}");
+    expect(workflow).not.toContain("inputs.release_tag || github.ref");
+  });
+
+  test("requires a release tag and skips publishing work for validation-only runs", async () => {
+    const workflow = await Bun.file(dockerWorkflowUrl).text();
+    const validateJobStart = workflow.indexOf("  validate:");
+    const buildJobStart = workflow.indexOf("  build:");
+
+    expect(validateJobStart).toBeGreaterThanOrEqual(0);
+    expect(buildJobStart).toBeGreaterThan(validateJobStart);
+
+    const validateJob = workflow.slice(validateJobStart, buildJobStart);
+    const buildJob = workflow.slice(buildJobStart);
+    const guardStep = validateJob.indexOf("- name: Require release tag for image publishing");
+    const checkoutStep = validateJob.indexOf("- name: Checkout release tag");
+
+    expect(guardStep).toBeGreaterThanOrEqual(0);
+    expect(checkoutStep).toBeGreaterThan(guardStep);
+    expect(validateJob).toContain("if: inputs.push_image == true && inputs.release_tag == ''");
+    expect(validateJob).toContain("if: inputs.push_image != true");
+    expect(buildJob).toContain("  build:\n    if: inputs.push_image == true");
+    expect(workflow).not.toContain("github.event.inputs");
+  });
+
+  test("does not infer reusable invocation from the caller event name", async () => {
+    const workflow = await Bun.file(dockerWorkflowUrl).text();
+
+    expect(workflow).not.toContain("github.event_name == 'workflow_call'");
   });
 
   test("does not dispatch Homebrew from Nightly or desktop build workflows", async () => {
