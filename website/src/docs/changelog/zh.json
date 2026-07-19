@@ -1,5 +1,38 @@
 [
 	{
+		"version": "0.3.5",
+		"date": "2026-07-18",
+		"highlights": [
+			"MCPMate v0.3.5-beta 强化了托管 MCP 环境中的身份、路由与分发边界。服务器能力与 Resource 现在在稳定的 MCPMate 身份后保留精确的上游归属，Resource Template 读取由后端负责展开，LLM 接入转向可配置 Provider，浏览器导入与发行交付也采用更清晰的 fail-closed 流程。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "LLM 接入现在通过兼容 OpenAI Chat Completions 和 Anthropic Messages 的 Provider 统一管理，并在 Settings 与 Secure Store 中提供 Provider 配置、连通性测试、模型发现、Thinking 控制和 API Key 托管。"
+			},
+			{
+				"type": "feat",
+				"text": "浏览器导入现在会直接交接给 MCPMate，仅在桌面应用未响应时显示后备页面；GitHub 与 Cursor registry 条目也会规范为明确的传输方式，并在重复项中优先选择 Streamable HTTP。"
+			},
+			{
+				"type": "fix",
+				"text": "当 OAuth refresh 无法提供启动凭证时，手动 Authorization header 仍会继续生效；切换认证模式时也会一致地清除相互竞争的认证来源。"
+			},
+			{
+				"type": "ref",
+				"text": "服务器与能力身份现在在 API、配置集、客户端暴露、Inspector 和 Board 管理中使用同一条 canonical pipeline，保留精确的上游名称，并把 namespace 冲突呈现为显式修复操作。"
+			},
+			{
+				"type": "feat",
+				"text": "Resource 与 Resource Template 现在使用可读、稳定的 canonical mcpmate://resources 地址，由后端权威执行 RFC 6570 展开，并对未知或未注册的 Proxy 地址保持 fail-closed 路由。"
+			},
+			{
+				"type": "chore",
+				"text": "发行流程现在强制执行 stable/beta tag 契约，要求完整的跨平台资产，并在完成下载说明或交接 Homebrew 更新前校验 exact-tag manifest 与 tracked redirect。"
+			}
+		]
+	},
+	{
 		"version": "0.3.4",
 		"date": "2026-06-30",
 		"highlights": [
