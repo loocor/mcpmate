@@ -15,16 +15,16 @@
 				"text": "Browser imports now hand off directly to MCPMate, show a fallback only when the desktop app does not respond, and normalize GitHub and Cursor registry entries to explicit transports with Streamable HTTP preferred for duplicates."
 			},
 			{
+				"type": "feat",
+				"text": "Resources and Resource Templates now use readable, stable canonical mcpmate://resources addresses, with backend-authoritative RFC 6570 expansion and fail-closed Proxy routing for unknown or unregistered addresses."
+			},
+			{
 				"type": "fix",
 				"text": "Manual Authorization headers now remain effective when OAuth refresh cannot provide startup credentials, while switching authentication modes clears competing sources consistently."
 			},
 			{
 				"type": "ref",
 				"text": "Server and capability identities now use one canonical pipeline across APIs, profiles, client exposure, Inspector, and Board management, preserving exact upstream names and making namespace conflicts explicit repair actions."
-			},
-			{
-				"type": "feat",
-				"text": "Resources and Resource Templates now use readable, stable canonical mcpmate://resources addresses, with backend-authoritative RFC 6570 expansion and fail-closed Proxy routing for unknown or unregistered addresses."
 			},
 			{
 				"type": "chore",

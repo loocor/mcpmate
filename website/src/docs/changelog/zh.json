@@ -15,16 +15,16 @@
 				"text": "浏览器导入现在会直接交接给 MCPMate，仅在桌面应用未响应时显示后备页面；GitHub 与 Cursor registry 条目也会规范为明确的传输方式，并在重复项中优先选择 Streamable HTTP。"
 			},
 			{
+				"type": "feat",
+				"text": "Resource 与 Resource Template 现在使用可读、稳定的 canonical mcpmate://resources 地址，由后端权威执行 RFC 6570 展开，并对未知或未注册的 Proxy 地址保持 fail-closed 路由。"
+			},
+			{
 				"type": "fix",
 				"text": "当 OAuth refresh 无法提供启动凭证时，手动 Authorization header 仍会继续生效；切换认证模式时也会一致地清除相互竞争的认证来源。"
 			},
 			{
 				"type": "ref",
 				"text": "服务器与能力身份现在在 API、配置集、客户端暴露、Inspector 和 Board 管理中使用同一条 canonical pipeline，保留精确的上游名称，并把 namespace 冲突呈现为显式修复操作。"
-			},
-			{
-				"type": "feat",
-				"text": "Resource 与 Resource Template 现在使用可读、稳定的 canonical mcpmate://resources 地址，由后端权威执行 RFC 6570 展开，并对未知或未注册的 Proxy 地址保持 fail-closed 路由。"
 			},
 			{
 				"type": "chore",
