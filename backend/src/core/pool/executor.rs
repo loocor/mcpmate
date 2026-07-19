@@ -768,7 +768,7 @@ impl UpstreamConnectionPool {
         let supports_prompts = capabilities.as_ref().and_then(|caps| caps.prompts.as_ref()).is_some();
 
         // Clone service metadata before moving into Arc
-        let peer_info = service.peer_info().cloned();
+        let peer_info = service.peer_info();
         let server_icons_payload = peer_info.as_ref().and_then(|info| info.server_info.icons.clone());
 
         // Clone service for database sync operations

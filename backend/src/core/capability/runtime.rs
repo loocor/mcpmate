@@ -973,11 +973,11 @@ fn convert_cached_resource(cached: CachedResourceInfo) -> Option<rmcp::model::Re
         .name
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| cached.uri.clone());
-    let mut raw = rmcp::model::RawResource::new(cached.uri.clone(), resolved_name);
-    raw.description = cached.description;
-    raw.mime_type = cached.mime_type;
-    raw.icons = cached.icons;
-    Some(rmcp::model::Resource { raw, annotations: None })
+    let mut resource = rmcp::model::Resource::new(cached.uri.clone(), resolved_name);
+    resource.description = cached.description;
+    resource.mime_type = cached.mime_type;
+    resource.icons = cached.icons;
+    Some(resource)
 }
 
 fn convert_cached_resource_template(cached: CachedResourceTemplateInfo) -> Option<rmcp::model::ResourceTemplate> {
@@ -985,14 +985,14 @@ fn convert_cached_resource_template(cached: CachedResourceTemplateInfo) -> Optio
         .name
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| cached.uri_template.clone());
-    let mut raw = rmcp::model::RawResourceTemplate::new(cached.uri_template, resolved_name);
+    let mut template = rmcp::model::ResourceTemplate::new(cached.uri_template, resolved_name);
     if let Some(description) = cached.description {
-        raw = raw.with_description(description);
+        template = template.with_description(description);
     }
     if let Some(mime_type) = cached.mime_type {
-        raw = raw.with_mime_type(mime_type);
+        template = template.with_mime_type(mime_type);
     }
-    Some(rmcp::model::ResourceTemplate { raw, annotations: None })
+    Some(template)
 }
 
 fn convert_cached_tool(cached: CachedToolInfo) -> Option<rmcp::model::Tool> {
@@ -1188,7 +1188,7 @@ async fn ensure_resource_unique_names(
     .context("Failed to assign external resource URIs")?;
     if name_domain == NameDomain::External {
         for (resource, upstream_uri) in resources.iter_mut().zip(upstream_uris) {
-            resource.raw.uri = crate::core::capability::naming::load_external_identifier(
+            resource.uri = crate::core::capability::naming::load_external_identifier(
                 &database.pool,
                 NamingKind::Resource,
                 server_id,
@@ -1231,7 +1231,7 @@ async fn ensure_resource_template_unique_names(
         if !crate::core::capability::resource_uri::resource_template_is_projectable(server_name, &upstream_template)? {
             continue;
         }
-        template.raw.uri_template = crate::core::capability::naming::load_external_identifier(
+        template.uri_template = crate::core::capability::naming::load_external_identifier(
             &database.pool,
             NamingKind::ResourceTemplate,
             server_id,
@@ -1279,7 +1279,7 @@ async fn project_external_items(
         }
         CapabilityItems::Resources(resources) => {
             for resource in resources {
-                resource.raw.uri = crate::core::capability::naming::load_external_identifier(
+                resource.uri = crate::core::capability::naming::load_external_identifier(
                     &database.pool,
                     NamingKind::Resource,
                     server_id,
@@ -1304,7 +1304,7 @@ async fn project_external_items(
                 )? {
                     continue;
                 }
-                template.raw.uri_template = crate::core::capability::naming::load_external_identifier(
+                template.uri_template = crate::core::capability::naming::load_external_identifier(
                     &database.pool,
                     NamingKind::ResourceTemplate,
                     server_id,
@@ -1343,7 +1343,9 @@ async fn project_cached_items(
 mod tests {
     use super::*;
     use crate::common::constants::protocol;
-    use crate::core::cache::{CacheScope, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo};
+    use crate::core::cache::{
+        CacheScope, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
+    };
     use crate::core::models::Config;
     use chrono::Utc;
     use sqlx::sqlite::SqlitePoolOptions;
@@ -1398,6 +1400,42 @@ mod tests {
             pool,
             path: PathBuf::new(),
         })
+    }
+
+    #[test]
+    fn cached_resource_models_preserve_baseline_persisted_fields() {
+        let icon = rmcp::model::Icon::new("https://example.com/resource.png");
+        let resource = convert_cached_resource(CachedResourceInfo {
+            uri: "file:///guide.md".to_string(),
+            name: Some("Guide".to_string()),
+            description: Some("Project guide".to_string()),
+            mime_type: Some("text/markdown".to_string()),
+            icons: Some(vec![icon.clone()]),
+            enabled: true,
+            cached_at: Utc::now(),
+        })
+        .expect("convert cached resource");
+
+        assert_eq!(resource.uri, "file:///guide.md");
+        assert_eq!(resource.name, "Guide");
+        assert_eq!(resource.description.as_deref(), Some("Project guide"));
+        assert_eq!(resource.mime_type.as_deref(), Some("text/markdown"));
+        assert_eq!(resource.icons, Some(vec![icon]));
+
+        let template = convert_cached_resource_template(CachedResourceTemplateInfo {
+            uri_template: "file:///{path}".to_string(),
+            name: Some("Files".to_string()),
+            description: Some("Project files".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            enabled: true,
+            cached_at: Utc::now(),
+        })
+        .expect("convert cached resource template");
+
+        assert_eq!(template.uri_template, "file:///{path}");
+        assert_eq!(template.name, "Files");
+        assert_eq!(template.description.as_deref(), Some("Project files"));
+        assert_eq!(template.mime_type.as_deref(), Some("text/plain"));
     }
 
     #[tokio::test]
@@ -1732,10 +1770,7 @@ mod tests {
             .await
             .expect("insert server");
         let upstream_template = "file:///{+path}";
-        let templates = vec![rmcp::model::ResourceTemplate {
-            raw: rmcp::model::RawResourceTemplate::new(upstream_template, "Files"),
-            annotations: None,
-        }];
+        let templates = vec![rmcp::model::ResourceTemplate::new(upstream_template, "Files")];
 
         let result =
             ensure_resource_template_unique_names(&database, "server-docs", "docs", templates, NameDomain::Upstream)
@@ -1753,14 +1788,8 @@ mod tests {
             .await
             .expect("insert server");
         let templates = vec![
-            rmcp::model::ResourceTemplate {
-                raw: rmcp::model::RawResourceTemplate::new("file:///{path}", "Files"),
-                annotations: None,
-            },
-            rmcp::model::ResourceTemplate {
-                raw: rmcp::model::RawResourceTemplate::new("file:///{+path}", "Reserved Files"),
-                annotations: None,
-            },
+            rmcp::model::ResourceTemplate::new("file:///{path}", "Files"),
+            rmcp::model::ResourceTemplate::new("file:///{+path}", "Reserved Files"),
         ];
 
         let result =
@@ -1804,17 +1833,14 @@ mod tests {
         .await
         .expect("insert template identity");
 
-        let upstream_resources = CapabilityItems::Resources(vec![rmcp::model::Resource {
-            raw: rmcp::model::RawResource::new("demo://resource/static/document/architecture.md", "Architecture"),
-            annotations: None,
-        }]);
-        let upstream_templates = CapabilityItems::ResourceTemplates(vec![rmcp::model::ResourceTemplate {
-            raw: rmcp::model::RawResourceTemplate::new(
-                "demo://resource/dynamic/text/{resourceId}",
-                "Dynamic Text Resource",
-            ),
-            annotations: None,
-        }]);
+        let upstream_resources = CapabilityItems::Resources(vec![rmcp::model::Resource::new(
+            "demo://resource/static/document/architecture.md",
+            "Architecture",
+        )]);
+        let upstream_templates = CapabilityItems::ResourceTemplates(vec![rmcp::model::ResourceTemplate::new(
+            "demo://resource/dynamic/text/{resourceId}",
+            "Dynamic Text Resource",
+        )]);
 
         for items in [upstream_resources, upstream_templates] {
             let live = project_external_items(&database, "server-docs", items.clone(), NameDomain::External)

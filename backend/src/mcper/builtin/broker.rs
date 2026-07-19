@@ -8,7 +8,8 @@ use futures::StreamExt;
 use json5;
 use once_cell::sync::Lazy;
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, Content, Resource, ResourceTemplate, Tool,
+    CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, ContentBlock, Resource, ResourceTemplate,
+    Tool,
 };
 use rmcp::service::PeerRequestOptions;
 use serde::{Deserialize, Serialize};
@@ -283,7 +284,7 @@ impl UcanError {
 
     /// Converts the error to a failed CallToolResult.
     pub fn to_call_tool_result(&self) -> CallToolResult {
-        CallToolResult::error(vec![Content::text(self.to_json())])
+        CallToolResult::error(vec![ContentBlock::text(self.to_json())])
     }
 }
 
@@ -1284,7 +1285,7 @@ impl BrokerService {
             items,
         };
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&response).context("Failed to serialize Unify tool catalog")?,
         )]))
     }
@@ -1556,7 +1557,7 @@ impl BrokerService {
             }
         };
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&response).context("Failed to serialize Unify tool details")?,
         )]))
     }
@@ -2375,7 +2376,7 @@ impl BrokerService {
                     &mut result,
                 )
                 .await?;
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
                 )]))
             }
@@ -2424,7 +2425,7 @@ impl BrokerService {
                     &mut result,
                 )
                 .await?;
-                Ok(CallToolResult::success(vec![Content::text(
+                Ok(CallToolResult::success(vec![ContentBlock::text(
                     serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
                 )]))
             }
@@ -3639,19 +3640,13 @@ mod tests {
                 server_id: "server-a".to_string(),
                 server_name: "Server A".to_string(),
                 raw_resource_uri: "resource-one".to_string(),
-                resource: Resource {
-                    raw: rmcp::model::RawResource::new("server-a://resource-one", "server-a://resource-one"),
-                    annotations: None,
-                },
+                resource: Resource::new("server-a://resource-one", "server-a://resource-one"),
             },
             VisibleResourceEntry {
                 server_id: "server-b".to_string(),
                 server_name: "Server B".to_string(),
                 raw_resource_uri: "resource-two".to_string(),
-                resource: Resource {
-                    raw: rmcp::model::RawResource::new("server-b://resource-two", "server-b://resource-two"),
-                    annotations: None,
-                },
+                resource: Resource::new("server-b://resource-two", "server-b://resource-two"),
             },
         ];
 
@@ -3687,19 +3682,13 @@ mod tests {
                 server_id: "server-a".to_string(),
                 server_name: "Server A".to_string(),
                 raw_resource_uri: "resource-one".to_string(),
-                resource: Resource {
-                    raw: rmcp::model::RawResource::new("server-a://resource-one", "server-a://resource-one"),
-                    annotations: None,
-                },
+                resource: Resource::new("server-a://resource-one", "server-a://resource-one"),
             },
             VisibleResourceEntry {
                 server_id: "server-a".to_string(),
                 server_name: "Server A".to_string(),
                 raw_resource_uri: "resource-two".to_string(),
-                resource: Resource {
-                    raw: rmcp::model::RawResource::new("server-a://resource-two", "server-a://resource-two"),
-                    annotations: None,
-                },
+                resource: Resource::new("server-a://resource-two", "server-a://resource-two"),
             },
         ];
 
@@ -3735,19 +3724,13 @@ mod tests {
                 server_id: "server-a".to_string(),
                 server_name: "Server A".to_string(),
                 raw_uri_template: "server-a://{id}".to_string(),
-                resource_template: ResourceTemplate {
-                    raw: rmcp::model::RawResourceTemplate::new("server-a://{id}", "server-a://{id}"),
-                    annotations: None,
-                },
+                resource_template: ResourceTemplate::new("server-a://{id}", "server-a://{id}"),
             },
             VisibleResourceTemplateEntry {
                 server_id: "server-b".to_string(),
                 server_name: "Server B".to_string(),
                 raw_uri_template: "server-b://{id}".to_string(),
-                resource_template: ResourceTemplate {
-                    raw: rmcp::model::RawResourceTemplate::new("server-b://{id}", "server-b://{id}"),
-                    annotations: None,
-                },
+                resource_template: ResourceTemplate::new("server-b://{id}", "server-b://{id}"),
             },
         ];
 
@@ -3783,19 +3766,13 @@ mod tests {
                 server_id: "server-a".to_string(),
                 server_name: "Server A".to_string(),
                 raw_uri_template: "server-a://{id}".to_string(),
-                resource_template: ResourceTemplate {
-                    raw: rmcp::model::RawResourceTemplate::new("server-a://{id}", "server-a://{id}"),
-                    annotations: None,
-                },
+                resource_template: ResourceTemplate::new("server-a://{id}", "server-a://{id}"),
             },
             VisibleResourceTemplateEntry {
                 server_id: "server-a".to_string(),
                 server_name: "Server A".to_string(),
                 raw_uri_template: "server-a://{name}".to_string(),
-                resource_template: ResourceTemplate {
-                    raw: rmcp::model::RawResourceTemplate::new("server-a://{name}", "server-a://{name}"),
-                    annotations: None,
-                },
+                resource_template: ResourceTemplate::new("server-a://{name}", "server-a://{name}"),
             },
         ];
 
@@ -4404,17 +4381,7 @@ mod tests {
         use super::resource_template_details_value;
         use rmcp::model::ResourceTemplate;
 
-        let template = ResourceTemplate::new(
-            rmcp::model::RawResourceTemplate {
-                name: "file_template".into(),
-                uri_template: "file:///{path}".into(),
-                title: None,
-                description: Some("File template".into()),
-                mime_type: None,
-                icons: None,
-            },
-            None,
-        );
+        let template = ResourceTemplate::new("file:///{path}", "file_template").with_description("File template");
 
         let summary = resource_template_details_value(&template, UcanDetailLevel::Summary).expect("summary details");
         assert!(summary.get("uri_template").is_some());

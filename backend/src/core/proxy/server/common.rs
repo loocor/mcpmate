@@ -11,6 +11,7 @@ use rmcp::{
 };
 use std::collections::HashSet;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::clients::models::{UnifyDirectExposureConfig, UnifyRouteMode};
 use crate::common::constants::client_headers;
@@ -263,21 +264,31 @@ pub struct SessionBinding {
 ///
 /// - `session_bindings`: Active session-to-client mappings. Cleared on explicit unbind.
 /// - `observed_clients`: Client info cache. Grows unbounded; entries persist across sessions.
-/// - `pending_initializations`: Transient contexts awaiting session binding. Cleared on bind.
+/// - `initialization_contexts`: One-shot contexts correlated to individual HTTP initialize requests.
 ///
 /// ## Cleanup Semantics
 ///
 /// `unbind_session` removes the session binding but intentionally leaves `observed_clients`
-/// and `pending_initializations` untouched:
+/// untouched. Initialize contexts have a separate request-scoped lifecycle:
 ///
 /// - `observed_clients`: Serves as a cache for reconnections; retained for future sessions.
-/// - `pending_initializations`: Keyed by peer pointer; stale entries are harmless but consume
-///   memory until the peer is dropped. A future TTL-based cleanup could be added if needed.
+/// - `initialization_contexts`: Removed when the matching initialize response completes, whether
+///   the request succeeds or fails. Request correlation avoids depending on rmcp peer snapshots
+///   and keeps concurrent initializes for the same managed identity independent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct InitializeRequestId(Uuid);
+
+impl InitializeRequestId {
+    fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SessionBoundClientContextResolver {
     pub session_bindings: Arc<DashMap<String, SessionBinding>>,
     pub observed_clients: Arc<DashMap<String, ObservedClientInfo>>,
-    pub pending_initializations: Arc<DashMap<usize, ClientContext>>,
+    initialization_contexts: Arc<DashMap<InitializeRequestId, Option<ClientContext>>>,
 }
 
 #[async_trait]
@@ -335,6 +346,40 @@ impl SessionBoundClientContextResolver {
         Self::default()
     }
 
+    fn take_initialization_context(
+        &self,
+        request_id: InitializeRequestId,
+    ) -> Option<ClientContext> {
+        self.initialization_contexts
+            .remove(&request_id)
+            .and_then(|(_, client_context)| client_context)
+    }
+
+    fn store_initialization_context(
+        &self,
+        request_id: InitializeRequestId,
+        client_context: ClientContext,
+    ) -> Result<()> {
+        let mut slot = self
+            .initialization_contexts
+            .get_mut(&request_id)
+            .ok_or_else(|| anyhow!("Managed initialize request is no longer active"))?;
+        if slot.is_some() {
+            return Err(anyhow!("Managed initialize request context is already resolved"));
+        }
+        *slot = Some(client_context);
+        Ok(())
+    }
+
+    pub(crate) fn approve_initialize_context(
+        &self,
+        context: &RequestContext<RoleServer>,
+        client_context: ClientContext,
+    ) -> Result<()> {
+        let request_id = initialize_request_id(context)?;
+        self.store_initialization_context(request_id, client_context)
+    }
+
     fn update_session_binding<F>(
         &self,
         session_id: &str,
@@ -352,6 +397,56 @@ impl SessionBoundClientContextResolver {
     }
 }
 
+struct InitializationContextGuard {
+    resolver: Arc<SessionBoundClientContextResolver>,
+    request_id: InitializeRequestId,
+}
+
+impl Drop for InitializationContextGuard {
+    fn drop(&mut self) {
+        self.resolver.initialization_contexts.remove(&self.request_id);
+    }
+}
+
+pub async fn bind_managed_session_after_initialize(
+    resolver: Arc<SessionBoundClientContextResolver>,
+    mut request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let request_id = InitializeRequestId::new();
+    request.extensions_mut().insert(request_id);
+    resolver.initialization_contexts.insert(request_id, None);
+    let _cleanup_guard = InitializationContextGuard {
+        resolver: resolver.clone(),
+        request_id,
+    };
+    let response = next.run(request).await;
+    let Some(session_id_header) = response.headers().get("mcp-session-id") else {
+        return response;
+    };
+
+    let Some(client_context) = resolver.take_initialization_context(request_id) else {
+        return response;
+    };
+
+    let session_id = match session_id_header.to_str() {
+        Ok(session_id) => session_id,
+        Err(error) => {
+            tracing::error!(error = %error, "Initialize response contained an invalid session identifier");
+            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    if let Err(error) = resolver.bind_session(session_id, &client_context).await {
+        tracing::error!(session_id, error = %error, "Failed to bind managed initialize session");
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    response
+}
+
 #[async_trait]
 impl ManagedClientContextResolver for SessionBoundClientContextResolver {
     async fn resolve_initialize_context(
@@ -364,13 +459,6 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
 
         if let Some(observed) = client_context.observed_client_info.clone() {
             self.observed_clients.insert(client_context.client_id.clone(), observed);
-        }
-
-        if let Some(session_id) = client_context.session_id.clone() {
-            self.bind_session(&session_id, &client_context).await?;
-        } else {
-            let peer_key = peer_context_key(context)?;
-            self.pending_initializations.insert(peer_key, client_context.clone());
         }
 
         Ok(client_context)
@@ -459,26 +547,10 @@ impl ManagedClientContextResolver for SessionBoundClientContextResolver {
         let session_id = extract_session_id(parts)
             .ok_or_else(|| anyhow!("Managed downstream session is required before request context resolution"))?;
 
-        let peer_key = peer_context_key(context)?;
-        let pending_client_context = self
-            .pending_initializations
-            .get(&peer_key)
-            .map(|entry| entry.clone())
-            .ok_or_else(|| {
-                anyhow!(
-                    "Managed downstream session '{}' has no initialize-bound identity",
-                    session_id
-                )
-            })?;
-        let client_context = resolve_pending_session_context_parts(parts, &pending_client_context)?;
-        self.bind_session(&session_id, &client_context).await?;
-        self.pending_initializations.remove(&peer_key);
-        resolve_bound_request_context_parts(parts, &self.session_bindings)?.ok_or_else(|| {
-            anyhow!(
-                "Managed downstream session '{}' failed to resolve after binding",
-                session_id
-            )
-        })
+        Err(anyhow!(
+            "Managed downstream session '{}' has no initialize-bound identity",
+            session_id
+        ))
     }
 
     async fn unbind_session(
@@ -573,31 +645,6 @@ fn resolve_bound_request_context_parts(
     }))
 }
 
-fn resolve_pending_session_context_parts(
-    parts: &axum::http::request::Parts,
-    initialize_context: &ClientContext,
-) -> Result<ClientContext> {
-    let session_id = extract_session_id(parts)
-        .ok_or_else(|| anyhow!("Managed downstream session is required before request context resolution"))?;
-    validate_request_identity_matches_context(
-        parts,
-        &initialize_context.client_id,
-        initialize_context.profile_id.as_deref(),
-    )?;
-
-    Ok(ClientContext {
-        client_id: initialize_context.client_id.clone(),
-        session_id: Some(session_id),
-        profile_id: initialize_context.profile_id.clone(),
-        config_mode: initialize_context.config_mode.clone(),
-        unify_workspace: initialize_context.unify_workspace.clone(),
-        surface_fingerprint: initialize_context.surface_fingerprint.clone(),
-        transport: transport_from_parts(Some(parts)),
-        source: ClientIdentitySource::SessionBinding,
-        observed_client_info: initialize_context.observed_client_info.clone(),
-    })
-}
-
 fn validate_request_identity_matches_context(
     parts: &axum::http::request::Parts,
     client_id: &str,
@@ -629,12 +676,13 @@ fn validate_request_identity_matches_context(
     }
 }
 
-fn peer_context_key(context: &RequestContext<RoleServer>) -> Result<usize> {
-    let peer_info: &InitializeRequestParams = context
-        .peer
-        .peer_info()
-        .ok_or_else(|| anyhow!("Managed downstream peer is missing initialize peer info"))?;
-    Ok(std::ptr::from_ref(peer_info) as usize)
+fn initialize_request_id(context: &RequestContext<RoleServer>) -> Result<InitializeRequestId> {
+    context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<InitializeRequestId>())
+        .copied()
+        .ok_or_else(|| anyhow!("Managed initialize request is missing HTTP request correlation"))
 }
 
 fn resolve_managed_context(
@@ -842,6 +890,7 @@ impl UnifiedHttpServer {
     pub async fn start<F, S>(
         &self,
         service_factory: F,
+        client_context_resolver: Arc<SessionBoundClientContextResolver>,
     ) -> Result<()>
     where
         F: Fn() -> S + Clone + Send + Sync + 'static,
@@ -869,8 +918,11 @@ impl UnifiedHttpServer {
             streamable_http_config,
         );
 
-        let combined_router =
-            axum::Router::new().route_service(&self.config.streamable_http_path, streamable_http_service);
+        let combined_router = axum::Router::new()
+            .route_service(&self.config.streamable_http_path, streamable_http_service)
+            .layer(axum::middleware::from_fn(move |request, next| {
+                bind_managed_session_after_initialize(client_context_resolver.clone(), request, next)
+            }));
 
         let listener = tokio::net::TcpListener::bind(self.config.bind_address)
             .await
@@ -905,8 +957,14 @@ impl UnifiedHttpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::{Request, header::HeaderValue};
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode, header::HeaderValue},
+        routing::post,
+    };
     use rmcp::model::{ClientCapabilities, Implementation, ProtocolVersion};
+    use tokio::sync::Barrier;
+    use tower::ServiceExt;
 
     #[test]
     fn unify_direct_resource_access_matches_the_route_kind() {
@@ -1160,81 +1218,6 @@ mod tests {
         assert!(err.to_string().contains("does not match session binding"));
     }
 
-    #[test]
-    fn resolves_pending_session_context_from_initialize_identity() {
-        let initialize_context = ClientContext {
-            client_id: "claude-code".to_string(),
-            session_id: None,
-            profile_id: Some("profile-a".to_string()),
-            config_mode: Some("hosted".to_string()),
-            unify_workspace: None,
-            surface_fingerprint: Some("fp-123".to_string()),
-            transport: ClientTransport::StreamableHttp,
-            source: ClientIdentitySource::ManagedQuery,
-            observed_client_info: Some(ObservedClientInfo {
-                name: "bridge".to_string(),
-                version: "1.0.0".to_string(),
-                title: None,
-                description: None,
-                website_url: None,
-                logo_url: None,
-            }),
-        };
-
-        let parts = build_parts("/mcp", Some("sess-123"), None, None);
-        let context = resolve_pending_session_context_parts(&parts, &initialize_context).expect("pending context");
-
-        assert_eq!(context.client_id, "claude-code");
-        assert_eq!(context.session_id.as_deref(), Some("sess-123"));
-        assert_eq!(context.profile_id.as_deref(), Some("profile-a"));
-        assert_eq!(context.surface_fingerprint.as_deref(), Some("fp-123"));
-        assert_eq!(context.source, ClientIdentitySource::SessionBinding);
-        assert_eq!(
-            context.observed_client_info.as_ref().map(|info| info.name.as_str()),
-            Some("bridge")
-        );
-    }
-
-    #[test]
-    fn rejects_pending_session_context_client_id_mismatch() {
-        let initialize_context = ClientContext {
-            client_id: "claude-code".to_string(),
-            session_id: None,
-            profile_id: Some("profile-a".to_string()),
-            config_mode: Some("hosted".to_string()),
-            unify_workspace: None,
-            surface_fingerprint: Some("fp-123".to_string()),
-            transport: ClientTransport::StreamableHttp,
-            source: ClientIdentitySource::ManagedQuery,
-            observed_client_info: None,
-        };
-
-        let parts = build_parts("/mcp?client_id=cursor", Some("sess-123"), None, None);
-        let err = resolve_pending_session_context_parts(&parts, &initialize_context)
-            .expect_err("client mismatch should fail");
-        assert!(err.to_string().contains("does not match session binding"));
-    }
-
-    #[test]
-    fn rejects_pending_session_context_profile_id_mismatch() {
-        let initialize_context = ClientContext {
-            client_id: "claude-code".to_string(),
-            session_id: None,
-            profile_id: Some("profile-a".to_string()),
-            config_mode: Some("hosted".to_string()),
-            unify_workspace: None,
-            surface_fingerprint: Some("fp-123".to_string()),
-            transport: ClientTransport::StreamableHttp,
-            source: ClientIdentitySource::ManagedQuery,
-            observed_client_info: None,
-        };
-
-        let parts = build_parts("/mcp?profile_id=profile-b", Some("sess-123"), None, None);
-        let err = resolve_pending_session_context_parts(&parts, &initialize_context)
-            .expect_err("profile mismatch should fail");
-        assert!(err.to_string().contains("does not match session binding"));
-    }
-
     #[tokio::test]
     async fn rejects_rebinding_same_session_to_different_client() {
         let resolver = SessionBoundClientContextResolver::new();
@@ -1462,31 +1445,270 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pending_initializations_stores_context_without_session_id() {
-        let resolver = SessionBoundClientContextResolver::new();
-        let context = ClientContext {
+    fn pending_client_context(observed_name: &str) -> ClientContext {
+        ClientContext {
             client_id: "pending-client".to_string(),
-            session_id: None, // No session ID
-            profile_id: None,
+            session_id: None,
+            profile_id: Some("profile-a".to_string()),
             config_mode: Some("hosted".to_string()),
             unify_workspace: None,
             surface_fingerprint: None,
-            transport: ClientTransport::Other,
-            source: ClientIdentitySource::ManagedQuery,
-            observed_client_info: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: Some(ObservedClientInfo {
+                name: observed_name.to_string(),
+                version: "1.0.0".to_string(),
+                title: None,
+                description: None,
+                website_url: None,
+                logo_url: None,
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_middleware_correlates_concurrent_requests() {
+        let resolver = Arc::new(SessionBoundClientContextResolver::new());
+        let handler_resolver = resolver.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let handler_barrier = barrier.clone();
+        let app = axum::Router::new()
+            .route(
+                "/mcp",
+                post(move |request: Request<Body>| {
+                    let resolver = handler_resolver.clone();
+                    let barrier = handler_barrier.clone();
+                    async move {
+                        let request_id = *request
+                            .extensions()
+                            .get::<InitializeRequestId>()
+                            .expect("middleware request correlation");
+                        let session_id = request
+                            .headers()
+                            .get("x-test-session-id")
+                            .and_then(|value| value.to_str().ok())
+                            .expect("test session id")
+                            .to_string();
+                        let observed_name = request
+                            .headers()
+                            .get("x-test-observed-name")
+                            .and_then(|value| value.to_str().ok())
+                            .expect("test observed name");
+                        resolver
+                            .store_initialization_context(request_id, pending_client_context(observed_name))
+                            .expect("store initialize context");
+                        barrier.wait().await;
+
+                        axum::http::Response::builder()
+                            .header("mcp-session-id", session_id)
+                            .body(Body::empty())
+                            .expect("initialize response")
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn({
+                let resolver = resolver.clone();
+                move |request, next| bind_managed_session_after_initialize(resolver.clone(), request, next)
+            }));
+
+        let request_a = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("x-test-session-id", "sess-pending-a")
+            .header("x-test-observed-name", "client-a")
+            .body(Body::empty())
+            .expect("first initialize request");
+        let request_b = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("x-test-session-id", "sess-pending-b")
+            .header("x-test-observed-name", "client-b")
+            .body(Body::empty())
+            .expect("second initialize request");
+
+        let (response_a, response_b) = tokio::join!(app.clone().oneshot(request_a), app.oneshot(request_b));
+        assert_eq!(response_a.expect("first response").status(), StatusCode::OK);
+        assert_eq!(response_b.expect("second response").status(), StatusCode::OK);
+        assert!(resolver.initialization_contexts.is_empty());
+        assert_eq!(
+            resolver
+                .session_bindings
+                .get("sess-pending-a")
+                .and_then(|binding| binding.observed_client_info.clone())
+                .map(|info| info.name),
+            Some("client-a".to_string())
+        );
+        assert_eq!(
+            resolver
+                .session_bindings
+                .get("sess-pending-b")
+                .and_then(|binding| binding.observed_client_info.clone())
+                .map(|info| info.name),
+            Some("client-b".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_middleware_discards_context_without_session_response() {
+        let resolver = Arc::new(SessionBoundClientContextResolver::new());
+        let handler_resolver = resolver.clone();
+        let app = axum::Router::new()
+            .route(
+                "/mcp",
+                post(move |request: Request<Body>| {
+                    let resolver = handler_resolver.clone();
+                    async move {
+                        let request_id = *request
+                            .extensions()
+                            .get::<InitializeRequestId>()
+                            .expect("middleware request correlation");
+                        resolver
+                            .store_initialization_context(request_id, pending_client_context("rejected-client"))
+                            .expect("store initialize context");
+                        StatusCode::BAD_REQUEST
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn({
+                let resolver = resolver.clone();
+                move |request, next| bind_managed_session_after_initialize(resolver.clone(), request, next)
+            }));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .body(Body::empty())
+                    .expect("initialize request"),
+            )
+            .await
+            .expect("initialize response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(resolver.initialization_contexts.is_empty());
+        assert!(resolver.session_bindings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn initialize_middleware_preserves_uncommitted_response() {
+        let resolver = Arc::new(SessionBoundClientContextResolver::new());
+        let app = axum::Router::new()
+            .route(
+                "/mcp",
+                post(|| async {
+                    axum::http::Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("mcp-session-id", "orphan-session")
+                        .body(Body::empty())
+                        .expect("initialize response")
+                }),
+            )
+            .layer(axum::middleware::from_fn({
+                let resolver = resolver.clone();
+                move |request, next| bind_managed_session_after_initialize(resolver.clone(), request, next)
+            }));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .body(Body::empty())
+                    .expect("initialize request"),
+            )
+            .await
+            .expect("initialize response");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(resolver.initialization_contexts.is_empty());
+        assert!(resolver.session_bindings.is_empty());
+    }
+
+    #[derive(Clone)]
+    struct RejectingInitializeServer;
+
+    impl rmcp::ServerHandler for RejectingInitializeServer {
+        async fn initialize(
+            &self,
+            _request: InitializeRequestParams,
+            _context: RequestContext<RoleServer>,
+        ) -> std::result::Result<rmcp::model::ServerInfo, rmcp::ErrorData> {
+            Err(rmcp::ErrorData::invalid_request(
+                "initialize rejected by policy".to_string(),
+                None,
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn initialize_middleware_preserves_rmcp_error_response_with_session_header() {
+        let resolver = Arc::new(SessionBoundClientContextResolver::new());
+        let service = StreamableHttpService::new(
+            || Ok(RejectingInitializeServer),
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default()
+                .with_stateful_mode(true)
+                .with_json_response(false),
+        );
+        let app = axum::Router::new()
+            .route_service("/mcp", service)
+            .layer(axum::middleware::from_fn({
+                let resolver = resolver.clone();
+                move |request, next| bind_managed_session_after_initialize(resolver.clone(), request, next)
+            }));
+        let request = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(axum::http::header::HOST, "localhost:8000")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(Body::from(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "clientInfo": { "name": "rejected-client", "version": "1.0.0" }
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("initialize request");
+
+        let response = app.oneshot(request).await.expect("initialize response");
+        let status = response.status();
+        let has_session_id = response.headers().contains_key("mcp-session-id");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read initialize error body");
+        let body = String::from_utf8_lossy(&body);
+        assert_eq!(status, StatusCode::OK, "unexpected response body: {body}");
+        assert!(has_session_id);
+        assert!(body.contains("initialize rejected by policy"));
+        assert!(resolver.initialization_contexts.is_empty());
+        assert!(resolver.session_bindings.is_empty());
+    }
+
+    #[test]
+    fn initialize_context_cannot_outlive_request_guard() {
+        let resolver = Arc::new(SessionBoundClientContextResolver::new());
+        let request_id = InitializeRequestId::new();
+        resolver.initialization_contexts.insert(request_id, None);
+        let cleanup_guard = InitializationContextGuard {
+            resolver: resolver.clone(),
+            request_id,
         };
 
-        // Use a fake peer_key (in real code this comes from peer pointer)
-        let peer_key = 0x1234_usize;
-        resolver.pending_initializations.insert(peer_key, context.clone());
+        drop(cleanup_guard);
 
-        assert!(
-            resolver.pending_initializations.contains_key(&peer_key),
-            "pending context should be stored"
-        );
-        let stored = resolver.pending_initializations.get(&peer_key).expect("should exist");
-        assert_eq!(stored.client_id, "pending-client");
+        let error = resolver
+            .store_initialization_context(request_id, pending_client_context("late-client"))
+            .expect_err("late initialize context must not recreate a completed request slot");
+        assert!(error.to_string().contains("no longer active"));
+        assert!(resolver.initialization_contexts.is_empty());
     }
 
     #[tokio::test]

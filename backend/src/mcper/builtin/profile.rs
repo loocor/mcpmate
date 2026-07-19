@@ -81,7 +81,7 @@ impl ProfileService {
 
         summaries.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&summaries).context("Failed to serialize response")?,
         )]))
     }
@@ -116,7 +116,7 @@ impl ProfileService {
             resources: detail_components.resources,
         };
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&preview).context("Failed to serialize response")?,
         )]))
     }

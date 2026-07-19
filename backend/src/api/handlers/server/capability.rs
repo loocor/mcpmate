@@ -254,10 +254,7 @@ mod tests {
     fn management_resource_template_projection_accepts_rmcp_wire_shape() {
         let upstream_template = "demo://resource/dynamic/text/{resourceId}";
         let canonical_template = "mcpmate://resources/template/everything/demo/dynamic/text/{resourceId}".to_string();
-        let template = rmcp::model::ResourceTemplate {
-            raw: rmcp::model::RawResourceTemplate::new(canonical_template.clone(), "Dynamic Text Resource"),
-            annotations: None,
-        };
+        let template = rmcp::model::ResourceTemplate::new(canonical_template.clone(), "Dynamic Text Resource");
         let wire_item = serde_json::to_value(template).expect("serialize RMCP resource template");
 
         assert_eq!(wire_item["uriTemplate"], canonical_template);
@@ -1322,7 +1319,7 @@ pub async fn extract_resources_capability(
         .resources
         .into_iter()
         .map(|r| {
-            let raw = &*r;
+            let raw = &r;
             let resource_info = crate::core::cache::CachedResourceInfo {
                 uri: raw.uri.clone(),
                 name: Some(raw.name.clone()),

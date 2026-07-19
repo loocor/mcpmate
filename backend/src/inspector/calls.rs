@@ -7,8 +7,8 @@ use std::{
 use rmcp::{
     RoleClient,
     model::{
-        CancelledNotification, CancelledNotificationParam, LoggingMessageNotificationParam, ProgressNotificationParam,
-        ProgressToken, RequestId, ServerResult,
+        CancelledNotification, CancelledNotificationParam, ProgressNotificationParam, ProgressToken, RequestId,
+        ServerResult,
     },
     service::{RequestHandle, ServiceError},
 };
@@ -22,6 +22,7 @@ use crate::api::models::inspector::InspectorMode;
 const BROADCAST_BUFFER: usize = 256;
 const CANCEL_BUFFER: usize = 4;
 
+#[expect(deprecated, reason = "Inspector preserves negotiated MCP logging events")]
 fn logging_level_to_str(level: &rmcp::model::LoggingLevel) -> &'static str {
     match level {
         rmcp::model::LoggingLevel::Debug => "debug",
@@ -334,10 +335,11 @@ impl InspectorCallRegistry {
         }
     }
 
+    #[expect(deprecated, reason = "Inspector preserves negotiated MCP logging events")]
     pub async fn emit_log(
         &self,
         token: Option<&ProgressToken>,
-        params: &LoggingMessageNotificationParam,
+        params: &rmcp::model::LoggingMessageNotificationParam,
     ) {
         let Some(token) = token else {
             return;
@@ -498,10 +500,10 @@ async fn call_worker(
                 None => None,
             };
 
-            let cancel_notification = CancelledNotification::new(CancelledNotificationParam {
-                request_id: request_id.clone(),
-                reason: reason.clone(),
-            });
+            let cancel_notification = CancelledNotification::new(CancelledNotificationParam::new(
+                Some(request_id.clone()),
+                reason.clone(),
+            ));
             let _ = peer.send_notification(cancel_notification.into()).await;
 
             InspectorTerminal::Cancelled { reason, server_id }
@@ -581,10 +583,7 @@ async fn call_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmcp::model::{
-        AnnotateAble, CallToolResult, Content, GetPromptResult, PromptMessage, PromptMessageContent, PromptMessageRole,
-        RawResource, ResourceContents,
-    };
+    use rmcp::model::{CallToolResult, ContentBlock, GetPromptResult, PromptMessage, Resource, ResourceContents, Role};
 
     async fn external_projection() -> InspectorResultProjection {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -611,11 +610,11 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_projection_rewrites_typed_resource_links() {
-        let mut result = CallToolResult::success(vec![Content::resource_link(RawResource::new(
+        let mut result = CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(
             "file:///guide.md",
             "guide",
         ))]);
-        result.content.push(Content::resource(ResourceContents::text(
+        result.content.push(ContentBlock::resource(ResourceContents::text(
             "embedded",
             "file:///embedded.md",
         )));
@@ -631,16 +630,17 @@ mod tests {
                 assert!(uri.starts_with("mcpmate://resources/docs/"));
             }
             ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            _ => panic!("expected known resource contents"),
         }
     }
 
     #[tokio::test]
     async fn native_projection_preserves_upstream_resource_links() {
-        let mut result = CallToolResult::success(vec![Content::resource_link(RawResource::new(
+        let mut result = CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(
             "file:///guide.md",
             "guide",
         ))]);
-        result.content.push(Content::resource(ResourceContents::text(
+        result.content.push(ContentBlock::resource(ResourceContents::text(
             "embedded",
             "file:///embedded.md",
         )));
@@ -656,17 +656,15 @@ mod tests {
         match &result.content[1].as_resource().expect("embedded resource").resource {
             ResourceContents::TextResourceContents { uri, .. } => assert_eq!(uri, "file:///embedded.md"),
             ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            _ => panic!("expected known resource contents"),
         }
     }
 
     fn prompt_result_with_typed_resources() -> GetPromptResult {
         GetPromptResult::new(vec![
-            PromptMessage::new_resource_link(
-                PromptMessageRole::User,
-                RawResource::new("file:///prompt-link.md", "prompt link").no_annotation(),
-            ),
+            PromptMessage::new_resource_link(Role::User, Resource::new("file:///prompt-link.md", "prompt link")),
             PromptMessage::new_resource(
-                PromptMessageRole::Assistant,
+                Role::Assistant,
                 "file:///prompt-embedded.md".to_string(),
                 Some("text/markdown".to_string()),
                 Some("embedded".to_string()),
@@ -685,17 +683,18 @@ mod tests {
             .expect("project proxy prompt");
 
         match &result.messages[0].content {
-            PromptMessageContent::ResourceLink { link } => {
+            ContentBlock::ResourceLink(link) => {
                 assert!(link.uri.starts_with("mcpmate://resources/docs/"));
             }
             _ => panic!("expected prompt resource link"),
         }
         match &result.messages[1].content {
-            PromptMessageContent::Resource { resource } => match &resource.resource {
+            ContentBlock::Resource(resource) => match &resource.resource {
                 ResourceContents::TextResourceContents { uri, .. } => {
                     assert!(uri.starts_with("mcpmate://resources/docs/"));
                 }
                 ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+                _ => panic!("expected known resource contents"),
             },
             _ => panic!("expected embedded prompt resource"),
         }
@@ -709,15 +708,16 @@ mod tests {
             .expect("preserve native prompt");
 
         match &result.messages[0].content {
-            PromptMessageContent::ResourceLink { link } => assert_eq!(link.uri, "file:///prompt-link.md"),
+            ContentBlock::ResourceLink(link) => assert_eq!(link.uri, "file:///prompt-link.md"),
             _ => panic!("expected prompt resource link"),
         }
         match &result.messages[1].content {
-            PromptMessageContent::Resource { resource } => match &resource.resource {
+            ContentBlock::Resource(resource) => match &resource.resource {
                 ResourceContents::TextResourceContents { uri, .. } => {
                     assert_eq!(uri, "file:///prompt-embedded.md");
                 }
                 ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+                _ => panic!("expected known resource contents"),
             },
             _ => panic!("expected embedded prompt resource"),
         }

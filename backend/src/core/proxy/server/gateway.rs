@@ -1,4 +1,7 @@
-use super::common::{ClientContext, ManagedClientContextResolver, SessionBoundClientContextResolver};
+use super::common::{
+    ClientContext, ManagedClientContextResolver, SessionBoundClientContextResolver,
+    bind_managed_session_after_initialize,
+};
 use crate::{
     audit::AuditService,
     clients::models::FirstContactBehavior,
@@ -38,6 +41,14 @@ pub struct DownstreamRoute {
     pub client_id: String,
     pub surface_fingerprint: Option<String>,
     pub peer: rmcp::service::Peer<rmcp::RoleServer>,
+}
+
+fn resolve_cancelled_route<T>(
+    request_id: Option<&RequestId>,
+    lookup: impl FnOnce(&RequestId) -> Option<T>,
+) -> Option<(RequestId, T)> {
+    let request_id = request_id?;
+    lookup(request_id).map(|route| (request_id.clone(), route))
 }
 
 pub struct ProxyServer {
@@ -879,7 +890,8 @@ impl ProxyServer {
             cancellation_token: self.cancellation_token.clone(),
         };
         let server = super::common::UnifiedHttpServer::with_config(config);
-        let server_handle = tokio::spawn(async move { server.start(factory).await });
+        let client_context_resolver = self.client_context_resolver.clone();
+        let server_handle = tokio::spawn(async move { server.start(factory, client_context_resolver).await });
         crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
             transport_type: TransportType::StreamableHttp,
             ready: true,
@@ -917,7 +929,12 @@ impl ProxyServer {
             rmcp::transport::streamable_http_server::session::local::LocalSessionManager::default(),
         );
         let streamable_service = rmcp::transport::StreamableHttpService::new(factory, session_manager, server_config);
-        let app = axum::Router::new().route_service(path, streamable_service);
+        let resolver = self.client_context_resolver.clone();
+        let app = axum::Router::new()
+            .route_service(path, streamable_service)
+            .layer(axum::middleware::from_fn(move |request, next| {
+                bind_managed_session_after_initialize(resolver.clone(), request, next)
+            }));
         let listener = tokio::net::TcpListener::bind(bind_address)
             .await
             .context("Failed to bind Streamable HTTP server")?;
@@ -970,7 +987,7 @@ impl ProxyServer {
         };
         let peer = peer_ref.clone();
         drop(peer_ref);
-        let param = ResourceUpdatedNotificationParam { uri: uri.to_string() };
+        let param = ResourceUpdatedNotificationParam::new(uri);
         match peer.notify_resource_updated(param).await {
             Ok(()) => true,
             Err(error) => {
@@ -1141,21 +1158,23 @@ impl ProxyServer {
         _server_id: &str,
         param: rmcp::model::CancelledNotificationParam,
     ) -> bool {
-        let Some(route_ref) = self.call_sessions_by_request.get(&param.request_id) else {
+        let Some((request_id, route)) = resolve_cancelled_route(param.request_id.as_ref(), |request_id| {
+            self.call_sessions_by_request
+                .get(request_id)
+                .map(|route_ref| route_ref.clone())
+        }) else {
             return false;
         };
-        let route = route_ref.clone();
-        drop(route_ref);
 
         tracing::trace!(
-            request_id = ?param.request_id,
+            request_id = ?request_id,
             session_id = %route.session_id,
             client_id = %route.client_id,
             reason = ?param.reason,
             "Forwarded cancellation to downstream"
         );
         let mut data = Self::build_base_event_data(&route);
-        data.insert("request_id".to_string(), Value::String(param.request_id.to_string()));
+        data.insert("request_id".to_string(), Value::String(request_id.to_string()));
         crate::audit::interceptor::emit_event(
             self.audit_service.as_ref(),
             crate::audit::interceptor::build_mcp_event(
@@ -1174,13 +1193,17 @@ impl ProxyServer {
             Ok(()) => true,
             Err(error) => {
                 tracing::warn!(session_id = %route.session_id, client_id = %route.client_id, error = %error, "Failed to forward cancellation; removing stale session");
-                self.call_sessions_by_request.remove(&param.request_id);
+                self.call_sessions_by_request.remove(&request_id);
                 self.remove_downstream_session(&route.session_id).await;
                 false
             }
         }
     }
 
+    #[expect(
+        deprecated,
+        reason = "MCPMate preserves negotiated logging forwarding until protocol removal"
+    )]
     pub async fn forward_upstream_log(
         &self,
         _server_id: &str,
@@ -1296,6 +1319,10 @@ impl ServerHandler for ProxyServer {
         let client = self.resolve_initialize_client_context(&context, &request).await?;
         if client.session_id.is_some() {
             self.register_downstream_client(&client, context.peer.clone()).await?;
+        } else {
+            self.client_context_resolver
+                .approve_initialize_context(&context, client.clone())
+                .map_err(|error| self.map_client_context_error(error))?;
         }
 
         let mut data = Map::new();
@@ -1717,6 +1744,46 @@ mod tests {
 
     impl rmcp::ServerHandler for SubscriptionContextServer {}
 
+    #[test]
+    fn upstream_cancellation_without_request_id_fails_closed_before_lookup() {
+        let lookup_attempted = std::cell::Cell::new(false);
+        let result = resolve_cancelled_route::<&str>(None, |_| {
+            lookup_attempted.set(true);
+            Some("unexpected route")
+        });
+
+        assert_eq!(result, None);
+        assert!(!lookup_attempted.get(), "missing IDs must not reach route lookup");
+    }
+
+    #[test]
+    fn upstream_cancellation_routes_only_the_exact_request_id() {
+        let routes = dashmap::DashMap::new();
+        let exact_id = RequestId::String("request-exact".into());
+        let other_id = RequestId::String("request-other".into());
+        routes.insert(exact_id.clone(), "exact route");
+        routes.insert(other_id, "other route");
+
+        let resolved = resolve_cancelled_route(Some(&exact_id), |request_id| {
+            routes.get(request_id).map(|route| *route.value())
+        });
+
+        assert_eq!(resolved, Some((exact_id, "exact route")));
+    }
+
+    #[test]
+    fn upstream_cancellation_with_unknown_request_id_does_not_route() {
+        let routes = dashmap::DashMap::new();
+        routes.insert(RequestId::String("request-known".into()), "known route");
+        let unknown_id = RequestId::String("request-unknown".into());
+
+        let resolved = resolve_cancelled_route(Some(&unknown_id), |request_id| {
+            routes.get(request_id).map(|route| *route.value())
+        });
+
+        assert_eq!(resolved, None);
+    }
+
     #[derive(Clone)]
     struct SubscriptionResourceServer;
 
@@ -2074,6 +2141,7 @@ mod tests {
                 assert_eq!(text, "read:fixture://documents/guide.md");
             }
             rmcp::model::ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            _ => panic!("expected known resource contents"),
         }
 
         let unselected = crate::core::capability::resource_uri::encode_resource_template(

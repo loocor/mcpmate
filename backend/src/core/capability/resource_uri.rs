@@ -977,6 +977,7 @@ async fn rewrite_resource_contents(
             )
             .await?;
         }
+        _ => {}
     }
     Ok(())
 }
@@ -988,11 +989,11 @@ pub(crate) async fn rewrite_call_tool_result(
     result: &mut rmcp::model::CallToolResult,
 ) -> Result<()> {
     for content in &mut result.content {
-        match &mut content.raw {
-            rmcp::model::RawContent::Resource(resource) => {
+        match content {
+            rmcp::model::ContentBlock::Resource(resource) => {
                 rewrite_resource_contents(registry_pool, server_id, namespace, &mut resource.resource).await?;
             }
-            rmcp::model::RawContent::ResourceLink(resource) => {
+            rmcp::model::ContentBlock::ResourceLink(resource) => {
                 resource.uri = crate::core::capability::resource_registry::issue_resource_route(
                     registry_pool,
                     server_id,
@@ -1001,9 +1002,10 @@ pub(crate) async fn rewrite_call_tool_result(
                 )
                 .await?;
             }
-            rmcp::model::RawContent::Text(_)
-            | rmcp::model::RawContent::Image(_)
-            | rmcp::model::RawContent::Audio(_) => {}
+            rmcp::model::ContentBlock::Text(_)
+            | rmcp::model::ContentBlock::Image(_)
+            | rmcp::model::ContentBlock::Audio(_) => {}
+            _ => {}
         }
     }
     Ok(())
@@ -1017,10 +1019,10 @@ pub(crate) async fn rewrite_get_prompt_result(
 ) -> Result<()> {
     for message in &mut result.messages {
         match &mut message.content {
-            rmcp::model::PromptMessageContent::Resource { resource } => {
+            rmcp::model::ContentBlock::Resource(resource) => {
                 rewrite_resource_contents(registry_pool, server_id, namespace, &mut resource.resource).await?;
             }
-            rmcp::model::PromptMessageContent::ResourceLink { link } => {
+            rmcp::model::ContentBlock::ResourceLink(link) => {
                 link.uri = crate::core::capability::resource_registry::issue_resource_route(
                     registry_pool,
                     server_id,
@@ -1029,7 +1031,10 @@ pub(crate) async fn rewrite_get_prompt_result(
                 )
                 .await?;
             }
-            rmcp::model::PromptMessageContent::Text { .. } | rmcp::model::PromptMessageContent::Image { .. } => {}
+            rmcp::model::ContentBlock::Text(_)
+            | rmcp::model::ContentBlock::Image(_)
+            | rmcp::model::ContentBlock::Audio(_) => {}
+            _ => {}
         }
     }
     Ok(())
@@ -1476,18 +1481,39 @@ mod tests {
 
     #[tokio::test]
     async fn rewrites_only_typed_embedded_resource_content_in_tool_results() {
-        use rmcp::model::{CallToolResult, Content, Icon, RawResource, ResourceContents};
+        use rmcp::model::{
+            Annotations, AudioContent, CallToolResult, ContentBlock, Icon, Meta, Resource, ResourceContents, Role,
+            TextContent,
+        };
+
+        let annotations = Annotations::default()
+            .with_audience(vec![Role::User])
+            .with_priority(0.75);
+        let mut meta = Meta::new();
+        meta.0.insert("source".to_string(), serde_json::json!("upstream"));
 
         let mut result = CallToolResult::structured(serde_json::json!({
             "url": "file:///structured.json"
         }));
         result.content = vec![
-            Content::resource_link(
-                RawResource::new("file:///linked.md", "linked")
-                    .with_icons(vec![Icon::new("https://example.com/icon.png")]),
+            ContentBlock::resource_link(
+                Resource::new("file:///linked.md", "linked")
+                    .with_description("Linked resource at file:///description.md")
+                    .with_icons(vec![Icon::new("https://example.com/icon.png")])
+                    .with_meta(meta.clone())
+                    .with_annotations(annotations.clone()),
             ),
-            Content::resource(ResourceContents::text("embedded", "file:///embedded.md")),
-            Content::text("file:///plain-text.md"),
+            ContentBlock::resource(ResourceContents::text("embedded", "file:///embedded.md")),
+            ContentBlock::Text(
+                TextContent::new("file:///plain-text.md")
+                    .with_meta(meta.clone())
+                    .with_annotations(annotations.clone()),
+            ),
+            ContentBlock::Audio(
+                AudioContent::new("file:///audio-data.wav", "audio/wav")
+                    .with_meta(meta.clone())
+                    .with_annotations(annotations.clone()),
+            ),
         ];
 
         let pool = projection_pool().await;
@@ -1503,6 +1529,22 @@ mod tests {
             result.content[0].as_resource_link().expect("resource link").icons,
             Some(vec![Icon::new("https://example.com/icon.png")])
         );
+        assert_eq!(
+            result.content[0]
+                .as_resource_link()
+                .expect("resource link")
+                .description
+                .as_deref(),
+            Some("Linked resource at file:///description.md")
+        );
+        assert_eq!(
+            result.content[0].as_resource_link().expect("resource link").meta,
+            Some(meta.clone())
+        );
+        assert_eq!(
+            result.content[0].as_resource_link().expect("resource link").annotations,
+            Some(annotations.clone())
+        );
         match &result.content[1].as_resource().expect("embedded resource").resource {
             ResourceContents::TextResourceContents { uri, text, .. } => {
                 assert_eq!(
@@ -1512,8 +1554,23 @@ mod tests {
                 assert_eq!(text, "embedded");
             }
             ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            _ => panic!("expected known resource contents"),
         }
         assert_eq!(result.content[2].as_text().expect("text").text, "file:///plain-text.md");
+        assert_eq!(result.content[2].as_text().expect("text").meta, Some(meta.clone()));
+        assert_eq!(
+            result.content[2].as_text().expect("text").annotations,
+            Some(annotations.clone())
+        );
+        assert_eq!(
+            result.content[3].as_audio().expect("audio").data,
+            "file:///audio-data.wav"
+        );
+        assert_eq!(result.content[3].as_audio().expect("audio").meta, Some(meta));
+        assert_eq!(
+            result.content[3].as_audio().expect("audio").annotations,
+            Some(annotations)
+        );
         assert_eq!(
             result.structured_content,
             Some(serde_json::json!({"url": "file:///structured.json"}))
@@ -1522,16 +1579,13 @@ mod tests {
 
     #[tokio::test]
     async fn rewrites_only_typed_embedded_resource_content_in_prompt_results() {
-        use rmcp::model::{
-            AnnotateAble, GetPromptResult, PromptMessage, PromptMessageContent, PromptMessageRole, RawResource,
-            ResourceContents,
-        };
+        use rmcp::model::{ContentBlock, GetPromptResult, PromptMessage, Resource, ResourceContents, Role};
 
-        let link = RawResource::new("file:///linked.md", "linked").no_annotation();
+        let link = Resource::new("file:///linked.md", "linked");
         let mut result = GetPromptResult::new(vec![
-            PromptMessage::new_resource_link(PromptMessageRole::User, link),
+            PromptMessage::new_resource_link(Role::User, link),
             PromptMessage::new_resource(
-                PromptMessageRole::Assistant,
+                Role::Assistant,
                 "file:///embedded.md".to_string(),
                 Some("text/plain".to_string()),
                 Some("embedded".to_string()),
@@ -1539,7 +1593,7 @@ mod tests {
                 None,
                 None,
             ),
-            PromptMessage::new_text(PromptMessageRole::User, "file:///plain-text.md"),
+            PromptMessage::new_text(Role::User, "file:///plain-text.md"),
         ]);
 
         let pool = projection_pool().await;
@@ -1548,14 +1602,14 @@ mod tests {
             .expect("rewrite prompt result");
 
         match &result.messages[0].content {
-            PromptMessageContent::ResourceLink { link } => assert_eq!(
+            ContentBlock::ResourceLink(link) => assert_eq!(
                 link.uri,
                 encode_resource_uri("docs", "file:///linked.md").expect("encode link")
             ),
             _ => panic!("expected resource link"),
         }
         match &result.messages[1].content {
-            PromptMessageContent::Resource { resource } => match &resource.resource {
+            ContentBlock::Resource(resource) => match &resource.resource {
                 ResourceContents::TextResourceContents { uri, text, .. } => {
                     assert_eq!(
                         uri,
@@ -1564,18 +1618,19 @@ mod tests {
                     assert_eq!(text, "embedded");
                 }
                 ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+                _ => panic!("expected known resource contents"),
             },
             _ => panic!("expected embedded resource"),
         }
         match &result.messages[2].content {
-            PromptMessageContent::Text { text } => assert_eq!(text, "file:///plain-text.md"),
+            ContentBlock::Text(text) => assert_eq!(text.text, "file:///plain-text.md"),
             _ => panic!("expected text"),
         }
     }
 
     #[tokio::test]
     async fn registry_projection_reuses_listed_and_issues_unlisted_tool_resources() {
-        use rmcp::model::{CallToolResult, Content, RawResource, ResourceContents};
+        use rmcp::model::{CallToolResult, ContentBlock, Resource, ResourceContents};
 
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -1608,15 +1663,15 @@ mod tests {
             "url": "demo://resource/structured.json"
         }));
         result.content = vec![
-            Content::resource_link(RawResource::new(
+            ContentBlock::resource_link(Resource::new(
                 "demo://resource/static/document/architecture.md",
                 "listed",
             )),
-            Content::resource(ResourceContents::text(
+            ContentBlock::resource(ResourceContents::text(
                 "generated",
                 "demo://resource/generated/report.md",
             )),
-            Content::text("demo://resource/plain-text.md"),
+            ContentBlock::text("demo://resource/plain-text.md"),
         ];
 
         rewrite_call_tool_result(&pool, "server-a", "everything", &mut result)
@@ -1632,6 +1687,7 @@ mod tests {
                 assert_eq!(uri, "mcpmate://resources/everything/demo/generated/report.md");
             }
             ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            _ => panic!("expected known resource contents"),
         }
         assert_eq!(
             result.content[2].as_text().expect("plain text").text,

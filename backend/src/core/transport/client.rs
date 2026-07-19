@@ -85,14 +85,23 @@ impl ClientHandler for UpstreamClientHandler {
             reason = ?params.reason,
             "Upstream request cancelled"
         );
+        let Some(request_id) = params.request_id.as_ref() else {
+            tracing::warn!(
+                server = %self.server_label,
+                reason = ?params.reason,
+                "Ignoring upstream cancellation without a request ID"
+            );
+            return;
+        };
         if let Some(server_id) = self.server_id.get() {
             if let Some(proxy_server) = global_proxy_server() {
                 let _ = proxy_server.forward_upstream_cancelled(server_id, params.clone()).await;
             }
         }
-        let _ = crate::inspector::service::inspector_forward_cancel(&params.request_id, params.reason.clone()).await;
+        let _ = crate::inspector::service::inspector_forward_cancel(request_id, params.reason.clone()).await;
     }
 
+    #[expect(deprecated, reason = "MCPMate preserves negotiated upstream logging notifications")]
     async fn on_logging_message(
         &self,
         params: rmcp::model::LoggingMessageNotificationParam,

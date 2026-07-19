@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt, PromptMessage,
-    PromptMessageRole, Tool,
+    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, Prompt, PromptMessage, Role, Tool,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -78,7 +77,7 @@ impl ClientService {
             },
         };
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&result).context("Failed to serialize client configuration response")?,
         )]))
     }
@@ -102,7 +101,7 @@ impl ClientService {
             .map_err(|error| anyhow!(error.to_string()))?
             .selected_profile_ids;
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
@@ -143,7 +142,7 @@ impl ClientService {
             .map_err(|error| anyhow!(error.to_string()))?
             .selected_profile_ids;
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
@@ -186,7 +185,7 @@ impl ClientService {
             .map_err(|error| anyhow!(error.to_string()))?
             .selected_profile_ids;
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&serde_json::json!({
                 "success": true,
                     "message": format!(
@@ -239,7 +238,7 @@ impl ClientService {
             resources: detail_components.resources,
         };
 
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&details).context("Failed to serialize custom profile details")?,
         )]))
     }
@@ -281,7 +280,7 @@ impl ClientService {
             client_id = context.client_id,
         );
 
-        GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
+        GetPromptResult::new(vec![PromptMessage::new_text(Role::User, content)])
             .with_description("Unify Mode guide for the current client")
     }
 
@@ -318,7 +317,7 @@ impl ClientService {
             next_action = next_action,
         );
 
-        GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, content)])
+        GetPromptResult::new(vec![PromptMessage::new_text(Role::User, content)])
             .with_description("Recommended Unify Mode next actions for the current client")
     }
 }

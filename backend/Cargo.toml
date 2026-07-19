@@ -52,7 +52,7 @@ reqwest = { version = "0.13", features = [
   "stream",
   "rustls",
 ], default-features = false }
-rmcp = { version = "1.7.0", features = [
+rmcp = { version = "=2.2.0", features = [
   "__reqwest",
   "auth",
   "client",
