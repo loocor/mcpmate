@@ -1,5 +1,38 @@
 [
 	{
+		"version": "0.3.5",
+		"date": "2026-07-18",
+		"highlights": [
+			"MCPMate v0.3.5-beta は、管理対象の MCP 環境における identity、routing、distribution の境界を強化します。Server capability と Resource は安定した MCPMate identity の背後で正確な upstream ownership を保持し、Resource Template の read は backend が展開し、LLM access は設定可能な Provider に移行しました。Browser import と release delivery も、より明確な fail-closed workflow になりました。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "LLM access は OpenAI Chat Completions 互換および Anthropic Messages 互換の Provider で管理され、Settings と Secure Store から Provider setup、connectivity test、model discovery、Thinking control、API Key custody を扱えます。"
+			},
+			{
+				"type": "feat",
+				"text": "Browser import は MCPMate に直接 handoff し、desktop app が応答しない場合だけ fallback page を表示します。GitHub と Cursor registry の entry は明示的な transport に正規化され、重複時は Streamable HTTP が優先されます。"
+			},
+			{
+				"type": "feat",
+				"text": "Resource と Resource Template は読みやすく安定した canonical mcpmate://resources address を使い、backend-authoritative な RFC 6570 expansion と、未知または未登録の Proxy address に対する fail-closed routing を提供します。"
+			},
+			{
+				"type": "fix",
+				"text": "OAuth refresh が起動 credential を提供できない場合でも手動の Authorization header が有効なまま保たれ、認証モードの切り替えでは競合する認証ソースが一貫して削除されます。"
+			},
+			{
+				"type": "ref",
+				"text": "Server と capability の identity は API、profile、client exposure、Inspector、Board management で 1 つの canonical pipeline を使い、正確な upstream name を保持しながら namespace conflict を明示的な repair action として扱います。"
+			},
+			{
+				"type": "chore",
+				"text": "Release publishing は stable/beta tag contract と完全な cross-platform asset set を必須にし、download の確定や Homebrew update の handoff 前に exact-tag manifest と tracked redirect を検証します。"
+			}
+		]
+	},
+	{
 		"version": "0.3.4",
 		"date": "2026-06-30",
 		"highlights": [

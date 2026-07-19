@@ -1,5 +1,38 @@
 [
 	{
+		"version": "0.3.5",
+		"date": "2026-07-18",
+		"highlights": [
+			"MCPMate v0.3.5-beta strengthens the identity, routing, and distribution boundaries across managed MCP setups. Server capabilities and Resources now preserve exact upstream ownership behind stable MCPMate identities, Resource Template reads are expanded by the backend, LLM access moves to configurable providers, and browser imports and release delivery follow clearer fail-closed workflows."
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "LLM access is now managed through OpenAI Chat Completions-compatible and Anthropic Messages-compatible providers, with provider setup, connectivity tests, model discovery, thinking controls, and API key custody in Secure Store."
+			},
+			{
+				"type": "feat",
+				"text": "Browser imports now hand off directly to MCPMate, show a fallback only when the desktop app does not respond, and normalize GitHub and Cursor registry entries to explicit transports with Streamable HTTP preferred for duplicates."
+			},
+			{
+				"type": "feat",
+				"text": "Resources and Resource Templates now use readable, stable canonical mcpmate://resources addresses, with backend-authoritative RFC 6570 expansion and fail-closed Proxy routing for unknown or unregistered addresses."
+			},
+			{
+				"type": "fix",
+				"text": "Manual Authorization headers now remain effective when OAuth refresh cannot provide startup credentials, while switching authentication modes clears competing sources consistently."
+			},
+			{
+				"type": "ref",
+				"text": "Server and capability identities now use one canonical pipeline across APIs, profiles, client exposure, Inspector, and Board management, preserving exact upstream names and making namespace conflicts explicit repair actions."
+			},
+			{
+				"type": "chore",
+				"text": "Release publishing now enforces the stable/beta tag contract, requires the complete cross-platform asset set, and validates exact-tag manifests and tracked redirects before finalizing downloads or handing off a Homebrew update."
+			}
+		]
+	},
+	{
 		"version": "0.3.4",
 		"date": "2026-06-30",
 		"highlights": [
