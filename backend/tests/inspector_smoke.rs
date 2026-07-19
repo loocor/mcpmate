@@ -715,12 +715,13 @@ async fn proxy_aggregate_list_keeps_successful_servers_when_one_server_fails() {
     )
     .await;
 
+    // Intentionally use the configured Inspector timeout: this test verifies
+    // partial aggregate success across a real cold start. Timeout behavior is
+    // covered by proxy_list_connect_and_protocol_operation_receive_independent_timeouts.
     let body = read_json_response(
-        app.oneshot(get_request(format!(
-            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=1000"
-        )))
-        .await
-        .expect("aggregate list response"),
+        app.oneshot(get_request(format!("{TOOL_LIST_PATH}?mode=proxy&refresh=true")))
+            .await
+            .expect("aggregate list response"),
     )
     .await;
 

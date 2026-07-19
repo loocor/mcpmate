@@ -2,8 +2,7 @@ use anyhow::anyhow;
 use futures::StreamExt;
 use rmcp::RoleClient;
 use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, ClientRequest, LoggingMessageNotificationParam, ProgressNotificationParam,
-    ProgressToken, RequestId,
+    CallToolRequest, CallToolRequestParams, ClientRequest, ProgressNotificationParam, ProgressToken, RequestId,
 };
 use rmcp::service::{Peer, PeerRequestOptions};
 use serde_json::{Value, json};
@@ -1230,9 +1229,10 @@ pub(crate) async fn inspector_forward_progress(params: &ProgressNotificationPara
     false
 }
 
+#[expect(deprecated, reason = "Inspector preserves negotiated MCP logging events")]
 pub(crate) async fn inspector_forward_log(
     token: Option<&ProgressToken>,
-    params: &LoggingMessageNotificationParam,
+    params: &rmcp::model::LoggingMessageNotificationParam,
 ) -> bool {
     if let Some(registry) = GLOBAL_CALL_REGISTRY.get() {
         registry.emit_log(token, params).await;

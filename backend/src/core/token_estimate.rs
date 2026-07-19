@@ -122,10 +122,10 @@ pub fn estimate_resource_tokens(resource: &Resource) -> u32 {
     }
 
     let estimate = ResourceForEstimate {
-        uri: &resource.raw.uri,
-        name: &resource.raw.name,
-        description: &resource.raw.description,
-        mime_type: &resource.raw.mime_type,
+        uri: &resource.uri,
+        name: &resource.name,
+        description: &resource.description,
+        mime_type: &resource.mime_type,
     };
 
     estimate_json_tokens(&estimate)
@@ -151,10 +151,10 @@ pub fn estimate_resource_template_tokens(template: &ResourceTemplate) -> u32 {
     }
 
     let estimate = TemplateForEstimate {
-        uri_template: &template.raw.uri_template,
-        name: &template.raw.name,
-        description: &template.raw.description,
-        mime_type: &template.raw.mime_type,
+        uri_template: &template.uri_template,
+        name: &template.name,
+        description: &template.description,
+        mime_type: &template.mime_type,
     };
 
     estimate_json_tokens(&estimate)
@@ -415,19 +415,9 @@ mod tests {
 
     #[test]
     fn test_estimate_resource_tokens() {
-        let resource = Resource {
-            raw: rmcp::model::RawResource {
-                uri: "file:///test/resource.txt".to_string(),
-                name: "Test Resource".to_string(),
-                title: None,
-                description: Some("A test resource".to_string()),
-                mime_type: Some("text/plain".to_string()),
-                size: None,
-                icons: None,
-                meta: None,
-            },
-            annotations: None,
-        };
+        let resource = Resource::new("file:///test/resource.txt", "Test Resource")
+            .with_description("A test resource")
+            .with_mime_type("text/plain");
 
         let tokens = estimate_resource_tokens(&resource);
         assert!(tokens > 0, "Resource tokens should be positive");
@@ -435,17 +425,9 @@ mod tests {
 
     #[test]
     fn test_estimate_resource_template_tokens() {
-        let template = ResourceTemplate {
-            raw: rmcp::model::RawResourceTemplate {
-                uri_template: "file:///test/{path}".to_string(),
-                name: "Test Template".to_string(),
-                title: None,
-                description: Some("A test template".to_string()),
-                mime_type: Some("text/plain".to_string()),
-                icons: None,
-            },
-            annotations: None,
-        };
+        let template = ResourceTemplate::new("file:///test/{path}", "Test Template")
+            .with_description("A test template")
+            .with_mime_type("text/plain");
 
         let tokens = estimate_resource_template_tokens(&template);
         assert!(tokens > 0, "Resource template tokens should be positive");

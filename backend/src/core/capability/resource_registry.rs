@@ -343,9 +343,12 @@ pub(crate) async fn rewrite_read_resource_result(
     result: &mut rmcp::model::ReadResourceResult,
 ) -> Result<()> {
     for content in &mut result.contents {
-        let upstream_uri = match content {
+        let Some(upstream_uri) = (match content {
             rmcp::model::ResourceContents::TextResourceContents { uri, .. }
-            | rmcp::model::ResourceContents::BlobResourceContents { uri, .. } => uri,
+            | rmcp::model::ResourceContents::BlobResourceContents { uri, .. } => Some(uri),
+            _ => None,
+        }) else {
+            continue;
         };
         if *upstream_uri == request_route.upstream_uri {
             upstream_uri.clone_from(&request_route.external_uri);
@@ -734,6 +737,7 @@ mod tests {
             .map(|content| match content {
                 rmcp::model::ResourceContents::TextResourceContents { uri, .. }
                 | rmcp::model::ResourceContents::BlobResourceContents { uri, .. } => uri.as_str(),
+                _ => panic!("expected known resource contents"),
             })
             .collect::<Vec<_>>();
         assert_eq!(

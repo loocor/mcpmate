@@ -325,16 +325,15 @@ fn tool_to_capability(tool: rmcp::model::Tool) -> CapabilityItem {
 }
 
 fn resource_to_capability(resource: rmcp::model::Resource) -> CapabilityItem {
-    let rmcp::model::Annotated { raw, .. } = resource;
-    let unique_uri = raw.uri.clone();
+    let unique_uri = resource.uri.clone();
     CapabilityItem::Resource(ResourceCapability {
-        uri: raw.uri,
-        name: Some(raw.name),
-        description: raw.description,
-        mime_type: raw.mime_type,
+        uri: resource.uri,
+        name: Some(resource.name),
+        description: resource.description,
+        mime_type: resource.mime_type,
         unique_uri,
         enabled: true,
-        icons: raw.icons,
+        icons: resource.icons,
     })
 }
 
@@ -366,13 +365,12 @@ fn prompt_to_capability(prompt: rmcp::model::Prompt) -> CapabilityItem {
 }
 
 fn template_to_capability(template: rmcp::model::ResourceTemplate) -> CapabilityItem {
-    let rmcp::model::Annotated { raw, .. } = template;
-    let unique_template = raw.uri_template.clone();
+    let unique_template = template.uri_template.clone();
     CapabilityItem::ResourceTemplate(ResourceTemplateCapability {
-        uri_template: raw.uri_template,
-        name: Some(raw.name),
-        description: raw.description,
-        mime_type: raw.mime_type,
+        uri_template: template.uri_template,
+        name: Some(template.name),
+        description: template.description,
+        mime_type: template.mime_type,
         unique_template,
         enabled: true,
     })
@@ -385,10 +383,7 @@ mod tests {
     #[test]
     fn resource_template_identity_uses_uri_template_not_display_name() {
         let external_template = "mcpmate://resources/template/docs/file/{path}";
-        let template = rmcp::model::ResourceTemplate {
-            raw: rmcp::model::RawResourceTemplate::new(external_template, "File"),
-            annotations: None,
-        };
+        let template = rmcp::model::ResourceTemplate::new(external_template, "File");
 
         let CapabilityItem::ResourceTemplate(projected) = template_to_capability(template) else {
             panic!("expected resource template capability");

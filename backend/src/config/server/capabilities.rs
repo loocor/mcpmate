@@ -285,10 +285,10 @@ pub async fn persist_snapshot_server_info(
 pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnection) -> Result<CapabilitySnapshot> {
     let peer_info = conn.service.as_ref().and_then(|service| service.peer_info());
     let mut snap = CapabilitySnapshot {
-        protocol_version: peer_info.map(|info| info.protocol_version.to_string()),
-        upstream_name: peer_info.map(|info| info.server_info.name.clone()),
-        upstream_title: peer_info.and_then(|info| info.server_info.title.clone()),
-        server_version: peer_info.map(|info| info.server_info.version.clone()),
+        protocol_version: peer_info.as_deref().map(|info| info.protocol_version.to_string()),
+        upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
+        upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
+        server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
         ..Default::default()
     };
 
@@ -352,10 +352,10 @@ pub async fn discover_from_config(
 
     let peer_info = service.peer_info();
     let mut snap = CapabilitySnapshot {
-        protocol_version: peer_info.map(|info| info.protocol_version.to_string()),
-        upstream_name: peer_info.map(|info| info.server_info.name.clone()),
-        upstream_title: peer_info.and_then(|info| info.server_info.title.clone()),
-        server_version: peer_info.map(|info| info.server_info.version.clone()),
+        protocol_version: peer_info.as_deref().map(|info| info.protocol_version.to_string()),
+        upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
+        upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
+        server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
         ..Default::default()
     };
 
@@ -460,10 +460,10 @@ pub async fn discover_from_config_preview(
 
     let peer_info = service.peer_info();
     let mut snap = CapabilitySnapshot {
-        protocol_version: peer_info.map(|info| info.protocol_version.to_string()),
-        upstream_name: peer_info.map(|info| info.server_info.name.clone()),
-        upstream_title: peer_info.and_then(|info| info.server_info.title.clone()),
-        server_version: peer_info.map(|info| info.server_info.version.clone()),
+        protocol_version: peer_info.as_deref().map(|info| info.protocol_version.to_string()),
+        upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
+        upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
+        server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
         ..Default::default()
     };
     for t in &tools {

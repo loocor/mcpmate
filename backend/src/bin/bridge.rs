@@ -12,7 +12,7 @@ use rmcp::{
         CompleteRequestParams, CompleteResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
         InitializeResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
         PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, ServerCapabilities,
-        ServerInfo, SetLevelRequestParams, SubscribeRequestParams, UnsubscribeRequestParams,
+        ServerInfo, SubscribeRequestParams, UnsubscribeRequestParams,
     },
     serve_server,
     service::{NotificationContext, RequestContext, ServiceExt},
@@ -60,6 +60,7 @@ struct NotificationState {
     resource_list_changed: bool,
     cancelled: Vec<CancelledNotificationParam>,
     progress: Vec<rmcp::model::ProgressNotificationParam>,
+    #[expect(deprecated, reason = "Bridge preserves negotiated MCP logging notifications")]
     logging: Vec<rmcp::model::LoggingMessageNotificationParam>,
     resource_updates: Vec<rmcp::model::ResourceUpdatedNotificationParam>,
 }
@@ -86,6 +87,10 @@ impl BridgeNotifications {
         &self,
         param: CancelledNotificationParam,
     ) {
+        if param.request_id.is_none() {
+            tracing::warn!("Ignoring upstream cancellation without a request ID");
+            return;
+        }
         self.inner.lock().await.cancelled.push(param);
     }
 
@@ -96,6 +101,7 @@ impl BridgeNotifications {
         self.inner.lock().await.progress.push(param);
     }
 
+    #[expect(deprecated, reason = "Bridge preserves negotiated MCP logging notifications")]
     async fn push_logging(
         &self,
         param: rmcp::model::LoggingMessageNotificationParam,
@@ -310,9 +316,9 @@ impl BridgeServer {
         match service_result {
             Ok(service) => {
                 let service = Arc::new(service);
-                if let Some(info) = service.peer().peer_info().cloned() {
+                if let Some(info) = service.peer().peer_info() {
                     let mut guard = self.server_info.write().expect("server_info poisoned");
-                    *guard = Some(info);
+                    *guard = Some(info.as_ref().clone());
                 }
                 self.runtime.set(service).await;
                 tracing::info!("Successfully initialized upstream MCP client");
@@ -361,6 +367,7 @@ impl BridgeServer {
         }
     }
 
+    #[expect(deprecated, reason = "Bridge preserves negotiated MCP logging notifications")]
     async fn flush_notifications(
         &self,
         context: &RequestContext<RoleServer>,
@@ -471,6 +478,7 @@ impl ClientHandler for BridgeClient {
         self.notifications.push_cancelled(params).await;
     }
 
+    #[expect(deprecated, reason = "Bridge preserves negotiated MCP logging notifications")]
     async fn on_logging_message(
         &self,
         params: rmcp::model::LoggingMessageNotificationParam,
@@ -641,9 +649,10 @@ impl ServerHandler for BridgeServer {
         }
     }
 
+    #[expect(deprecated, reason = "Bridge preserves negotiated MCP logging requests")]
     fn set_level(
         &self,
-        request: SetLevelRequestParams,
+        request: rmcp::model::SetLevelRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<(), McpError>> + Send + '_ {
         async move {
@@ -661,6 +670,10 @@ impl ServerHandler for BridgeServer {
         _context: NotificationContext<RoleServer>,
     ) -> impl Future<Output = ()> + Send + '_ {
         async move {
+            if notification.request_id.is_none() {
+                tracing::warn!("Ignoring downstream cancellation without a request ID");
+                return;
+            }
             self.forward_notification(move |service| {
                 let param = notification;
                 async move { service.notify_cancelled(param).await }
@@ -750,4 +763,41 @@ async fn main() -> Result<()> {
 
     tracing::info!("Bridge shut down");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::RequestId;
+
+    #[tokio::test]
+    async fn bridge_notifications_drop_cancellation_without_request_id() {
+        let notifications = BridgeNotifications::default();
+
+        notifications
+            .push_cancelled(CancelledNotificationParam::new(
+                None,
+                Some("missing request".to_string()),
+            ))
+            .await;
+
+        assert!(notifications.take().await.cancelled.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bridge_notifications_preserve_targeted_cancellation() {
+        let notifications = BridgeNotifications::default();
+        let request_id = RequestId::String("request-1".into());
+
+        notifications
+            .push_cancelled(CancelledNotificationParam::new(
+                Some(request_id.clone()),
+                Some("cancel request".to_string()),
+            ))
+            .await;
+
+        let pending = notifications.take().await.cancelled;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].request_id.as_ref(), Some(&request_id));
+    }
 }

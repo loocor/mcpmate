@@ -511,6 +511,7 @@ pub async fn read_upstream_resource(
                     blob.len()
                 );
             }
+            _ => {}
         }
     }
 

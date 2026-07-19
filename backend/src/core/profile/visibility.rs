@@ -417,14 +417,14 @@ impl ProfileVisibilityService {
         }
 
         if snapshot.has_resource_policy || snapshot.has_resource_template_policy {
-            resources.retain(|resource| resource_allowed_from_snapshot(snapshot, resource.raw.uri.as_str()));
+            resources.retain(|resource| resource_allowed_from_snapshot(snapshot, resource.uri.as_str()));
         }
 
         if snapshot.has_resource_template_policy {
             templates.retain(|template| {
                 snapshot
                     .allowed_resource_templates
-                    .contains(template.raw.uri_template.as_str())
+                    .contains(template.uri_template.as_str())
             });
         }
 
