@@ -454,10 +454,9 @@ fn parse_python_runner(args: &[String]) -> Option<PythonSignature> {
 
     let package = if let Some(spec) = spec_value {
         spec
-    } else if let Some(idx) = positional_index {
-        args[idx].clone()
     } else {
-        return None;
+        let idx = positional_index?;
+        args[idx].clone()
     };
 
     let raw_remainder = if let Some(idx) = positional_index {

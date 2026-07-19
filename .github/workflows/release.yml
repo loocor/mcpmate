@@ -514,11 +514,25 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Publish release — depends on all build jobs completing
+  # Publish Docker — the GitHub Release cannot complete without this channel
+  # ---------------------------------------------------------------------------
+  publish-docker:
+    name: Publish Docker image
+    needs: validate-tag
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      release_tag: ${{ needs.validate-tag.outputs.tag }}
+      push_image: true
+
+  # ---------------------------------------------------------------------------
+  # Publish release — depends on all build and distribution jobs completing
   # ---------------------------------------------------------------------------
   release:
     name: Publish Release
-    needs: [validate-tag, build-macos, build-windows, build-linux]
+    needs: [validate-tag, build-macos, build-windows, build-linux, publish-docker]
     runs-on: ubuntu-22.04
     env:
       RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
