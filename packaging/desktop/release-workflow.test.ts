@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 const releaseWorkflowUrl = new URL("../../.github/workflows/release.yml", import.meta.url);
+const dockerWorkflowUrl = new URL("../../.github/workflows/docker-publish.yml", import.meta.url);
 const injectVersionActionUrl = new URL("../../.github/actions/inject-version/action.yml", import.meta.url);
 const nightlyWorkflowUrl = new URL("../../.github/workflows/nightly.yml", import.meta.url);
 const desktopWorkflowUrls = ["desktop-macos.yml", "desktop-windows.yml", "desktop-linux.yml"].map(
@@ -68,6 +69,32 @@ describe("release workflow contract", () => {
     expect(updateNotes).toBeGreaterThan(synchronize);
     expect(dispatch).toBeGreaterThan(updateNotes);
     expect(workflow.slice(dispatch)).toContain("bun packaging/desktop/dispatch-homebrew-tap.ts");
+  });
+
+  test("gates GitHub Release publishing on the reusable Docker workflow", async () => {
+    const releaseWorkflow = await Bun.file(releaseWorkflowUrl).text();
+    const dockerWorkflow = await Bun.file(dockerWorkflowUrl).text();
+    const dockerJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf("  publish-docker:"),
+      releaseWorkflow.indexOf("  release:"),
+    );
+    const releaseJob = releaseWorkflow.slice(releaseWorkflow.indexOf("  release:"));
+
+    expect(dockerWorkflow).toContain("  workflow_call:");
+    expect(dockerWorkflow).toContain("  pull_request:\n    branches:\n      - main");
+    expect(dockerWorkflow.match(/default: false/g)).toHaveLength(2);
+    expect(dockerWorkflow).not.toContain('    tags:\n      - "v*"');
+    expect(dockerWorkflow).toContain("uses: dtolnay/rust-toolchain@1.97.1");
+    expect(dockerWorkflow).toContain("ref: ${{ inputs.release_tag || github.ref }}");
+    expect(dockerWorkflow).toContain("enable=${{ inputs.push_image == true }}");
+    expect(dockerWorkflow).toContain("push: ${{ inputs.push_image == true }}");
+    expect(dockerJob).toContain("uses: ./.github/workflows/docker-publish.yml");
+    expect(dockerJob).toContain("packages: write");
+    expect(dockerJob).toContain("release_tag: ${{ needs.validate-tag.outputs.tag }}");
+    expect(dockerJob).toContain("push_image: true");
+    expect(releaseJob).toContain(
+      "needs: [validate-tag, build-macos, build-windows, build-linux, publish-docker]",
+    );
   });
 
   test("does not dispatch Homebrew from Nightly or desktop build workflows", async () => {

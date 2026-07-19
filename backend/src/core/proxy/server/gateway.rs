@@ -669,13 +669,7 @@ impl ProxyServer {
             }
         }
 
-        negotiated_version.and_then(|v| {
-            if Self::is_valid_protocol_version(&v) {
-                Some(v)
-            } else {
-                None
-            }
-        })
+        negotiated_version.filter(|version| Self::is_valid_protocol_version(version))
     }
 
     fn resolve_effective_protocol_version(
