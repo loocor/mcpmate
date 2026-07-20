@@ -1,0 +1,29 @@
+[package]
+name = "mcpmate-capability-store"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Durable capability catalog and projection cache for MCPMate"
+
+[dependencies]
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6.1"
+lru = "0.12"
+rmcp = { version = "=2.2.0" }
+schemars = { version = "0.9", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+sqlx = { version = "0.8.1", features = [
+  "runtime-tokio",
+  "sqlite",
+  "chrono",
+  "runtime-tokio-rustls",
+] }
+thiserror = "1.0"
+tokio = { version = "1.44", features = ["sync"] }
+
+[dev-dependencies]
+tempfile = "3.2"
+tokio = { version = "1.44", features = ["full"] }
