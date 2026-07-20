@@ -43,7 +43,7 @@
         },
         {
           "name": "MCPMATE_DATA_DIR",
-          "description": "Directory used for MCPMate SQLite and REDB runtime state.",
+          "description": "Directory used for MCPMate SQLite runtime state.",
           "default": "/data/.mcpmate",
           "isRequired": false,
           "isSecret": false

@@ -2052,7 +2052,7 @@ async fn graceful_stop_child(child: &mut std::process::Child) -> Result<()> {
     let pid = child.id() as i32;
 
     // SIGTERM — backend core will run its graceful-shutdown chain
-    // (close listeners, release REDB, kill MCP sub-processes, etc.)
+    // (close listeners, release SQLite, kill MCP sub-processes, etc.)
     unsafe { libc::kill(pid, libc::SIGTERM) };
 
     // Poll up to 40 × 200 ms = 8 s for clean exit
