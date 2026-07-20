@@ -3,6 +3,10 @@ import { memo, useCallback, useMemo, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
+import {
+	formatCapabilityLifecycle,
+	type CapabilityLifecycleLabels,
+} from "../../lib/capability-lifecycle";
 import { getServerDisplayName } from "../../lib/server-display";
 import type { ServerSummary } from "../../lib/types";
 import { EntityCard } from "../entity-card";
@@ -42,31 +46,27 @@ export type ServerCatalogEntryProps =
 	| ServerCatalogListEntryProps
 	| ServerCatalogGridEntryProps;
 
-function getCapabilitySummary(server: ServerSummary) {
-	return server.capability ?? server.capabilities ?? undefined;
-}
-
 function buildCapabilityStats(
 	server: ServerSummary,
 	statsLabels: ServerCatalogStatsLabels,
+	lifecycleLabels: CapabilityLifecycleLabels,
 ) {
-	const capabilitySummary = getCapabilitySummary(server);
-	if (!capabilitySummary) {
-		return [
-			{ label: statsLabels.tools, value: 0 },
-			{ label: statsLabels.prompts, value: 0 },
-			{ label: statsLabels.resources, value: 0 },
-			{ label: statsLabels.templates, value: 0 },
-		];
-	}
-
 	return [
-		{ label: statsLabels.tools, value: capabilitySummary.tools_count },
-		{ label: statsLabels.prompts, value: capabilitySummary.prompts_count },
-		{ label: statsLabels.resources, value: capabilitySummary.resources_count },
+		{
+			label: statsLabels.tools,
+			value: formatCapabilityLifecycle(server.capability, "tools", lifecycleLabels),
+		},
+		{
+			label: statsLabels.prompts,
+			value: formatCapabilityLifecycle(server.capability, "prompts", lifecycleLabels),
+		},
+		{
+			label: statsLabels.resources,
+			value: formatCapabilityLifecycle(server.capability, "resources", lifecycleLabels),
+		},
 		{
 			label: statsLabels.templates,
-			value: capabilitySummary.resource_templates_count,
+			value: formatCapabilityLifecycle(server.capability, "resourceTemplates", lifecycleLabels),
 		},
 	];
 }
@@ -83,6 +83,13 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		onOpenDebug,
 	} = props;
 	const displayName = getServerDisplayName(server);
+	const lifecycleLabels: CapabilityLifecycleLabels = {
+		unavailable: t("capabilityLifecycle.capabilityUnavailable"),
+		unsupported: t("capabilityLifecycle.capabilityUnsupported"),
+		unknown: t("capabilityLifecycle.capabilityUnknown"),
+		empty: t("capabilityLifecycle.capabilityEmpty"),
+		ready: t("capabilityLifecycle.capabilityReady"),
+	};
 
 	const serverInitial = (displayName || server.id || "S")
 		.slice(0, 1)
@@ -237,10 +244,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		t,
 	]);
 
-	const stats = useMemo(
-		() => buildCapabilityStats(server, statsLabels),
-		[server, statsLabels],
-	);
+	const stats = buildCapabilityStats(server, statsLabels, lifecycleLabels);
 
 	const gridDescription = useMemo(() => {
 		const serverTypeRaw = server.server_type || "";

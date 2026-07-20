@@ -85,9 +85,13 @@ import {
   buildClientApplySelectedConfig,
   resolveClientConfigSyncErrorMessage,
 } from "../../lib/client-config-sync";
-import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
+import {
+  formatCapabilityLifecycle,
+  type CapabilityLifecycleLabels,
+} from "../../lib/capability-lifecycle";
+import { useClientDetailTranslations } from "./client-detail-translations";
 import type {
   ClientBackupEntry,
   ClientBackupPolicySetReq,
@@ -364,7 +368,7 @@ export function ClientDetailPage() {
   const { identifier } = useParams<{ identifier: string }>();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  usePageTranslations("clients");
+  useClientDetailTranslations();
   const { t } = useTranslation("clients");
   const showClientLiveLogs = useAppStore(
     (state) => state.dashboardSettings.showClientLiveLogs,
@@ -1242,12 +1246,21 @@ export function ClientDetailPage() {
     routeMode: DirectExposureRouteMode,
     exposedToolCount: number,
   ) => {
-    const cap = server.capabilities ?? server.capability;
-    const toolsTotal = cap?.tools_count ?? 0;
+		const cap = server.capability;
+		const lifecycleLabels: CapabilityLifecycleLabels = {
+			unavailable: t("servers:capabilityLifecycle.capabilityUnavailable"),
+			unsupported: t("servers:capabilityLifecycle.capabilityUnsupported"),
+			unknown: t("servers:capabilityLifecycle.capabilityUnknown"),
+			empty: t("servers:capabilityLifecycle.capabilityEmpty"),
+			ready: t("servers:capabilityLifecycle.capabilityReady"),
+		};
+		const toolsTotal = cap?.tools.currentAvailable
+			? cap.tools.currentCount
+			: undefined;
     const toolsValue =
       routeMode === "capability_level"
-        ? `${exposedToolCount}/${toolsTotal}`
-        : String(toolsTotal);
+				? `${exposedToolCount}/${toolsTotal ?? "—"} · ${formatCapabilityLifecycle(cap, "tools", lifecycleLabels)}`
+				: formatCapabilityLifecycle(cap, "tools", lifecycleLabels);
     const items = [
       {
         key: "tools",
@@ -1261,21 +1274,21 @@ export function ClientDetailPage() {
         label: t("detail.configuration.labels.resources", {
           defaultValue: "Resources",
         }),
-        value: String(cap?.resources_count ?? 0),
+			value: formatCapabilityLifecycle(cap, "resources", lifecycleLabels),
       },
       {
         key: "prompts",
         label: t("detail.configuration.labels.prompts", {
           defaultValue: "Prompts",
         }),
-        value: String(cap?.prompts_count ?? 0),
+			value: formatCapabilityLifecycle(cap, "prompts", lifecycleLabels),
       },
       {
         key: "resourceTemplates",
         label: t("detail.configuration.labels.resourceTemplates", {
           defaultValue: "Resource templates",
         }),
-        value: String(cap?.resource_templates_count ?? 0),
+			value: formatCapabilityLifecycle(cap, "resourceTemplates", lifecycleLabels),
       },
     ];
     return (
@@ -2817,7 +2830,9 @@ export function ClientDetailPage() {
                                     const isMixed = isUnifyServerMixedRouting(
                                       unifyRouteMode,
                                       toolSurfaces.length,
-                                      server.capabilities?.tools_count,
+										server.capability?.tools.currentAvailable
+											? server.capability.tools.currentCount
+											: undefined,
                                     );
                                     const showDirectSelection =
                                       unifyRouteMode === "capability_level"

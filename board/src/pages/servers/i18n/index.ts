@@ -1,6 +1,13 @@
 export const serversTranslations = {
     en: {
             title: "Connect and monitor MCP servers",
+		capabilityLifecycle: {
+			capabilityUnknown: "Unknown",
+			capabilityUnsupported: "Unsupported",
+			capabilityEmpty: "Empty",
+			capabilityUnavailable: "Unavailable",
+			capabilityReady: "Ready",
+		},
 		toolbar: {
 			search: {
 				placeholder: "Search servers...",
@@ -985,6 +992,13 @@ export const serversTranslations = {
 	},
     "zh-CN": {
             title: "接入与监控 MCP 服务器运行状态",
+		capabilityLifecycle: {
+			capabilityUnknown: "未知",
+			capabilityUnsupported: "不支持",
+			capabilityEmpty: "已就绪但为空",
+			capabilityUnavailable: "不可用",
+			capabilityReady: "可用",
+		},
 		toolbar: {
 			search: {
 				placeholder: "搜索服务器...",
@@ -1912,6 +1926,13 @@ export const serversTranslations = {
 	},
     "ja-JP": {
             title: "MCP サーバーの接続と監視",
+		capabilityLifecycle: {
+			capabilityUnknown: "不明",
+			capabilityUnsupported: "未対応",
+			capabilityEmpty: "空",
+			capabilityUnavailable: "利用不可",
+			capabilityReady: "利用可能",
+		},
 		toolbar: {
 			search: {
 				placeholder: "サーバーを検索...",

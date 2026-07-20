@@ -200,7 +200,7 @@ export function RuntimePage() {
 				}),
 				t("runtime:toasts.capabilitiesResetDescription", {
 					defaultValue:
-						"Capability data will be rehydrated on next access.",
+						"Memory caches were cleared and durable capability snapshots were invalidated.",
 				}),
 			);
 			setConfirm(null);
@@ -228,7 +228,7 @@ export function RuntimePage() {
 	});
 	let confirmDescription = t("runtime:capabilities.resetConfirmDesc", {
 		defaultValue:
-			"This clears both memory and on-disk capability cache. It will be repopulated on next access.",
+			"This clears the node-local memory cache and invalidates the durable SQLite catalog. The next access must revalidate upstream capabilities.",
 	});
 	let confirmLabel = t("runtime:dialogs.confirm");
 	let confirmVariant: "default" | "destructive" = "destructive";
@@ -478,36 +478,24 @@ export function RuntimePage() {
 						</div>
 					) : capStats ? (
 						<div className="space-y-4 text-sm">
-							<div className="grid gap-2 md:grid-cols-2">
+							<div className="grid gap-2 md:grid-cols-3">
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
-										{t("runtime:capabilities.labels.dbPath")}
+										{t("runtime:capabilities.labels.rawSnapshots")}
 									</span>
-									<span
-										className="truncate max-w-[60%]"
-										title={capStats?.storage?.db_path || ""}
-									>
-										{formatPathWithTilde(
-											capStats?.storage?.db_path ?? "",
-											userHome,
-										) || t("runtime:fallbacks.empty", { defaultValue: "—" })}
-									</span>
+									<span>{capStats.storage.memory.rawSnapshotEntries}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
-										{t("runtime:capabilities.labels.cacheSize")}
+										{t("runtime:capabilities.labels.projections")}
 									</span>
-									<span>{formatBytes(capStats.storage.cache_size_bytes)}</span>
+									<span>{capStats.storage.memory.projectionEntries}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
-										{t("runtime:capabilities.labels.lastCleanup")}
+										{t("runtime:capabilities.labels.records")}
 									</span>
-									<span>
-										{capStats.storage.last_cleanup
-											? formatLocalDateTime(capStats.storage.last_cleanup)
-											: t("runtime:fallbacks.empty", { defaultValue: "—" })}
-									</span>
+									<span>{capStats.storage.catalog.records}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
@@ -522,33 +510,39 @@ export function RuntimePage() {
 							<div className="mt-2 grid gap-2 md:grid-cols-3">
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
-										{t("runtime:capabilities.labels.servers")}
+										{t("runtime:capabilities.labels.snapshots")}
 									</span>
-									<span>{capStats.storage.tables.servers}</span>
+									<span>{capStats.storage.catalog.snapshots}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
 										{t("runtime:capabilities.labels.tools")}
 									</span>
-									<span>{capStats.storage.tables.tools}</span>
+									<span>{capStats.storage.catalog.tools}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
 										{t("runtime:capabilities.labels.resources")}
 									</span>
-									<span>{capStats.storage.tables.resources}</span>
+									<span>{capStats.storage.catalog.resources}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
 										{t("runtime:capabilities.labels.prompts")}
 									</span>
-									<span>{capStats.storage.tables.prompts}</span>
+									<span>{capStats.storage.catalog.prompts}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
 										{t("runtime:capabilities.labels.resourceTemplates")}
 									</span>
-									<span>{capStats.storage.tables.resourceTemplates}</span>
+									<span>{capStats.storage.catalog.resourceTemplates}</span>
+								</div>
+								<div className="flex items-center justify-between">
+									<span className="text-slate-500">
+										{t("runtime:capabilities.labels.invalidatedSnapshots")}
+									</span>
+									<span>{capStats.storage.catalog.invalidatedSnapshots}</span>
 								</div>
 							</div>
 
@@ -579,15 +573,15 @@ export function RuntimePage() {
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
-										{t("runtime:capabilities.labels.reads")}
+										{t("runtime:capabilities.labels.singleFlightWaits")}
 									</span>
-									<span>{capStats.metrics.readOperations}</span>
+									<span>{capStats.metrics.singleFlightWaits}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
-										{t("runtime:capabilities.labels.writes")}
+										{t("runtime:capabilities.labels.evictions")}
 									</span>
-									<span>{capStats.metrics.writeOperations}</span>
+									<span>{capStats.metrics.evictions}</span>
 								</div>
 								<div className="flex items-center justify-between">
 									<span className="text-slate-500">
