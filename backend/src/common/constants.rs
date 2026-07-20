@@ -178,7 +178,6 @@ pub mod database {
         pub const TRANSPORT_TYPE: &str = "transport_type";
         pub const PENDING_IMPORT: &str = "pending_import";
         pub const UNIFY_DIRECT_EXPOSURE_ELIGIBLE: &str = "unify_direct_exposure_eligible";
-        pub const CAPABILITIES: &str = "capabilities";
         pub const SOURCE: &str = "source";
         pub const DESCRIPTION: &str = "description";
         pub const ARGS: &str = "args";

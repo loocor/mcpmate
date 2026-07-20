@@ -16,7 +16,6 @@ use mcpmate::api::handlers::{inspector, server};
 use mcpmate::api::routes::AppState;
 use mcpmate::common::constants::protocol;
 use mcpmate::config::{database::Database, initialization::run_initialization};
-use mcpmate::core::cache::{RedbCacheManager, manager::CacheConfig};
 use mcpmate::core::models::Config;
 use mcpmate::core::pool::UpstreamConnectionPool;
 use mcpmate::core::profile::ConfigApplicationStateManager;
@@ -65,7 +64,6 @@ fn build_test_state() -> Arc<AppState> {
         None,
     )));
     let metrics = Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1)));
-    let redb = RedbCacheManager::global().expect("redb");
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     inspector_service::set_call_registry(inspector_calls.clone());
     let inspector_sessions = Arc::new(InspectorSessionManager::new());
@@ -79,7 +77,6 @@ fn build_test_state() -> Arc<AppState> {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        redb_cache: redb,
         unified_query: None,
         client_service: None,
         inspector_calls,
@@ -110,9 +107,8 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
     let database = Arc::new(Database {
         pool: db_pool,
         path: temp_dir.path().join("mcpmate-test.db"),
+        capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
     });
-    let cache_path = temp_dir.path().join("capability.redb");
-    let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("redb"));
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     inspector_service::set_call_registry(inspector_calls.clone());
 
@@ -128,7 +124,6 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        redb_cache,
         unified_query: None,
         client_service: None,
         inspector_calls,
@@ -431,8 +426,8 @@ async fn seed_enabled_tool_server(
         .await
         .expect("insert active profile");
     sqlx::query(
-        "INSERT INTO server_config (id, name, server_type, command, capabilities, enabled) \
-         VALUES (?, ?, 'stdio', ?, 'tools', 1)",
+        "INSERT INTO server_config (id, name, server_type, command, enabled) \
+         VALUES (?, ?, 'stdio', ?, 1)",
     )
     .bind(server_id)
     .bind(server_name)
@@ -644,12 +639,66 @@ async fn proxy_list_connect_and_protocol_operation_receive_independent_timeouts(
         .expect("timeout response"),
     )
     .await;
-    assert_eq!(timeout_status, axum::http::StatusCode::REQUEST_TIMEOUT);
-    assert_eq!(timeout_body.pointer("/error/status").and_then(Value::as_u64), Some(408));
+    assert_eq!(timeout_status, axum::http::StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(timeout_body.pointer("/error/status").and_then(Value::as_u64), Some(504));
     assert!(
         data_str(&timeout_body, "/error/message").contains("server connect exceeded 100 ms"),
         "unexpected timeout response: {timeout_body}"
     );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn native_preflight_outer_and_inner_timeouts_return_gateway_timeout() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let fixture = write_slow_preview_fixture(&temp_dir);
+    let python = which::which("python3").expect("python3 is required for stdio MCP fixture");
+    let state = build_database_state(&temp_dir).await;
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(TOOL_LIST_PATH, get(inspector::tools_list))
+        .with_state(state);
+    let create_body = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                CREATE_SERVER_PATH,
+                json!({
+                    "name": "native_preflight_timeout",
+                    "server_type": "stdio",
+                    "command": python.to_string_lossy(),
+                    "args": [fixture.to_string_lossy(), "0.40", "initialize"]
+                }),
+            ))
+            .await
+            .expect("create response"),
+    )
+    .await;
+    assert_api_success(&create_body);
+    let server_id = data_str(&create_body, "/data/id");
+
+    let (outer_status, outer_body) = read_json_response_with_status(
+        app.clone()
+            .oneshot(get_request(format!(
+                "{TOOL_LIST_PATH}?server_id={server_id}&mode=native&refresh=true&timeout_ms=100"
+            )))
+            .await
+            .expect("outer timeout response"),
+    )
+    .await;
+    assert_eq!(outer_status, StatusCode::GATEWAY_TIMEOUT, "{outer_body}");
+    assert_eq!(outer_body.pointer("/error/status").and_then(Value::as_u64), Some(504));
+
+    let _connect_timeout = EnvVarGuard::set("MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS", "50");
+    let (inner_status, inner_body) = read_json_response_with_status(
+        app.oneshot(get_request(format!(
+            "{TOOL_LIST_PATH}?server_id={server_id}&mode=native&refresh=true&timeout_ms=500"
+        )))
+        .await
+        .expect("inner timeout response"),
+    )
+    .await;
+    assert_eq!(inner_status, StatusCode::GATEWAY_TIMEOUT, "{inner_body}");
+    assert_eq!(inner_body.pointer("/error/status").and_then(Value::as_u64), Some(504));
 }
 
 #[tokio::test]

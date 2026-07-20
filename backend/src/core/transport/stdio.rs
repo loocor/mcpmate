@@ -3,9 +3,9 @@
 
 use anyhow::{Context, Result};
 use rmcp::{
+    RoleClient,
     model::{ServerCapabilities, Tool},
-    service::serve_client_with_ct,
-    transport::TokioChildProcess,
+    transport::{IntoTransport, TokioChildProcess},
 };
 use sysinfo;
 use tokio::{io::AsyncReadExt, time::timeout};
@@ -149,20 +149,36 @@ async fn connect_with_timeout(
         });
     }
 
-    timeout(connection_timeout, async {
-        let handler = crate::core::transport::client::UpstreamClientHandler::new(server_name.to_string());
-        serve_client_with_ct(handler, child_process, ct.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to server: {e}"))
-    })
-    .await
-    .map_err(|_| {
-        ct.cancel();
-        anyhow::anyhow!(
-            "Connection timeout for server '{server_name}' after {}s",
-            connection_timeout.as_secs()
-        )
-    })?
+    initialize_service_with_timeout(child_process, ct, server_name, connection_timeout).await
+}
+
+pub(crate) async fn connect_stdio_initialized_for_validation(
+    server_name: &str,
+    server_config: &MCPServerConfig,
+    ct: CancellationToken,
+    database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+) -> Result<crate::core::transport::ClientService> {
+    let (mut cmd, transformed_command) = prepare_server_command(server_config).await?;
+    setup_command_environment(&mut cmd, server_config, &transformed_command, database_pool).await?;
+    let command = server_config
+        .command
+        .as_ref()
+        .expect("command already validated in prepare_server_command");
+
+    connect_with_timeout(cmd, ct, server_name, get_connection_timeout(command)).await
+}
+
+async fn initialize_service_with_timeout<T, E, A>(
+    transport: T,
+    ct: CancellationToken,
+    server_name: &str,
+    connection_timeout: std::time::Duration,
+) -> Result<crate::core::transport::ClientService>
+where
+    T: IntoTransport<RoleClient, E, A>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    crate::core::transport::unified::initialize_client_service(server_name, transport, ct, connection_timeout).await
 }
 
 /// Get tools from service with timeout handling
@@ -336,4 +352,82 @@ async fn get_process_id_for_server(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use rmcp::{
+        ErrorData, RoleServer, ServerHandler, ServiceExt,
+        model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo},
+        service::RequestContext,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    use super::{get_tools_with_timeout, initialize_service_with_timeout};
+
+    #[derive(Clone)]
+    struct FailingToolsServer {
+        tools_list_calls: Arc<AtomicUsize>,
+    }
+
+    impl ServerHandler for FailingToolsServer {
+        fn get_info(&self) -> ServerInfo {
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        }
+
+        async fn list_tools(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: RequestContext<RoleServer>,
+        ) -> Result<ListToolsResult, ErrorData> {
+            self.tools_list_calls.fetch_add(1, Ordering::SeqCst);
+            Err(ErrorData::internal_error("tools/list is unavailable", None))
+        }
+    }
+
+    #[tokio::test]
+    async fn validation_initialization_skips_tools_while_production_bootstrap_lists_once() {
+        let tools_list_calls = Arc::new(AtomicUsize::new(0));
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let server_calls = tools_list_calls.clone();
+        let server_handle = tokio::spawn(async move {
+            let service = FailingToolsServer {
+                tools_list_calls: server_calls,
+            }
+            .serve(server_transport)
+            .await?;
+            service.waiting().await?;
+            Ok::<(), anyhow::Error>(())
+        });
+        let cancellation = CancellationToken::new();
+
+        let service = initialize_service_with_timeout(
+            client_transport,
+            cancellation.clone(),
+            "validation",
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .expect("initialize validation owner");
+
+        assert!(service.peer_info().is_some());
+        assert_eq!(tools_list_calls.load(Ordering::SeqCst), 0);
+
+        let result =
+            get_tools_with_timeout(&service, "production", std::time::Duration::from_secs(1), cancellation).await;
+
+        assert!(result.is_err());
+        assert_eq!(tools_list_calls.load(Ordering::SeqCst), 1);
+
+        service.cancel().await.expect("cancel validation owner");
+        server_handle
+            .await
+            .expect("join validation server")
+            .expect("validation server shutdown");
+    }
 }

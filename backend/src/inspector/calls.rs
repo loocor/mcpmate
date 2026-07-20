@@ -87,6 +87,9 @@ pub enum InspectorTerminal {
         message: String,
         server_id: String,
     },
+    Timeout {
+        server_id: String,
+    },
     Cancelled {
         reason: Option<String>,
         server_id: String,
@@ -419,6 +422,11 @@ impl InspectorCallRegistry {
                     server_id: server_id.clone(),
                     message: message.clone(),
                 },
+                InspectorTerminal::Timeout { server_id } => InspectorEvent::Error {
+                    call_id: entry.call_id.clone(),
+                    server_id: server_id.clone(),
+                    message: "Request timed out".to_string(),
+                },
                 InspectorTerminal::Cancelled { reason, server_id } => InspectorEvent::Cancelled {
                     call_id: entry.call_id.clone(),
                     server_id: server_id.clone(),
@@ -546,10 +554,7 @@ async fn call_worker(
                         call_id = %call_id,
                         "Inspector call timed out"
                     );
-                    InspectorTerminal::Error {
-                        message: "Request timed out".to_string(),
-                        server_id,
-                    }
+                    InspectorTerminal::Timeout { server_id }
                 }
                 Err(e) => {
                     tracing::error!(

@@ -17,25 +17,6 @@ use crate::clients::models::{UnifyDirectExposureConfig, UnifyRouteMode};
 use crate::common::constants::client_headers;
 use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 
-/// Determine whether a server declares a given capability token
-pub fn supports_capability(
-    capabilities: Option<&str>,
-    kind: crate::core::capability::CapabilityType,
-) -> bool {
-    let token = match kind {
-        crate::core::capability::CapabilityType::Tools => crate::common::capability::CapabilityToken::Tools.as_str(),
-        crate::core::capability::CapabilityType::Prompts => {
-            crate::common::capability::CapabilityToken::Prompts.as_str()
-        }
-        crate::core::capability::CapabilityType::Resources
-        | crate::core::capability::CapabilityType::ResourceTemplates => {
-            crate::common::capability::CapabilityToken::Resources.as_str()
-        }
-    };
-
-    crate::core::capability::facade::capability_declared(capabilities, token)
-}
-
 pub fn unify_route_mode(workspace: Option<&UnifyDirectExposureConfig>) -> UnifyRouteMode {
     workspace.map(|config| config.route_mode).unwrap_or_default()
 }

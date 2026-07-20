@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::config::database::Database;
-use crate::core::cache::manager::RedbCacheManager;
 use crate::core::capability::aggregate::AggregateListStatus;
 use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::core::foundation::types::ConnectionStatus;
@@ -971,10 +970,10 @@ impl BrokerService {
     async fn load_enabled_servers(
         &self,
         context: &'static str,
-    ) -> Result<Vec<(String, String, Option<String>, bool)>> {
+    ) -> Result<Vec<(String, String, bool)>> {
         sqlx::query_as(
             r#"
-            SELECT sc.id, sc.name, sc.capabilities, sc.unify_direct_exposure_eligible
+            SELECT sc.id, sc.name, sc.unify_direct_exposure_eligible
             FROM server_config sc
             WHERE sc.enabled = 1
             ORDER BY sc.name, sc.id
@@ -1788,21 +1787,14 @@ impl BrokerService {
             .load_enabled_servers("Failed to load enabled servers for Unify catalog")
             .await?;
 
-        let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
         let mut eligible_server_ids = HashSet::new();
-        for (server_id, server_name, capabilities, unify_direct_exposure_eligible) in enabled_servers {
+        for (server_id, server_name, unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            if !crate::core::proxy::server::supports_capability(
-                capabilities.as_deref(),
-                crate::core::capability::CapabilityType::Tools,
-            ) {
                 continue;
             }
             if unify_direct_exposure_eligible {
@@ -1817,13 +1809,17 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
-            let redb = redb.clone();
             let database = database.clone();
             let connection_pool = connection_pool.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &connection_pool, &database).await;
+                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+                    database,
+                    connection_pool,
+                );
+                let result = service.list(&ctx).await;
                 (server_id, server_name, result)
             });
         }
@@ -1919,26 +1915,18 @@ impl BrokerService {
             .await?;
         let eligible_server_ids = enabled_servers
             .iter()
-            .filter_map(|(server_id, _server_name, _capabilities, eligible)| eligible.then_some(server_id.clone()))
+            .filter_map(|(server_id, _server_name, eligible)| eligible.then_some(server_id.clone()))
             .collect::<HashSet<_>>();
 
-        let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities, _unify_direct_exposure_eligible) in enabled_servers {
+        for (server_id, server_name, _unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
-            if !crate::core::proxy::server::supports_capability(
-                capabilities.as_deref(),
-                crate::core::capability::CapabilityType::Prompts,
-            ) {
-                continue;
-            }
-
             let ctx = crate::core::capability::runtime::ListCtx {
                 capability: crate::core::capability::CapabilityType::Prompts,
                 server_id: server_id.clone(),
@@ -1947,14 +1935,18 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
-            let redb = redb.clone();
             let database = database.clone();
             let connection_pool = connection_pool.clone();
             let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &connection_pool, &database).await;
+                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+                    database,
+                    connection_pool,
+                );
+                let result = service.list(&ctx).await;
                 (server_id, server_name_cloned, result)
             });
         }
@@ -2051,26 +2043,18 @@ impl BrokerService {
             .await?;
         let eligible_server_ids = enabled_servers
             .iter()
-            .filter_map(|(server_id, _server_name, _capabilities, eligible)| eligible.then_some(server_id.clone()))
+            .filter_map(|(server_id, _server_name, eligible)| eligible.then_some(server_id.clone()))
             .collect::<HashSet<_>>();
 
-        let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities, _unify_direct_exposure_eligible) in enabled_servers {
+        for (server_id, server_name, _unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
-            if !crate::core::proxy::server::supports_capability(
-                capabilities.as_deref(),
-                crate::core::capability::CapabilityType::Resources,
-            ) {
-                continue;
-            }
-
             let ctx = crate::core::capability::runtime::ListCtx {
                 capability: crate::core::capability::CapabilityType::Resources,
                 server_id: server_id.clone(),
@@ -2079,14 +2063,18 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
-            let redb = redb.clone();
             let database = database.clone();
             let connection_pool = connection_pool.clone();
             let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &connection_pool, &database).await;
+                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+                    database,
+                    connection_pool,
+                );
+                let result = service.list(&ctx).await;
                 (server_id, server_name_cloned, result)
             });
         }
@@ -2188,26 +2176,18 @@ impl BrokerService {
             .await?;
         let eligible_server_ids = enabled_servers
             .iter()
-            .filter_map(|(server_id, _server_name, _capabilities, eligible)| eligible.then_some(server_id.clone()))
+            .filter_map(|(server_id, _server_name, eligible)| eligible.then_some(server_id.clone()))
             .collect::<HashSet<_>>();
 
-        let redb = RedbCacheManager::global().context("REDB cache is not initialized")?;
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
         let runtime_identity = client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities, _unify_direct_exposure_eligible) in enabled_servers {
+        for (server_id, server_name, _unify_direct_exposure_eligible) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
                 continue;
             }
-            if !crate::core::proxy::server::supports_capability(
-                capabilities.as_deref(),
-                crate::core::capability::CapabilityType::ResourceTemplates,
-            ) {
-                continue;
-            }
-
             let ctx = crate::core::capability::runtime::ListCtx {
                 capability: crate::core::capability::CapabilityType::ResourceTemplates,
                 server_id: server_id.clone(),
@@ -2216,14 +2196,18 @@ impl BrokerService {
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
-            let redb = redb.clone();
             let database = database.clone();
             let connection_pool = connection_pool.clone();
             let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                let result = crate::core::capability::runtime::list(&ctx, &redb, &connection_pool, &database).await;
+                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+                    database,
+                    connection_pool,
+                );
+                let result = service.list(&ctx).await;
                 (server_id, server_name_cloned, result)
             });
         }

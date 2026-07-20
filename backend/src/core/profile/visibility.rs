@@ -1148,6 +1148,7 @@ mod tests {
         let db = Arc::new(Database {
             pool,
             path: temp_dir.path().join("test.db"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
 
         let service = ProfileVisibilityService::new(Some(db.clone()), None);
@@ -1170,10 +1171,8 @@ mod tests {
     async fn insert_server(
         db: &Arc<Database>,
         name: &str,
-        capabilities: &str,
     ) -> String {
-        let mut server = Server::new(name.to_string(), ServerType::Stdio);
-        server.capabilities = Some(capabilities.to_string());
+        let server = Server::new(name.to_string(), ServerType::Stdio);
         server::upsert_server(&db.pool, &server).await.expect("upsert server")
     }
 
@@ -1303,8 +1302,8 @@ mod tests {
 
         let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
         let inactive_profile_id = insert_profile(&db, "inactive", ProfileType::Shared, false).await;
-        let active_server_id = insert_server(&db, "active_server", "tools,prompts,resources").await;
-        let inactive_server_id = insert_server(&db, "inactive_server", "tools,prompts,resources").await;
+        let active_server_id = insert_server(&db, "active_server").await;
+        let inactive_server_id = insert_server(&db, "inactive_server").await;
 
         profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
             .await
@@ -1351,8 +1350,8 @@ mod tests {
 
         let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
         let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
-        let active_server_id = insert_server(&db, "active_server", "tools").await;
-        let selected_server_id = insert_server(&db, "selected_server", "tools").await;
+        let active_server_id = insert_server(&db, "active_server").await;
+        let selected_server_id = insert_server(&db, "selected_server").await;
 
         profile::add_server_to_profile(&db.pool, &active_profile_id, &active_server_id, true)
             .await
@@ -1396,7 +1395,7 @@ mod tests {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
         let custom_profile_id = insert_profile(&db, "custom", ProfileType::HostApp, false).await;
-        let custom_server_id = insert_server(&db, "custom_server", "prompts").await;
+        let custom_server_id = insert_server(&db, "custom_server").await;
 
         profile::add_server_to_profile(&db.pool, &custom_profile_id, &custom_server_id, true)
             .await
@@ -1437,8 +1436,8 @@ mod tests {
         let (_temp_dir, db, service) = create_visibility_service().await;
 
         let profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
-        let allowed_server_id = insert_server(&db, "alpha_server", "tools,prompts,resources").await;
-        let denied_server_id = insert_server(&db, "beta_server", "tools,prompts,resources").await;
+        let allowed_server_id = insert_server(&db, "alpha_server").await;
+        let denied_server_id = insert_server(&db, "beta_server").await;
         crate::core::capability::resolver::upsert(&allowed_server_id, "alpha_server").await;
         crate::core::capability::resolver::upsert(&denied_server_id, "beta_server").await;
 
@@ -1602,8 +1601,8 @@ mod tests {
 
         let active_profile_id = insert_profile(&db, "active", ProfileType::Shared, true).await;
         let selected_profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
-        let disabled_server_id = insert_server(&db, "disabled_server", "tools,prompts,resources").await;
-        let enabled_server_id = insert_server(&db, "enabled_server", "tools,prompts,resources").await;
+        let disabled_server_id = insert_server(&db, "disabled_server").await;
+        let enabled_server_id = insert_server(&db, "enabled_server").await;
 
         profile::add_server_to_profile(&db.pool, &active_profile_id, &disabled_server_id, true)
             .await

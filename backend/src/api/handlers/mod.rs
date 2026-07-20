@@ -39,6 +39,12 @@ pub enum ApiError {
     Forbidden(String),
     /// Timeout error
     Timeout(String),
+    /// Upstream gateway timeout error
+    GatewayTimeout(String),
+    /// Upstream authentication error
+    Unauthorized(String),
+    /// Upstream/bad gateway error
+    BadGateway(String),
 }
 
 impl fmt::Display for ApiError {
@@ -54,6 +60,9 @@ impl fmt::Display for ApiError {
             ApiError::Conflict(msg) => write!(f, "Conflict: {msg}"),
             ApiError::Forbidden(msg) => write!(f, "Forbidden: {msg}"),
             ApiError::Timeout(msg) => write!(f, "Timeout: {msg}"),
+            ApiError::GatewayTimeout(msg) => write!(f, "Gateway timeout: {msg}"),
+            ApiError::Unauthorized(msg) => write!(f, "Unauthorized: {msg}"),
+            ApiError::BadGateway(msg) => write!(f, "Bad gateway: {msg}"),
         }
     }
 }
@@ -68,6 +77,9 @@ impl IntoResponse for ApiError {
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             ApiError::Timeout(msg) => (StatusCode::REQUEST_TIMEOUT, msg),
+            ApiError::GatewayTimeout(msg) => (StatusCode::GATEWAY_TIMEOUT, msg),
+            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            ApiError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, msg),
         };
 
         let body = Json(json!({
@@ -88,6 +100,26 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
+/// Convert a bare status code (from shared helpers that predate typed errors) into an
+/// ApiError, preserving a best-effort reason so the response body is never empty.
+impl From<StatusCode> for ApiError {
+    fn from(status: StatusCode) -> Self {
+        let message = status.canonical_reason().unwrap_or("Request failed").to_string();
+        match status {
+            StatusCode::NOT_FOUND => ApiError::NotFound(message),
+            StatusCode::BAD_REQUEST => ApiError::BadRequest(message),
+            StatusCode::CONFLICT => ApiError::Conflict(message),
+            StatusCode::FORBIDDEN => ApiError::Forbidden(message),
+            StatusCode::UNAUTHORIZED => ApiError::Unauthorized(message),
+            StatusCode::SERVICE_UNAVAILABLE => ApiError::ServiceUnavailable(message),
+            StatusCode::REQUEST_TIMEOUT => ApiError::Timeout(message),
+            StatusCode::GATEWAY_TIMEOUT => ApiError::GatewayTimeout(message),
+            StatusCode::BAD_GATEWAY => ApiError::BadGateway(message),
+            _ => ApiError::InternalError(message),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +129,35 @@ mod tests {
         let response = ApiError::ServiceUnavailable("secure store unavailable".to_string()).into_response();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn ordinary_timeout_errors_remain_request_timeout() {
+        let response = ApiError::Timeout("operation timed out".to_string()).into_response();
+
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    }
+
+    #[test]
+    fn unauthorized_errors_return_401() {
+        let response = ApiError::Unauthorized("upstream auth failed".to_string()).into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn bad_gateway_errors_return_502() {
+        let response = ApiError::BadGateway("upstream discovery failed".to_string()).into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn status_code_conversion_preserves_a_reason_in_the_body() {
+        let error: ApiError = StatusCode::NOT_FOUND.into();
+        match error {
+            ApiError::NotFound(msg) => assert_eq!(msg, "Not Found"),
+            other => panic!("Expected NotFound, got {other:?}"),
+        }
     }
 }

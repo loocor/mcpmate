@@ -263,6 +263,18 @@ impl EventHandlers {
                     .await;
                 self.notify_all_list_changed("Capability catalog change").await;
             }
+            Event::CapabilityCatalogCommitted {
+                server_id,
+                server_name,
+                revision,
+            } => {
+                debug!(
+                    server_id = %server_id,
+                    server_name = %server_name,
+                    revision,
+                    "Capability catalog revision committed"
+                );
+            }
             Event::CapabilityCollisionDetected {
                 server_id,
                 conflicting_server_id,
@@ -442,34 +454,6 @@ impl EventHandlers {
                         "Server {} (ID: {}) startup completed successfully",
                         server_name, server_id
                     );
-
-                    // Trigger capability sync for newly connected server using lightweight manager
-                    if let Some(event_capability_manager) = &self.event_capability_manager {
-                        debug!(
-                            "Server '{}' (ID: {}) connected successfully, triggering event-driven capability sync",
-                            server_name, server_id
-                        );
-
-                        match event_capability_manager.sync_single_server(&server_id).await {
-                            Ok(_) => {
-                                debug!(
-                                    "Successfully synced capabilities for newly connected server '{}' (ID: {}) (event-driven)",
-                                    server_name, server_id
-                                );
-                            }
-                            Err(e) => {
-                                warn!(
-                                    "Failed to sync capabilities for newly connected server '{}' (ID: {}): {}",
-                                    server_name, server_id, e
-                                );
-                            }
-                        }
-                    } else {
-                        debug!(
-                            "No event-driven capability manager available for server '{}' (ID: {}) capability sync",
-                            server_name, server_id
-                        );
-                    }
                 } else {
                     let error_message = error.unwrap_or_else(|| "Unknown error".to_string());
                     warn!(

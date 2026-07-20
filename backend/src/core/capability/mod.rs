@@ -4,14 +4,17 @@
 //! Integrates the former protocol layer for a cohesive capability-centric architecture.
 
 pub(crate) mod aggregate;
+pub(crate) mod connection_provider;
 pub mod descriptions;
 pub mod domain;
 pub mod facade;
+pub mod index;
 pub mod integration;
 mod internal;
 pub mod naming;
 pub mod prompts;
 pub mod query;
+pub(crate) mod read_service;
 pub mod resolver;
 pub(crate) mod resource_registry;
 pub(crate) mod resource_uri;

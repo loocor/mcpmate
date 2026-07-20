@@ -51,8 +51,6 @@ pub struct AppState {
     pub audit_service: Option<Arc<crate::audit::AuditService>>,
     /// Configuration application state manager
     pub config_application_state: Arc<crate::core::profile::ConfigApplicationStateManager>,
-    /// Redb cache manager (unified capabilities cache)
-    pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
     /// Unified query adapter (optional, for gradual migration)
     pub unified_query: Option<Arc<crate::core::capability::UnifiedQueryAdapter>>,
     /// Client configuration service (template-driven)
@@ -131,12 +129,6 @@ async fn create_router_internal(
         state_manager_clone.initialize().await;
     });
 
-    // Initialize standard Redb cache manager for API operations using global singleton
-    // Note: EventHandlers now uses a lightweight capability manager without RedbCacheManager
-    // This eliminates file lock conflicts while maintaining API query performance
-    let redb_cache = crate::core::cache::RedbCacheManager::global()
-        .expect("Failed to initialize standard Redb cache manager for API operations");
-
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     let inspector_sessions = Arc::new(InspectorSessionManager::new());
     inspector_service::set_call_registry(inspector_calls.clone());
@@ -152,7 +144,6 @@ async fn create_router_internal(
             audit_database: audit_database.clone(),
             audit_service: audit_service.clone(),
             config_application_state: config_application_state.clone(),
-            redb_cache: redb_cache.clone(),
             unified_query: None, // avoid recursion
             client_service: None,
             inspector_calls: inspector_calls.clone(),
@@ -249,7 +240,6 @@ async fn create_router_internal(
         audit_database,
         audit_service,
         config_application_state,
-        redb_cache,
         unified_query,
         client_service,
         inspector_calls,

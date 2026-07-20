@@ -7,7 +7,6 @@ use mcpmate::{
     common::server::ServerType,
     config::{database::Database, initialization::run_initialization},
     core::{
-        cache::{RedbCacheManager, manager::CacheConfig},
         models::{Config, MCPServerConfig},
         pool::UpstreamConnectionPool,
         profile::ConfigApplicationStateManager,
@@ -75,6 +74,7 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
     let database = Arc::new(Database {
         pool: db_pool.clone(),
         path: temp_dir.path().join("mcpmate-test.db"),
+        capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
     });
     let secret_store = Arc::new(
         LocalSecretStore::initialize_with_development_root_key(
@@ -84,8 +84,6 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
         .await
         .expect("initialize secret store"),
     );
-    let redb_cache =
-        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     inspector_service::set_call_registry(inspector_calls.clone());
 
@@ -101,7 +99,6 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        redb_cache,
         unified_query: None,
         client_service: None,
         inspector_calls,
@@ -133,6 +130,7 @@ async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<A
     let database = Arc::new(Database {
         pool: db_pool.clone(),
         path: temp_dir.path().join("mcpmate-test.db"),
+        capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
     });
     let secrets_dir = temp_dir.path().join("secrets");
     let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
@@ -147,8 +145,6 @@ async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<A
         .await
         .expect("persist provider mode");
 
-    let redb_cache =
-        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     inspector_service::set_call_registry(inspector_calls.clone());
 
@@ -164,7 +160,6 @@ async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<A
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        redb_cache,
         unified_query: None,
         client_service: None,
         inspector_calls,
@@ -179,10 +174,7 @@ async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<A
     (temp_dir, state, secret_store)
 }
 
-fn build_unavailable_secret_store_state(temp_dir: &TempDir) -> Arc<AppState> {
-    let redb_cache =
-        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
-
+fn build_unavailable_secret_store_state(_temp_dir: &TempDir) -> Arc<AppState> {
     Arc::new(AppState {
         connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
             Arc::new(Config::default()),
@@ -195,7 +187,6 @@ fn build_unavailable_secret_store_state(temp_dir: &TempDir) -> Arc<AppState> {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        redb_cache,
         unified_query: None,
         client_service: None,
         inspector_calls: Arc::new(InspectorCallRegistry::new()),
@@ -899,6 +890,7 @@ async fn build_locked_passphrase_context(master_password: &str) -> (TempDir, Arc
     let database = Arc::new(Database {
         pool: db_pool.clone(),
         path: temp_dir.path().join("mcpmate-test.db"),
+        capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
     });
     let data_dir = temp_dir.path();
     let secrets_dir = data_dir.join("secrets");
@@ -923,8 +915,6 @@ async fn build_locked_passphrase_context(master_password: &str) -> (TempDir, Arc
         other => panic!("expected locked passphrase bootstrap, got {other:?}"),
     }
 
-    let redb_cache =
-        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     inspector_service::set_call_registry(inspector_calls.clone());
 
@@ -939,7 +929,6 @@ async fn build_locked_passphrase_context(master_password: &str) -> (TempDir, Arc
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        redb_cache,
         unified_query: None,
         client_service: None,
         inspector_calls,
@@ -1063,6 +1052,7 @@ async fn provider_mode_persists_across_restart_simulation() {
     let database = Arc::new(Database {
         pool: db_pool.clone(),
         path: temp_dir.path().join("mcpmate-test.db"),
+        capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
     });
     let local_key_path = temp_dir.path().join("secrets").join("local-root.key");
     let secret_store = Arc::new(
@@ -1074,8 +1064,6 @@ async fn provider_mode_persists_across_restart_simulation() {
         .expect("initialize secret store"),
     );
     let store_readiness = mcpmate::core::secrets::store::SecretStoreReadiness::ready(secret_store.provider_metadata());
-    let redb_cache =
-        Arc::new(RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default()).expect("redb"));
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     inspector_service::set_call_registry(inspector_calls.clone());
     let pool = UpstreamConnectionPool::new(Arc::new(Config::default()), Some(database.clone()))
@@ -1089,7 +1077,6 @@ async fn provider_mode_persists_across_restart_simulation() {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        redb_cache,
         unified_query: None,
         client_service: None,
         inspector_calls,

@@ -3,18 +3,17 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     response::Json,
 };
 use std::sync::Arc;
 
 use crate::api::{
+    handlers::ApiError,
     models::server::{ServerCapabilityMeta, ServerCapabilityReq, ServerPromptsData, ServerPromptsResp},
     routes::AppState,
 };
 
 use super::capability::{CapabilityType, enrich_capability_items, respond_with_enriched};
-use super::common::create_inspect_response;
 
 /// Helper function to convert Json response to ServerPromptsResp
 fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> ServerPromptsData {
@@ -56,7 +55,7 @@ fn json_to_server_prompts_resp(json_response: axum::Json<serde_json::Value>) -> 
 pub async fn server_prompts(
     State(app_state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityReq>,
-) -> Result<Json<ServerPromptsResp>, StatusCode> {
+) -> Result<Json<ServerPromptsResp>, ApiError> {
     let result = server_prompts_core(&request, &app_state).await?;
     Ok(Json(result))
 }
@@ -66,7 +65,7 @@ pub async fn server_prompts(
 async fn server_prompts_core(
     request: &ServerCapabilityReq,
     app_state: &Arc<AppState>,
-) -> Result<ServerPromptsResp, StatusCode> {
+) -> Result<ServerPromptsResp, ApiError> {
     // Convert request to internal query format
     let query = super::common::InspectQuery {
         refresh: request.refresh.as_ref().map(|r| (*r).into()),
@@ -78,28 +77,14 @@ async fn server_prompts_core(
     // Validate and get server info using unified function
     let (db, server_info, params) = super::common::get_server_info_for_inspect(app_state, &request.id, &query).await?;
 
-    // Check if server supports prompts capability
-    if let Some(response) = super::common::check_capability_or_error(
-        &db.pool,
-        &server_info,
-        crate::common::capability::CapabilityToken::Prompts,
-        &params,
-    )
-    .await
-    {
-        let prompts_resp = json_to_server_prompts_resp(response);
-        return Ok(ServerPromptsResp::success(prompts_resp));
-    }
-
-    // Use CapabilityService (REDB-first → runtime → optional temporary via pool)
+    // CapabilityReadService owns cache and on-demand discovery orchestration.
     let refresh = match params.refresh {
         Some(super::common::RefreshStrategy::Force) => Some(crate::core::capability::runtime::RefreshStrategy::Force),
         _ => Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
     };
-    let service = crate::core::capability::CapabilityService::new(
-        app_state.redb_cache.clone(),
-        app_state.connection_pool.clone(),
+    let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
         db.clone(),
+        app_state.connection_pool.clone(),
     );
     let list_result = service
         .list(&crate::core::capability::runtime::ListCtx {
@@ -107,59 +92,46 @@ async fn server_prompts_core(
             server_id: server_info.server_id.clone(),
             refresh,
             timeout: Some(std::time::Duration::from_secs(10)),
-            validation_session: Some(crate::core::capability::service::CAPABILITY_VALIDATION_SESSION.to_string()),
+            validation_session: None,
             runtime_identity: None,
             connection_selection: None,
+            visibility_snapshot: None,
             name_domain: crate::core::capability::runtime::NameDomain::External,
         })
-        .await;
-    match list_result {
-        Ok(list_result) => {
-            let crate::core::capability::runtime::ListResult { items, meta } = list_result;
-            if let Some(prompt_items) = items.into_prompts() {
-                if !prompt_items.is_empty() {
-                    let json_items: Vec<serde_json::Value> = prompt_items
-                        .into_iter()
-                        .map(|prompt| serde_json::to_value(prompt).unwrap_or(serde_json::Value::Null))
-                        .collect();
-
-                    let enriched =
-                        enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, json_items)
-                            .await
-                            .map_err(|error| {
-                                tracing::error!(
-                                    server_id = %server_info.server_id,
-                                    error = %error,
-                                    "Prompt naming projection failed"
-                                );
-                                StatusCode::INTERNAL_SERVER_ERROR
-                            })?;
-                    let response_data =
-                        respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
-                    let prompts_resp = json_to_server_prompts_resp(response_data);
-                    return Ok(ServerPromptsResp::success(prompts_resp));
-                }
-            } else {
-                tracing::error!("Capability runtime returned non-prompt items for prompt capability");
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-            }
-
-            // Temporary instance fallback is handled by CapabilityService; handler remains unaware of pool
+        .await
+        .map_err(|error| {
+            tracing::error!(server_id = %server_info.server_id, error = %error, "Failed to list prompts");
+            crate::core::capability::service::map_capability_read_error(&error)
+        })?;
+    let crate::core::capability::runtime::ListResult { items, meta } = list_result;
+    let prompt_items = match items {
+        crate::core::capability::runtime::CapabilityItems::Prompts(items) => items,
+        _ => {
+            tracing::error!("Capability read service returned non-prompt items for prompt capability");
+            return Err(ApiError::InternalError(
+                "Capability read service returned non-prompt items for prompt capability".to_string(),
+            ));
         }
-        Err(e) => {
-            tracing::error!("Failed to list prompts via unified entry: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    // No handler-side temporary creation
-    // No offline fallback to avoid stale uncertainty; return empty if still not available
-    let response_data = create_inspect_response(
-        Vec::new(),
-        false,
-        params.refresh,
-        crate::common::constants::strategies::NONE,
-    );
+    };
+    let json_items = prompt_items
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            tracing::error!(server_id = %server_info.server_id, error = %error, "Failed to serialize prompts");
+            ApiError::InternalError(format!("Failed to serialize prompts: {error}"))
+        })?;
+    let enriched = enrich_capability_items(CapabilityType::Prompts, &db.pool, &server_info.server_id, json_items)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                server_id = %server_info.server_id,
+                error = %error,
+                "Prompt naming projection failed"
+            );
+            ApiError::InternalError(format!("Prompt naming projection failed: {error}"))
+        })?;
+    let response_data = respond_with_enriched(enriched, meta.cache_hit, params.refresh, meta.source.as_str());
     let prompts_resp = json_to_server_prompts_resp(response_data);
     Ok(ServerPromptsResp::success(prompts_resp))
 }

@@ -2,16 +2,11 @@
 // Contains functions for importing configuration from JSON files to database
 
 use crate::common::types::{ServerSource, ServerSourceType};
-use crate::core::cache::RedbCacheManager;
 use crate::core::models::Config;
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;
 use std::{fs::File, path::Path, sync::Arc};
-
-fn global_redb_cache() -> Result<Arc<RedbCacheManager>> {
-    RedbCacheManager::global().map_err(|error| anyhow::anyhow!("Failed to init REDB cache: {}", error))
-}
 
 pub(crate) async fn has_server_configs(pool: &Pool<Sqlite>) -> Result<bool> {
     sqlx::query_scalar::<_, i64>(&format!(
@@ -24,10 +19,9 @@ pub(crate) async fn has_server_configs(pool: &Pool<Sqlite>) -> Result<bool> {
     .map_err(|error| anyhow::anyhow!("Failed to check if server_config table has data: {}", error))
 }
 
-async fn import_config_with_cache(
+async fn import_config(
     pool: &Pool<Sqlite>,
     mcp_config: Config,
-    redb_cache: &Arc<RedbCacheManager>,
 ) -> Result<()> {
     let items: HashMap<String, crate::api::models::server::ServersImportConfig> = mcp_config
         .mcp_servers
@@ -55,8 +49,8 @@ async fn import_config_with_cache(
     )));
     let _ = crate::config::server::import_batch(
         pool,
+        Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         &dummy_pool,
-        redb_cache,
         items,
         crate::config::server::ImportOptions::dashboard_import(false, None),
     )
@@ -103,9 +97,7 @@ pub async fn import_from_mcp_config(
         }
     };
 
-    let redb_cache = global_redb_cache()?;
-
-    import_config_with_cache(pool, mcp_config, &redb_cache).await
+    import_config(pool, mcp_config).await
 }
 
 pub async fn import_from_mcp_config_content(
@@ -120,9 +112,7 @@ pub async fn import_from_mcp_config_content(
     }
 
     let mcp_config = load_mcp_config_from_str(content).context("Failed to parse in-memory MCP config")?;
-    let redb_cache = global_redb_cache()?;
-
-    import_config_with_cache(pool, mcp_config, &redb_cache).await
+    import_config(pool, mcp_config).await
 }
 
 /// Load MCP configuration from a file
@@ -184,7 +174,7 @@ mod tests {
         }
     }"#;
 
-    async fn create_test_pool() -> (TempDir, Pool<Sqlite>, Arc<RedbCacheManager>) {
+    async fn create_test_pool() -> (TempDir, Pool<Sqlite>) {
         let temp_dir = TempDir::new().expect("temp dir");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -198,21 +188,15 @@ mod tests {
             .expect("enable foreign keys");
         run_initialization(&pool).await.expect("initialize schema");
 
-        let cache = Arc::new(
-            RedbCacheManager::new(temp_dir.path().join("capability.redb"), Default::default()).expect("cache manager"),
-        );
-
-        (temp_dir, pool, cache)
+        (temp_dir, pool)
     }
 
     #[tokio::test]
     async fn import_from_mcp_config_content_imports_servers_without_file_path() {
-        let (_temp_dir, pool, cache) = create_test_pool().await;
+        let (_temp_dir, pool) = create_test_pool().await;
         let config = load_mcp_config_from_str(TEST_MCP_CONFIG).expect("parse config");
 
-        import_config_with_cache(&pool, config, &cache)
-            .await
-            .expect("import config");
+        import_config(&pool, config).await.expect("import config");
 
         let count: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM {}",

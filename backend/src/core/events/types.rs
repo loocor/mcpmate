@@ -111,6 +111,16 @@ pub enum Event {
         server_name: String,
     },
 
+    /// One server's transactional capability catalog revision committed.
+    CapabilityCatalogCommitted {
+        /// Stable MCPMate server ID.
+        server_id: String,
+        /// Canonical server namespace.
+        server_name: String,
+        /// New durable catalog revision.
+        revision: i64,
+    },
+
     /// An external capability identifier collision blocked one challenger.
     CapabilityCollisionDetected {
         /// Stable MCPMate ID of the challenger that must be blocked.

@@ -1,6 +1,13 @@
 //! Core connection pool implementation separated from module index.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::{self, Result};
 use mcpmate_secrets::SecretResolver;
@@ -8,6 +15,8 @@ use rmcp::service::{Peer, RoleClient};
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing;
+
+use tokio::sync::Mutex;
 
 use crate::core::{
     foundation::{monitor::ProcessMonitor, types::ConnectionStatus},
@@ -23,6 +32,162 @@ use super::types::{self, FailureKind};
 
 type InstanceSnapshot = (String, ConnectionStatus, bool, bool, Option<Peer<RoleClient>>);
 type SnapshotMap = HashMap<String, Vec<InstanceSnapshot>>;
+
+#[derive(Debug, thiserror::Error)]
+#[error("validation owner initialization timed out after {timeout_ms} ms")]
+pub(crate) struct ValidationConnectTimeout {
+    pub timeout_ms: u128,
+}
+
+const VALIDATION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ValidationReservationToken {
+    session_id: Arc<str>,
+    generation: u64,
+}
+
+impl ValidationReservationToken {
+    pub(crate) fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    pub(crate) const fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ValidationOwnerEpoch(u64);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ValidationOwnerObservation {
+    pub(crate) owner_epoch: ValidationOwnerEpoch,
+}
+
+#[derive(Clone, Debug)]
+struct ValidationReservationState {
+    generation: u64,
+    expires_at: Instant,
+    authority: Arc<ValidationReservationAuthority>,
+    in_flight: HashMap<u64, (String, CancellationToken)>,
+}
+
+#[derive(Debug)]
+struct ValidationReservationAuthority {
+    holders: AtomicUsize,
+    committed: AtomicBool,
+}
+
+pub(crate) struct ValidationReservationLease {
+    token: ValidationReservationToken,
+    authority: Arc<ValidationReservationAuthority>,
+    pool: Weak<Mutex<UpstreamConnectionPool>>,
+    armed: bool,
+}
+
+impl ValidationReservationLease {
+    pub(crate) fn token(&self) -> &ValidationReservationToken {
+        &self.token
+    }
+
+    pub(crate) fn into_persistent_token(mut self) -> ValidationReservationToken {
+        self.authority.committed.store(true, Ordering::SeqCst);
+        self.authority.holders.fetch_sub(1, Ordering::SeqCst);
+        self.armed = false;
+        self.token.clone()
+    }
+}
+
+impl Drop for ValidationReservationLease {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let was_last_holder = self.authority.holders.fetch_sub(1, Ordering::SeqCst) == 1;
+        if !was_last_holder || self.authority.committed.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(pool) = self.pool.upgrade() else {
+            return;
+        };
+        let token = self.token.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Err(error) = UpstreamConnectionPool::release_validation_reservation(&pool, &token).await {
+                    tracing::warn!(error = %error, session_id = token.session_id(), "Validation reservation cleanup failed");
+                }
+            });
+        }
+    }
+}
+
+struct ValidationAttemptGuard {
+    token: ValidationReservationToken,
+    attempt_id: u64,
+    server_id: String,
+    cancellation: CancellationToken,
+    pool: Weak<Mutex<UpstreamConnectionPool>>,
+    armed: bool,
+}
+
+enum ValidationSuccessFinalization {
+    Published,
+    Joined(types::UpstreamConnection),
+    Lost(types::UpstreamConnection),
+}
+
+impl ValidationAttemptGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ValidationAttemptGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.cancellation.cancel();
+        let Some(pool) = self.pool.upgrade() else {
+            return;
+        };
+        let token = self.token.clone();
+        let attempt_id = self.attempt_id;
+        let server_id = self.server_id.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                pool.lock()
+                    .await
+                    .remove_validation_attempt(&token, attempt_id, &server_id);
+            });
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ValidationReservationError {
+    #[error("validation reservation '{session_id}' generation {generation} was invalidated")]
+    Invalidated { session_id: String, generation: u64 },
+    #[error(transparent)]
+    Shutdown(#[from] ValidationShutdownError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ValidationShutdownError {
+    #[error("validation owner shutdown timed out after {timeout_ms} ms")]
+    Timeout { timeout_ms: u128 },
+    #[error("validation owner shutdown failed: {source}")]
+    Operation {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("validation shutdown task failed: {source}")]
+    Join {
+        #[source]
+        source: tokio::task::JoinError,
+    },
+}
 
 /// Build-in lightweight HTTP client registry kept at pool layer.
 ///
@@ -130,10 +295,15 @@ pub struct UpstreamConnectionPool {
     pub exploration_sessions: HashMap<String, HashMap<String, types::UpstreamConnection>>,
     /// Validation sessions: session_id -> map of server_id to connection (minimal skeleton)
     pub validation_sessions: HashMap<String, HashMap<String, types::UpstreamConnection>>,
+    validation_owner_epochs: HashMap<String, HashMap<String, ValidationOwnerEpoch>>,
     /// Exploration session expirations
     pub exploration_expirations: HashMap<String, std::time::Instant>,
     /// Validation session expirations
     pub validation_expirations: HashMap<String, std::time::Instant>,
+    validation_reservations: HashMap<String, ValidationReservationState>,
+    next_validation_reservation: Arc<AtomicU64>,
+    next_validation_attempt: Arc<AtomicU64>,
+    next_validation_owner_epoch: Arc<AtomicU64>,
     /// Server configuration
     pub config: Arc<Config>,
     /// Map of server ID to map of instance ID to cancellation token
@@ -153,6 +323,31 @@ pub struct UpstreamConnectionPool {
 }
 
 impl UpstreamConnectionPool {
+    fn validation_worker(&self) -> Self {
+        Self {
+            connections: HashMap::new(),
+            production_routes: HashMap::new(),
+            client_bound_connections: HashMap::new(),
+            exploration_sessions: HashMap::new(),
+            validation_sessions: HashMap::new(),
+            validation_owner_epochs: HashMap::new(),
+            exploration_expirations: HashMap::new(),
+            validation_expirations: HashMap::new(),
+            validation_reservations: HashMap::new(),
+            next_validation_reservation: self.next_validation_reservation.clone(),
+            next_validation_attempt: self.next_validation_attempt.clone(),
+            next_validation_owner_epoch: self.next_validation_owner_epoch.clone(),
+            config: self.config.clone(),
+            cancellation_tokens: HashMap::new(),
+            process_monitor: None,
+            database: self.database.clone(),
+            failure_states: self.failure_states.clone(),
+            http_clients: self.http_clients.clone(),
+            secret_resolver: self.secret_resolver.clone(),
+            secret_store: self.secret_store.clone(),
+        }
+    }
+
     /// Create a new connection pool
     ///
     /// # Arguments
@@ -174,8 +369,13 @@ impl UpstreamConnectionPool {
             client_bound_connections: HashMap::new(),
             exploration_sessions: HashMap::new(),
             validation_sessions: HashMap::new(),
+            validation_owner_epochs: HashMap::new(),
             exploration_expirations: HashMap::new(),
             validation_expirations: HashMap::new(),
+            validation_reservations: HashMap::new(),
+            next_validation_reservation: Arc::new(AtomicU64::new(1)),
+            next_validation_attempt: Arc::new(AtomicU64::new(1)),
+            next_validation_owner_epoch: Arc::new(AtomicU64::new(1)),
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
@@ -403,6 +603,7 @@ impl UpstreamConnectionPool {
     ) {
         use std::time::Instant;
         self.validation_sessions.entry(session_id.to_string()).or_default();
+        self.validation_owner_epochs.entry(session_id.to_string()).or_default();
         self.validation_expirations
             .insert(session_id.to_string(), Instant::now() + ttl);
     }
@@ -422,6 +623,7 @@ impl UpstreamConnectionPool {
                 .is_some_and(|expires_at| *expires_at > now);
         if !is_active {
             self.validation_sessions.remove(session_id);
+            self.validation_owner_epochs.remove(session_id);
             self.validation_expirations.remove(session_id);
             return false;
         }
@@ -451,7 +653,21 @@ impl UpstreamConnectionPool {
             .collect();
         for sid in expired_validation {
             self.validation_expirations.remove(&sid);
-            self.validation_sessions.remove(&sid);
+            if let Some(state) = self.validation_reservations.remove(&sid) {
+                for (_, cancellation) in state.in_flight.into_values() {
+                    cancellation.cancel();
+                }
+            }
+            let detached = self
+                .validation_sessions
+                .remove(&sid)
+                .map(HashMap::into_iter)
+                .unwrap_or_default()
+                .collect::<Vec<_>>();
+            self.validation_owner_epochs.remove(&sid);
+            if !detached.is_empty() {
+                spawn_validation_shutdown(sid, detached, VALIDATION_SHUTDOWN_TIMEOUT);
+            }
         }
     }
 
@@ -625,11 +841,18 @@ impl UpstreamConnectionPool {
         }
 
         // Create temporary validation instance
-        let connection = self.create_temporary_validation_instance(server_id, session_id).await?;
+        let connection = self
+            .create_temporary_validation_instance(server_id, session_id, CancellationToken::new())
+            .await?;
 
         // Store in validation_sessions
+        let owner_epoch = self.allocate_validation_owner_epoch();
         let session_servers = self.validation_sessions.entry(session_id.to_string()).or_default();
         session_servers.insert(server_id.to_string(), connection);
+        self.validation_owner_epochs
+            .entry(session_id.to_string())
+            .or_default()
+            .insert(server_id.to_string(), owner_epoch);
 
         // Return reference to the stored connection
         Ok(self
@@ -646,6 +869,7 @@ impl UpstreamConnectionPool {
         &mut self,
         server_id: &str,
         session_id: &str,
+        cancellation: CancellationToken,
     ) -> Result<types::UpstreamConnection, anyhow::Error> {
         tracing::info!("Creating temporary validation instance for server ID: {}", server_id);
 
@@ -704,12 +928,12 @@ impl UpstreamConnectionPool {
         // Determine transport type strictly from server_type (DB no longer stores transport_type)
         let effective_transport = server.server_type.wire_transport();
 
-        let connect_fut = crate::core::transport::unified::connect_server(
+        let connect_fut = crate::core::transport::unified::connect_server_initialized_for_validation(
             server_name,
             &server_config,
             server.server_type,
             effective_transport,
-            None, // No cancellation token needed for short-lived validation
+            Some(cancellation),
             Some(&db.pool),
         );
 
@@ -718,32 +942,569 @@ impl UpstreamConnectionPool {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(60_000); // Increased from 10s to 60s for consistency
-        let (service, tools, capabilities, _process_id) =
-            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), connect_fut).await {
-                Ok(Ok(ok)) => ok,
-                Ok(Err(e)) => {
-                    // Register failure and enter backoff to protect startup/import flows
-                    let reason = format!("{}", e);
-                    let _ = self.register_failure(&failure_key, FailureKind::Connect, Some(reason));
-                    return Err(e);
+        let service = match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), connect_fut).await {
+            Ok(Ok(service)) => service,
+            Ok(Err(e)) => {
+                // Register failure and enter backoff to protect startup/import flows
+                let reason = format!("{}", e);
+                let _ = self.register_failure(&failure_key, FailureKind::Connect, Some(reason));
+                return Err(e);
+            }
+            Err(_elapsed) => {
+                let reason = format!("validation connect timeout ({}ms)", timeout_ms);
+                let _ = self.register_failure(&failure_key, FailureKind::Connect, Some(reason));
+                return Err(ValidationConnectTimeout {
+                    timeout_ms: u128::from(timeout_ms),
                 }
-                Err(_elapsed) => {
-                    let reason = format!("validation connect timeout ({}ms)", timeout_ms);
-                    let _ = self.register_failure(&failure_key, FailureKind::Connect, Some(reason));
-                    return Err(anyhow::anyhow!(
-                        "Timed out creating validation instance for server '{}'",
-                        server_name
-                    ));
-                }
-            };
+                .into());
+            }
+        };
 
         self.clear_failure_state(&failure_key);
 
-        // Update connection with service and capabilities
-        connection.update_connected(service, tools, capabilities);
+        let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+        connection.update_connected(service, Vec::new(), capabilities);
 
         tracing::info!("Created temporary validation instance for server '{}'", server_name);
         Ok(connection)
+    }
+
+    /// Create or reuse a validation owner without holding the shared pool mutex
+    /// across database, OAuth, transport initialization, or loser shutdown work.
+    pub(crate) async fn reserve_validation_session(
+        shared: &Arc<Mutex<Self>>,
+        session_id: &str,
+        ttl: Duration,
+    ) -> ValidationReservationLease {
+        let (token, authority, detached) = {
+            let mut pool = shared.lock().await;
+            let now = Instant::now();
+            if let Some(generation) = pool.validation_reservations.get(session_id).and_then(|state| {
+                (state.expires_at > now && pool.validation_sessions.contains_key(session_id))
+                    .then_some(state.generation)
+            }) {
+                pool.validation_reservations
+                    .get_mut(session_id)
+                    .expect("active validation reservation exists")
+                    .expires_at = now + ttl;
+                pool.validation_expirations.insert(session_id.to_string(), now + ttl);
+                let authority = pool
+                    .validation_reservations
+                    .get(session_id)
+                    .expect("active validation reservation exists")
+                    .authority
+                    .clone();
+                authority.holders.fetch_add(1, Ordering::SeqCst);
+                (
+                    ValidationReservationToken {
+                        session_id: Arc::from(session_id),
+                        generation,
+                    },
+                    authority,
+                    Vec::new(),
+                )
+            } else {
+                let detached = pool
+                    .validation_sessions
+                    .remove(session_id)
+                    .map(HashMap::into_iter)
+                    .unwrap_or_default()
+                    .collect::<Vec<_>>();
+                pool.validation_owner_epochs.remove(session_id);
+                pool.validation_expirations.remove(session_id);
+                if let Some(state) = pool.validation_reservations.remove(session_id) {
+                    for (_, cancellation) in state.in_flight.into_values() {
+                        cancellation.cancel();
+                    }
+                }
+                let generation = pool
+                    .next_validation_reservation
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| current.checked_add(1))
+                    .expect("validation reservation generation exhausted");
+                let token = ValidationReservationToken {
+                    session_id: Arc::from(session_id),
+                    generation,
+                };
+                let authority = Arc::new(ValidationReservationAuthority {
+                    holders: AtomicUsize::new(1),
+                    committed: AtomicBool::new(false),
+                });
+                pool.validation_sessions.insert(session_id.to_string(), HashMap::new());
+                pool.validation_owner_epochs
+                    .insert(session_id.to_string(), HashMap::new());
+                pool.validation_expirations.insert(session_id.to_string(), now + ttl);
+                pool.validation_reservations.insert(
+                    session_id.to_string(),
+                    ValidationReservationState {
+                        generation,
+                        expires_at: now + ttl,
+                        authority: authority.clone(),
+                        in_flight: HashMap::new(),
+                    },
+                );
+                (token, authority, detached)
+            }
+        };
+        if !detached.is_empty() {
+            spawn_validation_shutdown(session_id.to_string(), detached, VALIDATION_SHUTDOWN_TIMEOUT);
+        }
+        ValidationReservationLease {
+            token,
+            authority,
+            pool: Arc::downgrade(shared),
+            armed: true,
+        }
+    }
+
+    pub(crate) fn validation_reservation_matches(
+        &self,
+        token: &ValidationReservationToken,
+    ) -> bool {
+        self.validation_reservation_identity_matches(token)
+            && self
+                .validation_reservations
+                .get(token.session_id())
+                .is_some_and(|state| state.expires_at > Instant::now())
+    }
+
+    fn validation_reservation_identity_matches(
+        &self,
+        token: &ValidationReservationToken,
+    ) -> bool {
+        self.validation_reservations
+            .get(token.session_id())
+            .is_some_and(|state| state.generation == token.generation)
+            && self.validation_sessions.contains_key(token.session_id())
+    }
+
+    fn allocate_validation_owner_epoch(&self) -> ValidationOwnerEpoch {
+        let epoch = self
+            .next_validation_owner_epoch
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| current.checked_add(1))
+            .expect("validation owner epoch exhausted");
+        ValidationOwnerEpoch(epoch)
+    }
+
+    pub(crate) fn validation_owner_observation(
+        &self,
+        token: &ValidationReservationToken,
+        server_id: &str,
+    ) -> Option<ValidationOwnerObservation> {
+        if !self.validation_reservation_identity_matches(token) {
+            return None;
+        }
+        self.validation_sessions.get(token.session_id())?.get(server_id)?;
+        let owner_epoch = *self.validation_owner_epochs.get(token.session_id())?.get(server_id)?;
+        Some(ValidationOwnerObservation { owner_epoch })
+    }
+
+    pub(crate) fn current_validation_token(
+        &self,
+        session_id: &str,
+    ) -> Option<ValidationReservationToken> {
+        let state = self.validation_reservations.get(session_id)?;
+        (state.expires_at > Instant::now() && self.validation_sessions.contains_key(session_id)).then(|| {
+            ValidationReservationToken {
+                session_id: Arc::from(session_id),
+                generation: state.generation,
+            }
+        })
+    }
+
+    pub(crate) fn refresh_validation_reservation(
+        &mut self,
+        token: &ValidationReservationToken,
+        ttl: Duration,
+    ) -> bool {
+        if !self.validation_reservation_matches(token) {
+            return false;
+        }
+        let expires_at = Instant::now() + ttl;
+        self.validation_reservations
+            .get_mut(token.session_id())
+            .expect("matching validation reservation exists")
+            .expires_at = expires_at;
+        self.validation_expirations
+            .insert(token.session_id().to_string(), expires_at);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn publish_validation_connection(
+        shared: &Arc<Mutex<Self>>,
+        token: &ValidationReservationToken,
+        server_id: &str,
+        connection: types::UpstreamConnection,
+        ttl: Duration,
+    ) -> Result<(), ValidationReservationError> {
+        let mut connection = Some(connection);
+        let published = {
+            let mut pool = shared.lock().await;
+            if !pool.validation_reservation_matches(token) {
+                false
+            } else {
+                let already_published = pool
+                    .validation_sessions
+                    .get(token.session_id())
+                    .expect("matching reservation retains its session shell")
+                    .contains_key(server_id);
+                if already_published {
+                    false
+                } else {
+                    let owner_epoch = pool.allocate_validation_owner_epoch();
+                    pool.validation_sessions
+                        .get_mut(token.session_id())
+                        .expect("matching reservation retains its session shell")
+                        .insert(
+                            server_id.to_string(),
+                            connection.take().expect("validation connection is present"),
+                        );
+                    pool.validation_owner_epochs
+                        .get_mut(token.session_id())
+                        .expect("matching reservation retains its owner epoch shell")
+                        .insert(server_id.to_string(), owner_epoch);
+                    pool.refresh_validation_reservation(token, ttl);
+                    true
+                }
+            }
+        };
+        if published {
+            return Ok(());
+        }
+
+        if let Some(connection) = connection {
+            spawn_validation_shutdown(
+                token.session_id().to_string(),
+                vec![(server_id.to_string(), connection)],
+                VALIDATION_SHUTDOWN_TIMEOUT,
+            );
+        }
+        if shared.lock().await.validation_reservation_matches(token) {
+            Ok(())
+        } else {
+            Err(ValidationReservationError::Invalidated {
+                session_id: token.session_id().to_string(),
+                generation: token.generation(),
+            })
+        }
+    }
+
+    fn begin_validation_attempt(
+        &mut self,
+        token: &ValidationReservationToken,
+        server_id: &str,
+        cancellation: CancellationToken,
+        shared: &Arc<Mutex<Self>>,
+    ) -> std::result::Result<ValidationAttemptGuard, ValidationReservationError> {
+        if !self.validation_reservation_matches(token) {
+            return Err(ValidationReservationError::Invalidated {
+                session_id: token.session_id().to_string(),
+                generation: token.generation(),
+            });
+        }
+        let attempt_id = self
+            .next_validation_attempt
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| current.checked_add(1))
+            .expect("validation attempt identifier exhausted");
+        self.validation_reservations
+            .get_mut(token.session_id())
+            .expect("active validation reservation exists")
+            .in_flight
+            .insert(attempt_id, (server_id.to_string(), cancellation.clone()));
+        Ok(ValidationAttemptGuard {
+            token: token.clone(),
+            attempt_id,
+            server_id: server_id.to_string(),
+            cancellation,
+            pool: Arc::downgrade(shared),
+            armed: true,
+        })
+    }
+
+    fn remove_validation_attempt(
+        &mut self,
+        token: &ValidationReservationToken,
+        attempt_id: u64,
+        server_id: &str,
+    ) -> bool {
+        if !self.validation_reservation_identity_matches(token) {
+            return false;
+        }
+        let state = self
+            .validation_reservations
+            .get_mut(token.session_id())
+            .expect("matching validation reservation exists");
+        let owns_attempt = state
+            .in_flight
+            .get(&attempt_id)
+            .is_some_and(|(attempt_server_id, _)| attempt_server_id == server_id);
+        if owns_attempt {
+            state.in_flight.remove(&attempt_id);
+        }
+        owns_attempt
+    }
+
+    fn claim_validation_attempt(
+        &mut self,
+        token: &ValidationReservationToken,
+        attempt_id: u64,
+        server_id: &str,
+    ) -> bool {
+        let is_active = self.validation_reservation_matches(token);
+        self.remove_validation_attempt(token, attempt_id, server_id) && is_active
+    }
+
+    fn commit_validation_success(
+        &mut self,
+        attempt: &ValidationAttemptGuard,
+        connection: types::UpstreamConnection,
+        failure_updates: Vec<(String, types::FailureState)>,
+        ttl: Duration,
+    ) -> ValidationSuccessFinalization {
+        if !self.claim_validation_attempt(&attempt.token, attempt.attempt_id, &attempt.server_id) {
+            return ValidationSuccessFinalization::Lost(connection);
+        }
+
+        apply_validation_failure_updates(self, failure_updates);
+        let session = self
+            .validation_sessions
+            .get(attempt.token.session_id())
+            .expect("claimed validation attempt retains its session shell");
+        if session.contains_key(&attempt.server_id) {
+            return ValidationSuccessFinalization::Joined(connection);
+        }
+
+        let owner_epoch = self.allocate_validation_owner_epoch();
+        self.validation_sessions
+            .get_mut(attempt.token.session_id())
+            .expect("claimed validation attempt retains its session shell")
+            .insert(attempt.server_id.clone(), connection);
+        self.validation_owner_epochs
+            .get_mut(attempt.token.session_id())
+            .expect("claimed validation attempt retains its owner epoch shell")
+            .insert(attempt.server_id.clone(), owner_epoch);
+        let expires_at = Instant::now() + ttl;
+        self.validation_reservations
+            .get_mut(attempt.token.session_id())
+            .expect("claimed validation attempt retains its reservation")
+            .expires_at = expires_at;
+        self.validation_expirations
+            .insert(attempt.token.session_id().to_string(), expires_at);
+        ValidationSuccessFinalization::Published
+    }
+
+    async fn finalize_validation_success(
+        shared: &Arc<Mutex<Self>>,
+        mut attempt: ValidationAttemptGuard,
+        pending: &mut PendingValidationConnection,
+        failure_updates: Vec<(String, types::FailureState)>,
+        ttl: Duration,
+    ) -> Result<(), anyhow::Error> {
+        let finalization = {
+            let mut pool = shared.lock().await;
+            let connection = pending
+                .take()
+                .expect("successful validation attempt retains its pending owner");
+            pool.commit_validation_success(&attempt, connection, failure_updates, ttl)
+        };
+        attempt.disarm();
+
+        match finalization {
+            ValidationSuccessFinalization::Published => {
+                pending.disarm();
+                Ok(())
+            }
+            ValidationSuccessFinalization::Joined(connection) => {
+                Self::shutdown_detached_validation_connection(&attempt.token, &attempt.server_id, connection).await?;
+                pending.disarm();
+                Ok(())
+            }
+            ValidationSuccessFinalization::Lost(connection) => {
+                Self::shutdown_detached_validation_connection(&attempt.token, &attempt.server_id, connection).await?;
+                Err(ValidationReservationError::Invalidated {
+                    session_id: attempt.token.session_id().to_string(),
+                    generation: attempt.token.generation(),
+                }
+                .into())
+            }
+        }
+    }
+
+    async fn finalize_validation_failure(
+        shared: &Arc<Mutex<Self>>,
+        mut attempt: ValidationAttemptGuard,
+        failure_updates: Vec<(String, types::FailureState)>,
+    ) -> bool {
+        let committed = {
+            let mut pool = shared.lock().await;
+            if pool.claim_validation_attempt(&attempt.token, attempt.attempt_id, &attempt.server_id) {
+                apply_validation_failure_updates(&mut pool, failure_updates);
+                true
+            } else {
+                false
+            }
+        };
+        attempt.disarm();
+        committed
+    }
+
+    fn detach_validation_reservation(
+        &mut self,
+        token: &ValidationReservationToken,
+    ) -> Vec<(String, types::UpstreamConnection)> {
+        if !self.validation_reservation_identity_matches(token) {
+            return Vec::new();
+        }
+        if let Some(state) = self.validation_reservations.remove(token.session_id()) {
+            for (_, cancellation) in state.in_flight.into_values() {
+                cancellation.cancel();
+            }
+        }
+        self.validation_expirations.remove(token.session_id());
+        self.validation_owner_epochs.remove(token.session_id());
+        self.validation_sessions
+            .remove(token.session_id())
+            .map(HashMap::into_iter)
+            .unwrap_or_default()
+            .collect()
+    }
+
+    pub(crate) async fn release_validation_reservation(
+        shared: &Arc<Mutex<Self>>,
+        token: &ValidationReservationToken,
+    ) -> Result<(), ValidationShutdownError> {
+        let connections = shared.lock().await.detach_validation_reservation(token);
+        if connections.is_empty() {
+            return Ok(());
+        }
+        spawn_validation_shutdown(token.session_id().to_string(), connections, VALIDATION_SHUTDOWN_TIMEOUT)
+            .await
+            .map_err(|source| ValidationShutdownError::Join { source })?
+    }
+
+    pub(crate) fn detach_validation_connection_if_matches(
+        &mut self,
+        token: &ValidationReservationToken,
+        server_id: &str,
+        expected_owner_epoch: ValidationOwnerEpoch,
+    ) -> Option<types::UpstreamConnection> {
+        if !self.validation_reservation_identity_matches(token) {
+            return None;
+        }
+        let matches_expected = self
+            .validation_owner_epochs
+            .get(token.session_id())
+            .and_then(|owner_epochs| owner_epochs.get(server_id))
+            .is_some_and(|owner_epoch| *owner_epoch == expected_owner_epoch);
+        if !matches_expected {
+            return None;
+        }
+        if let Some(state) = self.validation_reservations.get_mut(token.session_id()) {
+            let attempt_ids = state
+                .in_flight
+                .iter()
+                .filter_map(|(attempt_id, (attempt_server_id, cancellation))| {
+                    if attempt_server_id != server_id {
+                        return None;
+                    }
+                    cancellation.cancel();
+                    Some(*attempt_id)
+                })
+                .collect::<Vec<_>>();
+            for attempt_id in attempt_ids {
+                state.in_flight.remove(&attempt_id);
+            }
+        }
+        self.validation_owner_epochs
+            .get_mut(token.session_id())
+            .and_then(|owner_epochs| owner_epochs.remove(server_id));
+        self.validation_sessions
+            .get_mut(token.session_id())
+            .and_then(|servers| servers.remove(server_id))
+    }
+
+    pub(crate) async fn shutdown_detached_validation_connection(
+        token: &ValidationReservationToken,
+        server_id: &str,
+        connection: types::UpstreamConnection,
+    ) -> Result<(), ValidationShutdownError> {
+        spawn_validation_shutdown(
+            token.session_id().to_string(),
+            vec![(server_id.to_string(), connection)],
+            VALIDATION_SHUTDOWN_TIMEOUT,
+        )
+        .await
+        .map_err(|source| ValidationShutdownError::Join { source })?
+    }
+
+    pub(crate) async fn ensure_validation_instance(
+        shared: &Arc<Mutex<Self>>,
+        server_id: &str,
+        session_id: &str,
+        ttl: Duration,
+    ) -> Result<ValidationReservationLease, anyhow::Error> {
+        let lease = Self::reserve_validation_session(shared, session_id, ttl).await;
+        let token = lease.token().clone();
+        let mut worker = {
+            let pool = shared.lock().await;
+            if pool
+                .validation_sessions
+                .get(token.session_id())
+                .is_some_and(|servers| servers.contains_key(server_id))
+            {
+                return Ok(lease);
+            }
+            if pool.database.is_none() {
+                anyhow::bail!("Database connection not available");
+            }
+            pool.validation_worker()
+        };
+
+        let cancellation = CancellationToken::new();
+        let attempt_guard = {
+            let mut pool = shared.lock().await;
+            pool.begin_validation_attempt(&token, server_id, cancellation.clone(), shared)?
+        };
+        let task_server_id = server_id.to_string();
+        let task_session_id = session_id.to_string();
+        let task_cancellation = cancellation.clone();
+        let mut connect_task = tokio::spawn(async move {
+            let initial_failure_states = worker.failure_states.clone();
+            let connection = worker
+                .create_temporary_validation_instance(&task_server_id, &task_session_id, task_cancellation.clone())
+                .await;
+            let connection = connection.map(|connection| {
+                let mut pending = PendingValidationConnection::new(task_cancellation);
+                pending.set(connection);
+                pending
+            });
+            let failure_updates = worker
+                .failure_states
+                .into_iter()
+                .filter(|(key, state)| initial_failure_states.get(key) != Some(state))
+                .collect::<Vec<_>>();
+            (failure_updates, connection)
+        });
+        let mut abort_guard = AbortTaskOnDrop::new(connect_task.abort_handle(), cancellation.clone());
+        let (failure_updates, connection) = (&mut connect_task)
+            .await
+            .map_err(|error| anyhow::anyhow!("validation connect task failed: {error}"))?;
+        abort_guard.disarm();
+        let mut pending = match connection {
+            Ok(pending) => pending,
+            Err(error) => {
+                if Self::finalize_validation_failure(shared, attempt_guard, failure_updates).await {
+                    return Err(error);
+                }
+                return Err(ValidationReservationError::Invalidated {
+                    session_id: token.session_id().to_string(),
+                    generation: token.generation(),
+                }
+                .into());
+            }
+        };
+        Self::finalize_validation_success(shared, attempt_guard, &mut pending, failure_updates, ttl).await?;
+        Ok(lease)
     }
 
     /// Convert database Server model to MCPServerConfig
@@ -808,16 +1569,11 @@ impl UpstreamConnectionPool {
         session_id: &str,
     ) -> Result<(), anyhow::Error> {
         if let Some(session_servers) = self.validation_sessions.get_mut(session_id) {
-            if let Some(mut connection) = session_servers.remove(server_id) {
-                // Best-effort graceful shutdown: ask running service to cancel before dropping pipes.
-                if let Some(service) = connection.service.as_ref() {
-                    // Use cancellation token to request shutdown without taking ownership
-                    service.cancellation_token().cancel();
+            if let Some(connection) = session_servers.remove(server_id) {
+                if let Some(owner_epochs) = self.validation_owner_epochs.get_mut(session_id) {
+                    owner_epochs.remove(server_id);
                 }
-                // Disconnect the service if still connected (clears handles/status)
-                if connection.is_connected() {
-                    connection.update_disconnected();
-                }
+                shutdown_validation_connection(connection).await?;
                 tracing::info!("Destroyed validation instance for server ID '{}'", server_id);
             }
         }
@@ -830,13 +1586,19 @@ impl UpstreamConnectionPool {
         &mut self,
         session_id: &str,
     ) -> Result<(), anyhow::Error> {
+        let mut cleanup_error = None;
         if let Some(session_servers) = self.validation_sessions.remove(session_id) {
-            for (server_name, mut connection) in session_servers {
-                if let Some(service) = connection.service.as_ref() {
-                    service.cancellation_token().cancel();
-                }
-                if connection.is_connected() {
-                    connection.update_disconnected();
+            self.validation_owner_epochs.remove(session_id);
+            for (server_name, connection) in session_servers {
+                if let Err(error) = shutdown_validation_connection(connection).await {
+                    cleanup_error.get_or_insert_with(|| {
+                        anyhow::anyhow!(
+                            "Failed to await validation owner cleanup for server '{}' in session '{}': {}",
+                            server_name,
+                            session_id,
+                            error
+                        )
+                    });
                 }
                 tracing::info!(
                     "Destroyed validation instance for server '{}' in session '{}'",
@@ -847,6 +1609,940 @@ impl UpstreamConnectionPool {
         }
         self.validation_expirations.remove(session_id);
 
-        Ok(())
+        match cleanup_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+struct PendingValidationConnection {
+    cancellation: CancellationToken,
+    connection: Option<types::UpstreamConnection>,
+    armed: bool,
+}
+
+fn apply_validation_failure_updates(
+    pool: &mut UpstreamConnectionPool,
+    updates: Vec<(String, types::FailureState)>,
+) {
+    for (key, state) in updates {
+        if let Some(kind) = state.last_kind {
+            pool.register_failure(&key, kind, state.last_error);
+        } else {
+            pool.clear_failure_state(&key);
+        }
+    }
+}
+
+struct AbortTaskOnDrop {
+    handle: tokio::task::AbortHandle,
+    cancellation: CancellationToken,
+    armed: bool,
+}
+
+impl AbortTaskOnDrop {
+    fn new(
+        handle: tokio::task::AbortHandle,
+        cancellation: CancellationToken,
+    ) -> Self {
+        Self {
+            handle,
+            cancellation,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbortTaskOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.cancellation.cancel();
+            self.handle.abort();
+        }
+    }
+}
+
+impl PendingValidationConnection {
+    fn new(cancellation: CancellationToken) -> Self {
+        Self {
+            cancellation,
+            connection: None,
+            armed: true,
+        }
+    }
+
+    fn set(
+        &mut self,
+        connection: types::UpstreamConnection,
+    ) {
+        self.connection = Some(connection);
+    }
+
+    fn take(&mut self) -> Option<types::UpstreamConnection> {
+        self.connection.take()
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingValidationConnection {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.cancellation.cancel();
+        if let Some(service) = self
+            .connection
+            .as_ref()
+            .and_then(|connection| connection.service.as_ref())
+        {
+            service.cancellation_token().cancel();
+        }
+    }
+}
+
+async fn shutdown_validation_connection(mut connection: types::UpstreamConnection) -> Result<(), anyhow::Error> {
+    let service = connection.service.take();
+    connection.update_disconnected();
+
+    let Some(service) = service else {
+        return Ok(());
+    };
+
+    match Arc::try_unwrap(service) {
+        Ok(service) => {
+            service
+                .cancel()
+                .await
+                .map_err(|error| anyhow::anyhow!("Validation RunningService cleanup failed: {error}"))?;
+            Ok(())
+        }
+        Err(service) => {
+            service.cancellation_token().cancel();
+            Err(anyhow::anyhow!(
+                "Validation RunningService is still shared; issued best-effort cancellation"
+            ))
+        }
+    }
+}
+
+async fn await_validation_shutdown<F>(
+    future: F,
+    deadline: Duration,
+) -> Result<(), ValidationShutdownError>
+where
+    F: std::future::Future<Output = Result<(), anyhow::Error>>,
+{
+    tokio::time::timeout(deadline, future)
+        .await
+        .map_err(|_| ValidationShutdownError::Timeout {
+            timeout_ms: deadline.as_millis(),
+        })?
+        .map_err(|source| ValidationShutdownError::Operation { source })
+}
+
+fn spawn_validation_shutdown(
+    session_id: String,
+    connections: Vec<(String, types::UpstreamConnection)>,
+    deadline: Duration,
+) -> tokio::task::JoinHandle<Result<(), ValidationShutdownError>> {
+    for (_, connection) in &connections {
+        if let Some(service) = connection.service.as_ref() {
+            service.cancellation_token().cancel();
+        }
+    }
+    tokio::spawn(async move {
+        await_validation_shutdown(
+            async move {
+                let mut cleanup_error = None;
+                for (server_name, connection) in connections {
+                    if let Err(error) = shutdown_validation_connection(connection).await {
+                        cleanup_error.get_or_insert_with(|| {
+                            anyhow::anyhow!(
+                                "Failed to await validation owner cleanup for server '{}' in session '{}': {}",
+                                server_name,
+                                session_id,
+                                error
+                            )
+                        });
+                    }
+                }
+                cleanup_error.map_or(Ok(()), Err)
+            },
+            deadline,
+        )
+        .await
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::{Duration, Instant},
+    };
+
+    use rmcp::{ServerHandler, ServiceExt};
+    use tokio_util::sync::CancellationToken;
+
+    use super::types::FailureState;
+    use super::{
+        FailureKind, PendingValidationConnection, UpstreamConnectionPool, ValidationReservationError,
+        ValidationShutdownError, await_validation_shutdown, spawn_validation_shutdown,
+    };
+    use crate::core::{models::Config, pool::UpstreamConnection, transport::client::UpstreamClientHandler};
+
+    #[derive(Clone, Default)]
+    struct TestServer;
+
+    impl ServerHandler for TestServer {}
+
+    async fn validation_connection() -> (UpstreamConnection, tokio::task::JoinHandle<anyhow::Result<()>>) {
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let server_handle = tokio::spawn(async move {
+            let service = TestServer.serve(server_transport).await?;
+            service.waiting().await?;
+            Ok(())
+        });
+        let service = UpstreamClientHandler::new("validation-test".to_string())
+            .serve(client_transport)
+            .await
+            .expect("validation client should initialize");
+        let mut connection = UpstreamConnection::new("validation-test".to_string());
+        connection.update_connected(service, Vec::new(), Some(rmcp::model::ServerCapabilities::default()));
+        (connection, server_handle)
+    }
+
+    fn empty_pool() -> UpstreamConnectionPool {
+        UpstreamConnectionPool::new(
+            Arc::new(Config {
+                mcp_servers: HashMap::new(),
+                pagination: None,
+            }),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn validation_cleanup_reports_when_running_service_cannot_be_awaited() {
+        let (connection, server_handle) = validation_connection().await;
+        let retained_service = connection
+            .service
+            .as_ref()
+            .expect("validation service should exist")
+            .clone();
+        let mut pool = empty_pool();
+        pool.validation_sessions
+            .entry("validation-session".to_string())
+            .or_default()
+            .insert("server-1".to_string(), connection);
+        pool.validation_expirations.insert(
+            "validation-session".to_string(),
+            std::time::Instant::now() + Duration::from_secs(60),
+        );
+
+        let error = pool
+            .destroy_validation_session("validation-session")
+            .await
+            .expect_err("shared RunningService cannot provide awaited cleanup");
+
+        assert!(error.to_string().contains("still shared"));
+        assert!(retained_service.is_closed());
+        assert!(!pool.validation_sessions.contains_key("validation-session"));
+        assert!(!pool.validation_expirations.contains_key("validation-session"));
+
+        drop(retained_service);
+        tokio::time::timeout(Duration::from_secs(1), server_handle)
+            .await
+            .expect("server should stop after best-effort cancellation")
+            .expect("server task should join")
+            .expect("server should shut down cleanly");
+    }
+
+    #[tokio::test]
+    async fn published_reservation_is_cleaned_when_transfer_is_cancelled() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "cancel-transfer", Duration::from_secs(60)).await;
+        let token = lease.token().clone();
+        let (connection, server_handle) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish validation owner");
+
+        let guard = pool.lock().await;
+        let task_pool = pool.clone();
+        let transfer = tokio::spawn(async move {
+            let _lease = lease;
+            let _blocked = task_pool.lock().await;
+        });
+        tokio::task::yield_now().await;
+        transfer.abort();
+        assert!(transfer.await.expect_err("transfer should abort").is_cancelled());
+        drop(guard);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while pool.lock().await.validation_sessions.contains_key("cancel-transfer") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("armed reservation lease must detach on cancellation");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[tokio::test]
+    async fn old_reservation_cannot_publish_or_remove_a_replacement() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let old_lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "replace-session", Duration::from_secs(60)).await;
+        let old_token = old_lease.token().clone();
+        UpstreamConnectionPool::release_validation_reservation(&pool, &old_token)
+            .await
+            .expect("close old reservation");
+
+        let new_lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "replace-session", Duration::from_secs(60)).await;
+        let new_token = new_lease.token().clone();
+        assert_ne!(old_token.generation(), new_token.generation());
+        let (new_connection, new_server) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &new_token,
+            "server-1",
+            new_connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish replacement owner");
+
+        let (old_connection, old_server) = validation_connection().await;
+        let error = UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &old_token,
+            "server-1",
+            old_connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect_err("closed reservation must not publish into replacement");
+        assert!(matches!(error, ValidationReservationError::Invalidated { .. }));
+        drop(old_lease);
+
+        let guard = pool.lock().await;
+        assert!(guard.validation_sessions.get("replace-session").is_some_and(|session| {
+            session.get("server-1").is_some() && guard.validation_reservation_matches(&new_token)
+        }));
+        drop(guard);
+        old_server
+            .await
+            .expect("old server task should join")
+            .expect("rejected old owner should stop");
+        UpstreamConnectionPool::release_validation_reservation(&pool, &new_token)
+            .await
+            .expect("release replacement");
+        drop(new_lease);
+        new_server
+            .await
+            .expect("new server task should join")
+            .expect("replacement server should stop");
+    }
+
+    #[tokio::test]
+    async fn expired_reservation_token_still_has_cleanup_authority() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "expired-close", Duration::from_millis(50)).await;
+        let token = lease.token().clone();
+        let (connection, server_handle) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            connection,
+            Duration::from_millis(1),
+        )
+        .await
+        .expect("publish validation owner");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("expired token must retain cleanup authority");
+
+        assert!(!pool.lock().await.validation_sessions.contains_key("expired-close"));
+        drop(lease);
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("expired owner should stop");
+    }
+
+    #[tokio::test]
+    async fn committed_joiner_survives_creator_lease_drop_in_the_same_generation() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let creator =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "joined-session", Duration::from_secs(60)).await;
+        let creator_token = creator.token().clone();
+        let joiner =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "joined-session", Duration::from_secs(60)).await;
+        assert_eq!(creator_token, *joiner.token());
+        let persistent_token = joiner.into_persistent_token();
+        let (connection, server_handle) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &persistent_token,
+            "server-1",
+            connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("joiner publishes owner");
+
+        drop(creator);
+        tokio::task::yield_now().await;
+
+        assert!(pool.lock().await.validation_reservation_matches(&persistent_token));
+        UpstreamConnectionPool::release_validation_reservation(&pool, &persistent_token)
+            .await
+            .expect("release persistent joiner");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("joined owner should stop");
+    }
+
+    #[tokio::test]
+    async fn late_stale_observer_does_not_cancel_replacement_attempt() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "stale-attempt", Duration::from_secs(60)).await;
+        let token = lease.token().clone();
+        let (stale_connection, stale_server) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            stale_connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish stale owner");
+        let observed_owner_epoch = pool
+            .lock()
+            .await
+            .validation_owner_observation(&token, "server-1")
+            .expect("observe stale publication")
+            .owner_epoch;
+
+        let detached = pool
+            .lock()
+            .await
+            .detach_validation_connection_if_matches(&token, "server-1", observed_owner_epoch)
+            .expect("first observer detaches expected owner");
+        let shutdown = spawn_validation_shutdown(
+            token.session_id().to_string(),
+            vec![("server-1".to_string(), detached)],
+            super::VALIDATION_SHUTDOWN_TIMEOUT,
+        );
+        let cancellation = CancellationToken::new();
+        let attempt = pool
+            .lock()
+            .await
+            .begin_validation_attempt(&token, "server-1", cancellation.clone(), &pool)
+            .expect("register replacement attempt");
+
+        assert!(
+            pool.lock()
+                .await
+                .detach_validation_connection_if_matches(&token, "server-1", observed_owner_epoch)
+                .is_none()
+        );
+        assert!(!cancellation.is_cancelled());
+        assert!(UpstreamConnectionPool::finalize_validation_failure(&pool, attempt, Vec::new()).await);
+
+        shutdown
+            .await
+            .expect("shutdown task should join")
+            .expect("stale owner should stop");
+        stale_server
+            .await
+            .expect("stale server task should join")
+            .expect("stale server should stop");
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release reservation");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn late_stale_observer_does_not_remove_published_replacement() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "stale-replacement", Duration::from_secs(60))
+                .await;
+        let token = lease.token().clone();
+        let (stale_connection, stale_server) = validation_connection().await;
+        let expected_instance = stale_connection.id.clone();
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            stale_connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish stale owner");
+        let observed_owner_epoch = pool
+            .lock()
+            .await
+            .validation_owner_observation(&token, "server-1")
+            .expect("observe stale publication")
+            .owner_epoch;
+        let detached = pool
+            .lock()
+            .await
+            .detach_validation_connection_if_matches(&token, "server-1", observed_owner_epoch)
+            .expect("first observer detaches expected owner");
+        let shutdown = spawn_validation_shutdown(
+            token.session_id().to_string(),
+            vec![("server-1".to_string(), detached)],
+            super::VALIDATION_SHUTDOWN_TIMEOUT,
+        );
+        let (mut replacement, replacement_server) = validation_connection().await;
+        replacement.id = expected_instance.clone();
+        let replacement_service = replacement.service.as_ref().expect("replacement service").clone();
+        let replacement_instance = replacement.id.clone();
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            replacement,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish replacement");
+        let replacement_owner_epoch = pool
+            .lock()
+            .await
+            .validation_owner_observation(&token, "server-1")
+            .expect("observe replacement publication")
+            .owner_epoch;
+        assert_ne!(observed_owner_epoch, replacement_owner_epoch);
+
+        assert!(
+            pool.lock()
+                .await
+                .detach_validation_connection_if_matches(&token, "server-1", observed_owner_epoch)
+                .is_none()
+        );
+        assert_eq!(
+            pool.lock().await.validation_sessions[token.session_id()]["server-1"].id,
+            replacement_instance
+        );
+        assert!(!replacement_service.is_closed());
+        drop(replacement_service);
+
+        shutdown
+            .await
+            .expect("shutdown task should join")
+            .expect("stale owner should stop");
+        stale_server
+            .await
+            .expect("stale server task should join")
+            .expect("stale server should stop");
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release replacement");
+        replacement_server
+            .await
+            .expect("replacement server task should join")
+            .expect("replacement should stop");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn detached_attempt_finishes_without_worker_authority() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "detached-attempt", Duration::from_secs(60))
+                .await;
+        let token = lease.token().clone();
+        let (connection, server_handle) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish observed owner");
+        let observed_owner_epoch = pool
+            .lock()
+            .await
+            .validation_owner_observation(&token, "server-1")
+            .expect("observe publication")
+            .owner_epoch;
+        let cancellation = CancellationToken::new();
+        let attempt = pool
+            .lock()
+            .await
+            .begin_validation_attempt(&token, "server-1", cancellation.clone(), &pool)
+            .expect("register replacement attempt");
+
+        let detached = pool
+            .lock()
+            .await
+            .detach_validation_connection_if_matches(&token, "server-1", observed_owner_epoch)
+            .expect("detach expected owner");
+        assert!(cancellation.is_cancelled());
+        assert!(!UpstreamConnectionPool::finalize_validation_failure(&pool, attempt, Vec::new()).await);
+
+        spawn_validation_shutdown(
+            token.session_id().to_string(),
+            vec![("server-1".to_string(), detached)],
+            super::VALIDATION_SHUTDOWN_TIMEOUT,
+        )
+        .await
+        .expect("shutdown task should join")
+        .expect("detached owner should stop");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release reservation");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn late_successful_attempt_cannot_publish_after_matching_epoch_detach() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "late-success", Duration::from_secs(60)).await;
+        let token = lease.token().clone();
+        let cancellation = CancellationToken::new();
+        let attempt = pool
+            .lock()
+            .await
+            .begin_validation_attempt(&token, "server-1", cancellation.clone(), &pool)
+            .expect("register worker A");
+        let (worker_connection, worker_server) = validation_connection().await;
+        let mut worker_result = PendingValidationConnection::new(cancellation);
+        worker_result.set(worker_connection);
+
+        let (replacement, replacement_server) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            replacement,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("worker B publishes replacement");
+        let replacement_epoch = pool
+            .lock()
+            .await
+            .validation_owner_observation(&token, "server-1")
+            .expect("observe replacement")
+            .owner_epoch;
+        let detached = pool
+            .lock()
+            .await
+            .detach_validation_connection_if_matches(&token, "server-1", replacement_epoch)
+            .expect("matching epoch detach completes");
+        UpstreamConnectionPool::shutdown_detached_validation_connection(&token, "server-1", detached)
+            .await
+            .expect("replacement shutdown");
+        replacement_server
+            .await
+            .expect("replacement server should join")
+            .expect("replacement should stop");
+
+        let error = UpstreamConnectionPool::finalize_validation_success(
+            &pool,
+            attempt,
+            &mut worker_result,
+            Vec::new(),
+            Duration::from_secs(60),
+        )
+        .await
+        .expect_err("late worker A must lose publication authority");
+        assert!(matches!(
+            error.downcast_ref::<ValidationReservationError>(),
+            Some(ValidationReservationError::Invalidated { .. })
+        ));
+        assert!(
+            !pool
+                .lock()
+                .await
+                .validation_sessions
+                .get(token.session_id())
+                .is_some_and(|servers| servers.contains_key("server-1"))
+        );
+        worker_server
+            .await
+            .expect("late worker server should join")
+            .expect("late worker owner should receive bounded shutdown");
+
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release reservation");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn late_failed_attempt_cannot_apply_updates_after_matching_epoch_detach() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "late-failure", Duration::from_secs(60)).await;
+        let token = lease.token().clone();
+        let cancellation = CancellationToken::new();
+        let attempt = pool
+            .lock()
+            .await
+            .begin_validation_attempt(&token, "server-1", cancellation, &pool)
+            .expect("register worker A");
+        let mut late_failure = FailureState::new();
+        late_failure.register_failure(
+            Instant::now(),
+            FailureKind::Connect,
+            Some("late worker failure".to_string()),
+        );
+
+        let (replacement, replacement_server) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            replacement,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("worker B publishes replacement");
+        let replacement_epoch = pool
+            .lock()
+            .await
+            .validation_owner_observation(&token, "server-1")
+            .expect("observe replacement")
+            .owner_epoch;
+        let detached = pool
+            .lock()
+            .await
+            .detach_validation_connection_if_matches(&token, "server-1", replacement_epoch)
+            .expect("matching epoch detach completes");
+        UpstreamConnectionPool::shutdown_detached_validation_connection(&token, "server-1", detached)
+            .await
+            .expect("replacement shutdown");
+        replacement_server
+            .await
+            .expect("replacement server should join")
+            .expect("replacement should stop");
+
+        assert!(
+            !UpstreamConnectionPool::finalize_validation_failure(
+                &pool,
+                attempt,
+                vec![("late-worker".to_string(), late_failure)],
+            )
+            .await
+        );
+        assert!(!pool.lock().await.failure_states.contains_key("late-worker"));
+
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release reservation");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn validation_owner_epoch_allocator_is_shared_with_clones_and_workers() {
+        let pool = empty_pool();
+        let cloned_pool = pool.clone();
+        let worker = pool.validation_worker();
+
+        let pool_epoch = pool.allocate_validation_owner_epoch();
+        let clone_epoch = cloned_pool.allocate_validation_owner_epoch();
+        let worker_epoch = worker.allocate_validation_owner_epoch();
+
+        assert_ne!(pool_epoch, clone_epoch);
+        assert_ne!(pool_epoch, worker_epoch);
+        assert_ne!(clone_epoch, worker_epoch);
+        assert!(Arc::ptr_eq(
+            &pool.next_validation_owner_epoch,
+            &cloned_pool.next_validation_owner_epoch
+        ));
+        assert!(Arc::ptr_eq(
+            &pool.next_validation_owner_epoch,
+            &worker.next_validation_owner_epoch
+        ));
+    }
+
+    #[tokio::test]
+    async fn validation_owner_epoch_overflow_is_fail_stop() {
+        let pool = empty_pool();
+        pool.next_validation_owner_epoch.store(u64::MAX, Ordering::Relaxed);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pool.allocate_validation_owner_epoch();
+        }));
+
+        assert!(panic.is_err());
+    }
+
+    #[tokio::test]
+    async fn lazy_expiry_replacement_shuts_down_only_the_old_generation() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let old_lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "lazy-expiry", Duration::from_millis(50)).await;
+        let old_token = old_lease.token().clone();
+        let (old_connection, old_server) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &old_token,
+            "server-1",
+            old_connection,
+            Duration::from_millis(1),
+        )
+        .await
+        .expect("publish old owner");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let new_lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "lazy-expiry", Duration::from_secs(60)).await;
+        let new_token = new_lease.token().clone();
+        assert_ne!(old_token.generation(), new_token.generation());
+        tokio::time::timeout(Duration::from_secs(1), old_server)
+            .await
+            .expect("expired owner should receive bounded shutdown")
+            .expect("old server task should join")
+            .expect("old server should stop");
+        drop(old_lease);
+        tokio::task::yield_now().await;
+        assert!(pool.lock().await.validation_reservation_matches(&new_token));
+
+        UpstreamConnectionPool::release_validation_reservation(&pool, &new_token)
+            .await
+            .expect("release replacement generation");
+        drop(new_lease);
+    }
+
+    #[tokio::test]
+    async fn lazy_expiry_cleanup_detaches_identity_and_uses_bounded_shutdown() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "lazy-cleanup", Duration::from_millis(50)).await;
+        let token = lease.token().clone();
+        let (connection, server_handle) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            connection,
+            Duration::from_millis(1),
+        )
+        .await
+        .expect("publish expiring owner");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        pool.lock().await.cleanup_expired_sessions();
+
+        {
+            let pool = pool.lock().await;
+            assert!(!pool.validation_reservation_identity_matches(&token));
+            assert!(!pool.validation_reservations.contains_key(token.session_id()));
+        }
+        tokio::time::timeout(Duration::from_secs(1), server_handle)
+            .await
+            .expect("lazy cleanup should bound owner shutdown")
+            .expect("server task should join")
+            .expect("expired server should stop");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn failed_creator_does_not_remove_another_server_committed_by_joiner() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let creator =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "multi-server", Duration::from_secs(60)).await;
+        let joiner =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "multi-server", Duration::from_secs(60)).await;
+        let token = joiner.into_persistent_token();
+        let (connection, server_handle) = validation_connection().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-b",
+            connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("server B joiner publishes");
+
+        drop(creator);
+        tokio::task::yield_now().await;
+        assert!(
+            pool.lock()
+                .await
+                .validation_sessions
+                .get(token.session_id())
+                .is_some_and(|servers| servers.contains_key("server-b"))
+        );
+
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release multi-server reservation");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server B should stop");
+    }
+
+    #[tokio::test]
+    async fn validation_shutdown_deadline_drops_a_never_finishing_close() {
+        struct DropProbe(Arc<AtomicBool>);
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let probe = DropProbe(dropped.clone());
+        let error = await_validation_shutdown(
+            async move {
+                let _probe = probe;
+                std::future::pending::<Result<(), anyhow::Error>>().await
+            },
+            Duration::from_millis(10),
+        )
+        .await
+        .expect_err("never-finishing close must hit the deadline");
+
+        assert!(matches!(error, ValidationShutdownError::Timeout { .. }));
+        assert!(dropped.load(Ordering::SeqCst), "timed-out shutdown must drop ownership");
     }
 }

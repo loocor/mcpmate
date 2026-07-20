@@ -1,4 +1,4 @@
-// Capability preview (no DB / no REDB / no pool)
+// Capability preview (no persistence / no pool)
 // Provides helpers to discover capabilities for an arbitrary server config safely.
 
 use crate::common::server::ServerType;

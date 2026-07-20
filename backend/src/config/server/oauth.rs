@@ -217,7 +217,6 @@ mod tests {
             command: None,
             url: Some("https://example.com/mcp".to_string()),
             source: None,
-            capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
             pending_import: false,

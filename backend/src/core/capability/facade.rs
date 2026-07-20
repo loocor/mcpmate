@@ -21,14 +21,6 @@ pub fn concurrency_limit() -> usize {
     internal::concurrency_limit()
 }
 
-/// Parse capability declaration strings to determine whether a capability token is enabled
-pub fn capability_declared(
-    capabilities: Option<&str>,
-    token: &str,
-) -> bool {
-    internal::capability_declared(capabilities, token)
-}
-
 pub async fn build_resource_mapping(
     connection_pool: &Arc<Mutex<UpstreamConnectionPool>>,
     database: Option<&Arc<Database>>,

@@ -19,6 +19,9 @@ mod sync;
 mod types;
 
 pub use connection::UpstreamConnectionPool;
+pub(crate) use connection::{
+    ValidationConnectTimeout, ValidationReservationLease, ValidationReservationToken, ValidationShutdownError,
+};
 
 // Re-export selected types for external coordination
 pub use database::CapSyncFlags;

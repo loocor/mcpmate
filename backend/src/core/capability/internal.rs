@@ -1,6 +1,10 @@
 use anyhow::Result;
 use futures::future::BoxFuture;
-use rmcp::service::{Peer, RoleClient};
+use rmcp::{
+    model::ErrorCode,
+    service::{Peer, RoleClient, ServiceError},
+    transport::streamable_http_client::StreamableHttpError,
+};
 use std::time::Duration;
 
 /// Determine concurrency limit based on OS CPU cores
@@ -14,10 +18,12 @@ pub fn is_method_not_supported(msg: &str) -> bool {
     m.contains("method not found") || m.contains("not supported")
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum CapabilityFetchFailure {
-    Timeout,
-    Gone { message: String },
+    Timeout { timeout_ms: u128 },
+    TransportClosed,
+    Unsupported { message: String },
+    Authentication { message: String },
     Other { message: String },
 }
 
@@ -39,8 +45,11 @@ pub fn require_complete_capability_fetch<T>(
     };
 
     let detail = match failure {
-        CapabilityFetchFailure::Timeout => "request timed out".to_string(),
-        CapabilityFetchFailure::Gone { message } | CapabilityFetchFailure::Other { message } => message,
+        CapabilityFetchFailure::Timeout { timeout_ms } => format!("request timed out after {timeout_ms} ms"),
+        CapabilityFetchFailure::TransportClosed => "transport closed".to_string(),
+        CapabilityFetchFailure::Unsupported { message }
+        | CapabilityFetchFailure::Authentication { message }
+        | CapabilityFetchFailure::Other { message } => message,
     };
     Err(anyhow::anyhow!(
         "Failed to complete '{}' for server '{}' ({}) instance '{}': {}",
@@ -52,42 +61,41 @@ pub fn require_complete_capability_fetch<T>(
     ))
 }
 
-fn looks_like_gone(msg_lower: &str) -> bool {
-    msg_lower.contains("status: 404")
-        || msg_lower.contains("status: 410")
-        || msg_lower.contains("410")
-        || msg_lower.contains("404")
-        || msg_lower.contains("gone")
-}
-
-/// Parse capability declaration strings (e.g. "tools,prompts=false") to determine
-/// whether a specific capability token is enabled. Defaults to `true` when the
-/// declaration string is absent, matching legacy behaviour.
-pub fn capability_declared(
-    capabilities: Option<&str>,
-    token: &str,
-) -> bool {
-    match capabilities {
-        None => true,
-        Some(caps) => {
-            let mut saw_any = false;
-            for part in caps.split(',') {
-                let part = part.trim();
-                if part.is_empty() {
-                    continue;
-                }
-                saw_any = true;
-                let part_lower = part.to_ascii_lowercase();
-                if let Some((key, value)) = part_lower.split_once('=') {
-                    if key == token {
-                        return value != "false";
-                    }
-                } else if part_lower == token {
-                    return true;
-                }
+fn classify_service_error(error: &ServiceError) -> CapabilityFetchFailure {
+    match error {
+        ServiceError::McpError(error) if error.code == ErrorCode::METHOD_NOT_FOUND => {
+            CapabilityFetchFailure::Unsupported {
+                message: error.to_string(),
             }
-            !saw_any
         }
+        ServiceError::TransportClosed => CapabilityFetchFailure::TransportClosed,
+        ServiceError::Timeout { timeout } => CapabilityFetchFailure::Timeout {
+            timeout_ms: timeout.as_millis(),
+        },
+        ServiceError::TransportSend(error)
+            if error
+                .error
+                .downcast_ref::<StreamableHttpError<reqwest::Error>>()
+                .is_some_and(|error| {
+                    matches!(
+                        error,
+                        StreamableHttpError::AuthRequired(_) | StreamableHttpError::InsufficientScope(_)
+                    )
+                }) =>
+        {
+            CapabilityFetchFailure::Authentication {
+                message: error.to_string(),
+            }
+        }
+        ServiceError::McpError(_)
+        | ServiceError::TransportSend(_)
+        | ServiceError::UnexpectedResponse
+        | ServiceError::Cancelled { .. } => CapabilityFetchFailure::Other {
+            message: error.to_string(),
+        },
+        _ => CapabilityFetchFailure::Other {
+            message: error.to_string(),
+        },
     }
 }
 
@@ -107,7 +115,7 @@ pub async fn collect_capability_from_instance_peer<TItem, TMap, FFetch, FMap>(
     server_id: &str,
     server_name: &str,
     instance_id: &str,
-    is_unsupported: fn(&str) -> bool,
+    _is_unsupported: fn(&str) -> bool,
 ) -> CapabilityFetchOutcome<TMap>
 where
     FFetch: Fn(Peer<RoleClient>, Option<String>) -> BoxFuture<'static, Result<(Vec<TItem>, Option<String>)>>,
@@ -126,35 +134,34 @@ where
                     server_id,
                     instance_id
                 );
-                failure = Some(CapabilityFetchFailure::Timeout);
+                failure = Some(CapabilityFetchFailure::Timeout {
+                    timeout_ms: timeout.as_millis(),
+                });
                 break;
             }
             Ok(Err(e)) => {
-                let msg = format!("{}", e);
-                if is_unsupported(&msg) {
+                let classified = e
+                    .downcast_ref::<ServiceError>()
+                    .map(classify_service_error)
+                    .unwrap_or_else(|| CapabilityFetchFailure::Other { message: e.to_string() });
+                if matches!(classified, CapabilityFetchFailure::Unsupported { .. }) {
                     tracing::debug!(
                         "Capability not supported on '{}' ({}) instance {}: {}",
                         server_name,
                         server_id,
                         instance_id,
-                        msg
+                        e
                     );
-                    failure = Some(CapabilityFetchFailure::Other { message: msg });
                 } else {
                     tracing::warn!(
                         "Failed fetching capability page from '{}' ({}) instance {}: {}",
                         server_name,
                         server_id,
                         instance_id,
-                        msg
+                        e
                     );
-                    let msg_lower = msg.to_ascii_lowercase();
-                    if looks_like_gone(&msg_lower) {
-                        failure = Some(CapabilityFetchFailure::Gone { message: msg });
-                    } else {
-                        failure = Some(CapabilityFetchFailure::Other { message: msg });
-                    }
                 }
+                failure = Some(classified);
                 break;
             }
             Ok(Ok((items, next))) => {
@@ -177,7 +184,21 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{CapabilityFetchFailure, CapabilityFetchOutcome, require_complete_capability_fetch};
+    use std::{any::TypeId, time::Duration};
+
+    use rmcp::{
+        ErrorData,
+        model::ErrorCode,
+        service::ServiceError,
+        transport::{
+            DynamicTransportError,
+            streamable_http_client::{AuthRequiredError, InsufficientScopeError, StreamableHttpError},
+        },
+    };
+
+    use super::{
+        CapabilityFetchFailure, CapabilityFetchOutcome, classify_service_error, require_complete_capability_fetch,
+    };
 
     #[test]
     fn incomplete_paginated_inventory_never_returns_partial_items() {
@@ -188,12 +209,70 @@ mod tests {
             "instance-1",
             CapabilityFetchOutcome {
                 items: vec!["first-page"],
-                failure: Some(CapabilityFetchFailure::Timeout),
+                failure: Some(CapabilityFetchFailure::Timeout { timeout_ms: 1_000 }),
             },
         )
         .expect_err("partial inventory must fail closed");
 
         assert!(error.to_string().contains("prompts/list"));
         assert!(error.to_string().contains("server-1"));
+    }
+
+    #[test]
+    fn rmcp_service_errors_are_classified_without_message_matching() {
+        assert_eq!(
+            classify_service_error(&ServiceError::TransportClosed),
+            CapabilityFetchFailure::TransportClosed
+        );
+        assert_eq!(
+            classify_service_error(&ServiceError::Timeout {
+                timeout: Duration::from_millis(250),
+            }),
+            CapabilityFetchFailure::Timeout { timeout_ms: 250 }
+        );
+        assert!(matches!(
+            classify_service_error(&ServiceError::McpError(ErrorData::new(
+                ErrorCode::METHOD_NOT_FOUND,
+                "opaque message",
+                None,
+            ))),
+            CapabilityFetchFailure::Unsupported { .. }
+        ));
+        assert!(matches!(
+            classify_service_error(&ServiceError::McpError(ErrorData::new(
+                ErrorCode::INTERNAL_ERROR,
+                "gone 410",
+                None,
+            ))),
+            CapabilityFetchFailure::Other { .. }
+        ));
+    }
+
+    #[test]
+    fn streamable_http_auth_failures_remain_typed_without_message_matching() {
+        for error in [
+            StreamableHttpError::<reqwest::Error>::AuthRequired(AuthRequiredError::new(
+                "Bearer resource_metadata=\"https://example.com\"".to_string(),
+            )),
+            StreamableHttpError::<reqwest::Error>::InsufficientScope(InsufficientScopeError::new(
+                "Bearer error=\"insufficient_scope\"".to_string(),
+                Some("tools.read".to_string()),
+            )),
+        ] {
+            let service_error = ServiceError::TransportSend(DynamicTransportError::from_parts(
+                "streamable-http-client",
+                TypeId::of::<()>(),
+                Box::new(error),
+            ));
+
+            assert!(matches!(
+                classify_service_error(&service_error),
+                CapabilityFetchFailure::Authentication { .. }
+            ));
+            assert_eq!(
+                crate::core::capability::runtime::RuntimeFailureKind::Authentication.retry_disposition(),
+                crate::core::capability::connection_provider::DiscoveryRetryDisposition::DoNotRetry
+            );
+        }
     }
 }

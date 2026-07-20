@@ -312,7 +312,9 @@ mod tests {
         models::{ServerOAuthConfig, ServerOAuthToken},
         server::{init::initialize_server_tables, upsert_server_oauth_config, upsert_server_oauth_token},
     };
-    use crate::core::cache::{CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo};
+    use crate::core::capability::index::{
+        CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo,
+    };
     use crate::core::secrets::store::{SecretCreateInput, SecretKindInput};
     use crate::test_helpers::oauth_secret_origin;
     use chrono::{Duration, Utc};

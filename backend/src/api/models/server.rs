@@ -287,24 +287,120 @@ pub struct InstanceSummary {
     pub connected_at: Option<String>,
 }
 
-/// Server capability summary information
+/// Lifecycle state for one capability kind in a catalog snapshot.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
-#[schemars(description = "Capability summary for a server")]
+#[serde(rename_all = "camelCase")]
+#[schemars(description = "Lifecycle state for one capability kind")]
+pub struct CapabilityKindSummary {
+    pub declaration: mcpmate_capability_store::DeclarationState,
+    pub inventory: mcpmate_capability_store::InventoryState,
+    pub current_count: u32,
+    pub current_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+/// Server capability state derived from one durable catalog snapshot.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
+#[serde(rename_all = "camelCase")]
+#[schemars(description = "Capability lifecycle summary for a server")]
 pub struct ServerCapabilitySummary {
-    #[schemars(description = "Whether the server declares tool support")]
-    pub supports_tools: bool,
-    #[schemars(description = "Whether the server declares prompt support")]
-    pub supports_prompts: bool,
-    #[schemars(description = "Whether the server declares resource support (including templates)")]
-    pub supports_resources: bool,
-    #[schemars(description = "Number of tools discovered for this server")]
-    pub tools_count: u32,
-    #[schemars(description = "Number of prompts discovered for this server")]
-    pub prompts_count: u32,
-    #[schemars(description = "Number of resources discovered for this server")]
-    pub resources_count: u32,
-    #[schemars(description = "Number of resource templates discovered for this server")]
-    pub resource_templates_count: u32,
+    pub snapshot_state: mcpmate_capability_store::SnapshotState,
+    pub revision: i64,
+    pub observed_at: String,
+    pub tools: CapabilityKindSummary,
+    pub prompts: CapabilityKindSummary,
+    pub resources: CapabilityKindSummary,
+    pub resource_templates: CapabilityKindSummary,
+}
+
+#[cfg(test)]
+mod capability_summary_tests {
+    use super::{CapabilityKindSummary, ServerCapabilitySummary};
+    use mcpmate_capability_store::{DeclarationState, InventoryState, SnapshotState};
+
+    fn kind(
+        declaration: DeclarationState,
+        inventory: InventoryState,
+        current_count: u32,
+        current_available: bool,
+        last_error: Option<&str>,
+    ) -> CapabilityKindSummary {
+        CapabilityKindSummary {
+            declaration,
+            inventory,
+            current_count,
+            current_available,
+            last_error: last_error.map(str::to_string),
+        }
+    }
+
+    fn summary(
+        snapshot_state: SnapshotState,
+        capability: CapabilityKindSummary,
+    ) -> ServerCapabilitySummary {
+        ServerCapabilitySummary {
+            snapshot_state,
+            revision: 42,
+            observed_at: "2026-07-20T10:00:00Z".to_string(),
+            tools: capability.clone(),
+            prompts: capability.clone(),
+            resources: capability.clone(),
+            resource_templates: capability,
+        }
+    }
+
+    #[test]
+    fn capability_summary_serializes_unknown_unsupported_empty_ready_and_failed_distinctly() {
+        let cases = [
+            summary(
+                SnapshotState::Ready,
+                kind(DeclarationState::Unknown, InventoryState::Unknown, 0, false, None),
+            ),
+            summary(
+                SnapshotState::Ready,
+                kind(DeclarationState::Unsupported, InventoryState::Complete, 0, false, None),
+            ),
+            summary(
+                SnapshotState::Ready,
+                kind(DeclarationState::Supported, InventoryState::Complete, 0, true, None),
+            ),
+            summary(
+                SnapshotState::Ready,
+                kind(DeclarationState::Supported, InventoryState::Complete, 3, true, None),
+            ),
+            summary(
+                SnapshotState::Unavailable,
+                kind(
+                    DeclarationState::Supported,
+                    InventoryState::Failed,
+                    3,
+                    false,
+                    Some("upstream unavailable"),
+                ),
+            ),
+        ];
+
+        let values = cases
+            .into_iter()
+            .map(|case| serde_json::to_value(case).expect("serialize capability summary"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(values[0]["tools"]["declaration"], "unknown");
+        assert_eq!(values[0]["tools"]["currentAvailable"], false);
+        assert!(values[0]["tools"].get("lastError").is_none());
+        assert_eq!(values[1]["tools"]["declaration"], "unsupported");
+        assert_eq!(values[1]["tools"]["currentAvailable"], false);
+        assert_eq!(values[2]["tools"]["currentCount"], 0);
+        assert_eq!(values[2]["tools"]["currentAvailable"], true);
+        assert_eq!(values[3]["tools"]["currentCount"], 3);
+        assert_eq!(values[4]["snapshotState"], "unavailable");
+        assert_eq!(values[4]["tools"]["inventory"], "failed");
+        assert_eq!(values[4]["tools"]["currentAvailable"], false);
+        assert_eq!(values[4]["tools"]["lastError"], "upstream unavailable");
+        assert_eq!(values[4]["revision"], 42);
+        assert_eq!(values[4]["observedAt"], "2026-07-20T10:00:00Z");
+    }
 }
 
 /// Standard upstream server identity observed during MCP initialize.
@@ -356,7 +452,7 @@ pub struct ServerDetailsData {
     /// Standard read-only identity advertised by the upstream server
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_info: Option<StandardServerInfo>,
-    /// Capability summary including support flags and counts
+    /// Capability lifecycle summary from the durable catalog snapshot
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability: Option<ServerCapabilitySummary>,
     /// Last known MCP protocol version advertised by the server

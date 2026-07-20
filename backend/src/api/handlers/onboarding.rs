@@ -164,7 +164,10 @@ pub async fn server_scan(
                 .inspect_config_path_for_import(&descriptor.state, config_path, parse_rule_owned.as_ref())
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(build_import_plan_from_entries(inspected.inspection.entries, &client_name))
+            Ok(build_import_plan_from_entries(
+                inspected.inspection.entries,
+                &client_name,
+            ))
         }
         .await;
 
@@ -360,12 +363,7 @@ mod tests {
         profile::init::initialize_profile_tables,
         server::init::initialize_server_tables,
     };
-    use crate::core::{
-        cache::{RedbCacheManager, manager::CacheConfig},
-        models::Config,
-        pool::UpstreamConnectionPool,
-        profile::ConfigApplicationStateManager,
-    };
+    use crate::core::{models::Config, pool::UpstreamConnectionPool, profile::ConfigApplicationStateManager};
     use crate::inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager};
     use crate::system::metrics::MetricsCollector;
     use sqlx::sqlite::SqlitePoolOptions;
@@ -437,6 +435,7 @@ mod tests {
         let database = Arc::new(Database {
             pool: db_pool.clone(),
             path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
@@ -460,9 +459,6 @@ mod tests {
                 .expect("client service"),
         );
 
-        let cache_path = temp_dir.path().join("capability.redb");
-        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
-
         let state = Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
                 Arc::new(Config::default()),
@@ -475,7 +471,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            redb_cache,
             unified_query: None,
             client_service: Some(client_service),
             inspector_calls: Arc::new(InspectorCallRegistry::new()),

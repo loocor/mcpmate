@@ -4,13 +4,13 @@
 use super::TransportType;
 use crate::common::constants::protocol;
 use crate::common::http::make_streamable_config;
-use crate::core::foundation::utils::{get_sse_connection_timeout, get_sse_service_timeout, get_sse_tools_timeout};
+use crate::core::foundation::utils::{get_sse_service_timeout, get_sse_tools_timeout};
 use crate::core::models::MCPServerConfig;
 use anyhow::{Context, Result};
 use rmcp::{
+    RoleClient,
     model::{ServerCapabilities, Tool},
-    service::ServiceExt,
-    transport::StreamableHttpClientTransport,
+    transport::{IntoTransport, StreamableHttpClientTransport},
 };
 use std::time::Duration;
 use tokio::time::timeout;
@@ -23,53 +23,62 @@ fn annotate_operation<T>(
     result.with_context(|| format!("{operation} failed for server '{server_name}'"))
 }
 
-/// Internal helper used by streamable HTTP connections
-async fn connect_http_internal(
+fn build_configured_http_client(server_config: &MCPServerConfig) -> Result<reqwest::Client> {
+    let mut header_map = reqwest::header::HeaderMap::new();
+    if let Some(headers) = server_config.headers.as_ref() {
+        for (key, value) in headers {
+            if let (Ok(name), Ok(value)) = (
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                reqwest::header::HeaderValue::from_str(value),
+            ) {
+                let controlled = matches!(
+                    name.as_str().to_ascii_lowercase().as_str(),
+                    "accept"
+                        | "content-length"
+                        | "host"
+                        | "connection"
+                        | "transfer-encoding"
+                        | protocol::MCP_PROTOCOL_VERSION_HEADER_LOWER
+                );
+                if !controlled {
+                    header_map.insert(name, value);
+                }
+            }
+        }
+    }
+    reqwest::Client::builder()
+        .default_headers(header_map)
+        .build()
+        .context("Failed to build configured HTTP client")
+}
+
+pub(crate) async fn connect_http_initialized_for_validation(
     server_name: &str,
     server_config: &MCPServerConfig,
     transport_type: TransportType,
-) -> Result<(
-    crate::core::transport::ClientService,
-    Vec<Tool>,
-    Option<ServerCapabilities>,
-)> {
-    // Reuse previous implementation (moved from old connect_http_server body)
-    // Get URL
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Result<crate::core::transport::ClientService> {
     let url = server_config
         .url
         .as_ref()
         .context("URL not specified for HTTP server")?;
 
-    // Get timeouts
-    let connection_timeout = get_sse_connection_timeout();
-    let service_timeout = get_sse_service_timeout();
-    let tools_timeout = get_sse_tools_timeout();
-
-    tracing::debug!(
-        "Using timeouts for server '{}': connection={}s, service={}s, tools={}s",
-        server_name,
-        connection_timeout.as_secs(),
-        service_timeout.as_secs(),
-        tools_timeout.as_secs()
-    );
-
-    let (service, tools, capabilities) = match transport_type {
+    match transport_type {
         TransportType::StreamableHttp => {
             let config = make_streamable_config(url, &server_config.headers);
-            let transport =
-                StreamableHttpClientTransport::<reqwest::Client>::with_client(reqwest::Client::new(), config);
-            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
+            let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(
+                build_configured_http_client(server_config)?,
+                config,
+            );
+            build_initialized_service_with_cancellation(server_name, transport, cancellation, get_sse_service_timeout())
+                .await
         }
-        TransportType::Stdio => {
-            return Err(anyhow::anyhow!("Stdio transport not supported by this function"));
-        }
-    };
-
-    Ok((service, tools, capabilities))
+        TransportType::Stdio => anyhow::bail!("Stdio transport not supported by this function"),
+    }
 }
 
 /// Build RunningService and fetch tools with standard timeout handling
-async fn build_service_tools<T>(
+async fn build_service_tools<T, E, A>(
     server_name: &str,
     transport: T,
     service_timeout: std::time::Duration,
@@ -80,15 +89,10 @@ async fn build_service_tools<T>(
     Option<ServerCapabilities>,
 )>
 where
-    T: rmcp::transport::Transport<rmcp::RoleClient> + Send + 'static,
+    T: IntoTransport<RoleClient, E, A>,
+    E: std::error::Error + Send + Sync + 'static,
 {
-    // Serve transport with timeout
-    // server_name is a display label (e.g., "Gitmcp (SERVxxxx)") provided by the caller
-    let handler = crate::core::transport::client::UpstreamClientHandler::new(server_name.to_string());
-    let service = timeout(service_timeout, async { handler.serve(transport).await })
-        .await
-        .map_err(|_| anyhow::anyhow!(format!("Connection timeout for server '{server_name}'")))?;
-    let service = annotate_operation(service.map_err(anyhow::Error::from), "initialize/connect", server_name)?;
+    let service = build_initialized_service(server_name, transport, service_timeout).await?;
 
     // Fetch tools
     let tools = timeout(tools_timeout, service.list_all_tools())
@@ -110,6 +114,39 @@ where
     Ok((service, tools, capabilities))
 }
 
+async fn build_initialized_service<T, E, A>(
+    server_name: &str,
+    transport: T,
+    service_timeout: std::time::Duration,
+) -> Result<crate::core::transport::ClientService>
+where
+    T: IntoTransport<RoleClient, E, A>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    build_initialized_service_with_cancellation(server_name, transport, Default::default(), service_timeout).await
+}
+
+async fn build_initialized_service_with_cancellation<T, E, A>(
+    server_name: &str,
+    transport: T,
+    cancellation: tokio_util::sync::CancellationToken,
+    service_timeout: std::time::Duration,
+) -> Result<crate::core::transport::ClientService>
+where
+    T: IntoTransport<RoleClient, E, A>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let service = crate::core::transport::unified::initialize_client_service(
+        server_name,
+        transport,
+        cancellation,
+        service_timeout,
+    )
+    .await;
+
+    annotate_operation(service, "initialize/connect", server_name)
+}
+
 /// Connect to a streamable HTTP server with timeout
 pub async fn connect_http_server(
     server_name: &str,
@@ -120,48 +157,8 @@ pub async fn connect_http_server(
     Vec<Tool>,
     Option<ServerCapabilities>,
 )> {
-    let began = std::time::Instant::now();
-
-    // If default headers are configured, build a client with those headers and reuse the with_client path
-    if let Some(hdrs) = server_config.headers.as_ref() {
-        if !hdrs.is_empty() {
-            let mut header_map = reqwest::header::HeaderMap::new();
-            for (k, v) in hdrs.iter() {
-                if let (Ok(name), Ok(value)) = (
-                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
-                    reqwest::header::HeaderValue::from_str(v),
-                ) {
-                    // Skip controlled headers that transport layer will manage itself
-                    let controlled = matches!(
-                        name.as_str().to_ascii_lowercase().as_str(),
-                        "accept"
-                            | "content-length"
-                            | "host"
-                            | "connection"
-                            | "transfer-encoding"
-                            | protocol::MCP_PROTOCOL_VERSION_HEADER_LOWER
-                    );
-                    if controlled {
-                        continue;
-                    }
-                    header_map.insert(name, value);
-                }
-            }
-            let client = reqwest::Client::builder().default_headers(header_map).build()?;
-            return connect_http_server_with_client(server_name, server_config, client, transport_type).await;
-        }
-    }
-
-    let res = connect_http_internal(server_name, server_config, transport_type).await;
-    if let Ok((_, ref tools, _)) = res {
-        tracing::debug!(
-            "[HTTP CONNECT][no-reuse] server={} tools={} elapsed_ms={}",
-            server_name,
-            tools.len(),
-            began.elapsed().as_millis()
-        );
-    }
-    res
+    let client = build_configured_http_client(server_config)?;
+    connect_http_server_with_client(server_name, server_config, client, transport_type).await
 }
 
 /// Connect to a streamable HTTP server with provided reqwest client
@@ -248,7 +245,59 @@ pub async fn connect_http_server_with_client_timeouts(
 
 #[cfg(test)]
 mod tests {
-    use super::annotate_operation;
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
+    use rmcp::{
+        ErrorData, RoleServer, ServerHandler, ServiceExt,
+        model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo},
+        service::RequestContext,
+    };
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    use super::{
+        TransportType, annotate_operation, build_initialized_service, build_service_tools,
+        connect_http_initialized_for_validation,
+    };
+    use crate::{common::server::ServerType, core::models::MCPServerConfig};
+
+    #[derive(Clone)]
+    struct FailingToolsServer {
+        tools_list_calls: Arc<AtomicUsize>,
+    }
+
+    impl ServerHandler for FailingToolsServer {
+        fn get_info(&self) -> ServerInfo {
+            ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        }
+
+        async fn list_tools(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            _context: RequestContext<RoleServer>,
+        ) -> Result<ListToolsResult, ErrorData> {
+            self.tools_list_calls.fetch_add(1, Ordering::SeqCst);
+            Err(ErrorData::internal_error("tools/list is unavailable", None))
+        }
+    }
+
+    async fn spawn_failing_tools_server(
+        tools_list_calls: Arc<AtomicUsize>
+    ) -> (tokio::io::DuplexStream, tokio::task::JoinHandle<anyhow::Result<()>>) {
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let server_handle = tokio::spawn(async move {
+            let service = FailingToolsServer { tools_list_calls }.serve(server_transport).await?;
+            service.waiting().await?;
+            Ok(())
+        });
+
+        (client_transport, server_handle)
+    }
 
     #[test]
     fn protocol_errors_include_the_preview_operation_name() {
@@ -259,5 +308,82 @@ mod tests {
             assert!(error.to_string().contains(operation));
             assert!(error.to_string().contains("docs"));
         }
+    }
+
+    #[tokio::test]
+    async fn validation_initialization_skips_tools_while_production_bootstrap_lists_once() {
+        let tools_list_calls = Arc::new(AtomicUsize::new(0));
+        let (validation_transport, validation_server) = spawn_failing_tools_server(tools_list_calls.clone()).await;
+
+        let validation_service =
+            build_initialized_service("validation", validation_transport, std::time::Duration::from_secs(1))
+                .await
+                .expect("initialize validation owner");
+
+        assert!(validation_service.peer_info().is_some());
+        assert_eq!(tools_list_calls.load(Ordering::SeqCst), 0);
+
+        validation_service.cancel().await.expect("cancel validation owner");
+        validation_server
+            .await
+            .expect("join validation server")
+            .expect("validation server shutdown");
+
+        let (production_transport, production_server) = spawn_failing_tools_server(tools_list_calls.clone()).await;
+        let result = build_service_tools(
+            "production",
+            production_transport,
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(tools_list_calls.load(Ordering::SeqCst), 1);
+        production_server
+            .await
+            .expect("join production server")
+            .expect("production server shutdown");
+    }
+
+    #[tokio::test]
+    async fn validation_initialization_preserves_configured_http_headers() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let config = MCPServerConfig {
+            kind: ServerType::StreamableHttp,
+            command: None,
+            args: None,
+            url: Some(server.uri()),
+            env: None,
+            headers: Some(HashMap::from([
+                ("Authorization".to_string(), "Basic dXNlcjpwYXNz".to_string()),
+                ("X-API-Key".to_string(), "api-secret".to_string()),
+                ("X-Tenant-ID".to_string(), "tenant-a".to_string()),
+            ])),
+        };
+
+        let result = connect_http_initialized_for_validation(
+            "header-fixture",
+            &config,
+            TransportType::StreamableHttp,
+            Default::default(),
+        )
+        .await;
+
+        assert!(result.is_err(), "fixture intentionally rejects initialize");
+        let requests = server.received_requests().await.expect("read captured requests");
+        let request = requests.first().expect("initialize request");
+        let has_header = |expected_name: &str, expected_value: &str| {
+            request.headers.iter().any(|(name, values)| {
+                name.as_str() == expected_name && values.iter().any(|value| value.as_str() == expected_value)
+            })
+        };
+        assert!(has_header("authorization", "Basic dXNlcjpwYXNz"));
+        assert!(has_header("x-api-key", "api-secret"));
+        assert!(has_header("x-tenant-id", "tenant-a"));
     }
 }

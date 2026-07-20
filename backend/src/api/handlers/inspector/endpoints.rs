@@ -96,6 +96,9 @@ pub async fn tool_call(
                 ApiError::Conflict(m) => ("conflict", m.as_str()),
                 ApiError::Forbidden(m) => ("forbidden", m.as_str()),
                 ApiError::Timeout(m) => ("timeout", m.as_str()),
+                ApiError::GatewayTimeout(m) => ("gateway_timeout", m.as_str()),
+                ApiError::Unauthorized(m) => ("unauthorized", m.as_str()),
+                ApiError::BadGateway(m) => ("bad_gateway", m.as_str()),
             };
             let resp = InspectorToolCallResp::error_simple(code, message);
             Ok(Json(resp))
@@ -305,11 +308,11 @@ pub async fn prompts_list(
             validation_session: None,
             runtime_identity: None,
             connection_selection: None,
+            visibility_snapshot: None,
             name_domain: crate::core::capability::runtime::NameDomain::External,
         };
         let res = crate::core::capability::runtime::list(
             &ctx,
-            &state.redb_cache,
             &state.connection_pool,
             &state
                 .database
@@ -325,14 +328,14 @@ pub async fn prompts_list(
             .database
             .as_ref()
             .ok_or(ApiError::InternalError("Database not available".into()))?;
-        let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        let enabled_servers: Vec<(String, String)> = sqlx::query_as(
             r#"
-            SELECT sc.id, sc.name, sc.capabilities
+            SELECT sc.id, sc.name
             FROM server_config sc
             JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
             JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
             WHERE sc.enabled = 1
-            GROUP BY sc.id, sc.name, sc.capabilities
+            GROUP BY sc.id, sc.name
             "#,
         )
         .fetch_all(&db.pool)
@@ -340,7 +343,7 @@ pub async fn prompts_list(
         .unwrap_or_default();
 
         let mut tasks = Vec::new();
-        for (server_id, _name, _caps) in enabled_servers {
+        for (server_id, _name) in enabled_servers {
             let ctx = crate::core::capability::runtime::ListCtx {
                 capability: crate::core::capability::CapabilityType::Prompts,
                 server_id: server_id.clone(),
@@ -349,13 +352,13 @@ pub async fn prompts_list(
                 validation_session: None,
                 runtime_identity: None,
                 connection_selection: None,
+                visibility_snapshot: None,
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
-            let redb = state.redb_cache.clone();
             let pool = state.connection_pool.clone();
             let db_arc = state.database.as_ref().unwrap().clone();
             tasks.push(async move {
-                match crate::core::capability::runtime::list(&ctx, &redb, &pool, &db_arc).await {
+                match crate::core::capability::runtime::list(&ctx, &pool, &db_arc).await {
                     Ok(result) => result.items.into_prompts().unwrap_or_default(),
                     Err(_) => Vec::new(),
                 }

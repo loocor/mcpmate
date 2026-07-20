@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, anyhow};
 use sqlx::{Pool, Sqlite};
-use std::collections::HashSet;
 
 use super::namespace::{suggest_server_namespace, validate_server_namespace};
 use crate::core::capability::naming::{
@@ -389,23 +388,6 @@ async fn repair_namespace(
 
     crate::core::capability::resolver::remove_by_id(server_id).await;
     crate::core::capability::resolver::upsert(server_id, &candidate).await;
-
-    let affected_server_ids = identifier_changes
-        .iter()
-        .map(|change| change.server_id.clone())
-        .chain(std::iter::once(server_id.to_string()))
-        .collect::<HashSet<_>>();
-    if let Ok(cache) = crate::core::cache::RedbCacheManager::global() {
-        for affected_server_id in affected_server_ids {
-            if let Err(error) = cache.remove_server_data(&affected_server_id).await {
-                tracing::warn!(
-                    server_id = %affected_server_id,
-                    error = %error,
-                    "Failed to invalidate cache after canonical namespace repair"
-                );
-            }
-        }
-    }
 
     let tool_changes = identifier_changes
         .iter()
@@ -801,7 +783,7 @@ mod tests {
         .await
         .expect("insert owner tool");
         let mut snapshot = crate::config::server::capabilities::CapabilitySnapshot {
-            tools: vec![crate::core::cache::CachedToolInfo {
+            tools: vec![crate::core::capability::index::CachedToolInfo {
                 name: "c".to_string(),
                 description: None,
                 input_schema_json: r#"{"type":"object"}"#.to_string(),

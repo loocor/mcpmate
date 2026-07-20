@@ -982,12 +982,7 @@ mod tests {
 
     use crate::{
         config::database::Database,
-        core::{
-            cache::{RedbCacheManager, manager::CacheConfig},
-            models::Config,
-            pool::UpstreamConnectionPool,
-            secrets::store::LocalSecretStore,
-        },
+        core::{models::Config, pool::UpstreamConnectionPool, secrets::store::LocalSecretStore},
         inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
         system::metrics::MetricsCollector,
     };
@@ -1029,9 +1024,8 @@ mod tests {
         let database = Arc::new(Database {
             pool: db_pool,
             path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
-        let cache_path = temp_dir.path().join("capability.redb");
-        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
         let app_state = Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
                 Arc::new(Config::default()),
@@ -1044,7 +1038,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(crate::core::profile::ConfigApplicationStateManager::new()),
-            redb_cache,
             unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),

@@ -8,13 +8,12 @@ use crate::{
     api::{
         handlers::ApiError,
         models::server::{
-            InstanceSummary, ServerCapabilitySummary, ServerIcon, ServerMetaInfo, ServerNamespaceConflict,
-            ServerNamespaceIssue, StandardServerInfo,
+            CapabilityKindSummary, InstanceSummary, ServerCapabilitySummary, ServerIcon, ServerMetaInfo,
+            ServerNamespaceConflict, ServerNamespaceIssue, StandardServerInfo,
         },
         routes::AppState,
     },
     config::{database::Database, server},
-    core::cache::{CacheQuery, CacheScope, FreshnessLevel},
     core::proxy::server::ProxyServer,
 };
 use axum::http::StatusCode;
@@ -381,11 +380,13 @@ pub async fn get_complete_server_details(
     // Get instance information from connection pool
     details.instances = get_server_instances(state, server_id).await;
 
-    // Capability summary derived from SQLite shadow tables
-    details.capability = get_server_capability_summary(pool, server_id).await;
-
-    // Protocol version sourced from live instances or cached capability snapshot
-    details.protocol_version = get_server_protocol_version(state, server_id).await;
+    let live_protocol_version = get_live_server_protocol_version(state, server_id).await;
+    let management = load_server_capability_management(state, server_id).await;
+    details.capability = management.as_ref().map(|projection| projection.summary.clone());
+    details.protocol_version = resolve_management_protocol_version(
+        live_protocol_version,
+        management.and_then(|projection| projection.cached_protocol_version),
+    );
 
     details
 }
@@ -508,86 +509,103 @@ pub async fn get_server_instances(
         .collect()
 }
 
-async fn get_server_capability_summary(
-    pool: &Pool<Sqlite>,
+pub(crate) struct CapabilityManagementProjection {
+    pub(crate) summary: ServerCapabilitySummary,
+    pub(crate) cached_protocol_version: Option<String>,
+}
+
+pub(crate) fn resolve_management_protocol_version(
+    live_protocol_version: Option<String>,
+    cached_protocol_version: Option<String>,
+) -> Option<String> {
+    live_protocol_version.or(cached_protocol_version)
+}
+
+async fn load_server_capability_management(
+    state: &Arc<AppState>,
     server_id: &str,
-) -> Option<ServerCapabilitySummary> {
+) -> Option<CapabilityManagementProjection> {
     if server_id.is_empty() {
         return None;
     }
 
-    let capability_tokens =
-        match sqlx::query_scalar::<_, Option<String>>("SELECT capabilities FROM server_config WHERE id = ?")
-            .bind(server_id)
-            .fetch_optional(pool)
-            .await
-        {
-            Ok(row) => row.flatten().unwrap_or_default(),
-            Err(error) => {
-                tracing::warn!(server_id = %server_id, error = %error, "Failed to load capability flags");
-                String::new()
-            }
-        };
-
-    let mut supports_tools = false;
-    let mut supports_prompts = false;
-    let mut supports_resources = false;
-
-    for token in capability_tokens.split(',').map(|t| t.trim().to_ascii_lowercase()) {
-        match token.as_str() {
-            "tools" => supports_tools = true,
-            "prompts" => supports_prompts = true,
-            "resources" => supports_resources = true,
-            _ => {}
-        }
-    }
-
-    let tools_count = count_rows(pool, "server_tools", server_id).await;
-    let prompts_count = count_rows(pool, "server_prompts", server_id).await;
-    let resources_count = count_rows(pool, "server_resources", server_id).await;
-    let resource_templates_count = count_rows(pool, "server_resource_templates", server_id).await;
-
-    // Consider non-zero counts as evidence of support even if capability flags are missing
-    let supports_tools = supports_tools || tools_count > 0;
-    let supports_prompts = supports_prompts || prompts_count > 0;
-    let supports_resources = supports_resources || resources_count > 0 || resource_templates_count > 0;
-
-    Some(ServerCapabilitySummary {
-        supports_tools,
-        supports_prompts,
-        supports_resources,
-        tools_count,
-        prompts_count,
-        resources_count,
-        resource_templates_count,
-    })
-}
-
-async fn count_rows(
-    pool: &Pool<Sqlite>,
-    table: &str,
-    server_id: &str,
-) -> u32 {
-    let query = format!("SELECT COUNT(*) FROM {} WHERE server_id = ?", table);
-    match sqlx::query_scalar::<_, i64>(&query)
-        .bind(server_id)
-        .fetch_one(pool)
-        .await
-    {
-        Ok(value) => value.try_into().unwrap_or(u32::MAX),
+    let database = match get_database_from_state(state) {
+        Ok(database) => database,
         Err(error) => {
-            tracing::warn!(
-                server_id = %server_id,
-                table = table,
-                error = %error,
-                "Failed to count rows in capability shadow table"
-            );
-            0
+            tracing::warn!(server_id = %server_id, error = %error, "Capability catalog is unavailable");
+            return None;
+        }
+    };
+    match database.load_capability_snapshot(server_id).await {
+        Ok((Some(snapshot), _)) => Some(build_capability_management_projection(&snapshot)),
+        Ok((None, _)) => None,
+        Err(error) => {
+            tracing::warn!(server_id = %server_id, error = %error, "Failed to load capability catalog summary");
+            None
         }
     }
 }
 
-async fn get_server_protocol_version(
+pub(crate) fn build_capability_management_projection(
+    snapshot: &mcpmate_capability_store::CatalogSnapshot
+) -> CapabilityManagementProjection {
+    CapabilityManagementProjection {
+        summary: build_server_capability_summary(snapshot),
+        cached_protocol_version: snapshot
+            .initialize
+            .as_ref()
+            .map(|initialize| initialize.protocol_version.to_string()),
+    }
+}
+
+pub(crate) fn build_server_capability_summary(
+    snapshot: &mcpmate_capability_store::CatalogSnapshot
+) -> ServerCapabilitySummary {
+    let kind = |kind| {
+        let observation = snapshot.kind_states.iter().find(|state| state.kind == kind);
+        let declaration = observation
+            .map(|state| state.declaration)
+            .unwrap_or(mcpmate_capability_store::DeclarationState::Unknown);
+        let inventory = observation
+            .map(|state| state.inventory)
+            .unwrap_or(mcpmate_capability_store::InventoryState::Unknown);
+        let current_count = snapshot
+            .records
+            .iter()
+            .filter(|record| record.kind() == kind)
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        let current_available = snapshot.state == mcpmate_capability_store::SnapshotState::Ready
+            && declaration == mcpmate_capability_store::DeclarationState::Supported
+            && inventory == mcpmate_capability_store::InventoryState::Complete;
+        let last_error = observation.and_then(|state| state.error.clone()).or_else(|| {
+            (snapshot.state != mcpmate_capability_store::SnapshotState::Ready)
+                .then(|| snapshot.last_error.clone())
+                .flatten()
+        });
+
+        CapabilityKindSummary {
+            declaration,
+            inventory,
+            current_count,
+            current_available,
+            last_error,
+        }
+    };
+
+    ServerCapabilitySummary {
+        snapshot_state: snapshot.state,
+        revision: snapshot.revision,
+        observed_at: snapshot.observed_at.to_rfc3339(),
+        tools: kind(mcpmate_capability_store::CapabilityKind::Tools),
+        prompts: kind(mcpmate_capability_store::CapabilityKind::Prompts),
+        resources: kind(mcpmate_capability_store::CapabilityKind::Resources),
+        resource_templates: kind(mcpmate_capability_store::CapabilityKind::ResourceTemplates),
+    }
+}
+
+async fn get_live_server_protocol_version(
     state: &Arc<AppState>,
     server_id: &str,
 ) -> Option<String> {
@@ -595,36 +613,18 @@ async fn get_server_protocol_version(
         return None;
     }
 
-    if let Ok(pool_guard) = ConnectionPoolManager::get_pool_for_api(state).await {
-        let version = pool_guard.connections.get(server_id).and_then(|instances| {
-            instances.values().find_map(|conn| {
-                conn.service
-                    .as_ref()
-                    .and_then(|service| service.peer_info().map(|info| info.protocol_version.to_string()))
+    ConnectionPoolManager::get_pool_for_api(state)
+        .await
+        .ok()
+        .and_then(|pool_guard| {
+            pool_guard.connections.get(server_id).and_then(|instances| {
+                instances.values().find_map(|conn| {
+                    conn.service
+                        .as_ref()
+                        .and_then(|service| service.peer_info().map(|info| info.protocol_version.to_string()))
+                })
             })
-        });
-
-        if version.is_some() {
-            return version;
-        }
-    }
-
-    let query = CacheQuery {
-        server_id: server_id.to_string(),
-        freshness_level: FreshnessLevel::Cached,
-        include_disabled: true,
-        scope: CacheScope::shared_raw(),
-    };
-
-    if let Ok(result) = state.redb_cache.get_server_data(&query).await {
-        if let Some(data) = result.data {
-            if !data.protocol_version.is_empty() {
-                return Some(data.protocol_version);
-            }
-        }
-    }
-
-    None
+        })
 }
 
 /// Get server by name or ID with validation
@@ -720,25 +720,6 @@ pub async fn get_server_info_for_inspect(
     Ok((db, server_info, params))
 }
 
-/// Check server capability or return error (unified interface)
-///
-/// Replaces the repeated capability checking pattern in resources.rs, prompts.rs, and tools.rs.
-/// Returns Some(response) if the server doesn't support the capability, None if it does support it.
-pub async fn check_capability_or_error(
-    pool: &Pool<Sqlite>,
-    server_info: &ServerIdentification,
-    capability: crate::common::capability::CapabilityToken,
-    params: &InspectParams,
-) -> Option<axum::Json<serde_json::Value>> {
-    if let Ok((server_row, _id)) = get_server_by_identifier(pool, &server_info.server_name).await {
-        if server_row.capabilities.is_some() && !server_row.has_capability(capability) {
-            let strategy = format!("capability-{}-unsupported", capability.as_str().to_lowercase());
-            return Some(create_inspect_response(Vec::new(), false, params.refresh, &strategy));
-        }
-    }
-    None
-}
-
 /// Get database from application state
 ///
 /// Helper function to extract database connection from AppState
@@ -810,40 +791,6 @@ impl InspectQuery {
     }
 }
 
-/// Map inspect RefreshStrategy to cache FreshnessLevel for Redb
-#[inline]
-pub fn map_refresh_to_freshness(refresh: RefreshStrategy) -> FreshnessLevel {
-    match refresh {
-        RefreshStrategy::CacheFirst => FreshnessLevel::Cached,
-        RefreshStrategy::RefreshIfStale => FreshnessLevel::RecentlyFresh,
-        RefreshStrategy::Force => FreshnessLevel::RealTime,
-    }
-}
-
-/// Validate a cached snapshot for being non-empty
-#[inline]
-pub fn cached_snapshot_has_data(data: &crate::core::cache::CachedServerData) -> bool {
-    !(data.tools.is_empty()
-        && data.resources.is_empty()
-        && data.prompts.is_empty()
-        && data.resource_templates.is_empty())
-}
-
-/// Build a Redb CacheQuery from server id and Inspect params
-pub fn build_cache_query(
-    server_id: &str,
-    params: &InspectParams,
-) -> CacheQuery {
-    let refresh = params.refresh.unwrap_or_default();
-    let freshness_level = map_refresh_to_freshness(refresh);
-    CacheQuery {
-        server_id: server_id.to_owned(),
-        freshness_level,
-        include_disabled: false,
-        scope: CacheScope::shared_raw(),
-    }
-}
-
 /// Validate server ID format
 ///
 /// Ensures server ID follows expected format patterns
@@ -870,33 +817,6 @@ pub fn validate_server_id(server_id: &str) -> Result<(), ApiError> {
 #[inline]
 pub fn handle_inspect_error(error: String) -> ApiError {
     ApiError::InternalError(error)
-}
-
-/// Create a CachedServerData structure for storing runtime data
-///
-/// This helper function creates a standardized CachedServerData structure
-/// for storing capability data in the cache.
-pub fn create_runtime_cache_data(
-    server_info: &ServerIdentification,
-    tools: Vec<crate::core::cache::CachedToolInfo>,
-    resources: Vec<crate::core::cache::CachedResourceInfo>,
-    prompts: Vec<crate::core::cache::CachedPromptInfo>,
-    resource_templates: Vec<crate::core::cache::CachedResourceTemplateInfo>,
-) -> crate::core::cache::CachedServerData {
-    let now = chrono::Utc::now();
-    crate::core::cache::CachedServerData {
-        server_id: server_info.server_id.clone(),
-        server_name: server_info.server_name.clone(),
-        server_version: None,
-        protocol_version: "latest".to_owned(),
-        tools,
-        resources,
-        prompts,
-        resource_templates,
-        cached_at: now,
-        fingerprint: format!("runtime-raw:{}", server_info.server_id),
-        scope: crate::core::cache::CacheScope::shared_raw(),
-    }
 }
 
 /// Create a standardized JSON response for inspect endpoints

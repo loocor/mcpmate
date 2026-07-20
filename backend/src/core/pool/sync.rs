@@ -252,7 +252,14 @@ mod tests {
         run_initialization(&pool).await.expect("initialize schema");
         let db_path = temp_dir.path().join("test.db");
 
-        (temp_dir, Arc::new(Database { pool, path: db_path }))
+        (
+            temp_dir,
+            Arc::new(Database {
+                pool,
+                path: db_path,
+                capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+            }),
+        )
     }
 
     async fn insert_server(

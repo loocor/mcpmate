@@ -3,7 +3,6 @@
 use crate::api::handlers::server::common::InspectParams;
 use crate::api::routes::AppState;
 use crate::config::database::Database;
-use crate::core::cache::RedbCacheManager;
 use crate::core::pool::UpstreamConnectionPool;
 use std::sync::Arc;
 
@@ -18,13 +17,11 @@ pub struct UnifiedQueryAdapter {
 impl UnifiedQueryAdapter {
     /// Build adapter from AppState components
     pub fn from_components(
-        cache: Arc<RedbCacheManager>,
         pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
         database: Arc<Database>,
         app_state: Arc<AppState>,
     ) -> Self {
         let service = UnifiedQueryServiceBuilder::new()
-            .with_cache(cache)
             .with_pool(pool)
             .with_database(database)
             .with_app_state(app_state)
@@ -70,12 +67,11 @@ impl UnifiedQueryIntegration {
             return None;
         }
 
-        let cache = app_state.redb_cache.clone();
         let pool = app_state.connection_pool.clone();
         let database = app_state.database.clone()?;
 
         Some(Arc::new(UnifiedQueryAdapter::from_components(
-            cache, pool, database, app_state,
+            pool, database, app_state,
         )))
     }
 }

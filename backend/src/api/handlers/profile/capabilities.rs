@@ -63,11 +63,8 @@ pub async fn prompts_list(
     let prompt_configs = crate::config::profile::get_prompts_for_profile(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile prompts: {e}")))?;
-    let descriptions = load_cached_capability_descriptions(
-        state.redb_cache.as_ref(),
-        prompt_configs.iter().map(|config| config.server_id.clone()),
-    )
-    .await;
+    let descriptions =
+        load_cached_capability_descriptions(&db, prompt_configs.iter().map(|config| config.server_id.clone())).await;
 
     // Convert to response format
     let mut prompts = Vec::new();
@@ -123,11 +120,8 @@ pub async fn resources_list(
     let resource_configs = crate::config::profile::get_resources_for_profile(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile resources: {e}")))?;
-    let descriptions = load_cached_capability_descriptions(
-        state.redb_cache.as_ref(),
-        resource_configs.iter().map(|config| config.server_id.clone()),
-    )
-    .await;
+    let descriptions =
+        load_cached_capability_descriptions(&db, resource_configs.iter().map(|config| config.server_id.clone())).await;
 
     // Convert to response format
     let mut resources = Vec::new();
@@ -230,11 +224,8 @@ pub async fn resource_templates_list(
         }
     }
 
-    let descriptions = load_cached_capability_descriptions(
-        state.redb_cache.as_ref(),
-        template_configs.iter().map(|config| config.server_id.clone()),
-    )
-    .await;
+    let descriptions =
+        load_cached_capability_descriptions(&db, template_configs.iter().map(|config| config.server_id.clone())).await;
 
     let mut templates = Vec::new();
     for config in template_configs {
@@ -291,11 +282,8 @@ pub async fn tools_list(
     let tool_configs = crate::config::profile::get_profile_tools(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile tools: {e}")))?;
-    let descriptions = load_cached_capability_descriptions(
-        state.redb_cache.as_ref(),
-        tool_configs.iter().map(|tool| tool.server_id.clone()),
-    )
-    .await;
+    let descriptions =
+        load_cached_capability_descriptions(&db, tool_configs.iter().map(|tool| tool.server_id.clone())).await;
 
     // Convert to response format
     let mut tools = Vec::new();

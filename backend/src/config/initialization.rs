@@ -9,6 +9,8 @@ use anyhow::Result;
 use sqlx::{Pool, Sqlite};
 use tracing;
 
+use super::database::initialize_capability_catalog;
+
 /// Run database initialization
 pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::info!("Running database initialization");
@@ -28,6 +30,10 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     // Initialize profile-related tables
     tracing::debug!("Initializing profile-related tables");
     initialize_profile_tables(pool).await?;
+
+    // Initialize the durable capability catalog after its referenced identity tables.
+    tracing::debug!("Initializing capability catalog tables");
+    initialize_capability_catalog(pool).await?;
 
     // Initialize LLM provider tables
     tracing::debug!("Initializing LLM provider tables");

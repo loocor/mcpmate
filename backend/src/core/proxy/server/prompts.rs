@@ -44,9 +44,9 @@ pub(super) async fn list_prompts(
     let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("prompts");
 
     if let Some(db) = &server.database {
-        let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        let enabled_servers: Vec<(String, String)> = sqlx::query_as(
             r#"
-            SELECT sc.id, sc.name, sc.capabilities
+            SELECT sc.id, sc.name
             FROM server_config sc
             WHERE sc.enabled = 1
             ORDER BY sc.name, sc.id
@@ -56,18 +56,11 @@ pub(super) async fn list_prompts(
         .await
         .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
-        let redb = &server.redb_cache;
         let pool = &server.connection_pool;
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        for (server_id, server_name) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            if !super::supports_capability(
-                capabilities.as_deref(),
-                crate::core::capability::CapabilityType::Prompts,
-            ) {
                 continue;
             }
             let ctx = crate::core::capability::runtime::ListCtx {
@@ -78,14 +71,16 @@ pub(super) async fn list_prompts(
                 validation_session: None,
                 runtime_identity: client.runtime_identity(),
                 connection_selection: client.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(std::sync::Arc::new(snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
-            let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
             let server_name_cloned = server_name.clone();
             tasks.push(async move {
-                let prompts = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(db, pool);
+                let prompts = service
+                    .list(&ctx)
                     .await
                     .map_err(|error| error.to_string())
                     .and_then(|result| {
@@ -304,6 +299,16 @@ pub(super) async fn get_prompt(
         }
         Err(e) => {
             tracing::error!("Failed to get prompt '{}': {}", request.name, e);
+            if let Some(database) = server.database.as_ref() {
+                crate::core::capability::runtime::record_capability_usage_evidence(
+                    database,
+                    &server_filter,
+                    mcpmate_capability_store::CapabilityKind::Prompts,
+                    None,
+                    &e.to_string(),
+                )
+                .await;
+            }
             Err(McpError::internal_error(e.to_string(), None))
         }
     }

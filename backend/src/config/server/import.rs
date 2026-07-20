@@ -17,9 +17,8 @@ use crate::config::models::{Server, ServerMeta};
 use crate::config::server as server_ops;
 use crate::config::server::{args, env, fingerprint, get_all_servers, upsert_server};
 
-// Capability sync utilities (dual write to SQLite shadow + REDB)
-use crate::config::server::capabilities::sync_via_connection_pool;
-use crate::core::cache::RedbCacheManager;
+// Capability sync utilities for the transactional SQLite catalog.
+use crate::config::server::capabilities::{record_capability_failure, sync_via_connection_pool_deferred};
 use crate::core::pool::UpstreamConnectionPool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,8 +377,8 @@ pub async fn plan_import_from_client_inspection(
 /// - `items`: map of server name -> ServersImportConfig (kind/command/url/args/env)
 pub async fn import_batch(
     db_pool: &Pool<Sqlite>,
+    capability_cache: Arc<mcpmate_capability_store::DerivedCapabilityCache>,
     connection_pool: &Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
-    redb_cache: &Arc<RedbCacheManager>,
     items: HashMap<String, ServersImportConfig>,
     opts: ImportOptions,
 ) -> Result<ImportOutcome> {
@@ -479,11 +478,11 @@ pub async fn import_batch(
         // Update resolver cache (id <-> name) so capability service can map server_id to server_name immediately
         crate::core::capability::resolver::upsert(&server_id, &name).await;
 
-        // Capability discovery + dual write (schedule in background to avoid blocking import)
+        // Capability discovery is scheduled in the background to avoid blocking import.
         {
             let cp = connection_pool.clone();
-            let redb = redb_cache.clone();
             let dbp = db_pool.clone();
+            let capability_cache = capability_cache.clone();
             let sid = server_id.clone();
             let sname = name.clone();
             tokio::spawn(async move {
@@ -495,9 +494,6 @@ pub async fn import_batch(
                     "Scheduling capability sync"
                 );
 
-                // Mark as refreshing for a short TTL
-                let _ = redb.set_refreshing(&sid, Duration::from_secs(60)).await;
-
                 let max_retries: u32 = std::env::var("MCPMATE_IMPORT_CAP_SYNC_RETRIES")
                     .ok()
                     .and_then(|v| v.parse().ok())
@@ -508,10 +504,10 @@ pub async fn import_batch(
                     .unwrap_or(2000);
 
                 for attempt in 0..=max_retries {
-                    match sync_via_connection_pool(
+                    match sync_via_connection_pool_deferred(
                         &cp,
-                        &redb,
                         &dbp,
+                        capability_cache.as_ref(),
                         &sid,
                         &sname,
                         crate::config::server::capabilities::default_pool_lock_timeout_secs(),
@@ -530,6 +526,18 @@ pub async fn import_batch(
                         }
                         Err(e) => {
                             if attempt >= max_retries {
+                                if let Some(evidence) = e.evidence().cloned()
+                                    && let Err(record_error) =
+                                        record_capability_failure(&dbp, capability_cache.as_ref(), evidence).await
+                                {
+                                    tracing::error!(
+                                        target: "mcpmate::config::server::import",
+                                        server_id = %sid,
+                                        server_name = %sname,
+                                        error = %record_error,
+                                        "Failed to persist terminal imported capability evidence"
+                                    );
+                                }
                                 tracing::warn!(
                                     target: "mcpmate::config::server::import",
                                     server_id = %sid,
@@ -750,8 +758,7 @@ fn validate_server_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{cache::manager::CacheConfig, models::Config};
-    use tempfile::TempDir;
+    use crate::core::models::Config;
     use tokio::sync::Mutex;
 
     fn server_entry(
@@ -825,11 +832,6 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");
-        let temp_dir = TempDir::new().expect("create temporary cache directory");
-        let redb_cache = Arc::new(
-            RedbCacheManager::new(temp_dir.path().join("import.redb"), CacheConfig::default())
-                .expect("create cache manager"),
-        );
         let connection_pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
             Arc::new(Config::default()),
             None,
@@ -850,8 +852,8 @@ mod tests {
 
         let outcome = import_batch(
             &pool,
+            Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
             &connection_pool,
-            &redb_cache,
             items,
             ImportOptions::dashboard_import(true, None),
         )

@@ -78,9 +78,9 @@ pub(super) async fn list_tools(
     let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("tools");
 
     if let Some(db) = &server.database {
-        let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        let enabled_servers: Vec<(String, String)> = sqlx::query_as(
             r#"
-            SELECT sc.id, sc.name, sc.capabilities
+            SELECT sc.id, sc.name
             FROM server_config sc
             WHERE sc.enabled = 1
             ORDER BY sc.name, sc.id
@@ -90,15 +90,11 @@ pub(super) async fn list_tools(
         .await
         .map_err(|error| McpError::internal_error(error.to_string(), None))?;
 
-        let redb = &server.redb_cache;
         let pool = &server.connection_pool;
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, capabilities) in enabled_servers {
+        for (server_id, server_name) in enabled_servers {
             if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            if !super::supports_capability(capabilities.as_deref(), crate::core::capability::CapabilityType::Tools) {
                 continue;
             }
             let ctx = crate::core::capability::runtime::ListCtx {
@@ -109,13 +105,15 @@ pub(super) async fn list_tools(
                 validation_session: None,
                 runtime_identity: client.runtime_identity(),
                 connection_selection: client.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(std::sync::Arc::new(snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
-            let redb = redb.clone();
             let pool = pool.clone();
             let db = db.clone();
             tasks.push(async move {
-                let tools = crate::core::capability::runtime::list(&ctx, &redb, &pool, &db)
+                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(db, pool);
+                let tools = service
+                    .list(&ctx)
                     .await
                     .map_err(|error| error.to_string())
                     .and_then(|result| {
@@ -440,7 +438,7 @@ pub(super) async fn call_tool(
         .unwrap_or(60);
 
     // Acquire upstream peer (ensure connected if necessary)
-    let (peer_opt, instance_id_opt) = {
+    let (peer_opt, mut instance_id_opt) = {
         let pool_guard = server.connection_pool.lock().await;
         let snap = pool_guard.get_snapshot();
         let mut p: Option<rmcp::service::Peer<rmcp::RoleClient>> = None;
@@ -509,7 +507,7 @@ pub(super) async fn call_tool(
             "Ensured connection before tool call"
         );
         drop(pool_guard);
-        instance_id_opt.or(Some(iid.clone()));
+        instance_id_opt = instance_id_opt.or_else(|| Some(iid.clone()));
         peer.clone().expect("peer exists by check")
     };
 
@@ -562,14 +560,25 @@ pub(super) async fn call_tool(
             Err(McpError::internal_error("Unexpected server result".to_string(), None))
         }
         Err(e) => {
+            let error_str = e.to_string();
             tracing::error!(
                 call_id = %call_id,
                 tool = %request.name,
                 elapsed_ms = started_at.elapsed().as_millis() as u64,
-                error = %e,
+                error = %error_str,
                 "ProxyServer::call_tool upstream error"
             );
-            Err(McpError::internal_error(e.to_string(), None))
+            if let Some(database) = server.database.as_ref() {
+                crate::core::capability::runtime::record_capability_usage_evidence(
+                    database,
+                    &server_id,
+                    mcpmate_capability_store::CapabilityKind::Tools,
+                    instance_id_opt.as_deref(),
+                    &error_str,
+                )
+                .await;
+            }
+            Err(McpError::internal_error(error_str, None))
         }
     }
 }

@@ -218,11 +218,7 @@ mod tests {
         audit::{AuditAction, AuditEvent, AuditService, AuditStatus, AuditStore},
         clients::ClientConfigService,
         config::audit_database::AuditDatabase,
-        core::{
-            cache::{RedbCacheManager, manager::CacheConfig},
-            models::Config,
-            pool::UpstreamConnectionPool,
-        },
+        core::{models::Config, pool::UpstreamConnectionPool},
         inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
         system::metrics::MetricsCollector,
     };
@@ -256,9 +252,6 @@ mod tests {
         audit_store.initialize().await.expect("initialize audit store");
         let audit_service = Arc::new(AuditService::new(audit_store).await.expect("audit service"));
 
-        let cache_path = temp_dir.path().join("capability.redb");
-        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
-
         Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
                 Arc::new(Config::default()),
@@ -271,7 +264,6 @@ mod tests {
             audit_database: Some(audit_database),
             audit_service: Some(audit_service),
             config_application_state: Arc::new(crate::core::profile::ConfigApplicationStateManager::new()),
-            redb_cache,
             unified_query: None,
             client_service: None::<Arc<ClientConfigService>>,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),

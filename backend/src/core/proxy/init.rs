@@ -430,7 +430,14 @@ mod tests {
             .expect("select non-interactive test secret provider");
         let db_path = temp_dir.path().join("test.db");
 
-        (temp_dir, Database { pool, path: db_path })
+        (
+            temp_dir,
+            Database {
+                pool,
+                path: db_path,
+                capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+            },
+        )
     }
 
     async fn insert_server(

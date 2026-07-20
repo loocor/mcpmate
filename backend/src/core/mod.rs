@@ -9,7 +9,6 @@
 //! - protocol: protocol handling
 //! - proxy: proxy core
 
-pub mod cache;
 pub mod capability;
 pub mod events;
 pub mod foundation;

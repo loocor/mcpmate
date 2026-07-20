@@ -67,32 +67,31 @@ pub struct CacheResetData {
 // ==================== Data Models ====================
 
 #[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Storage statistics for cache database")]
+#[schemars(description = "SQLite catalog and node-local memory cache statistics")]
 pub struct CacheStorageStats {
-    #[schemars(description = "Path to the cache database file")]
-    pub db_path: String,
-    #[schemars(description = "Total cache size in bytes")]
-    pub cache_size_bytes: u64,
-    #[schemars(description = "Count of items in each table")]
-    pub tables: CacheTablesCount,
-    #[schemars(description = "ISO 8601 timestamp of last cleanup")]
-    pub last_cleanup: Option<String>,
+    pub catalog: CacheCatalogStats,
+    pub memory: CacheMemoryStats,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-#[schemars(description = "Count of items in each cache table")]
-pub struct CacheTablesCount {
-    #[schemars(description = "Number of cached servers")]
-    pub servers: u64,
-    #[schemars(description = "Number of cached tools")]
+#[serde(rename_all = "camelCase")]
+pub struct CacheCatalogStats {
+    pub snapshots: u64,
+    pub ready_snapshots: u64,
+    pub invalidated_snapshots: u64,
+    pub unavailable_snapshots: u64,
+    pub records: u64,
     pub tools: u64,
-    #[schemars(description = "Number of cached resources")]
     pub resources: u64,
-    #[schemars(description = "Number of cached prompts")]
     pub prompts: u64,
-    #[serde(rename = "resourceTemplates")]
-    #[schemars(description = "Number of cached resource templates")]
     pub resource_templates: u64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheMemoryStats {
+    pub raw_snapshot_entries: usize,
+    pub projection_entries: usize,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -110,12 +109,17 @@ pub struct CacheMetricsStats {
     #[serde(rename = "hitRatio")]
     #[schemars(description = "Cache hit ratio (0.0 to 1.0)")]
     pub hit_ratio: f64,
-    #[serde(rename = "readOperations")]
-    #[schemars(description = "Number of read operations")]
-    pub read_operations: u64,
-    #[serde(rename = "writeOperations")]
-    #[schemars(description = "Number of write operations")]
-    pub write_operations: u64,
+    #[serde(rename = "rawSnapshotHits")]
+    pub raw_snapshot_hits: u64,
+    #[serde(rename = "rawSnapshotMisses")]
+    pub raw_snapshot_misses: u64,
+    #[serde(rename = "projectionHits")]
+    pub projection_hits: u64,
+    #[serde(rename = "projectionMisses")]
+    pub projection_misses: u64,
+    #[serde(rename = "singleFlightWaits")]
+    pub single_flight_waits: u64,
+    pub evictions: u64,
     #[serde(rename = "cacheInvalidations")]
     #[schemars(description = "Number of cache invalidations")]
     pub cache_invalidations: u64,
@@ -124,11 +128,11 @@ pub struct CacheMetricsStats {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[schemars(description = "Individual cache key item")]
 pub struct CacheKeyItem {
-    #[schemars(description = "Cache key identifier")]
-    pub key: String,
-    #[serde(rename = "serverId")]
-    #[schemars(description = "ID of the server this key belongs to")]
-    pub server_id: String,
+    #[schemars(description = "Derived cache class")]
+    pub cache: String,
+    #[serde(rename = "keyHash")]
+    #[schemars(description = "Redacted SHA-256 key prefix")]
+    pub key_hash: String,
     #[serde(rename = "approxValueSizeBytes")]
     #[schemars(description = "Approximate size of cached value in bytes")]
     pub approx_value_size_bytes: u64,
@@ -144,3 +148,58 @@ pub struct CacheKeyItem {
 // Generate response structures using macro
 api_resp!(CacheDetailsResp, CacheDetailsData, "Cache details API response");
 api_resp!(CacheResetResp, CacheResetData, "Cache reset API response");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_cache_stats_expose_sqlite_and_memory_details() {
+        let response = CacheDetailsData {
+            keys: None,
+            storage: Some(CacheStorageStats {
+                catalog: CacheCatalogStats {
+                    snapshots: 2,
+                    ready_snapshots: 1,
+                    invalidated_snapshots: 1,
+                    unavailable_snapshots: 0,
+                    records: 10,
+                    tools: 10,
+                    resources: 0,
+                    prompts: 0,
+                    resource_templates: 0,
+                },
+                memory: CacheMemoryStats {
+                    raw_snapshot_entries: 2,
+                    projection_entries: 4,
+                },
+            }),
+            metrics: None,
+            total: None,
+            generated_at: None,
+        };
+
+        let value = serde_json::to_value(response).expect("serialize capability cache statistics");
+        assert_eq!(value["storage"]["catalog"]["readySnapshots"], 1);
+        assert_eq!(value["storage"]["memory"]["projectionEntries"], 4);
+        let encoded = value.to_string();
+        for legacy_field in ["db_path", "cache_size_bytes", "tables", "last_cleanup"] {
+            assert!(!encoded.contains(legacy_field));
+        }
+    }
+
+    #[test]
+    fn capability_cache_key_diagnostics_are_redacted() {
+        let key = CacheKeyItem {
+            cache: "raw_snapshot".to_string(),
+            key_hash: "0123456789abcdef".to_string(),
+            approx_value_size_bytes: 512,
+            cached_at: Some("2026-07-20T00:00:00Z".to_string()),
+        };
+
+        let value = serde_json::to_value(key).expect("serialize redacted cache key");
+        assert_eq!(value["keyHash"], "0123456789abcdef");
+        assert!(value.get("key").is_none());
+        assert!(value.get("serverId").is_none());
+    }
+}

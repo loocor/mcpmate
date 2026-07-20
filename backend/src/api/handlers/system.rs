@@ -436,12 +436,6 @@ pub async fn restart(State(state): State<Arc<AppState>>) -> Result<Json<Manageme
 
     let mut errors = Vec::new();
 
-    // Clear capabilities cache as part of restart to force fresh capability discovery
-    if let Err(e) = state.redb_cache.clear_all().await {
-        tracing::warn!(error = %e, "Failed to clear capabilities cache during restart");
-        errors.push(format!("clear_cache: {e}"));
-    }
-
     if let Err(err) = proxy.initiate_shutdown().await {
         tracing::warn!(error = %err, "Failed to initiate proxy shutdown before restart");
         errors.push(format!("initiate_shutdown: {err}"));
