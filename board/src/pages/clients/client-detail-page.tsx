@@ -89,6 +89,7 @@ import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import {
   formatCapabilityLifecycle,
+  getCapabilityLifecycle,
   type CapabilityLifecycleLabels,
 } from "../../lib/capability-lifecycle";
 import { useClientDetailTranslations } from "./client-detail-translations";
@@ -1257,9 +1258,15 @@ export function ClientDetailPage() {
 		const toolsTotal = cap?.tools.currentAvailable
 			? cap.tools.currentCount
 			: undefined;
+		// In capability_level mode the fraction already carries the total count, so append only
+		// the lifecycle label here. Reusing `formatCapabilityLifecycle` (which also prefixes its
+		// own count) would render the total twice, e.g. "3/10 · 10 · Ready" (Codex review
+		// follow-up, PR #160).
+		const toolsLifecycleLabel =
+			lifecycleLabels[getCapabilityLifecycle(cap, "tools").state];
     const toolsValue =
       routeMode === "capability_level"
-				? `${exposedToolCount}/${toolsTotal ?? "—"} · ${formatCapabilityLifecycle(cap, "tools", lifecycleLabels)}`
+				? `${exposedToolCount}/${toolsTotal ?? "—"} · ${toolsLifecycleLabel}`
 				: formatCapabilityLifecycle(cap, "tools", lifecycleLabels);
     const items = [
       {
