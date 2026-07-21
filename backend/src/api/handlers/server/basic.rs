@@ -523,10 +523,12 @@ async fn load_server_capability_management(
     for server_id in server_ids {
         match database.load_capability_snapshot(server_id).await {
             Ok((Some(snapshot), _)) => {
-                projections.insert(
-                    server_id.clone(),
-                    common::build_capability_management_projection(&snapshot),
-                );
+                if let Some(projection) =
+                    common::build_capability_management_projection_if_current(&database.pool, server_id, &snapshot)
+                        .await
+                {
+                    projections.insert(server_id.clone(), projection);
+                }
             }
             Ok((None, _)) => {}
             Err(error) => {

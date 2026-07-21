@@ -74,6 +74,33 @@ pub struct VisibilitySnapshot {
     has_prompt_policy: bool,
 }
 
+#[cfg(test)]
+impl VisibilitySnapshot {
+    /// Builds a fixture snapshot for tests outside this module. Production code always
+    /// derives a `VisibilitySnapshot` through `ProfileVisibilityService::resolve_snapshot_for_client`.
+    pub(crate) fn for_test(
+        client_id: &str,
+        surface_fingerprint: &str,
+        server_ids: Vec<String>,
+        has_tool_policy: bool,
+    ) -> Self {
+        Self {
+            client_id: client_id.to_string(),
+            surface_fingerprint: surface_fingerprint.to_string(),
+            profile_ids: Vec::new(),
+            server_ids,
+            allowed_tools: HashSet::new(),
+            allowed_resources: HashSet::new(),
+            allowed_resource_templates: HashSet::new(),
+            allowed_prompts: HashSet::new(),
+            has_tool_policy,
+            has_resource_policy: false,
+            has_resource_template_policy: false,
+            has_prompt_policy: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ClientCapabilityRow {
     capability_source: Option<String>,

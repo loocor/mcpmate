@@ -1174,6 +1174,12 @@ fn shadow_table_and_column(kind: CatalogKind) -> (&'static str, &'static str) {
     }
 }
 
+/// Stable-id prefix `catalog_records_in_transaction` assigns to a Resource Template that
+/// cannot enter the canonical shadow-index address space (see
+/// `resource_template_is_projectable`). These records are intentionally never written to
+/// `server_resource_templates`, so the shadow-index integrity check must not expect them there.
+const UNPROJECTABLE_TEMPLATE_STABLE_ID_PREFIX: &str = "unprojectable-template-";
+
 /// Compares one kind's catalog records against its shadow index table by upstream key. The
 /// shadow index is derived data committed atomically with the catalog snapshot; if the two
 /// disagree (e.g. a prior bug wrote one without the other), the persisted snapshot can no
@@ -1187,7 +1193,9 @@ pub(crate) async fn shadow_index_matches_catalog_kind(
 ) -> Result<bool> {
     let catalog_keys: BTreeSet<&str> = records
         .iter()
-        .filter(|record| record.kind() == kind)
+        .filter(|record| {
+            record.kind() == kind && !record.stable_id.starts_with(UNPROJECTABLE_TEMPLATE_STABLE_ID_PREFIX)
+        })
         .map(|record| record.upstream_key.as_str())
         .collect();
     let (table, column) = shadow_table_and_column(kind);
@@ -1385,9 +1393,26 @@ async fn seed_profiles_in_transaction(
         let alphabet = crate::macros::id::create_safe_alphabet();
         format!("{}{}", prefix.to_uppercase(), nanoid::nanoid!(12, &alphabet))
     }
-    let profile_ids = sqlx::query_scalar::<_, String>("SELECT id FROM profile WHERE is_active = 1 ORDER BY id")
-        .fetch_all(&mut **tx)
-        .await?;
+    // Seeding must be scoped to profiles that actually have this server attached. Seeding an
+    // unrelated active profile writes `profile_tool`/`profile_*` rows for a server it never
+    // opted into, which then makes `has_profile_rows` treat that profile as having an explicit
+    // policy; once visibility resolution filters those rows down to the profile's real visible
+    // servers, the profile can end up with an empty allow-list for the servers it actually has
+    // (Codex review, PR #160).
+    let profile_ids = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT DISTINCT p.id
+        FROM profile p
+        JOIN profile_server ps ON ps.profile_id = p.id
+        WHERE p.is_active = 1
+          AND ps.server_id = ?
+          AND ps.enabled = 1
+        ORDER BY p.id
+        "#,
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?;
     let tool_ids = sqlx::query_scalar::<_, String>("SELECT id FROM server_tools WHERE server_id = ? ORDER BY id")
         .bind(server_id)
         .fetch_all(&mut **tx)
@@ -1530,7 +1555,7 @@ async fn catalog_records_in_transaction(
         } else {
             let digest = format!("{:x}", Sha256::digest(format!("{server_id}:{}", template.uri_template)));
             records.push(CatalogRecord::new(
-                format!("unprojectable-template-{}", &digest[..24]),
+                format!("{UNPROJECTABLE_TEMPLATE_STABLE_ID_PREFIX}{}", &digest[..24]),
                 &template.uri_template,
                 format!("internal://capability/{server_id}/resource-template/{digest}"),
                 CapabilityPayload::ResourceTemplate(template.clone()),
@@ -2205,12 +2230,35 @@ mod tests {
     }
 
     async fn insert_active_profile(pool: &Pool<Sqlite>) {
+        insert_active_profile_attached_to(pool, "profile-a", "server-a").await;
+    }
+
+    /// Inserts an active profile attached to `server_id` via `profile_server`, matching the
+    /// production invariant that capability seeding only targets profiles the server is
+    /// actually scoped into.
+    async fn insert_active_profile_attached_to(
+        pool: &Pool<Sqlite>,
+        profile_id: &str,
+        server_id: &str,
+    ) {
         sqlx::query(
-            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-a', 'Profile A', '', 'shared', 1, 1, 1, 0)",
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES (?, ?, '', 'shared', 1, 1, 1, 0)",
         )
+        .bind(profile_id)
+        .bind(format!("Profile {profile_id}"))
         .execute(pool)
         .await
         .expect("insert active profile");
+        sqlx::query(
+            "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) VALUES (?, ?, ?, ?, 1)",
+        )
+        .bind(format!("{profile_id}-{server_id}"))
+        .bind(profile_id)
+        .bind(server_id)
+        .bind(server_id)
+        .execute(pool)
+        .await
+        .expect("attach server to active profile");
     }
 
     #[tokio::test]
@@ -2346,6 +2394,64 @@ mod tests {
                 .await
                 .unwrap_or_else(|query_error| panic!("count {table}: {query_error}"));
             assert_eq!(count, 0, "{table} must roll back with the failed observation");
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_seeding_only_targets_profiles_attached_to_the_server() {
+        // Guards against seeding every active profile: a profile that never attached this
+        // server must not get `profile_tool`/`profile_*` rows written for it (Codex review,
+        // PR #160). Those stray rows would otherwise make an unrelated profile look like it
+        // has an explicit policy, which can leave it with an empty allow-list for the servers
+        // it actually attached once visibility resolution filters by its real server scope.
+        let pool = capability_store_pool().await;
+        insert_active_profile_attached_to(&pool, "profile-attached", "server-a").await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-unrelated', 'Profile Unrelated', '', 'shared', 1, 0, 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert unrelated active profile");
+
+        let (initialize, tool, resource, prompt, template) = protocol_fixture();
+        commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize),
+            vec![tool],
+            vec![resource],
+            vec![prompt],
+            vec![template],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit protocol observation");
+
+        for table in [
+            "profile_tool",
+            "profile_prompt",
+            "profile_resource",
+            "profile_resource_template",
+        ] {
+            let attached_count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {table} WHERE profile_id = 'profile-attached'"
+            ))
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("count {table} for attached profile: {error}"));
+            assert_eq!(attached_count, 1, "{table} must be seeded for the attached profile");
+
+            let unrelated_count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM {table} WHERE profile_id = 'profile-unrelated'"
+            ))
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("count {table} for unrelated profile: {error}"));
+            assert_eq!(
+                unrelated_count, 0,
+                "{table} must not be seeded for an active profile that never attached this server"
+            );
         }
     }
 
@@ -2590,6 +2696,67 @@ mod tests {
         .await
         .expect("load projected templates");
         assert_eq!(projected, vec!["file:///{path}".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn shadow_index_integrity_check_ignores_unprojectable_templates() {
+        // An unprojectable Resource Template (e.g. `file:///{+path}`) legitimately never gets a
+        // `server_resource_templates` shadow row, by design of
+        // `upsert_shadow_resource_templates_batch_in_transaction`. The integrity check must not
+        // treat that intentional gap as catalog/shadow-index divergence, or every cache-first
+        // read for a server with such a template would invalidate a perfectly valid snapshot
+        // and fall back to live discovery (Codex review, PR #160).
+        let pool = capability_store_pool().await;
+        let projectable: rmcp::model::ResourceTemplate = decode(json!({
+            "uriTemplate": "file:///{path}",
+            "name": "projectable-template"
+        }));
+        let unprojectable: rmcp::model::ResourceTemplate = decode(json!({
+            "uriTemplate": "file:///{+path}",
+            "name": "unprojectable-template"
+        }));
+
+        commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(decode(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"resources": {"listChanged": true}},
+                "serverInfo": {"name": "docs", "version": "1.0.0"}
+            }))),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![projectable, unprojectable],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit a snapshot containing an unprojectable template");
+
+        let snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("load catalog")
+            .expect("catalog snapshot exists");
+        assert_eq!(
+            snapshot
+                .records
+                .iter()
+                .filter(|record| record.kind() == CatalogKind::ResourceTemplates)
+                .count(),
+            2,
+            "the catalog must retain both templates even though only one is projectable"
+        );
+
+        let trustworthy =
+            shadow_index_matches_catalog_kind(&pool, "server-a", CatalogKind::ResourceTemplates, &snapshot.records)
+                .await
+                .expect("integrity check must run");
+        assert!(
+            trustworthy,
+            "an unprojectable template's intentional absence from the shadow index must not look like corruption"
+        );
     }
 
     fn cached_tool(name: &str) -> CachedToolInfo {

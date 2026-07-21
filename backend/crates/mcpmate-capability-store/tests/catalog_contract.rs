@@ -459,6 +459,117 @@ async fn concurrent_writers_from_independent_pools_commit_consecutive_revisions(
 }
 
 #[tokio::test]
+async fn remove_server_deletes_child_rows_even_without_foreign_key_cascade() {
+    // `capability_kind_states`/`capability_records` declare `ON DELETE CASCADE`, but SQLite
+    // only enforces foreign keys on connections that ran `PRAGMA foreign_keys = ON`. That
+    // pragma is a per-connection opt-in the caller's pool controls, not a schema-level
+    // guarantee, so `remove_server` must delete every table explicitly instead of depending on
+    // it (Codex review follow-up, PR #160).
+    let options = SqliteConnectOptions::from_str("sqlite::memory:")
+        .unwrap()
+        .foreign_keys(false);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let foreign_keys_enabled: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        foreign_keys_enabled, 0,
+        "this test only proves anything with cascade disabled"
+    );
+
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    catalog.ensure_schema().await.unwrap();
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-no-cascade",
+            "fixture-server",
+            "config-v1",
+            initialize_result(),
+            complete_states(),
+            full_records(),
+        ))
+        .await
+        .unwrap();
+
+    catalog.remove_server("server-no-cascade").await.unwrap();
+
+    assert!(catalog.load_snapshot("server-no-cascade").await.unwrap().is_none());
+    let stats = catalog.stats().await.unwrap();
+    assert_eq!(stats.records, 0, "capability_records must not survive server removal");
+    let orphaned_kind_states: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM capability_kind_states")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        orphaned_kind_states, 0,
+        "capability_kind_states must not survive server removal"
+    );
+}
+
+#[tokio::test]
+async fn record_failure_creates_the_kind_state_row_when_it_never_existed() {
+    // A server whose committed `kind_states` never included a given kind (e.g. it was never
+    // discovered or its declaration was omitted) has no `capability_kind_states` row for that
+    // kind. `record_failure` must still surface the failure for that kind instead of silently
+    // affecting zero rows (Codex review follow-up, PR #160).
+    let catalog = catalog().await;
+    let partial_states = vec![
+        KindObservation::new(
+            CapabilityKind::Tools,
+            DeclarationState::Supported,
+            InventoryState::Complete,
+        ),
+        KindObservation::new(
+            CapabilityKind::Prompts,
+            DeclarationState::Supported,
+            InventoryState::Complete,
+        ),
+    ];
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-partial-kinds",
+            "fixture-server",
+            "config-v1",
+            initialize_result(),
+            partial_states,
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+    let before = catalog.load_snapshot("server-partial-kinds").await.unwrap().unwrap();
+    assert!(
+        !before
+            .kind_states
+            .iter()
+            .any(|state| state.kind == CapabilityKind::Resources),
+        "fixture must start without a Resources kind_states row"
+    );
+
+    catalog
+        .record_failure(
+            "server-partial-kinds",
+            Some(CapabilityKind::Resources),
+            "session closed",
+        )
+        .await
+        .unwrap();
+
+    let after = catalog.load_snapshot("server-partial-kinds").await.unwrap().unwrap();
+    let resources_state = after
+        .kind_states
+        .iter()
+        .find(|state| state.kind == CapabilityKind::Resources)
+        .expect("record_failure must create the missing Resources kind_states row");
+    assert_eq!(resources_state.inventory, InventoryState::Failed);
+    assert_eq!(resources_state.error.as_deref(), Some("session closed"));
+}
+
+#[tokio::test]
 async fn lifecycle_updates_preserve_payload_and_advance_revision() {
     let catalog = catalog().await;
     catalog

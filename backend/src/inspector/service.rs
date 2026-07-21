@@ -175,7 +175,7 @@ pub async fn prompt_get(
 
             ensure_proxy_connection(state, &server_id, timeout).await?;
 
-            let mut res = run_inspector_operation(timeout, "prompts/get", async {
+            let operation_result = run_inspector_operation(timeout, "prompts/get", async {
                 let mapping =
                     capability::facade::build_prompt_mapping_filtered(&state.connection_pool, Some(&server_filter))
                         .await
@@ -191,7 +191,17 @@ pub async fn prompt_get(
                 .await
                 .map_err(map_anyhow)
             })
-            .await?;
+            .await;
+            if let Err(error) = &operation_result {
+                record_inspector_usage_evidence(
+                    state,
+                    &server_id,
+                    mcpmate_capability_store::CapabilityKind::Prompts,
+                    error,
+                )
+                .await;
+            }
+            let mut res = operation_result?;
             let database = state
                 .database
                 .as_ref()
@@ -227,6 +237,15 @@ pub async fn prompt_get(
             .await;
             if let Some(cleanup) = cleanup {
                 cleanup.cleanup().await;
+            }
+            if let Err(error) = &res {
+                record_inspector_usage_evidence(
+                    state,
+                    &server_id,
+                    mcpmate_capability_store::CapabilityKind::Prompts,
+                    error,
+                )
+                .await;
             }
             let mut res = res?;
             crate::inspector::calls::project_prompt_result(&InspectorResultProjection::Upstream, &mut res)
@@ -268,7 +287,7 @@ pub async fn resource_read(
             )
             .await?;
 
-            let mut res = run_inspector_operation(timeout, "resources/read", async {
+            let operation_result = run_inspector_operation(timeout, "resources/read", async {
                 capability::facade::read_routed_resource(
                     &state.connection_pool,
                     server_filter
@@ -280,7 +299,19 @@ pub async fn resource_read(
                 .await
                 .map_err(map_anyhow)
             })
-            .await?;
+            .await;
+            if let Err(error) = &operation_result {
+                record_inspector_usage_evidence(
+                    state,
+                    server_filter
+                        .as_deref()
+                        .expect("resolved resource route has a server id"),
+                    mcpmate_capability_store::CapabilityKind::Resources,
+                    error,
+                )
+                .await;
+            }
+            let mut res = operation_result?;
             capability::resource_registry::rewrite_read_resource_result(&database.pool, &route, &mut res)
                 .await
                 .map_err(map_anyhow)?;
@@ -304,6 +335,15 @@ pub async fn resource_read(
             .await;
             if let Some(cleanup) = cleanup {
                 cleanup.cleanup().await;
+            }
+            if let Err(error) = &res {
+                record_inspector_usage_evidence(
+                    state,
+                    &server_id,
+                    mcpmate_capability_store::CapabilityKind::Resources,
+                    error,
+                )
+                .await;
             }
             let res = res?;
             Ok(json!({
@@ -368,6 +408,7 @@ pub async fn call_tool(
     let PreparedCall {
         completion,
         mut native_validation_session,
+        server_id,
         ..
     } = prepared;
 
@@ -383,6 +424,16 @@ pub async fn call_tool(
 
     if let Some(cleanup) = native_validation_session {
         cleanup.cleanup().await;
+    }
+
+    if let InspectorTerminal::Error { message, .. } = &result {
+        record_inspector_usage_evidence(
+            state,
+            &server_id,
+            mcpmate_capability_store::CapabilityKind::Tools,
+            &ApiError::InternalError(message.clone()),
+        )
+        .await;
     }
 
     map_tool_call_terminal(result)
@@ -565,6 +616,29 @@ where
     tokio::time::timeout(timeout, future).await.map_err(|_| {
         ApiError::GatewayTimeout(format!("Inspector server connect exceeded {} ms", timeout.as_millis()))
     })?
+}
+
+/// Feeds a failed Inspector `tools/call` / `resources/read` / `prompts/get` back into the
+/// capability catalog as usage evidence, mirroring the main MCP proxy paths
+/// (`core::capability::runtime::record_capability_usage_evidence`). Without this, a session
+/// or transport failure observed only through the Inspector would never invalidate a stale
+/// `Ready` catalog declaration (Codex review follow-up, PR #160).
+async fn record_inspector_usage_evidence(
+    state: &AppState,
+    server_id: &str,
+    kind: mcpmate_capability_store::CapabilityKind,
+    error: &ApiError,
+) {
+    if let Some(database) = state.database.as_ref() {
+        crate::core::capability::runtime::record_capability_usage_evidence(
+            database,
+            server_id,
+            kind,
+            None,
+            &error.to_string(),
+        )
+        .await;
+    }
 }
 
 async fn ensure_proxy_connection(
@@ -977,12 +1051,22 @@ fn map_anyhow(e: anyhow::Error) -> ApiError {
     ApiError::InternalError(message)
 }
 
+/// Mirrors `core::capability::service::map_capability_read_error`, which every other read
+/// surface (tools/prompts/resources/templates/detail) already uses so a typed
+/// `CapabilityReadError` reports a consistent status code and reason instead of collapsing to
+/// a bare `InternalError`. The Inspector previously only recognized timeouts here and fell
+/// back to a generic 500 for everything else, silently losing e.g. upstream authentication
+/// failures (`Unauthorized`) and discovery failures (`BadGateway`) (Codex review follow-up,
+/// PR #160).
 fn map_capability_list_error(error: anyhow::Error) -> ApiError {
     if let Some(timeout_ms) = capability::service::connection_timeout_ms(&error) {
         return ApiError::GatewayTimeout(format!("Inspector server connect exceeded {timeout_ms} ms"));
     }
     if let Some(timeout_ms) = capability::service::operation_timeout_ms(&error) {
         return ApiError::Timeout(format!("Inspector capability operation exceeded {timeout_ms} ms"));
+    }
+    if let Some(read_error) = error.downcast_ref::<capability::read_service::CapabilityReadError>() {
+        return capability::service::map_capability_read_error(read_error);
     }
     map_anyhow(error)
 }
@@ -1418,6 +1502,53 @@ mod tests {
         let response = map_capability_list_error(error.into()).into_response();
 
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    }
+
+    #[test]
+    fn upstream_authentication_failure_returns_unauthorized_instead_of_generic_500() {
+        // Before this fix, `map_capability_list_error` only recognized timeouts and fell back
+        // to a bare `InternalError` (500) for every other typed `CapabilityReadError`, silently
+        // losing the more specific status the main proxy read paths already report via
+        // `map_capability_read_error` (Codex review follow-up, PR #160).
+        let error = CapabilityReadError::CleanupFailed {
+            server_id: "server-a".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            instance_id: "instance-a".to_string(),
+            connection_generation: None,
+            owner_source: OwnerSource::Existing,
+            error: CapabilityOwnerError::Authentication {
+                reason: "token expired".to_string(),
+            },
+        };
+
+        let response = map_capability_list_error(error.into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn discovery_failure_without_a_timeout_returns_bad_gateway_not_internal_error() {
+        let error = CapabilityReadError::DiscoveryFailed {
+            server_id: "server-a".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            kind: CapabilityType::Tools,
+            catalog_error: None,
+            existing: Some(DiscoveryAttemptFailure {
+                instance_id: None,
+                connection_generation: None,
+                source: OwnerSource::Existing,
+                error: CapabilityAttemptError::Owner(CapabilityOwnerError::Missing {
+                    reason: "no connection".to_string(),
+                }),
+            }),
+            fresh: None,
+        };
+
+        let response = map_capability_list_error(error.into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
 
     #[test]

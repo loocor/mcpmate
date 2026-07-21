@@ -219,10 +219,22 @@ fn projection_key(
         .as_ref()
         .map(ConnectionSelection::cache_scope_key)
         .unwrap_or_else(|| format!("{}#shared", ctx.server_id));
+    // A caller with a `visibility_snapshot` but no `runtime_identity` (builtin/broker call
+    // sites that resolve visibility ad hoc instead of through a bound client session) must
+    // never fall back to the unscoped "shared_raw" bucket: that bucket is shared with
+    // unfiltered management/API reads, and the snapshot's own `surface_fingerprint` already
+    // encodes the exact visibility scope (config mode, allowed capability sets, direct
+    // exposure) that produced this projection. Reusing it here keeps filtered projections
+    // isolated from the unfiltered baseline and from other visibility scopes.
     let surface_fingerprint = ctx
         .runtime_identity
         .as_ref()
         .map(|identity| identity.surface_fingerprint.clone())
+        .or_else(|| {
+            ctx.visibility_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.surface_fingerprint.clone())
+        })
         .unwrap_or_else(|| "shared_raw".to_string());
     let revision_set = format!("{}:{revision}", ctx.server_id);
     let catalog_revision_set_hash = format!("{:x}", Sha256::digest(revision_set));
@@ -1934,6 +1946,61 @@ mod tests {
 
         assert!(error.to_string().contains("validation-a"));
         assert!(error.to_string().contains("server-a"));
+    }
+
+    fn base_list_ctx() -> ListCtx {
+        ListCtx {
+            capability: CapabilityType::Tools,
+            server_id: "server-a".to_string(),
+            refresh: None,
+            timeout: None,
+            validation_session: None,
+            runtime_identity: None,
+            connection_selection: None,
+            visibility_snapshot: None,
+            name_domain: NameDomain::External,
+        }
+    }
+
+    #[test]
+    fn projection_key_uses_runtime_identity_fingerprint_when_present() {
+        let mut ctx = base_list_ctx();
+        ctx.runtime_identity = Some(RuntimeIdentity {
+            client_id: "claude-code".to_string(),
+            profile_id: None,
+            surface_fingerprint: "fp-runtime".to_string(),
+        });
+
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "fp-runtime");
+    }
+
+    #[test]
+    fn projection_key_uses_visibility_snapshot_fingerprint_without_runtime_identity() {
+        // Builtin/broker call sites resolve visibility ad hoc and never populate
+        // `runtime_identity`. A filtered projection computed from that visibility scope
+        // must never land in the unscoped "shared_raw" bucket shared with unfiltered
+        // management/API reads (Codex review, PR #160).
+        let mut ctx = base_list_ctx();
+        ctx.visibility_snapshot = Some(Arc::new(
+            crate::core::profile::visibility::VisibilitySnapshot::for_test(
+                "hosted-client",
+                "fp-hosted-profile-a",
+                vec!["server-a".to_string()],
+                true,
+            ),
+        ));
+
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "fp-hosted-profile-a");
+        assert_ne!(key.surface_fingerprint, "shared_raw");
+    }
+
+    #[test]
+    fn projection_key_falls_back_to_shared_raw_only_without_any_visibility_context() {
+        let ctx = base_list_ctx();
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "shared_raw");
     }
 
     #[test]

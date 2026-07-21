@@ -834,9 +834,11 @@ async fn proxy_aggregate_list_rejects_empty_results_from_partial_inventory() {
     )
     .await;
 
+    // This test verifies incomplete aggregate classification across a real cold start.
+    // Connection timeout behavior is covered by the dedicated timeout smoke tests.
     let (status, body) = read_json_response_with_status(
         app.oneshot(get_request(format!(
-            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=1000"
+            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=5000"
         )))
         .await
         .expect("aggregate list response"),

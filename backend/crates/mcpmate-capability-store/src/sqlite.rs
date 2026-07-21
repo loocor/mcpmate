@@ -93,11 +93,27 @@ impl SqliteCapabilityCatalog {
         load_snapshot_on_connection(transaction, server_id).await
     }
 
+    /// Deletes every row for `server_id` across all three capability tables explicitly,
+    /// rather than deleting only `capability_server_snapshots` and relying on
+    /// `ON DELETE CASCADE`. SQLite only enforces foreign keys when `PRAGMA foreign_keys = ON`
+    /// is set on the connection actually executing the statement; that pragma is a
+    /// per-connection setting the caller's pool must opt into, not a schema-level guarantee.
+    /// If it were ever off (a different pool, a future migration path, a test harness), the
+    /// cascade would silently no-op and leave orphaned `capability_kind_states` /
+    /// `capability_records` rows behind (Codex review follow-up, PR #160).
     pub async fn remove_server_in_transaction(
         &self,
         transaction: &mut Transaction<'_, Sqlite>,
         server_id: &str,
     ) -> Result<()> {
+        sqlx::query("DELETE FROM capability_records WHERE server_id = ?")
+            .bind(server_id)
+            .execute(&mut **transaction)
+            .await?;
+        sqlx::query("DELETE FROM capability_kind_states WHERE server_id = ?")
+            .bind(server_id)
+            .execute(&mut **transaction)
+            .await?;
         sqlx::query("DELETE FROM capability_server_snapshots WHERE server_id = ?")
             .bind(server_id)
             .execute(&mut **transaction)
@@ -239,10 +255,9 @@ impl CapabilityCatalog for SqliteCapabilityCatalog {
         &self,
         server_id: &str,
     ) -> Result<()> {
-        sqlx::query("DELETE FROM capability_server_snapshots WHERE server_id = ?")
-            .bind(server_id)
-            .execute(&self.pool)
-            .await?;
+        let mut transaction = self.pool.begin().await?;
+        self.remove_server_in_transaction(&mut transaction, server_id).await?;
+        transaction.commit().await?;
         Ok(())
     }
 
@@ -567,14 +582,37 @@ async fn update_snapshot_state(
     .await?;
     sync_child_revisions(transaction, server_id, revision).await?;
     if let Some(kind) = failed_kind {
+        // A plain `UPDATE ... WHERE server_id = ? AND kind = ?` silently affects zero rows if
+        // this server never had a `capability_kind_states` row for `kind` (e.g. a kind that
+        // was never part of the committed `kind_states` list). That would let a real usage
+        // failure disappear without marking anything as failed. Upsert instead so the failure
+        // is always recorded, defaulting a freshly-created row's declaration to `Unknown`
+        // since we don't know whether the kind was ever declared/discovered (Codex review
+        // follow-up, PR #160).
+        let position = CapabilityKind::ALL
+            .iter()
+            .position(|candidate| *candidate == kind)
+            .unwrap_or(0) as i64;
         sqlx::query(
-            "UPDATE capability_kind_states SET inventory_state = ?, error = ?, observed_at = ? WHERE server_id = ? AND kind = ?",
+            r#"
+            INSERT INTO capability_kind_states
+                (server_id, position, kind, declaration_state, inventory_state, error, catalog_revision, observed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(server_id, kind) DO UPDATE SET
+                inventory_state = excluded.inventory_state,
+                error = excluded.error,
+                observed_at = excluded.observed_at,
+                catalog_revision = excluded.catalog_revision
+            "#,
         )
+        .bind(server_id)
+        .bind(position)
+        .bind(kind.as_str())
+        .bind(DeclarationState::Unknown.as_str())
         .bind(InventoryState::Failed.as_str())
         .bind(reason)
+        .bind(revision)
         .bind(&now)
-        .bind(server_id)
-        .bind(kind.as_str())
         .execute(&mut **transaction)
         .await?;
     }
