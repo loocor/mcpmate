@@ -30,14 +30,26 @@ export interface RegistryMetaPayload {
   [namespace: string]: unknown;
 }
 
+export type SnapshotState = "ready" | "invalidated" | "unavailable";
+export type DeclarationState = "unknown" | "unsupported" | "supported";
+export type InventoryState = "unknown" | "complete" | "failed";
+
+export interface CapabilityKindSummary {
+  declaration: DeclarationState;
+  inventory: InventoryState;
+  currentCount: number;
+  currentAvailable: boolean;
+  lastError?: string | null;
+}
+
 export interface ServerCapabilitySummary {
-  supports_tools: boolean;
-  supports_prompts: boolean;
-  supports_resources: boolean;
-  tools_count: number;
-  prompts_count: number;
-  resources_count: number;
-  resource_templates_count: number;
+  snapshotState: SnapshotState;
+  revision: number;
+  observedAt: string;
+  tools: CapabilityKindSummary;
+  prompts: CapabilityKindSummary;
+  resources: CapabilityKindSummary;
+  resourceTemplates: CapabilityKindSummary;
 }
 
 export interface ServerMetaInfo {
@@ -102,7 +114,6 @@ export interface ServerSummary {
   server_info?: StandardServerInfo | null;
   icons?: ServerIcon[];
   capability?: ServerCapabilitySummary;
-  capabilities?: ServerCapabilitySummary;
   protocol_version?: string | null;
   server_version?: string | null;
   created_at?: string | null;
@@ -1025,19 +1036,26 @@ export interface ClearCacheResponse {
 }
 
 // Capabilities Cache Types
-export interface CapabilitiesStorageTables {
-  servers: number;
+export interface CapabilitiesCatalogStats {
+  snapshots: number;
+  readySnapshots: number;
+  invalidatedSnapshots: number;
+  unavailableSnapshots: number;
+  records: number;
   tools: number;
   resources: number;
   prompts: number;
   resourceTemplates: number;
 }
 
+export interface CapabilitiesMemoryStats {
+  rawSnapshotEntries: number;
+  projectionEntries: number;
+}
+
 export interface CapabilitiesStorageStats {
-  db_path: string;
-  cache_size_bytes: number;
-  tables: CapabilitiesStorageTables;
-  last_cleanup?: string | null;
+  catalog: CapabilitiesCatalogStats;
+  memory: CapabilitiesMemoryStats;
 }
 
 export interface CapabilitiesMetricsStats {
@@ -1045,8 +1063,12 @@ export interface CapabilitiesMetricsStats {
   cacheHits: number;
   cacheMisses: number;
   hitRatio: number;
-  readOperations: number;
-  writeOperations: number;
+  rawSnapshotHits: number;
+  rawSnapshotMisses: number;
+  projectionHits: number;
+  projectionMisses: number;
+  singleFlightWaits: number;
+  evictions: number;
   cacheInvalidations: number;
 }
 
@@ -1057,8 +1079,8 @@ export interface CapabilitiesStatsResponse {
 }
 
 export interface CapabilitiesKeyItem {
-  key: string;
-  serverId: string;
+  cache: string;
+  keyHash: string;
   approxValueSizeBytes: number;
   cachedAt?: string;
 }

@@ -243,7 +243,6 @@ mod tests {
             command: Some("server-command".to_string()),
             url: None,
             source: None,
-            capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
             pending_import: false,

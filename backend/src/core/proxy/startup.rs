@@ -3,7 +3,6 @@
 //! This module handles the startup and background connection management using core modules.
 
 use super::{Args, ProxyServer};
-use crate::common::startup_diagnostics::{self, StartupDegradedEvent, component};
 use crate::core::{pool::UpstreamConnectionPool, transport::TransportType};
 use crate::system::config::bind_socket_addr;
 use anyhow::Result;
@@ -12,49 +11,26 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 /// Start background connections to all configured servers using core connection pool
 pub async fn start_background_connections(
     proxy: &ProxyServer,
-    proxy_arc: Arc<ProxyServer>,
+    _proxy_arc: Arc<ProxyServer>,
 ) -> Result<()> {
     // Get a reference to the core connection pool
     let connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>> = Arc::clone(&proxy.connection_pool);
-    let connection_pool_for_prewarm = Arc::clone(&connection_pool);
-    let proxy_arc_for_prewarm = Arc::clone(&proxy_arc);
+    let connection_pool_for_placeholders = Arc::clone(&connection_pool);
 
     // No eager connections at startup; keep instances registered as Idle placeholders.
-    // Background task: delegate prewarm to capability service
+    // Startup intentionally does not prewarm capabilities: durable SQLite snapshots
+    // remain available after restart, while missing snapshots are discovered on demand.
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Log current registered servers as placeholders
         {
-            let pool = connection_pool_for_prewarm.lock().await;
+            let pool = connection_pool_for_placeholders.lock().await;
             let enabled_servers_count = pool.connections.len();
             tracing::info!(
                 "Startup: {} enabled servers registered as placeholders (Idle). Will connect on demand.",
                 enabled_servers_count
             );
-        }
-
-        if let Some(db) = proxy_arc_for_prewarm.database.clone() {
-            let service = crate::core::capability::CapabilityService::new(
-                proxy_arc_for_prewarm.redb_cache.clone(),
-                connection_pool_for_prewarm.clone(),
-                db.clone(),
-            );
-            if let Err(error) = service.prewarm_enabled_servers_if_cache_miss().await {
-                startup_diagnostics::warn_degraded(
-                    StartupDegradedEvent {
-                        component: component::BACKGROUND,
-                        phase: "capability_prewarm",
-                        reason_code: "capability_prewarm_failed",
-                        action_taken: "skip_prewarm",
-                        subsystem: "capability",
-                    },
-                    &error,
-                    "Capability prewarm task failed",
-                );
-            }
-        } else {
-            tracing::debug!("Database not set on proxy; skipping cache prewarm");
         }
     });
 

@@ -90,7 +90,7 @@ flowchart LR
         direction TB
         UP["Upstream Mgmt<br/><small>Connection Pool · OAuth 2.0 + PKCE</small>"]
         PROF["Profile Engine<br/><small>Scene · App · Dynamic</small>"]
-        SEC["Event Logs &amp; Security<br/><small>Secure Store · Structured Logs · redb Cache</small>"]
+        SEC["Event Logs &amp; Security<br/><small>Secure Store · Structured Logs · SQLite Catalog</small>"]
         UP --> PROF --> SEC
     end
 
@@ -148,7 +148,7 @@ MCPMate sits between your AI clients and MCP servers. To each app it looks like 
 | **Runtime Manager**           | Installs and manages Node.js, uv (Python), and Bun runtimes used by local MCP servers.                                                  |
 | **Secure Store & OAuth Custody** | Keeps local secrets, OAuth tokens, and client secrets in encrypted custody with lifecycle cleanup and degraded-state guidance.        |
 | **OAuth 2.0 Upstream (PKCE)** | Supports upstream OAuth 2.0 flows with PKCE for Streamable HTTP MCP servers, including metadata discovery, callback handling, and reconnect flows. |
-| **Built-in redb Cache**       | L2 embedded cache for capability snapshots and frequently accessed proxy state.                                                         |
+| **Transactional Capability Catalog** | Versioned SQLite capability snapshots with a bounded in-process LRU for fast protocol and management reads.                        |
 | **Structured Logs**           | Dedicated Logs page with cursor-based pagination, actor/target/action metadata, and REST API access.                                    |
 | **Browser Extension**         | Chrome/Edge extension browses Servers, Clients, and Portals, then imports MCP snippets, GitHub MCP entries, and Cursor.directory entries via `mcpmate://import/server`. |
 | **Tool Inspector**            | Run quick tool calls against connected servers and inspect structured responses from the console.                                       |
@@ -232,7 +232,7 @@ Coming soon. An online environment will let you explore the dashboard, profiles,
 
 | Layer               | Technology                                                          |
 | ------------------- | ------------------------------------------------------------------- |
-| **Proxy / Backend** | Rust, tokio, rmcp, SQLite (persistence), redb (L2 capability cache) |
+| **Proxy / Backend** | Rust, tokio, rmcp, SQLite (configuration and capability catalog), in-process LRU |
 | **Dashboard**       | React, Vite, Zustand, React Query, Radix UI                         |
 | **Desktop**         | Tauri 2, system tray, native notifications                          |
 | **Bridge**          | Rust binary, stdio-to-HTTP conversion                               |

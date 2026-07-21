@@ -22,20 +22,17 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::api::handlers::ApiError;
 use crate::api::handlers::server::common::{
-    InspectParams, InspectQuery, RefreshStrategy, ServerIdentification, get_database_from_state,
-    get_server_info_for_inspect,
+    InspectQuery, RefreshStrategy, ServerIdentification, get_database_from_state, get_server_info_for_inspect,
 };
 use crate::api::models::cache::{
-    CacheDetailsData, CacheDetailsReq, CacheDetailsResp, CacheKeyItem, CacheMetricsStats, CacheResetData,
-    CacheResetResp, CacheStorageStats, CacheTablesCount, CacheViewType,
+    CacheCatalogStats, CacheDetailsData, CacheDetailsReq, CacheDetailsResp, CacheKeyItem, CacheMemoryStats,
+    CacheMetricsStats, CacheResetData, CacheResetResp, CacheStorageStats, CacheViewType,
 };
 use crate::api::models::server::{
     ServerCapabilityDetailData, ServerCapabilityDetailReq, ServerCapabilityDetailResp, ServerCapabilityMeta,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditStatus};
-use crate::core::cache::{CacheQuery, CacheScope, FreshnessLevel};
-use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 
 #[derive(Debug, Clone, Copy)]
 pub enum CapabilityType {
@@ -56,10 +53,7 @@ mod tests {
         api::{handlers::server::common::ServerIdentification, routes::AppState},
         config::database::Database,
         core::{
-            cache::{
-                CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo, RedbCacheManager,
-                manager::CacheConfig,
-            },
+            capability::index::{CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo},
             models::Config,
             pool::UpstreamConnectionPool,
             profile::ConfigApplicationStateManager,
@@ -71,7 +65,6 @@ mod tests {
     use serde_json::json;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-    use tempfile::TempDir;
     use tokio::sync::{Mutex, RwLock};
 
     fn mapping(
@@ -131,7 +124,7 @@ mod tests {
         let prompt = prompt_json(
             "everything_args-prompt",
             Some("Prompt with arguments".to_string()),
-            vec![crate::core::cache::PromptArgument {
+            vec![crate::core::capability::index::PromptArgument {
                 name: "message".to_string(),
                 description: Some("Message".to_string()),
                 required: true,
@@ -360,7 +353,6 @@ mod tests {
 
     #[tokio::test]
     async fn force_refresh_collision_records_namespace_remediation_issue() {
-        let temp_dir = TempDir::new().expect("temp dir");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -369,6 +361,10 @@ mod tests {
         crate::config::initialization::run_initialization(&pool)
             .await
             .expect("initialize schema");
+        mcpmate_capability_store::SqliteCapabilityCatalog::new(pool.clone())
+            .ensure_schema()
+            .await
+            .expect("initialize capability catalog");
         for (server_id, namespace) in [("server-owner", "a"), ("server-challenger", "a_b")] {
             sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
                 .bind(server_id)
@@ -384,11 +380,8 @@ mod tests {
         let database = Arc::new(Database {
             pool: pool.clone(),
             path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
-        let redb_cache = Arc::new(
-            RedbCacheManager::new(temp_dir.path().join("capability.redb"), CacheConfig::default())
-                .expect("create cache"),
-        );
         let state = Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
                 Arc::new(Config::default()),
@@ -401,7 +394,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            redb_cache,
             unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
@@ -414,7 +406,6 @@ mod tests {
         });
         crate::config::server::capabilities::store_dual_write(
             &pool,
-            &state.redb_cache,
             "server-challenger",
             "a_b",
             Vec::new(),
@@ -426,16 +417,11 @@ mod tests {
         .await
         .expect("store full baseline before scoped force refresh");
         let extracted = ExtractedCapability {
-            tools: vec![CachedToolInfo {
-                name: "c".to_string(),
-                description: None,
-                input_schema_json: "{}".to_string(),
-                output_schema_json: None,
-                unique_name: None,
-                icons: None,
-                enabled: true,
-                cached_at: Utc::now(),
-            }],
+            tools: vec![rmcp::model::Tool::new(
+                "c",
+                "collision fixture",
+                Arc::new(serde_json::Map::new()),
+            )],
             ..ExtractedCapability::default()
         };
         let mut events = crate::core::events::EventBus::global().subscribe_async();
@@ -471,15 +457,19 @@ mod tests {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 pub struct ExtractedCapability {
     pub data: Vec<serde_json::Value>,
-    pub tools: Vec<crate::core::cache::CachedToolInfo>,
-    pub prompts: Vec<crate::core::cache::CachedPromptInfo>,
-    pub resources: Vec<crate::core::cache::CachedResourceInfo>,
-    pub resource_templates: Vec<crate::core::cache::CachedResourceTemplateInfo>,
+    pub initialize: Option<rmcp::model::InitializeResult>,
+    pub tools: Vec<rmcp::model::Tool>,
+    pub prompts: Vec<rmcp::model::Prompt>,
+    pub resources: Vec<rmcp::model::Resource>,
+    pub resource_templates: Vec<rmcp::model::ResourceTemplate>,
+    pub kind_states: Vec<mcpmate_capability_store::KindObservation>,
 }
 
+#[cfg(test)]
 impl ExtractedCapability {
     pub fn empty() -> Self {
         Self::default()
@@ -629,10 +619,10 @@ struct CapabilityDetailLookup {
 pub async fn server_capability_detail(
     State(state): State<Arc<AppState>>,
     Query(request): Query<ServerCapabilityDetailReq>,
-) -> Result<Json<ServerCapabilityDetailResp>, StatusCode> {
+) -> Result<Json<ServerCapabilityDetailResp>, ApiError> {
     let key = request.key.trim();
     if key.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ApiError::BadRequest("Capability detail key must not be empty".to_string()));
     }
 
     let query = InspectQuery {
@@ -676,71 +666,65 @@ async fn cached_capability_detail_item(
     server_info: &ServerIdentification,
     capability_type: CapabilityType,
     key: &str,
-) -> Result<CapabilityDetailLookup, StatusCode> {
-    let query = CacheQuery {
-        server_id: server_info.server_id.clone(),
-        freshness_level: FreshnessLevel::Cached,
-        include_disabled: true,
-        scope: CacheScope::shared_raw(),
+) -> Result<CapabilityDetailLookup, ApiError> {
+    let database = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("Database is not initialized".to_string()))?;
+    let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+        database.clone(),
+        state.connection_pool.clone(),
+    );
+    let runtime_kind = match capability_type {
+        CapabilityType::Tools => crate::core::capability::CapabilityType::Tools,
+        CapabilityType::Prompts => crate::core::capability::CapabilityType::Prompts,
+        CapabilityType::Resources => crate::core::capability::CapabilityType::Resources,
+        CapabilityType::ResourceTemplates => crate::core::capability::CapabilityType::ResourceTemplates,
     };
-    let cached = state
-        .redb_cache
-        .get_server_data(&query)
+    let result = service
+        .list(&crate::core::capability::runtime::ListCtx {
+            capability: runtime_kind,
+            server_id: server_info.server_id.clone(),
+            refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
+            timeout: Some(std::time::Duration::from_secs(10)),
+            validation_session: None,
+            runtime_identity: None,
+            connection_selection: None,
+            visibility_snapshot: None,
+            name_domain: crate::core::capability::runtime::NameDomain::External,
+        })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let Some(data) = cached.data else {
-        return Ok(CapabilityDetailLookup {
-            item: None,
-            cache_hit: false,
-            source: "cache".to_string(),
-        });
-    };
-
-    let naming_kind = match capability_type {
-        CapabilityType::Tools => NamingKind::Tool,
-        CapabilityType::Prompts => NamingKind::Prompt,
-        CapabilityType::Resources => NamingKind::Resource,
-        CapabilityType::ResourceTemplates => NamingKind::ResourceTemplate,
-    };
-    let route = resolve_capability_route(naming_kind, key)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    if route.server_id != server_info.server_id {
-        return Ok(CapabilityDetailLookup {
-            item: None,
-            cache_hit: true,
-            source: "cache".to_string(),
-        });
-    }
-    let upstream_key = route.upstream_value;
-    let item = match capability_type {
-        CapabilityType::Tools => data
-            .tools
+        .map_err(|error| {
+            tracing::error!(
+                server_id = %server_info.server_id,
+                error = %error,
+                "Capability detail read path failed"
+            );
+            crate::core::capability::service::map_capability_read_error(&error)
+        })?;
+    let item = match result.items {
+        crate::core::capability::runtime::CapabilityItems::Tools(items) => items
             .into_iter()
-            .find(|tool| capability_key_matches(&tool.name, &upstream_key))
-            .map(|tool| tool_json_from_cached(&tool, key)),
-        CapabilityType::Resources => data
-            .resources
+            .find(|item| item.name.as_ref() == key)
+            .and_then(|item| serde_json::to_value(item).ok()),
+        crate::core::capability::runtime::CapabilityItems::Prompts(items) => items
             .into_iter()
-            .find(|resource| capability_key_matches(&resource.uri, &upstream_key))
-            .map(|resource| resource_json_from_cached(resource, key)),
-        CapabilityType::Prompts => data
-            .prompts
+            .find(|item| item.name == key)
+            .and_then(|item| serde_json::to_value(item).ok()),
+        crate::core::capability::runtime::CapabilityItems::Resources(items) => items
             .into_iter()
-            .find(|prompt| capability_key_matches(&prompt.name, &upstream_key))
-            .map(|prompt| prompt_json_from_cached(prompt, key)),
-        CapabilityType::ResourceTemplates => data
-            .resource_templates
+            .find(|item| item.uri == key)
+            .and_then(|item| serde_json::to_value(item).ok()),
+        crate::core::capability::runtime::CapabilityItems::ResourceTemplates(items) => items
             .into_iter()
-            .find(|template| capability_key_matches(&template.uri_template, &upstream_key))
-            .map(|template| resource_template_json_from_cached(template, key)),
+            .find(|item| item.uri_template == key)
+            .and_then(|item| serde_json::to_value(item).ok()),
     };
 
     Ok(CapabilityDetailLookup {
         item,
-        cache_hit: true,
-        source: "cache".to_string(),
+        cache_hit: result.meta.cache_hit,
+        source: result.meta.source,
     })
 }
 
@@ -754,14 +738,6 @@ fn parse_capability_detail_type(kind: &str) -> Result<CapabilityType, StatusCode
     }
 }
 
-fn capability_key_matches(
-    candidate: &str,
-    upstream_key: &str,
-) -> bool {
-    let candidate = candidate.trim();
-    candidate == upstream_key.trim()
-}
-
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 1000;
 
@@ -772,23 +748,17 @@ async fn cache_details_core(
     match query.view {
         CacheViewType::Keys => {
             let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-
-            let entries = state
-                .redb_cache
-                .list_server_entries(query.server_id.as_deref(), limit)
+            let database = get_database_from_state(state).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            let keys: Vec<CacheKeyItem> = database
+                .capability_cache
+                .diagnostic_keys_for_server(limit, query.server_id.as_deref())
                 .await
-                .map_err(|e| {
-                    tracing::error!("Failed to list cache entries: {e}");
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?;
-
-            let keys: Vec<CacheKeyItem> = entries
                 .into_iter()
                 .map(|e| CacheKeyItem {
-                    key: e.key,
-                    server_id: e.server_id,
+                    cache: e.cache.to_string(),
+                    key_hash: e.key_hash,
                     approx_value_size_bytes: e.approx_value_size_bytes,
-                    cached_at: e.cached_at.map(|t| t.to_rfc3339()),
+                    cached_at: Some(e.cached_at.to_rfc3339()),
                 })
                 .collect();
 
@@ -804,35 +774,55 @@ async fn cache_details_core(
             Ok(CacheDetailsResp::success(response))
         }
         CacheViewType::Stats => {
-            let stats = state.redb_cache.get_stats().await;
-            let live = state.redb_cache.get_metrics().await;
-            let db_path = state.redb_cache.database_path();
-            let last_cleanup = state.redb_cache.get_last_cleanup_time();
+            let database = get_database_from_state(state).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+            let catalog = mcpmate_capability_store::SqliteCapabilityCatalog::new(database.pool.clone());
+            let stats = mcpmate_capability_store::CapabilityCatalog::stats(&catalog)
+                .await
+                .map_err(|error| {
+                    tracing::error!(error = %error, "Failed to read SQLite capability catalog statistics");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            let live = database.capability_cache.metrics().await;
 
             let storage = CacheStorageStats {
-                db_path: db_path.to_string_lossy().to_string(),
-                cache_size_bytes: stats.cache_size_bytes,
-                tables: CacheTablesCount {
-                    servers: stats.total_servers,
-                    tools: stats.total_tools,
-                    resources: stats.total_resources,
-                    prompts: stats.total_prompts,
-                    resource_templates: stats.total_resource_templates,
+                catalog: CacheCatalogStats {
+                    snapshots: stats.snapshots.max(0) as u64,
+                    ready_snapshots: stats.ready_snapshots.max(0) as u64,
+                    invalidated_snapshots: stats.invalidated_snapshots.max(0) as u64,
+                    unavailable_snapshots: stats.unavailable_snapshots.max(0) as u64,
+                    records: stats.records.max(0) as u64,
+                    tools: stats.tools.max(0) as u64,
+                    resources: stats.resources.max(0) as u64,
+                    prompts: stats.prompts.max(0) as u64,
+                    resource_templates: stats.resource_templates.max(0) as u64,
                 },
-                last_cleanup,
+                memory: CacheMemoryStats {
+                    raw_snapshot_entries: live.raw_entries,
+                    projection_entries: live.projection_entries,
+                },
             };
 
-            let hit_ratio = live.hit_ratio();
+            let cache_hits = live.raw_hits + live.projection_hits;
+            let cache_misses = live.raw_misses + live.projection_misses;
+            let hit_ratio = if live.total_queries == 0 {
+                0.0
+            } else {
+                cache_hits as f64 / live.total_queries as f64
+            };
             let hit_ratio = (hit_ratio * 10_000.0).round() / 10_000.0;
 
             let metrics = CacheMetricsStats {
                 total_queries: live.total_queries,
-                cache_hits: live.cache_hits,
-                cache_misses: live.cache_misses,
+                cache_hits,
+                cache_misses,
                 hit_ratio,
-                read_operations: live.read_operations,
-                write_operations: live.write_operations,
-                cache_invalidations: live.cache_invalidations,
+                raw_snapshot_hits: live.raw_hits,
+                raw_snapshot_misses: live.raw_misses,
+                projection_hits: live.projection_hits,
+                projection_misses: live.projection_misses,
+                single_flight_waits: live.single_flight_waits,
+                evictions: live.raw_evictions + live.projection_evictions,
+                cache_invalidations: live.invalidations,
             };
 
             let response = CacheDetailsData {
@@ -840,7 +830,7 @@ async fn cache_details_core(
                 storage: Some(storage),
                 metrics: Some(metrics),
                 total: None,
-                generated_at: Some(stats.last_updated.to_rfc3339()),
+                generated_at: Some(chrono::Utc::now().to_rfc3339()),
             };
 
             Ok(CacheDetailsResp::success(response))
@@ -849,14 +839,30 @@ async fn cache_details_core(
 }
 
 async fn cache_reset_core(state: &Arc<AppState>) -> Result<CacheResetResp, StatusCode> {
-    state.redb_cache.clear_all().await.map_err(|e| {
-        tracing::error!("Failed to clear cache: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let database = get_database_from_state(state).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let catalog = mcpmate_capability_store::SqliteCapabilityCatalog::new(database.pool.clone());
+    let invalidated = catalog
+        .invalidate_all("explicit capability cache reset")
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "Failed to invalidate SQLite capability catalog");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    database.capability_cache.clear().await;
+    for commit in &invalidated {
+        crate::config::server::capabilities::publish_catalog_commit(
+            &commit.server_id,
+            &commit.server_name,
+            commit.revision,
+        );
+    }
 
     let response = CacheResetData {
         success: true,
-        message: Some("Cache cleared successfully".to_string()),
+        message: Some(format!(
+            "Cleared node-local capability caches and invalidated {} durable catalog snapshots",
+            invalidated.len()
+        )),
     };
 
     Ok(CacheResetResp::success(response))
@@ -1068,7 +1074,7 @@ pub fn tool_json(
 }
 
 pub fn tool_json_from_cached(
-    t: &crate::core::cache::CachedToolInfo,
+    t: &crate::core::capability::index::CachedToolInfo,
     external_name: &str,
 ) -> serde_json::Value {
     let schema = t.input_schema().unwrap_or_else(|_| serde_json::json!({}));
@@ -1076,7 +1082,7 @@ pub fn tool_json_from_cached(
     tool_json(external_name, t.description.clone(), schema, out, t.icons.clone())
 }
 
-pub fn tool_management_json_from_cached(t: &crate::core::cache::CachedToolInfo) -> serde_json::Value {
+pub fn tool_management_json_from_cached(t: &crate::core::capability::index::CachedToolInfo) -> serde_json::Value {
     serde_json::json!({
         "name": t.name,
         "description": t.description,
@@ -1105,7 +1111,7 @@ pub fn resource_json(
 }
 
 pub fn resource_json_from_cached(
-    r: crate::core::cache::CachedResourceInfo,
+    r: crate::core::capability::index::CachedResourceInfo,
     external_uri: &str,
 ) -> serde_json::Value {
     resource_json(external_uri, r.name, r.description, r.mime_type, r.icons)
@@ -1130,7 +1136,7 @@ pub fn resource_template_json(
 }
 
 pub fn resource_template_json_from_cached(
-    t: crate::core::cache::CachedResourceTemplateInfo,
+    t: crate::core::capability::index::CachedResourceTemplateInfo,
     external_uri_template: &str,
 ) -> serde_json::Value {
     resource_template_json(external_uri_template, t.name, t.description, t.mime_type)
@@ -1139,7 +1145,7 @@ pub fn resource_template_json_from_cached(
 pub fn prompt_json(
     name: &str,
     description: Option<String>,
-    arguments: Vec<crate::core::cache::PromptArgument>,
+    arguments: Vec<crate::core::capability::index::PromptArgument>,
     icons: Option<Vec<Icon>>,
 ) -> serde_json::Value {
     let args: Vec<serde_json::Value> = arguments
@@ -1163,7 +1169,7 @@ pub fn prompt_json(
 }
 
 pub fn prompt_json_from_cached(
-    p: crate::core::cache::CachedPromptInfo,
+    p: crate::core::capability::index::CachedPromptInfo,
     external_name: &str,
 ) -> serde_json::Value {
     prompt_json(
@@ -1189,232 +1195,8 @@ fn insert_optional_json<T>(
     }
 }
 
-pub async fn extract_tools_capability(
-    conn: &crate::core::pool::UpstreamConnection
-) -> Result<ExtractedCapability, ApiError> {
-    let now = chrono::Utc::now();
-
-    let (data, tools): (Vec<_>, Vec<_>) = conn
-        .tools
-        .iter()
-        .map(|t| {
-            let schema = t.schema_as_json_value();
-            let data_item = serde_json::json!({
-                "name": t.name,
-                "description": t.description,
-                "input_schema": schema,
-                "output_schema": t.output_schema.as_ref().map(|s| serde_json::Value::Object((**s).clone())),
-                "unique_name": serde_json::Value::Null,
-                "icons": t.icons.clone(),
-            });
-
-            let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
-            let tool_info = crate::core::cache::CachedToolInfo {
-                name: t.name.to_string(),
-                description: t.description.clone().map(|d| d.into_owned()),
-                input_schema_json,
-                output_schema_json: t.output_schema.as_ref().map(|s| {
-                    serde_json::to_string(&serde_json::Value::Object((**s).clone()))
-                        .unwrap_or_else(|_| "{}".to_string())
-                }),
-                unique_name: None,
-                icons: t.icons.clone(),
-                enabled: true,
-                cached_at: now,
-            };
-
-            (data_item, tool_info)
-        })
-        .unzip();
-
-    Ok(ExtractedCapability {
-        data,
-        tools,
-        prompts: Vec::new(),
-        resources: Vec::new(),
-        resource_templates: Vec::new(),
-    })
-}
-
-pub async fn extract_prompts_capability(
-    conn: &crate::core::pool::UpstreamConnection
-) -> Result<ExtractedCapability, ApiError> {
-    if !conn.supports_prompts() {
-        return Ok(ExtractedCapability::empty());
-    }
-
-    let service = match &conn.service {
-        Some(service) => service,
-        None => return Ok(ExtractedCapability::empty()),
-    };
-
-    let list_result = service
-        .list_prompts(None)
-        .await
-        .map_err(|_| ApiError::InternalError("Failed to list prompts".to_string()))?;
-
-    let now = chrono::Utc::now();
-    let (data, prompts): (Vec<_>, Vec<_>) = list_result
-        .prompts
-        .into_iter()
-        .map(|p| {
-            let arguments = p.arguments.unwrap_or_default();
-
-            let prompt_info = crate::core::cache::CachedPromptInfo {
-                name: p.name,
-                description: p.description,
-                arguments: arguments
-                    .clone()
-                    .into_iter()
-                    .map(|arg| crate::core::cache::PromptArgument {
-                        name: arg.name,
-                        description: arg.description,
-                        required: arg.required.unwrap_or(false),
-                    })
-                    .collect(),
-                icons: p.icons.clone(),
-                enabled: true,
-                cached_at: now,
-            };
-
-            let data_item = serde_json::json!({
-                "name": prompt_info.name,
-                "description": prompt_info.description,
-                "arguments": arguments,
-                "icons": prompt_info.icons.clone(),
-            });
-
-            (data_item, prompt_info)
-        })
-        .unzip();
-
-    Ok(ExtractedCapability {
-        data,
-        tools: Vec::new(),
-        prompts,
-        resources: Vec::new(),
-        resource_templates: Vec::new(),
-    })
-}
-
-pub async fn extract_resources_capability(
-    conn: &crate::core::pool::UpstreamConnection
-) -> Result<ExtractedCapability, ApiError> {
-    if !conn.supports_resources() {
-        return Ok(ExtractedCapability::empty());
-    }
-
-    let service = match &conn.service {
-        Some(service) => service,
-        None => return Ok(ExtractedCapability::empty()),
-    };
-
-    let list_result = service
-        .list_resources(None)
-        .await
-        .map_err(|_| ApiError::InternalError("Failed to list resources".to_string()))?;
-
-    let now = chrono::Utc::now();
-    let (data, resources): (Vec<_>, Vec<_>) = list_result
-        .resources
-        .into_iter()
-        .map(|r| {
-            let raw = &r;
-            let resource_info = crate::core::cache::CachedResourceInfo {
-                uri: raw.uri.clone(),
-                name: Some(raw.name.clone()),
-                description: raw.description.clone(),
-                mime_type: raw.mime_type.clone(),
-                icons: raw.icons.clone(),
-                enabled: true,
-                cached_at: now,
-            };
-
-            let data_item = serde_json::json!({
-                "uri": resource_info.uri,
-                "name": resource_info.name,
-                "description": resource_info.description,
-                "mime_type": resource_info.mime_type,
-                "icons": resource_info.icons.clone(),
-            });
-
-            (data_item, resource_info)
-        })
-        .unzip();
-
-    Ok(ExtractedCapability {
-        data,
-        tools: Vec::new(),
-        prompts: Vec::new(),
-        resources,
-        resource_templates: Vec::new(),
-    })
-}
-
-pub async fn extract_resource_templates_capability(
-    conn: &crate::core::pool::UpstreamConnection
-) -> Result<ExtractedCapability, ApiError> {
-    if !conn.supports_resources() {
-        return Ok(ExtractedCapability::empty());
-    }
-
-    let service = match &conn.service {
-        Some(service) => service,
-        None => return Ok(ExtractedCapability::empty()),
-    };
-
-    let now = chrono::Utc::now();
-    let mut all_templates = Vec::new();
-    let mut cursor = None;
-
-    // Paginated resource template collection
-    loop {
-        let list_result = service
-            .list_resource_templates(Some(rmcp::model::PaginatedRequestParams::default().with_cursor(cursor)))
-            .await
-            .map_err(|_| ApiError::InternalError("Failed to list resource templates".to_string()))?;
-
-        all_templates.extend(list_result.resource_templates);
-        cursor = list_result.next_cursor;
-
-        if cursor.is_none() {
-            break;
-        }
-    }
-
-    let (data, resource_templates): (Vec<_>, Vec<_>) = all_templates
-        .into_iter()
-        .map(|t| {
-            let data_item = serde_json::json!({
-                "uri_template": t.uri_template,
-                "name": t.name,
-                "description": t.description,
-                "mime_type": t.mime_type,
-            });
-
-            let template_info = crate::core::cache::CachedResourceTemplateInfo {
-                uri_template: t.uri_template.clone(),
-                name: Some(t.name.clone()),
-                description: t.description.clone(),
-                mime_type: t.mime_type.clone(),
-                enabled: true,
-                cached_at: now,
-            };
-
-            (data_item, template_info)
-        })
-        .unzip();
-
-    Ok(ExtractedCapability {
-        data,
-        tools: Vec::new(),
-        prompts: Vec::new(),
-        resources: Vec::new(),
-        resource_templates,
-    })
-}
-
 /// Persist the authoritative inventory for one explicitly refreshed kind.
+#[cfg(test)]
 async fn persist_extracted_inventory(
     state: &Arc<AppState>,
     server_info: &ServerIdentification,
@@ -1428,84 +1210,23 @@ async fn persist_extracted_inventory(
         CapabilityType::ResourceTemplates => crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES,
     };
     let db = get_database_from_state(state)?;
-    if let Err(error) = crate::config::server::capabilities::store_dual_write_for_kinds(
+    if let Err(error) = crate::config::server::capabilities::commit_protocol_observation_for_kinds(
         &db.pool,
-        &state.redb_cache,
         &server_info.server_id,
         &server_info.server_name,
+        extracted.initialize.clone(),
         extracted.tools.clone(),
         extracted.resources.clone(),
         extracted.prompts.clone(),
         extracted.resource_templates.clone(),
-        None,
         kinds,
+        extracted.kind_states.clone(),
     )
     .await
     {
         crate::config::server::namespace_repair::record_capability_collision_from_error(&db.pool, &error).await?;
         return Err(error.into());
     }
+    db.capability_cache.invalidate_server(&server_info.server_id).await;
     Ok(())
-}
-
-/// Create a temporary server instance for capability extraction during force refresh.
-pub async fn create_temporary_instance_for_capability(
-    state: &Arc<AppState>,
-    server_info: &ServerIdentification,
-    params: &InspectParams,
-    capability_type: CapabilityType,
-    allow_without_force: bool,
-) -> Result<Option<Json<serde_json::Value>>, ApiError> {
-    if params.refresh != Some(RefreshStrategy::Force) && !allow_without_force {
-        return Ok(None);
-    }
-
-    // Try to reuse an existing connected instance first
-    use crate::api::handlers::server::common::ConnectionPoolManager;
-    let mut pool = match ConnectionPoolManager::get_pool_for_capability(state).await {
-        Ok(pool) => pool,
-        Err(_) => return Ok(None),
-    };
-
-    if let Some(instances) = pool.connections.get(&server_info.server_id) {
-        if let Some(conn) = instances.values().find(|c| c.is_connected()) {
-            let extracted = match capability_type {
-                CapabilityType::Tools => extract_tools_capability(conn).await?,
-                CapabilityType::Prompts => extract_prompts_capability(conn).await?,
-                CapabilityType::Resources => extract_resources_capability(conn).await?,
-                CapabilityType::ResourceTemplates => extract_resource_templates_capability(conn).await?,
-            };
-
-            persist_extracted_inventory(state, server_info, capability_type, &extracted).await?;
-
-            let db = get_database_from_state(state)?;
-            let enriched =
-                enrich_capability_items(capability_type, &db.pool, &server_info.server_id, extracted.data).await?;
-            return Ok(Some(respond_with_enriched(enriched, false, params.refresh, "runtime")));
-        }
-    }
-
-    // Create temporary validation instance
-    match pool
-        .get_or_create_validation_instance(&server_info.server_id, "api", std::time::Duration::from_secs(5 * 60))
-        .await
-    {
-        Ok(Some(validation_conn)) => {
-            let extracted = match capability_type {
-                CapabilityType::Tools => extract_tools_capability(validation_conn).await?,
-                CapabilityType::Prompts => extract_prompts_capability(validation_conn).await?,
-                CapabilityType::Resources => extract_resources_capability(validation_conn).await?,
-                CapabilityType::ResourceTemplates => extract_resource_templates_capability(validation_conn).await?,
-            };
-
-            persist_extracted_inventory(state, server_info, capability_type, &extracted).await?;
-
-            let db = get_database_from_state(state)?;
-            let items =
-                enrich_capability_items(capability_type, &db.pool, &server_info.server_id, extracted.data).await?;
-
-            Ok(Some(respond_with_enriched(items, false, params.refresh, "temporary")))
-        }
-        _ => Ok(None),
-    }
 }

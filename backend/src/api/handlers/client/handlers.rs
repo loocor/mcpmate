@@ -1465,7 +1465,6 @@ mod tests {
         server::init::initialize_server_tables,
     };
     use crate::core::{
-        cache::{RedbCacheManager, manager::CacheConfig},
         events::{Event, EventBus},
         models::Config,
         pool::UpstreamConnectionPool,
@@ -1564,6 +1563,7 @@ mod tests {
         let database = Arc::new(Database {
             pool: db_pool.clone(),
             path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
@@ -1591,9 +1591,6 @@ mod tests {
         );
         crate::core::capability::naming::initialize(db_pool.clone());
 
-        let cache_path = temp_dir.path().join("capability.redb");
-        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
-
         let app_state = Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
                 Arc::new(Config::default()),
@@ -1606,7 +1603,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            redb_cache,
             unified_query: None,
             client_service: Some(client_service.clone()),
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
@@ -1830,8 +1826,8 @@ mod tests {
         crate::core::capability::naming::initialize(pool.clone());
         sqlx::query(
             r#"
-            INSERT INTO server_config (id, name, server_type, command, capabilities, enabled, unify_direct_exposure_eligible)
-            VALUES (?, ?, 'stdio', 'server-binary', 'tools', 1, ?)
+            INSERT INTO server_config (id, name, server_type, command, enabled, unify_direct_exposure_eligible)
+            VALUES (?, ?, 'stdio', 'server-binary', 1, ?)
             "#,
         )
         .bind(id)

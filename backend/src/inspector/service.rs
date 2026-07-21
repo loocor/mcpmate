@@ -22,10 +22,10 @@ use crate::api::models::inspector::{
 use crate::api::routes::AppState;
 use crate::core::capability;
 use crate::core::capability::resolver;
-use crate::core::proxy::server::supports_capability;
 use crate::inspector::calls::{
     InspectorCallInfo, InspectorCallRegistry, InspectorResultProjection, InspectorTerminal, RegisteredCall,
 };
+use crate::inspector::sessions::{ActiveSession, InspectorSessionClosing, SessionLookup};
 
 const NATIVE_VALIDATION_SESSION_TTL: Duration = Duration::from_secs(300);
 
@@ -104,44 +104,27 @@ struct CapabilityPayload {
 
 struct NativeValidationSessionGuard {
     connection_pool: Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
-    session_id: Option<String>,
+    lease: crate::core::pool::ValidationReservationLease,
 }
 
 impl NativeValidationSessionGuard {
-    fn new(
+    fn from_lease(
         state: &AppState,
-        session_id: String,
+        lease: crate::core::pool::ValidationReservationLease,
     ) -> Self {
         Self {
             connection_pool: state.connection_pool.clone(),
-            session_id: Some(session_id),
+            lease,
         }
     }
 
-    fn session_id(&self) -> &str {
-        self.session_id
-            .as_deref()
-            .expect("native validation cleanup guard must own a session")
+    fn reservation(&self) -> &crate::core::pool::ValidationReservationToken {
+        self.lease.token()
     }
 
-    async fn cleanup(mut self) {
-        if let Some(session_id) = self.session_id.clone() {
-            destroy_validation_session(&self.connection_pool, &session_id).await;
-            self.session_id.take();
-        }
-    }
-}
-
-impl Drop for NativeValidationSessionGuard {
-    fn drop(&mut self) {
-        let Some(session_id) = self.session_id.take() else {
-            return;
-        };
-        let connection_pool = self.connection_pool.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                destroy_validation_session(&connection_pool, &session_id).await;
-            });
+    async fn cleanup(self) {
+        if let Err(error) = destroy_validation_session(&self.connection_pool, self.lease.token()).await {
+            tracing::warn!(error = %error, "Native validation session cleanup failed");
         }
     }
 }
@@ -402,6 +385,10 @@ pub async fn call_tool(
         cleanup.cleanup().await;
     }
 
+    map_tool_call_terminal(result)
+}
+
+fn map_tool_call_terminal(result: InspectorTerminal) -> Result<ToolCallOutcome, ApiError> {
     match result {
         InspectorTerminal::Result {
             result,
@@ -414,6 +401,7 @@ pub async fn call_tool(
             message: Some("completed".to_string()),
         }),
         InspectorTerminal::Error { message, .. } => Err(ApiError::InternalError(message)),
+        InspectorTerminal::Timeout { .. } => Err(ApiError::Timeout("Inspector tools/call exceeded its timeout".into())),
         InspectorTerminal::Cancelled { reason, .. } => Err(ApiError::Conflict(
             reason.unwrap_or_else(|| "Inspector call cancelled".to_string()),
         )),
@@ -455,13 +443,13 @@ pub async fn open_session(
 
     let server_id = resolve_server(&req.server_id, &req.server_name).await?;
     let session_id = crate::generate_id!("inspses");
-    let (peer, validation_session) = if matches!(req.mode, InspectorMode::Native) {
+    let (peer, validation_reservation) = if matches!(req.mode, InspectorMode::Native) {
         let validation_session = native_session_id_for_inspector_session(&session_id);
-        ensure_native_session_with_timeout(state, &server_id, &validation_session, timeout).await?;
-        acquire_validation_peer(state, &server_id, &validation_session)
+        let lease = ensure_native_session_with_timeout(state, &server_id, &validation_session, timeout).await?;
+        acquire_validation_peer(state, &server_id, lease.token())
             .await
             .map_err(|e| ApiError::InternalError(e.to_string()))?;
-        (None, Some(validation_session))
+        (None, Some(lease))
     } else {
         ensure_proxy_connection(state, &server_id, timeout).await?;
         let peer = acquire_peer_for_call(state, &server_id, None)
@@ -477,7 +465,7 @@ pub async fn open_session(
             server_id.clone(),
             req.mode,
             peer,
-            validation_session.clone(),
+            validation_reservation,
         )
         .await;
 
@@ -493,13 +481,48 @@ pub async fn close_session(
     state: &Arc<AppState>,
     req: &InspectorSessionCloseReq,
 ) -> Result<bool, ApiError> {
-    if let Some(closed) = state.inspector_sessions.close_session(&req.session_id).await {
-        if matches!(closed.mode, InspectorMode::Native) {
-            cleanup_native_session(state, &closed.server_id, closed.validation_session.as_deref()).await;
+    let Some(closing) = state.inspector_sessions.begin_close(&req.session_id).await else {
+        return Ok(false);
+    };
+    release_inspector_session(state, closing).await?;
+    Ok(true)
+}
+
+async fn release_inspector_session(
+    state: &AppState,
+    closing: InspectorSessionClosing,
+) -> Result<(), ApiError> {
+    let info = closing.info().clone();
+    if matches!(info.mode, InspectorMode::Native)
+        && let Some(reservation) = info.validation_reservation.as_ref()
+    {
+        crate::core::pool::UpstreamConnectionPool::release_validation_reservation(&state.connection_pool, reservation)
+            .await
+            .map_err(|error| ApiError::InternalError(error.to_string()))?;
+    }
+    if !closing.complete().await {
+        return Err(ApiError::Conflict("Inspector session changed while closing".into()));
+    }
+    Ok(())
+}
+
+async fn get_active_session(
+    state: &AppState,
+    session_id: &str,
+) -> Result<ActiveSession, ApiError> {
+    match state.inspector_sessions.get_session(session_id).await {
+        SessionLookup::Active(session) => Ok(session),
+        SessionLookup::Expired(closing) => {
+            release_inspector_session(state, closing).await?;
+            Err(ApiError::NotFound(format!(
+                "Inspector session '{}' not found or expired",
+                session_id
+            )))
         }
-        Ok(true)
-    } else {
-        Ok(false)
+        SessionLookup::Missing => Err(ApiError::NotFound(format!(
+            "Inspector session '{}' not found or expired",
+            session_id
+        ))),
     }
 }
 
@@ -532,6 +555,18 @@ where
         .map_err(|_| ApiError::Timeout(format!("Inspector {operation} exceeded {} ms", timeout.as_millis())))?
 }
 
+async fn run_native_preflight<T, F>(
+    timeout: Duration,
+    future: F,
+) -> Result<T, ApiError>
+where
+    F: Future<Output = Result<T, ApiError>>,
+{
+    tokio::time::timeout(timeout, future).await.map_err(|_| {
+        ApiError::GatewayTimeout(format!("Inspector server connect exceeded {} ms", timeout.as_millis()))
+    })?
+}
+
 async fn ensure_proxy_connection(
     state: &AppState,
     server_id: &str,
@@ -562,14 +597,11 @@ async fn start_tool_call_internal_with_timeout(
         ensure_native_allowed()?;
     }
 
-    let active_session =
-        if let Some(session_id) = req.session_id.as_ref() {
-            Some(state.inspector_sessions.get_session(session_id).await.ok_or_else(|| {
-                ApiError::NotFound(format!("Inspector session '{}' not found or expired", session_id))
-            })?)
-        } else {
-            None
-        };
+    let active_session = if let Some(session_id) = req.session_id.as_ref() {
+        Some(get_active_session(state, session_id).await?)
+    } else {
+        None
+    };
 
     let (server_id, upstream_tool_name, result_projection) = match req.mode {
         InspectorMode::Proxy => {
@@ -615,19 +647,19 @@ async fn start_tool_call_internal_with_timeout(
 
     let (peer, native_cleanup_session) = match (req.mode, active_session) {
         (InspectorMode::Native, Some(session)) => {
-            let validation_session = session.validation_session.as_deref().ok_or_else(|| {
+            let reservation = session.validation_reservation.as_ref().ok_or_else(|| {
                 ApiError::InternalError("Native Inspector session is missing validation ownership".into())
             })?;
-            let peer = acquire_validation_peer(state, &server_id, validation_session)
+            let peer = acquire_validation_peer(state, &server_id, reservation)
                 .await
                 .map_err(|e| ApiError::InternalError(e.to_string()))?;
             (peer, None)
         }
         (InspectorMode::Native, None) => {
             let validation_session = native_temporary_session_id();
-            ensure_native_session_with_timeout(state, &server_id, &validation_session, timeout).await?;
-            let cleanup = NativeValidationSessionGuard::new(state, validation_session);
-            let peer = acquire_validation_peer(state, &server_id, cleanup.session_id())
+            let lease = ensure_native_session_with_timeout(state, &server_id, &validation_session, timeout).await?;
+            let cleanup = NativeValidationSessionGuard::from_lease(state, lease);
+            let peer = acquire_validation_peer(state, &server_id, cleanup.reservation())
                 .await
                 .map_err(|e| ApiError::InternalError(e.to_string()))?;
             (peer, Some(cleanup))
@@ -764,7 +796,6 @@ async fn list_capability_payload(
         InspectorMode::Proxy => {
             if query.server_id.is_some() || query.server_name.is_some() {
                 let server_id = resolve_server(&query.server_id, &query.server_name).await?;
-                let redb = state.redb_cache.clone();
                 let pool = state.connection_pool.clone();
                 let database = state
                     .database
@@ -772,7 +803,6 @@ async fn list_capability_payload(
                     .ok_or(ApiError::InternalError("Database not available".into()))?
                     .clone();
                 let (extracted, meta) = list_capability_via_components(
-                    redb,
                     pool,
                     database,
                     &server_id,
@@ -791,12 +821,12 @@ async fn list_capability_payload(
                     .database
                     .as_ref()
                     .ok_or(ApiError::InternalError("Database not available".into()))?;
-                let enabled_servers: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                    r#"SELECT sc.id, sc.name, sc.capabilities FROM server_config sc
+                let enabled_servers: Vec<(String, String)> = sqlx::query_as(
+                    r#"SELECT sc.id, sc.name FROM server_config sc
                        JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
                        JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
                        WHERE sc.enabled = 1
-                       GROUP BY sc.id, sc.name, sc.capabilities"#,
+                       GROUP BY sc.id, sc.name"#,
                 )
                 .fetch_all(&db.pool)
                 .await
@@ -807,20 +837,14 @@ async fn list_capability_payload(
                 })?;
 
                 let mut tasks = Vec::new();
-                let redb = state.redb_cache.clone();
                 let pool = state.connection_pool.clone();
-                for (server_id, server_name, caps) in enabled_servers {
-                    if !supports_capability(caps.as_deref(), capability_type) {
-                        continue;
-                    }
+                for (server_id, server_name) in enabled_servers {
                     let db_arc = state.database.as_ref().unwrap().clone();
-                    let redb_clone = redb.clone();
                     let pool_clone = pool.clone();
                     let db_clone = db_arc.clone();
                     tasks.push(async move {
                         let sid = server_id.clone();
                         list_capability_via_components(
-                            redb_clone,
                             pool_clone,
                             db_clone,
                             &sid,
@@ -865,7 +889,6 @@ async fn list_capability_payload(
             let server_id = resolve_server(&query.server_id, &query.server_name).await?;
             let (session_id, cleanup) =
                 native_validation_scope(state, &server_id, query.session_id.as_deref(), timeout).await?;
-            let redb = state.redb_cache.clone();
             let pool = state.connection_pool.clone();
             let database = match state.database.as_ref() {
                 Some(database) => database.clone(),
@@ -877,14 +900,13 @@ async fn list_capability_payload(
                 }
             };
             let result = list_capability_via_components(
-                redb,
                 pool,
                 database,
                 &server_id,
                 refresh,
                 capability_type,
                 timeout,
-                Some(session_id),
+                Some(session_id.session_id().to_string()),
                 capability::runtime::NameDomain::Upstream,
                 extractor,
             )
@@ -906,7 +928,6 @@ async fn list_capability_payload(
 }
 
 async fn list_capability_via_components(
-    redb: Arc<crate::core::cache::RedbCacheManager>,
     pool: Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
     database: Arc<crate::config::database::Database>,
     server_id: &str,
@@ -917,7 +938,7 @@ async fn list_capability_via_components(
     name_domain: capability::runtime::NameDomain,
     extractor: fn(capability::runtime::ListResult) -> Vec<Value>,
 ) -> Result<(Vec<Value>, Value), ApiError> {
-    let service = capability::CapabilityService::new(redb, pool, database);
+    let service = capability::CapabilityService::new(pool, database);
 
     let ctx = capability::runtime::ListCtx {
         capability: capability_type,
@@ -927,6 +948,7 @@ async fn list_capability_via_components(
         validation_session: session_id,
         runtime_identity: None,
         connection_selection: None,
+        visibility_snapshot: None,
         name_domain,
     };
 
@@ -936,22 +958,11 @@ async fn list_capability_via_components(
     Ok((items, meta))
 }
 
-async fn cleanup_native_session(
-    state: &AppState,
-    _server_id: &str,
-    session_id: Option<&str>,
-) {
-    if let Some(session) = session_id {
-        destroy_validation_session(&state.connection_pool, session).await;
-    }
-}
-
 async fn destroy_validation_session(
     connection_pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
-    session_id: &str,
-) {
-    let mut pool = connection_pool.lock().await;
-    let _ = pool.destroy_validation_session(session_id).await;
+    reservation: &crate::core::pool::ValidationReservationToken,
+) -> Result<(), crate::core::pool::ValidationShutdownError> {
+    crate::core::pool::UpstreamConnectionPool::release_validation_reservation(connection_pool, reservation).await
 }
 
 fn map_anyhow(e: anyhow::Error) -> ApiError {
@@ -968,7 +979,10 @@ fn map_anyhow(e: anyhow::Error) -> ApiError {
 
 fn map_capability_list_error(error: anyhow::Error) -> ApiError {
     if let Some(timeout_ms) = capability::service::connection_timeout_ms(&error) {
-        return ApiError::Timeout(format!("Inspector server connect exceeded {timeout_ms} ms"));
+        return ApiError::GatewayTimeout(format!("Inspector server connect exceeded {timeout_ms} ms"));
+    }
+    if let Some(timeout_ms) = capability::service::operation_timeout_ms(&error) {
+        return ApiError::Timeout(format!("Inspector capability operation exceeded {timeout_ms} ms"));
     }
     map_anyhow(error)
 }
@@ -1022,21 +1036,22 @@ async fn ensure_native_session(
     state: &AppState,
     server_id: &str,
     session_id: &str,
-) -> Result<String, ApiError> {
-    {
-        let mut pool = state.connection_pool.lock().await;
-        pool.cleanup_expired_sessions();
-        pool.upsert_validation_session(session_id, NATIVE_VALIDATION_SESSION_TTL);
-        if let Err(err) = pool
-            .get_or_create_validation_instance(server_id, session_id, NATIVE_VALIDATION_SESSION_TTL)
-            .await
-        {
-            let _ = pool.destroy_validation_session(session_id).await;
-            return Err(map_anyhow(err));
+) -> Result<crate::core::pool::ValidationReservationLease, ApiError> {
+    let lease = crate::core::pool::UpstreamConnectionPool::ensure_validation_instance(
+        &state.connection_pool,
+        server_id,
+        session_id,
+        NATIVE_VALIDATION_SESSION_TTL,
+    )
+    .await
+    .map_err(|err| {
+        if let Some(timeout) = err.downcast_ref::<crate::core::pool::ValidationConnectTimeout>() {
+            return ApiError::GatewayTimeout(format!("Inspector server connect exceeded {} ms", timeout.timeout_ms));
         }
-    }
+        map_anyhow(err)
+    })?;
 
-    Ok(session_id.to_string())
+    Ok(lease)
 }
 
 async fn ensure_native_session_with_timeout(
@@ -1044,15 +1059,11 @@ async fn ensure_native_session_with_timeout(
     server_id: &str,
     session_id: &str,
     timeout: Duration,
-) -> Result<String, ApiError> {
-    let result = run_inspector_operation(timeout, "server connect", async {
+) -> Result<crate::core::pool::ValidationReservationLease, ApiError> {
+    run_native_preflight(timeout, async {
         ensure_native_session(state, server_id, session_id).await
     })
-    .await;
-    if result.is_err() {
-        destroy_validation_session(&state.connection_pool, session_id).await;
-    }
-    result
+    .await
 }
 
 fn native_session_id_for_inspector_session(session_id: &str) -> String {
@@ -1067,17 +1078,8 @@ async fn native_validation_session_for_request(
     state: &AppState,
     server_id: &str,
     inspector_session_id: &str,
-) -> Result<String, ApiError> {
-    let session = state
-        .inspector_sessions
-        .get_session(inspector_session_id)
-        .await
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "Inspector session '{}' not found or expired",
-                inspector_session_id
-            ))
-        })?;
+) -> Result<crate::core::pool::ValidationReservationToken, ApiError> {
+    let session = get_active_session(state, inspector_session_id).await?;
 
     if session.mode != InspectorMode::Native {
         return Err(ApiError::BadRequest(
@@ -1090,8 +1092,8 @@ async fn native_validation_session_for_request(
         ));
     }
 
-    let validation_session = session
-        .validation_session
+    let reservation = session
+        .validation_reservation
         .ok_or_else(|| ApiError::InternalError("Native Inspector session is missing validation ownership".into()))?;
 
     // Native Inspector reuse is intentionally scoped to the explicit inspector
@@ -1100,8 +1102,8 @@ async fn native_validation_session_for_request(
     // the same server concurrently, and MCP sessions can carry state. When
     // auth/RBAC lands, extend this ownership boundary with actor/org scope.
     let mut pool = state.connection_pool.lock().await;
-    if pool.refresh_validation_session(&validation_session, NATIVE_VALIDATION_SESSION_TTL) {
-        Ok(validation_session)
+    if pool.refresh_validation_reservation(&reservation, NATIVE_VALIDATION_SESSION_TTL) {
+        Ok(reservation)
     } else {
         Err(ApiError::NotFound(format!(
             "Native Inspector validation session '{}' not found or expired",
@@ -1115,40 +1117,54 @@ async fn native_validation_scope(
     server_id: &str,
     inspector_session_id: Option<&str>,
     timeout: Duration,
-) -> Result<(String, Option<NativeValidationSessionGuard>), ApiError> {
+) -> Result<
+    (
+        crate::core::pool::ValidationReservationToken,
+        Option<NativeValidationSessionGuard>,
+    ),
+    ApiError,
+> {
     if let Some(inspector_session_id) = inspector_session_id {
-        let validation_session = native_validation_session_for_request(state, server_id, inspector_session_id).await?;
-        return Ok((validation_session, None));
+        let reservation = native_validation_session_for_request(state, server_id, inspector_session_id).await?;
+        return Ok((reservation, None));
     }
 
     let validation_session = native_temporary_session_id();
-    ensure_native_session_with_timeout(state, server_id, &validation_session, timeout).await?;
-    let cleanup = NativeValidationSessionGuard::new(state, validation_session);
-    Ok((cleanup.session_id().to_string(), Some(cleanup)))
+    let lease = ensure_native_session_with_timeout(state, server_id, &validation_session, timeout).await?;
+    let cleanup = NativeValidationSessionGuard::from_lease(state, lease);
+    Ok((cleanup.reservation().clone(), Some(cleanup)))
 }
 
 async fn acquire_validation_peer(
     state: &AppState,
     server_id: &str,
-    session_id: &str,
+    reservation: &crate::core::pool::ValidationReservationToken,
 ) -> Result<Peer<RoleClient>, anyhow::Error> {
-    let mut pool_guard = state.connection_pool.lock().await;
+    acquire_validation_peer_from_pool(&state.connection_pool, server_id, reservation).await
+}
+
+async fn acquire_validation_peer_from_pool(
+    connection_pool: &Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
+    server_id: &str,
+    reservation: &crate::core::pool::ValidationReservationToken,
+) -> Result<Peer<RoleClient>, anyhow::Error> {
+    let mut pool_guard = connection_pool.lock().await;
     let peer = pool_guard
         .validation_sessions
-        .get(session_id)
+        .get(reservation.session_id())
         .and_then(|session_servers| session_servers.get(server_id))
         .and_then(|conn| conn.service.as_ref())
         .map(|service| service.peer().clone());
 
     if let Some(peer) = peer {
-        if pool_guard.refresh_validation_session(session_id, NATIVE_VALIDATION_SESSION_TTL) {
+        if pool_guard.refresh_validation_reservation(reservation, NATIVE_VALIDATION_SESSION_TTL) {
             return Ok(peer);
         }
     }
 
     Err(anyhow!(
         "Native Inspector session '{}' is no longer connected for server '{}'",
-        session_id,
+        reservation.session_id(),
         server_id
     ))
 }
@@ -1156,17 +1172,17 @@ async fn acquire_validation_peer(
 async fn clone_native_validation_connection(
     state: &AppState,
     server_id: &str,
-    session_id: &str,
+    reservation: &crate::core::pool::ValidationReservationToken,
 ) -> Result<crate::core::pool::UpstreamConnection, ApiError> {
     let mut pool = state.connection_pool.lock().await;
-    if !pool.refresh_validation_session(session_id, NATIVE_VALIDATION_SESSION_TTL) {
+    if !pool.refresh_validation_reservation(reservation, NATIVE_VALIDATION_SESSION_TTL) {
         return Err(ApiError::NotFound(format!(
             "Native Inspector validation session '{}' not found or expired",
-            session_id
+            reservation.session_id()
         )));
     }
     pool.validation_sessions
-        .get(session_id)
+        .get(reservation.session_id())
         .and_then(|session| session.get(server_id))
         .cloned()
         .ok_or_else(|| ApiError::InternalError("Validation connection not found".into()))
@@ -1252,8 +1268,24 @@ pub(crate) async fn inspector_forward_cancel(
 
 #[cfg(test)]
 mod tests {
-    use super::run_inspector_operation;
+    use std::{collections::HashMap, sync::Arc};
+
+    use axum::{http::StatusCode, response::IntoResponse};
+    use tokio::sync::Mutex;
+
+    use super::{
+        NativeValidationSessionGuard, acquire_validation_peer_from_pool, map_capability_list_error,
+        map_tool_call_terminal, run_inspector_operation,
+    };
     use crate::api::handlers::ApiError;
+    use crate::core::capability::{
+        CapabilityType,
+        connection_provider::{CapabilityOwnerError, OwnerSource},
+        read_service::{CapabilityAttemptError, CapabilityReadError, DiscoveryAttemptFailure},
+        runtime::{RuntimeFailure, RuntimeFailureKind},
+    };
+    use crate::core::{models::Config, pool::UpstreamConnectionPool};
+    use crate::inspector::calls::InspectorTerminal;
     use tokio::time::Duration;
 
     #[tokio::test]
@@ -1272,5 +1304,129 @@ mod tests {
         })
         .await
         .expect("a later operation receives its own timeout budget");
+    }
+
+    #[tokio::test]
+    async fn cancelled_temporary_cleanup_keeps_lease_armed_until_detach() {
+        let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+            Arc::new(Config {
+                mcp_servers: HashMap::new(),
+                pagination: None,
+            }),
+            None,
+        )));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "temporary-cancel", Duration::from_secs(60))
+                .await;
+        let guard = NativeValidationSessionGuard {
+            connection_pool: pool.clone(),
+            lease,
+        };
+        let pool_lock = pool.lock().await;
+        let cleanup = tokio::spawn(guard.cleanup());
+        tokio::task::yield_now().await;
+        cleanup.abort();
+        assert!(cleanup.await.expect_err("cleanup should be cancelled").is_cancelled());
+        drop(pool_lock);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while pool.lock().await.validation_sessions.contains_key("temporary-cancel") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("temporary guard drop must retry token-scoped detach");
+    }
+
+    #[tokio::test]
+    async fn cancelled_peer_acquisition_keeps_open_lease_armed() {
+        let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+            Arc::new(Config {
+                mcp_servers: HashMap::new(),
+                pagination: None,
+            }),
+            None,
+        )));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "peer-cancel", Duration::from_secs(60)).await;
+        let pool_lock = pool.lock().await;
+        let task_pool = pool.clone();
+        let acquisition =
+            tokio::spawn(async move { acquire_validation_peer_from_pool(&task_pool, "server-1", lease.token()).await });
+        tokio::task::yield_now().await;
+        acquisition.abort();
+        assert!(
+            acquisition
+                .await
+                .expect_err("peer acquisition should be cancelled")
+                .is_cancelled()
+        );
+        drop(pool_lock);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while pool.lock().await.validation_sessions.contains_key("peer-cancel") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled peer acquisition must release the armed lease");
+    }
+
+    #[test]
+    fn capability_connection_timeout_returns_gateway_timeout() {
+        let error = CapabilityReadError::DiscoveryFailed {
+            server_id: "server-a".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            kind: CapabilityType::Tools,
+            catalog_error: None,
+            existing: Some(DiscoveryAttemptFailure {
+                instance_id: None,
+                connection_generation: None,
+                source: OwnerSource::Existing,
+                error: CapabilityAttemptError::Owner(CapabilityOwnerError::Timeout { timeout_ms: 250 }),
+            }),
+            fresh: None,
+        };
+
+        let response = map_capability_list_error(error.into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    }
+
+    #[test]
+    fn capability_operation_timeout_returns_request_timeout() {
+        let error = CapabilityReadError::DiscoveryFailed {
+            server_id: "server-a".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            kind: CapabilityType::Tools,
+            catalog_error: None,
+            existing: Some(DiscoveryAttemptFailure {
+                instance_id: Some("instance-a".to_string()),
+                connection_generation: None,
+                source: OwnerSource::Existing,
+                error: CapabilityAttemptError::Runtime(RuntimeFailure {
+                    kind: RuntimeFailureKind::Timeout,
+                    message: Some("request timeout".to_string()),
+                    timeout_ms: Some(250),
+                }),
+            }),
+            fresh: None,
+        };
+
+        let response = map_capability_list_error(error.into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    }
+
+    #[test]
+    fn synchronous_tool_call_timeout_returns_request_timeout() {
+        let error = map_tool_call_terminal(InspectorTerminal::Timeout {
+            server_id: "server-a".to_string(),
+        })
+        .expect_err("timed out tool calls must fail");
+
+        assert_eq!(error.into_response().status(), StatusCode::REQUEST_TIMEOUT);
     }
 }

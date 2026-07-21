@@ -90,7 +90,7 @@ flowchart LR
         direction TB
         UP["Upstream Mgmt<br/><small>Connection Pool · OAuth 2.0 + PKCE</small>"]
         PROF["Profile Engine<br/><small>Scene · App · Dynamic</small>"]
-        SEC["Event Logs &amp; Security<br/><small>Secure Store · Structured Logs · redb Cache</small>"]
+        SEC["Event Logs &amp; Security<br/><small>Secure Store · Structured Logs · SQLite Catalog</small>"]
         UP --> PROF --> SEC
     end
 
@@ -148,7 +148,7 @@ MCPMate は AI クライアントと MCP サーバーの間に位置します。
 | **Runtime Manager** | ローカル MCP サーバーが使う Node.js、uv (Python)、Bun ランタイムをインストール、管理します。 |
 | **Secure Store & OAuth Custody** | ローカル secret、OAuth token、client secret を暗号化された保管領域に置き、ライフサイクル整理と degraded-state guidance を提供します。 |
 | **OAuth 2.0 Upstream (PKCE)** | Streamable HTTP MCP サーバー向けの OAuth 2.0 + PKCE フローを、メタデータ検出、コールバック処理、再接続フロー込みでサポートします。 |
-| **Built-in redb Cache** | capability snapshot と高頻度に使われる proxy state 向けの L2 embedded cache です。 |
+| **Transactional Capability Catalog** | versioned SQLite capability snapshot を永続的な事実とし、bounded in-process LRU で protocol と management read を高速化します。 |
 | **Structured Logs** | actor/target/action メタデータ、cursor pagination、REST API を備えた専用 Logs ページを提供します。 |
 | **Browser Extension** | Chrome/Edge 拡張で Servers、Clients、Portals を閲覧し、MCP snippets、GitHub MCP entries、Cursor.directory entries を `mcpmate://import/server` 経由で取り込めます。 |
 | **Tool Inspector** | 接続済みサーバーに対してツール呼び出しを試し、構造化レスポンスをコンソールから確認できます。 |
@@ -232,7 +232,7 @@ Coming soon. ローカルセットアップなしで dashboard、profiles、clie
 
 | レイヤー | 技術 |
 | -------- | ---- |
-| **Proxy / Backend** | Rust, tokio, rmcp, SQLite (persistence), redb (L2 capability cache) |
+| **Proxy / Backend** | Rust, tokio, rmcp, SQLite (configuration and capability catalog), in-process LRU |
 | **Dashboard** | React, Vite, Zustand, React Query, Radix UI |
 | **Desktop** | Tauri 2, system tray, native notifications |
 | **Bridge** | Rust binary, stdio-to-HTTP conversion |

@@ -30,8 +30,6 @@ pub struct Server {
     pub url: Option<String>,
     /// Source value object (structured import origin tracking)
     pub source: Option<ServerSource>,
-    /// Capabilities list string (e.g., "tools,prompts,resources")
-    pub capabilities: Option<String>,
     /// Whether the server is globally enabled
     pub enabled: EnabledStatus,
     /// Whether the server is eligible for Unify direct exposure
@@ -133,7 +131,6 @@ impl Server {
             url: None,
 
             source: None,
-            capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,
             pending_import: false,
@@ -155,7 +152,6 @@ impl Server {
             url: None,
 
             source: None,
-            capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,
             pending_import: false,
@@ -177,7 +173,6 @@ impl Server {
             url,
 
             source: None,
-            capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
             pending_import: false,
@@ -199,44 +194,11 @@ impl Server {
             url,
 
             source: None,
-            capabilities: None,
             enabled: EnabledStatus::Enabled, // Default to enabled
             unify_direct_exposure_eligible: false,
             pending_import: false,
             created_at: None,
             updated_at: None,
-        }
-    }
-
-    /// Helper: check capability by enum token (single public entrypoint)
-    pub fn has_capability(
-        &self,
-        token: crate::common::capability::CapabilityToken,
-    ) -> bool {
-        if let Some(ref caps) = self.capabilities {
-            let token_lower = token.as_str().to_ascii_lowercase();
-            caps.split(',')
-                .map(|s| s.trim().to_ascii_lowercase())
-                .any(|t| t == token_lower)
-        } else {
-            false
-        }
-    }
-
-    /// Helper: set capabilities from tokens
-    pub fn set_capabilities_from_tokens<T: AsRef<str>>(
-        &mut self,
-        tokens: &[T],
-    ) {
-        let list: Vec<String> = tokens
-            .iter()
-            .map(|t| t.as_ref().trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect();
-        if list.is_empty() {
-            self.capabilities = None;
-        } else {
-            self.capabilities = Some(list.join(","));
         }
     }
 

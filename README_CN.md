@@ -90,7 +90,7 @@ flowchart LR
         direction TB
         UP["上游管理<br/><small>连接池 · OAuth 2.0 + PKCE</small>"]
         PROF["配置集引擎<br/><small>场景 · 应用 · 动态</small>"]
-        SEC["事件日志与安全<br/><small>Secure Store · 结构化日志 · redb 缓存</small>"]
+        SEC["事件日志与安全<br/><small>Secure Store · 结构化日志 · SQLite 能力目录</small>"]
         UP --> PROF --> SEC
     end
 
@@ -148,7 +148,7 @@ MCPMate 位于 AI 客户端与 MCP 服务器之间。对应用侧而言，它就
 | **运行时管理器**          | 安装和管理本地 MCP 服务器使用的 Node.js、uv (Python)、Bun 运行时。                        |
 | **Secure Store 与 OAuth 托管** | 将本地 secret、OAuth token 和客户端密钥放入加密托管，并提供生命周期清理与降级状态提示。 |
 | **上游 OAuth 2.0 (PKCE)** | 支持 Streamable HTTP MCP 服务器的 OAuth 2.0 流程（含 PKCE），含元数据发现、回调处理与重连路径。 |
-| **内建 redb 缓存**        | 面向能力快照与高频代理状态的 L2 嵌入式缓存。                                              |
+| **事务型能力目录**        | 使用版本化 SQLite 能力快照作为持久化事实，并通过有界进程内 LRU 加速协议与管理读取。       |
 | **结构化日志**            | 独立日志页面，支持游标分页、actor/target/action 元数据和 REST API 查询。                  |
 | **浏览器扩展**            | Chrome/Edge 扩展可浏览 Servers、Clients、Portals，并通过 `mcpmate://import/server` 导入 MCP 片段、GitHub MCP 条目和 Cursor.directory 条目。 |
 | **工具检视器**            | 对已连接服务器快速发起工具调用，查看结构化返回结果。                                      |
@@ -232,7 +232,7 @@ Coming soon。线上环境将允许你在无需本地部署的情况下，探索
 
 | 层级             | 技术                                                     |
 | ---------------- | -------------------------------------------------------- |
-| **代理 / 后端**  | Rust, tokio, rmcp, SQLite（持久化）, redb（L2 能力缓存） |
+| **代理 / 后端**  | Rust, tokio, rmcp, SQLite（配置与能力目录）, 进程内 LRU  |
 | **Dashboard**    | React, Vite, Zustand, React Query, Radix UI              |
 | **桌面应用**     | Tauri 2, 系统托盘, 原生通知                              |
 | **Bridge**       | Rust 二进制, stdio → HTTP 转换                           |

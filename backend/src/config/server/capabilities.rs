@@ -1,21 +1,24 @@
-// Server capabilities persistence helpers (shadow tables + REDB dual-write)
-// Centralizes insert/update logic so API handlers and migration can reuse.
+// Server capability discovery, transactional catalog persistence, and identity projection.
 
 use anyhow::{Context, Result};
+#[cfg(test)]
+use mcpmate_capability_store::CapabilityCatalog;
+use mcpmate_capability_store::{
+    CapabilityFailureObservation, CapabilityKind as CatalogKind, CapabilityObservation, CapabilityPayload,
+    CatalogCommit, CatalogRecord, CatalogSnapshot, DeclarationState, DerivedCapabilityCache, InventoryState,
+    KindObservation, SnapshotState, SqliteCapabilityCatalog,
+};
 use once_cell::sync::OnceCell;
+use sha2::{Digest, Sha256};
 use sqlx::{Pool, Sqlite, Transaction};
 
-use crate::core::capability::naming::{
-    NamingKind, begin_naming_transaction, reconcile_external_identifier_additions, reconcile_external_identifiers,
-};
-use std::sync::Arc;
+#[cfg(test)]
+use crate::core::capability::naming::reconcile_external_identifier_additions;
+use crate::core::capability::naming::{NamingKind, begin_naming_transaction, reconcile_external_identifiers};
+use std::collections::{BTreeSet, HashMap};
 
-use crate::common::{capability::CapabilityToken, server::ServerType};
 use crate::core::{
-    cache::{
-        CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedServerData, CachedToolInfo,
-        RedbCacheManager,
-    },
+    capability::index::{CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo},
     pool::UpstreamConnectionPool,
 };
 use tokio::time::{Duration, timeout};
@@ -82,8 +85,33 @@ where
 /// Internal helpers to deduplicate discovery and application steps
 mod discovery_helpers {
     use super::*;
+    use rmcp::{model::ErrorCode, service::ServiceError};
 
-    pub async fn collect_all_prompts(service: &crate::core::transport::ClientService) -> Result<Vec<CachedPromptInfo>> {
+    pub async fn collect_all_tools(service: &crate::core::transport::ClientService) -> Result<Vec<rmcp::model::Tool>> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let result = service
+                .list_tools(
+                    cursor
+                        .clone()
+                        .map(|value| rmcp::model::PaginatedRequestParams::default().with_cursor(Some(value))),
+                )
+                .await
+                .map_err(anyhow::Error::new)
+                .map_err(|source| CapabilityInventoryDiscoveryError::new(CatalogKind::Tools, source))?;
+            out.extend(result.tools);
+            cursor = result.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    pub async fn collect_all_prompts(
+        service: &crate::core::transport::ClientService
+    ) -> Result<Vec<rmcp::model::Prompt>> {
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
@@ -94,27 +122,9 @@ mod discovery_helpers {
                         .map(|c| rmcp::model::PaginatedRequestParams::default().with_cursor(Some(c))),
                 )
                 .await
-                .context("prompts/list failed during capability discovery")?;
-            for p in result.prompts {
-                let converted_args = p
-                    .arguments
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|arg| crate::core::cache::PromptArgument {
-                        name: arg.name,
-                        description: arg.description,
-                        required: arg.required.unwrap_or(false),
-                    })
-                    .collect();
-                out.push(CachedPromptInfo {
-                    name: p.name,
-                    description: p.description,
-                    arguments: converted_args,
-                    icons: p.icons,
-                    enabled: true,
-                    cached_at: chrono::Utc::now(),
-                });
-            }
+                .map_err(anyhow::Error::new)
+                .map_err(|source| CapabilityInventoryDiscoveryError::new(CatalogKind::Prompts, source))?;
+            out.extend(result.prompts);
             cursor = result.next_cursor;
             if cursor.is_none() {
                 break;
@@ -125,7 +135,7 @@ mod discovery_helpers {
 
     pub async fn collect_all_resources(
         service: &crate::core::transport::ClientService
-    ) -> Result<Vec<CachedResourceInfo>> {
+    ) -> Result<Vec<rmcp::model::Resource>> {
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
@@ -136,18 +146,9 @@ mod discovery_helpers {
                         .map(|c| rmcp::model::PaginatedRequestParams::default().with_cursor(Some(c))),
                 )
                 .await
-                .context("resources/list failed during capability discovery")?;
-            for r in result.resources {
-                out.push(CachedResourceInfo {
-                    uri: r.uri.clone(),
-                    name: Some(r.name.clone()),
-                    description: r.description.clone(),
-                    mime_type: r.mime_type.clone(),
-                    icons: r.icons.clone(),
-                    enabled: true,
-                    cached_at: chrono::Utc::now(),
-                });
-            }
+                .map_err(anyhow::Error::new)
+                .map_err(|source| CapabilityInventoryDiscoveryError::new(CatalogKind::Resources, source))?;
+            out.extend(result.resources);
             cursor = result.next_cursor;
             if cursor.is_none() {
                 break;
@@ -158,93 +159,109 @@ mod discovery_helpers {
 
     pub async fn collect_all_resource_templates(
         service: &crate::core::transport::ClientService
-    ) -> Result<Vec<CachedResourceTemplateInfo>> {
+    ) -> Result<ResourceTemplateDiscovery> {
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
-            let result = service
+            let result = match service
                 .list_resource_templates(Some(
                     rmcp::model::PaginatedRequestParams::default().with_cursor(cursor.clone()),
                 ))
                 .await
-                .context("resources/templates/list failed during capability discovery")?;
-            for t in result.resource_templates {
-                out.push(CachedResourceTemplateInfo {
-                    uri_template: t.uri_template.clone(),
-                    name: Some(t.name.clone()),
-                    description: t.description.clone(),
-                    mime_type: t.mime_type.clone(),
-                    enabled: true,
-                    cached_at: chrono::Utc::now(),
-                });
-            }
+            {
+                Ok(result) => result,
+                Err(ServiceError::McpError(error)) if error.code == ErrorCode::METHOD_NOT_FOUND => {
+                    return Ok(ResourceTemplateDiscovery::Unsupported);
+                }
+                Err(error) => {
+                    return Err(CapabilityInventoryDiscoveryError::new(
+                        CatalogKind::ResourceTemplates,
+                        anyhow::Error::new(error),
+                    )
+                    .into());
+                }
+            };
+            out.extend(result.resource_templates);
             cursor = result.next_cursor;
             if cursor.is_none() {
                 break;
             }
         }
-        Ok(out)
+        Ok(ResourceTemplateDiscovery::Complete(out))
     }
 
     pub async fn apply_snapshot(
         db_pool: &Pool<Sqlite>,
-        redb: &RedbCacheManager,
+        capability_cache: &DerivedCapabilityCache,
         server_id: &str,
         server_name: &str,
         snapshot: &super::CapabilitySnapshot,
-        seed_profiles: bool,
+        _seed_profiles: bool,
     ) -> Result<()> {
-        super::store_dual_write(
+        super::commit_capability_observation(
             db_pool,
-            redb,
+            capability_cache,
             server_id,
             server_name,
-            snapshot.tools.clone(),
-            snapshot.resources.clone(),
-            snapshot.prompts.clone(),
-            snapshot.resource_templates.clone(),
-            snapshot.protocol_version.clone(),
+            snapshot.clone(),
+            crate::core::pool::CapSyncFlags::ALL,
         )
         .await?;
-
-        super::persist_snapshot_server_info(db_pool, server_id, snapshot).await?;
-
-        let supports_tools = !snapshot.tools.is_empty();
-        let supports_prompts = !snapshot.prompts.is_empty();
-        let supports_resources = !snapshot.resources.is_empty() || !snapshot.resource_templates.is_empty();
-
-        super::overwrite_capabilities(db_pool, server_id, supports_tools, supports_prompts, supports_resources).await?;
-
-        if seed_profiles {
-            if let Err(e) = super::seed_profiles_with_snapshot(db_pool, server_id, snapshot).await {
-                tracing::warn!(server_id = %server_id, error = %e, "Failed to seed profiles with snapshot");
-            }
-        }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+enum ResourceTemplateDiscovery {
+    Complete(Vec<rmcp::model::ResourceTemplate>),
+    Unsupported,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{operation} inventory discovery failed for {kind:?}: {source}")]
+pub(crate) struct CapabilityInventoryDiscoveryError {
+    pub kind: CatalogKind,
+    operation: &'static str,
+    #[source]
+    pub source: anyhow::Error,
+}
+
+impl CapabilityInventoryDiscoveryError {
+    fn new(
+        kind: CatalogKind,
+        source: anyhow::Error,
+    ) -> Self {
+        let operation = match kind {
+            CatalogKind::Tools => "tools/list",
+            CatalogKind::Prompts => "prompts/list",
+            CatalogKind::Resources => "resources/list",
+            CatalogKind::ResourceTemplates => "resources/templates/list",
+        };
+        Self {
+            kind,
+            operation,
+            source,
+        }
     }
 }
 
 pub(crate) async fn apply_discovered_snapshot(
     db_pool: &Pool<Sqlite>,
-    redb: &RedbCacheManager,
+    capability_cache: &DerivedCapabilityCache,
     server_id: &str,
     server_name: &str,
     snapshot: &CapabilitySnapshot,
     seed_profiles: bool,
 ) -> Result<()> {
-    discovery_helpers::apply_snapshot(db_pool, redb, server_id, server_name, snapshot, seed_profiles).await
-}
-
-/// Cache helpers used by API and startup paths
-pub mod cache_utils {
-    use super::*;
-
-    /// Create a standard Redb cache manager using the global cache directory
-    pub fn get_standard_cache_manager() -> anyhow::Result<Arc<RedbCacheManager>> {
-        let cache_path = crate::common::paths::global_paths().cache_dir().join("capability.redb");
-        let mgr = RedbCacheManager::new(cache_path, crate::core::cache::manager::CacheConfig::default())?;
-        Ok(Arc::new(mgr))
-    }
+    discovery_helpers::apply_snapshot(
+        db_pool,
+        capability_cache,
+        server_id,
+        server_name,
+        snapshot,
+        seed_profiles,
+    )
+    .await
 }
 
 /// Unified capability snapshot container
@@ -258,6 +275,177 @@ pub struct CapabilitySnapshot {
     pub upstream_name: Option<String>,
     pub upstream_title: Option<String>,
     pub server_version: Option<String>,
+    pub initialize: Option<rmcp::model::InitializeResult>,
+    pub protocol_tools: Vec<rmcp::model::Tool>,
+    pub protocol_resources: Vec<rmcp::model::Resource>,
+    pub protocol_prompts: Vec<rmcp::model::Prompt>,
+    pub protocol_resource_templates: Vec<rmcp::model::ResourceTemplate>,
+    pub kind_states: Vec<KindObservation>,
+}
+
+impl CapabilitySnapshot {
+    fn set_tools(
+        &mut self,
+        tools: Vec<rmcp::model::Tool>,
+    ) {
+        self.tools = tools.iter().map(cached_tool_from_protocol).collect();
+        self.protocol_tools = tools;
+    }
+
+    fn set_prompts(
+        &mut self,
+        prompts: Vec<rmcp::model::Prompt>,
+    ) {
+        self.prompts = prompts.iter().map(cached_prompt_from_protocol).collect();
+        self.protocol_prompts = prompts;
+    }
+
+    fn set_resources(
+        &mut self,
+        resources: Vec<rmcp::model::Resource>,
+    ) {
+        self.resources = resources.iter().map(cached_resource_from_protocol).collect();
+        self.protocol_resources = resources;
+    }
+
+    fn set_resource_templates(
+        &mut self,
+        templates: Vec<rmcp::model::ResourceTemplate>,
+    ) {
+        self.resource_templates = templates.iter().map(cached_resource_template_from_protocol).collect();
+        self.protocol_resource_templates = templates;
+    }
+
+    fn ensure_protocol_payloads(&mut self) {
+        if self.protocol_tools.is_empty() && !self.tools.is_empty() {
+            self.protocol_tools = self.tools.iter().filter_map(protocol_tool_from_cached).collect();
+        }
+        if self.protocol_prompts.is_empty() && !self.prompts.is_empty() {
+            self.protocol_prompts = self.prompts.iter().map(protocol_prompt_from_cached).collect();
+        }
+        if self.protocol_resources.is_empty() && !self.resources.is_empty() {
+            self.protocol_resources = self.resources.iter().map(protocol_resource_from_cached).collect();
+        }
+        if self.protocol_resource_templates.is_empty() && !self.resource_templates.is_empty() {
+            self.protocol_resource_templates = self
+                .resource_templates
+                .iter()
+                .map(protocol_resource_template_from_cached)
+                .collect();
+        }
+    }
+}
+
+fn cached_tool_from_protocol(tool: &rmcp::model::Tool) -> CachedToolInfo {
+    CachedToolInfo {
+        name: tool.name.to_string(),
+        description: tool.description.clone().map(|value| value.into_owned()),
+        input_schema_json: serde_json::to_string(&tool.schema_as_json_value()).unwrap_or_else(|_| "{}".to_string()),
+        output_schema_json: tool.output_schema.as_ref().map(|schema| {
+            serde_json::to_string(&serde_json::Value::Object((**schema).clone())).unwrap_or_else(|_| "{}".to_string())
+        }),
+        unique_name: None,
+        icons: tool.icons.clone(),
+        enabled: true,
+        cached_at: chrono::Utc::now(),
+    }
+}
+
+fn cached_prompt_from_protocol(prompt: &rmcp::model::Prompt) -> CachedPromptInfo {
+    CachedPromptInfo {
+        name: prompt.name.clone(),
+        description: prompt.description.clone(),
+        arguments: prompt
+            .arguments
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|argument| crate::core::capability::index::PromptArgument {
+                name: argument.name,
+                description: argument.description,
+                required: argument.required.unwrap_or(false),
+            })
+            .collect(),
+        icons: prompt.icons.clone(),
+        enabled: true,
+        cached_at: chrono::Utc::now(),
+    }
+}
+
+fn cached_resource_from_protocol(resource: &rmcp::model::Resource) -> CachedResourceInfo {
+    CachedResourceInfo {
+        uri: resource.uri.clone(),
+        name: Some(resource.name.clone()),
+        description: resource.description.clone(),
+        mime_type: resource.mime_type.clone(),
+        icons: resource.icons.clone(),
+        enabled: true,
+        cached_at: chrono::Utc::now(),
+    }
+}
+
+fn cached_resource_template_from_protocol(template: &rmcp::model::ResourceTemplate) -> CachedResourceTemplateInfo {
+    CachedResourceTemplateInfo {
+        uri_template: template.uri_template.clone(),
+        name: Some(template.name.clone()),
+        description: template.description.clone(),
+        mime_type: template.mime_type.clone(),
+        enabled: true,
+        cached_at: chrono::Utc::now(),
+    }
+}
+
+fn protocol_tool_from_cached(tool: &CachedToolInfo) -> Option<rmcp::model::Tool> {
+    let input_schema = serde_json::from_str::<serde_json::Value>(&tool.input_schema_json).ok()?;
+    let output_schema = tool
+        .output_schema_json
+        .as_deref()
+        .map(serde_json::from_str::<serde_json::Value>)
+        .transpose()
+        .ok()?;
+    serde_json::from_value(serde_json::json!({
+        "name": tool.name,
+        "description": tool.description,
+        "inputSchema": input_schema,
+        "outputSchema": output_schema,
+        "icons": tool.icons,
+    }))
+    .ok()
+}
+
+fn protocol_prompt_from_cached(prompt: &CachedPromptInfo) -> rmcp::model::Prompt {
+    serde_json::from_value(serde_json::json!({
+        "name": prompt.name,
+        "description": prompt.description,
+        "arguments": prompt.arguments.iter().map(|argument| serde_json::json!({
+            "name": argument.name,
+            "description": argument.description,
+            "required": argument.required,
+        })).collect::<Vec<_>>(),
+        "icons": prompt.icons,
+    }))
+    .expect("cached prompt projection must be valid RMCP payload")
+}
+
+fn protocol_resource_from_cached(resource: &CachedResourceInfo) -> rmcp::model::Resource {
+    serde_json::from_value(serde_json::json!({
+        "uri": resource.uri,
+        "name": resource.name.as_deref().unwrap_or(&resource.uri),
+        "description": resource.description,
+        "mimeType": resource.mime_type,
+        "icons": resource.icons,
+    }))
+    .expect("cached resource projection must be valid RMCP payload")
+}
+
+fn protocol_resource_template_from_cached(template: &CachedResourceTemplateInfo) -> rmcp::model::ResourceTemplate {
+    serde_json::from_value(serde_json::json!({
+        "uriTemplate": template.uri_template,
+        "name": template.name.as_deref().unwrap_or(&template.uri_template),
+        "description": template.description,
+        "mimeType": template.mime_type,
+    }))
+    .expect("cached resource template projection must be valid RMCP payload")
 }
 
 pub async fn persist_snapshot_server_info(
@@ -283,48 +471,62 @@ pub async fn persist_snapshot_server_info(
 
 /// Discover capabilities from an existing upstream connection (API temporary instance)
 pub async fn discover_from_connection(conn: &crate::core::pool::UpstreamConnection) -> Result<CapabilitySnapshot> {
-    let peer_info = conn.service.as_ref().and_then(|service| service.peer_info());
+    let service = conn
+        .service
+        .as_ref()
+        .context("Connected instance has no capability peer")?;
+    let tools = if conn
+        .capabilities
+        .as_ref()
+        .and_then(|capabilities| capabilities.tools.as_ref())
+        .is_some()
+    {
+        discovery_helpers::collect_all_tools(service).await?
+    } else {
+        Vec::new()
+    };
+    discover_from_service(service, tools, conn.capabilities.clone()).await
+}
+
+pub async fn discover_from_service(
+    service: &crate::core::transport::ClientService,
+    tools: Vec<rmcp::model::Tool>,
+    capabilities: Option<rmcp::model::ServerCapabilities>,
+) -> Result<CapabilitySnapshot> {
+    let peer_info = service.peer_info();
     let mut snap = CapabilitySnapshot {
         protocol_version: peer_info.as_deref().map(|info| info.protocol_version.to_string()),
         upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
         upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
         server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
+        initialize: peer_info.as_deref().cloned(),
         ..Default::default()
     };
 
-    // Tools
-    for t in &conn.tools {
-        let schema = t.schema_as_json_value();
-        let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
-        snap.tools.push(CachedToolInfo {
-            name: t.name.to_string(),
-            description: t.description.clone().map(|d| d.into_owned()),
-            input_schema_json,
-            output_schema_json: t.output_schema.as_ref().map(|s| {
-                serde_json::to_string(&serde_json::Value::Object((**s).clone())).unwrap_or_else(|_| "{}".to_string())
-            }),
-            unique_name: None,
-            icons: t.icons.clone(),
-            enabled: true,
-            cached_at: chrono::Utc::now(),
-        });
-    }
+    snap.set_tools(tools);
 
     // Prompts (paginate defensively)
-    if conn.supports_prompts() {
-        if let Some(service) = &conn.service {
-            let items = discovery_helpers::collect_all_prompts(service).await?;
-            snap.prompts.extend(items);
-        }
+    if capabilities.as_ref().and_then(|value| value.prompts.as_ref()).is_some() {
+        let items = discovery_helpers::collect_all_prompts(service).await?;
+        snap.set_prompts(items);
     }
 
     // Resources and templates (paginate fully)
-    if conn.supports_resources() {
-        if let Some(service) = &conn.service {
-            let resources = discovery_helpers::collect_all_resources(service).await?;
-            let templates = discovery_helpers::collect_all_resource_templates(service).await?;
-            snap.resources.extend(resources);
-            snap.resource_templates.extend(templates);
+    if capabilities
+        .as_ref()
+        .and_then(|value| value.resources.as_ref())
+        .is_some()
+    {
+        let resources = discovery_helpers::collect_all_resources(service).await?;
+        let templates = discovery_helpers::collect_all_resource_templates(service).await?;
+        snap.set_resources(resources);
+        match templates {
+            ResourceTemplateDiscovery::Complete(templates) => snap.set_resource_templates(templates),
+            ResourceTemplateDiscovery::Unsupported => {
+                snap.set_resource_templates(Vec::new());
+                snap.kind_states
+                    .push(unsupported_complete_observation(CatalogKind::ResourceTemplates));
+            }
         }
     }
 
@@ -356,39 +558,31 @@ pub async fn discover_from_config(
         upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
         upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
         server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
+        initialize: peer_info.as_deref().cloned(),
         ..Default::default()
     };
 
-    // Tools
-    for t in &tools {
-        let schema = t.schema_as_json_value();
-        let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
-        snap.tools.push(CachedToolInfo {
-            name: t.name.to_string(),
-            description: t.description.clone().map(|d| d.into_owned()),
-            input_schema_json,
-            output_schema_json: t.output_schema.as_ref().map(|s| {
-                serde_json::to_string(&serde_json::Value::Object((**s).clone())).unwrap_or_else(|_| "{}".to_string())
-            }),
-            unique_name: None,
-            icons: t.icons.clone(),
-            enabled: true,
-            cached_at: chrono::Utc::now(),
-        });
-    }
+    snap.set_tools(tools);
 
     // Prompts (paginate defensively)
     if capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
         let items = discovery_helpers::collect_all_prompts(&service).await?;
-        snap.prompts.extend(items);
+        snap.set_prompts(items);
     }
 
     // Resources & templates (paginate fully)
     if capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
         let resources = discovery_helpers::collect_all_resources(&service).await?;
         let templates = discovery_helpers::collect_all_resource_templates(&service).await?;
-        snap.resources.extend(resources);
-        snap.resource_templates.extend(templates);
+        snap.set_resources(resources);
+        match templates {
+            ResourceTemplateDiscovery::Complete(templates) => snap.set_resource_templates(templates),
+            ResourceTemplateDiscovery::Unsupported => {
+                snap.set_resource_templates(Vec::new());
+                snap.kind_states
+                    .push(unsupported_complete_observation(CatalogKind::ResourceTemplates));
+            }
+        }
     }
 
     Ok(snap)
@@ -464,24 +658,10 @@ pub async fn discover_from_config_preview(
         upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
         upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
         server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
+        initialize: peer_info.as_deref().cloned(),
         ..Default::default()
     };
-    for t in &tools {
-        let schema = t.schema_as_json_value();
-        let input_schema_json = serde_json::to_string(&schema).unwrap_or_else(|_| "{}".to_string());
-        snap.tools.push(CachedToolInfo {
-            name: t.name.to_string(),
-            description: t.description.clone().map(|d| d.into_owned()),
-            input_schema_json,
-            output_schema_json: t.output_schema.as_ref().map(|s| {
-                serde_json::to_string(&serde_json::Value::Object((**s).clone())).unwrap_or_else(|_| "{}".to_string())
-            }),
-            unique_name: None,
-            icons: t.icons.clone(),
-            enabled: true,
-            cached_at: chrono::Utc::now(),
-        });
-    }
+    snap.set_tools(tools);
     if capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
         let items = run_preview_operation(
             "prompts/list",
@@ -489,7 +669,7 @@ pub async fn discover_from_config_preview(
             discovery_helpers::collect_all_prompts(&service),
         )
         .await?;
-        snap.prompts.extend(items);
+        snap.set_prompts(items);
     }
     if capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
         let resources = run_preview_operation(
@@ -504,8 +684,15 @@ pub async fn discover_from_config_preview(
             discovery_helpers::collect_all_resource_templates(&service),
         )
         .await?;
-        snap.resources.extend(resources);
-        snap.resource_templates.extend(templates);
+        snap.set_resources(resources);
+        match templates {
+            ResourceTemplateDiscovery::Complete(templates) => snap.set_resource_templates(templates),
+            ResourceTemplateDiscovery::Unsupported => {
+                snap.set_resource_templates(Vec::new());
+                snap.kind_states
+                    .push(unsupported_complete_observation(CatalogKind::ResourceTemplates));
+            }
+        }
     }
     Ok(snap)
 }
@@ -543,7 +730,12 @@ async fn upsert_shadow_prompt_row(
     Ok(())
 }
 
-pub async fn upsert_shadow_prompt(
+/// Test-only convenience wrapper that upserts a single shadow prompt row outside the
+/// observation-commit transaction. Production code must go through
+/// `apply_snapshot_catalog_in_transaction` (via `upsert_shadow_prompts_batch_in_transaction`)
+/// so the shadow index never drifts from the committed catalog snapshot.
+#[cfg(test)]
+pub(crate) async fn upsert_shadow_prompt(
     pool: &Pool<Sqlite>,
     server_id: &str,
     server_name: &str,
@@ -613,7 +805,12 @@ async fn upsert_shadow_resource_row(
     Ok(())
 }
 
-pub async fn upsert_shadow_resource(
+/// Test-only convenience wrapper that upserts a single shadow resource row outside the
+/// observation-commit transaction. Production code must go through
+/// `apply_snapshot_catalog_in_transaction` (via `upsert_shadow_resources_batch_in_transaction`)
+/// so the shadow index never drifts from the committed catalog snapshot.
+#[cfg(test)]
+pub(crate) async fn upsert_shadow_resource(
     pool: &Pool<Sqlite>,
     server_id: &str,
     server_name: &str,
@@ -695,7 +892,13 @@ async fn upsert_shadow_resource_template_row(
     Ok(())
 }
 
-pub async fn upsert_shadow_resource_template(
+/// Test-only convenience wrapper that upserts a single shadow resource template row outside
+/// the observation-commit transaction. Production code must go through
+/// `apply_snapshot_catalog_in_transaction` (via
+/// `upsert_shadow_resource_templates_batch_in_transaction`) so the shadow index never drifts
+/// from the committed catalog snapshot.
+#[cfg(test)]
+pub(crate) async fn upsert_shadow_resource_template(
     pool: &Pool<Sqlite>,
     server_id: &str,
     server_name: &str,
@@ -738,20 +941,6 @@ pub async fn upsert_shadow_resource_template(
     Ok(unique_name)
 }
 
-pub(crate) async fn upsert_shadow_prompts_batch(
-    pool: &Pool<Sqlite>,
-    server_id: &str,
-    server_name: &str,
-    prompts: &[CachedPromptInfo],
-) -> Result<bool> {
-    let mut tx = begin_naming_transaction(pool)
-        .await
-        .context("Failed to begin shadow prompt batch")?;
-    let catalog_changed = upsert_shadow_prompts_batch_in_transaction(&mut tx, server_id, server_name, prompts).await?;
-    tx.commit().await.context("Failed to commit shadow prompt batch")?;
-    Ok(catalog_changed)
-}
-
 pub(crate) async fn upsert_shadow_prompts_batch_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
@@ -776,6 +965,7 @@ pub(crate) async fn upsert_shadow_prompts_batch_in_transaction(
     Ok(catalog_changed)
 }
 
+#[cfg(test)]
 pub(crate) async fn upsert_shadow_resources_batch(
     pool: &Pool<Sqlite>,
     server_id: &str,
@@ -817,23 +1007,6 @@ pub(crate) async fn upsert_shadow_resources_batch_in_transaction(
         .await?;
     }
     let catalog_changed = reconciliation.catalog_changed();
-    Ok(catalog_changed)
-}
-
-pub(crate) async fn upsert_shadow_resource_templates_batch(
-    pool: &Pool<Sqlite>,
-    server_id: &str,
-    server_name: &str,
-    templates: &[CachedResourceTemplateInfo],
-) -> Result<bool> {
-    let mut tx = begin_naming_transaction(pool)
-        .await
-        .context("Failed to begin shadow resource template batch")?;
-    let catalog_changed =
-        upsert_shadow_resource_templates_batch_in_transaction(&mut tx, server_id, server_name, templates).await?;
-    tx.commit()
-        .await
-        .context("Failed to commit shadow resource template batch")?;
     Ok(catalog_changed)
 }
 
@@ -879,101 +1052,25 @@ pub(crate) async fn upsert_shadow_resource_templates_batch_in_transaction(
     Ok(catalog_changed)
 }
 
-/// Store snapshot in REDB
-pub async fn store_redb_snapshot(
-    redb: &RedbCacheManager,
-    server_id: &str,
-    server_name: &str,
-    tools: Vec<CachedToolInfo>,
-    resources: Vec<CachedResourceInfo>,
-    prompts: Vec<CachedPromptInfo>,
-    resource_templates: Vec<CachedResourceTemplateInfo>,
-    protocol_version: Option<&str>,
-) -> Result<()> {
-    let protocol_version = protocol_version.unwrap_or("unknown").to_string();
-    let server_data = CachedServerData {
-        server_id: server_id.to_string(),
-        server_name: server_name.to_string(),
-        server_version: None,
-        protocol_version,
-        tools,
-        resources,
-        prompts,
-        resource_templates,
-        cached_at: chrono::Utc::now(),
-        fingerprint: format!("store:{}:{}", server_id, chrono::Utc::now().timestamp()),
-        scope: crate::core::cache::CacheScope::shared_raw(),
-    };
-    redb.store_server_data(&server_data)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
+/// Fixed, non-inventory-driven initialize result for test-only fixtures that do not care
+/// about declaration semantics. Declaring every kind as `Supported` unconditionally (rather
+/// than inferring support from whether a list happens to be empty) keeps `store_dual_write`
+/// from resurrecting the "empty list == unsupported" inference bug in test fixtures.
+#[cfg(test)]
+fn dual_write_fixture_initialize(protocol_version: Option<&str>) -> rmcp::model::InitializeResult {
+    let protocol_version = protocol_version.unwrap_or(rmcp::model::ProtocolVersion::LATEST.as_str());
+    serde_json::from_value(serde_json::json!({
+        "protocolVersion": protocol_version,
+        "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
+        "serverInfo": {"name": "dual-write-fixture", "version": "test"}
+    }))
+    .expect("dual-write fixture initialize must always decode")
 }
 
-/// Atomically replace the complete REDB capability snapshot for a server.
-pub async fn replace_redb_snapshot(
-    redb: &RedbCacheManager,
-    server_id: &str,
-    server_name: &str,
-    tools: Vec<CachedToolInfo>,
-    resources: Vec<CachedResourceInfo>,
-    prompts: Vec<CachedPromptInfo>,
-    resource_templates: Vec<CachedResourceTemplateInfo>,
-    protocol_version: Option<&str>,
-) -> Result<()> {
-    let protocol_version = protocol_version.unwrap_or("unknown").to_string();
-    let server_data = CachedServerData {
-        server_id: server_id.to_string(),
-        server_name: server_name.to_string(),
-        server_version: None,
-        protocol_version,
-        tools,
-        resources,
-        prompts,
-        resource_templates,
-        cached_at: chrono::Utc::now(),
-        fingerprint: format!("replace:{}:{}", server_id, chrono::Utc::now().timestamp()),
-        scope: crate::core::cache::CacheScope::shared_raw(),
-    };
-    redb.replace_server_data(&server_data)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
-}
-
-/// Store snapshot in REDB with a specific cache scope (for client-filtered entries).
-pub async fn store_redb_snapshot_with_scope(
-    redb: &RedbCacheManager,
-    server_id: &str,
-    server_name: &str,
-    tools: Vec<CachedToolInfo>,
-    resources: Vec<CachedResourceInfo>,
-    prompts: Vec<CachedPromptInfo>,
-    resource_templates: Vec<CachedResourceTemplateInfo>,
-    protocol_version: Option<&str>,
-    scope: crate::core::cache::CacheScope,
-) -> Result<()> {
-    let protocol_version = protocol_version.unwrap_or("unknown").to_string();
-    let server_data = CachedServerData {
-        server_id: server_id.to_string(),
-        server_name: server_name.to_string(),
-        server_version: None,
-        protocol_version,
-        tools,
-        resources,
-        prompts,
-        resource_templates,
-        cached_at: chrono::Utc::now(),
-        fingerprint: format!("filtered:{}:{}", server_id, chrono::Utc::now().timestamp()),
-        scope,
-    };
-    redb.store_server_data(&server_data)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.to_string()))
-}
-
-/// Dual-write: REDB full + SQLite shadow tables + server_tools batch upsert
+/// Test adapter that persists derived index DTOs through the SQLite catalog.
+#[cfg(test)]
 pub async fn store_dual_write(
     pool: &Pool<Sqlite>,
-    redb: &RedbCacheManager,
     server_id: &str,
     server_name: &str,
     tools: Vec<CachedToolInfo>,
@@ -982,19 +1079,27 @@ pub async fn store_dual_write(
     templates: Vec<CachedResourceTemplateInfo>,
     protocol_version: Option<String>,
 ) -> Result<()> {
-    store_dual_write_for_kinds(
-        pool,
-        redb,
-        server_id,
-        server_name,
+    let initialize = dual_write_fixture_initialize(protocol_version.as_deref());
+    let mut snapshot = CapabilitySnapshot {
         tools,
         resources,
         prompts,
-        templates,
+        resource_templates: templates,
         protocol_version,
+        initialize: Some(initialize),
+        ..Default::default()
+    };
+    snapshot.ensure_protocol_payloads();
+    commit_capability_observation(
+        pool,
+        &DerivedCapabilityCache::default(),
+        server_id,
+        server_name,
+        snapshot,
         crate::core::pool::CapSyncFlags::ALL,
     )
     .await
+    .map(|_| ())
 }
 
 pub(crate) async fn apply_snapshot_catalog_in_transaction(
@@ -1020,211 +1125,728 @@ pub(crate) async fn apply_snapshot_catalog_in_transaction(
     Ok(catalog_changed)
 }
 
-fn client_visible_inventory_changed<T: serde::Serialize>(
-    previous: &[T],
-    current: &[T],
-) -> Result<bool> {
-    fn projection<T: serde::Serialize>(items: &[T]) -> Result<serde_json::Value> {
-        let mut value =
-            serde_json::to_value(items).context("Failed to serialize client-visible capability inventory")?;
-        if let Some(items) = value.as_array_mut() {
-            for item in items {
-                if let Some(fields) = item.as_object_mut() {
-                    fields.remove("cached_at");
-                }
-            }
-        }
-        Ok(value)
+fn snapshot_from_catalog(snapshot: CatalogSnapshot) -> Result<CapabilitySnapshot> {
+    let mut result = CapabilitySnapshot::default();
+    if let Some(initialize) = snapshot.initialize {
+        result.protocol_version = Some(initialize.protocol_version.to_string());
+        result.upstream_name = Some(initialize.server_info.name.clone());
+        result.upstream_title = initialize.server_info.title.clone();
+        result.server_version = Some(initialize.server_info.version.clone());
+        result.initialize = Some(initialize);
     }
-
-    Ok(projection(previous)? != projection(current)?)
+    for record in snapshot.records {
+        match record.payload {
+            CapabilityPayload::Tool(tool) => {
+                let mut cached = cached_tool_from_protocol(&tool);
+                cached.unique_name = Some(record.external_key);
+                result.tools.push(cached);
+                result.protocol_tools.push(tool);
+            }
+            CapabilityPayload::Prompt(prompt) => result.protocol_prompts.push(prompt),
+            CapabilityPayload::Resource(resource) => result.protocol_resources.push(resource),
+            CapabilityPayload::ResourceTemplate(template) => result.protocol_resource_templates.push(template),
+        }
+    }
+    result.prompts = result
+        .protocol_prompts
+        .iter()
+        .map(cached_prompt_from_protocol)
+        .collect();
+    result.resources = result
+        .protocol_resources
+        .iter()
+        .map(cached_resource_from_protocol)
+        .collect();
+    result.resource_templates = result
+        .protocol_resource_templates
+        .iter()
+        .map(cached_resource_template_from_protocol)
+        .collect();
+    Ok(result)
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("Capability catalog committed for server '{server_id}', but cache convergence is pending: {reason}")]
-pub struct CapabilityCacheConvergencePending {
+fn shadow_table_and_column(kind: CatalogKind) -> (&'static str, &'static str) {
+    match kind {
+        CatalogKind::Tools => ("server_tools", "tool_name"),
+        CatalogKind::Prompts => ("server_prompts", "prompt_name"),
+        CatalogKind::Resources => ("server_resources", "resource_uri"),
+        CatalogKind::ResourceTemplates => ("server_resource_templates", "uri_template"),
+    }
+}
+
+/// Compares one kind's catalog records against its shadow index table by upstream key. The
+/// shadow index is derived data committed atomically with the catalog snapshot; if the two
+/// disagree (e.g. a prior bug wrote one without the other), the persisted snapshot can no
+/// longer be trusted for cache-first serving and the caller must treat it the same as an
+/// invalidated baseline rather than silently serving a possibly-inconsistent projection.
+pub(crate) async fn shadow_index_matches_catalog_kind(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    kind: CatalogKind,
+    records: &[CatalogRecord],
+) -> Result<bool> {
+    let catalog_keys: BTreeSet<&str> = records
+        .iter()
+        .filter(|record| record.kind() == kind)
+        .map(|record| record.upstream_key.as_str())
+        .collect();
+    let (table, column) = shadow_table_and_column(kind);
+    let shadow_keys: Vec<String> = sqlx::query_scalar(&format!("SELECT {column} FROM {table} WHERE server_id = ?"))
+        .bind(server_id)
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("Failed to load {table} shadow index for the catalog integrity check"))?;
+    let shadow_keys: BTreeSet<&str> = shadow_keys.iter().map(String::as_str).collect();
+    Ok(catalog_keys == shadow_keys)
+}
+
+fn declaration_for_kind(
+    initialize: &rmcp::model::InitializeResult,
+    kind: CatalogKind,
+) -> DeclarationState {
+    let supported = match kind {
+        CatalogKind::Tools => initialize.capabilities.tools.is_some(),
+        CatalogKind::Prompts => initialize.capabilities.prompts.is_some(),
+        CatalogKind::Resources | CatalogKind::ResourceTemplates => initialize.capabilities.resources.is_some(),
+    };
+    if supported {
+        DeclarationState::Supported
+    } else {
+        DeclarationState::Unsupported
+    }
+}
+
+fn merge_selected_kinds(
+    existing: Option<CatalogSnapshot>,
+    mut discovered: CapabilitySnapshot,
+    kinds: crate::core::pool::CapSyncFlags,
+    server_name: &str,
+    rebuilding_untrusted_catalog: bool,
+) -> Result<(CapabilitySnapshot, Vec<KindObservation>)> {
+    discovered.ensure_protocol_payloads();
+    let discovered_states = discovered.kind_states.clone();
+    // Keep historical payloads for unselected kinds whenever a prior snapshot still
+    // exists. Corrupt replacement already deleted the prior rows, so there is nothing
+    // to retain there. Ready baselines also keep prior Complete kind states; non-Ready
+    // baselines force Unknown for unselected kinds so they are not re-exposed until
+    // re-listed, while shadow indexes and Profile associations survive reconcile.
+    let retain_history =
+        existing.is_some() && !rebuilding_untrusted_catalog && kinds != crate::core::pool::CapSyncFlags::ALL;
+    let merge_from_ready = existing
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.state == SnapshotState::Ready && retain_history);
+    let previous_states = existing
+        .as_ref()
+        .filter(|_| retain_history)
+        .map(|snapshot| snapshot.kind_states.clone())
+        .unwrap_or_default();
+    let mut merged = match existing.filter(|_| retain_history) {
+        Some(snapshot) => snapshot_from_catalog(snapshot)?,
+        None => CapabilitySnapshot::default(),
+    };
+
+    if kinds.contains(crate::core::pool::CapSyncFlags::TOOLS) {
+        merged.set_tools(discovered.protocol_tools);
+    }
+    if kinds.contains(crate::core::pool::CapSyncFlags::PROMPTS) {
+        merged.set_prompts(discovered.protocol_prompts);
+    }
+    if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCES) {
+        merged.set_resources(discovered.protocol_resources);
+    }
+    if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES) {
+        merged.set_resource_templates(discovered.protocol_resource_templates);
+    }
+    merged.initialize = discovered.initialize.or(merged.initialize);
+    merged.protocol_version = discovered.protocol_version.or(merged.protocol_version);
+    merged.upstream_name = discovered.upstream_name.or(merged.upstream_name);
+    merged.upstream_title = discovered.upstream_title.or(merged.upstream_title);
+    merged.server_version = discovered.server_version.or(merged.server_version);
+    let initialize = merged.initialize.clone().with_context(|| {
+        format!(
+            "Capability discovery for server '{server_name}' did not provide a protocol initialize result; \
+             refusing to fabricate a declaration from inventory size"
+        )
+    })?;
+
+    let states = CatalogKind::ALL
+        .into_iter()
+        .map(|kind| {
+            let selected = match kind {
+                CatalogKind::Tools => kinds.contains(crate::core::pool::CapSyncFlags::TOOLS),
+                CatalogKind::Prompts => kinds.contains(crate::core::pool::CapSyncFlags::PROMPTS),
+                CatalogKind::Resources => kinds.contains(crate::core::pool::CapSyncFlags::RESOURCES),
+                CatalogKind::ResourceTemplates => kinds.contains(crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES),
+            };
+            if selected {
+                discovered_states
+                    .iter()
+                    .find(|state| state.kind == kind)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        KindObservation::new(kind, declaration_for_kind(&initialize, kind), InventoryState::Complete)
+                    })
+            } else if merge_from_ready {
+                previous_states
+                    .iter()
+                    .find(|state| state.kind == kind)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        KindObservation::new(kind, declaration_for_kind(&initialize, kind), InventoryState::Unknown)
+                    })
+            } else {
+                KindObservation::new(kind, declaration_for_kind(&initialize, kind), InventoryState::Unknown)
+            }
+        })
+        .collect();
+    Ok((merged, states))
+}
+
+async fn config_fingerprint_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    server_id: &str,
+) -> mcpmate_capability_store::Result<String> {
+    let server = sqlx::query_as::<_, (String, Option<String>, Option<String>, bool)>(
+        "SELECT server_type, command, url, enabled FROM server_config WHERE id = ?",
+    )
+    .bind(server_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    let args = sqlx::query_as::<_, (i64, String)>(
+        "SELECT arg_index, arg_value FROM server_args WHERE server_id = ? ORDER BY arg_index",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let env = sqlx::query_as::<_, (String, String)>(
+        "SELECT env_key, env_value FROM server_env WHERE server_id = ? ORDER BY env_key",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let headers = sqlx::query_as::<_, (String, String)>(
+        "SELECT header_key, header_value FROM server_headers WHERE server_id = ? ORDER BY header_key",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let value = serde_json::to_vec(&(server, args, env, headers))?;
+    Ok(format!("sha256:{:x}", Sha256::digest(value)))
+}
+
+pub async fn current_config_fingerprint(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<String> {
+    let mut transaction = pool.begin().await?;
+    let fingerprint = config_fingerprint_in_transaction(&mut transaction, server_id).await?;
+    transaction.commit().await?;
+    Ok(fingerprint)
+}
+
+async fn persist_server_info_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    initialize: &rmcp::model::InitializeResult,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO server_meta (
+            id, server_id, server_name, upstream_name, upstream_title, server_version, protocol_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(server_id) DO UPDATE SET
+            server_name = excluded.server_name,
+            upstream_name = excluded.upstream_name,
+            upstream_title = excluded.upstream_title,
+            server_version = excluded.server_version,
+            protocol_version = excluded.protocol_version,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(crate::generate_id!("smet"))
+    .bind(server_id)
+    .bind(server_name)
+    .bind(&initialize.server_info.name)
+    .bind(&initialize.server_info.title)
+    .bind(&initialize.server_info.version)
+    .bind(initialize.protocol_version.to_string())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn seed_profiles_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    server_id: &str,
+    server_name: &str,
+) -> Result<()> {
+    fn generated_profile_capability_id(prefix: &str) -> String {
+        let alphabet = crate::macros::id::create_safe_alphabet();
+        format!("{}{}", prefix.to_uppercase(), nanoid::nanoid!(12, &alphabet))
+    }
+    let profile_ids = sqlx::query_scalar::<_, String>("SELECT id FROM profile WHERE is_active = 1 ORDER BY id")
+        .fetch_all(&mut **tx)
+        .await?;
+    let tool_ids = sqlx::query_scalar::<_, String>("SELECT id FROM server_tools WHERE server_id = ? ORDER BY id")
+        .bind(server_id)
+        .fetch_all(&mut **tx)
+        .await?;
+    let prompts = sqlx::query_scalar::<_, String>(
+        "SELECT prompt_name FROM server_prompts WHERE server_id = ? ORDER BY prompt_name",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let resources = sqlx::query_scalar::<_, String>(
+        "SELECT resource_uri FROM server_resources WHERE server_id = ? ORDER BY resource_uri",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let templates = sqlx::query_scalar::<_, String>(
+        "SELECT uri_template FROM server_resource_templates WHERE server_id = ? ORDER BY uri_template",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    for profile_id in profile_ids {
+        for tool_id in &tool_ids {
+            sqlx::query(
+                "INSERT INTO profile_tool (id, profile_id, server_tool_id, enabled) VALUES (?, ?, ?, 1) ON CONFLICT(profile_id, server_tool_id) DO NOTHING",
+            )
+            .bind(crate::generate_id!("cstool"))
+            .bind(&profile_id)
+            .bind(tool_id)
+            .execute(&mut **tx)
+            .await?;
+        }
+        for (table, column, prefix, values) in [
+            ("profile_prompt", "prompt_name", "csprompt", &prompts),
+            ("profile_resource", "resource_uri", "csres", &resources),
+            ("profile_resource_template", "uri_template", "csrt", &templates),
+        ] {
+            let query = format!(
+                "INSERT INTO {table} (id, profile_id, server_id, server_name, {column}, enabled) VALUES (?, ?, ?, ?, ?, 1) ON CONFLICT(profile_id, server_id, {column}) DO NOTHING"
+            );
+            for value in values {
+                sqlx::query(&query)
+                    .bind(generated_profile_capability_id(prefix))
+                    .bind(&profile_id)
+                    .bind(server_id)
+                    .bind(server_name)
+                    .bind(value)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn catalog_records_in_transaction(
+    tx: &mut Transaction<'_, Sqlite>,
+    snapshot: &CapabilitySnapshot,
+    server_id: &str,
+) -> Result<Vec<CatalogRecord>> {
+    let tool_identity = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT tool_name, id, unique_name FROM server_tools WHERE server_id = ?",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .map(|(key, id, external)| (key, (id, external)))
+    .collect::<HashMap<_, _>>();
+    let prompt_identity = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT prompt_name, id, unique_name FROM server_prompts WHERE server_id = ?",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .map(|(key, id, external)| (key, (id, external)))
+    .collect::<HashMap<_, _>>();
+    let resource_identity = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT resource_uri, id, unique_uri FROM server_resources WHERE server_id = ?",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .map(|(key, id, external)| (key, (id, external)))
+    .collect::<HashMap<_, _>>();
+    let template_identity = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT uri_template, id, unique_name FROM server_resource_templates WHERE server_id = ?",
+    )
+    .bind(server_id)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .map(|(key, id, external)| (key, (id, external)))
+    .collect::<HashMap<_, _>>();
+    let mut records = Vec::new();
+    for tool in &snapshot.protocol_tools {
+        let (id, external) = tool_identity
+            .get(tool.name.as_ref())
+            .with_context(|| format!("Missing Tool identity for '{}'", tool.name))?;
+        records.push(CatalogRecord::new(
+            id,
+            tool.name.as_ref(),
+            external,
+            CapabilityPayload::Tool(tool.clone()),
+        ));
+    }
+    for prompt in &snapshot.protocol_prompts {
+        let (id, external) = prompt_identity
+            .get(&prompt.name)
+            .with_context(|| format!("Missing Prompt identity for '{}'", prompt.name))?;
+        records.push(CatalogRecord::new(
+            id,
+            &prompt.name,
+            external,
+            CapabilityPayload::Prompt(prompt.clone()),
+        ));
+    }
+    for resource in &snapshot.protocol_resources {
+        let (id, external) = resource_identity
+            .get(&resource.uri)
+            .with_context(|| format!("Missing Resource identity for '{}'", resource.uri))?;
+        records.push(CatalogRecord::new(
+            id,
+            &resource.uri,
+            external,
+            CapabilityPayload::Resource(resource.clone()),
+        ));
+    }
+    for template in &snapshot.protocol_resource_templates {
+        if let Some((id, external)) = template_identity.get(&template.uri_template) {
+            records.push(CatalogRecord::new(
+                id,
+                &template.uri_template,
+                external,
+                CapabilityPayload::ResourceTemplate(template.clone()),
+            ));
+        } else {
+            let digest = format!("{:x}", Sha256::digest(format!("{server_id}:{}", template.uri_template)));
+            records.push(CatalogRecord::new(
+                format!("unprojectable-template-{}", &digest[..24]),
+                &template.uri_template,
+                format!("internal://capability/{server_id}/resource-template/{digest}"),
+                CapabilityPayload::ResourceTemplate(template.clone()),
+            ));
+        }
+    }
+    Ok(records)
+}
+
+pub(crate) async fn commit_snapshot_for_kinds(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    snapshot: CapabilitySnapshot,
+    kinds: crate::core::pool::CapSyncFlags,
+) -> Result<CatalogCommit> {
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    #[cfg(test)]
+    catalog.ensure_schema().await?;
+    let mut tx = begin_naming_transaction(pool)
+        .await
+        .context("Failed to begin transactional capability catalog update")?;
+    let (existing, rebuilding_untrusted_catalog, previous_revision) =
+        match catalog.load_snapshot_in_transaction(&mut tx, server_id).await {
+            Ok(existing) => (existing, false, None),
+            Err(
+                mcpmate_capability_store::CatalogError::Json(_)
+                | mcpmate_capability_store::CatalogError::UnsupportedRecordVersion { .. }
+                | mcpmate_capability_store::CatalogError::InvalidValue { .. }
+                | mcpmate_capability_store::CatalogError::InvalidTimestamp { .. },
+            ) => {
+                let previous_revision = catalog
+                    .load_revision_in_transaction(&mut tx, server_id)
+                    .await?
+                    .context("Corrupt capability snapshot disappeared before replacement")?;
+                catalog.remove_server_in_transaction(&mut tx, server_id).await?;
+                (None, true, Some(previous_revision))
+            }
+            Err(error) => return Err(error.into()),
+        };
+    let (mut merged, states) =
+        merge_selected_kinds(existing, snapshot, kinds, server_name, rebuilding_untrusted_catalog)?;
+    apply_snapshot_catalog_in_transaction(&mut tx, server_id, server_name, &mut merged).await?;
+    seed_profiles_in_transaction(&mut tx, server_id, server_name).await?;
+    let initialize = merged
+        .initialize
+        .clone()
+        .context("Capability discovery did not provide initialize data")?;
+    persist_server_info_in_transaction(&mut tx, server_id, server_name, &initialize).await?;
+    let records = catalog_records_in_transaction(&mut tx, &merged, server_id).await?;
+    let config_fingerprint = config_fingerprint_in_transaction(&mut tx, server_id).await?;
+    let observation =
+        CapabilityObservation::new(server_id, server_name, config_fingerprint, initialize, states, records);
+    let commit = match previous_revision {
+        Some(previous_revision) => {
+            catalog
+                .commit_observation_after_revision_in_transaction(&mut tx, observation, previous_revision)
+                .await?
+        }
+        None => catalog.commit_observation_in_transaction(&mut tx, observation).await?,
+    };
+    tx.commit()
+        .await
+        .context("Failed to commit capability catalog transaction")?;
+    Ok(commit)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CapabilityFailureEvidence {
     pub server_id: String,
+    pub kind: CatalogKind,
+    pub instance_id: Option<String>,
+    pub connection_generation: Option<u64>,
     pub reason: String,
 }
 
-async fn finish_committed_snapshot(
-    redb: &RedbCacheManager,
-    server_id: &str,
-    server_name: &str,
-    catalog_changed: bool,
-    invalidation_result: std::result::Result<usize, crate::core::cache::CacheError>,
-) -> Result<()> {
-    redb.clear_refreshing(server_id).await;
-    if catalog_changed {
-        crate::core::events::EventBus::global().publish(crate::core::events::Event::CapabilityCatalogChanged {
-            server_id: server_id.to_string(),
-            server_name: server_name.to_string(),
-        });
-    }
-
-    invalidation_result.map(|_| ()).map_err(|error| {
-        CapabilityCacheConvergencePending {
-            server_id: server_id.to_string(),
-            reason: error.to_string(),
-        }
-        .into()
-    })
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+pub(crate) struct CapabilitySyncFailure {
+    #[source]
+    source: anyhow::Error,
+    evidence: Option<CapabilityFailureEvidence>,
 }
 
-/// Persist authoritative inventories for the selected capability kinds while
-/// preserving untouched kinds in the shared raw cache.
-pub async fn store_dual_write_for_kinds(
+impl CapabilitySyncFailure {
+    fn operation(source: anyhow::Error) -> Self {
+        Self { source, evidence: None }
+    }
+
+    fn inventory(
+        source: anyhow::Error,
+        evidence: CapabilityFailureEvidence,
+    ) -> Self {
+        Self {
+            source,
+            evidence: Some(evidence),
+        }
+    }
+
+    pub(crate) fn evidence(&self) -> Option<&CapabilityFailureEvidence> {
+        self.evidence.as_ref()
+    }
+
+    pub(crate) fn into_source(self) -> anyhow::Error {
+        self.source
+    }
+}
+
+pub(crate) struct CapabilityProtocolObservation {
+    pub initialize: Option<rmcp::model::InitializeResult>,
+    pub tools: Vec<rmcp::model::Tool>,
+    pub resources: Vec<rmcp::model::Resource>,
+    pub prompts: Vec<rmcp::model::Prompt>,
+    pub templates: Vec<rmcp::model::ResourceTemplate>,
+    pub kinds: crate::core::pool::CapSyncFlags,
+    pub kind_states: Vec<KindObservation>,
+}
+
+fn catalog_kind_name(kind: CatalogKind) -> &'static str {
+    match kind {
+        CatalogKind::Tools => "tools",
+        CatalogKind::Prompts => "prompts",
+        CatalogKind::Resources => "resources",
+        CatalogKind::ResourceTemplates => "resource_templates",
+    }
+}
+
+pub(crate) fn unsupported_complete_observation(kind: CatalogKind) -> KindObservation {
+    KindObservation::new(kind, DeclarationState::Unsupported, InventoryState::Complete)
+}
+
+pub(crate) async fn commit_capability_observation(
     pool: &Pool<Sqlite>,
-    redb: &RedbCacheManager,
+    cache: &DerivedCapabilityCache,
     server_id: &str,
     server_name: &str,
-    mut tools: Vec<CachedToolInfo>,
+    snapshot: CapabilitySnapshot,
+    kinds: crate::core::pool::CapSyncFlags,
+) -> Result<CatalogCommit> {
+    let commit = commit_snapshot_for_kinds(pool, server_id, server_name, snapshot, kinds).await?;
+    cache.invalidate_server(server_id).await;
+    publish_catalog_commit(server_id, server_name, commit.revision);
+    Ok(commit)
+}
+
+pub(crate) async fn record_capability_failure(
+    pool: &Pool<Sqlite>,
+    cache: &DerivedCapabilityCache,
+    evidence: CapabilityFailureEvidence,
+) -> mcpmate_capability_store::Result<CatalogCommit> {
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let server_name = sqlx::query_scalar::<_, String>("SELECT name FROM server_config WHERE id = ?")
+        .bind(&evidence.server_id)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or_else(|| mcpmate_capability_store::CatalogError::ServerNotFound {
+            server_id: evidence.server_id.clone(),
+        })?;
+    let config_fingerprint = config_fingerprint_in_transaction(&mut transaction, &evidence.server_id).await?;
+    let reason = format!(
+        "server_id={} server_name={} kinds=[{}] instance={:?} generation={:?} reason={}",
+        evidence.server_id,
+        server_name,
+        catalog_kind_name(evidence.kind),
+        evidence.instance_id,
+        evidence.connection_generation,
+        evidence.reason
+    );
+    let commit = SqliteCapabilityCatalog::new(pool.clone())
+        .record_failure_in_transaction(
+            &mut transaction,
+            CapabilityFailureObservation::new(
+                &evidence.server_id,
+                &server_name,
+                config_fingerprint,
+                evidence.kind,
+                reason,
+            ),
+        )
+        .await?;
+    transaction.commit().await?;
+    cache.invalidate_server(&evidence.server_id).await;
+    publish_catalog_commit(&evidence.server_id, &server_name, commit.revision);
+    Ok(commit)
+}
+
+pub(crate) fn publish_catalog_commit(
+    server_id: &str,
+    server_name: &str,
+    revision: i64,
+) {
+    crate::core::events::EventBus::global().publish(crate::core::events::Event::CapabilityCatalogCommitted {
+        server_id: server_id.to_string(),
+        server_name: server_name.to_string(),
+        revision,
+    });
+    crate::core::events::EventBus::global().publish(crate::core::events::Event::CapabilityCatalogChanged {
+        server_id: server_id.to_string(),
+        server_name: server_name.to_string(),
+    });
+}
+
+pub async fn commit_protocol_items_for_kinds(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    initialize: Option<rmcp::model::InitializeResult>,
+    tools: Vec<rmcp::model::Tool>,
+    resources: Vec<rmcp::model::Resource>,
+    prompts: Vec<rmcp::model::Prompt>,
+    templates: Vec<rmcp::model::ResourceTemplate>,
+    kinds: crate::core::pool::CapSyncFlags,
+) -> Result<CatalogCommit> {
+    commit_protocol_observation_for_kinds(
+        pool,
+        server_id,
+        server_name,
+        initialize,
+        tools,
+        resources,
+        prompts,
+        templates,
+        kinds,
+        Vec::new(),
+    )
+    .await
+}
+
+pub async fn commit_protocol_observation_for_kinds(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    initialize: Option<rmcp::model::InitializeResult>,
+    tools: Vec<rmcp::model::Tool>,
+    resources: Vec<rmcp::model::Resource>,
+    prompts: Vec<rmcp::model::Prompt>,
+    templates: Vec<rmcp::model::ResourceTemplate>,
+    kinds: crate::core::pool::CapSyncFlags,
+    kind_states: Vec<KindObservation>,
+) -> Result<CatalogCommit> {
+    let mut snapshot = CapabilitySnapshot {
+        protocol_version: initialize.as_ref().map(|result| result.protocol_version.to_string()),
+        upstream_name: initialize.as_ref().map(|result| result.server_info.name.clone()),
+        upstream_title: initialize.as_ref().and_then(|result| result.server_info.title.clone()),
+        server_version: initialize.as_ref().map(|result| result.server_info.version.clone()),
+        initialize,
+        kind_states,
+        ..Default::default()
+    };
+    snapshot.set_tools(tools);
+    snapshot.set_resources(resources);
+    snapshot.set_prompts(prompts);
+    snapshot.set_resource_templates(templates);
+    commit_snapshot_for_kinds(pool, server_id, server_name, snapshot, kinds).await
+}
+
+pub(crate) async fn commit_capability_protocol_observation(
+    pool: &Pool<Sqlite>,
+    cache: &DerivedCapabilityCache,
+    server_id: &str,
+    server_name: &str,
+    observation: CapabilityProtocolObservation,
+) -> Result<CatalogCommit> {
+    let CapabilityProtocolObservation {
+        initialize,
+        tools,
+        resources,
+        prompts,
+        templates,
+        kinds,
+        kind_states,
+    } = observation;
+    let mut snapshot = CapabilitySnapshot {
+        protocol_version: initialize.as_ref().map(|result| result.protocol_version.to_string()),
+        upstream_name: initialize.as_ref().map(|result| result.server_info.name.clone()),
+        upstream_title: initialize.as_ref().and_then(|result| result.server_info.title.clone()),
+        server_version: initialize.as_ref().map(|result| result.server_info.version.clone()),
+        initialize,
+        kind_states,
+        ..Default::default()
+    };
+    snapshot.set_tools(tools);
+    snapshot.set_resources(resources);
+    snapshot.set_prompts(prompts);
+    snapshot.set_resource_templates(templates);
+    commit_capability_observation(pool, cache, server_id, server_name, snapshot, kinds).await
+}
+
+/// Test adapter for partial SQLite catalog commits.
+#[cfg(test)]
+pub async fn store_dual_write_for_kinds(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    tools: Vec<CachedToolInfo>,
     resources: Vec<CachedResourceInfo>,
     prompts: Vec<CachedPromptInfo>,
     templates: Vec<CachedResourceTemplateInfo>,
     protocol_version: Option<String>,
     kinds: crate::core::pool::CapSyncFlags,
 ) -> Result<()> {
-    let is_full_snapshot = kinds == crate::core::pool::CapSyncFlags::ALL;
-    let existing_result = redb
-        .get_server_data(&crate::core::cache::CacheQuery {
-            server_id: server_id.to_string(),
-            freshness_level: crate::core::cache::FreshnessLevel::Cached,
-            include_disabled: true,
-            scope: crate::core::cache::CacheScope::shared_raw(),
-        })
-        .await;
-    let existing = if is_full_snapshot {
-        existing_result.ok().and_then(|result| result.data)
-    } else {
-        Some(
-            existing_result
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
-            .data
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Cannot apply partial capability refresh for server '{server_id}' without an existing shared raw baseline"
-                )
-            })?,
-        )
+    let mut snapshot = CapabilitySnapshot {
+        tools,
+        resources,
+        prompts,
+        resource_templates: templates,
+        protocol_version,
+        ..Default::default()
     };
-
-    let mut tx = begin_naming_transaction(pool)
+    snapshot.ensure_protocol_payloads();
+    commit_snapshot_for_kinds(pool, server_id, server_name, snapshot, kinds)
         .await
-        .context("Failed to begin authoritative capability snapshot update")?;
-    let mut catalog_changed = false;
-    if kinds.contains(crate::core::pool::CapSyncFlags::TOOLS) {
-        catalog_changed |= crate::config::server::tools::assign_unique_names_to_cached_tools_in_transaction(
-            &mut tx,
-            server_id,
-            server_name,
-            &mut tools,
-        )
-        .await?;
-    }
-
-    if kinds.contains(crate::core::pool::CapSyncFlags::PROMPTS) {
-        catalog_changed |=
-            upsert_shadow_prompts_batch_in_transaction(&mut tx, server_id, server_name, &prompts).await?;
-    }
-    if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCES) {
-        catalog_changed |=
-            upsert_shadow_resources_batch_in_transaction(&mut tx, server_id, server_name, &resources).await?;
-    }
-    if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES) {
-        catalog_changed |=
-            upsert_shadow_resource_templates_batch_in_transaction(&mut tx, server_id, server_name, &templates).await?;
-    }
-
-    let existing_protocol_version = existing.as_ref().map(|snapshot| snapshot.protocol_version.clone());
-    let merged_tools = if kinds.contains(crate::core::pool::CapSyncFlags::TOOLS) {
-        tools
-    } else {
-        existing
-            .as_ref()
-            .map(|snapshot| snapshot.tools.clone())
-            .unwrap_or_default()
-    };
-    let merged_resources = if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCES) {
-        resources
-    } else {
-        existing
-            .as_ref()
-            .map(|snapshot| snapshot.resources.clone())
-            .unwrap_or_default()
-    };
-    let merged_prompts = if kinds.contains(crate::core::pool::CapSyncFlags::PROMPTS) {
-        prompts
-    } else {
-        existing
-            .as_ref()
-            .map(|snapshot| snapshot.prompts.clone())
-            .unwrap_or_default()
-    };
-    let merged_templates = if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES) {
-        templates
-    } else {
-        existing
-            .as_ref()
-            .map(|snapshot| snapshot.resource_templates.clone())
-            .unwrap_or_default()
-    };
-    let protocol_version = protocol_version.or(existing_protocol_version);
-
-    if let Some(previous) = existing.as_ref() {
-        if kinds.contains(crate::core::pool::CapSyncFlags::TOOLS) {
-            catalog_changed |= client_visible_inventory_changed(&previous.tools, &merged_tools)?;
-        }
-        if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCES) {
-            catalog_changed |= client_visible_inventory_changed(&previous.resources, &merged_resources)?;
-        }
-        if kinds.contains(crate::core::pool::CapSyncFlags::PROMPTS) {
-            catalog_changed |= client_visible_inventory_changed(&previous.prompts, &merged_prompts)?;
-        }
-        if kinds.contains(crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES) {
-            catalog_changed |= client_visible_inventory_changed(&previous.resource_templates, &merged_templates)?;
-        }
-    }
-
-    let cache_write_result = if is_full_snapshot {
-        replace_redb_snapshot(
-            redb,
-            server_id,
-            server_name,
-            merged_tools,
-            merged_resources,
-            merged_prompts,
-            merged_templates,
-            protocol_version.as_deref(),
-        )
-        .await
-    } else {
-        store_redb_snapshot(
-            redb,
-            server_id,
-            server_name,
-            merged_tools,
-            merged_resources,
-            merged_prompts,
-            merged_templates,
-            protocol_version.as_deref(),
-        )
-        .await
-    };
-    cache_write_result.context("Failed to write authoritative capability cache")?;
-    if let Err(error) = tx.commit().await {
-        return match redb.remove_server_data(server_id).await {
-            Ok(()) => Err(error).context("Failed to commit authoritative capability catalog"),
-            Err(cleanup_error) => Err(anyhow::anyhow!(
-                "Failed to commit authoritative capability catalog: {error}; additionally failed to remove capability cache: {cleanup_error}"
-            )),
-        }
-        .map_err(|error| error.context(format!("server_id={server_id}")));
-    }
-    let invalidation_result = redb.invalidate_client_filtered_by_server(server_id).await;
-    finish_committed_snapshot(redb, server_id, server_name, catalog_changed, invalidation_result).await
+        .map(|_| ())
 }
 
+#[cfg(test)]
 async fn profile_has_seed_tool(
     pool: &Pool<Sqlite>,
     profile_id: &str,
@@ -1251,6 +1873,7 @@ async fn profile_has_seed_tool(
     .unwrap_or(false)
 }
 
+#[cfg(test)]
 async fn profile_has_seed_capability(
     pool: &Pool<Sqlite>,
     profile_id: &str,
@@ -1270,9 +1893,8 @@ async fn profile_has_seed_capability(
         .unwrap_or(false)
 }
 
-/// Seed active profiles with discovered capabilities (enabled=true by default).
-/// This honors the REDB-first + seed-profile rule on first-run so that API `/mcp/profile/*`
-/// endpoints are not empty immediately after initialization.
+/// Legacy non-transactional profile seeding retained only for characterization tests.
+#[cfg(test)]
 pub async fn seed_profiles_with_snapshot(
     pool: &Pool<Sqlite>,
     server_id: &str,
@@ -1338,44 +1960,45 @@ pub async fn seed_profiles_with_snapshot(
     Ok(())
 }
 
-/// Overwrite server_config.capabilities using protocol-level support flags (full snapshot semantics)
-pub async fn overwrite_capabilities(
-    pool: &Pool<Sqlite>,
-    server_id: &str,
-    supports_tools: bool,
-    supports_prompts: bool,
-    supports_resources: bool,
-) -> Result<()> {
-    let mut caps: Vec<&str> = Vec::new();
-    if supports_tools {
-        caps.push(CapabilityToken::Tools.as_str());
-    }
-    if supports_prompts {
-        caps.push(CapabilityToken::Prompts.as_str());
-    }
-    if supports_resources {
-        caps.push(CapabilityToken::Resources.as_str());
-    }
-    let caps_opt: Option<String> = if caps.is_empty() { None } else { Some(caps.join(",")) };
-
-    sqlx::query(r#"UPDATE server_config SET capabilities = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"#)
-        .bind(caps_opt)
-        .bind(server_id)
-        .execute(pool)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
-    Ok(())
-}
-
 /// Sync capabilities using an upstream connection pool (API path helper)
 pub async fn sync_via_connection_pool(
     connection_pool: &tokio::sync::Mutex<UpstreamConnectionPool>,
-    redb: &RedbCacheManager,
     db_pool: &Pool<Sqlite>,
+    capability_cache: &DerivedCapabilityCache,
     server_id: &str,
     server_name: &str,
     lock_timeout_secs: u64,
 ) -> Result<()> {
+    match sync_via_connection_pool_deferred(
+        connection_pool,
+        db_pool,
+        capability_cache,
+        server_id,
+        server_name,
+        lock_timeout_secs,
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(failure) => {
+            if let Some(evidence) = failure.evidence().cloned() {
+                record_capability_failure(db_pool, capability_cache, evidence)
+                    .await
+                    .context("Failed to persist terminal validation capability evidence")?;
+            }
+            Err(failure.into_source())
+        }
+    }
+}
+
+pub(crate) async fn sync_via_connection_pool_deferred(
+    connection_pool: &tokio::sync::Mutex<UpstreamConnectionPool>,
+    db_pool: &Pool<Sqlite>,
+    capability_cache: &DerivedCapabilityCache,
+    server_id: &str,
+    server_name: &str,
+    lock_timeout_secs: u64,
+) -> std::result::Result<(), CapabilitySyncFailure> {
     tracing::info!(
         target: "mcpmate::config::server::capabilities",
         server_id = %server_id,
@@ -1386,7 +2009,7 @@ pub async fn sync_via_connection_pool(
     // Acquire pool
     let pool_guard = timeout(Duration::from_secs(lock_timeout_secs), connection_pool.lock())
         .await
-        .map_err(|_| anyhow::anyhow!("Timeout acquiring connection pool lock"))?;
+        .map_err(|_| CapabilitySyncFailure::operation(anyhow::anyhow!("Timeout acquiring connection pool lock")))?;
     let mut pool = pool_guard;
 
     // Create temporary validation instance
@@ -1395,23 +2018,43 @@ pub async fn sync_via_connection_pool(
         .await
     {
         Ok(Some(c)) => c,
-        Ok(None) => anyhow::bail!(
-            "No validation instance is available for capability sync of server '{}'",
-            server_name
-        ),
+        Ok(None) => {
+            return Err(CapabilitySyncFailure::operation(anyhow::anyhow!(
+                "No validation instance is available for capability sync of server '{}'",
+                server_name
+            )));
+        }
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!("Failed to create a validation instance for capability sync of server '{server_name}'")
-            });
+            return Err(CapabilitySyncFailure::operation(error.context(format!(
+                "Failed to create a validation instance for capability sync of server '{server_name}'"
+            ))));
         }
     };
+    let instance_id = conn.id.clone();
 
     // Discover and apply (now fully paginated)
-    let sync_result = async {
-        let snap = discover_from_connection(conn).await?;
-        discovery_helpers::apply_snapshot(db_pool, redb, server_id, server_name, &snap, true).await
-    }
-    .await;
+    let sync_result = match discover_from_connection(conn).await {
+        Ok(snapshot) => {
+            discovery_helpers::apply_snapshot(db_pool, capability_cache, server_id, server_name, &snapshot, true)
+                .await
+                .map_err(CapabilitySyncFailure::operation)
+        }
+        Err(error) => {
+            let evidence = error
+                .downcast_ref::<CapabilityInventoryDiscoveryError>()
+                .map(|failure| CapabilityFailureEvidence {
+                    server_id: server_id.to_string(),
+                    kind: failure.kind,
+                    instance_id: Some(instance_id),
+                    connection_generation: None,
+                    reason: format!("{error:#}"),
+                });
+            Err(match evidence {
+                Some(evidence) => CapabilitySyncFailure::inventory(error, evidence),
+                None => CapabilitySyncFailure::operation(error),
+            })
+        }
+    };
 
     // Cleanup
     if let Err(e) = pool.destroy_validation_instance(server_id, "api").await {
@@ -1420,14 +2063,16 @@ pub async fn sync_via_connection_pool(
 
     if let Err(error) = sync_result {
         if let Some(collision) =
-            crate::config::server::namespace_repair::record_capability_collision_from_error(db_pool, &error).await?
+            crate::config::server::namespace_repair::record_capability_collision_from_error(db_pool, &error.source)
+                .await
+                .map_err(CapabilitySyncFailure::operation)?
         {
             pool.block_server_after_capability_collision(&collision.server_id).await;
-            pool.sync_servers_from_active_profile().await.with_context(|| {
-                format!(
+            pool.sync_servers_from_active_profile().await.map_err(|source| {
+                CapabilitySyncFailure::operation(source.context(format!(
                     "Failed to block server '{}' after external capability collision",
                     collision.server_id
-                )
+                )))
             })?;
             tracing::warn!(
                 server_id = %collision.server_id,
@@ -1442,288 +2087,6 @@ pub async fn sync_via_connection_pool(
     Ok(())
 }
 
-/// Capability sync strategy
-#[derive(Debug, Clone)]
-pub enum SyncStrategy {
-    /// Use existing connection from pool
-    FromConnection,
-    /// Create temporary connection for discovery
-    FromConfig(crate::core::models::MCPServerConfig, ServerType),
-    /// Force refresh capabilities
-    ForceRefresh,
-}
-
-/// Capability sync result
-#[derive(Debug)]
-pub struct CapabilitySync {
-    pub server_id: String,
-    pub server_name: String,
-    pub supports_tools: bool,
-    pub supports_prompts: bool,
-    pub supports_resources: bool,
-    pub snapshot: CapabilitySnapshot,
-}
-
-/// Unified capability management interface
-pub struct CapabilityManager {
-    db_pool: Arc<Pool<Sqlite>>,
-    redb_cache: Arc<RedbCacheManager>,
-    connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
-}
-
-impl CapabilityManager {
-    /// Create a new capability manager
-    pub fn new(
-        db_pool: Arc<Pool<Sqlite>>,
-        redb_cache: Arc<RedbCacheManager>,
-        connection_pool: Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
-    ) -> Self {
-        Self {
-            db_pool,
-            redb_cache,
-            connection_pool,
-        }
-    }
-
-    /// Sync capabilities for a single server
-    pub async fn sync_server_capabilities(
-        &self,
-        server_id: &str,
-        server_name: &str,
-        strategy: SyncStrategy,
-    ) -> Result<CapabilitySync> {
-        tracing::debug!(
-            "Syncing capabilities for server '{}' using strategy {:?}",
-            server_name,
-            strategy
-        );
-
-        // Discover capabilities
-        let snapshot = match strategy {
-            SyncStrategy::FromConnection => self.discover_from_existing_connection(server_id, server_name).await?,
-            SyncStrategy::FromConfig(config, server_type) => {
-                discover_from_config(server_name, &config, server_type).await?
-            }
-            SyncStrategy::ForceRefresh => {
-                // Get server config from database and use FromConfig strategy
-                let server_row = crate::config::models::Server::find_by_name(&self.db_pool, server_name)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
-
-                let config = crate::core::models::MCPServerConfig {
-                    kind: server_row.server_type,
-                    command: server_row.command,
-                    url: server_row.url,
-                    args: None,
-                    env: None,
-                    headers: None,
-                };
-
-                discover_from_config(server_name, &config, server_row.server_type).await?
-            }
-        };
-
-        // Store capabilities and overwrite flags (no seeding here)
-        discovery_helpers::apply_snapshot(
-            &self.db_pool,
-            &self.redb_cache,
-            server_id,
-            server_name,
-            &snapshot,
-            false,
-        )
-        .await?;
-
-        let supports_tools = !snapshot.tools.is_empty();
-        let supports_prompts = !snapshot.prompts.is_empty();
-        let supports_resources = !snapshot.resources.is_empty() || !snapshot.resource_templates.is_empty();
-
-        Ok(CapabilitySync {
-            server_id: server_id.to_string(),
-            server_name: server_name.to_string(),
-            supports_tools,
-            supports_prompts,
-            supports_resources,
-            snapshot,
-        })
-    }
-
-    /// Sync capabilities for multiple servers in parallel
-    pub async fn sync_multiple_servers(
-        &self,
-        servers: Vec<(String, String, SyncStrategy)>, // (server_id, server_name, strategy)
-    ) -> Result<Vec<CapabilitySync>> {
-        tracing::info!("Starting capability sync for {} servers (concurrent)", servers.len());
-
-        // Process servers sequentially to collect results
-        // Note: This could be optimized with concurrent processing if needed
-        let mut successes = Vec::new();
-
-        for (server_id, server_name, strategy) in servers {
-            match self.sync_server_capabilities(&server_id, &server_name, strategy).await {
-                Ok(sync) => {
-                    tracing::debug!("Successfully synced capabilities for server '{}'", server_name);
-                    successes.push(sync);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to sync capabilities for server '{}': {}", server_name, e);
-                }
-            }
-        }
-
-        tracing::info!(
-            "Completed capability sync: {}/{} successful",
-            successes.len(),
-            successes.len()
-        );
-        Ok(successes)
-    }
-
-    /// Sync all servers from startup (all servers from database)
-    pub async fn sync_connected_servers(&self) -> Result<Vec<CapabilitySync>> {
-        // Get all servers from database instead of relying on connection pool state
-        let all_servers = crate::config::server::get_all_servers(&self.db_pool).await?;
-
-        let mut servers_with_strategy = Vec::new();
-
-        // Sync capabilities for each server using auto-strategy selection
-        for server in all_servers {
-            if let Some(server_id) = server.id {
-                // Use auto strategy: try connection first, fallback to config
-                let strategy = {
-                    let pool = self.connection_pool.lock().await;
-                    if pool
-                        .connections
-                        .get(&server.name)
-                        .is_some_and(|instances| instances.values().any(|conn| conn.is_connected()))
-                    {
-                        SyncStrategy::FromConnection
-                    } else {
-                        let config = crate::core::models::MCPServerConfig {
-                            kind: server.server_type,
-                            command: server.command,
-                            url: server.url,
-                            args: None,
-                            env: None,
-                            headers: None,
-                        };
-                        SyncStrategy::FromConfig(config, server.server_type)
-                    }
-                };
-
-                servers_with_strategy.push((server_id, server.name, strategy));
-            }
-        }
-
-        self.sync_multiple_servers(servers_with_strategy).await
-    }
-
-    /// Sync servers from import configuration
-    pub async fn sync_import_servers(
-        &self,
-        servers: Vec<(String, String, crate::core::models::MCPServerConfig, ServerType)>, // (server_id, server_name, config, server_type)
-    ) -> Result<Vec<CapabilitySync>> {
-        let servers_with_strategy = servers
-            .into_iter()
-            .map(|(server_id, server_name, config, server_type)| {
-                (server_id, server_name, SyncStrategy::FromConfig(config, server_type))
-            })
-            .collect();
-
-        self.sync_multiple_servers(servers_with_strategy).await
-    }
-
-    /// Helper: discover from existing connection
-    async fn discover_from_existing_connection(
-        &self,
-        server_id: &str,
-        server_name: &str,
-    ) -> Result<CapabilitySnapshot> {
-        let mut pool = self.connection_pool.lock().await;
-        let session_id = "capability_sync";
-        let conn = pool
-            .get_or_create_validation_instance(server_id, session_id, tokio::time::Duration::from_secs(30))
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Failed to get connection for server '{}'", server_name))?;
-
-        let snapshot = discover_from_connection(conn).await?;
-
-        // Cleanup validation instance
-        if let Err(e) = pool.destroy_validation_instance(server_id, session_id).await {
-            tracing::trace!(server_name = %server_name, error = %e, "Failed to destroy validation instance");
-        }
-
-        Ok(snapshot)
-    }
-
-    /// Convenience function: Sync single server by name with auto-strategy selection
-    pub async fn auto_sync_server(
-        &self,
-        server_name: &str,
-    ) -> Result<CapabilitySync> {
-        // Get server from database
-        let server_row = crate::config::models::Server::find_by_name(&self.db_pool, server_name)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
-
-        let server_id = server_row
-            .id
-            .ok_or_else(|| anyhow::anyhow!("Server '{}' has no ID", server_name))?;
-
-        // Try connection first, fallback to config
-        let strategy = {
-            let pool = self.connection_pool.lock().await;
-            if pool
-                .connections
-                .get(server_name)
-                .is_some_and(|instances| instances.values().any(|conn| conn.is_connected()))
-            {
-                SyncStrategy::FromConnection
-            } else {
-                let config = crate::core::models::MCPServerConfig {
-                    kind: server_row.server_type,
-                    command: server_row.command,
-                    url: server_row.url,
-                    args: None,
-                    env: None,
-                    headers: None,
-                };
-                SyncStrategy::FromConfig(config, server_row.server_type)
-            }
-        };
-
-        self.sync_server_capabilities(&server_id, server_name, strategy).await
-    }
-
-    /// Sync capabilities for a single server that just connected successfully
-    /// This method is optimized for event-driven capability sync triggered by connection events
-    pub async fn sync_single_server(
-        &self,
-        server_name: &str,
-    ) -> Result<CapabilitySync> {
-        // Get server from database
-        let server_row = crate::config::models::Server::find_by_name(&self.db_pool, server_name)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found", server_name))?;
-
-        let server_id = server_row
-            .id
-            .ok_or_else(|| anyhow::anyhow!("Server '{}' has no ID", server_name))?;
-
-        // Use FromConnection strategy since we know the server just connected successfully
-        let strategy = SyncStrategy::FromConnection;
-
-        tracing::debug!(
-            "Syncing capabilities for newly connected server '{}' using FromConnection strategy",
-            server_name
-        );
-
-        self.sync_server_capabilities(&server_id, server_name, strategy).await
-    }
-}
-/// Resolve the default lock timeout (seconds) to use when acquiring the upstream
-/// connection pool. Allow overriding via `MCPMATE_CAPABILITY_POOL_LOCK_TIMEOUT_SECS`
-/// to accommodate environments where upstream servers have heavy cold-start costs.
 pub fn default_pool_lock_timeout_secs() -> u64 {
     static TIMEOUT: OnceCell<u64> = OnceCell::new();
     *TIMEOUT.get_or_init(|| {
@@ -1738,17 +2101,11 @@ pub fn default_pool_lock_timeout_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use serde::de::DeserializeOwned;
+    use serde_json::{Value, json};
     use sqlx::sqlite::SqlitePoolOptions;
-    use std::collections::HashMap;
-    use std::path::Path;
-    use tempfile::TempDir;
 
     use super::*;
-    use crate::core::cache::fingerprint::{
-        CapabilityFingerprint, CodeFingerprint, ConfigFingerprint, DependencyFingerprint, MCPServerFingerprint,
-    };
-    use crate::core::cache::operations::CacheOperations;
-    use crate::core::cache::{CacheQuery, CacheScope, CachedServerData, FreshnessLevel, SERVERS_TABLE};
 
     async fn capability_store_pool() -> Pool<Sqlite> {
         let pool = SqlitePoolOptions::new()
@@ -1765,6 +2122,10 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
+        SqliteCapabilityCatalog::new(pool.clone())
+            .ensure_schema()
+            .await
+            .expect("initialize capability catalog");
         sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
             .execute(&pool)
             .await
@@ -1772,19 +2133,430 @@ mod tests {
         pool
     }
 
+    fn decode<T: DeserializeOwned>(value: Value) -> T {
+        serde_json::from_value(value).expect("fixture must match RMCP 2.2")
+    }
+
+    fn protocol_fixture() -> (
+        rmcp::model::InitializeResult,
+        rmcp::model::Tool,
+        rmcp::model::Resource,
+        rmcp::model::Prompt,
+        rmcp::model::ResourceTemplate,
+    ) {
+        let initialize = decode(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+                "prompts": {"listChanged": true},
+                "resources": {"subscribe": true, "listChanged": true},
+                "tools": {"listChanged": true}
+            },
+            "serverInfo": {"name": "fixture-server", "title": "Fixture Server", "version": "2.2.0"},
+            "instructions": "Preserve this initialize result exactly.",
+            "_meta": {"fixture": "initialize"}
+        }));
+        let tool = decode(json!({
+            "name": "analyze",
+            "title": "Analyze",
+            "description": "Analyze a payload",
+            "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            "outputSchema": {"type": "object", "properties": {"result": {"type": "string"}}},
+            "annotations": {
+                "title": "Safe analyzer",
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+            },
+            "execution": {"taskSupport": "optional"},
+            "icons": [{"src": "https://icons.example/tool.svg", "mimeType": "image/svg+xml", "sizes": ["any"]}],
+            "_meta": {"fixture": "tool"}
+        }));
+        let resource = decode(json!({
+            "uri": "file:///fixture/report.md",
+            "name": "report",
+            "title": "Fixture Report",
+            "description": "A complete resource fixture",
+            "mimeType": "text/markdown",
+            "size": 4096,
+            "icons": [{"src": "https://icons.example/resource.svg", "mimeType": "image/svg+xml"}],
+            "_meta": {"fixture": "resource"},
+            "annotations": {"audience": ["user", "assistant"], "priority": 0.75, "lastModified": "2026-07-20T00:00:00Z"}
+        }));
+        let prompt = decode(json!({
+            "name": "summarize",
+            "title": "Summarize",
+            "description": "Summarize a document",
+            "arguments": [{"name": "document", "title": "Document", "description": "Input text", "required": true}],
+            "icons": [{"src": "https://icons.example/prompt.png", "mimeType": "image/png"}],
+            "_meta": {"fixture": "prompt"}
+        }));
+        let template = decode(json!({
+            "uriTemplate": "file:///fixture/{name}.md",
+            "name": "fixture-template",
+            "title": "Fixture Template",
+            "description": "A complete template fixture",
+            "mimeType": "text/markdown",
+            "icons": [{"src": "https://icons.example/template.svg", "mimeType": "image/svg+xml"}],
+            "_meta": {"fixture": "template"},
+            "annotations": {"audience": ["assistant"], "priority": 0.5}
+        }));
+        (initialize, tool, resource, prompt, template)
+    }
+
+    async fn insert_active_profile(pool: &Pool<Sqlite>) {
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-a', 'Profile A', '', 'shared', 1, 1, 1, 0)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert active profile");
+    }
+
+    #[tokio::test]
+    async fn protocol_observation_commits_payload_indexes_profiles_and_metadata_atomically() {
+        let pool = capability_store_pool().await;
+        insert_active_profile(&pool).await;
+        sqlx::query("ALTER TABLE server_config ADD COLUMN capabilities TEXT")
+            .execute(&pool)
+            .await
+            .expect("simulate a pre-C4 database");
+        sqlx::query("UPDATE server_config SET capabilities = 'legacy-summary' WHERE id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("seed legacy summary");
+        let (initialize, tool, resource, prompt, template) = protocol_fixture();
+
+        let commit = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize.clone()),
+            vec![tool.clone()],
+            vec![resource.clone()],
+            vec![prompt.clone()],
+            vec![template.clone()],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit protocol observation");
+
+        assert_eq!(commit.revision, 1);
+        let catalog = SqliteCapabilityCatalog::new(pool.clone());
+        let snapshot = catalog
+            .load_snapshot("server-a")
+            .await
+            .expect("load catalog")
+            .expect("catalog snapshot exists");
+        assert_eq!(
+            serde_json::to_value(snapshot.initialize.as_ref().expect("ready snapshot initialize"))
+                .expect("serialize initialize"),
+            serde_json::to_value(&initialize).expect("serialize expected initialize")
+        );
+        let payloads = snapshot
+            .records
+            .iter()
+            .map(|record| serde_json::to_value(&record.payload).expect("serialize payload"))
+            .collect::<Vec<_>>();
+        for expected in [
+            CapabilityPayload::Tool(tool),
+            CapabilityPayload::Resource(resource),
+            CapabilityPayload::Prompt(prompt),
+            CapabilityPayload::ResourceTemplate(template),
+        ] {
+            assert!(payloads.contains(&serde_json::to_value(expected).expect("serialize fixture payload")));
+        }
+
+        for table in [
+            "server_tools",
+            "server_prompts",
+            "server_resources",
+            "server_resource_templates",
+            "profile_tool",
+            "profile_prompt",
+            "profile_resource",
+            "profile_resource_template",
+        ] {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|error| panic!("count {table}: {error}"));
+            assert_eq!(count, 1, "{table} must be committed with the snapshot");
+        }
+        let server_meta: (String, String, String) = sqlx::query_as(
+            "SELECT upstream_name, server_version, protocol_version FROM server_meta WHERE server_id = 'server-a'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load server metadata");
+        assert_eq!(
+            server_meta,
+            ("fixture-server".into(), "2.2.0".into(), "2025-11-25".into())
+        );
+        let legacy_summary: Option<String> =
+            sqlx::query_scalar("SELECT capabilities FROM server_config WHERE id = 'server-a'")
+                .fetch_one(&pool)
+                .await
+                .expect("load legacy summary");
+        assert_eq!(legacy_summary.as_deref(), Some("legacy-summary"));
+    }
+
+    #[tokio::test]
+    async fn profile_seed_failure_rolls_back_catalog_indexes_associations_and_metadata() {
+        let pool = capability_store_pool().await;
+        insert_active_profile(&pool).await;
+        sqlx::query(
+            "CREATE TRIGGER fail_profile_prompt BEFORE INSERT ON profile_prompt BEGIN SELECT RAISE(ABORT, 'profile prompt fixture failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install rollback trigger");
+        let (initialize, tool, resource, prompt, template) = protocol_fixture();
+
+        let error = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize),
+            vec![tool],
+            vec![resource],
+            vec![prompt],
+            vec![template],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect_err("profile seed failure must abort the entire observation");
+        assert!(error.to_string().contains("profile prompt fixture failure"));
+
+        let catalog = SqliteCapabilityCatalog::new(pool.clone());
+        assert!(catalog.load_snapshot("server-a").await.expect("load catalog").is_none());
+        for table in [
+            "server_tools",
+            "server_prompts",
+            "server_resources",
+            "server_resource_templates",
+            "profile_tool",
+            "profile_prompt",
+            "profile_resource",
+            "profile_resource_template",
+            "server_meta",
+        ] {
+            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|query_error| panic!("count {table}: {query_error}"));
+            assert_eq!(count, 0, "{table} must roll back with the failed observation");
+        }
+    }
+
+    #[tokio::test]
+    async fn live_observation_atomically_replaces_a_corrupt_catalog_snapshot() {
+        let pool = capability_store_pool().await;
+        let (initialize, tool, _, _, _) = protocol_fixture();
+        let first_commit = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize.clone()),
+            vec![tool],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit initial observation");
+        let second_commit = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize.clone()),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::TOOLS,
+        )
+        .await
+        .expect("advance catalog revision before corruption");
+        assert_eq!(first_commit.revision, 1);
+        assert_eq!(second_commit.revision, 2);
+        sqlx::query(
+            "UPDATE capability_server_snapshots SET initialize_payload = '{corrupt-json' WHERE server_id = 'server-a'",
+        )
+        .execute(&pool)
+        .await
+        .expect("corrupt stored initialize payload");
+        let replacement_tool: rmcp::model::Tool = decode(json!({
+            "name": "replacement",
+            "description": "Replacement after live recovery",
+            "inputSchema": {"type": "object"}
+        }));
+
+        let replacement_commit = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize),
+            vec![replacement_tool.clone()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::TOOLS,
+        )
+        .await
+        .expect("live observation should replace the corrupt snapshot");
+        assert_eq!(replacement_commit.revision, 3);
+
+        let snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("replacement snapshot should decode")
+            .expect("replacement snapshot should exist");
+        assert_eq!(snapshot.revision, 3);
+        assert!(snapshot.records.iter().any(
+            |record| matches!(&record.payload, CapabilityPayload::Tool(tool) if tool.name == replacement_tool.name)
+        ));
+        for table in ["capability_kind_states", "capability_records"] {
+            let revisions: Vec<i64> = sqlx::query_scalar(&format!(
+                "SELECT DISTINCT catalog_revision FROM {table} WHERE server_id = 'server-a'"
+            ))
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_else(|error| panic!("load {table} revisions: {error}"));
+            assert_eq!(revisions, vec![3], "{table} must use the replacement revision");
+        }
+    }
+
+    #[tokio::test]
+    async fn corrupt_snapshot_replacement_rolls_back_when_a_later_write_fails() {
+        let pool = capability_store_pool().await;
+        let (initialize, tool, _, _, _) = protocol_fixture();
+        commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize.clone()),
+            vec![tool],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit initial observation");
+        let corrupt_payload = "{corrupt-json";
+        sqlx::query("UPDATE capability_server_snapshots SET initialize_payload = ? WHERE server_id = 'server-a'")
+            .bind(corrupt_payload)
+            .execute(&pool)
+            .await
+            .expect("corrupt stored initialize payload");
+        sqlx::query(
+            "CREATE TRIGGER fail_replacement_tool BEFORE INSERT ON server_tools BEGIN SELECT RAISE(ABORT, 'replacement fixture failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install replacement failure trigger");
+        let replacement_tool: rmcp::model::Tool = decode(json!({
+            "name": "replacement",
+            "description": "Replacement after live recovery",
+            "inputSchema": {"type": "object"}
+        }));
+
+        let error = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize),
+            vec![replacement_tool],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::TOOLS,
+        )
+        .await
+        .expect_err("later write failure should abort corrupt replacement");
+
+        assert!(
+            format!("{error:#}").contains("replacement fixture failure"),
+            "unexpected replacement error: {error:#}"
+        );
+        let stored_payload: String = sqlx::query_scalar(
+            "SELECT initialize_payload FROM capability_server_snapshots WHERE server_id = 'server-a'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("original corrupt row should survive rollback");
+        assert_eq!(stored_payload, corrupt_payload);
+        assert!(matches!(
+            SqliteCapabilityCatalog::new(pool).load_snapshot("server-a").await,
+            Err(mcpmate_capability_store::CatalogError::Json(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn partial_protocol_refresh_preserves_untouched_full_payloads() {
+        let pool = capability_store_pool().await;
+        let (initialize, tool, resource, prompt, template) = protocol_fixture();
+        commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize.clone()),
+            vec![tool],
+            vec![resource.clone()],
+            vec![prompt.clone()],
+            vec![template.clone()],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit initial observation");
+        let updated_tool: rmcp::model::Tool = decode(json!({
+            "name": "analyze-v2",
+            "title": "Analyze v2",
+            "description": "Updated tool only",
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "object"},
+            "_meta": {"fixture": "tool-v2"}
+        }));
+
+        let commit = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize),
+            vec![updated_tool.clone()],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::TOOLS,
+        )
+        .await
+        .expect("commit partial tools refresh");
+
+        assert_eq!(commit.revision, 2);
+        let snapshot = SqliteCapabilityCatalog::new(pool)
+            .load_snapshot("server-a")
+            .await
+            .expect("load catalog")
+            .expect("catalog snapshot exists");
+        let payloads = snapshot
+            .records
+            .into_iter()
+            .map(|record| record.payload)
+            .collect::<Vec<_>>();
+        assert!(payloads.contains(&CapabilityPayload::Tool(updated_tool)));
+        assert!(payloads.contains(&CapabilityPayload::Resource(resource)));
+        assert!(payloads.contains(&CapabilityPayload::Prompt(prompt)));
+        assert!(payloads.contains(&CapabilityPayload::ResourceTemplate(template)));
+        assert_eq!(payloads.len(), 4);
+    }
+
     #[tokio::test]
     async fn raw_snapshot_keeps_templates_that_cannot_enter_external_projection() {
         let pool = capability_store_pool().await;
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("resource-template-projection.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
-
         store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "docs",
             Vec::new(),
@@ -1796,18 +2568,19 @@ mod tests {
         .await
         .expect("store raw templates independently from external projection");
 
-        let cached = redb
-            .get_server_data(&CacheQuery {
-                server_id: "server-a".to_string(),
-                freshness_level: FreshnessLevel::Cached,
-                include_disabled: true,
-                scope: CacheScope::shared_raw(),
-            })
+        let cached = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
             .await
             .expect("read raw snapshot")
-            .data
             .expect("raw snapshot exists");
-        assert_eq!(cached.resource_templates.len(), 2);
+        assert_eq!(
+            cached
+                .records
+                .iter()
+                .filter(|record| matches!(record.payload, CapabilityPayload::ResourceTemplate(_)))
+                .count(),
+            2
+        );
 
         let projected = sqlx::query_scalar::<_, String>(
             "SELECT uri_template FROM server_resource_templates WHERE server_id = ? ORDER BY uri_template",
@@ -1844,17 +2617,6 @@ mod tests {
         }
     }
 
-    fn cached_prompt(name: &str) -> CachedPromptInfo {
-        CachedPromptInfo {
-            name: name.to_string(),
-            description: None,
-            arguments: Vec::new(),
-            icons: None,
-            enabled: true,
-            cached_at: Utc::now(),
-        }
-    }
-
     fn cached_template(uri_template: &str) -> CachedResourceTemplateInfo {
         CachedResourceTemplateInfo {
             uri_template: uri_template.to_string(),
@@ -1866,309 +2628,400 @@ mod tests {
         }
     }
 
-    fn test_fingerprint() -> MCPServerFingerprint {
-        MCPServerFingerprint {
-            code_fingerprint: CodeFingerprint {
-                file_hashes: HashMap::new(),
-                total_files: 1,
-                total_size: 1,
-                last_modified: Utc::now(),
+    #[tokio::test]
+    async fn first_partial_observation_records_only_the_selected_kind_as_complete() {
+        let pool = capability_store_pool().await;
+        let (_, tool, _, _, _) = protocol_fixture();
+        let initialize = decode(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+                "tools": {"listChanged": true},
+                "prompts": {"listChanged": true}
             },
-            dependency_fingerprint: DependencyFingerprint {
-                package_lock_hash: None,
-                manifest_hash: "manifest".to_string(),
-                resolved_versions: HashMap::new(),
-            },
-            capability_fingerprint: CapabilityFingerprint {
-                tools_hash: "tools".to_string(),
-                resources_hash: "resources".to_string(),
-                prompts_hash: "prompts".to_string(),
-                server_info_hash: "server".to_string(),
-            },
-            config_fingerprint: ConfigFingerprint {
-                server_config_hash: "config".to_string(),
-                environment_hash: "environment".to_string(),
-                arguments_hash: "arguments".to_string(),
-            },
-            combined_hash: "combined".to_string(),
-            generated_at: Utc::now(),
-        }
-    }
+            "serverInfo": {"name": "docs", "version": "1.0.0"}
+        }));
 
-    fn create_corrupt_shared_raw_cache(path: &Path) {
-        let database = redb::Database::create(path).expect("create corrupt cache fixture");
-        let old_snapshot = CachedServerData {
-            server_id: "server-a".to_string(),
-            server_name: "docs".to_string(),
-            server_version: None,
-            protocol_version: "2024-11-05".to_string(),
-            tools: vec![cached_tool("old_tool")],
-            resources: vec![cached_resource("file:///old")],
-            prompts: vec![cached_prompt("old_prompt")],
-            resource_templates: vec![cached_template("file:///{old}")],
-            cached_at: Utc::now(),
-            fingerprint: "old-snapshot".to_string(),
-            scope: CacheScope::shared_raw(),
+        commit_protocol_observation_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize),
+            vec![tool],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::TOOLS,
+            Vec::new(),
+        )
+        .await
+        .expect("first partial observation must establish a catalog baseline");
+
+        let snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("load first partial snapshot")
+            .expect("first partial snapshot exists");
+        let state = |kind| {
+            snapshot
+                .kind_states
+                .iter()
+                .find(|state| state.kind == kind)
+                .expect("kind state exists")
         };
-        CacheOperations::new(&database)
-            .store_server_data(&old_snapshot)
-            .expect("store old per-kind cache entries");
-
-        let write_txn = database.begin_write().expect("begin corrupting cache entry");
-        {
-            let mut servers = write_txn.open_table(SERVERS_TABLE).expect("open server cache table");
-            servers
-                .insert("server-a#production#raw", &[0xff, 0x00][..])
-                .expect("replace server snapshot with invalid bincode");
-        }
-        write_txn.commit().expect("commit corrupt cache fixture");
+        assert_eq!(state(CatalogKind::Tools).declaration, DeclarationState::Supported);
+        assert_eq!(state(CatalogKind::Tools).inventory, InventoryState::Complete);
+        assert_eq!(state(CatalogKind::Prompts).declaration, DeclarationState::Supported);
+        assert_eq!(state(CatalogKind::Prompts).inventory, InventoryState::Unknown);
+        assert_eq!(state(CatalogKind::Resources).declaration, DeclarationState::Unsupported);
+        assert_eq!(state(CatalogKind::Resources).inventory, InventoryState::Unknown);
+        assert_eq!(
+            state(CatalogKind::ResourceTemplates).declaration,
+            DeclarationState::Unsupported
+        );
+        assert_eq!(state(CatalogKind::ResourceTemplates).inventory, InventoryState::Unknown);
+        assert_eq!(
+            snapshot
+                .records
+                .iter()
+                .filter(|record| record.kind() == CatalogKind::Tools)
+                .count(),
+            1
+        );
+        assert!(
+            snapshot
+                .records
+                .iter()
+                .all(|record| record.kind() == CatalogKind::Tools)
+        );
     }
 
     #[tokio::test]
-    async fn full_snapshot_replaces_corrupt_server_data_and_stale_per_kind_entries() {
+    async fn first_partial_unsupported_observation_completes_only_the_selected_kind() {
         let pool = capability_store_pool().await;
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let cache_path = cache_dir.path().join("corrupt-full.redb");
-        create_corrupt_shared_raw_cache(&cache_path);
-        let redb = RedbCacheManager::new(cache_path, crate::core::cache::manager::CacheConfig::default())
-            .expect("open corrupt cache fixture");
-        let fingerprint = test_fingerprint();
-        redb.store_fingerprint("server-a", &fingerprint)
-            .await
-            .expect("store server fingerprint");
+        let initialize = decode(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"resources": {"listChanged": true}},
+            "serverInfo": {"name": "docs", "version": "1.0.0"}
+        }));
 
-        store_dual_write_for_kinds(
+        commit_protocol_observation_for_kinds(
             &pool,
-            &redb,
             "server-a",
             "docs",
-            vec![cached_tool("new_tool")],
-            vec![cached_resource("file:///new")],
-            vec![cached_prompt("new_prompt")],
-            vec![cached_template("file:///{new}")],
-            Some("2025-11-25".to_string()),
+            Some(initialize),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES,
+            vec![KindObservation::new(
+                CatalogKind::ResourceTemplates,
+                DeclarationState::Unsupported,
+                InventoryState::Complete,
+            )],
+        )
+        .await
+        .expect("first partial unsupported observation must establish a catalog baseline");
+
+        let snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("load first unsupported partial snapshot")
+            .expect("first unsupported partial snapshot exists");
+        let state = |kind| {
+            snapshot
+                .kind_states
+                .iter()
+                .find(|state| state.kind == kind)
+                .expect("kind state exists")
+        };
+        assert_eq!(state(CatalogKind::Tools).declaration, DeclarationState::Unsupported);
+        assert_eq!(state(CatalogKind::Tools).inventory, InventoryState::Unknown);
+        assert_eq!(state(CatalogKind::Prompts).declaration, DeclarationState::Unsupported);
+        assert_eq!(state(CatalogKind::Prompts).inventory, InventoryState::Unknown);
+        assert_eq!(state(CatalogKind::Resources).declaration, DeclarationState::Supported);
+        assert_eq!(state(CatalogKind::Resources).inventory, InventoryState::Unknown);
+        assert_eq!(
+            state(CatalogKind::ResourceTemplates).declaration,
+            DeclarationState::Unsupported
+        );
+        assert_eq!(
+            state(CatalogKind::ResourceTemplates).inventory,
+            InventoryState::Complete
+        );
+        assert!(snapshot.records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fresh_failure_creates_scoped_unavailable_snapshot_with_canonical_evidence() {
+        let pool = capability_store_pool().await;
+        let server_id = "server-fresh-failure-event";
+        let server_name = "fresh_failure_docs";
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
+            .bind(server_id)
+            .bind(server_name)
+            .execute(&pool)
+            .await
+            .expect("insert event-isolated server");
+        let cache = DerivedCapabilityCache::default();
+        let catalog = SqliteCapabilityCatalog::new(pool.clone());
+        assert!(
+            catalog
+                .load_snapshot(server_id)
+                .await
+                .expect("load empty catalog")
+                .is_none()
+        );
+        let invalidations_before = cache.metrics().await.invalidations;
+        let mut events = crate::core::events::EventBus::global().subscribe_async();
+
+        let commit = record_capability_failure(
+            &pool,
+            &cache,
+            CapabilityFailureEvidence {
+                server_id: server_id.to_string(),
+                kind: CatalogKind::Resources,
+                instance_id: None,
+                connection_generation: None,
+                reason: "initial resource discovery failed".to_string(),
+            },
+        )
+        .await
+        .expect("fresh failure must establish durable catalog evidence");
+
+        assert_eq!(commit.revision, 1);
+        let snapshot = catalog
+            .load_snapshot(server_id)
+            .await
+            .expect("load failure snapshot")
+            .expect("failure snapshot exists");
+        assert_eq!(snapshot.server_name, server_name);
+        assert_eq!(snapshot.state, SnapshotState::Unavailable);
+        assert!(snapshot.records.is_empty());
+        let resources = snapshot
+            .kind_states
+            .iter()
+            .find(|state| state.kind == CatalogKind::Resources)
+            .expect("resources failure state exists");
+        assert_eq!(resources.declaration, DeclarationState::Unknown);
+        assert_eq!(resources.inventory, InventoryState::Failed);
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some(
+                "server_id=server-fresh-failure-event server_name=fresh_failure_docs kinds=[resources] instance=None generation=None reason=initial resource discovery failed"
+            )
+        );
+        let initialize_payload: String =
+            sqlx::query_scalar("SELECT initialize_payload FROM capability_server_snapshots WHERE server_id = ?")
+                .bind(server_id)
+                .fetch_one(&pool)
+                .await
+                .expect("load failure initialize payload");
+        assert_eq!(
+            initialize_payload, "null",
+            "failure evidence must not fabricate initialize data"
+        );
+        assert_eq!(cache.metrics().await.invalidations, invalidations_before + 1);
+
+        let mut committed = 0;
+        let mut changed = 0;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while committed == 0 || changed == 0 {
+                match events.recv().await.expect("receive catalog event") {
+                    crate::core::events::Event::CapabilityCatalogCommitted {
+                        server_id,
+                        server_name,
+                        revision,
+                    } if server_id == "server-fresh-failure-event" => {
+                        assert_eq!(server_name, "fresh_failure_docs");
+                        assert_eq!(revision, 1);
+                        committed += 1;
+                    }
+                    crate::core::events::Event::CapabilityCatalogChanged { server_id, server_name }
+                        if server_id == "server-fresh-failure-event" =>
+                    {
+                        assert_eq!(server_name, "fresh_failure_docs");
+                        changed += 1;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("fresh failure must publish one complete catalog transition");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        while let Ok(event) = events.try_recv() {
+            match event {
+                crate::core::events::Event::CapabilityCatalogCommitted { server_id, .. }
+                    if server_id == "server-fresh-failure-event" =>
+                {
+                    committed += 1
+                }
+                crate::core::events::Event::CapabilityCatalogChanged { server_id, .. }
+                    if server_id == "server-fresh-failure-event" =>
+                {
+                    changed += 1
+                }
+                _ => {}
+            }
+        }
+        assert_eq!((committed, changed), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn partial_observation_retains_unselected_history_after_unavailable_baseline() {
+        let pool = capability_store_pool().await;
+        insert_active_profile(&pool).await;
+        let (initial_initialize, initial_tool, initial_resource, initial_prompt, initial_template) = protocol_fixture();
+        let full_commit = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initial_initialize),
+            vec![initial_tool],
+            vec![initial_resource],
+            vec![initial_prompt.clone()],
+            vec![initial_template],
             crate::core::pool::CapSyncFlags::ALL,
         )
         .await
-        .expect("full snapshot should replace corrupt cache data");
+        .expect("commit full Ready baseline");
+        let unavailable_commit = SqliteCapabilityCatalog::new(pool.clone())
+            .record_failure("server-a", None, "upstream unavailable")
+            .await
+            .expect("mark full baseline unavailable");
 
-        let cached = redb
-            .get_server_data(&CacheQuery {
-                server_id: "server-a".to_string(),
-                freshness_level: FreshnessLevel::Cached,
-                include_disabled: true,
-                scope: CacheScope::shared_raw(),
-            })
-            .await
-            .expect("read rebuilt full snapshot")
-            .data
-            .expect("rebuilt full snapshot exists");
-        assert_eq!(cached.protocol_version, "2025-11-25");
-        assert_eq!(
-            cached.tools.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(),
-            ["new_tool"]
-        );
-        assert_eq!(
-            cached
-                .resources
-                .iter()
-                .map(|item| item.uri.as_str())
-                .collect::<Vec<_>>(),
-            ["file:///new"]
-        );
-        assert_eq!(
-            cached.prompts.iter().map(|item| item.name.as_str()).collect::<Vec<_>>(),
-            ["new_prompt"]
-        );
-        assert_eq!(
-            cached
-                .resource_templates
-                .iter()
-                .map(|item| item.uri_template.as_str())
-                .collect::<Vec<_>>(),
-            ["file:///{new}"]
-        );
-
-        assert_eq!(
-            redb.get_server_tools("server-a", true)
-                .await
-                .expect("read rebuilt tools")
-                .iter()
-                .map(|item| item.name.as_str())
-                .collect::<Vec<_>>(),
-            ["new_tool"]
-        );
-        assert_eq!(
-            redb.get_server_resources("server-a", true)
-                .await
-                .expect("read rebuilt resources")
-                .iter()
-                .map(|item| item.uri.as_str())
-                .collect::<Vec<_>>(),
-            ["file:///new"]
-        );
-        assert_eq!(
-            redb.get_server_prompts("server-a", true)
-                .await
-                .expect("read rebuilt prompts")
-                .iter()
-                .map(|item| item.name.as_str())
-                .collect::<Vec<_>>(),
-            ["new_prompt"]
-        );
-        assert_eq!(
-            redb.get_server_resource_templates("server-a", true)
-                .await
-                .expect("read rebuilt resource templates")
-                .iter()
-                .map(|item| item.uri_template.as_str())
-                .collect::<Vec<_>>(),
-            ["file:///{new}"]
-        );
-        assert_eq!(
-            redb.get_fingerprint("server-a").await.expect("read server fingerprint"),
-            Some(fingerprint)
-        );
-    }
-
-    #[tokio::test]
-    async fn partial_snapshot_rejects_corrupt_server_data_without_clearing_other_kinds() {
-        let pool = capability_store_pool().await;
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let cache_path = cache_dir.path().join("corrupt-partial.redb");
-        create_corrupt_shared_raw_cache(&cache_path);
-        let redb = RedbCacheManager::new(cache_path, crate::core::cache::manager::CacheConfig::default())
-            .expect("open corrupt cache fixture");
-        crate::config::server::tools::upsert_server_tool(&pool, "server-a", "docs", "old_tool", None)
-            .await
-            .expect("store old tool catalog row");
-        upsert_shadow_prompt(&pool, "server-a", "docs", "old_prompt", None)
-            .await
-            .expect("store old prompt catalog row");
-        upsert_shadow_resource(&pool, "server-a", "docs", "file:///old", None, None, None)
-            .await
-            .expect("store old resource catalog row");
-        upsert_shadow_resource_template(&pool, "server-a", "docs", "file:///{old}", Some("Old"), None)
-            .await
-            .expect("store old resource template catalog row");
-
-        let error = store_dual_write_for_kinds(
+        let current_initialize = decode(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+                "tools": {"listChanged": true},
+                "prompts": {"listChanged": true}
+            },
+            "serverInfo": {"name": "docs", "version": "2.3.0"}
+        }));
+        let current_tool = decode(json!({
+            "name": "current_tool",
+            "description": "Current live tool",
+            "inputSchema": {"type": "object"}
+        }));
+        let partial_commit = commit_protocol_observation_for_kinds(
             &pool,
-            &redb,
             "server-a",
             "docs",
-            vec![cached_tool("new_tool")],
+            Some(current_initialize),
+            vec![current_tool],
             Vec::new(),
             Vec::new(),
             Vec::new(),
-            Some("2025-11-25".to_string()),
             crate::core::pool::CapSyncFlags::TOOLS,
+            Vec::new(),
         )
         .await
-        .expect_err("partial snapshot must not replace a corrupt full snapshot");
+        .expect("commit selected-kind recovery");
 
-        assert!(error.to_string().contains("Serialization error"));
-        assert_eq!(
-            redb.get_server_tools("server-a", true)
-                .await
-                .expect("old tool entries remain")
+        assert_eq!(unavailable_commit.revision, full_commit.revision + 1);
+        assert_eq!(partial_commit.revision, unavailable_commit.revision + 1);
+        let snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("load rebuilt snapshot")
+            .expect("rebuilt snapshot exists");
+        assert_eq!(snapshot.state, SnapshotState::Ready);
+        let state = |kind| {
+            snapshot
+                .kind_states
                 .iter()
-                .map(|item| item.name.as_str())
-                .collect::<Vec<_>>(),
-            ["old_tool"]
-        );
+                .find(|state| state.kind == kind)
+                .expect("kind state exists")
+        };
+        assert_eq!(state(CatalogKind::Tools).declaration, DeclarationState::Supported);
+        assert_eq!(state(CatalogKind::Tools).inventory, InventoryState::Complete);
+        assert_eq!(state(CatalogKind::Prompts).declaration, DeclarationState::Supported);
+        assert_eq!(state(CatalogKind::Prompts).inventory, InventoryState::Unknown);
+        assert_eq!(state(CatalogKind::Resources).declaration, DeclarationState::Unsupported);
+        assert_eq!(state(CatalogKind::Resources).inventory, InventoryState::Unknown);
         assert_eq!(
-            redb.get_server_resources("server-a", true)
-                .await
-                .expect("old resource entries remain")
-                .iter()
-                .map(|item| item.uri.as_str())
-                .collect::<Vec<_>>(),
-            ["file:///old"]
+            state(CatalogKind::ResourceTemplates).declaration,
+            DeclarationState::Unsupported
         );
-        assert_eq!(
-            redb.get_server_prompts("server-a", true)
-                .await
-                .expect("old prompt entries remain")
+        assert_eq!(state(CatalogKind::ResourceTemplates).inventory, InventoryState::Unknown);
+        assert_eq!(snapshot.records.len(), 4);
+        assert!(
+            snapshot
+                .records
                 .iter()
-                .map(|item| item.name.as_str())
-                .collect::<Vec<_>>(),
-            ["old_prompt"]
+                .any(|record| record.kind() == CatalogKind::Tools && record.upstream_key == "current_tool")
         );
-        assert_eq!(
-            redb.get_server_resource_templates("server-a", true)
-                .await
-                .expect("old resource template entries remain")
+        assert!(
+            snapshot
+                .records
                 .iter()
-                .map(|item| item.uri_template.as_str())
-                .collect::<Vec<_>>(),
-            ["file:///{old}"]
+                .any(|record| record.kind() == CatalogKind::Prompts && record.upstream_key == initial_prompt.name)
         );
 
-        for (table, column, expected) in [
-            ("server_tools", "tool_name", "old_tool"),
-            ("server_prompts", "prompt_name", "old_prompt"),
-            ("server_resources", "resource_uri", "file:///old"),
-            ("server_resource_templates", "uri_template", "file:///{old}"),
-        ] {
-            let query = format!("SELECT {column} FROM {table} WHERE server_id = 'server-a'");
-            let values: Vec<String> = sqlx::query_scalar(&query)
-                .fetch_all(&pool)
-                .await
-                .unwrap_or_else(|error| panic!("load {table} catalog rows: {error}"));
-            assert_eq!(values, [expected], "{table} catalog changed after partial failure");
-        }
-    }
-
-    #[tokio::test]
-    async fn partial_snapshot_requires_an_existing_shared_raw_baseline() {
-        let pool = capability_store_pool().await;
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("missing-partial-baseline.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
-
-        let error = store_dual_write_for_kinds(
-            &pool,
-            &redb,
-            "server-a",
-            "docs",
-            vec![cached_tool("new_tool")],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Some("2025-11-25".to_string()),
-            crate::core::pool::CapSyncFlags::TOOLS,
-        )
-        .await
-        .expect_err("partial refresh without a shared raw baseline must fail");
-
-        assert!(error.to_string().contains("shared raw baseline"));
-        let stored_tools = sqlx::query_scalar::<_, String>(
-            "SELECT tool_name FROM server_tools WHERE server_id = 'server-a' ORDER BY tool_name",
+        let shadow_prompts = sqlx::query_scalar::<_, String>(
+            "SELECT prompt_name FROM server_prompts WHERE server_id = 'server-a' ORDER BY prompt_name",
         )
         .fetch_all(&pool)
         .await
-        .expect("load tool catalog");
-        assert!(stored_tools.is_empty());
+        .expect("load prompt shadow index");
+        assert_eq!(shadow_prompts, vec![initial_prompt.name.clone()]);
+
+        let profile_prompts = sqlx::query_scalar::<_, String>(
+            "SELECT prompt_name FROM profile_prompt WHERE server_id = 'server-a' ORDER BY prompt_name",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("load prompt profile associations");
+        assert_eq!(profile_prompts, vec![initial_prompt.name]);
+    }
+
+    #[tokio::test]
+    async fn missing_initialize_fails_closed_instead_of_inferring_declarations_from_inventory() {
+        let pool = capability_store_pool().await;
+        insert_active_profile(&pool).await;
+        let (_initialize, tool, _resource, _prompt, _template) = protocol_fixture();
+
+        // A brand-new server with no prior baseline and no real protocol initialize result
+        // must fail the commit rather than fabricate a "Supported" declaration purely
+        // because the discovered tool inventory happens to be non-empty.
+        let error = commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            None,
+            vec![tool],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect_err("commit without initialize must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("did not provide a protocol initialize result"),
+            "unexpected error: {error}"
+        );
+
+        let snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("load catalog after failed commit");
+        assert!(
+            snapshot.is_none(),
+            "a failed commit must not leave a partial catalog snapshot behind"
+        );
     }
 
     #[tokio::test]
     async fn client_visible_tool_metadata_change_emits_catalog_changed() {
         let pool = capability_store_pool().await;
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("tool-metadata-change.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
         let mut initial = cached_tool("read");
         initial.description = Some("Initial description".to_string());
         store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "docs",
             vec![initial],
@@ -2185,7 +3038,6 @@ mod tests {
         updated.description = Some("Updated description".to_string());
         store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "docs",
             vec![updated],
@@ -2212,48 +3064,6 @@ mod tests {
         })
         .await;
         assert!(event.is_ok(), "metadata-only change must notify downstream clients");
-    }
-
-    #[tokio::test]
-    async fn post_commit_cache_failure_clears_refreshing_and_still_notifies_catalog_change() {
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("post-commit-cache-failure.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
-        redb.set_refreshing("server-a", std::time::Duration::from_secs(60))
-            .await;
-        let mut events = crate::core::events::EventBus::global().subscribe_async();
-
-        let error = finish_committed_snapshot(
-            &redb,
-            "server-a",
-            "docs",
-            true,
-            Err(crate::core::cache::CacheError::ConcurrentAccess),
-        )
-        .await
-        .expect_err("post-commit invalidation failure must remain visible");
-
-        assert!(error.to_string().contains("catalog committed"));
-        assert!(error.to_string().contains("cache convergence is pending"));
-        assert!(!redb.is_refreshing("server-a").await);
-        let event = tokio::time::timeout(std::time::Duration::from_secs(1), async move {
-            loop {
-                match events.recv().await {
-                    Ok(crate::core::events::Event::CapabilityCatalogChanged { server_id, .. })
-                        if server_id == "server-a" =>
-                    {
-                        break;
-                    }
-                    Ok(_) => continue,
-                    Err(error) => panic!("event receiver failed: {error}"),
-                }
-            }
-        })
-        .await;
-        assert!(event.is_ok(), "committed catalog change must still be announced");
     }
 
     #[tokio::test]
@@ -2352,35 +3162,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_authoritative_snapshot_clears_capability_flags() {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("connect in-memory database");
-        crate::config::server::init::initialize_server_tables(&pool)
-            .await
-            .expect("initialize server tables");
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type, capabilities) VALUES ('server-a', 'docs', 'stdio', 'tools,prompts,resources')",
-        )
-        .execute(&pool)
-        .await
-        .expect("insert server");
-
-        overwrite_capabilities(&pool, "server-a", false, false, false)
-            .await
-            .expect("persist empty authoritative support flags");
-
-        let capabilities: Option<String> =
-            sqlx::query_scalar("SELECT capabilities FROM server_config WHERE id = 'server-a'")
-                .fetch_one(&pool)
-                .await
-                .expect("load capability flags");
-        assert_eq!(capabilities, None);
-    }
-
-    #[tokio::test]
     async fn raw_snapshot_preserves_exact_values_for_every_capability_kind() {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -2401,16 +3182,9 @@ mod tests {
             .await
             .expect("insert server");
 
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("capability.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
         let now = Utc::now();
         store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "searxng",
             vec![CachedToolInfo {
@@ -2453,22 +3227,39 @@ mod tests {
         .await
         .expect("store raw snapshot");
 
-        let cached = redb
-            .get_server_data(&CacheQuery {
-                server_id: "server-a".to_string(),
-                freshness_level: FreshnessLevel::Cached,
-                include_disabled: true,
-                scope: CacheScope::shared_raw(),
-            })
+        let cached = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
             .await
             .expect("read raw snapshot")
-            .data
             .expect("raw snapshot exists");
-        assert_eq!(cached.tools[0].name, "get_searxng_status");
-        assert_eq!(cached.tools[0].unique_name.as_deref(), Some("searxng_get_status"));
-        assert_eq!(cached.prompts[0].name, "get_searxng_help");
-        assert_eq!(cached.resources[0].uri, "file:///searxng/status");
-        assert_eq!(cached.resource_templates[0].uri_template, "searxng://status/{id}");
+        let payloads = cached
+            .records
+            .into_iter()
+            .map(|record| record.payload)
+            .collect::<Vec<_>>();
+        assert!(
+            payloads
+                .iter()
+                .any(|payload| matches!(payload, CapabilityPayload::Tool(tool) if tool.name == "get_searxng_status"))
+        );
+        assert!(
+            payloads.iter().any(
+                |payload| matches!(payload, CapabilityPayload::Prompt(prompt) if prompt.name == "get_searxng_help")
+            )
+        );
+        assert!(payloads.iter().any(
+            |payload| matches!(payload, CapabilityPayload::Resource(resource) if resource.uri == "file:///searxng/status")
+        ));
+        assert!(payloads.iter().any(
+            |payload| matches!(payload, CapabilityPayload::ResourceTemplate(template) if template.uri_template == "searxng://status/{id}")
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT unique_name FROM server_tools WHERE server_id = 'server-a'")
+                .fetch_one(&pool)
+                .await
+                .expect("load tool projection"),
+            "searxng_get_status"
+        );
         let (unique_name, route_uri): (String, String) =
             sqlx::query_as("SELECT unique_name, route_uri FROM server_resource_templates WHERE server_id = 'server-a'")
                 .fetch_one(&pool)
@@ -2516,16 +3307,8 @@ mod tests {
         .execute(&pool)
         .await
         .expect("insert issued resource route");
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("empty-capability.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
-
         store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "docs",
             Vec::new(),
@@ -2697,17 +3480,10 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert server");
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("atomic-capability.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
         let now = Utc::now();
 
         store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "docs",
             vec![CachedToolInfo {
@@ -2738,7 +3514,6 @@ mod tests {
         };
         let error = store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "docs",
             vec![CachedToolInfo {
@@ -2789,16 +3564,9 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert server");
-        let cache_dir = TempDir::new().expect("create cache directory");
-        let redb = RedbCacheManager::new(
-            cache_dir.path().join("scoped-capability.redb"),
-            crate::core::cache::manager::CacheConfig::default(),
-        )
-        .expect("create cache manager");
         let now = Utc::now();
         store_dual_write(
             &pool,
-            &redb,
             "server-a",
             "docs",
             vec![CachedToolInfo {
@@ -2843,7 +3611,6 @@ mod tests {
 
         store_dual_write_for_kinds(
             &pool,
-            &redb,
             "server-a",
             "docs",
             Vec::new(),
@@ -2856,20 +3623,42 @@ mod tests {
         .await
         .expect("replace only the tool inventory");
 
-        let cached = redb
-            .get_server_data(&CacheQuery {
-                server_id: "server-a".to_string(),
-                freshness_level: FreshnessLevel::Cached,
-                include_disabled: true,
-                scope: CacheScope::shared_raw(),
-            })
+        let cached = SqliteCapabilityCatalog::new(pool)
+            .load_snapshot("server-a")
             .await
             .expect("read scoped snapshot")
-            .data
             .expect("scoped snapshot exists");
-        assert!(cached.tools.is_empty());
-        assert_eq!(cached.prompts.len(), 1);
-        assert_eq!(cached.resources.len(), 1);
-        assert_eq!(cached.resource_templates.len(), 1);
+        assert_eq!(
+            cached
+                .records
+                .iter()
+                .filter(|record| matches!(record.payload, CapabilityPayload::Tool(_)))
+                .count(),
+            0
+        );
+        assert_eq!(
+            cached
+                .records
+                .iter()
+                .filter(|record| matches!(record.payload, CapabilityPayload::Prompt(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            cached
+                .records
+                .iter()
+                .filter(|record| matches!(record.payload, CapabilityPayload::Resource(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            cached
+                .records
+                .iter()
+                .filter(|record| matches!(record.payload, CapabilityPayload::ResourceTemplate(_)))
+                .count(),
+            1
+        );
     }
 }

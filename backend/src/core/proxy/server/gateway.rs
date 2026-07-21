@@ -57,7 +57,6 @@ pub struct ProxyServer {
     pub audit_database: Option<Arc<AuditDatabase>>,
     pub audit_service: Option<Arc<AuditService>>,
     pub profile_service: Option<Arc<crate::core::profile::ProfileService>>,
-    pub redb_cache: Arc<crate::core::cache::RedbCacheManager>,
     pub paginator: crate::core::foundation::pagination::ProxyPaginator,
     pub builtin_services: Arc<BuiltinServiceRegistry>,
     pub cancellation_token: tokio_util::sync::CancellationToken,
@@ -81,7 +80,6 @@ impl Clone for ProxyServer {
             audit_database: self.audit_database.clone(),
             audit_service: self.audit_service.clone(),
             profile_service: self.profile_service.clone(),
-            redb_cache: self.redb_cache.clone(),
             paginator: self.paginator.clone(),
             builtin_services: self.builtin_services.clone(),
             cancellation_token: self.cancellation_token.clone(),
@@ -729,16 +727,12 @@ impl ProxyServer {
 
         let paginator = crate::core::foundation::pagination::ProxyPaginator::new();
         let builtin_services = Arc::new(BuiltinServiceRegistry::new());
-        let redb_cache = crate::core::cache::RedbCacheManager::global()
-            .map_err(|error| anyhow::anyhow!("Failed to initialize REDB cache manager: {error}"))?;
-
         Ok(Self {
             connection_pool,
             database: None,
             audit_database: None,
             audit_service: None,
             profile_service: None,
-            redb_cache,
             paginator,
             builtin_services,
             cancellation_token: tokio_util::sync::CancellationToken::new(),
@@ -853,6 +847,7 @@ impl ProxyServer {
         if let Some(database) = &self.database {
             let event_capability_manager = Arc::new(crate::core::events::EventDrivenCapabilityManager::new(
                 Arc::new(database.pool.clone()),
+                database.capability_cache.clone(),
                 self.connection_pool.clone(),
             ));
             handlers.set_event_capability_manager(event_capability_manager);
@@ -1892,7 +1887,6 @@ mod tests {
             "subscription_docs".to_string(),
             crate::common::server::ServerType::Stdio,
         );
-        upstream.capabilities = Some("resources".to_string());
         upstream.unify_direct_exposure_eligible = true;
         let server_id = crate::config::server::upsert_server(&pool, &upstream)
             .await
@@ -1933,6 +1927,7 @@ mod tests {
         let database = Arc::new(Database {
             pool: pool.clone(),
             path: temp_dir.path().join("test.db"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
         let mut server = ProxyServer::new(Arc::new(Config::default()));
         server.database = Some(database);
@@ -2194,6 +2189,7 @@ mod tests {
         let database = Arc::new(Database {
             pool: pool.clone(),
             path: temp_dir.path().join("test.db"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
 
         let mut server = ProxyServer::new(Arc::new(Config::default()));

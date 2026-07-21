@@ -878,7 +878,14 @@ impl UpstreamConnectionPool {
             )
             .await
             {
-                tracing::error!("Unified capability sync failed for server '{}': {}", server_id_clone, e);
+                tracing::error!(
+                    server_id = %server_id_clone,
+                    instance_id = %instance_id_clone,
+                    connection_generation = ?None::<u64>,
+                    kinds = ?flags,
+                    reason = %e,
+                    "Unified capability sync failed after recording terminal evidence"
+                );
             } else {
                 tracing::debug!("Unified capability sync completed for server '{}'", server_id_clone);
             }

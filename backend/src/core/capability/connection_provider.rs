@@ -1,0 +1,1201 @@
+//! Typed connection ownership boundary for capability discovery.
+
+use std::{
+    sync::{Arc, Weak},
+    time::Duration,
+};
+
+use async_trait::async_trait;
+use rmcp::service::{Peer, RoleClient};
+use tokio::sync::Mutex;
+
+use crate::config::database::Database;
+use crate::core::{
+    capability::{AffinityKey, ConnectionSelection, runtime::ListCtx},
+    foundation::types::ConnectionStatus,
+    pool::{UpstreamConnectionPool, ValidationReservationLease, ValidationReservationToken},
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OwnerSource {
+    Existing,
+    Fresh,
+    Validation,
+}
+
+pub(crate) struct CapabilityOwner {
+    pub server_id: String,
+    pub server_name: String,
+    pub instance_id: String,
+    pub connection_generation: Option<u64>,
+    pub peer: Peer<RoleClient>,
+    pub source: OwnerSource,
+    pub cleanup: Option<CapabilityOwnerCleanup>,
+}
+
+pub(crate) struct CapabilityOwnerCleanup {
+    reservation: ValidationReservationToken,
+    pool: Weak<Mutex<UpstreamConnectionPool>>,
+    armed: bool,
+}
+
+impl CapabilityOwnerCleanup {
+    fn from_lease(
+        lease: ValidationReservationLease,
+        pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    ) -> Self {
+        Self {
+            reservation: lease.into_persistent_token(),
+            pool: Arc::downgrade(pool),
+            armed: true,
+        }
+    }
+
+    async fn release(&mut self) -> Result<(), CapabilityOwnerError> {
+        let pool = self.pool.upgrade().ok_or_else(|| CapabilityOwnerError::Other {
+            reason: format!(
+                "capability pool disappeared before validation session '{}' could be released",
+                self.reservation.session_id()
+            ),
+        })?;
+        let shutdown = UpstreamConnectionPool::release_validation_reservation(&pool, &self.reservation).await;
+        self.armed = false;
+        shutdown.map_err(|error| CapabilityOwnerError::Other {
+            reason: format!(
+                "failed to release validation session '{}': {}",
+                self.reservation.session_id(),
+                error
+            ),
+        })
+    }
+}
+
+impl Drop for CapabilityOwnerCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(pool) = self.pool.upgrade() else {
+            return;
+        };
+        let reservation = self.reservation.clone();
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                session_id = reservation.session_id(),
+                "No Tokio runtime is available for best-effort capability owner cleanup"
+            );
+            return;
+        };
+        handle.spawn(async move {
+            if let Err(error) = UpstreamConnectionPool::release_validation_reservation(&pool, &reservation).await {
+                tracing::warn!(
+                    session_id = reservation.session_id(),
+                    error = %error,
+                    "Best-effort capability owner cleanup failed"
+                );
+            }
+        });
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiscoveryRetryDisposition {
+    FreshOnce,
+    DoNotRetry,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CapabilityOwnerError {
+    #[error("no capability owner is available: {reason}")]
+    Missing { reason: String },
+    #[error("capability owner is stale: {reason}")]
+    Stale { reason: String },
+    #[error("capability owner acquisition timed out after {timeout_ms} ms")]
+    Timeout { timeout_ms: u128 },
+    #[error("capability owner authentication failed: {reason}")]
+    Authentication { reason: String },
+    #[error("capability owner configuration is invalid: {reason}")]
+    Configuration { reason: String },
+    #[error("capability owner acquisition failed: {reason}")]
+    Other { reason: String },
+}
+
+impl CapabilityOwnerError {
+    pub(crate) const fn retry_disposition(&self) -> DiscoveryRetryDisposition {
+        match self {
+            Self::Missing { .. } | Self::Stale { .. } => DiscoveryRetryDisposition::FreshOnce,
+            Self::Timeout { .. } | Self::Authentication { .. } | Self::Configuration { .. } | Self::Other { .. } => {
+                DiscoveryRetryDisposition::DoNotRetry
+            }
+        }
+    }
+}
+
+#[async_trait]
+pub(crate) trait CapabilityConnectionProvider: Send + Sync {
+    async fn existing_owner(
+        &self,
+        ctx: &ListCtx,
+    ) -> Result<Option<CapabilityOwner>, CapabilityOwnerError>;
+    async fn fresh_owner(
+        &self,
+        ctx: &ListCtx,
+    ) -> Result<CapabilityOwner, CapabilityOwnerError>;
+    async fn release_owner(
+        &self,
+        owner: CapabilityOwner,
+    ) -> Result<(), CapabilityOwnerError>;
+}
+
+pub(crate) struct PoolCapabilityConnectionProvider {
+    pool: Arc<Mutex<UpstreamConnectionPool>>,
+    database: Arc<Database>,
+}
+
+impl PoolCapabilityConnectionProvider {
+    pub(crate) fn new(
+        pool: Arc<Mutex<UpstreamConnectionPool>>,
+        database: Arc<Database>,
+    ) -> Self {
+        Self { pool, database }
+    }
+
+    fn validation_session(ctx: &ListCtx) -> (String, bool) {
+        match ctx.validation_session.as_ref() {
+            Some(session_id) => (session_id.clone(), false),
+            None => (crate::generate_id!("capval"), true),
+        }
+    }
+
+    fn is_unauthorized_or_forbidden(status: reqwest::StatusCode) -> bool {
+        status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN
+    }
+
+    fn is_authentication_error(error: &anyhow::Error) -> bool {
+        if error
+            .downcast_ref::<reqwest::Error>()
+            .and_then(reqwest::Error::status)
+            .is_some_and(Self::is_unauthorized_or_forbidden)
+        {
+            return true;
+        }
+
+        let Some(rmcp::service::ClientInitializeError::TransportError { error, .. }) =
+            error.downcast_ref::<rmcp::service::ClientInitializeError>()
+        else {
+            return false;
+        };
+        let Some(streamable) = error
+            .error
+            .downcast_ref::<rmcp::transport::streamable_http_client::StreamableHttpError<reqwest::Error>>()
+        else {
+            return false;
+        };
+
+        match streamable {
+            rmcp::transport::streamable_http_client::StreamableHttpError::AuthRequired(_)
+            | rmcp::transport::streamable_http_client::StreamableHttpError::InsufficientScope(_) => true,
+            rmcp::transport::streamable_http_client::StreamableHttpError::Client(client_error) => {
+                client_error.status().is_some_and(Self::is_unauthorized_or_forbidden)
+            }
+            _ => false,
+        }
+    }
+
+    fn classify_acquisition_error(error: anyhow::Error) -> CapabilityOwnerError {
+        if Self::is_authentication_error(&error) {
+            CapabilityOwnerError::Authentication {
+                reason: error.to_string(),
+            }
+        } else {
+            CapabilityOwnerError::Other {
+                reason: error.to_string(),
+            }
+        }
+    }
+
+    async fn canonical_server_name(
+        &self,
+        server_id: &str,
+    ) -> Result<String, CapabilityOwnerError> {
+        let server = crate::config::server::get_server_by_id(&self.database.pool, server_id)
+            .await
+            .map_err(|error| CapabilityOwnerError::Other {
+                reason: format!("failed to load server '{server_id}' for capability ownership: {error}"),
+            })?
+            .ok_or_else(|| CapabilityOwnerError::Configuration {
+                reason: format!("server '{server_id}' is missing from the canonical database"),
+            })?;
+        crate::config::server::validate_server_namespace(&server.name).map_err(|error| {
+            CapabilityOwnerError::Configuration {
+                reason: format!("server '{server_id}' has an invalid canonical namespace: {error}"),
+            }
+        })?;
+        Ok(server.name)
+    }
+
+    fn owner_from_validation_session(
+        pool: &UpstreamConnectionPool,
+        ctx: &ListCtx,
+        reservation: &ValidationReservationToken,
+        source: OwnerSource,
+        cleanup: Option<CapabilityOwnerCleanup>,
+    ) -> Result<CapabilityOwner, CapabilityOwnerError> {
+        let connection = pool
+            .validation_sessions
+            .get(reservation.session_id())
+            .and_then(|servers| servers.get(&ctx.server_id))
+            .ok_or_else(|| CapabilityOwnerError::Missing {
+                reason: format!(
+                    "validation session '{}' has no owner for server '{}'",
+                    reservation.session_id(),
+                    ctx.server_id
+                ),
+            })?;
+        if !matches!(connection.status, ConnectionStatus::Ready) {
+            return Err(CapabilityOwnerError::Stale {
+                reason: format!(
+                    "validation owner '{}' for server '{}' is not ready",
+                    connection.id, ctx.server_id
+                ),
+            });
+        }
+        let service = connection.service.as_ref().ok_or_else(|| CapabilityOwnerError::Stale {
+            reason: format!(
+                "validation owner '{}' for server '{}' has no RunningService",
+                connection.id, ctx.server_id
+            ),
+        })?;
+        if service.is_closed() {
+            return Err(CapabilityOwnerError::Stale {
+                reason: format!(
+                    "validation owner '{}' for server '{}' is closed",
+                    connection.id, ctx.server_id
+                ),
+            });
+        }
+
+        Ok(CapabilityOwner {
+            server_id: ctx.server_id.clone(),
+            server_name: connection.server_name.clone(),
+            instance_id: connection.id.clone(),
+            connection_generation: Some(reservation.generation()),
+            peer: service.peer().clone(),
+            source,
+            cleanup,
+        })
+    }
+
+    async fn create_fresh_owner(
+        &self,
+        ctx: &ListCtx,
+        session_id: &str,
+        owns_session: bool,
+    ) -> Result<CapabilityOwner, CapabilityOwnerError> {
+        let lease = UpstreamConnectionPool::ensure_validation_instance(
+            &self.pool,
+            &ctx.server_id,
+            session_id,
+            Duration::from_secs(300),
+        )
+        .await
+        .map_err(Self::classify_acquisition_error)?;
+
+        let reservation = lease.token().clone();
+        let cleanup = if owns_session {
+            Some(CapabilityOwnerCleanup::from_lease(lease, &self.pool))
+        } else {
+            None
+        };
+        let pool = self.pool.lock().await;
+
+        let source = if ctx.validation_session.is_some() {
+            OwnerSource::Validation
+        } else {
+            OwnerSource::Fresh
+        };
+        Self::owner_from_validation_session(&pool, ctx, &reservation, source, cleanup)
+    }
+}
+
+#[async_trait]
+impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
+    async fn existing_owner(
+        &self,
+        ctx: &ListCtx,
+    ) -> Result<Option<CapabilityOwner>, CapabilityOwnerError> {
+        let server_name = self.canonical_server_name(&ctx.server_id).await?;
+        let mut pool = self.pool.lock().await;
+        if let Some(session_id) = ctx.validation_session.as_ref() {
+            let Some(reservation) = pool.current_validation_token(session_id) else {
+                return Ok(None);
+            };
+            let observation = pool.validation_owner_observation(&reservation, &ctx.server_id);
+            let owner = Self::owner_from_validation_session(&pool, ctx, &reservation, OwnerSource::Validation, None);
+            return match owner {
+                Ok(mut owner) => {
+                    owner.server_name = server_name;
+                    Ok(Some(owner))
+                }
+                Err(CapabilityOwnerError::Missing { .. }) => Ok(None),
+                Err(error @ CapabilityOwnerError::Stale { .. }) => {
+                    let observation = observation.expect("stale validation observations retain publication identity");
+                    let detached = pool.detach_validation_connection_if_matches(
+                        &reservation,
+                        &ctx.server_id,
+                        observation.owner_epoch,
+                    );
+                    drop(pool);
+                    if let Some(detached) = detached {
+                        UpstreamConnectionPool::shutdown_detached_validation_connection(
+                            &reservation,
+                            &ctx.server_id,
+                            detached,
+                        )
+                        .await
+                        .map_err(|shutdown| CapabilityOwnerError::Other {
+                            reason: format!(
+                                "failed to detach stale validation owner '{}' for server '{}': {shutdown}",
+                                reservation.session_id(),
+                                ctx.server_id
+                            ),
+                        })?;
+                    }
+                    Err(error)
+                }
+                Err(error) => Err(error),
+            };
+        }
+
+        let selection = ctx.connection_selection.clone().unwrap_or_else(|| ConnectionSelection {
+            server_id: ctx.server_id.clone(),
+            affinity_key: AffinityKey::Default,
+        });
+        if selection.server_id != ctx.server_id {
+            return Err(CapabilityOwnerError::Configuration {
+                reason: format!(
+                    "connection selection targets server '{}' instead of '{}'",
+                    selection.server_id, ctx.server_id
+                ),
+            });
+        }
+        let Some(instance_id) =
+            pool.select_ready_instance_id(&selection)
+                .map_err(|error| CapabilityOwnerError::Other {
+                    reason: error.to_string(),
+                })?
+        else {
+            return Ok(None);
+        };
+        let closed_or_peer = {
+            let connection =
+                pool.get_instance(&ctx.server_id, &instance_id)
+                    .map_err(|error| CapabilityOwnerError::Stale {
+                        reason: error.to_string(),
+                    })?;
+            if !matches!(connection.status, ConnectionStatus::Ready) {
+                return Err(CapabilityOwnerError::Stale {
+                    reason: format!("selected owner '{}' is not ready", instance_id),
+                });
+            }
+            let service = connection.service.as_ref().ok_or_else(|| CapabilityOwnerError::Stale {
+                reason: format!("selected owner '{}' has no RunningService", instance_id),
+            })?;
+            if service.is_closed() {
+                Err(format!("selected owner '{instance_id}' is closed"))
+            } else {
+                Ok(service.peer().clone())
+            }
+        };
+        let peer = match closed_or_peer {
+            Ok(peer) => peer,
+            Err(reason) => {
+                pool.register_failure(
+                    &ctx.server_id,
+                    crate::core::pool::FailureKind::RuntimeGone,
+                    Some(reason.clone()),
+                );
+                if let Ok(connection) = pool.get_instance_mut(&ctx.server_id, &instance_id) {
+                    if let Some(service) = connection.service.take() {
+                        service.cancellation_token().cancel();
+                    }
+                    connection.update_disconnected();
+                }
+                if let Some(tokens) = pool.cancellation_tokens.get_mut(&ctx.server_id) {
+                    if let Some(token) = tokens.remove(&instance_id) {
+                        token.cancel();
+                    }
+                }
+                return Err(CapabilityOwnerError::Stale { reason });
+            }
+        };
+        pool.mark_instance_activity(&ctx.server_id, &instance_id);
+
+        Ok(Some(CapabilityOwner {
+            server_id: ctx.server_id.clone(),
+            server_name,
+            instance_id,
+            connection_generation: None,
+            peer,
+            source: OwnerSource::Existing,
+            cleanup: None,
+        }))
+    }
+
+    async fn fresh_owner(
+        &self,
+        ctx: &ListCtx,
+    ) -> Result<CapabilityOwner, CapabilityOwnerError> {
+        let (session_id, owns_session) = Self::validation_session(ctx);
+        let acquisition = self.create_fresh_owner(ctx, &session_id, owns_session);
+        match ctx.timeout {
+            Some(timeout) => match tokio::time::timeout(timeout, acquisition).await {
+                Ok(result) => result,
+                Err(_) => Err(CapabilityOwnerError::Timeout {
+                    timeout_ms: timeout.as_millis(),
+                }),
+            },
+            None => acquisition.await,
+        }
+    }
+
+    async fn release_owner(
+        &self,
+        mut owner: CapabilityOwner,
+    ) -> Result<(), CapabilityOwnerError> {
+        let Some(mut cleanup) = owner.cleanup.take() else {
+            return Ok(());
+        };
+        cleanup.release().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+
+    use rmcp::{ServerHandler, ServiceExt};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tokio::{
+        io::AsyncReadExt,
+        net::TcpListener,
+        sync::{Barrier, Mutex, Notify},
+    };
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    use super::{
+        CapabilityConnectionProvider, CapabilityOwnerCleanup, CapabilityOwnerError, DiscoveryRetryDisposition,
+        OwnerSource, PoolCapabilityConnectionProvider,
+    };
+    use crate::config::database::Database;
+    use crate::core::{
+        capability::{
+            AffinityKey, CapabilityType, ConnectionSelection,
+            runtime::{ListCtx, NameDomain},
+        },
+        foundation::types::ConnectionStatus,
+        models::Config,
+        pool::{UpstreamConnection, UpstreamConnectionPool},
+        transport::client::UpstreamClientHandler,
+    };
+
+    #[derive(Clone, Default)]
+    struct TestServer;
+
+    impl ServerHandler for TestServer {}
+
+    fn list_ctx(
+        validation_session: Option<&str>,
+        connection_selection: Option<ConnectionSelection>,
+    ) -> ListCtx {
+        ListCtx {
+            capability: CapabilityType::Tools,
+            server_id: "server-1".to_string(),
+            refresh: None,
+            timeout: Some(Duration::from_secs(1)),
+            validation_session: validation_session.map(str::to_string),
+            runtime_identity: None,
+            connection_selection,
+            visibility_snapshot: None,
+            name_domain: NameDomain::Upstream,
+        }
+    }
+
+    fn empty_pool() -> UpstreamConnectionPool {
+        UpstreamConnectionPool::new(
+            Arc::new(Config {
+                mcp_servers: HashMap::new(),
+                pagination: None,
+            }),
+            None,
+        )
+    }
+
+    async fn test_database() -> Arc<Database> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        Arc::new(Database {
+            pool,
+            path: PathBuf::new(),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        })
+    }
+
+    async fn connected_instance() -> (UpstreamConnection, tokio::task::JoinHandle<anyhow::Result<()>>) {
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let server_handle = tokio::spawn(async move {
+            let service = TestServer.serve(server_transport).await?;
+            service.waiting().await?;
+            Ok(())
+        });
+        let service = UpstreamClientHandler::new("selected-server".to_string())
+            .serve(client_transport)
+            .await
+            .expect("client should initialize");
+        let mut connection = UpstreamConnection::new("selected-server".to_string());
+        connection.update_connected(service, Vec::new(), Some(rmcp::model::ServerCapabilities::default()));
+        (connection, server_handle)
+    }
+
+    #[tokio::test]
+    async fn dropping_owned_cleanup_schedules_best_effort_session_destruction() {
+        let pool = Arc::new(Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "drop-session", Duration::from_secs(60)).await;
+        let cleanup = CapabilityOwnerCleanup::from_lease(lease, &pool);
+        drop(cleanup);
+        tokio::task::yield_now().await;
+
+        let guard = pool.lock().await;
+        assert!(!guard.validation_sessions.contains_key("drop-session"));
+        assert!(!guard.validation_expirations.contains_key("drop-session"));
+    }
+
+    #[tokio::test]
+    async fn successful_release_shuts_down_the_real_validation_owner() {
+        let pool = Arc::new(Mutex::new(empty_pool()));
+        let (connection, server_handle) = connected_instance().await;
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "release-session", Duration::from_secs(60)).await;
+        {
+            let mut guard = pool.lock().await;
+            guard
+                .validation_sessions
+                .entry("release-session".to_string())
+                .or_default()
+                .insert("server-1".to_string(), connection);
+            guard.validation_expirations.insert(
+                "release-session".to_string(),
+                std::time::Instant::now() + Duration::from_secs(60),
+            );
+        }
+
+        let mut cleanup = CapabilityOwnerCleanup::from_lease(lease, &pool);
+        cleanup.release().await.expect("release validation owner");
+
+        let guard = pool.lock().await;
+        assert!(!guard.validation_sessions.contains_key("release-session"));
+        assert!(!guard.validation_expirations.contains_key("release-session"));
+        drop(guard);
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[tokio::test]
+    async fn aborting_release_while_the_pool_is_contended_still_cleans_the_owner() {
+        let pool = Arc::new(Mutex::new(empty_pool()));
+        let (connection, server_handle) = connected_instance().await;
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "contended-session", Duration::from_secs(60))
+                .await;
+        {
+            let mut guard = pool.lock().await;
+            guard
+                .validation_sessions
+                .entry("contended-session".to_string())
+                .or_default()
+                .insert("server-1".to_string(), connection);
+            guard.validation_expirations.insert(
+                "contended-session".to_string(),
+                std::time::Instant::now() + Duration::from_secs(60),
+            );
+        }
+
+        let guard = pool.lock().await;
+        let barrier = Arc::new(Barrier::new(2));
+        let task_pool = pool.clone();
+        let task_barrier = barrier.clone();
+        let release = tokio::spawn(async move {
+            let mut cleanup = CapabilityOwnerCleanup::from_lease(lease, &task_pool);
+            task_barrier.wait().await;
+            cleanup.release().await
+        });
+        barrier.wait().await;
+        tokio::task::yield_now().await;
+        release.abort();
+        assert!(release.await.expect_err("release should be aborted").is_cancelled());
+        drop(guard);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !pool.lock().await.validation_sessions.contains_key("contended-session") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("drop fallback should detach the validation session");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[tokio::test]
+    async fn slow_validation_initialization_does_not_hold_the_pool_mutex() {
+        let database = test_database().await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind fixture");
+        let address = listener.local_addr().expect("fixture address");
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, url) VALUES (?, 'slow_fixture', 'streamable_http', ?)",
+        )
+        .bind("server-1")
+        .bind(format!("http://{address}/mcp"))
+        .execute(&database.pool)
+        .await
+        .expect("insert HTTP server record");
+        let request_seen = Arc::new(Notify::new());
+        let server_seen = request_seen.clone();
+        let fixture = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept validation connection");
+            let mut request = [0_u8; 4096];
+            let read = stream.read(&mut request).await.expect("read initialize request");
+            assert!(read > 0);
+            server_seen.notify_one();
+            std::future::pending::<()>().await;
+        });
+
+        let mut raw_pool = empty_pool();
+        raw_pool.database = Some(database);
+        let pool = Arc::new(Mutex::new(raw_pool));
+        let task_pool = pool.clone();
+        let acquisition = tokio::spawn(async move {
+            UpstreamConnectionPool::ensure_validation_instance(
+                &task_pool,
+                "server-1",
+                "slow-session",
+                Duration::from_secs(60),
+            )
+            .await
+        });
+        request_seen.notified().await;
+
+        let guard = tokio::time::timeout(Duration::from_millis(100), pool.lock())
+            .await
+            .expect("pool mutex must remain available during initialize");
+        drop(guard);
+        acquisition.abort();
+        match acquisition.await {
+            Err(error) => assert!(error.is_cancelled()),
+            Ok(_) => panic!("acquisition should be aborted"),
+        }
+        assert!(
+            !pool
+                .lock()
+                .await
+                .validation_sessions
+                .get("slow-session")
+                .is_some_and(|servers| servers.contains_key("server-1")),
+            "an aborted initialization must not publish an unobserved owner"
+        );
+        fixture.abort();
+        assert!(fixture.await.expect_err("fixture should be stopped").is_cancelled());
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if !pool.lock().await.validation_sessions.contains_key("slow-session") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("aborted acquisition lease should clean its validation reservation");
+    }
+
+    #[tokio::test]
+    async fn closing_reservation_cancels_slow_validation_ensure() {
+        let database = test_database().await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind fixture");
+        let address = listener.local_addr().expect("fixture address");
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, url) VALUES (?, 'slow_cancel_fixture', 'streamable_http', ?)",
+        )
+        .bind("server-1")
+        .bind(format!("http://{address}/mcp"))
+        .execute(&database.pool)
+        .await
+        .expect("insert HTTP server record");
+        let request_seen = Arc::new(Notify::new());
+        let server_seen = request_seen.clone();
+        let fixture = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept validation connection");
+            let mut request = [0_u8; 4096];
+            let read = stream.read(&mut request).await.expect("read initialize request");
+            assert!(read > 0);
+            server_seen.notify_one();
+            std::future::pending::<()>().await;
+        });
+
+        let mut raw_pool = empty_pool();
+        raw_pool.database = Some(database);
+        let pool = Arc::new(Mutex::new(raw_pool));
+        let creator =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "slow-close-session", Duration::from_secs(60))
+                .await;
+        let token = creator.token().clone();
+        let task_pool = pool.clone();
+        let acquisition = tokio::spawn(async move {
+            UpstreamConnectionPool::ensure_validation_instance(
+                &task_pool,
+                "server-1",
+                "slow-close-session",
+                Duration::from_secs(60),
+            )
+            .await
+        });
+        request_seen.notified().await;
+
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release slow reservation");
+        let result = tokio::time::timeout(Duration::from_secs(1), acquisition)
+            .await
+            .expect("release must cancel slow ensure")
+            .expect("ensure task should join");
+        assert!(result.is_err(), "cancelled ensure must not publish");
+        assert!(!pool.lock().await.validation_sessions.contains_key("slow-close-session"));
+        drop(creator);
+        fixture.abort();
+        assert!(fixture.await.expect_err("fixture should stop").is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn fresh_http_initialize_auth_failure_remains_typed_and_does_not_retry() {
+        for status in [401, 403] {
+            let upstream = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(status).insert_header(
+                    "www-authenticate",
+                    "Bearer resource_metadata=\"https://example.test/.well-known/oauth-protected-resource\"",
+                ))
+                .mount(&upstream)
+                .await;
+            let database = test_database().await;
+            sqlx::query(
+                "INSERT INTO server_config (id, name, server_type, url) VALUES ('server-1', 'auth_fixture', 'streamable_http', ?)",
+            )
+            .bind(upstream.uri())
+            .execute(&database.pool)
+            .await
+            .expect("insert HTTP auth fixture");
+            let mut raw_pool = empty_pool();
+            raw_pool.database = Some(database.clone());
+            let provider = PoolCapabilityConnectionProvider::new(Arc::new(Mutex::new(raw_pool)), database);
+
+            let error = match provider.fresh_owner(&list_ctx(None, None)).await {
+                Err(error) => error,
+                Ok(_) => panic!("{status} initialize must fail acquisition"),
+            };
+
+            assert!(matches!(error, CapabilityOwnerError::Authentication { .. }));
+            assert_eq!(error.retry_disposition(), DiscoveryRetryDisposition::DoNotRetry);
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_validation_owner_is_not_classified_as_existing_production() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server record");
+        let pool = Arc::new(Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "inspector-session", Duration::from_secs(60))
+                .await;
+        let token = lease.into_persistent_token();
+        let (connection, server_handle) = connected_instance().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish validation owner");
+        let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database);
+
+        let owner = provider
+            .existing_owner(&list_ctx(Some(token.session_id()), None))
+            .await
+            .expect("owner lookup")
+            .expect("validation owner");
+
+        assert_eq!(owner.source, OwnerSource::Validation);
+        assert_eq!(owner.connection_generation, Some(token.generation()));
+        drop(owner);
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release validation owner");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[tokio::test]
+    async fn closed_validation_owner_is_detached_before_fresh_replacement() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server record");
+        let pool = Arc::new(Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "stale-session", Duration::from_secs(60)).await;
+        let token = lease.into_persistent_token();
+        let (connection, stale_server) = connected_instance().await;
+        let service = connection.service.as_ref().expect("stale service").clone();
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish stale owner");
+        service.cancellation_token().cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !service.is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("validation service should close");
+        drop(service);
+        let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database);
+        let ctx = list_ctx(Some(token.session_id()), None);
+
+        let error = match provider.existing_owner(&ctx).await {
+            Err(error) => error,
+            Ok(_) => panic!("closed validation owner should be typed stale"),
+        };
+        assert!(matches!(error, CapabilityOwnerError::Stale { .. }));
+        assert!(
+            !pool
+                .lock()
+                .await
+                .validation_sessions
+                .get(token.session_id())
+                .is_some_and(|servers| servers.contains_key("server-1"))
+        );
+        stale_server
+            .await
+            .expect("stale server task should join")
+            .expect("stale server should stop");
+
+        let (replacement, replacement_server) = connected_instance().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            replacement,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish replacement");
+        let owner = provider
+            .existing_owner(&ctx)
+            .await
+            .expect("replacement lookup")
+            .expect("replacement owner");
+        assert_eq!(owner.connection_generation, Some(token.generation()));
+        assert_eq!(owner.source, OwnerSource::Validation);
+        drop(owner);
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release replacement");
+        replacement_server
+            .await
+            .expect("replacement server task should join")
+            .expect("replacement should stop");
+    }
+
+    #[tokio::test]
+    async fn temporary_guard_keeps_cleanup_authority_after_fresh_joiner() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server record");
+        let pool = Arc::new(Mutex::new(empty_pool()));
+        let guard =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "temporary-stale", Duration::from_secs(60)).await;
+        let token = guard.token().clone();
+        let (stale_connection, stale_server) = connected_instance().await;
+        let stale_service = stale_connection.service.as_ref().expect("stale service").clone();
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            stale_connection,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish stale owner");
+        stale_service.cancellation_token().cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !stale_service.is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("validation service should close");
+        drop(stale_service);
+        let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database);
+        let ctx = list_ctx(Some(token.session_id()), None);
+
+        assert!(matches!(
+            provider.existing_owner(&ctx).await,
+            Err(CapabilityOwnerError::Stale { .. })
+        ));
+        stale_server
+            .await
+            .expect("stale server task should join")
+            .expect("stale server should stop");
+        let (replacement, replacement_server) = connected_instance().await;
+        UpstreamConnectionPool::publish_validation_connection(
+            &pool,
+            &token,
+            "server-1",
+            replacement,
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("publish replacement");
+
+        let owner = provider.fresh_owner(&ctx).await.expect("join replacement owner");
+        assert!(owner.cleanup.is_none());
+        drop(owner);
+        drop(guard);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while pool.lock().await.validation_sessions.contains_key(token.session_id()) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("temporary guard cancellation must retain cleanup authority");
+        {
+            let pool = pool.lock().await;
+            assert!(!pool.validation_expirations.contains_key(token.session_id()));
+        }
+        replacement_server
+            .await
+            .expect("replacement server task should join")
+            .expect("replacement should stop");
+    }
+
+    #[tokio::test]
+    async fn existing_owner_respects_connection_selection() {
+        let database = test_database().await;
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'selected_server', 'stdio')",
+        )
+        .execute(&database.pool)
+        .await
+        .expect("insert server record");
+        let (mut connection, server_handle) = connected_instance().await;
+        connection.id = "selected-instance".to_string();
+        connection.last_activity -= Duration::from_secs(30);
+        let previous_activity = connection.last_activity;
+        let mut pool = empty_pool();
+        pool.database = Some(database.clone());
+        pool.client_bound_connections
+            .entry(("server-1".to_string(), "client-1".to_string()))
+            .or_default()
+            .insert(connection.id.clone(), connection);
+        let pool = Arc::new(Mutex::new(pool));
+        let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database);
+        let ctx = list_ctx(
+            None,
+            Some(ConnectionSelection {
+                server_id: "server-1".to_string(),
+                affinity_key: AffinityKey::PerClient("client-1".to_string()),
+            }),
+        );
+
+        let owner = provider
+            .existing_owner(&ctx)
+            .await
+            .expect("owner lookup should succeed")
+            .expect("selected owner should exist");
+
+        assert_eq!(owner.instance_id, "selected-instance");
+        assert_eq!(owner.server_name, "selected_server");
+        assert_eq!(owner.source, OwnerSource::Existing);
+        assert_eq!(owner.connection_generation, None);
+        assert!(owner.cleanup.is_none());
+        drop(owner);
+
+        let mut guard = pool.lock().await;
+        let mut connection = guard
+            .client_bound_connections
+            .get_mut(&("server-1".to_string(), "client-1".to_string()))
+            .expect("bound server map")
+            .remove("selected-instance")
+            .expect("selected connection");
+        assert!(connection.last_activity > previous_activity);
+        let service = connection.service.take().expect("service owner");
+        drop(guard);
+        Arc::try_unwrap(service)
+            .expect("test should retain the only RunningService owner")
+            .cancel()
+            .await
+            .expect("client should cancel");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[tokio::test]
+    async fn existing_owner_uses_the_canonical_database_namespace() {
+        let database = test_database().await;
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'inspector_fixture', 'stdio')",
+        )
+        .execute(&database.pool)
+        .await
+        .expect("insert server record");
+        let (mut connection, server_handle) = connected_instance().await;
+        connection.id = "selected-instance".to_string();
+        connection.server_name = "SERVmixedCaseId".to_string();
+        let mut pool = empty_pool();
+        pool.database = Some(database.clone());
+        pool.connections
+            .entry("server-1".to_string())
+            .or_default()
+            .insert(connection.id.clone(), connection);
+        let pool = Arc::new(Mutex::new(pool));
+        let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database);
+
+        let owner = provider
+            .existing_owner(&list_ctx(None, None))
+            .await
+            .expect("owner lookup should succeed")
+            .expect("existing owner should exist");
+
+        assert_eq!(owner.server_name, "inspector_fixture");
+        drop(owner);
+        let mut guard = pool.lock().await;
+        let mut connection = guard
+            .connections
+            .get_mut("server-1")
+            .expect("server map")
+            .remove("selected-instance")
+            .expect("selected connection");
+        let service = connection.service.take().expect("service owner");
+        drop(guard);
+        Arc::try_unwrap(service)
+            .expect("test should retain the only RunningService owner")
+            .cancel()
+            .await
+            .expect("client should cancel");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[tokio::test]
+    async fn closed_ready_owner_is_quarantined_before_the_next_selection() {
+        let database = test_database().await;
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
+            .execute(&database.pool)
+            .await
+            .expect("insert server record");
+        let (mut connection, server_handle) = connected_instance().await;
+        connection.id = "closed-instance".to_string();
+        let service = connection.service.as_ref().expect("service owner").clone();
+        service.cancellation_token().cancel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !service.is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("service should close");
+        drop(service);
+        let mut raw_pool = empty_pool();
+        raw_pool.database = Some(database.clone());
+        raw_pool
+            .connections
+            .entry("server-1".to_string())
+            .or_default()
+            .insert(connection.id.clone(), connection);
+        let pool = Arc::new(Mutex::new(raw_pool));
+        let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database);
+        let ctx = list_ctx(None, None);
+
+        let first = match provider.existing_owner(&ctx).await {
+            Err(error) => error,
+            Ok(_) => panic!("closed Ready owner should be typed stale"),
+        };
+        assert!(matches!(first, CapabilityOwnerError::Stale { .. }));
+        assert!(provider.existing_owner(&ctx).await.expect("second selection").is_none());
+
+        let guard = pool.lock().await;
+        let failure = guard.failure_states.get("server-1").expect("runtime failure state");
+        assert_eq!(failure.last_kind, Some(crate::core::pool::FailureKind::RuntimeGone));
+        let connection = guard
+            .connections
+            .get("server-1")
+            .and_then(|connections| connections.get("closed-instance"))
+            .expect("quarantined connection remains diagnosable");
+        assert!(connection.service.is_none());
+        assert!(!matches!(connection.status, ConnectionStatus::Ready));
+        drop(guard);
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[test]
+    fn ordinary_fresh_sessions_are_unique_while_explicit_sessions_are_preserved() {
+        let ordinary = list_ctx(None, None);
+        let (first, first_owned) = PoolCapabilityConnectionProvider::validation_session(&ordinary);
+        let (second, second_owned) = PoolCapabilityConnectionProvider::validation_session(&ordinary);
+
+        assert_ne!(first, second);
+        assert!(first_owned);
+        assert!(second_owned);
+
+        let explicit = list_ctx(Some("inspector-session"), None);
+        let (session, owned) = PoolCapabilityConnectionProvider::validation_session(&explicit);
+        assert_eq!(session, "inspector-session");
+        assert!(!owned);
+    }
+}

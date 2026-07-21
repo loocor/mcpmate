@@ -7,7 +7,7 @@ use sqlx::{Pool, Sqlite, Transaction};
 
 use crate::{
     config::models::ServerTool,
-    core::cache::CachedToolInfo,
+    core::capability::index::CachedToolInfo,
     core::capability::naming::{
         NamingKind, begin_naming_transaction, reconcile_external_identifier_additions, reconcile_external_identifiers,
     },

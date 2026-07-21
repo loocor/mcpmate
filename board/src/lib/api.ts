@@ -9,6 +9,7 @@ import type {
 	CapabilitiesMetricsStats,
 	CapabilitiesStatsResponse,
 	CapabilitiesStorageStats,
+	CapabilityKindSummary,
 	ClearCacheResponse,
 	ClientBackupActionResp,
 	ClientBackupListResp,
@@ -644,64 +645,62 @@ export const serializeMetaForApi = (
 	return Object.keys(payload).length > 0 ? payload : undefined;
 };
 
-const toBoolean = (value: unknown): boolean => {
-	if (typeof value === "boolean") return value;
-	if (typeof value === "number") return value !== 0;
-	if (typeof value === "string") {
-		const normalized = value.trim().toLowerCase();
-		if (!normalized) return false;
-		return ["true", "yes", "1", "y", "on"].includes(normalized);
-	}
-	return false;
-};
-
-const toCount = (value: unknown): number => {
-	if (typeof value === "number" && Number.isFinite(value)) {
-		return Math.max(0, Math.round(value));
-	}
-	if (typeof value === "string") {
-		const parsed = Number(value);
-		if (Number.isFinite(parsed)) {
-			return Math.max(0, Math.round(parsed));
-		}
-	}
-	return 0;
-};
-
 const normalizeCapabilitySummary = (
 	capability: unknown,
 ): ServerCapabilitySummary | undefined => {
-	if (!capability || typeof capability !== "object") return undefined;
+	if (capability === null || capability === undefined) return undefined;
+	if (typeof capability !== "object") {
+		throw new Error("Invalid server capability summary");
+	}
 
 	const source = capability as Record<string, unknown>;
+	const snapshotStates = new Set(["ready", "invalidated", "unavailable"]);
+	if (!snapshotStates.has(String(source.snapshotState))) {
+		throw new Error("Invalid server capability snapshot state");
+	}
+	if (!Number.isSafeInteger(source.revision) || (source.revision as number) < 0) {
+		throw new Error("Invalid server capability revision");
+	}
+	if (typeof source.observedAt !== "string" || source.observedAt.length === 0) {
+		throw new Error("Invalid server capability observation time");
+	}
+
+	const normalizeKind = (key: string): CapabilityKindSummary => {
+		const value = source[key];
+		if (!value || typeof value !== "object") {
+			throw new Error(`Invalid ${key} capability summary`);
+		}
+		const kind = value as Record<string, unknown>;
+		if (!["unknown", "unsupported", "supported"].includes(String(kind.declaration))) {
+			throw new Error(`Invalid ${key} capability declaration`);
+		}
+		if (!["unknown", "complete", "failed"].includes(String(kind.inventory))) {
+			throw new Error(`Invalid ${key} capability inventory`);
+		}
+		if (!Number.isSafeInteger(kind.currentCount) || (kind.currentCount as number) < 0) {
+			throw new Error(`Invalid ${key} capability count`);
+		}
+		if (typeof kind.currentAvailable !== "boolean") {
+			throw new Error(`Invalid ${key} capability availability`);
+		}
+		if (
+			kind.lastError !== undefined &&
+			kind.lastError !== null &&
+			typeof kind.lastError !== "string"
+		) {
+			throw new Error(`Invalid ${key} capability error`);
+		}
+		return kind as unknown as CapabilityKindSummary;
+	};
+
 	return {
-		supports_tools: toBoolean(
-			source.supports_tools ?? source.supportsTools ?? source.tools_supported,
-		),
-		supports_prompts: toBoolean(
-			source.supports_prompts ??
-				source.supportsPrompts ??
-				source.prompts_supported,
-		),
-		supports_resources: toBoolean(
-			source.supports_resources ??
-				source.supportsResources ??
-				source.resources_supported,
-		),
-		tools_count: toCount(
-			source.tools_count ?? source.toolsCount ?? source.tools,
-		),
-		prompts_count: toCount(
-			source.prompts_count ?? source.promptsCount ?? source.prompts,
-		),
-		resources_count: toCount(
-			source.resources_count ?? source.resourcesCount ?? source.resources,
-		),
-		resource_templates_count: toCount(
-			source.resource_templates_count ??
-				source.resourceTemplatesCount ??
-				source.templates,
-		),
+		snapshotState: source.snapshotState as ServerCapabilitySummary["snapshotState"],
+		revision: source.revision as number,
+		observedAt: source.observedAt,
+		tools: normalizeKind("tools"),
+		prompts: normalizeKind("prompts"),
+		resources: normalizeKind("resources"),
+		resourceTemplates: normalizeKind("resourceTemplates"),
 	};
 };
 
@@ -723,7 +722,7 @@ const enrichServerRecord = <T extends Record<string, unknown>>(server: T) => {
 	const directIcons = normalizeServerIconList(server.icons);
 	const combinedIcons = uniqBySrc([...(meta?.icons ?? []), ...directIcons]);
 	const capability = normalizeCapabilitySummary(
-		server.capability ?? server.capabilities,
+		server.capability,
 	);
 
 	if (meta || combinedIcons.length) {
@@ -743,17 +742,14 @@ const enrichServerRecord = <T extends Record<string, unknown>>(server: T) => {
 
 	if (capability) {
 		base.capability = capability;
-		base.capabilities = capability;
 	} else {
 		delete base.capability;
-		delete base.capabilities;
 	}
 
 	return base as T & {
 		meta?: ServerMetaInfo;
 		icons?: ServerIcon[];
 		capability?: ServerCapabilitySummary;
-		capabilities?: ServerCapabilitySummary;
 	};
 };
 
@@ -830,6 +826,7 @@ function normalizeServerDetail(
           ? null
           : undefined,
 		icons: normalizeServerIconList(enhanced?.icons),
+		capability: enhanced.capability as ServerCapabilitySummary | undefined,
 		namespace_issue:
 			typeof detailRecord.namespace_issue === "object" &&
 			detailRecord.namespace_issue !== null
@@ -1171,33 +1168,28 @@ export const secretsApi = {
 // Server Management API
 export const serversApi = {
 	getAll: async (): Promise<ServerListResponse> => {
-		try {
-			const resp = await fetchApi<ServerListResp>("/api/mcp/servers/list");
-			const rawServers = Array.isArray(resp?.data?.servers)
-				? resp.data.servers
-				: [];
-			const servers = rawServers.map((server): ServerSummary => {
-				const rec = server as unknown as Record<string, unknown>;
-				const enhanced = enrichServerRecord(rec);
-				const er = enhanced as Record<string, unknown>;
-				const source = er.source as ServerSource | undefined;
-				const serverType =
-					toTrimmedString(er.server_type as string | undefined) ??
-					toTrimmedString(er.serverType as string | undefined) ??
-					toTrimmedString(er.kind as string | undefined);
-				return {
-					...enhanced,
-					server_type: serverType,
-					source,
-					auth_mode: asOptionalString(er.auth_mode) ?? null,
-					...normalizeOAuthSummary(er),
-				} as ServerSummary;
-			});
-			return { servers };
-		} catch (error) {
-			console.error("Failed to fetch servers:", error);
-			return { servers: [] };
-		}
+		const resp = await fetchApi<ServerListResp>("/api/mcp/servers/list");
+		const rawServers = Array.isArray(resp?.data?.servers)
+			? resp.data.servers
+			: [];
+		const servers = rawServers.map((server): ServerSummary => {
+			const rec = server as unknown as Record<string, unknown>;
+			const enhanced = enrichServerRecord(rec);
+			const er = enhanced as Record<string, unknown>;
+			const source = er.source as ServerSource | undefined;
+			const serverType =
+				toTrimmedString(er.server_type as string | undefined) ??
+				toTrimmedString(er.serverType as string | undefined) ??
+				toTrimmedString(er.kind as string | undefined);
+			return {
+				...enhanced,
+				server_type: serverType,
+				source,
+				auth_mode: asOptionalString(er.auth_mode) ?? null,
+				...normalizeOAuthSummary(er),
+			} as ServerSummary;
+		});
+		return { servers };
 	},
 
 	getOAuthStatus: async (id: string): Promise<OAuthStatus | null> => {
@@ -1277,25 +1269,14 @@ export const serversApi = {
 	},
 
 	getServer: async (id: string): Promise<ServerDetail> => {
-		try {
-			const q = new URLSearchParams({ id });
-			const resp = await fetchApi<ServerDetailsResp>(
-				`/api/mcp/servers/details?${q}`,
-			);
-			const data = (resp?.data ?? {}) as Record<string, unknown>;
-			const enhanced = enrichServerRecord(data);
+		const q = new URLSearchParams({ id });
+		const resp = await fetchApi<ServerDetailsResp>(
+			`/api/mcp/servers/details?${q}`,
+		);
+		const data = (resp?.data ?? {}) as Record<string, unknown>;
+		const enhanced = enrichServerRecord(data);
 
-			return normalizeServerDetail(enhanced, id);
-		} catch (error) {
-			console.error(`Error fetching server details for ${id}:`, error);
-			return {
-				id,
-				name: id,
-				status: "error",
-				server_type: "unknown",
-				instances: [],
-			};
-		}
+		return normalizeServerDetail(enhanced, id);
 	},
 
 	refreshRegistryMetadata: async (id: string): Promise<ServerDetail> => {

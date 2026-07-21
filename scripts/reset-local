@@ -51,7 +51,6 @@ rm -rf /tmp/mcpmate-uv-extract
 rm -f /tmp/mcpmate-market-diag.log
 rm -f /tmp/mcpmate-backend.log
 rm -f /tmp/mcpmate-board.log
-rm -f /tmp/mcpmate-cache-*.redb
 
 print_section "done"
 printf 'Local MCPMate runtime state has been reset.\n'

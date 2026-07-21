@@ -72,18 +72,15 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { mergeCapabilityInspectorItem } from "../../lib/capability-detail";
 import { collectLoadedInspectorOptions } from "../../lib/inspector-operation";
+import {
+	formatCapabilityLifecycle,
+	type CapabilityLifecycleLabels,
+} from "../../lib/capability-lifecycle";
 import { getServerDisplayName } from "../../lib/server-display";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
-import type { ServerCapabilitySummary, ServerDetail } from "../../lib/types";
+import type { ServerDetail } from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
-
-const readLegacyCapability = (
-	server: ServerDetail | undefined,
-): ServerCapabilitySummary | undefined => {
-	if (!server) return undefined;
-	return server.capabilities ?? undefined;
-};
 
 const readLegacyString = (
 	server: ServerDetail | undefined,
@@ -565,11 +562,21 @@ export function ServerDetailPage() {
     string | undefined;
 	const serverScenario = (server?.meta as Record<string, unknown>)
 		?.recommendedScenario as string | undefined;
-	const capabilitySummary = server
-		? (server.capability ?? readLegacyCapability(server))
-		: undefined;
-	const capabilityOverviewText = capabilitySummary
-		? `Tools ${capabilitySummary.tools_count} | Prompts ${capabilitySummary.prompts_count} | Resources ${capabilitySummary.resources_count} | Templates ${capabilitySummary.resource_templates_count}`
+	const capabilitySummary = server?.capability;
+	const capabilityLifecycleLabels: CapabilityLifecycleLabels = {
+		unavailable: t("capabilityLifecycle.capabilityUnavailable"),
+		unsupported: t("capabilityLifecycle.capabilityUnsupported"),
+		unknown: t("capabilityLifecycle.capabilityUnknown"),
+		empty: t("capabilityLifecycle.capabilityEmpty"),
+		ready: t("capabilityLifecycle.capabilityReady"),
+	};
+	const capabilityOverviewText = server
+		? [
+				`${t("detail.capabilityList.labels.tools")} ${formatCapabilityLifecycle(capabilitySummary, "tools", capabilityLifecycleLabels)}`,
+				`${t("detail.capabilityList.labels.prompts")} ${formatCapabilityLifecycle(capabilitySummary, "prompts", capabilityLifecycleLabels)}`,
+				`${t("detail.capabilityList.labels.resources")} ${formatCapabilityLifecycle(capabilitySummary, "resources", capabilityLifecycleLabels)}`,
+				`${t("detail.capabilityList.labels.templates")} ${formatCapabilityLifecycle(capabilitySummary, "resourceTemplates", capabilityLifecycleLabels)}`,
+			].join(" | ")
 		: undefined;
 	const protocolVersion =
 		server?.protocol_version ?? readLegacyString(server, "protocolVersion");

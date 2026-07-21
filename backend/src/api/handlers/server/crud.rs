@@ -114,7 +114,7 @@ pub async fn remediate_server_namespace(
     let mut pending_steps = Vec::new();
     if let Err(error) = crate::config::server::capabilities::apply_discovered_snapshot(
         &db.pool,
-        &state.redb_cache,
+        db.capability_cache.as_ref(),
         &payload.id,
         &payload.namespace,
         &snapshot,
@@ -554,12 +554,12 @@ pub async fn create_server(
             .map_err(map_anyhow_error)?;
     }
 
-    // Initial capability discovery + dual write (SQLite shadow + REDB)
+    // Initial capability discovery persists the transactional SQLite catalog.
     if !server.pending_import {
         if let Err(error) = sync_via_connection_pool(
             &state.connection_pool,
-            &state.redb_cache,
             &db.pool,
+            db.capability_cache.as_ref(),
             &server_id,
             &payload.name,
             crate::config::server::capabilities::default_pool_lock_timeout_secs(),
@@ -815,8 +815,8 @@ pub async fn update_server(
     if existing_server.pending_import && !updated_server.pending_import {
         if let Err(error) = sync_via_connection_pool(
             &state.connection_pool,
-            &state.redb_cache,
             &db.pool,
+            db.capability_cache.as_ref(),
             &server_id,
             &existing_server.name,
             crate::config::server::capabilities::default_pool_lock_timeout_secs(),
@@ -955,8 +955,8 @@ pub async fn import_servers(
 
     let outcome = import_batch(
         &db.pool,
+        db.capability_cache.clone(),
         &state.connection_pool,
-        &state.redb_cache,
         mcp_servers,
         ImportOptions::dashboard_import(payload.dry_run, payload.target_profile_id.clone()),
     )
@@ -1070,6 +1070,11 @@ async fn delete_server_records(
         .await
         .map_err(map_database_error)?;
 
+    mcpmate_capability_store::SqliteCapabilityCatalog::new(db.pool.clone())
+        .remove_server_in_transaction(&mut tx, server_id)
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?;
+
     // Use CASCADE DELETE for server_config and its FK-linked tables.
     sqlx::query("DELETE FROM server_config WHERE id = ?")
         .bind(server_id)
@@ -1090,6 +1095,7 @@ async fn delete_server_records(
     // - profile_tool (has FK to server_tools.id, which cascades from server_config)
 
     tx.commit().await.map_err(map_database_error)?;
+    db.capability_cache.invalidate_server(server_id).await;
     Ok(())
 }
 
@@ -1120,11 +1126,6 @@ pub async fn delete_server(
 
     // Delete all server-related records
     delete_server_records(&state, &db, &server_id).await?;
-
-    // Remove capability cache (REDB) for this server
-    if let Err(e) = state.redb_cache.remove_server_data(&server_id).await {
-        tracing::warn!("Failed to remove REDB cache for server '{}': {}", server_id, e);
-    }
 
     // Remove resolver mapping to keep id<->name cache consistent
     crate::core::capability::resolver::remove_by_id(&server_id).await;
@@ -1165,10 +1166,7 @@ mod tests {
     use crate::{
         config::models::{ServerOAuthConfig, ServerOAuthToken},
         core::{
-            cache::{RedbCacheManager, manager::CacheConfig},
-            models::Config,
-            pool::UpstreamConnectionPool,
-            profile::ConfigApplicationStateManager,
+            models::Config, pool::UpstreamConnectionPool, profile::ConfigApplicationStateManager,
             secrets::store::LocalSecretStore,
         },
         inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
@@ -1674,10 +1672,8 @@ for line in sys.stdin:
         let database = Arc::new(Database {
             pool: db_pool.clone(),
             path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
-
-        let cache_path = temp_dir.path().join("capability.redb");
-        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
 
         let app_state = Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
@@ -1691,7 +1687,6 @@ for line in sys.stdin:
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            redb_cache,
             unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),

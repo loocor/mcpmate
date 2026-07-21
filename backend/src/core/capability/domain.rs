@@ -85,7 +85,7 @@ impl QueryContext {
     }
 }
 
-/// Data freshness requirements - mapped to existing FreshnessLevel
+/// Data freshness requirements for capability reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FreshnessRequirement {
     /// Prefer cache, query runtime when cache misses
@@ -98,15 +98,6 @@ pub enum FreshnessRequirement {
 }
 
 impl FreshnessRequirement {
-    /// Convert to existing cache FreshnessLevel
-    pub fn to_cache_level(&self) -> crate::core::cache::FreshnessLevel {
-        match self {
-            FreshnessRequirement::CachePreferred => crate::core::cache::FreshnessLevel::Cached,
-            FreshnessRequirement::ForceRefresh => crate::core::cache::FreshnessLevel::RealTime,
-            FreshnessRequirement::CacheOnly => crate::core::cache::FreshnessLevel::Cached,
-        }
-    }
-
     /// Convert from existing RefreshStrategy
     pub fn from_refresh_strategy(strategy: crate::api::handlers::server::common::RefreshStrategy) -> Self {
         match strategy {
@@ -178,7 +169,7 @@ impl CapabilityQuery {
 pub enum DataSource {
     /// L1 cache (memory)
     CacheL1,
-    /// L2 cache (ReDB)
+    /// Durable SQLite capability catalog
     CacheL2,
     /// Runtime instance
     Runtime,
@@ -200,8 +191,8 @@ impl DataSource {
     pub fn description(&self) -> &'static str {
         match self {
             DataSource::CacheL1 => "memory_cache",
-            DataSource::CacheL2 => "redb_cache",
-            DataSource::Runtime => "runtime_instance",
+            DataSource::CacheL2 => "sqlite_catalog",
+            DataSource::Runtime => "live",
             DataSource::Temporary => "temporary_instance",
             DataSource::WarmUp => "warmup_instance",
             DataSource::None => "none",

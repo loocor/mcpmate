@@ -8,7 +8,6 @@ use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditEvent, AuditStatus};
 
 pub(crate) async fn invalidate_client_runtime_visibility(identifier: &str) {
-    let mut affinity_fragments = vec![format!("#client:{identifier}")];
     let mut removed_sessions = 0_usize;
 
     if let Some(proxy) = crate::core::proxy::server::ProxyServer::global() {
@@ -21,8 +20,6 @@ pub(crate) async fn invalidate_client_runtime_visibility(identifier: &str) {
                 .filter(|entry| entry.client_id == identifier)
                 .map(|entry| entry.session_id.clone())
                 .collect::<Vec<_>>();
-            affinity_fragments.extend(session_ids.iter().map(|session_id| format!("#session:{session_id}")));
-
             for session_id in session_ids {
                 proxy_server.remove_downstream_session(&session_id).await;
                 removed_sessions += 1;
@@ -36,19 +33,6 @@ pub(crate) async fn invalidate_client_runtime_visibility(identifier: &str) {
                 prompts_count,
                 resources_count,
                 "Invalidated downstream client runtime visibility"
-            );
-        }
-    }
-
-    if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
-        if let Err(error) = cache_manager
-            .invalidate_by_affinity_fragments(&affinity_fragments)
-            .await
-        {
-            tracing::warn!(
-                client = %identifier,
-                error = %error,
-                "Failed to invalidate client-filtered cache entries by downstream affinity"
             );
         }
     }

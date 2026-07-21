@@ -1033,6 +1033,7 @@ impl ClientConfigService {
             Some(Arc::new(Database {
                 pool: self.db_pool.as_ref().clone(),
                 path: PathBuf::new(),
+                capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
             })),
             None,
         );
@@ -1085,25 +1086,12 @@ impl ClientConfigService {
             .surface_fingerprint;
 
         if let Some(ref fingerprint) = old_fingerprint {
-            if let Ok(cache_manager) = crate::core::cache::RedbCacheManager::global() {
-                match cache_manager.invalidate_by_surface_fingerprint(fingerprint).await {
-                    Ok(count) => {
-                        tracing::info!(
-                            client = %identifier,
-                            old_fingerprint = %fingerprint,
-                            invalidated_count = count,
-                            "Invalidated client-filtered cache entries after capability config update"
-                        );
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            client = %identifier,
-                            error = %err,
-                            "Failed to invalidate client-filtered cache entries"
-                        );
-                    }
-                }
-            }
+            tracing::debug!(
+                client = %identifier,
+                old_fingerprint = %fingerprint,
+                new_fingerprint = %new_fingerprint,
+                "Client capability visibility fingerprint changed"
+            );
         }
 
         let has_visible_direct_surface = !state.unify_direct_exposure.selected_tool_surfaces.is_empty()

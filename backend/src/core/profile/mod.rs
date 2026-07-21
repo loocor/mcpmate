@@ -67,6 +67,7 @@ mod tests {
         let db = Arc::new(Database {
             pool,
             path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
 
         // Create ProfileService

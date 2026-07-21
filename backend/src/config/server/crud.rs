@@ -103,10 +103,9 @@ pub async fn upsert_server_tx(
 
     let result = sqlx::query(&format!(
         r#"
-        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {}, {}, {})
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO {} ({}, {}, {}, {}, {}, {}, {}, {})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT({}) DO UPDATE SET
-            {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
             {} = excluded.{},
@@ -122,7 +121,6 @@ pub async fn upsert_server_tx(
         columns::COMMAND,
         columns::URL,
         columns::SOURCE,
-        columns::CAPABILITIES,
         columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
         columns::PENDING_IMPORT,
         columns::NAME,
@@ -134,8 +132,6 @@ pub async fn upsert_server_tx(
         columns::URL,
         columns::SOURCE,
         columns::SOURCE,
-        columns::CAPABILITIES,
-        columns::CAPABILITIES,
         columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
         columns::UNIFY_DIRECT_EXPOSURE_ELIGIBLE,
         columns::PENDING_IMPORT,
@@ -148,7 +144,6 @@ pub async fn upsert_server_tx(
     .bind(&server.command)
     .bind(&server.url)
     .bind(&server.source)
-    .bind(&server.capabilities)
     .bind(server.unify_direct_exposure_eligible)
     .bind(server.pending_import)
     .execute(&mut **tx)
@@ -232,7 +227,6 @@ mod tests {
             command: None,
             url: Some(format!("https://example.com/{name}")),
             source: None,
-            capabilities: None,
             enabled: EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
             pending_import,

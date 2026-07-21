@@ -3,9 +3,8 @@
 
 use super::{common, shared::*};
 use crate::api::models::server::{
-    InstanceListData, InstanceListReq, InstanceListResp, InstanceSummary, ServerCapabilitySummary, ServerDetailsData,
-    ServerDetailsReq, ServerDetailsResp, ServerListData, ServerListReq, ServerListResp, ServerMetaInfo,
-    StandardServerInfo,
+    InstanceListData, InstanceListReq, InstanceListResp, InstanceSummary, ServerDetailsData, ServerDetailsReq,
+    ServerDetailsResp, ServerListData, ServerListReq, ServerListResp, ServerMetaInfo, StandardServerInfo,
 };
 use axum::http::StatusCode;
 use sqlx::{Pool, Row, Sqlite};
@@ -259,8 +258,7 @@ async fn server_list_core(
 
     let server_ids: Vec<String> = all_servers.iter().filter_map(|server| server.id.clone()).collect();
     let (instance_map, live_protocol_versions) = snapshot_runtime_state(state).await;
-    let protocol_versions = load_cached_protocol_versions(state, &server_ids, live_protocol_versions).await;
-    let capability_map = load_server_capabilities(db_pool, &server_ids).await;
+    let management_map = load_server_capability_management(state, &server_ids).await;
     let (meta_map, server_info_map) = load_server_meta_maps(db_pool, &server_ids).await;
     let enabled_in_profile = load_enabled_server_ids(db_pool).await;
     let streamable_http_server_ids: Vec<String> = all_servers
@@ -294,10 +292,10 @@ async fn server_list_core(
     let mut filtered_servers = Vec::new();
     let mut total_count = 0;
     let mut instance_map = instance_map;
-    let mut capability_map = capability_map;
+    let mut management_map = management_map;
     let mut meta_map = meta_map;
     let mut server_info_map = server_info_map;
-    let mut protocol_versions = protocol_versions;
+    let mut live_protocol_versions = live_protocol_versions;
     let mut headers_map = headers_map;
 
     for server in all_servers {
@@ -325,10 +323,14 @@ async fn server_list_core(
         let updated_at = server.updated_at.map(|dt| dt.to_rfc3339());
         let enabled_in_profile_flag = globally_enabled && enabled_in_profile.contains(&server_id);
         let instances = instance_map.remove(&server_id).unwrap_or_default();
-        let capability = capability_map.remove(&server_id);
+        let management = management_map.remove(&server_id);
+        let capability = management.as_ref().map(|projection| projection.summary.clone());
         let meta = meta_map.remove(&server_id).flatten();
         let server_info = server_info_map.remove(&server_id).flatten();
-        let protocol_version = protocol_versions.remove(&server_id).flatten();
+        let protocol_version = common::resolve_management_protocol_version(
+            live_protocol_versions.remove(&server_id).flatten(),
+            management.and_then(|projection| projection.cached_protocol_version),
+        );
         let raw_headers = raw_headers_map.remove(&server_id);
         let headers = headers_map.remove(&server_id);
 
@@ -505,137 +507,39 @@ async fn load_enabled_server_ids(pool: &Pool<Sqlite>) -> HashSet<String> {
     enabled
 }
 
-async fn load_server_capabilities(
-    pool: &Pool<Sqlite>,
+async fn load_server_capability_management(
+    state: &Arc<AppState>,
     server_ids: &[String],
-) -> HashMap<String, ServerCapabilitySummary> {
-    let capability_rows = match sqlx::query(
-        r#"
-        SELECT id, capabilities
-        FROM server_config
-        WHERE id IS NOT NULL
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    {
-        Ok(rows) => rows,
+) -> HashMap<String, common::CapabilityManagementProjection> {
+    let database = match common::get_database_from_state(state) {
+        Ok(database) => database,
         Err(error) => {
-            tracing::warn!(error = %error, "Failed to load capability flags for server list");
+            tracing::warn!(error = %error, "Capability catalog is unavailable for server list");
             return HashMap::new();
         }
     };
 
-    let mut summaries = HashMap::new();
-    for row in capability_rows {
-        let server_id: String = row.get("id");
-        let tokens: Option<String> = row.get("capabilities");
-        summaries.insert(server_id, capability_summary_from_tokens(tokens.as_deref()));
-    }
-
-    merge_capability_counts(pool, &mut summaries, "server_tools", server_ids, |summary, count| {
-        summary.tools_count = count;
-        if count > 0 {
-            summary.supports_tools = true;
-        }
-    })
-    .await;
-    merge_capability_counts(pool, &mut summaries, "server_prompts", server_ids, |summary, count| {
-        summary.prompts_count = count;
-        if count > 0 {
-            summary.supports_prompts = true;
-        }
-    })
-    .await;
-    merge_capability_counts(
-        pool,
-        &mut summaries,
-        "server_resources",
-        server_ids,
-        |summary, count| {
-            summary.resources_count = count;
-            if count > 0 {
-                summary.supports_resources = true;
+    let mut projections = HashMap::new();
+    for server_id in server_ids {
+        match database.load_capability_snapshot(server_id).await {
+            Ok((Some(snapshot), _)) => {
+                projections.insert(
+                    server_id.clone(),
+                    common::build_capability_management_projection(&snapshot),
+                );
             }
-        },
-    )
-    .await;
-    merge_capability_counts(
-        pool,
-        &mut summaries,
-        "server_resource_templates",
-        server_ids,
-        |summary, count| {
-            summary.resource_templates_count = count;
-            if count > 0 {
-                summary.supports_resources = true;
+            Ok((None, _)) => {}
+            Err(error) => {
+                tracing::warn!(
+                    server_id = %server_id,
+                    error = %error,
+                    "Failed to load capability catalog summary for server list"
+                );
             }
-        },
-    )
-    .await;
-
-    summaries
-}
-
-fn capability_summary_from_tokens(tokens: Option<&str>) -> ServerCapabilitySummary {
-    let mut supports_tools = false;
-    let mut supports_prompts = false;
-    let mut supports_resources = false;
-
-    for token in tokens
-        .unwrap_or_default()
-        .split(',')
-        .map(|token| token.trim().to_ascii_lowercase())
-    {
-        match token.as_str() {
-            "tools" => supports_tools = true,
-            "prompts" => supports_prompts = true,
-            "resources" => supports_resources = true,
-            _ => {}
         }
     }
 
-    ServerCapabilitySummary {
-        supports_tools,
-        supports_prompts,
-        supports_resources,
-        tools_count: 0,
-        prompts_count: 0,
-        resources_count: 0,
-        resource_templates_count: 0,
-    }
-}
-
-async fn merge_capability_counts<F>(
-    pool: &Pool<Sqlite>,
-    summaries: &mut HashMap<String, ServerCapabilitySummary>,
-    table: &str,
-    server_ids: &[String],
-    mut apply: F,
-) where
-    F: FnMut(&mut ServerCapabilitySummary, u32),
-{
-    if server_ids.is_empty() {
-        return;
-    }
-
-    let query = format!("SELECT server_id, COUNT(*) AS count FROM {table} GROUP BY server_id");
-    let rows = match sqlx::query(&query).fetch_all(pool).await {
-        Ok(rows) => rows,
-        Err(error) => {
-            tracing::warn!(table = table, error = %error, "Failed to load capability counts for server list");
-            return;
-        }
-    };
-
-    for row in rows {
-        let server_id: String = row.get("server_id");
-        let count: i64 = row.get("count");
-        let summary = summaries
-            .entry(server_id)
-            .or_insert_with(|| capability_summary_from_tokens(None));
-        apply(summary, count.try_into().unwrap_or(u32::MAX));
-    }
+    projections
 }
 
 async fn load_server_meta_maps(
@@ -763,43 +667,6 @@ fn build_server_meta_info(server_meta: crate::config::models::ServerMeta) -> Opt
     })
 }
 
-async fn load_cached_protocol_versions(
-    state: &Arc<AppState>,
-    server_ids: &[String],
-    mut protocol_versions: HashMap<String, Option<String>>,
-) -> HashMap<String, Option<String>> {
-    for server_id in server_ids {
-        if protocol_versions
-            .get(server_id)
-            .and_then(|version| version.clone())
-            .is_some()
-        {
-            continue;
-        }
-
-        let query = crate::core::cache::CacheQuery {
-            server_id: server_id.clone(),
-            freshness_level: crate::core::cache::FreshnessLevel::Cached,
-            include_disabled: true,
-            scope: crate::core::cache::CacheScope::shared_raw(),
-        };
-
-        let version = state.redb_cache.get_server_data(&query).await.ok().and_then(|result| {
-            result.data.and_then(|data| {
-                if data.protocol_version.is_empty() {
-                    None
-                } else {
-                    Some(data.protocol_version)
-                }
-            })
-        });
-
-        protocol_versions.insert(server_id.clone(), version);
-    }
-
-    protocol_versions
-}
-
 async fn load_server_header_maps(
     pool: &Pool<Sqlite>,
     server_ids: &[String],
@@ -919,7 +786,6 @@ mod tests {
             profile, server,
         },
         core::{
-            cache::{RedbCacheManager, manager::CacheConfig},
             models::Config,
             pool::{UpstreamConnection, UpstreamConnectionPool},
             profile::ConfigApplicationStateManager,
@@ -940,6 +806,18 @@ mod tests {
         _temp_dir: TempDir,
         app_state: Arc<AppState>,
         db_pool: sqlx::SqlitePool,
+    }
+
+    #[test]
+    fn live_protocol_version_has_priority_over_cached_management_projection() {
+        assert_eq!(
+            common::resolve_management_protocol_version(
+                Some("live-version".to_string()),
+                Some("cached-version".to_string()),
+            )
+            .as_deref(),
+            Some("live-version")
+        );
     }
 
     #[tokio::test]
@@ -971,6 +849,7 @@ mod tests {
         );
         assert!(data.servers.iter().all(|server| server.instances.is_empty()));
         assert!(data.servers.iter().all(|server| server.protocol_version.is_none()));
+        assert!(data.servers.iter().all(|server| server.capability.is_none()));
     }
 
     #[tokio::test]
@@ -1055,8 +934,27 @@ mod tests {
         assert_eq!(server.env, None);
         assert_eq!(server.instances.len(), 1);
         assert_eq!(server.instances[0].status, "Ready");
-        assert_eq!(server.capability.as_ref().map(|summary| summary.tools_count), Some(1));
-        assert_eq!(server.capability.as_ref().map(|summary| summary.prompts_count), Some(1));
+        let capability = server.capability.as_ref().expect("capability snapshot summary");
+        assert_eq!(
+            capability.snapshot_state,
+            mcpmate_capability_store::SnapshotState::Ready
+        );
+        assert_eq!(capability.tools.current_count, 1);
+        assert_eq!(capability.prompts.current_count, 1);
+        assert!(capability.tools.current_available);
+        assert!(capability.prompts.current_available);
+        assert_eq!(
+            capability.tools.declaration,
+            mcpmate_capability_store::DeclarationState::Supported
+        );
+        assert_eq!(
+            capability.prompts.declaration,
+            mcpmate_capability_store::DeclarationState::Supported
+        );
+        assert_eq!(
+            capability.resources.declaration,
+            mcpmate_capability_store::DeclarationState::Unsupported
+        );
         assert_eq!(
             server.meta.as_ref().and_then(|meta| meta.description.as_deref()),
             Some("Server description")
@@ -1068,6 +966,109 @@ mod tests {
                 .and_then(|meta| meta.icons.as_ref())
                 .map(|icons| icons.len()),
             Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn server_list_capability_summary_uses_one_catalog_snapshot_not_shadow_indexes() {
+        let context = create_test_context().await;
+        let server_id = seed_servers(&context.db_pool, 1)
+            .await
+            .into_iter()
+            .next()
+            .expect("server id");
+        seed_server_capabilities(&context.db_pool, &server_id).await;
+
+        let database = context.app_state.database.as_ref().expect("database");
+        let (snapshot, _) = database
+            .load_capability_snapshot(&server_id)
+            .await
+            .expect("load catalog snapshot");
+        let snapshot = snapshot.expect("catalog snapshot");
+
+        sqlx::query("DELETE FROM server_tools WHERE server_id = ?")
+            .bind(&server_id)
+            .execute(&context.db_pool)
+            .await
+            .expect("delete shadow tool rows");
+        database.capability_cache.clear().await;
+        let metrics_before = database.capability_cache.metrics().await;
+
+        let response = server_list_core(
+            &ServerListReq {
+                enabled: None,
+                server_type: None,
+                limit: Some(10),
+                offset: Some(0),
+            },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server list");
+        let server = response
+            .data
+            .expect("server list data")
+            .servers
+            .into_iter()
+            .next()
+            .expect("server item");
+        let summary = server.capability.expect("capability summary");
+        let metrics_after = database.capability_cache.metrics().await;
+
+        assert_eq!(summary.revision, snapshot.revision);
+        assert_eq!(summary.observed_at, snapshot.observed_at.to_rfc3339());
+        assert_eq!(server.protocol_version.as_deref(), Some("2025-11-25"));
+        assert_eq!(
+            (metrics_after.raw_hits + metrics_after.raw_misses) - (metrics_before.raw_hits + metrics_before.raw_misses),
+            1,
+            "list must derive lifecycle summary and cached protocol from one snapshot load"
+        );
+        assert_eq!(summary.tools.current_count, 1);
+        assert_eq!(
+            summary.tools.inventory,
+            mcpmate_capability_store::InventoryState::Complete
+        );
+        assert!(summary.tools.current_available);
+    }
+
+    #[tokio::test]
+    async fn server_details_derives_capability_and_cached_protocol_from_one_catalog_snapshot() {
+        let context = create_test_context().await;
+        let server_id = seed_servers(&context.db_pool, 1)
+            .await
+            .into_iter()
+            .next()
+            .expect("server id");
+        seed_server_capabilities(&context.db_pool, &server_id).await;
+
+        let database = context.app_state.database.as_ref().expect("database");
+        let (snapshot, _) = database
+            .load_capability_snapshot(&server_id)
+            .await
+            .expect("load catalog snapshot");
+        let snapshot = snapshot.expect("catalog snapshot");
+        database.capability_cache.clear().await;
+        let metrics_before = database.capability_cache.metrics().await;
+
+        let response = server_details_core(
+            &ServerDetailsReq { id: server_id.clone() },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server details");
+        let server = response.data.expect("server details data");
+        let summary = server.capability.expect("capability summary");
+        let metrics_after = database.capability_cache.metrics().await;
+
+        assert_eq!(summary.revision, snapshot.revision);
+        assert_eq!(summary.observed_at, snapshot.observed_at.to_rfc3339());
+        assert_eq!(server.protocol_version.as_deref(), Some("2025-11-25"));
+        assert_eq!(
+            (metrics_after.raw_hits + metrics_after.raw_misses) - (metrics_before.raw_hits + metrics_before.raw_misses),
+            1,
+            "details must derive lifecycle summary and cached protocol from one snapshot load"
         );
     }
 
@@ -1363,10 +1364,8 @@ mod tests {
         let database = Arc::new(Database {
             pool: db_pool.clone(),
             path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         });
-
-        let cache_path = temp_dir.path().join("capability.redb");
-        let redb_cache = Arc::new(RedbCacheManager::new(cache_path, CacheConfig::default()).expect("cache manager"));
 
         let app_state = Arc::new(AppState {
             connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(
@@ -1380,7 +1379,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            redb_cache,
             unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
@@ -1412,7 +1410,6 @@ mod tests {
                 command: Some("echo".to_string()),
                 url: None,
                 source: None,
-                capabilities: Some("tools,prompts,resources".to_string()),
                 enabled: crate::common::status::EnabledStatus::Enabled,
                 unify_direct_exposure_eligible: false,
                 created_at: None,
@@ -1436,7 +1433,6 @@ mod tests {
             command: None,
             url: Some(format!("https://example.com/{name}")),
             source: None,
-            capabilities: None,
             enabled: crate::common::status::EnabledStatus::Enabled,
             unify_direct_exposure_eligible: false,
             created_at: None,
@@ -1484,12 +1480,27 @@ mod tests {
         pool: &sqlx::SqlitePool,
         server_id: &str,
     ) {
-        server::tools::upsert_server_tool(pool, server_id, "server_0", "tool-a", Some("tool"))
-            .await
-            .expect("insert tool");
-        server::capabilities::upsert_shadow_prompt(pool, server_id, "server_0", "prompt-a", None)
-            .await
-            .expect("insert prompt");
+        let initialize = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}, "prompts": {}},
+            "serverInfo": {"name": "server_0", "version": "1.0.0"}
+        }))
+        .expect("build initialize fixture");
+        let tool = rmcp::model::Tool::new("tool-a", "tool", std::sync::Arc::new(serde_json::Map::new()));
+        let prompt = rmcp::model::Prompt::new("prompt-a", None::<String>, None);
+        server::capabilities::commit_protocol_items_for_kinds(
+            pool,
+            server_id,
+            "server_0",
+            Some(initialize),
+            vec![tool],
+            Vec::new(),
+            vec![prompt],
+            Vec::new(),
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit capability catalog");
     }
 
     async fn seed_profile_enablement(

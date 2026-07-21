@@ -9,21 +9,18 @@ use tokio::sync::Mutex;
 
 use crate::api::handlers::server::common::{InspectParams, RefreshStrategy};
 use crate::api::routes::AppState;
-use crate::common::capability::CapabilityToken;
 use crate::config::database::Database;
 use crate::config::models::Server;
 use crate::config::server;
-use crate::core::cache::RedbCacheManager;
 use crate::core::capability::domain::{
     CapabilityError, CapabilityItem, CapabilityResult, CapabilityType, DataSource,
     PromptArgument as DomainPromptArgument, PromptCapability, QueryContext, ResourceCapability,
     ResourceTemplateCapability, ResponseMetadata, ToolCapability,
 };
-use crate::core::capability::facade;
+use crate::core::capability::read_service::CapabilityReadService;
 use crate::core::capability::runtime::{
     CapabilityItems, ListCtx, ListResult, Meta, RefreshStrategy as RuntimeRefreshStrategy,
 };
-use crate::core::capability::service::{CAPABILITY_VALIDATION_SESSION, CapabilityService};
 use crate::core::pool::UpstreamConnectionPool;
 
 /// Performance metrics collection trait used by the unified query service.
@@ -49,7 +46,6 @@ pub trait MetricsCollector {
 
 /// Shared state for unified capability queries
 pub struct UnifiedQueryService {
-    cache: Arc<RedbCacheManager>,
     pool: Arc<Mutex<UpstreamConnectionPool>>,
     database: Arc<Database>,
     app_state: Arc<AppState>,
@@ -62,7 +58,6 @@ impl std::fmt::Debug for UnifiedQueryService {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         f.debug_struct("UnifiedQueryService")
-            .field("cache_strong_refs", &Arc::strong_count(&self.cache))
             .field("pool_strong_refs", &Arc::strong_count(&self.pool))
             .field("database_strong_refs", &Arc::strong_count(&self.database))
             .field("app_state_refs", &Arc::strong_count(&self.app_state))
@@ -72,7 +67,6 @@ impl std::fmt::Debug for UnifiedQueryService {
 }
 
 pub struct UnifiedQueryServiceBuilder {
-    cache: Option<Arc<RedbCacheManager>>,
     pool: Option<Arc<Mutex<UpstreamConnectionPool>>>,
     database: Option<Arc<Database>>,
     app_state: Option<Arc<AppState>>,
@@ -82,20 +76,11 @@ pub struct UnifiedQueryServiceBuilder {
 impl UnifiedQueryServiceBuilder {
     pub fn new() -> Self {
         Self {
-            cache: None,
             pool: None,
             database: None,
             app_state: None,
             timeout: Duration::from_secs(DEFAULT_QUERY_TIMEOUT_SECS),
         }
-    }
-
-    pub fn with_cache(
-        mut self,
-        cache: Arc<RedbCacheManager>,
-    ) -> Self {
-        self.cache = Some(cache);
-        self
     }
 
     pub fn with_pool(
@@ -132,7 +117,6 @@ impl UnifiedQueryServiceBuilder {
 
     pub fn build(self) -> Result<UnifiedQueryService, String> {
         Ok(UnifiedQueryService {
-            cache: self.cache.ok_or("Cache manager is required")?,
             pool: self.pool.ok_or("Connection pool is required")?,
             database: self.database.ok_or("Database is required")?,
             app_state: self.app_state.ok_or("App state is required")?,
@@ -157,10 +141,10 @@ impl UnifiedQueryService {
         context: QueryContext,
     ) -> Result<CapabilityResult, CapabilityError> {
         let server = self.load_server(server_id).await?;
-        self.ensure_capability_enabled(&server, server_id, capability_type)?;
+        self.ensure_server_enabled(&server, server_id)?;
 
         let list_ctx = self.build_list_ctx(server_id, capability_type, params, context);
-        let capability_service = CapabilityService::new(self.cache.clone(), self.pool.clone(), self.database.clone());
+        let capability_service = CapabilityReadService::from_runtime(self.database.clone(), self.pool.clone());
 
         let list_result = capability_service
             .list(&list_ctx)
@@ -180,22 +164,13 @@ impl UnifiedQueryService {
             .ok_or_else(|| CapabilityError::InternalError(format!("Server {} not found", server_id)))
     }
 
-    fn ensure_capability_enabled(
+    fn ensure_server_enabled(
         &self,
         server: &Server,
         server_id: &str,
-        capability_type: CapabilityType,
     ) -> Result<(), CapabilityError> {
         if !server.enabled.as_bool() {
             return Err(CapabilityError::ServerDisabled {
-                server_id: server_id.to_string(),
-            });
-        }
-
-        let token = capability_capability_token(capability_type);
-        if !facade::capability_declared(server.capabilities.as_deref(), token.as_str()) {
-            return Err(CapabilityError::CapabilityDisabled {
-                capability_type,
                 server_id: server_id.to_string(),
             });
         }
@@ -220,6 +195,7 @@ impl UnifiedQueryService {
             validation_session: validation_session(context),
             runtime_identity: None,
             connection_selection: None,
+            visibility_snapshot: None,
             name_domain: crate::core::capability::runtime::NameDomain::External,
         }
     }
@@ -234,17 +210,7 @@ fn map_refresh_strategy(refresh: Option<RefreshStrategy>) -> RuntimeRefreshStrat
 
 fn validation_session(context: QueryContext) -> Option<String> {
     match context {
-        QueryContext::ApiCall => Some(CAPABILITY_VALIDATION_SESSION.to_string()),
-        QueryContext::McpClient => None,
-    }
-}
-
-fn capability_capability_token(capability_type: CapabilityType) -> CapabilityToken {
-    match capability_type {
-        CapabilityType::Tools => CapabilityToken::Tools,
-        CapabilityType::Prompts => CapabilityToken::Prompts,
-        CapabilityType::Resources => CapabilityToken::Resources,
-        CapabilityType::ResourceTemplates => CapabilityToken::Resources,
+        QueryContext::ApiCall | QueryContext::McpClient => None,
     }
 }
 
@@ -286,8 +252,9 @@ fn to_data_source(
     capability_type: CapabilityType,
 ) -> DataSource {
     match meta.source.as_str() {
-        "cache" => DataSource::CacheL2,
-        "runtime" => match capability_type {
+        "memory_cache" => DataSource::CacheL1,
+        "sqlite_catalog" => DataSource::CacheL2,
+        "live" => match capability_type {
             CapabilityType::Tools | CapabilityType::Prompts | CapabilityType::Resources => DataSource::Runtime,
             CapabilityType::ResourceTemplates => {
                 if meta.had_peer {
@@ -297,16 +264,9 @@ fn to_data_source(
                 }
             }
         },
-        "temporary" => DataSource::Temporary,
         other => {
             tracing::debug!(source = other, "Unknown capability data source");
-            if meta.cache_hit {
-                DataSource::CacheL2
-            } else if meta.had_peer {
-                DataSource::Runtime
-            } else {
-                DataSource::None
-            }
+            DataSource::None
         }
     }
 }
@@ -392,5 +352,11 @@ mod tests {
         assert_eq!(projected.uri_template, external_template);
         assert_eq!(projected.unique_template, external_template);
         assert_eq!(projected.name.as_deref(), Some("File"));
+    }
+
+    #[test]
+    fn ordinary_query_contexts_do_not_pin_shared_validation_sessions() {
+        assert_eq!(validation_session(QueryContext::ApiCall), None);
+        assert_eq!(validation_session(QueryContext::McpClient), None);
     }
 }

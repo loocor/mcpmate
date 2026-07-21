@@ -1,301 +1,176 @@
-use crate::core::{cache::RedbCacheManager, pool::UpstreamConnectionPool};
-use anyhow::{Context, Result, anyhow};
-use std::{future::Future, sync::Arc, time::Duration};
+use std::sync::Arc;
+
+use anyhow::Result;
 use tokio::sync::Mutex;
 
-/// Session identifier used for temporary validation instances when capability
-/// queries require on-demand peers.
+use crate::{
+    config::database::Database,
+    core::{
+        capability::{
+            read_service::CapabilityReadService,
+            runtime::{ListCtx, ListResult},
+        },
+        pool::UpstreamConnectionPool,
+    },
+};
+
+/// Legacy sentinel used by ordinary API callers before request-unique discovery owners.
 pub const CAPABILITY_VALIDATION_SESSION: &str = "capability-service";
 
 #[derive(Debug, thiserror::Error)]
 #[error("Capability server connect exceeded {timeout_ms} ms")]
 pub(crate) struct CapabilityConnectionTimeout {
     timeout_ms: u128,
+    #[source]
+    source: crate::core::capability::read_service::CapabilityReadError,
 }
 
 pub(crate) fn connection_timeout_ms(error: &anyhow::Error) -> Option<u128> {
     error
         .downcast_ref::<CapabilityConnectionTimeout>()
         .map(|timeout| timeout.timeout_ms)
+        .or_else(|| {
+            error
+                .downcast_ref::<crate::core::capability::read_service::CapabilityReadError>()
+                .and_then(crate::core::capability::read_service::CapabilityReadError::connection_timeout_ms)
+        })
 }
 
-/// High-level orchestration service for capabilities.
-///
-/// Responsibilities:
-/// - REDB-first
-/// - Runtime pipeline (directly via capability runtime helpers)
-/// - Temporary instance fallback (delegated to pool validation instance)
-/// - Async write-back to REDB (on success)
+pub(crate) fn operation_timeout_ms(error: &anyhow::Error) -> Option<u128> {
+    error
+        .downcast_ref::<crate::core::capability::read_service::CapabilityReadError>()
+        .and_then(crate::core::capability::read_service::CapabilityReadError::operation_timeout_ms)
+}
+
+/// Maps a typed capability read failure to the REST-facing `ApiError`, so every read
+/// surface (tools/prompts/resources/templates/detail) reports the same status code and
+/// keeps the underlying reason in the response body instead of collapsing to a bare 500.
+pub(crate) fn map_capability_read_error(
+    error: &crate::core::capability::read_service::CapabilityReadError
+) -> crate::api::handlers::ApiError {
+    use crate::api::handlers::ApiError;
+    use crate::core::capability::read_service::CapabilityReadError;
+
+    if let Some(timeout_ms) = error.connection_timeout_ms() {
+        return ApiError::GatewayTimeout(format!("capability discovery exceeded {timeout_ms} ms: {error}"));
+    }
+    if let Some(timeout_ms) = error.operation_timeout_ms() {
+        return ApiError::Timeout(format!("capability operation exceeded {timeout_ms} ms: {error}"));
+    }
+    if let Some(reason) = error.authentication_reason() {
+        return ApiError::Unauthorized(format!("capability owner authentication failed: {reason}"));
+    }
+    match error {
+        CapabilityReadError::CatalogUntrusted { .. } | CapabilityReadError::CatalogOperation { .. } => {
+            ApiError::ServiceUnavailable(error.to_string())
+        }
+        CapabilityReadError::CleanupFailed { .. } => ApiError::ServiceUnavailable(error.to_string()),
+        CapabilityReadError::DiscoveryFailed { .. } => ApiError::BadGateway(error.to_string()),
+        CapabilityReadError::ProjectionFailed { .. } => ApiError::InternalError(error.to_string()),
+    }
+}
+
+/// Compatibility facade for callers that Task 3 will migrate to CapabilityReadService.
 pub struct CapabilityService {
-    pub redb: Arc<RedbCacheManager>,
-    pub pool: Arc<Mutex<UpstreamConnectionPool>>,
-    pub database: Arc<crate::config::database::Database>,
+    inner: CapabilityReadService,
 }
 
 impl CapabilityService {
     pub fn new(
-        redb: Arc<RedbCacheManager>,
         pool: Arc<Mutex<UpstreamConnectionPool>>,
-        database: Arc<crate::config::database::Database>,
+        database: Arc<Database>,
     ) -> Self {
-        Self { redb, pool, database }
-    }
-
-    /// Prewarm REDB cache for enabled servers when cache is missing
-    /// Uses temporary validation instances, writes back, and destroys them.
-    /// Optimization: run prewarm with concurrency = CPU cores (bounded by servers count).
-    pub async fn prewarm_enabled_servers_if_cache_miss(&self) -> anyhow::Result<()> {
-        use crate::core::cache::{CacheQuery, FreshnessLevel};
-        use futures::stream::{self, StreamExt};
-
-        let servers = crate::config::server::get_all_servers(&self.database.pool).await?;
-        if servers.is_empty() {
-            return Ok(());
+        Self {
+            inner: CapabilityReadService::from_runtime(database, pool),
         }
-
-        let concurrency = std::cmp::min(servers.len(), num_cpus::get());
-        tracing::info!("Prewarm start: servers={}, concurrency={}", servers.len(), concurrency);
-
-        let redb = self.redb.clone();
-        let pool = self.pool.clone();
-        let db_pool = self.database.pool.clone();
-
-        stream::iter(servers)
-            .for_each_concurrent(concurrency, move |server| {
-                let redb = redb.clone();
-                let pool = pool.clone();
-                let db_pool = db_pool.clone();
-                async move {
-                    let Some(server_id) = &server.id else { return; };
-
-                    // Cache hit, skip
-                    let query = CacheQuery {
-                        server_id: server_id.clone(),
-                        freshness_level: FreshnessLevel::Cached,
-                        include_disabled: false,
-                        scope: crate::core::cache::CacheScope::shared_raw(),
-                    };
-                    let cached = match redb.get_server_data(&query).await {
-                        Ok(res) => res.data.is_some(),
-                        Err(e) => {
-                            tracing::warn!(server = %server.name, error = %e, "Cache lookup failed; will attempt prewarm");
-                            false
-                        }
-                    };
-                    if cached { return; }
-
-                    // Mark refreshing to help UI/consumers avoid treating empty cache as final
-                    tracing::info!(server = %server.name, "Prewarming capability cache via temporary validation instance");
-                    let _ = redb
-                        .set_refreshing(server_id, std::time::Duration::from_secs(60))
-                        .await;
-
-                    let res = crate::config::server::capabilities::sync_via_connection_pool(
-                        &pool,
-                        &redb,
-                        &db_pool,
-                        server_id,
-                        &server.name,
-                        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-                    )
-                    .await;
-
-                    match res {
-                        Ok(_) => {
-                            tracing::debug!(server = %server.name, "Cache prewarm completed");
-                        }
-                        Err(e) => {
-                            tracing::warn!(server = %server.name, error = %e, "Cache prewarm failed");
-                        }
-                    }
-                    let _ = redb.clear_refreshing(server_id).await;
-                }
-            })
-            .await;
-
-        tracing::info!("Prewarm finished");
-        Ok(())
     }
 
-    /// List capabilities for a server with unified flow and optional temporary instance fallback
     pub async fn list(
         &self,
-        ctx: &crate::core::capability::runtime::ListCtx,
-    ) -> Result<crate::core::capability::runtime::ListResult> {
-        match crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await {
-            Ok(result) => return Ok(result),
-            Err(error) if crate::core::capability::runtime::is_missing_peer_error(&error) => {}
-            Err(error) => return Err(error),
-        }
-
-        if let Some(session_id) = ctx.validation_session.as_deref() {
-            let server_name = self.resolve_server_name(&ctx.server_id).await?;
-            let connection_available = run_list_connection(ctx.timeout, async {
-                let mut pool = self.pool.lock().await;
-                pool.get_or_create_validation_instance(&ctx.server_id, session_id, Duration::from_secs(300))
-                    .await
-                    .map(|connection| connection.is_some())
-            })
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to create validation instance for server '{}' (session '{}')",
-                    server_name, session_id
-                )
-            })?;
-            if !connection_available {
-                anyhow::bail!(
-                    "No validation instance is available for server '{}' (session '{}')",
-                    server_name,
-                    session_id
-                );
-            }
-            let result = crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await;
-
-            // Only auto-cleanup the shared capability session; other sessions manage lifecycle themselves.
-            if session_id == CAPABILITY_VALIDATION_SESSION {
-                let mut pool = self.pool.lock().await;
-                if let Err(error) = pool.destroy_validation_instance(&ctx.server_id, session_id).await {
-                    tracing::debug!(
-                        server = %server_name,
-                        session = %session_id,
-                        error = %error,
-                        "Failed to destroy validation instance after capability listing"
-                    );
+        ctx: &ListCtx,
+    ) -> Result<ListResult> {
+        let normalized;
+        let ctx = if ctx.validation_session.as_deref() == Some(CAPABILITY_VALIDATION_SESSION) {
+            normalized = ListCtx {
+                validation_session: None,
+                ..ctx.clone()
+            };
+            &normalized
+        } else {
+            ctx
+        };
+        match self.inner.list(ctx).await {
+            Ok(result) => Ok(result),
+            Err(error) => match error.connection_timeout_ms() {
+                Some(timeout_ms) => Err(CapabilityConnectionTimeout {
+                    timeout_ms,
+                    source: error,
                 }
-            }
-
-            return result;
+                .into()),
+                None => Err(error.into()),
+            },
         }
-
-        run_list_connection(ctx.timeout, async {
-            let mut pool = self.pool.lock().await;
-            ensure_list_connection(&mut pool, ctx).await
-        })
-        .await?;
-
-        crate::core::capability::runtime::list(ctx, &self.redb, &self.pool, &self.database).await
     }
-
-    async fn resolve_server_name(
-        &self,
-        server_id: &str,
-    ) -> Result<String> {
-        if let Some(name) = crate::core::capability::resolver::to_name(server_id).await? {
-            return Ok(name);
-        }
-
-        let server = crate::config::server::get_server_by_id(&self.database.pool, server_id)
-            .await?
-            .ok_or_else(|| anyhow!("Server '{}' not found in database", server_id))?;
-
-        crate::core::capability::resolver::upsert(server_id, &server.name).await;
-        Ok(server.name)
-    }
-}
-
-async fn run_list_connection<T, F>(
-    timeout: Option<Duration>,
-    future: F,
-) -> Result<T>
-where
-    F: Future<Output = Result<T>>,
-{
-    match timeout {
-        Some(timeout) => tokio::time::timeout(timeout, future)
-            .await
-            .map_err(|_| CapabilityConnectionTimeout {
-                timeout_ms: timeout.as_millis(),
-            })?,
-        None => future.await,
-    }
-}
-
-async fn ensure_list_connection(
-    pool: &mut UpstreamConnectionPool,
-    ctx: &crate::core::capability::runtime::ListCtx,
-) -> Result<()> {
-    if let Some(selection) = ctx.connection_selection.as_ref() {
-        pool.ensure_connected_with_selection(selection).await?;
-    } else {
-        pool.ensure_connected(&ctx.server_id).await?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_list_connection;
-    use crate::common::server::ServerType;
-    use crate::core::capability::runtime::ListCtx;
-    use crate::core::capability::{AffinityKey, CapabilityType, ConnectionSelection};
-    use crate::core::models::{Config, MCPServerConfig};
-    use crate::core::pool::UpstreamConnectionPool;
-    use std::{collections::HashMap, sync::Arc};
+    use super::{CAPABILITY_VALIDATION_SESSION, connection_timeout_ms, operation_timeout_ms};
+    use crate::core::capability::{
+        CapabilityType,
+        connection_provider::{CapabilityOwnerError, OwnerSource},
+        read_service::{CapabilityAttemptError, CapabilityReadError, DiscoveryAttemptFailure},
+        runtime::{RuntimeFailure, RuntimeFailureKind},
+    };
 
-    fn create_test_pool() -> UpstreamConnectionPool {
-        let mut mcp_servers = HashMap::new();
-        mcp_servers.insert(
-            "srv-visible".to_string(),
-            MCPServerConfig {
-                kind: ServerType::Stdio,
-                command: Some("command-that-should-not-exist-mcpmate".to_string()),
-                args: Some(vec!["--test".to_string()]),
-                headers: None,
-                url: None,
-                env: None,
-            },
-        );
+    #[test]
+    fn legacy_api_session_remains_distinct_from_inspector_sessions() {
+        assert_ne!(CAPABILITY_VALIDATION_SESSION, "inspector-session");
+    }
 
-        UpstreamConnectionPool::new(
-            Arc::new(Config {
-                mcp_servers,
-                pagination: None,
+    #[test]
+    fn typed_read_timeout_reaches_the_inspector_boundary() {
+        let error = anyhow::Error::from(CapabilityReadError::DiscoveryFailed {
+            server_id: "server-1".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            kind: CapabilityType::Tools,
+            catalog_error: None,
+            existing: Some(DiscoveryAttemptFailure {
+                instance_id: None,
+                connection_generation: None,
+                source: OwnerSource::Existing,
+                error: CapabilityAttemptError::Owner(CapabilityOwnerError::Timeout { timeout_ms: 750 }),
             }),
-            None,
-        )
+            fresh: None,
+        });
+
+        assert_eq!(connection_timeout_ms(&error), Some(750));
+        assert_eq!(operation_timeout_ms(&error), None);
     }
 
-    fn make_list_ctx(connection_selection: Option<ConnectionSelection>) -> ListCtx {
-        ListCtx {
-            capability: CapabilityType::Tools,
-            server_id: "srv-visible".to_string(),
-            refresh: None,
-            timeout: None,
-            validation_session: None,
-            runtime_identity: None,
-            connection_selection,
-            name_domain: crate::core::capability::runtime::NameDomain::External,
-        }
-    }
+    #[test]
+    fn runtime_timeout_stays_an_operation_timeout() {
+        let error = anyhow::Error::from(CapabilityReadError::DiscoveryFailed {
+            server_id: "server-1".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            kind: CapabilityType::Tools,
+            catalog_error: None,
+            existing: Some(DiscoveryAttemptFailure {
+                instance_id: Some("instance-1".to_string()),
+                connection_generation: None,
+                source: OwnerSource::Existing,
+                error: CapabilityAttemptError::Runtime(RuntimeFailure {
+                    kind: RuntimeFailureKind::Timeout,
+                    message: Some("request timeout".to_string()),
+                    timeout_ms: Some(500),
+                }),
+            }),
+            fresh: None,
+        });
 
-    #[tokio::test]
-    async fn ensure_list_connection_uses_scoped_selection_when_available() {
-        let mut pool = create_test_pool();
-        let ctx = make_list_ctx(Some(ConnectionSelection {
-            server_id: "srv-visible".to_string(),
-            affinity_key: AffinityKey::PerSession("session-effective-scope".to_string()),
-        }));
-
-        let result = ensure_list_connection(&mut pool, &ctx).await;
-        assert!(result.is_err(), "connection should fail with fake command");
-
-        assert_eq!(pool.production_route_count(), 1);
-        assert!(pool.has_affinity_bound_connection("srv-visible", "session-effective-scope"));
-        assert_eq!(pool.client_bound_connection_count(), 1);
-    }
-
-    #[tokio::test]
-    async fn ensure_list_connection_falls_back_to_default_route_without_selection() {
-        let mut pool = create_test_pool();
-        let ctx = make_list_ctx(None);
-
-        let result = ensure_list_connection(&mut pool, &ctx).await;
-        assert!(result.is_err(), "connection should fail with fake command");
-
-        assert_eq!(pool.production_route_count(), 1);
-        assert_eq!(pool.client_bound_connection_count(), 0);
-        assert!(pool.connections.contains_key("srv-visible"));
+        assert_eq!(connection_timeout_ms(&error), None);
+        assert_eq!(operation_timeout_ms(&error), Some(500));
     }
 }

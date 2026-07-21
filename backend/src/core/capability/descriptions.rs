@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::core::cache::{CacheQuery, CacheScope, FreshnessLevel, RedbCacheManager};
+use mcpmate_capability_store::{CapabilityPayload, InventoryState, SnapshotState};
+
+use crate::config::database::Database;
 
 #[derive(Default)]
 pub struct CapabilityDescriptionIndex {
@@ -68,73 +70,105 @@ fn insert_description(
 }
 
 pub async fn load_cached_capability_descriptions(
-    redb_cache: &RedbCacheManager,
+    database: &Database,
     server_ids: impl IntoIterator<Item = String>,
 ) -> CapabilityDescriptionIndex {
     let mut index = CapabilityDescriptionIndex::default();
     let server_ids: HashSet<String> = server_ids.into_iter().collect();
 
     for server_id in server_ids {
-        let query = CacheQuery {
-            server_id: server_id.clone(),
-            freshness_level: FreshnessLevel::Cached,
-            include_disabled: true,
-            scope: CacheScope::shared_raw(),
-        };
-
-        let cached = match redb_cache.get_server_data(&query).await {
-            Ok(result) => result.data,
+        let snapshot = match database.load_capability_snapshot(&server_id).await {
+            Ok((snapshot, _)) => snapshot,
             Err(error) => {
                 tracing::debug!(
                     server_id = %server_id,
                     error = %error,
-                    "Failed to read cached capability descriptions"
+                    "Failed to read SQLite capability descriptions"
                 );
                 None
             }
         };
 
-        let Some(cached) = cached else {
+        let Some(snapshot) = snapshot else {
             continue;
         };
-
-        for tool in cached.tools {
-            insert_description(&mut index.tools, &server_id, &tool.name, tool.description.as_deref());
-            if let Some(unique_name) = tool.unique_name.as_deref() {
-                insert_description(&mut index.tools, &server_id, unique_name, tool.description.as_deref());
+        if snapshot.state != SnapshotState::Ready {
+            continue;
+        }
+        let complete_kinds = snapshot
+            .kind_states
+            .iter()
+            .filter(|state| state.inventory == InventoryState::Complete)
+            .map(|state| state.kind)
+            .collect::<HashSet<_>>();
+        for record in &snapshot.records {
+            if !complete_kinds.contains(&record.kind()) {
+                continue;
             }
-        }
-
-        for resource in cached.resources {
-            insert_description(
-                &mut index.resources,
-                &server_id,
-                &resource.uri,
-                resource.description.as_deref(),
-            );
-            if let Some(name) = resource.name.as_deref() {
-                insert_description(&mut index.resources, &server_id, name, resource.description.as_deref());
-            }
-        }
-
-        for prompt in cached.prompts {
-            insert_description(
-                &mut index.prompts,
-                &server_id,
-                &prompt.name,
-                prompt.description.as_deref(),
-            );
-        }
-
-        for template in cached.resource_templates {
-            insert_description(
-                &mut index.templates,
-                &server_id,
-                &template.uri_template,
-                template.description.as_deref(),
-            );
-            if let Some(name) = template.name.as_deref() {
-                insert_description(&mut index.templates, &server_id, name, template.description.as_deref());
+            match &record.payload {
+                CapabilityPayload::Tool(tool) => {
+                    insert_description(&mut index.tools, &server_id, &tool.name, tool.description.as_deref());
+                    insert_description(
+                        &mut index.tools,
+                        &server_id,
+                        &record.external_key,
+                        tool.description.as_deref(),
+                    );
+                }
+                CapabilityPayload::Resource(resource) => {
+                    insert_description(
+                        &mut index.resources,
+                        &server_id,
+                        &resource.uri,
+                        resource.description.as_deref(),
+                    );
+                    insert_description(
+                        &mut index.resources,
+                        &server_id,
+                        &record.external_key,
+                        resource.description.as_deref(),
+                    );
+                    insert_description(
+                        &mut index.resources,
+                        &server_id,
+                        &resource.name,
+                        resource.description.as_deref(),
+                    );
+                }
+                CapabilityPayload::Prompt(prompt) => {
+                    insert_description(
+                        &mut index.prompts,
+                        &server_id,
+                        &prompt.name,
+                        prompt.description.as_deref(),
+                    );
+                    insert_description(
+                        &mut index.prompts,
+                        &server_id,
+                        &record.external_key,
+                        prompt.description.as_deref(),
+                    );
+                }
+                CapabilityPayload::ResourceTemplate(template) => {
+                    insert_description(
+                        &mut index.templates,
+                        &server_id,
+                        &template.uri_template,
+                        template.description.as_deref(),
+                    );
+                    insert_description(
+                        &mut index.templates,
+                        &server_id,
+                        &record.external_key,
+                        template.description.as_deref(),
+                    );
+                    insert_description(
+                        &mut index.templates,
+                        &server_id,
+                        &template.name,
+                        template.description.as_deref(),
+                    );
+                }
             }
         }
     }
