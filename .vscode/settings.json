@@ -1,0 +1,20 @@
+{
+  // Use the rustup-provided rust-analyzer so the server and its proc-macro
+  // server always match the toolchain that builds the proc-macro dylibs.
+  // Without an ABI match, `#[async_trait]` stays unexpanded and every
+  // `Arc<Concrete> -> Arc<dyn Trait>` coercion is falsely reported as E0308.
+  "rust-analyzer.server.path": "rust-analyzer",
+  "rust-analyzer.procMacro.enable": true,
+  "rust-analyzer.procMacro.attributes.enable": true,
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  // Keep rust-analyzer out of `backend/target` so its checks never block on the
+  // cargo lock held by terminal builds; a blocked check leaves proc macros unexpanded.
+  "rust-analyzer.cargo.targetDir": true,
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.allTargets": true,
+  "rust-analyzer.linkedProjects": [
+    "backend/Cargo.toml",
+    "desktop/src-tauri/Cargo.toml",
+    "extension/cherry/Cargo.toml"
+  ]
+}

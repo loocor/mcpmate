@@ -24,7 +24,7 @@ TAURI_DIR="$(project_dir desktop/src-tauri)"
 print_section "backend dependency check"
 BACKEND_DIR="$(project_dir backend)"
 printf 'Ensuring backend dependencies are up-to-date...\n'
-run_in "$BACKEND_DIR" cargo check --quiet
+run_cargo_in "$BACKEND_DIR" check --quiet
 
 print_section "desktop tauri dev"
 printf 'MCPMATE_TAURI_ENABLE_INSPECTOR=%s\n' "${MCPMATE_TAURI_ENABLE_INSPECTOR:-1}"
@@ -35,4 +35,5 @@ run_in "$TAURI_DIR" env \
   MCPMATE_TAURI_ENABLE_INSPECTOR="${MCPMATE_TAURI_ENABLE_INSPECTOR:-1}" \
   MCPMATE_TAURI_LOG="${MCPMATE_TAURI_LOG:-debug}" \
   RUST_LOG="${RUST_LOG:-mcpmate=debug,mcpmate_tauri=debug,tauri=info}" \
+  RUSTC_WRAPPER= \
   cargo tauri dev --verbose "$@"

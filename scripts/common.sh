@@ -37,6 +37,15 @@ run_in() {
   )
 }
 
+run_cargo_in() {
+  local dir="$1"
+  shift
+  (
+    cd "$dir"
+    RUSTC_WRAPPER= cargo "$@"
+  )
+}
+
 print_section() {
   local title="$1"
   printf '\n== %s ==\n' "$title"
