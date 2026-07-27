@@ -12,10 +12,11 @@ use crate::api::models::{
     server::{
         InstanceDetailsReq, InstanceDetailsResp, InstanceHealthReq, InstanceHealthResp, InstanceListReq,
         InstanceListResp, InstanceManageReq, ServerCapabilityDetailReq, ServerCapabilityDetailResp,
-        ServerCapabilityReq, ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp, ServerListReq,
-        ServerListResp, ServerManageReq, ServerNamespaceRemediationReq, ServerOperationResp, ServerPreviewReq,
-        ServerPreviewResp, ServerPromptsResp, ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp,
-        ServerUpdateReq, ServersImportReq, ServersImportResp,
+        ServerCapabilityListsResp, ServerCapabilityRefreshReq, ServerCapabilityRefreshResp, ServerCapabilityReq,
+        ServerCreateReq, ServerDeleteReq, ServerDetailsReq, ServerDetailsResp, ServerListReq, ServerListResp,
+        ServerManageReq, ServerNamespaceRemediationReq, ServerOperationResp, ServerPreviewReq, ServerPreviewResp,
+        ServerPromptsResp, ServerResourceTemplatesResp, ServerResourcesResp, ServerToolsResp, ServerUpdateReq,
+        ServersImportReq, ServersImportResp,
     },
 };
 use crate::{aide_wrapper, aide_wrapper_payload, aide_wrapper_query};
@@ -82,6 +83,14 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/servers/capability/detail",
             get_with(server_capability_detail_aide, server_capability_detail_docs),
+        )
+        .api_route(
+            "/mcp/servers/capabilities/lists",
+            get_with(server_capability_lists_aide, server_capability_lists_docs),
+        )
+        .api_route(
+            "/mcp/servers/capabilities/refresh",
+            post_with(refresh_server_capabilities_aide, refresh_server_capabilities_docs),
         )
         .api_route(
             "/mcp/servers/oauth/config",
@@ -204,6 +213,20 @@ aide_wrapper_query!(
     ServerCapabilityDetailReq,
     ServerCapabilityDetailResp,
     "Get one cached capability detail for a specific server"
+);
+
+aide_wrapper_query!(
+    server::server_capability_lists,
+    ServerCapabilityReq,
+    ServerCapabilityListsResp,
+    "List all capability kinds for a specific server in one discovery pass"
+);
+
+aide_wrapper_payload!(
+    server::refresh_server_capabilities,
+    ServerCapabilityRefreshReq,
+    ServerCapabilityRefreshResp,
+    "Refresh the complete capability catalog for a specific server"
 );
 
 aide_wrapper_payload!(

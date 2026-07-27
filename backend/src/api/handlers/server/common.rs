@@ -14,10 +14,8 @@ use crate::{
         routes::AppState,
     },
     config::{database::Database, server},
-    core::proxy::server::ProxyServer,
 };
 use axum::http::StatusCode;
-use tracing::{debug, warn};
 
 #[derive(Debug, Default)]
 pub(crate) struct ServerOAuthResponseSummary {
@@ -419,53 +417,6 @@ pub(crate) async fn load_server_oauth_response_summary(
     })
 }
 
-pub(crate) async fn reconcile_client_direct_exposure_after_server_constraint_change(
-    state: &Arc<AppState>,
-    server_id: &str,
-) -> Result<usize, ApiError> {
-    let Ok(client_service) = crate::api::handlers::client::get_client_service(state) else {
-        warn!(server_id = %server_id, "Client service unavailable; skipping direct exposure reconciliation");
-        return Ok(0);
-    };
-
-    let reconciled = client_service
-        .reconcile_unify_direct_exposure_for_server(server_id)
-        .await
-        .map_err(|err| {
-            ApiError::InternalError(format!(
-                "Failed to reconcile client direct exposure after server constraint change: {err}"
-            ))
-        })?;
-
-    if reconciled.is_empty() {
-        return Ok(0);
-    }
-
-    if let Some(proxy_server) = ProxyServer::global().and_then(|proxy| proxy.try_lock().ok().map(|guard| guard.clone()))
-    {
-        for client in &reconciled {
-            if let Err(err) = proxy_server
-                .apply_persisted_unify_direct_exposure(&client.identifier, client.unify_direct_exposure.clone())
-                .await
-            {
-                warn!(client = %client.identifier, server_id = %server_id, error = %err, "Failed to refresh reconciled Unify direct exposure state");
-            }
-        }
-
-        let (tools_count, prompts_count, resources_count) = proxy_server.notify_all_list_changed().await;
-        debug!(
-            server_id = %server_id,
-            reconciled_clients = reconciled.len(),
-            tools_count,
-            prompts_count,
-            resources_count,
-            "Reconciled client direct exposure after server constraint change"
-        );
-    }
-
-    Ok(reconciled.len())
-}
-
 /// Get server instances with timeout protection
 ///
 /// Consolidates the connection pool access and instance retrieval logic
@@ -537,7 +488,9 @@ async fn load_server_capability_management(
         }
     };
     match database.load_capability_snapshot(server_id).await {
-        Ok((Some(snapshot), _)) => Some(build_capability_management_projection(&snapshot)),
+        Ok((Some(snapshot), _)) => {
+            build_capability_management_projection_if_current(&database.pool, server_id, &snapshot).await
+        }
         Ok((None, _)) => None,
         Err(error) => {
             tracing::warn!(server_id = %server_id, error = %error, "Failed to load capability catalog summary");
@@ -546,7 +499,34 @@ async fn load_server_capability_management(
     }
 }
 
-pub(crate) fn build_capability_management_projection(
+/// Guards against showing a management summary or cached protocol version derived from a
+/// stale catalog snapshot. `/api/mcp/servers/update` can change a server's command, URL,
+/// headers, env, or enabled state without immediately invalidating the persisted snapshot; the
+/// old snapshot otherwise remains readable until the next capability read invalidates it,
+/// which would let the management UI keep showing a `ready` summary and protocol version from
+/// the previous configuration (Codex review, PR #160).
+pub(crate) async fn build_capability_management_projection_if_current(
+    pool: &sqlx::SqlitePool,
+    server_id: &str,
+    snapshot: &mcpmate_capability_store::CatalogSnapshot,
+) -> Option<CapabilityManagementProjection> {
+    match crate::config::server::capabilities::current_config_fingerprint(pool, server_id).await {
+        Ok(current_fingerprint) if current_fingerprint == snapshot.config_fingerprint => {
+            Some(build_capability_management_projection(snapshot))
+        }
+        Ok(_) => None,
+        Err(error) => {
+            tracing::warn!(
+                server_id = %server_id,
+                error = %error,
+                "Failed to validate capability catalog fingerprint for management summary"
+            );
+            None
+        }
+    }
+}
+
+fn build_capability_management_projection(
     snapshot: &mcpmate_capability_store::CatalogSnapshot
 ) -> CapabilityManagementProjection {
     CapabilityManagementProjection {
@@ -861,4 +841,81 @@ pub async fn enrich_capability_response(
     Ok(super::capability::respond_with_enriched(
         enriched, cache_hit, refresh, strategy,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::*;
+
+    async fn test_pool() -> Pool<Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command) VALUES ('server-a', 'docs', 'stdio', 'node')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert server");
+        pool
+    }
+
+    fn snapshot_with_fingerprint(fingerprint: &str) -> mcpmate_capability_store::CatalogSnapshot {
+        mcpmate_capability_store::CatalogSnapshot {
+            server_id: "server-a".to_string(),
+            server_name: "docs".to_string(),
+            config_fingerprint: fingerprint.to_string(),
+            revision: 1,
+            state: mcpmate_capability_store::SnapshotState::Ready,
+            initialize: None,
+            kind_states: Vec::new(),
+            records: Vec::new(),
+            observed_at: chrono::Utc::now(),
+            committed_at: chrono::Utc::now(),
+            last_error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn management_projection_is_served_when_fingerprint_matches_the_live_config() {
+        let pool = test_pool().await;
+        let fingerprint = crate::config::server::capabilities::current_config_fingerprint(&pool, "server-a")
+            .await
+            .expect("compute fingerprint");
+        let snapshot = snapshot_with_fingerprint(&fingerprint);
+
+        let projection = build_capability_management_projection_if_current(&pool, "server-a", &snapshot).await;
+        assert!(projection.is_some());
+    }
+
+    #[tokio::test]
+    async fn stale_management_projection_is_suppressed_after_config_changes() {
+        // The persisted catalog snapshot survives an `/api/mcp/servers/update` config edit
+        // until a capability read invalidates it. Management summaries must not present that
+        // stale `ready` snapshot as if it reflected the new configuration (Codex review,
+        // PR #160).
+        let pool = test_pool().await;
+        let stale_fingerprint = crate::config::server::capabilities::current_config_fingerprint(&pool, "server-a")
+            .await
+            .expect("compute fingerprint before the config change");
+        let snapshot = snapshot_with_fingerprint(&stale_fingerprint);
+
+        sqlx::query("UPDATE server_config SET command = 'python' WHERE id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("simulate a server configuration update");
+
+        let projection = build_capability_management_projection_if_current(&pool, "server-a", &snapshot).await;
+        assert!(
+            projection.is_none(),
+            "a fingerprint mismatch must suppress the stale summary"
+        );
+    }
 }

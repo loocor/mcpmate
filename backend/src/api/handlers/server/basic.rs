@@ -240,6 +240,13 @@ async fn server_details_core(
         oauth_requires_reconnect,
         oauth_issue,
         namespace_issue,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            db_pool,
+        )
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .into_iter()
+        .collect(),
     };
 
     Ok(ServerDetailsResp::success(server_details))
@@ -251,6 +258,12 @@ async fn server_list_core(
     db_pool: &sqlx::SqlitePool,
     state: &Arc<AppState>,
 ) -> Result<ServerListResp, StatusCode> {
+    let source_revision_set =
+        crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(db_pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .into_iter()
+            .collect::<crate::api::models::CatalogRevisionSet>();
     let all_servers = crate::config::server::get_all_servers(db_pool).await.map_err(|e| {
         tracing::error!("Failed to get servers: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -382,6 +395,7 @@ async fn server_list_core(
             oauth_requires_reconnect,
             oauth_issue,
             namespace_issue,
+            source_revision_set: source_revision_set.clone(),
         });
     }
 
@@ -523,10 +537,12 @@ async fn load_server_capability_management(
     for server_id in server_ids {
         match database.load_capability_snapshot(server_id).await {
             Ok((Some(snapshot), _)) => {
-                projections.insert(
-                    server_id.clone(),
-                    common::build_capability_management_projection(&snapshot),
-                );
+                if let Some(projection) =
+                    common::build_capability_management_projection_if_current(&database.pool, server_id, &snapshot)
+                        .await
+                {
+                    projections.insert(server_id.clone(), projection);
+                }
             }
             Ok((None, _)) => {}
             Err(error) => {
@@ -1210,7 +1226,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unify_direct_exposure_eligibility_round_trips_through_update_list_and_details() {
+    async fn unify_direct_exposure_eligibility_round_trips_through_management_list_and_details() {
         let context = create_test_context().await;
         let server_id = seed_streamable_http_server(&context.db_pool, "eligibility-server").await;
         crate::config::server::upsert_server_oauth_config(
@@ -1262,44 +1278,19 @@ mod tests {
             Some("https://example.com/eligibility-server")
         );
 
-        let update_response = crate::api::handlers::server::crud::update_server(
-            State(context.app_state.clone()),
-            Json(crate::api::models::server::ServerUpdateReq {
-                id: server_id.clone(),
-                kind: None,
-                command: None,
-                url: None,
-                args: None,
-                env: None,
-                headers: None,
-                profile_ids: None,
-                enabled: None,
-                pending_import: None,
-                source: None,
-                meta: None,
-                unify_direct_exposure_eligible: Some(true),
-            }),
+        let revisions =
+            crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(&context.db_pool)
+                .await
+                .expect("load source revision set");
+        crate::core::capability::management::ServerSurfaceManagement::set_direct_exposure_eligible(
+            &context.db_pool,
+            &server_id,
+            true,
+            revisions,
+            "test",
         )
         .await
-        .expect("server update response")
-        .0;
-        let updated = update_response.data.expect("updated server payload");
-        assert!(updated.unify_direct_exposure_eligible);
-        assert_eq!(updated.name, "eligibility-server");
-        assert_eq!(updated.url.as_deref(), Some("https://example.com/eligibility-server"));
-        assert!(matches!(
-            updated.oauth_status,
-            Some(crate::core::oauth::OAuthConnectionState::Connected)
-        ));
-        assert!(matches!(
-            updated.oauth_custody_state,
-            Some(crate::core::oauth::OAuthCustodyState::Unavailable)
-        ));
-        assert_eq!(updated.oauth_requires_reconnect, Some(true));
-        assert_eq!(
-            updated.oauth_issue.as_ref().map(|issue| issue.code.as_str()),
-            Some("secure_store_unavailable")
-        );
+        .expect("server management response");
 
         let list_response = server_list_core(
             &ServerListReq {
@@ -1359,6 +1350,13 @@ mod tests {
         crate::config::profile::init::initialize_profile_tables(&db_pool)
             .await
             .expect("init profile tables");
+        crate::config::client::init::initialize_client_table(&db_pool)
+            .await
+            .expect("init client tables");
+        mcpmate_capability_store::SqliteCapabilityCatalog::new(db_pool.clone())
+            .ensure_schema()
+            .await
+            .expect("init capability catalog tables");
         crate::core::capability::naming::initialize(db_pool.clone());
 
         let database = Arc::new(Database {
@@ -1379,7 +1377,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),

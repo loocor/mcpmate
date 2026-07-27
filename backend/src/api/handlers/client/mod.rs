@@ -3,7 +3,7 @@ mod backups;
 mod handlers;
 mod inspection;
 mod manage;
-mod runtime;
+mod surface_reviews;
 
 pub use approval::{approve_client, suspend_client};
 pub use backups::{delete_backup, get_backup_policy, list_backups, set_backup_policy};
@@ -15,3 +15,8 @@ pub use handlers::{
 };
 pub(crate) use inspection::parse_rule_from_api_data;
 pub use manage::delete_client;
+pub use surface_reviews::{
+    approve_surface_review, get_surface_review, list_surface_publications, list_surface_reviews,
+    preview_surface_intent_resolution, reject_surface_review, resolve_surface_intent, rollback_surface_publication,
+    summarize_surface_reviews,
+};

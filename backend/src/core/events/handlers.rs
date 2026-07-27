@@ -19,7 +19,7 @@ pub struct EventHandlers {
     pub connection_pool: Option<Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>>,
     /// Optional event-driven capability manager for server capability sync
     pub event_capability_manager: Option<Arc<crate::core::events::capability::EventDrivenCapabilityManager>>,
-    /// Optional client configuration service for direct-exposure reconciliation.
+    /// Optional client configuration service for namespace-repair reconciliation.
     pub client_config_service: Option<Arc<crate::clients::service::ClientConfigService>>,
 }
 
@@ -111,15 +111,15 @@ impl EventHandlers {
         }
     }
 
-    async fn notify_all_list_changed(
+    async fn notify_transparent_list_changed(
         &self,
         context: &str,
     ) {
         if let Some(proxy_server) = global_proxy_server() {
-            let refreshed = proxy_server.refresh_all_bound_sessions().await;
-            let (t, p, r) = proxy_server.notify_all_list_changed().await;
+            let refreshed = proxy_server.refresh_transparent_bound_sessions().await;
+            let (t, p, r) = proxy_server.notify_transparent_all_list_changed().await;
             debug!(
-                "{}: refreshed={} bound sessions, list_changed (tools={}, prompts={}, resources={})",
+                "{}: refreshed={} bound sessions, transparent list_changed (tools={}, prompts={}, resources={})",
                 context, refreshed, t, p, r
             );
         }
@@ -138,25 +138,6 @@ impl EventHandlers {
             .await
         {
             Ok(reconciled) => {
-                if let Some(proxy_server) = global_proxy_server() {
-                    for client in &reconciled {
-                        if let Err(error) = proxy_server
-                            .apply_persisted_unify_direct_exposure(
-                                &client.identifier,
-                                client.unify_direct_exposure.clone(),
-                            )
-                            .await
-                        {
-                            warn!(
-                                server_id = %server_id,
-                                client = %client.identifier,
-                                error = %error,
-                                context,
-                                "Failed to apply reconciled direct exposure"
-                            );
-                        }
-                    }
-                }
                 debug!(
                     server_id = %server_id,
                     clients = reconciled.len(),
@@ -185,7 +166,7 @@ impl EventHandlers {
             Event::ProfileStatusChanged { profile_id, enabled } => {
                 debug!("Handling ProfileStatusChanged: {} -> {}", profile_id, enabled);
                 self.invalidate_cache_and_sync_servers().await;
-                self.notify_all_list_changed("Profile change").await;
+                self.notify_transparent_list_changed("Profile change").await;
             }
 
             // Server enabled in profile changed - trigger immediate server management for active profile
@@ -212,14 +193,14 @@ impl EventHandlers {
                     }
                 }
 
-                self.notify_all_list_changed("Server enabled change").await;
+                self.notify_transparent_list_changed("Server enabled change").await;
             }
 
             // Events that require server synchronization (but not specific server management)
             Event::ServerGlobalStatusChanged { .. } | Event::DatabaseChanged | Event::ConfigReloaded => {
                 debug!("Handling server sync event: {:?}", event);
                 self.invalidate_cache_and_sync_servers().await;
-                self.notify_all_list_changed("Server sync event").await;
+                self.notify_transparent_list_changed("Server sync event").await;
             }
 
             // Emit listChanged notifications for downstream clients
@@ -227,7 +208,7 @@ impl EventHandlers {
                 debug!("Tool configuration changed: emitting tools/list_changed");
                 self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
-                    let count = proxy_server.notify_tool_list_changed().await;
+                    let count = proxy_server.notify_transparent_tool_list_changed().await;
                     debug!("tools/list_changed notified {} client(s)", count);
                 }
             }
@@ -235,14 +216,15 @@ impl EventHandlers {
                 debug!("Prompt configuration changed: emitting prompts/list_changed");
                 self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
-                    let count = proxy_server.notify_prompt_list_changed().await;
+                    let count = proxy_server.notify_transparent_prompt_list_changed().await;
                     debug!("prompts/list_changed notified {} client(s)", count);
                 }
             }
             Event::ClientVisibleDirectSurfaceChanged { client_id } => {
                 debug!(client = %client_id, "Client visible direct surface changed: emitting tools/prompts/resources list_changed");
                 if let Some(proxy_server) = global_proxy_server() {
-                    let (tools_count, prompts_count, resources_count) = proxy_server.notify_all_list_changed().await;
+                    let (tools_count, prompts_count, resources_count) =
+                        proxy_server.notify_consumer_surface_changed(&client_id).await;
                     debug!(
                         client = %client_id,
                         "tools/list_changed={}, prompts/list_changed={}, resources/list_changed={}",
@@ -259,9 +241,6 @@ impl EventHandlers {
                     "Capability catalog changed"
                 );
                 self.invalidate_profile_cache().await;
-                self.reconcile_direct_exposure_for_server(&server_id, "Capability catalog change")
-                    .await;
-                self.notify_all_list_changed("Capability catalog change").await;
             }
             Event::CapabilityCatalogCommitted {
                 server_id,
@@ -298,7 +277,7 @@ impl EventHandlers {
                     }
                 }
                 self.invalidate_profile_cache().await;
-                self.notify_all_list_changed("Capability collision").await;
+                self.notify_transparent_list_changed("Capability collision").await;
             }
             Event::ServerNamespaceRepaired {
                 server_id,
@@ -324,13 +303,13 @@ impl EventHandlers {
                 self.invalidate_cache_and_sync_servers().await;
                 self.reconcile_direct_exposure_for_server(&server_id, "Server namespace repair")
                     .await;
-                self.notify_all_list_changed("Server namespace repair").await;
+                self.notify_transparent_list_changed("Server namespace repair").await;
             }
             Event::ResourceEnabledInProfileChanged { .. } => {
                 debug!("Resource configuration changed: emitting resources/list_changed");
                 self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
-                    let count = proxy_server.notify_resource_list_changed().await;
+                    let count = proxy_server.notify_transparent_resource_list_changed().await;
                     debug!("resources/list_changed notified {} client(s)", count);
                 }
             }
@@ -339,7 +318,7 @@ impl EventHandlers {
                 debug!("Resource template configuration changed: emitting resources/list_changed");
                 self.invalidate_profile_cache().await;
                 if let Some(proxy_server) = global_proxy_server() {
-                    let count = proxy_server.notify_resource_list_changed().await;
+                    let count = proxy_server.notify_transparent_resource_list_changed().await;
                     debug!(
                         "resources/list_changed notified {} client(s) (via template change)",
                         count

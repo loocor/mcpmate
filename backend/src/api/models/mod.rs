@@ -16,6 +16,8 @@ pub mod server;
 pub mod system;
 pub mod token_estimate;
 
+pub type CatalogRevisionSet = std::collections::BTreeMap<String, i64>;
+
 // Re-export commonly used types for convenience
 pub use resp::{ErrorDetails, ErrorResp, ResponseConverter, SuccessResp};
 

@@ -1762,6 +1762,8 @@ impl BrokerService {
             }
             Err(error) => {
                 let error_str = error.to_string();
+                self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Tools, &error_str)
+                    .await;
                 if error_str.contains("timeout") || error_str.contains("Timeout") || error_str.contains("timed out") {
                     Ok(UcanError::timeout("tool", tool_name, timeout_secs).to_call_tool_result())
                 } else {
@@ -2364,7 +2366,16 @@ impl BrokerService {
                     serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
                 )]))
             }
-            Err(e) => Ok(UcanError::upstream_error("prompt", prompt_name, &e.to_string()).to_call_tool_result()),
+            Err(e) => {
+                let error_str = e.to_string();
+                self.record_usage_evidence(
+                    &server_id,
+                    mcpmate_capability_store::CapabilityKind::Prompts,
+                    &error_str,
+                )
+                .await;
+                Ok(UcanError::upstream_error("prompt", prompt_name, &error_str).to_call_tool_result())
+            }
         }
     }
 
@@ -2413,8 +2424,33 @@ impl BrokerService {
                     serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
                 )]))
             }
-            Err(e) => Ok(UcanError::upstream_error("resource", resource_uri, &e.to_string()).to_call_tool_result()),
+            Err(e) => {
+                let error_str = e.to_string();
+                self.record_usage_evidence(
+                    &server_id,
+                    mcpmate_capability_store::CapabilityKind::Resources,
+                    &error_str,
+                )
+                .await;
+                Ok(UcanError::upstream_error("resource", resource_uri, &error_str).to_call_tool_result())
+            }
         }
+    }
+
+    async fn record_usage_evidence(
+        &self,
+        server_id: &str,
+        kind: mcpmate_capability_store::CapabilityKind,
+        error: &str,
+    ) {
+        crate::core::capability::runtime::record_capability_usage_evidence(
+            &self.database,
+            server_id,
+            kind,
+            None,
+            error,
+        )
+        .await;
     }
 
     async fn acquire_peer(

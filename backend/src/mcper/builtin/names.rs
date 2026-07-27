@@ -36,3 +36,37 @@ pub const HOSTED_BUILTIN_TOOL_NAMES: [&str; 7] = [
 
 /// Legacy alias — prefer HOSTED_BUILTIN_TOOL_NAMES.
 pub const PROFILE_MODE_BUILTIN_TOOL_NAMES: [&str; 7] = HOSTED_BUILTIN_TOOL_NAMES;
+
+pub(crate) fn builtin_tool_names_for_surface(
+    config_mode: &str,
+    capability_source: &str,
+) -> &'static [&'static str] {
+    match (config_mode, capability_source) {
+        ("unify", _) => &UNIFY_BUILTIN_TOOL_NAMES,
+        ("hosted", "profiles") => &HOSTED_BUILTIN_TOOL_NAMES,
+        _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HOSTED_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES, builtin_tool_names_for_surface};
+
+    #[test]
+    fn builtin_surface_matrix_matches_the_pre_surface_runtime_contract() {
+        for source in ["activated", "profiles", "custom"] {
+            assert_eq!(
+                builtin_tool_names_for_surface("unify", source),
+                UNIFY_BUILTIN_TOOL_NAMES
+            );
+        }
+
+        assert_eq!(
+            builtin_tool_names_for_surface("hosted", "profiles"),
+            HOSTED_BUILTIN_TOOL_NAMES
+        );
+        assert!(builtin_tool_names_for_surface("hosted", "activated").is_empty());
+        assert!(builtin_tool_names_for_surface("hosted", "custom").is_empty());
+        assert!(builtin_tool_names_for_surface("transparent", "profiles").is_empty());
+    }
+}

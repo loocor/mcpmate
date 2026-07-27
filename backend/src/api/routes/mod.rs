@@ -51,8 +51,6 @@ pub struct AppState {
     pub audit_service: Option<Arc<crate::audit::AuditService>>,
     /// Configuration application state manager
     pub config_application_state: Arc<crate::core::profile::ConfigApplicationStateManager>,
-    /// Unified query adapter (optional, for gradual migration)
-    pub unified_query: Option<Arc<crate::core::capability::UnifiedQueryAdapter>>,
     /// Client configuration service (template-driven)
     pub client_service: Option<Arc<ClientConfigService>>,
     /// Inspector call registry (long-running tool calls)
@@ -132,32 +130,6 @@ async fn create_router_internal(
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     let inspector_sessions = Arc::new(InspectorSessionManager::new());
     inspector_service::set_call_registry(inspector_calls.clone());
-
-    // Create unified query adapter (optional, for incremental migration)
-    let unified_query = if database.is_some() {
-        crate::core::capability::UnifiedQueryIntegration::create_adapter(Arc::new(AppState {
-            connection_pool: connection_pool.clone(),
-            metrics_collector: metrics_collector.clone(),
-            http_proxy: http_proxy.clone(),
-            profile_merge_service: profile_merge_service.clone(),
-            database: database.clone(),
-            audit_database: audit_database.clone(),
-            audit_service: audit_service.clone(),
-            config_application_state: config_application_state.clone(),
-            unified_query: None, // avoid recursion
-            client_service: None,
-            inspector_calls: inspector_calls.clone(),
-            inspector_sessions: inspector_sessions.clone(),
-            oauth_manager: RwLock::new(None),
-            secret_store: RwLock::new(None),
-            secret_store_readiness: RwLock::new(crate::core::secrets::store::SecretStoreReadiness::unavailable(
-                "not_initialized",
-                "Secret store initialization has not run yet",
-            )),
-        }))
-    } else {
-        None
-    };
 
     // Reuse the proxy-owned client service when available so API startup does not
     // repeat discovery bootstrap work already completed during proxy setup.
@@ -240,7 +212,6 @@ async fn create_router_internal(
         audit_database,
         audit_service,
         config_application_state,
-        unified_query,
         client_service,
         inspector_calls,
         inspector_sessions,
