@@ -872,10 +872,7 @@ mod tests {
         );
         pool.connections.insert(
             owner.to_string(),
-            HashMap::from([(
-                "owner-default".to_string(),
-                UpstreamConnection::new(owner.to_string()),
-            )]),
+            HashMap::from([("owner-default".to_string(), UpstreamConnection::new(owner.to_string()))]),
         );
         pool.client_bound_connections.insert(
             (challenger.to_string(), "client-1".to_string()),

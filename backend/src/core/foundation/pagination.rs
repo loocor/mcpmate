@@ -9,6 +9,8 @@ use rmcp::ErrorData as McpError;
 use rmcp::model::{Cursor, PaginatedRequestParams};
 use serde::{Deserialize, Serialize};
 
+use crate::mcper::builtin::names::SHARED_DISCOVERY_TOOL_NAMES;
+
 /// pagination behavior configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaginationConfig {
@@ -156,7 +158,19 @@ impl ProxyPaginator {
         );
 
         // sort tools by name using natural sort (correctly handle numbers)
-        all_tools.sort_by_key(|tool| natural_sort_key(&tool.name));
+        all_tools.sort_by(|left, right| {
+            match (
+                SHARED_DISCOVERY_TOOL_NAMES
+                    .iter()
+                    .position(|name| *name == left.name.as_ref()),
+                SHARED_DISCOVERY_TOOL_NAMES
+                    .iter()
+                    .position(|name| *name == right.name.as_ref()),
+            ) {
+                (Some(left_rank), Some(right_rank)) => left_rank.cmp(&right_rank),
+                _ => natural_sort_key(&left.name).cmp(&natural_sort_key(&right.name)),
+            }
+        });
         tracing::debug!("Sorted {} tools by name (natural sort)", all_tools.len());
 
         // if pagination is disabled or page_size is 0, skip pagination
@@ -377,4 +391,27 @@ fn natural_sort_key(s: &str) -> Vec<SortKeyPart> {
 enum SortKeyPart {
     String(String),
     Number(u64),
+}
+
+#[cfg(test)]
+mod tests {
+    use rmcp::model::Tool;
+
+    use super::ProxyPaginator;
+    use crate::mcper::builtin::names::SHARED_DISCOVERY_TOOL_NAMES;
+
+    #[test]
+    fn paginate_tools_orders_ucan_discovery_tools_before_natural_sort() {
+        let paginator = ProxyPaginator::new();
+        let tools = SHARED_DISCOVERY_TOOL_NAMES
+            .iter()
+            .rev()
+            .map(|name| Tool::new(*name, *name, std::sync::Arc::new(serde_json::Map::new())))
+            .collect();
+
+        let page = paginator.paginate_tools(&None, tools).expect("paginate tools");
+        let names = page.items.iter().map(|tool| tool.name.as_ref()).collect::<Vec<_>>();
+
+        assert_eq!(names, SHARED_DISCOVERY_TOOL_NAMES.as_slice());
+    }
 }

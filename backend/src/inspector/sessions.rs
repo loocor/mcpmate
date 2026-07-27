@@ -41,6 +41,7 @@ pub(crate) struct ActiveSession {
     pub mode: InspectorMode,
     pub peer: Option<Peer<RoleClient>>,
     pub validation_reservation: Option<ValidationReservationToken>,
+    pub expires_at_epoch_ms: u128,
 }
 
 pub(crate) enum SessionLookup {
@@ -158,12 +159,14 @@ impl InspectorSessionManager {
                 armed: true,
             });
         }
-        entry.expires_at = Instant::now() + SESSION_TTL;
+        let expires_at = Instant::now() + SESSION_TTL;
+        entry.expires_at = expires_at;
         SessionLookup::Active(ActiveSession {
             server_id: entry.server_id.clone(),
             mode: entry.mode,
             peer: entry.peer.clone(),
             validation_reservation: entry.validation_reservation.clone(),
+            expires_at_epoch_ms: session_expiry_epoch(expires_at),
         })
     }
 

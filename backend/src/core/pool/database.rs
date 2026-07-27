@@ -44,6 +44,14 @@ impl CapSyncFlags {
 
     /// Convenience presets
     pub const ALL: Self = Self(Self::TOOLS.0 | Self::RESOURCES.0 | Self::PROMPTS.0 | Self::RESOURCE_TEMPLATES.0);
+
+    #[inline]
+    pub const fn union(
+        self,
+        other: Self,
+    ) -> Self {
+        Self(self.0 | other.0)
+    }
 }
 
 // Simplified approach - extract common database operations

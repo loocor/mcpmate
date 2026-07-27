@@ -714,6 +714,9 @@ mod tests {
         CreateLlmProviderRecord, LlmProviderRepository, StoredLlmProvider, UpdateLlmProviderRecord,
     };
 
+    type ProviderUsageReplacement = (String, Option<String>);
+    type ProviderUsageReplacementLog = Arc<Mutex<Vec<ProviderUsageReplacement>>>;
+
     #[derive(Clone, Default)]
     struct FakeRepository {
         providers: Arc<Mutex<HashMap<String, StoredLlmProvider>>>,
@@ -826,7 +829,7 @@ mod tests {
 
     #[derive(Clone, Default)]
     struct FakeCredentialStore {
-        replaced: Arc<Mutex<Vec<(String, Option<String>)>>>,
+        replaced: ProviderUsageReplacementLog,
         fail_empty_replace: bool,
     }
 

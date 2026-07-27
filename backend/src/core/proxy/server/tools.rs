@@ -1,31 +1,29 @@
 use super::*;
-use crate::clients::models::CapabilitySource;
-use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::mcper::builtin::ClientBuiltinContext;
 use crate::mcper::{
-    HOSTED_BUILTIN_TOOL_NAMES, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ADD_TOOL,
-    MCPMATE_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_GET_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_PROFILE_REMOVE_TOOL,
-    MCPMATE_PROFILE_SET_TOOL, MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL,
-    UNIFY_BUILTIN_TOOL_NAMES,
+    MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL, MCPMATE_PROFILE_ADD_TOOL, MCPMATE_PROFILE_DETAILS_TOOL,
+    MCPMATE_PROFILE_GET_TOOL, MCPMATE_PROFILE_LIST_TOOL, MCPMATE_PROFILE_REMOVE_TOOL, MCPMATE_PROFILE_SET_TOOL,
+    MCPMATE_UCAN_CALL_TOOL, MCPMATE_UCAN_CATALOG_TOOL, MCPMATE_UCAN_DETAILS_TOOL,
 };
-use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, PaginatedRequestParams};
 use rmcp::service::PeerRequestOptions;
 use rmcp::service::RequestContext;
 
+#[cfg(test)]
 fn builtin_tool_allowed(
     config_mode: Option<&str>,
-    capability_source: CapabilitySource,
+    capability_source: crate::clients::models::CapabilitySource,
     tool_name: &str,
 ) -> bool {
-    match config_mode {
-        Some("unify") => UNIFY_BUILTIN_TOOL_NAMES.contains(&tool_name),
-        Some("transparent") => false,
-        _ => capability_source == CapabilitySource::Profiles && HOSTED_BUILTIN_TOOL_NAMES.contains(&tool_name),
-    }
+    crate::mcper::builtin::names::builtin_tool_names_for_surface(
+        config_mode.unwrap_or("hosted"),
+        capability_source.as_str(),
+    )
+    .contains(&tool_name)
 }
 
+#[cfg(test)]
 fn direct_managed_tool_call_allowed(
     config_mode: Option<&str>,
     directly_exposed: bool,
@@ -50,159 +48,16 @@ pub(super) async fn list_tools(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<rmcp::model::ListToolsResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let snapshot = vis
-        .resolve_snapshot_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    let visible_server_ids = snapshot
-        .server_ids
-        .iter()
-        .cloned()
-        .collect::<std::collections::HashSet<_>>();
-    let unify_direct_exposure_eligible_server_ids = if unify_mode {
-        if let Some(db) = &server.database {
-            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?
-        } else {
-            std::collections::HashSet::new()
-        }
-    } else {
-        std::collections::HashSet::new()
-    };
-
-    let mut tools: Vec<rmcp::model::Tool> = Vec::new();
-    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("tools");
-
-    if let Some(db) = &server.database {
-        let enabled_servers: Vec<(String, String)> = sqlx::query_as(
-            r#"
-            SELECT sc.id, sc.name
-            FROM server_config sc
-            WHERE sc.enabled = 1
-            ORDER BY sc.name, sc.id
-            "#,
-        )
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-        let pool = &server.connection_pool;
-
-        let mut tasks = Vec::new();
-        for (server_id, server_name) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            let ctx = crate::core::capability::runtime::ListCtx {
-                capability: crate::core::capability::CapabilityType::Tools,
-                server_id: server_id.clone(),
-                refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
-                validation_session: None,
-                runtime_identity: client.runtime_identity(),
-                connection_selection: client.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(std::sync::Arc::new(snapshot.clone())),
-                name_domain: crate::core::capability::runtime::NameDomain::External,
-            };
-            let pool = pool.clone();
-            let db = db.clone();
-            tasks.push(async move {
-                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(db, pool);
-                let tools = service
-                    .list(&ctx)
-                    .await
-                    .map_err(|error| error.to_string())
-                    .and_then(|result| {
-                        result
-                            .items
-                            .into_tools()
-                            .ok_or_else(|| "Tool listing returned a different capability kind".to_string())
-                    });
-                (server_id, server_name, tools)
-            });
-        }
-
-        for (server_id, server_name, result) in futures::stream::iter(tasks)
-            .buffer_unordered(crate::core::capability::facade::concurrency_limit())
-            .collect::<Vec<_>>()
-            .await
-        {
-            let tool_batch = match result {
-                Ok(tool_batch) => tool_batch,
-                Err(error) => {
-                    aggregate.record_failure(&server_id, &server_name, error);
-                    continue;
-                }
-            };
-            let server_tools = async {
-                if !unify_mode {
-                    return Ok(tool_batch);
-                }
-                let mut exposed = Vec::new();
-                for tool in tool_batch {
-                    let raw_tool_name = crate::core::proxy::server::resolve_direct_surface_value(
-                        NamingKind::Tool,
-                        &server_id,
-                        tool.name.as_ref(),
-                    )
-                    .await?;
-                    if crate::core::proxy::server::unify_directly_exposed_tool_allowed(
-                        client.unify_workspace.as_ref(),
-                        &unify_direct_exposure_eligible_server_ids,
-                        &server_id,
-                        raw_tool_name.as_ref(),
-                    ) {
-                        exposed.push(tool);
-                    }
-                }
-                Ok::<_, anyhow::Error>(exposed)
-            }
-            .await;
-            match server_tools {
-                Ok(server_tools) => {
-                    aggregate.record_success();
-                    tools.extend(server_tools);
-                }
-                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
-            }
-        }
-    }
-
-    tools = vis.filter_tools_with_snapshot(&snapshot, tools);
-
-    let capability_config = vis
-        .resolve_capability_config_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    let builtin_tools = server
-        .builtin_services
-        .tools()
-        .into_iter()
-        .filter(|tool| {
-            builtin_tool_allowed(
-                client.config_mode.as_deref(),
-                capability_config.capability_source,
-                tool.name.as_ref(),
-            )
-        })
-        .collect::<Vec<_>>();
-    tracing::debug!("Including {} builtin service tools", builtin_tools.len());
-    tools.extend(builtin_tools);
-    aggregate
-        .finish_for_result(!tools.is_empty())
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-    // Apply pagination (natural sort inside paginator)
-    let page = server.paginator.paginate_tools(&_request, tools)?;
+    let surface = server.load_active_surface(&client).await?;
+    let page = server.paginator.paginate_tools(&_request, surface.tools())?;
 
     tracing::info!(
         total = page.items.len(),
         has_next = page.next_cursor.is_some(),
-        "Proxy listed tools (including builtin services)"
+        consumer_id = %surface.consumer_id,
+        publication_id = %surface.publication_id,
+        generation = surface.generation,
+        "Proxy listed tools from active Surface publication"
     );
 
     Ok(rmcp::model::ListToolsResult {
@@ -218,6 +73,14 @@ pub(super) async fn call_tool(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<CallToolResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    let surface_entry = server
+        .require_active_surface_entry(
+            &client,
+            mcpmate_capability_store::CapabilityKind::Tools,
+            request.name.as_ref(),
+        )
+        .await?;
+    let is_builtin = surface_entry.source_server_id == mcpmate_capability_store::BUILTIN_CAPABILITY_SOURCE_ID;
     let call_id = crate::generate_id!("tcall");
     let started_at = std::time::Instant::now();
 
@@ -253,20 +116,7 @@ pub(super) async fn call_tool(
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        if !builtin_tool_allowed(
-            client.config_mode.as_deref(),
-            capability_config.capability_source,
-            &request.name,
-        ) {
-            let message = if is_profile_tool {
-                "profile helper tools are only available for clients using the profiles capability source"
-            } else {
-                "client tool not available for current capability source"
-            };
-            return Err(McpError::invalid_params(message.to_string(), None));
-        }
-
-        if is_client_tool {
+        if is_client_tool && is_builtin {
             let builtin_context = ClientBuiltinContext {
                 client_id: client.client_id.clone(),
                 session_id: client.session_id.clone(),
@@ -312,7 +162,7 @@ pub(super) async fn call_tool(
         }
     }
 
-    if let Some(result) = server.builtin_services.call_tool(&request).await {
+    if is_builtin && let Some(result) = server.builtin_services.call_tool(&request).await {
         tracing::debug!(
             call_id = %call_id,
             tool = %request.name,
@@ -349,53 +199,21 @@ pub(super) async fn call_tool(
         ));
     }
 
-    let route = resolve_capability_route(NamingKind::Tool, &request.name)
+    let server_id = surface_entry.source_server_id;
+    let original_tool_name = surface_entry.upstream_key;
+    let server_name: String = sqlx::query_scalar("SELECT name FROM server_config WHERE id = ?")
+        .bind(&server_id)
+        .fetch_one(&server.database.as_ref().expect("database checked above").pool)
         .await
         .map_err(|e| {
             tracing::error!(
                 call_id = %call_id,
                 tool = %request.name,
                 error = %e,
-                "ProxyServer::call_tool failed to resolve unique name"
+                "ProxyServer::call_tool failed to resolve pinned source server"
             );
-            McpError::internal_error(format!("Failed to resolve unique tool name: {}", e), None)
+            McpError::internal_error(format!("Failed to resolve pinned source server: {e}"), None)
         })?;
-    let server_id = route.server_id;
-    let server_name = route.server_name;
-    let original_tool_name = route.upstream_value;
-
-    let directly_exposed = if matches!(client.config_mode.as_deref(), Some("unify")) {
-        let db = server
-            .database
-            .as_ref()
-            .ok_or_else(|| McpError::internal_error("Database not available for tool calling".to_string(), None))?;
-        let eligible_server_ids = load_unify_direct_exposure_eligible_server_ids(db).await?;
-        crate::core::proxy::server::unify_directly_exposed_tool_allowed(
-            client.unify_workspace.as_ref(),
-            &eligible_server_ids,
-            &server_id,
-            &original_tool_name,
-        )
-    } else {
-        false
-    };
-
-    if !direct_managed_tool_call_allowed(client.config_mode.as_deref(), directly_exposed) {
-        tracing::warn!(
-            call_id = %call_id,
-            tool = %request.name,
-            client_id = %client.client_id,
-            profile_id = ?client.profile_id,
-            "ProxyServer::call_tool denied direct managed tool call in unify mode"
-        );
-        return Err(McpError::invalid_params(
-            format!(
-                "Tool '{}' is not available for direct proxy calls in unify mode",
-                request.name
-            ),
-            None,
-        ));
-    }
 
     tracing::debug!(
         call_id = %call_id,
@@ -407,29 +225,6 @@ pub(super) async fn call_tool(
         profile_id = ?client.profile_id,
         "ProxyServer::call_tool resolved mapping"
     );
-
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let snapshot = vis
-        .resolve_snapshot_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    if let Err(error) = vis.assert_tool_allowed_with_snapshot(&snapshot, &request.name).await {
-        tracing::warn!(
-            call_id = %call_id,
-            tool = %request.name,
-            client_id = %client.client_id,
-            profile_id = ?client.profile_id,
-            error = %error,
-            "ProxyServer::call_tool denied by visibility policy"
-        );
-        return Err(McpError::invalid_params(
-            format!("Tool '{}' is not available for this client", request.name),
-            None,
-        ));
-    }
 
     // Resolve tool call timeout from env (fallback 30s)
     let call_timeout_secs: u64 = std::env::var("MCPMATE_TOOL_CALL_TIMEOUT_SECS")

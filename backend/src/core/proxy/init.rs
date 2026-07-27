@@ -346,6 +346,7 @@ pub async fn setup_proxy_server_with_params(
     } else {
         None
     };
+    proxy.start_surface_background_workers()?;
 
     let proxy_arc = Arc::new(proxy.clone());
     ProxyServer::set_global(Arc::new(tokio::sync::Mutex::new(proxy)));

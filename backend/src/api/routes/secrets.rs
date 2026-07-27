@@ -42,7 +42,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/secrets/provider/switch",
             post_with(switch_provider_aide, switch_provider_docs),
         )
-        .api_route("/secrets/unlock", post_with(unlock_secret_store_aide, unlock_secret_store_docs))
+        .api_route(
+            "/secrets/unlock",
+            post_with(unlock_secret_store_aide, unlock_secret_store_docs),
+        )
         .api_route(
             "/secrets/passphrase/rotate",
             post_with(rotate_passphrase_aide, rotate_passphrase_docs),
@@ -52,10 +55,7 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/secrets/password/status",
             get_with(get_password_status_aide, get_password_status_docs),
         )
-        .api_route(
-            "/secrets/password/set",
-            post_with(set_password_aide, set_password_docs),
-        )
+        .api_route("/secrets/password/set", post_with(set_password_aide, set_password_docs))
         .api_route(
             "/secrets/password/verify",
             post_with(verify_password_endpoint_aide, verify_password_endpoint_docs),

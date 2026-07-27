@@ -61,10 +61,7 @@ pub fn classify_custody(
         ));
     }
 
-    for value in values
-        .iter()
-        .filter(|value| !value.trim().is_empty())
-    {
+    for value in values.iter().filter(|value| !value.trim().is_empty()) {
         if parse_placeholder(value.trim())?.is_none() {
             return Ok((
                 OAuthCustodyState::LegacyPlaintext,

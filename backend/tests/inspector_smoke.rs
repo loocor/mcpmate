@@ -33,6 +33,7 @@ const RESOURCE_READ_PATH: &str = "/api/mcp/inspector/resource/read";
 const TEMPLATE_LIST_PATH: &str = "/api/mcp/inspector/template/list";
 const TEMPLATE_READ_PATH: &str = "/api/mcp/inspector/template/read";
 const SESSION_OPEN_PATH: &str = "/api/mcp/inspector/session/open";
+const SESSION_REFRESH_PATH: &str = "/api/mcp/inspector/session/refresh";
 const SESSION_CLOSE_PATH: &str = "/api/mcp/inspector/session/close";
 const TEMPORARY_NATIVE_VALIDATION_SESSION_PREFIX: &str = "INSPNATIVE";
 
@@ -77,7 +78,6 @@ fn build_test_state() -> Arc<AppState> {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        unified_query: None,
         client_service: None,
         inspector_calls,
         inspector_sessions,
@@ -124,7 +124,6 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        unified_query: None,
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
@@ -417,7 +416,6 @@ async fn seed_enabled_tool_server(
 ) {
     let pool = &state.database.as_ref().expect("database state").pool;
     let profile_id = format!("profile-{server_id}");
-    let profile_server_id = format!("profile-server-{server_id}");
 
     sqlx::query("INSERT INTO profile (id, name, type, is_active) VALUES (?, ?, 'user', 1)")
         .bind(&profile_id)
@@ -435,17 +433,9 @@ async fn seed_enabled_tool_server(
     .execute(pool)
     .await
     .expect("insert enabled server");
-    sqlx::query(
-        "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) \
-         VALUES (?, ?, ?, ?, 1)",
-    )
-    .bind(profile_server_id)
-    .bind(profile_id)
-    .bind(server_id)
-    .bind(server_name)
-    .execute(pool)
-    .await
-    .expect("insert enabled profile server");
+    mcpmate::config::profile::add_server_to_profile(pool, &profile_id, server_id, true)
+        .await
+        .expect("insert enabled profile server");
 }
 
 async fn open_native_session(
@@ -748,14 +738,9 @@ async fn proxy_aggregate_list_keeps_successful_servers_when_one_server_fails() {
         .execute(pool)
         .await
         .expect("insert healthy profile");
-    sqlx::query(
-        "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) \
-         VALUES ('profile-server-healthy', 'profile-healthy', ?, 'inspector_fixture', 1)",
-    )
-    .bind(&healthy_server_id)
-    .execute(pool)
-    .await
-    .expect("insert healthy profile server");
+    mcpmate::config::profile::add_server_to_profile(pool, "profile-healthy", &healthy_server_id, true)
+        .await
+        .expect("insert healthy profile server");
     seed_enabled_tool_server(
         &state,
         "aggregate-partial-failure",
@@ -818,14 +803,9 @@ async fn proxy_aggregate_list_rejects_empty_results_from_partial_inventory() {
         .execute(pool)
         .await
         .expect("insert empty profile");
-    sqlx::query(
-        "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) \
-         VALUES ('profile-server-empty', 'profile-empty', ?, 'empty_tool_fixture', 1)",
-    )
-    .bind(empty_server_id)
-    .execute(pool)
-    .await
-    .expect("insert empty profile server");
+    mcpmate::config::profile::add_server_to_profile(pool, "profile-empty", empty_server_id, true)
+        .await
+        .expect("insert empty profile server");
     seed_enabled_tool_server(
         &state,
         "aggregate-partial-empty-failure",
@@ -834,9 +814,11 @@ async fn proxy_aggregate_list_rejects_empty_results_from_partial_inventory() {
     )
     .await;
 
+    // This test verifies incomplete aggregate classification across a real cold start.
+    // Connection timeout behavior is covered by the dedicated timeout smoke tests.
     let (status, body) = read_json_response_with_status(
         app.oneshot(get_request(format!(
-            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=1000"
+            "{TOOL_LIST_PATH}?mode=proxy&refresh=true&timeout_ms=5000"
         )))
         .await
         .expect("aggregate list response"),
@@ -856,7 +838,7 @@ async fn proxy_aggregate_list_surfaces_server_query_failures() {
     let temp_dir = TempDir::new().expect("temp dir");
     let state = build_database_state(&temp_dir).await;
     let pool = &state.database.as_ref().expect("database state").pool;
-    sqlx::query("DROP TABLE profile_server")
+    sqlx::query("DROP TABLE profile_server_relationships")
         .execute(pool)
         .await
         .expect("drop profile server table");
@@ -873,7 +855,7 @@ async fn proxy_aggregate_list_surfaces_server_query_failures() {
 
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "unexpected response: {body}");
     assert!(
-        data_str(&body, "/error/message").contains("profile_server"),
+        data_str(&body, "/error/message").contains("profile_server_relationships"),
         "unexpected aggregate query error: {body}"
     );
 }
@@ -1248,6 +1230,101 @@ async fn inspector_native_list_and_call_reuse_explicit_session() {
     );
 
     mcpmate::core::capability::resolver::clear_cache().await;
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn inspector_native_session_refresh_renews_session_and_validation_reservation() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let state = build_database_state(&temp_dir).await;
+
+    let app = Router::new()
+        .route(CREATE_SERVER_PATH, post(server::create_server))
+        .route(SESSION_OPEN_PATH, post(inspector::session_open))
+        .route(SESSION_REFRESH_PATH, post(inspector::session_refresh))
+        .route(SESSION_CLOSE_PATH, post(inspector::session_close))
+        .with_state(state.clone());
+
+    let server_id = create_stdio_fixture_server(&app, &temp_dir).await;
+    let open_body = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                SESSION_OPEN_PATH,
+                json!({
+                    "server_id": server_id,
+                    "mode": "native"
+                }),
+            ))
+            .await
+            .expect("open session response"),
+    )
+    .await;
+    assert_api_success(&open_body);
+    let session_id = data_str(&open_body, "/data/session_id").to_string();
+    let initial_expiry = data_u64(&open_body, "/data/expires_at_epoch_ms");
+    let validation_session = native_validation_session_id(&session_id);
+
+    let refresh_body = read_json_response(
+        app.clone()
+            .oneshot(json_post_request(
+                SESSION_REFRESH_PATH,
+                json!({
+                    "session_id": session_id
+                }),
+            ))
+            .await
+            .expect("refresh session response"),
+    )
+    .await;
+    assert_api_success(&refresh_body);
+    assert_eq!(data_str(&refresh_body, "/data/session_id"), session_id);
+    assert_eq!(data_str(&refresh_body, "/data/server_id"), server_id);
+    assert_eq!(data_str(&refresh_body, "/data/mode"), "native");
+    assert!(data_u64(&refresh_body, "/data/expires_at_epoch_ms") >= initial_expiry);
+    assert!(validation_session_exists(&state, &validation_session).await);
+    assert!(validation_session_contains_server(&state, &validation_session, &server_id).await);
+
+    state
+        .connection_pool
+        .lock()
+        .await
+        .destroy_validation_instance(&server_id, &validation_session)
+        .await
+        .expect("disconnect native validation instance");
+    let response = app
+        .clone()
+        .oneshot(json_post_request(
+            SESSION_REFRESH_PATH,
+            json!({
+                "session_id": session_id
+            }),
+        ))
+        .await
+        .expect("disconnected session refresh response");
+    let (status, body) = read_json_response_with_status(response).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        data_str(&body, "/error/message").contains("no longer connected"),
+        "expected explicit disconnected session error: {body}"
+    );
+
+    close_inspector_session(&app, &session_id).await;
+
+    let response = app
+        .oneshot(json_post_request(
+            SESSION_REFRESH_PATH,
+            json!({
+                "session_id": session_id
+            }),
+        ))
+        .await
+        .expect("closed session refresh response");
+    let (status, body) = read_json_response_with_status(response).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        data_str(&body, "/error/message").contains("not found or expired"),
+        "expected explicit closed session error: {body}"
+    );
 }
 
 #[tokio::test]

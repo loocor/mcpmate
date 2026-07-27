@@ -148,42 +148,59 @@ fn catalog_kind(capability: CapabilityType) -> CatalogKind {
     }
 }
 
+fn catalog_payloads_for_kind(
+    records: Vec<mcpmate_capability_store::CatalogRecord>,
+    kind: CatalogKind,
+    name_domain: NameDomain,
+) -> Vec<CapabilityPayload> {
+    records
+        .into_iter()
+        .filter(|record| record.kind() == kind)
+        .map(|record| match name_domain {
+            NameDomain::External => record.payload,
+            NameDomain::Upstream => record.upstream_payload(),
+        })
+        .collect()
+}
+
 fn items_from_catalog(
     capability: CapabilityType,
     records: Vec<mcpmate_capability_store::CatalogRecord>,
+    name_domain: NameDomain,
 ) -> CapabilityItems {
+    let payloads = catalog_payloads_for_kind(records, catalog_kind(capability), name_domain);
     match capability {
         CapabilityType::Tools => CapabilityItems::Tools(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::Tool(tool) => Some(tool),
                     _ => None,
                 })
                 .collect(),
         ),
         CapabilityType::Prompts => CapabilityItems::Prompts(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::Prompt(prompt) => Some(prompt),
                     _ => None,
                 })
                 .collect(),
         ),
         CapabilityType::Resources => CapabilityItems::Resources(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::Resource(resource) => Some(resource),
                     _ => None,
                 })
                 .collect(),
         ),
         CapabilityType::ResourceTemplates => CapabilityItems::ResourceTemplates(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::ResourceTemplate(template) => Some(template),
                     _ => None,
                 })
@@ -219,10 +236,22 @@ fn projection_key(
         .as_ref()
         .map(ConnectionSelection::cache_scope_key)
         .unwrap_or_else(|| format!("{}#shared", ctx.server_id));
+    // A caller with a `visibility_snapshot` but no `runtime_identity` (builtin/broker call
+    // sites that resolve visibility ad hoc instead of through a bound client session) must
+    // never fall back to the unscoped "shared_raw" bucket: that bucket is shared with
+    // unfiltered management/API reads, and the snapshot's own `surface_fingerprint` already
+    // encodes the exact visibility scope (config mode, allowed capability sets, direct
+    // exposure) that produced this projection. Reusing it here keeps filtered projections
+    // isolated from the unfiltered baseline and from other visibility scopes.
     let surface_fingerprint = ctx
         .runtime_identity
         .as_ref()
         .map(|identity| identity.surface_fingerprint.clone())
+        .or_else(|| {
+            ctx.visibility_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.surface_fingerprint.clone())
+        })
         .unwrap_or_else(|| "shared_raw".to_string());
     let revision_set = format!("{}:{revision}", ctx.server_id);
     let catalog_revision_set_hash = format!("{:x}", Sha256::digest(revision_set));
@@ -291,6 +320,17 @@ pub(crate) struct RuntimeFailure {
 #[derive(Debug)]
 pub(crate) struct CapabilityDiscoveryObservation {
     pub(crate) items: CapabilityItems,
+    pub(crate) flags: CapSyncFlags,
+    pub(crate) kind_states: Vec<KindObservation>,
+}
+
+/// Full-server protocol observation used by management discovery.
+#[derive(Debug)]
+pub(crate) struct CapabilityFullDiscoveryObservation {
+    pub(crate) tools: Vec<rmcp::model::Tool>,
+    pub(crate) resources: Vec<rmcp::model::Resource>,
+    pub(crate) prompts: Vec<rmcp::model::Prompt>,
+    pub(crate) templates: Vec<rmcp::model::ResourceTemplate>,
     pub(crate) flags: CapSyncFlags,
     pub(crate) kind_states: Vec<KindObservation>,
 }
@@ -533,11 +573,8 @@ where
 
     let projected_from_sqlite = Arc::new(AtomicBool::new(false));
     let projector_flag = projected_from_sqlite.clone();
-    let projection_database = database.clone();
-    let projection_server_id = ctx.server_id.clone();
-    let projection_name_domain = ctx.name_domain;
     let visibility_snapshot = ctx.visibility_snapshot.clone();
-    let raw_items = items_from_catalog(ctx.capability, snapshot.records.clone());
+    let raw_items = items_from_catalog(ctx.capability, snapshot.records.clone(), ctx.name_domain);
     let projected = database
         .capability_cache
         .get_or_project_at_epoch(
@@ -545,14 +582,7 @@ where
             projection_epoch,
             || async move {
                 projector_flag.store(true, Ordering::Relaxed);
-                let items = project_items_for_context(
-                    &projection_database,
-                    &projection_server_id,
-                    raw_items,
-                    projection_name_domain,
-                    visibility_snapshot.as_deref(),
-                )
-                .await?;
+                let items = apply_visibility_filter(raw_items, visibility_snapshot.as_deref());
                 Ok::<_, anyhow::Error>(projection_payload(items))
             },
         )
@@ -606,6 +636,116 @@ pub(crate) async fn discover_owner(
             kind_states,
         }),
     }
+}
+
+pub(crate) async fn discover_all_kinds_owner(
+    ctx: &ListCtx,
+    owner: &CapabilityOwner,
+) -> std::result::Result<CapabilityFullDiscoveryObservation, RuntimeFailure> {
+    if owner.server_id != ctx.server_id {
+        return Err(RuntimeFailure {
+            kind: RuntimeFailureKind::Other,
+            message: Some(format!(
+                "owner targets server '{}' instead of '{}'",
+                owner.server_id, ctx.server_id
+            )),
+            timeout_ms: None,
+        });
+    }
+
+    let timeout = ctx.timeout.unwrap_or_else(|| Duration::from_secs(10));
+    let mut tools = Vec::new();
+    let mut resources = Vec::new();
+    let mut prompts = Vec::new();
+    let mut templates = Vec::new();
+    let mut flags = CapSyncFlags::NONE;
+    let mut kind_states = Vec::new();
+
+    for capability in [
+        CapabilityType::Tools,
+        CapabilityType::Prompts,
+        CapabilityType::Resources,
+        CapabilityType::ResourceTemplates,
+    ] {
+        let (items, capability_flags, failure, capability_states) = fetch_runtime_items(
+            capability,
+            owner.peer.clone(),
+            timeout,
+            &owner.server_id,
+            &owner.server_name,
+            &owner.instance_id,
+        )
+        .await
+        .map_err(|error| RuntimeFailure {
+            kind: RuntimeFailureKind::Other,
+            message: Some(error.to_string()),
+            timeout_ms: None,
+        })?;
+        if let Some(failure) = failure {
+            tracing::debug!(
+                server_id = %owner.server_id,
+                capability = ?capability,
+                error = %failure,
+                "Full discovery recorded a failing capability kind and continued"
+            );
+            kind_states.push(KindObservation::new(
+                catalog_kind(capability),
+                mcpmate_capability_store::DeclarationState::Supported,
+                InventoryState::Failed,
+            ));
+            flags = flags.union(capability_flags);
+            continue;
+        }
+        flags = flags.union(capability_flags);
+        kind_states.extend(capability_states);
+        match items {
+            CapabilityItems::Tools(items) => tools = items,
+            CapabilityItems::Resources(items) => resources = items,
+            CapabilityItems::Prompts(items) => prompts = items,
+            CapabilityItems::ResourceTemplates(items) => templates = items,
+        }
+    }
+
+    Ok(CapabilityFullDiscoveryObservation {
+        tools,
+        resources,
+        prompts,
+        templates,
+        flags,
+        kind_states,
+    })
+}
+
+pub(crate) async fn commit_full_discovery_observation(
+    owner: &CapabilityOwner,
+    observation: &CapabilityFullDiscoveryObservation,
+    database: &Arc<Database>,
+) -> Result<i64> {
+    let commit = crate::config::server::capabilities::commit_capability_protocol_observation(
+        &database.pool,
+        database.capability_cache.as_ref(),
+        &owner.server_id,
+        &owner.server_name,
+        crate::config::server::capabilities::CapabilityProtocolObservation {
+            initialize: owner.peer.peer_info().as_deref().cloned(),
+            tools: observation.tools.clone(),
+            resources: observation.resources.clone(),
+            prompts: observation.prompts.clone(),
+            templates: observation.templates.clone(),
+            kinds: observation.flags,
+            kind_states: observation.kind_states.clone(),
+        },
+    )
+    .await
+    .context("Failed to commit full live capability observation")?;
+    tracing::debug!(
+        server_id = %owner.server_id,
+        instance_id = %owner.instance_id,
+        owner_source = ?owner.source,
+        revision = commit.revision,
+        "Committed a full live capability observation"
+    );
+    Ok(commit.revision)
 }
 
 pub(crate) async fn commit_discovery_observation(
@@ -665,7 +805,7 @@ pub(crate) async fn project_discovery_observation(
                 projection_key(ctx, committed_revision),
                 projection_epoch,
                 || async move {
-                    let items = project_items_for_context(
+                    let items = project_live_items_for_context(
                         &projection_database,
                         &projection_server_id,
                         items,
@@ -685,7 +825,7 @@ pub(crate) async fn project_discovery_observation(
             "Skipped live projection cache warm because a newer catalog revision won"
         );
         Arc::new(projection_payload(
-            project_items_for_context(
+            project_live_items_for_context(
                 database,
                 &owner.server_id,
                 items,
@@ -1281,19 +1421,28 @@ async fn project_external_items(
     Ok(items)
 }
 
-async fn project_items_for_context(
+async fn project_live_items_for_context(
     database: &Arc<Database>,
     server_id: &str,
     items: CapabilityItems,
     name_domain: NameDomain,
     visibility_snapshot: Option<&crate::core::profile::visibility::VisibilitySnapshot>,
 ) -> Result<CapabilityItems> {
-    let items = project_external_items(database, server_id, items, name_domain).await?;
+    Ok(apply_visibility_filter(
+        project_external_items(database, server_id, items, name_domain).await?,
+        visibility_snapshot,
+    ))
+}
+
+fn apply_visibility_filter(
+    items: CapabilityItems,
+    visibility_snapshot: Option<&crate::core::profile::visibility::VisibilitySnapshot>,
+) -> CapabilityItems {
     let Some(snapshot) = visibility_snapshot else {
-        return Ok(items);
+        return items;
     };
     let visibility = crate::core::profile::visibility::ProfileVisibilityService::new(None, None);
-    Ok(match items {
+    match items {
         CapabilityItems::Tools(items) => CapabilityItems::Tools(visibility.filter_tools_with_snapshot(snapshot, items)),
         CapabilityItems::Prompts(items) => {
             CapabilityItems::Prompts(visibility.filter_prompts_with_snapshot(snapshot, items))
@@ -1306,7 +1455,7 @@ async fn project_items_for_context(
             let (_, templates) = visibility.filter_resources_with_snapshot(snapshot, Vec::new(), items);
             CapabilityItems::ResourceTemplates(templates)
         }
-    })
+    }
 }
 
 #[cfg(test)]
@@ -1339,6 +1488,9 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("initialize client tables");
         crate::config::profile::init::initialize_profile_tables(&pool)
             .await
             .expect("initialize profile tables");
@@ -1416,6 +1568,32 @@ mod tests {
             visibility_snapshot: None,
             name_domain: NameDomain::Upstream,
         }
+    }
+
+    #[tokio::test]
+    async fn external_catalog_read_skips_identity_reprojection() {
+        let database = test_database().await;
+        insert_runtime_server(&database).await;
+        commit_runtime_catalog(&database, vec![runtime_tool("analyze")]).await;
+
+        let external: String = sqlx::query_scalar(
+            "SELECT unique_name FROM server_tools WHERE server_id = 'server-a' AND tool_name = 'analyze'",
+        )
+        .fetch_one(&database.pool)
+        .await
+        .expect("external tool name");
+
+        let mut ctx = list_ctx(RefreshStrategy::CacheFirst);
+        ctx.name_domain = NameDomain::External;
+        let pool = empty_runtime_pool(database.clone());
+
+        let result = list(&ctx, &pool, &database)
+            .await
+            .expect("external catalog read must not re-project persisted payload names");
+        let tools = result.items.into_tools().expect("tools result");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name.as_ref(), external);
+        assert_ne!(tools[0].name.as_ref(), "analyze");
     }
 
     #[tokio::test]
@@ -1934,6 +2112,61 @@ mod tests {
 
         assert!(error.to_string().contains("validation-a"));
         assert!(error.to_string().contains("server-a"));
+    }
+
+    fn base_list_ctx() -> ListCtx {
+        ListCtx {
+            capability: CapabilityType::Tools,
+            server_id: "server-a".to_string(),
+            refresh: None,
+            timeout: None,
+            validation_session: None,
+            runtime_identity: None,
+            connection_selection: None,
+            visibility_snapshot: None,
+            name_domain: NameDomain::External,
+        }
+    }
+
+    #[test]
+    fn projection_key_uses_runtime_identity_fingerprint_when_present() {
+        let mut ctx = base_list_ctx();
+        ctx.runtime_identity = Some(RuntimeIdentity {
+            client_id: "claude-code".to_string(),
+            profile_id: None,
+            surface_fingerprint: "fp-runtime".to_string(),
+        });
+
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "fp-runtime");
+    }
+
+    #[test]
+    fn projection_key_uses_visibility_snapshot_fingerprint_without_runtime_identity() {
+        // Builtin/broker call sites resolve visibility ad hoc and never populate
+        // `runtime_identity`. A filtered projection computed from that visibility scope
+        // must never land in the unscoped "shared_raw" bucket shared with unfiltered
+        // management/API reads (Codex review, PR #160).
+        let mut ctx = base_list_ctx();
+        ctx.visibility_snapshot = Some(Arc::new(
+            crate::core::profile::visibility::VisibilitySnapshot::for_test(
+                "hosted-client",
+                "fp-hosted-profile-a",
+                vec!["server-a".to_string()],
+                true,
+            ),
+        ));
+
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "fp-hosted-profile-a");
+        assert_ne!(key.surface_fingerprint, "shared_raw");
+    }
+
+    #[test]
+    fn projection_key_falls_back_to_shared_raw_only_without_any_visibility_context() {
+        let ctx = base_list_ctx();
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "shared_raw");
     }
 
     #[test]

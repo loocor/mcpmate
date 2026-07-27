@@ -14,6 +14,7 @@ use crate::{
     mcper::builtin::BuiltinServiceRegistry,
 };
 use anyhow::Context;
+use async_trait::async_trait;
 use once_cell::sync::OnceCell;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
@@ -23,17 +24,30 @@ use rmcp::model::{
 };
 use rmcp::{ServerHandler, service::RequestContext};
 use serde_json::{Map, Value};
-use std::{
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 static GLOBAL_PROXY_SERVER: OnceCell<Arc<Mutex<ProxyServer>>> = OnceCell::new();
 const STARTUP_DIAGNOSTIC_COMPONENT: &str = "startup_proxy";
+
+struct ProxySurfaceOutboxDelivery;
+
+#[async_trait]
+impl crate::core::capability::reconciliation::SurfaceOutboxDelivery for ProxySurfaceOutboxDelivery {
+    async fn deliver(
+        &self,
+        event: &mcpmate_capability_store::SurfaceOutboxEvent,
+    ) -> mcpmate_capability_store::Result<()> {
+        let proxy =
+            ProxyServer::global().ok_or_else(|| mcpmate_capability_store::CatalogError::InvalidSurfaceValue {
+                field: "surface outbox delivery",
+                value: "proxy server is not available".to_string(),
+            })?;
+        let proxy = proxy.lock().await.clone();
+        proxy.deliver_consumer_surface_changed(&event.aggregate_id).await?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DownstreamRoute {
@@ -68,8 +82,8 @@ pub struct ProxyServer {
     pub call_sessions_by_request: Arc<dashmap::DashMap<RequestId, DownstreamRoute>>,
     /// Used for first-contact governance on MCP `initialize` (unknown clients + policy).
     pub client_config_service: Option<Arc<ClientConfigService>>,
-    /// Shared guard for coalescing overlapping listChanged notifications across server clones.
-    list_changed_in_progress: Arc<AtomicBool>,
+    /// Shared guard that serializes listChanged notifications across server clones.
+    list_changed_guard: Arc<Mutex<()>>,
 }
 
 impl Clone for ProxyServer {
@@ -90,7 +104,7 @@ impl Clone for ProxyServer {
             call_sessions_by_token: self.call_sessions_by_token.clone(),
             call_sessions_by_request: self.call_sessions_by_request.clone(),
             client_config_service: self.client_config_service.clone(),
-            list_changed_in_progress: self.list_changed_in_progress.clone(),
+            list_changed_guard: self.list_changed_guard.clone(),
         }
     }
 }
@@ -155,6 +169,80 @@ impl ProxyServer {
         Ok(client)
     }
 
+    pub(super) async fn resolve_consumer_access_context(
+        &self,
+        client: &ClientContext,
+    ) -> Result<crate::core::proxy::server::ConsumerAccessContext, rmcp::ErrorData> {
+        let database = self.database.as_ref().ok_or_else(|| {
+            rmcp::ErrorData::internal_error("Managed Consumer resolution requires database access".to_string(), None)
+        })?;
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT identifier, approval_status
+            FROM client
+            WHERE identifier = ?
+            "#,
+        )
+        .bind(&client.client_id)
+        .fetch_all(&database.pool)
+        .await
+        .map_err(|error| rmcp::ErrorData::internal_error(error.to_string(), None))?;
+        let [(consumer_id, approval_status)] = rows.as_slice() else {
+            return Err(rmcp::ErrorData::invalid_request(
+                format!(
+                    "Managed client identity '{}' does not resolve to exactly one Consumer",
+                    client.client_id
+                ),
+                None,
+            ));
+        };
+        if approval_status != "approved" {
+            return Err(rmcp::ErrorData::invalid_request(
+                format!("Consumer '{consumer_id}' is not approved for managed access"),
+                None,
+            ));
+        }
+        if !matches!(client.config_mode.as_deref(), Some("unify" | "hosted")) {
+            return Err(rmcp::ErrorData::invalid_request(
+                format!("Consumer '{consumer_id}' does not have a managed MCP Surface"),
+                None,
+            ));
+        }
+        client
+            .consumer_access_context(consumer_id)
+            .map_err(|error| rmcp::ErrorData::invalid_request(error.to_string(), None))
+    }
+
+    pub(super) async fn load_active_surface(
+        &self,
+        client: &ClientContext,
+    ) -> Result<crate::core::capability::surface_read::ActiveSurface, rmcp::ErrorData> {
+        let access = self.resolve_consumer_access_context(client).await?;
+        let database = self.database.as_ref().ok_or_else(|| {
+            rmcp::ErrorData::internal_error("Managed Surface read requires database access".to_string(), None)
+        })?;
+        crate::core::capability::surface_read::SurfaceReader::new(database.pool.clone())
+            .load(&access.consumer_id)
+            .await
+            .map_err(|error| rmcp::ErrorData::invalid_request(error.to_string(), None))
+    }
+
+    pub(super) async fn require_active_surface_entry(
+        &self,
+        client: &ClientContext,
+        kind: mcpmate_capability_store::CapabilityKind,
+        external_key: &str,
+    ) -> Result<crate::core::capability::surface_read::ActiveSurfaceEntry, rmcp::ErrorData> {
+        let access = self.resolve_consumer_access_context(client).await?;
+        let database = self.database.as_ref().ok_or_else(|| {
+            rmcp::ErrorData::internal_error("Managed Surface read requires database access".to_string(), None)
+        })?;
+        crate::core::capability::surface_read::SurfaceReader::new(database.pool.clone())
+            .require(kind, &access.consumer_id, external_key)
+            .await
+            .map_err(|error| rmcp::ErrorData::invalid_params(error.to_string(), None))
+    }
+
     fn require_session_id(
         &self,
         client: &ClientContext,
@@ -165,6 +253,26 @@ impl ProxyServer {
                 None,
             )
         })
+    }
+
+    pub(super) async fn resolve_active_resource_route(
+        &self,
+        client: &ClientContext,
+        external_uri: &str,
+    ) -> Result<crate::core::capability::surface_read::ActiveResourceRoute, rmcp::ErrorData> {
+        let access = self.resolve_consumer_access_context(client).await?;
+        let database = self.database.as_ref().ok_or_else(|| {
+            rmcp::ErrorData::internal_error("Active Surface resolution requires database access".to_string(), None)
+        })?;
+        crate::core::capability::surface_read::SurfaceReader::new(database.pool.clone())
+            .resolve_resource_route(&access.consumer_id, external_uri)
+            .await
+            .map_err(|error| {
+                rmcp::ErrorData::invalid_params(
+                    format!("Resource is not in the active Surface publication: {error}"),
+                    None,
+                )
+            })
     }
 
     pub fn build_downstream_route(
@@ -446,6 +554,40 @@ impl ProxyServer {
         refreshed
     }
 
+    pub async fn refresh_transparent_bound_sessions(&self) -> usize {
+        let sessions = self
+            .client_context_resolver
+            .session_bindings
+            .iter()
+            .map(|entry| (entry.session_id.clone(), entry.client_id.clone()))
+            .collect::<Vec<_>>();
+
+        let mut refreshed = 0;
+        for (session_id, client_id) in sessions {
+            match self.resolve_effective_config_mode(&client_id).await {
+                Ok(mode) if mode == "transparent" => {
+                    if self
+                        .refresh_bound_session_runtime_identity(&session_id, &client_id)
+                        .await
+                        .is_ok()
+                    {
+                        refreshed += 1;
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        client_id = %client_id,
+                        error = %error,
+                        "Failed to resolve downstream mode for transparent runtime refresh"
+                    );
+                }
+            }
+        }
+        refreshed
+    }
+
     pub async fn update_unify_session_workspace(
         &self,
         session_id: &str,
@@ -521,22 +663,7 @@ impl ProxyServer {
         session_id: &str,
     ) {
         self.downstream_clients.remove(session_id);
-
-        let subscription_keys: Vec<((String, String), String)> = self
-            .resource_subscriptions
-            .iter()
-            .filter(|entry| entry.key().0 == session_id)
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect();
-        for ((subscription_session, unique_uri), server_id) in subscription_keys {
-            self.resource_subscriptions
-                .remove(&(subscription_session.clone(), unique_uri.clone()));
-            if !server_id.is_empty() {
-                if let Some(index) = self.server_resource_index.get(&server_id) {
-                    index.remove(&(subscription_session, unique_uri));
-                }
-            }
-        }
+        self.remove_resource_subscriptions_for_session(session_id);
 
         let progress_tokens: Vec<rmcp::model::ProgressToken> = self
             .call_sessions_by_token
@@ -560,6 +687,41 @@ impl ProxyServer {
 
         if let Err(error) = self.client_context_resolver.unbind_session(session_id).await {
             tracing::warn!(session_id = %session_id, error = %error, "Failed to unbind downstream session");
+        }
+    }
+
+    fn remove_resource_subscriptions_for_session(
+        &self,
+        session_id: &str,
+    ) {
+        let subscription_keys: Vec<((String, String), String)> = self
+            .resource_subscriptions
+            .iter()
+            .filter(|entry| entry.key().0 == session_id)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        for ((subscription_session, unique_uri), server_id) in subscription_keys {
+            self.resource_subscriptions
+                .remove(&(subscription_session.clone(), unique_uri.clone()));
+            if !server_id.is_empty() {
+                if let Some(index) = self.server_resource_index.get(&server_id) {
+                    index.remove(&(subscription_session, unique_uri));
+                }
+            }
+        }
+    }
+
+    fn remove_resource_subscription(
+        &self,
+        session_id: &str,
+        uri: &str,
+    ) {
+        if let Some((_, server_id)) = self
+            .resource_subscriptions
+            .remove(&(session_id.to_string(), uri.to_string()))
+            && let Some(subscriptions) = self.server_resource_index.get(&server_id)
+        {
+            subscriptions.remove(&(session_id.to_string(), uri.to_string()));
         }
     }
 
@@ -743,7 +905,7 @@ impl ProxyServer {
             call_sessions_by_token: Arc::new(dashmap::DashMap::new()),
             call_sessions_by_request: Arc::new(dashmap::DashMap::new()),
             client_config_service: None,
-            list_changed_in_progress: Arc::new(AtomicBool::new(false)),
+            list_changed_guard: Arc::new(Mutex::new(())),
         })
     }
 
@@ -788,6 +950,28 @@ impl ProxyServer {
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
         self.bootstrap_client_services(&db_arc).await;
+        let builtin_records = self
+            .builtin_services
+            .catalog_records()
+            .map_err(|error| anyhow::anyhow!("Builtin capability Catalog materialization failed: {error}"))?;
+        let (catalog_commit, materializations) =
+            crate::core::capability::materializer::synchronize_builtin_catalog_and_bootstrap_managed_surfaces(
+                &db_arc.pool,
+                builtin_records,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("Builtin capability Catalog synchronization failed: {error}"))?;
+        let published_consumers = materializations
+            .iter()
+            .filter(|(_, commit)| commit.effective_surface_changed)
+            .count();
+        tracing::info!(
+            catalog_revision = catalog_commit.revision,
+            catalog_changed = catalog_commit.changed,
+            evaluated_consumers = materializations.len(),
+            published_consumers,
+            "Builtin capability Catalog and managed Surfaces synchronized"
+        );
         if let Err(error) = crate::core::capability::resolver::init(db_arc.clone()).await {
             startup_diagnostics::warn_degraded(
                 StartupDegradedEvent {
@@ -805,7 +989,7 @@ impl ProxyServer {
         }
         {
             let mut pool = self.connection_pool.lock().await;
-            pool.set_database(Some(db_arc));
+            pool.set_database(Some(db_arc.clone()));
         }
         if let Err(error) = self.setup_event_handlers().await {
             tracing::warn!(
@@ -822,6 +1006,20 @@ impl ProxyServer {
         }
         tracing::debug!(
             "Database connection, builtin services, server manager, and event handlers set for proxy server"
+        );
+        Ok(())
+    }
+
+    pub fn start_surface_background_workers(&self) -> anyhow::Result<()> {
+        let database = self
+            .database
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Cannot start surface workers before database setup"))?;
+        crate::core::capability::reconciliation::spawn_surface_background_workers(
+            database.pool.clone(),
+            self.cancellation_token.clone(),
+            self.audit_service.clone(),
+            Some(Arc::new(ProxySurfaceOutboxDelivery)),
         );
         Ok(())
     }
@@ -929,6 +1127,11 @@ impl ProxyServer {
             .route_service(path, streamable_service)
             .layer(axum::middleware::from_fn(move |request, next| {
                 bind_managed_session_after_initialize(resolver.clone(), request, next)
+            }))
+            .layer(axum::Extension(if bind_address.ip().is_loopback() {
+                super::common::ManagedEndpointTrust::LocalOnly
+            } else {
+                super::common::ManagedEndpointTrust::VerifiedCredentialRequired
             }));
         let listener = tokio::net::TcpListener::bind(bind_address)
             .await
@@ -962,14 +1165,189 @@ impl ProxyServer {
     }
 
     pub async fn notify_all_list_changed(&self) -> (usize, usize, usize) {
-        if self.list_changed_in_progress.swap(true, Ordering::Relaxed) {
-            return (0, 0, 0);
-        }
+        let _guard = self.list_changed_guard.lock().await;
         let t = self.notify_tool_list_changed().await;
         let p = self.notify_prompt_list_changed().await;
         let r = self.notify_resource_list_changed().await;
-        self.list_changed_in_progress.store(false, Ordering::Relaxed);
         (t, p, r)
+    }
+
+    async fn transparent_downstream_peers(&self) -> Vec<(String, rmcp::service::Peer<rmcp::RoleServer>)> {
+        let sessions = self
+            .downstream_clients
+            .iter()
+            .filter_map(|entry| {
+                let session_id = entry.key().clone();
+                let peer = entry.value().clone();
+                self.client_context_resolver
+                    .session_bindings
+                    .get(&session_id)
+                    .map(|binding| (session_id, binding.client_id.clone(), peer))
+            })
+            .collect::<Vec<_>>();
+
+        let mut recipients = Vec::new();
+        for (session_id, client_id, peer) in sessions {
+            match self.resolve_effective_config_mode(&client_id).await {
+                Ok(mode) if mode == "transparent" => recipients.push((session_id, peer)),
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        client_id = %client_id,
+                        error = %error,
+                        "Failed to resolve downstream mode for transparent listChanged notification"
+                    );
+                }
+            }
+        }
+        recipients
+    }
+
+    pub async fn notify_transparent_tool_list_changed(&self) -> usize {
+        let _guard = self.list_changed_guard.lock().await;
+        let recipients = self.transparent_downstream_peers().await;
+        self.broadcast_notify_to(recipients, |peer| {
+            Box::pin(async move { peer.notify_tool_list_changed().await })
+        })
+        .await
+    }
+
+    pub async fn notify_transparent_prompt_list_changed(&self) -> usize {
+        let _guard = self.list_changed_guard.lock().await;
+        let recipients = self.transparent_downstream_peers().await;
+        self.broadcast_notify_to(recipients, |peer| {
+            Box::pin(async move { peer.notify_prompt_list_changed().await })
+        })
+        .await
+    }
+
+    pub async fn notify_transparent_resource_list_changed(&self) -> usize {
+        let _guard = self.list_changed_guard.lock().await;
+        let recipients = self.transparent_downstream_peers().await;
+        self.broadcast_notify_to(recipients, |peer| {
+            Box::pin(async move { peer.notify_resource_list_changed().await })
+        })
+        .await
+    }
+
+    pub async fn notify_transparent_all_list_changed(&self) -> (usize, usize, usize) {
+        let _guard = self.list_changed_guard.lock().await;
+        let recipients = self.transparent_downstream_peers().await;
+        let tools = self
+            .broadcast_notify_to(recipients.clone(), |peer| {
+                Box::pin(async move { peer.notify_tool_list_changed().await })
+            })
+            .await;
+        let prompts = self
+            .broadcast_notify_to(recipients.clone(), |peer| {
+                Box::pin(async move { peer.notify_prompt_list_changed().await })
+            })
+            .await;
+        let resources = self
+            .broadcast_notify_to(recipients, |peer| {
+                Box::pin(async move { peer.notify_resource_list_changed().await })
+            })
+            .await;
+        (tools, prompts, resources)
+    }
+
+    pub async fn deliver_consumer_surface_changed(
+        &self,
+        consumer_id: &str,
+    ) -> mcpmate_capability_store::Result<(usize, usize, usize)> {
+        let _guard = self.list_changed_guard.lock().await;
+        let service = self.client_config_service.as_ref().ok_or_else(|| {
+            mcpmate_capability_store::CatalogError::InvalidSurfaceValue {
+                field: "surface outbox delivery",
+                value: "client configuration service is not available".to_string(),
+            }
+        })?;
+        let effective_mode = service.get_effective_config_mode(consumer_id).await.map_err(|error| {
+            mcpmate_capability_store::CatalogError::InvalidSurfaceValue {
+                field: "surface outbox Consumer mode",
+                value: format!("{consumer_id}: {error}"),
+            }
+        })?;
+        if !matches!(effective_mode.as_str(), "hosted" | "unify") {
+            self.remove_downstream_sessions_for_client(consumer_id).await;
+            return Ok((0, 0, 0));
+        }
+        let unify_workspace = if effective_mode == "unify" {
+            Some(
+                service
+                    .get_unify_direct_exposure_config(consumer_id)
+                    .await
+                    .map_err(|error| mcpmate_capability_store::CatalogError::InvalidSurfaceValue {
+                        field: "surface outbox Direct Exposure",
+                        value: format!("{consumer_id}: {error}"),
+                    })?
+                    .unwrap_or_default(),
+            )
+        } else {
+            None
+        };
+        self.apply_persisted_client_runtime_state(consumer_id, Some(effective_mode), unify_workspace)
+            .await
+            .map_err(|error| mcpmate_capability_store::CatalogError::InvalidSurfaceValue {
+                field: "surface outbox runtime state",
+                value: format!("{consumer_id}: {error}"),
+            })?;
+
+        let session_ids = self
+            .client_context_resolver
+            .session_bindings
+            .iter()
+            .filter(|entry| entry.client_id == consumer_id)
+            .map(|entry| entry.session_id.clone())
+            .collect::<Vec<_>>();
+
+        let mut peers = Vec::new();
+        for session_id in session_ids {
+            self.remove_resource_subscriptions_for_session(&session_id);
+            if let Some(peer) = self.downstream_clients.get(&session_id) {
+                peers.push((session_id, peer.clone()));
+            }
+        }
+
+        let mut tools = 0;
+        let mut prompts = 0;
+        let mut resources = 0;
+        let mut stale_sessions = Vec::new();
+        for (session_id, peer) in peers {
+            let tools_result = peer.notify_tool_list_changed().await;
+            let prompts_result = peer.notify_prompt_list_changed().await;
+            let resources_result = peer.notify_resource_list_changed().await;
+            if tools_result.is_ok() && prompts_result.is_ok() && resources_result.is_ok() {
+                tools += 1;
+                prompts += 1;
+                resources += 1;
+            } else {
+                stale_sessions.push(session_id);
+            }
+        }
+        for session_id in stale_sessions {
+            self.remove_downstream_session(&session_id).await;
+        }
+
+        Ok((tools, prompts, resources))
+    }
+
+    pub async fn notify_consumer_surface_changed(
+        &self,
+        consumer_id: &str,
+    ) -> (usize, usize, usize) {
+        match self.deliver_consumer_surface_changed(consumer_id).await {
+            Ok(counts) => counts,
+            Err(error) => {
+                tracing::warn!(
+                    consumer_id = %consumer_id,
+                    error = %error,
+                    "Failed to deliver direct Consumer Surface notification"
+                );
+                (0, 0, 0)
+            }
+        }
     }
 
     async fn notify_resource_updated_for_session(
@@ -977,6 +1355,40 @@ impl ProxyServer {
         session_id: &str,
         uri: &str,
     ) -> bool {
+        let Some(binding) = self.client_context_resolver.session_bindings.get(session_id) else {
+            self.remove_resource_subscriptions_for_session(session_id);
+            return false;
+        };
+        let consumer_id = binding.client_id.clone();
+        drop(binding);
+        if self
+            .refresh_bound_session_runtime_identity(session_id, &consumer_id)
+            .await
+            .is_err()
+        {
+            self.remove_downstream_session(session_id).await;
+            return false;
+        }
+        let Some(binding) = self.client_context_resolver.session_bindings.get(session_id) else {
+            self.remove_resource_subscriptions_for_session(session_id);
+            return false;
+        };
+        let client = ClientContext {
+            client_id: binding.client_id.clone(),
+            session_id: Some(session_id.to_string()),
+            profile_id: binding.profile_id.clone(),
+            config_mode: binding.config_mode.clone(),
+            unify_workspace: binding.unify_workspace.clone(),
+            surface_fingerprint: binding.surface_fingerprint.clone(),
+            transport: super::common::ClientTransport::StreamableHttp,
+            source: binding.source,
+            observed_client_info: binding.observed_client_info.clone(),
+        };
+        drop(binding);
+        if self.resolve_active_resource_route(&client, uri).await.is_err() {
+            self.remove_resource_subscription(session_id, uri);
+            return false;
+        }
         let Some(peer_ref) = self.downstream_clients.get(session_id) else {
             return false;
         };
@@ -1045,7 +1457,18 @@ impl ProxyServer {
             .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect();
+        self.broadcast_notify_to(recipients, make_call).await
+    }
 
+    async fn broadcast_notify_to<F, Fut>(
+        &self,
+        recipients: Vec<(String, rmcp::service::Peer<rmcp::RoleServer>)>,
+        make_call: F,
+    ) -> usize
+    where
+        F: Fn(rmcp::service::Peer<rmcp::RoleServer>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), rmcp::service::ServiceError>>,
+    {
         let mut ok = 0usize;
         let mut stale_sessions: Vec<String> = Vec::new();
         for (session_id, peer) in recipients {
@@ -1722,6 +2145,7 @@ fn apply_client_audit_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clients::source::{ClientConfigSource, DbTemplateSource};
     use crate::config::client::init::{
         initialize_client_table, initialize_system_settings, set_default_client_config_mode,
     };
@@ -1904,25 +2328,114 @@ mod tests {
         crate::config::profile::add_server_to_profile(&pool, &profile_id, &server_id, true)
             .await
             .expect("add server to profile");
-        crate::config::server::capabilities::upsert_shadow_resource_template(
+        crate::config::server::capabilities::commit_protocol_items_for_kinds(
             &pool,
             &server_id,
             "subscription_docs",
-            "fixture://documents/{path}",
-            Some("Documents"),
-            None,
+            Some(
+                serde_json::from_value(serde_json::json!({
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {"resources": {"subscribe": true, "listChanged": true}},
+                    "serverInfo": {"name": "subscription_docs", "version": "1.0.0"}
+                }))
+                .expect("decode subscription initialize fixture"),
+            ),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![
+                serde_json::from_value(serde_json::json!({
+                    "uriTemplate": "fixture://documents/{path}",
+                    "name": "Documents"
+                }))
+                .expect("decode subscription template fixture"),
+            ],
+            crate::core::pool::CapSyncFlags::ALL,
         )
         .await
-        .expect("insert subscription template catalog row");
-        crate::config::profile::add_resource_template_to_profile(
-            &pool,
-            &profile_id,
-            &server_id,
-            "fixture://documents/{path}",
-            true,
+        .expect("commit subscription template catalog row");
+        let template_ref = mcpmate_capability_store::CapabilityRefId::derive(
+            &mcpmate_capability_store::CapabilitySourceIdentity::new(
+                &server_id,
+                mcpmate_capability_store::CapabilityKind::ResourceTemplates,
+                "fixture://documents/{path}",
+            ),
         )
-        .await
-        .expect("add template to profile");
+        .expect("derive subscription template ref")
+        .to_string();
+        crate::config::profile::add_resource_template_to_profile(&pool, &profile_id, &server_id, &template_ref, true)
+            .await
+            .expect("add template to profile");
+        let capability_id: String =
+            sqlx::query_scalar("SELECT capability_id FROM capability_ref_current WHERE ref_id = ?")
+                .bind(&template_ref)
+                .fetch_one(&pool)
+                .await
+                .expect("load current subscription template version");
+        let external_template = crate::core::capability::resource_uri::encode_resource_template(
+            "subscription_docs",
+            "fixture://documents/{path}",
+        )
+        .expect("encode published subscription template");
+        for consumer_id in ["hosted-client", "unify-client"] {
+            let config_mode = if consumer_id == "hosted-client" {
+                "hosted"
+            } else {
+                "unify"
+            };
+            sqlx::query(
+                r#"
+                INSERT INTO client (
+                    id, name, identifier, config_mode, approval_status
+                ) VALUES (?, ?, ?, ?, 'approved')
+                "#,
+            )
+            .bind(consumer_id)
+            .bind(consumer_id)
+            .bind(consumer_id)
+            .bind(config_mode)
+            .execute(&pool)
+            .await
+            .expect("insert subscription Consumer");
+            let manifest = mcpmate_capability_store::SurfaceManifest::compile(
+                consumer_id,
+                vec![mcpmate_capability_store::SurfaceManifestEntryInput::new(
+                    template_ref.parse().expect("parse subscription template ref"),
+                    capability_id
+                        .parse()
+                        .expect("parse subscription template capability id"),
+                    mcpmate_capability_store::CapabilityKind::ResourceTemplates,
+                    external_template.clone(),
+                )],
+            )
+            .expect("compile subscription Surface manifest");
+            let store = mcpmate_capability_store::SqliteSurfaceStore::new(pool.clone());
+            let mut transaction = pool.begin().await.expect("begin Surface publication");
+            store
+                .insert_manifest_in_transaction(&mut transaction, &manifest)
+                .await
+                .expect("insert subscription Surface manifest");
+            store
+                .publish_and_bind_in_transaction(
+                    &mut transaction,
+                    &mcpmate_capability_store::SurfacePublication::new(
+                        format!("publication-{consumer_id}"),
+                        consumer_id,
+                        manifest.manifest_id,
+                        None,
+                        "test_fixture",
+                        "test",
+                        None,
+                    ),
+                    None,
+                )
+                .await
+                .expect("publish subscription Surface");
+            transaction
+                .commit()
+                .await
+                .expect("commit subscription Surface publication");
+        }
 
         let database = Arc::new(Database {
             pool: pool.clone(),
@@ -1985,7 +2498,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn resource_subscription_handler_reuses_visibility_and_canonical_routing() {
-        let (_temp_dir, _pool, server, server_id, profile_id) = create_subscription_test_server().await;
+        let (_temp_dir, pool, mut server, server_id, profile_id) = create_subscription_test_server().await;
         let hosted_session = "hosted-subscription";
         let hosted_client = ClientContext {
             client_id: "hosted-client".to_string(),
@@ -2028,6 +2541,23 @@ mod tests {
                 .contains_key(&(hosted_session.to_string(), allowed_uri.clone()))
         );
         assert_eq!(server.notify_resource_updates_for_server(&server_id).await, 1);
+        let runtime_source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("runtime template source"));
+        server.client_config_service = Some(Arc::new(
+            ClientConfigService::with_source(Arc::new(pool), runtime_source)
+                .await
+                .expect("client config service"),
+        ));
+        server
+            .deliver_consumer_surface_changed("hosted-client")
+            .await
+            .expect("deliver target Consumer Surface change");
+        server.client_config_service = None;
+        assert!(
+            !server
+                .resource_subscriptions
+                .contains_key(&(hosted_session.to_string(), allowed_uri.clone()))
+        );
 
         let denied_uri = crate::core::capability::resource_uri::encode_resource_uri(
             "subscription_docs",
@@ -2071,6 +2601,223 @@ mod tests {
                 .resource_subscriptions
                 .contains_key(&(hosted_session.to_string(), allowed_uri))
         );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resource_update_drops_subscription_after_surface_contraction() {
+        let (_temp_dir, pool, server, server_id, profile_id) = create_subscription_test_server().await;
+        let session_id = "contracted-subscription";
+        let client = ClientContext {
+            client_id: "hosted-client".to_string(),
+            session_id: Some(session_id.to_string()),
+            profile_id: Some(profile_id),
+            config_mode: Some("hosted".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(session_id, &client)
+            .await
+            .expect("bind hosted client");
+        let (context, _client_service, _server_service) =
+            subscription_request_context("hosted-client", session_id).await;
+        server
+            .downstream_clients
+            .insert(session_id.to_string(), context.peer.clone());
+
+        let uri = crate::core::capability::resource_uri::encode_resource_template(
+            "subscription_docs",
+            "fixture://documents/{path}",
+        )
+        .expect("encode selected template")
+        .replace("{path}", "guide.md");
+        rmcp::ServerHandler::subscribe(&server, SubscribeRequestParams::new(uri.clone()), context)
+            .await
+            .expect("subscribe selected resource");
+
+        let store = mcpmate_capability_store::SqliteSurfaceStore::new(pool.clone());
+        let binding = store
+            .load_binding("hosted-client")
+            .await
+            .expect("load active binding")
+            .expect("active binding should exist");
+        let empty_manifest = mcpmate_capability_store::SurfaceManifest::compile("hosted-client", Vec::new())
+            .expect("compile contracted Surface");
+        let publication = mcpmate_capability_store::SurfacePublication::new(
+            "publication-hosted-client-contracted",
+            "hosted-client",
+            empty_manifest.manifest_id.clone(),
+            None,
+            "test_surface_contraction",
+            "test",
+            Some(binding.active_publication_id.clone()),
+        );
+        let mut transaction = pool.begin().await.expect("begin contracted Surface publication");
+        store
+            .insert_manifest_in_transaction(&mut transaction, &empty_manifest)
+            .await
+            .expect("insert contracted Surface");
+        store
+            .publish_and_bind_in_transaction(&mut transaction, &publication, Some(binding.generation))
+            .await
+            .expect("publish contracted Surface");
+        transaction.commit().await.expect("commit contracted Surface");
+
+        assert_eq!(server.notify_resource_updates_for_server(&server_id).await, 0);
+        assert!(
+            !server
+                .resource_subscriptions
+                .contains_key(&(session_id.to_string(), uri))
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn transparent_list_changed_recipients_exclude_managed_consumers() {
+        let (_temp_dir, pool, server, _server_id, profile_id) = create_subscription_test_server().await;
+        sqlx::query(
+            r#"
+            INSERT INTO client (id, name, identifier, config_mode, approval_status)
+            VALUES ('transparent-client', 'Transparent Client', 'transparent-client', 'transparent', 'approved')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("insert transparent Consumer");
+
+        let managed_session = "managed-list-changed";
+        let managed = ClientContext {
+            client_id: "hosted-client".to_string(),
+            session_id: Some(managed_session.to_string()),
+            profile_id: Some(profile_id),
+            config_mode: Some("hosted".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: Some("managed-before-legacy-event".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(managed_session, &managed)
+            .await
+            .expect("bind managed client");
+        let (managed_context, _managed_client, _managed_server) =
+            subscription_request_context("hosted-client", managed_session).await;
+        server
+            .downstream_clients
+            .insert(managed_session.to_string(), managed_context.peer.clone());
+
+        let transparent_session = "transparent-list-changed";
+        let transparent = ClientContext {
+            client_id: "transparent-client".to_string(),
+            session_id: Some(transparent_session.to_string()),
+            profile_id: None,
+            config_mode: Some("transparent".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: Some("transparent-before-legacy-event".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(transparent_session, &transparent)
+            .await
+            .expect("bind transparent client");
+        let (transparent_context, _transparent_client, _transparent_server) =
+            subscription_request_context("transparent-client", transparent_session).await;
+        server
+            .downstream_clients
+            .insert(transparent_session.to_string(), transparent_context.peer.clone());
+
+        let recipient_ids = server
+            .transparent_downstream_peers()
+            .await
+            .into_iter()
+            .map(|(session_id, _)| session_id)
+            .collect::<Vec<_>>();
+        assert_eq!(recipient_ids, vec![transparent_session.to_string()]);
+
+        assert_eq!(server.refresh_transparent_bound_sessions().await, 1);
+        assert_eq!(
+            server
+                .client_context_resolver
+                .session_bindings
+                .get(managed_session)
+                .expect("managed binding")
+                .surface_fingerprint
+                .as_deref(),
+            Some("managed-before-legacy-event")
+        );
+        assert_ne!(
+            server
+                .client_context_resolver
+                .session_bindings
+                .get(transparent_session)
+                .expect("transparent binding")
+                .surface_fingerprint
+                .as_deref(),
+            Some("transparent-before-legacy-event")
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn surface_outbox_delivery_synchronizes_target_consumer_runtime_state() {
+        let (_temp_dir, pool, mut server, _server_id, profile_id) = create_subscription_test_server().await;
+        let runtime_source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("runtime template source"));
+        server.client_config_service = Some(Arc::new(
+            ClientConfigService::with_source(Arc::new(pool.clone()), runtime_source)
+                .await
+                .expect("client config service"),
+        ));
+
+        let session_id = "outbox-runtime-sync";
+        let client = ClientContext {
+            client_id: "hosted-client".to_string(),
+            session_id: Some(session_id.to_string()),
+            profile_id: Some(profile_id),
+            config_mode: Some("hosted".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: Some("before-outbox".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(session_id, &client)
+            .await
+            .expect("bind managed Consumer");
+        let (context, _client_service, _server_service) =
+            subscription_request_context("hosted-client", session_id).await;
+        server
+            .downstream_clients
+            .insert(session_id.to_string(), context.peer.clone());
+        sqlx::query("UPDATE client SET config_mode = 'unify' WHERE identifier = 'hosted-client'")
+            .execute(&pool)
+            .await
+            .expect("persist new managed mode");
+
+        server
+            .deliver_consumer_surface_changed("hosted-client")
+            .await
+            .expect("deliver target Consumer Surface change");
+
+        let binding = server
+            .client_context_resolver
+            .session_bindings
+            .get(session_id)
+            .expect("target Consumer binding");
+        assert_eq!(binding.config_mode.as_deref(), Some("unify"));
+        assert_ne!(binding.surface_fingerprint.as_deref(), Some("before-outbox"));
     }
 
     #[tokio::test]
@@ -2492,6 +3239,49 @@ mod tests {
             .expect("resolve config mode");
 
         assert_eq!(mode, "transparent");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn managed_access_uses_the_effective_inherited_config_mode() {
+        let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
+
+        set_default_client_config_mode(&pool, "unify")
+            .await
+            .expect("set default mode");
+        sqlx::query(
+            r#"
+            INSERT INTO client (
+                id, name, identifier, config_mode, approval_status, backup_policy, backup_limit
+            )
+            VALUES (?, ?, ?, NULL, 'approved', 'keep_n', 5)
+            "#,
+        )
+        .bind(crate::generate_id!("clnt"))
+        .bind("Inherited Managed Client")
+        .bind("inherited-managed-client")
+        .execute(&pool)
+        .await
+        .expect("insert client row");
+
+        let context = ClientContext {
+            client_id: "inherited-managed-client".to_string(),
+            session_id: Some("session-inherited-managed".to_string()),
+            profile_id: None,
+            config_mode: Some("unify".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: Some("surface-fingerprint".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+
+        let access = server
+            .resolve_consumer_access_context(&context)
+            .await
+            .expect("effective managed mode should authorize Surface access");
+
+        assert_eq!(access.consumer_id, "inherited-managed-client");
     }
 
     #[tokio::test]

@@ -29,7 +29,10 @@ use crate::api::models::cache::{
     CacheMetricsStats, CacheResetData, CacheResetResp, CacheStorageStats, CacheViewType,
 };
 use crate::api::models::server::{
-    ServerCapabilityDetailData, ServerCapabilityDetailReq, ServerCapabilityDetailResp, ServerCapabilityMeta,
+    ServerCapabilityDetailData, ServerCapabilityDetailReq, ServerCapabilityDetailResp, ServerCapabilityListsData,
+    ServerCapabilityListsResp, ServerCapabilityMeta, ServerCapabilityRefreshData, ServerCapabilityRefreshReq,
+    ServerCapabilityRefreshResp, ServerCapabilityReq, ServerPromptsData, ServerResourceTemplatesData,
+    ServerResourcesData, ServerToolsData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditStatus};
@@ -42,12 +45,302 @@ pub enum CapabilityType {
     ResourceTemplates,
 }
 
+pub type CapabilityIdentityMapping = HashMap<String, (String, String, String)>;
+
+async fn resolve_capability_read(
+    state: &Arc<AppState>,
+    request: &ServerCapabilityReq,
+) -> Result<(Arc<crate::config::database::Database>, String, Option<RefreshStrategy>), ApiError> {
+    let query = InspectQuery {
+        refresh: request.refresh.as_ref().map(|refresh| (*refresh).into()),
+        format: None,
+        include_meta: None,
+        timeout: None,
+    };
+    let (db, server_info, params) = get_server_info_for_inspect(state, &request.id, &query).await?;
+    Ok((db, server_info.server_id, params.refresh))
+}
+
+fn runtime_kind(capability_type: CapabilityType) -> crate::core::capability::CapabilityType {
+    match capability_type {
+        CapabilityType::Tools => crate::core::capability::CapabilityType::Tools,
+        CapabilityType::Prompts => crate::core::capability::CapabilityType::Prompts,
+        CapabilityType::Resources => crate::core::capability::CapabilityType::Resources,
+        CapabilityType::ResourceTemplates => crate::core::capability::CapabilityType::ResourceTemplates,
+    }
+}
+
+fn runtime_list_refresh(refresh: Option<RefreshStrategy>) -> Option<crate::core::capability::runtime::RefreshStrategy> {
+    match refresh {
+        Some(RefreshStrategy::Force) => Some(crate::core::capability::runtime::RefreshStrategy::Force),
+        _ => Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
+    }
+}
+
+fn list_ctx(
+    server_id: &str,
+    refresh: Option<RefreshStrategy>,
+    capability_type: CapabilityType,
+) -> crate::core::capability::runtime::ListCtx {
+    crate::core::capability::runtime::ListCtx {
+        capability: runtime_kind(capability_type),
+        server_id: server_id.to_string(),
+        refresh: runtime_list_refresh(refresh),
+        timeout: Some(std::time::Duration::from_secs(10)),
+        validation_session: None,
+        runtime_identity: None,
+        connection_selection: None,
+        visibility_snapshot: None,
+        name_domain: crate::core::capability::runtime::NameDomain::External,
+    }
+}
+
+async fn read_capability_list_result(
+    state: &Arc<AppState>,
+    server_id: &str,
+    refresh: Option<RefreshStrategy>,
+    capability_type: CapabilityType,
+) -> Result<crate::core::capability::runtime::ListResult, ApiError> {
+    let database = state
+        .database
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("Database is not initialized".to_string()))?;
+    let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+        database.clone(),
+        state.connection_pool.clone(),
+    );
+    service
+        .list(&list_ctx(server_id, refresh, capability_type))
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                server_id = %server_id,
+                capability = ?capability_type,
+                error = %error,
+                "Failed to read server capability list"
+            );
+            crate::core::capability::service::map_capability_read_error(&error)
+        })
+}
+
+pub(crate) async fn list_server_capability(
+    state: &Arc<AppState>,
+    request: &ServerCapabilityReq,
+    capability_type: CapabilityType,
+) -> Result<ServerToolsData, ApiError> {
+    let (db, server_id, refresh) = resolve_capability_read(state, request).await?;
+    let list_result = read_capability_list_result(state, &server_id, refresh, capability_type).await?;
+    project_list_payload(&db, &server_id, capability_type, list_result, refresh).await
+}
+
+/// Refresh all capability kinds for one server in a single catalog observation.
+pub async fn refresh_server_capabilities(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ServerCapabilityRefreshReq>,
+) -> Result<Json<ServerCapabilityRefreshResp>, ApiError> {
+    let database = get_database_from_state(&state)?;
+    let server = crate::config::server::get_server_by_id(&database.pool, &request.id)
+        .await
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("Server '{}' not found", request.id)))?;
+    let commit = crate::config::server::capabilities::sync_via_connection_pool(
+        &state.connection_pool,
+        &database.pool,
+        database.capability_cache.as_ref(),
+        &request.id,
+        &server.name,
+        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
+    )
+    .await
+    .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
+
+    Ok(Json(ServerCapabilityRefreshResp::success(
+        ServerCapabilityRefreshData {
+            server_id: commit.server_id,
+            catalog_revision: commit.revision,
+            catalog_changed: commit.changed,
+        },
+    )))
+}
+
+/// List all capability kinds for one server using a single discovery pass.
+pub async fn server_capability_lists(
+    State(state): State<Arc<AppState>>,
+    Query(request): Query<ServerCapabilityReq>,
+) -> Result<Json<ServerCapabilityListsResp>, ApiError> {
+    let (db, server_id, refresh) = resolve_capability_read(&state, &request).await?;
+    let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+        db.clone(),
+        state.connection_pool.clone(),
+    );
+    let lists = service
+        .list_all_kinds(
+            &server_id,
+            runtime_list_refresh(refresh),
+            Some(std::time::Duration::from_secs(10)),
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                server_id = %server_id,
+                error = %error,
+                "Failed to list all capability kinds"
+            );
+            crate::core::capability::service::map_capability_read_error(&error)
+        })?;
+
+    let tools = project_list_payload(&db, &server_id, CapabilityType::Tools, lists.tools, refresh).await?;
+    let resources_payload =
+        project_list_payload(&db, &server_id, CapabilityType::Resources, lists.resources, refresh).await?;
+    let prompts_payload =
+        project_list_payload(&db, &server_id, CapabilityType::Prompts, lists.prompts, refresh).await?;
+    let resource_templates_payload = project_list_payload(
+        &db,
+        &server_id,
+        CapabilityType::ResourceTemplates,
+        lists.resource_templates,
+        refresh,
+    )
+    .await?;
+
+    Ok(Json(ServerCapabilityListsResp::success(ServerCapabilityListsData {
+        tools,
+        resources: ServerResourcesData {
+            items: resources_payload.items,
+            state: resources_payload.state,
+            meta: resources_payload.meta,
+        },
+        prompts: ServerPromptsData {
+            items: prompts_payload.items,
+            state: prompts_payload.state,
+            meta: prompts_payload.meta,
+        },
+        resource_templates: ServerResourceTemplatesData {
+            items: resource_templates_payload.items,
+            state: resource_templates_payload.state,
+            meta: resource_templates_payload.meta,
+        },
+    })))
+}
+
+async fn project_list_payload(
+    db: &Arc<crate::config::database::Database>,
+    server_id: &str,
+    capability_type: CapabilityType,
+    list_result: crate::core::capability::runtime::ListResult,
+    refresh: Option<RefreshStrategy>,
+) -> Result<ServerToolsData, ApiError> {
+    let crate::core::capability::runtime::ListResult { items, meta } = list_result;
+    let json_items = capability_items_to_json(capability_type, server_id, items)?;
+    let enriched = enrich_capability_items(capability_type, &db.pool, server_id, json_items)
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                server_id = %server_id,
+                capability = ?capability_type,
+                error = %error,
+                "Capability naming projection failed"
+            );
+            ApiError::InternalError(format!("Capability naming projection failed: {error}"))
+        })?;
+    Ok(build_capability_list_data(enriched, &meta, refresh))
+}
+
+fn capability_list_state(source: &str) -> String {
+    if source.starts_with("capability-") {
+        "unsupported".to_string()
+    } else {
+        "ok".to_string()
+    }
+}
+
+fn capability_list_strategy(refresh: Option<RefreshStrategy>) -> String {
+    serde_json::to_value(refresh.unwrap_or_default())
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "cacheFirst".to_string())
+}
+
+fn build_capability_list_data(
+    items: Vec<serde_json::Value>,
+    meta: &crate::core::capability::runtime::Meta,
+    refresh: Option<RefreshStrategy>,
+) -> ServerToolsData {
+    ServerToolsData {
+        items,
+        state: capability_list_state(&meta.source),
+        meta: ServerCapabilityMeta {
+            cache_hit: meta.cache_hit,
+            strategy: capability_list_strategy(refresh),
+            source: meta.source.clone(),
+        },
+    }
+}
+
+fn capability_items_to_json(
+    capability_type: CapabilityType,
+    server_id: &str,
+    items: crate::core::capability::runtime::CapabilityItems,
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    let values = match items {
+        crate::core::capability::runtime::CapabilityItems::Tools(items) => {
+            if !matches!(capability_type, CapabilityType::Tools) {
+                return Err(ApiError::InternalError(
+                    "Capability read service returned mismatched tool items".to_string(),
+                ));
+            }
+            items
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()
+        }
+        crate::core::capability::runtime::CapabilityItems::Resources(items) => {
+            if !matches!(capability_type, CapabilityType::Resources) {
+                return Err(ApiError::InternalError(
+                    "Capability read service returned mismatched resource items".to_string(),
+                ));
+            }
+            items
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()
+        }
+        crate::core::capability::runtime::CapabilityItems::Prompts(items) => {
+            if !matches!(capability_type, CapabilityType::Prompts) {
+                return Err(ApiError::InternalError(
+                    "Capability read service returned mismatched prompt items".to_string(),
+                ));
+            }
+            items
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()
+        }
+        crate::core::capability::runtime::CapabilityItems::ResourceTemplates(items) => {
+            if !matches!(capability_type, CapabilityType::ResourceTemplates) {
+                return Err(ApiError::InternalError(
+                    "Capability read service returned mismatched resource template items".to_string(),
+                ));
+            }
+            items
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()
+        }
+    }
+    .map_err(|error| {
+        tracing::error!(server_id = %server_id, error = %error, "Failed to serialize capability items");
+        ApiError::InternalError(format!("Failed to serialize capability items: {error}"))
+    })?;
+    Ok(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        CapabilityType, ExtractedCapability, enrich_prompt_item, enrich_resource_item, enrich_resource_template_item,
-        enrich_tool_item, persist_extracted_inventory, prompt_json, resource_json, resource_template_json,
-        resource_template_json_from_cached, tool_json,
+        CapabilityIdentityMapping, CapabilityType, ExtractedCapability, enrich_prompt_item, enrich_resource_item,
+        enrich_resource_template_item, enrich_tool_item, persist_extracted_inventory, prompt_json, resource_json,
+        resource_template_json, resource_template_json_from_cached, tool_json,
     };
     use crate::{
         api::{handlers::server::common::ServerIdentification, routes::AppState},
@@ -70,10 +363,14 @@ mod tests {
     fn mapping(
         upstream: &str,
         external: &str,
-    ) -> HashMap<String, (String, String)> {
+    ) -> CapabilityIdentityMapping {
         HashMap::from([(
             upstream.to_string(),
-            ("capability-id".to_string(), external.to_string()),
+            (
+                "capability-id".to_string(),
+                external.to_string(),
+                "capability-ref-id".to_string(),
+            ),
         )])
     }
 
@@ -211,6 +508,7 @@ mod tests {
         assert_eq!(projected["unique_name"], "searxng_get_status");
         assert_eq!(projected["tool_name"], "get_searxng_status");
         assert_eq!(projected["id"], "capability-id");
+        assert_eq!(projected["ref_id"], "capability-ref-id");
     }
 
     #[test]
@@ -338,6 +636,10 @@ mod tests {
             .execute(&pool)
             .await
             .expect("create tool catalog");
+        sqlx::query("CREATE TABLE capability_refs (ref_id TEXT, server_id TEXT, kind TEXT, origin_key TEXT)")
+            .execute(&pool)
+            .await
+            .expect("create capability refs");
 
         let error = super::enrich_capability_items(
             super::CapabilityType::Tools,
@@ -394,7 +696,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
@@ -487,15 +788,23 @@ impl ExtractedCapability {
 pub async fn load_tool_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
-    Ok(sqlx::query_as::<_, (String, String, String)>(
-        r#"SELECT tool_name, id, unique_name FROM server_tools WHERE server_id = ?"#,
+) -> Result<CapabilityIdentityMapping, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String, String)>(
+        r#"
+        SELECT st.tool_name, st.id, st.unique_name, cr.ref_id
+        FROM server_tools st
+        JOIN capability_refs cr
+          ON cr.server_id = st.server_id
+         AND cr.kind = 'tools'
+         AND cr.origin_key = st.tool_name
+        WHERE st.server_id = ?
+        "#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(name, id, unique_name)| (name, (id, unique_name)))
+    .map(|(name, id, unique_name, ref_id)| (name, (id, unique_name, ref_id)))
     .collect())
 }
 
@@ -510,15 +819,23 @@ pub async fn load_tool_mapping(
 pub async fn load_prompt_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
-    Ok(sqlx::query_as::<_, (String, String, String)>(
-        r#"SELECT prompt_name, id, unique_name FROM server_prompts WHERE server_id = ?"#,
+) -> Result<CapabilityIdentityMapping, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String, String)>(
+        r#"
+        SELECT sp.prompt_name, sp.id, sp.unique_name, cr.ref_id
+        FROM server_prompts sp
+        JOIN capability_refs cr
+          ON cr.server_id = sp.server_id
+         AND cr.kind = 'prompts'
+         AND cr.origin_key = sp.prompt_name
+        WHERE sp.server_id = ?
+        "#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(name, id, unique_name)| (name, (id, unique_name)))
+    .map(|(name, id, unique_name, ref_id)| (name, (id, unique_name, ref_id)))
     .collect())
 }
 
@@ -533,30 +850,46 @@ pub async fn load_prompt_mapping(
 pub async fn load_resource_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
-    Ok(sqlx::query_as::<_, (String, String, String)>(
-        r#"SELECT resource_uri, id, unique_uri FROM server_resources WHERE server_id = ?"#,
+) -> Result<CapabilityIdentityMapping, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String, String)>(
+        r#"
+        SELECT sr.resource_uri, sr.id, sr.unique_uri, cr.ref_id
+        FROM server_resources sr
+        JOIN capability_refs cr
+          ON cr.server_id = sr.server_id
+         AND cr.kind = 'resources'
+         AND cr.origin_key = sr.resource_uri
+        WHERE sr.server_id = ?
+        "#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(uri, id, unique_uri)| (uri, (id, unique_uri)))
+    .map(|(uri, id, unique_uri, ref_id)| (uri, (id, unique_uri, ref_id)))
     .collect())
 }
 
 pub async fn load_resource_template_mapping(
     pool: &Pool<Sqlite>,
     server_id: &str,
-) -> Result<HashMap<String, (String, String)>, sqlx::Error> {
-    Ok(sqlx::query_as::<_, (String, String, String)>(
-        r#"SELECT uri_template, id, unique_name FROM server_resource_templates WHERE server_id = ?"#,
+) -> Result<CapabilityIdentityMapping, sqlx::Error> {
+    Ok(sqlx::query_as::<_, (String, String, String, String)>(
+        r#"
+        SELECT srt.uri_template, srt.id, srt.unique_name, cr.ref_id
+        FROM server_resource_templates srt
+        JOIN capability_refs cr
+          ON cr.server_id = srt.server_id
+         AND cr.kind = 'resource_templates'
+         AND cr.origin_key = srt.uri_template
+        WHERE srt.server_id = ?
+        "#,
     )
     .bind(server_id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|(tpl, id, unique_name)| (tpl, (id, unique_name)))
+    .map(|(tpl, id, unique_name, ref_id)| (tpl, (id, unique_name, ref_id)))
     .collect())
 }
 
@@ -622,7 +955,9 @@ pub async fn server_capability_detail(
 ) -> Result<Json<ServerCapabilityDetailResp>, ApiError> {
     let key = request.key.trim();
     if key.is_empty() {
-        return Err(ApiError::BadRequest("Capability detail key must not be empty".to_string()));
+        return Err(ApiError::BadRequest(
+            "Capability detail key must not be empty".to_string(),
+        ));
     }
 
     let query = InspectQuery {
@@ -667,65 +1002,48 @@ async fn cached_capability_detail_item(
     capability_type: CapabilityType,
     key: &str,
 ) -> Result<CapabilityDetailLookup, ApiError> {
-    let database = state
-        .database
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("Database is not initialized".to_string()))?;
-    let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
-        database.clone(),
-        state.connection_pool.clone(),
-    );
-    let runtime_kind = match capability_type {
-        CapabilityType::Tools => crate::core::capability::CapabilityType::Tools,
-        CapabilityType::Prompts => crate::core::capability::CapabilityType::Prompts,
-        CapabilityType::Resources => crate::core::capability::CapabilityType::Resources,
-        CapabilityType::ResourceTemplates => crate::core::capability::CapabilityType::ResourceTemplates,
-    };
-    let result = service
-        .list(&crate::core::capability::runtime::ListCtx {
-            capability: runtime_kind,
-            server_id: server_info.server_id.clone(),
-            refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-            timeout: Some(std::time::Duration::from_secs(10)),
-            validation_session: None,
-            runtime_identity: None,
-            connection_selection: None,
-            visibility_snapshot: None,
-            name_domain: crate::core::capability::runtime::NameDomain::External,
-        })
-        .await
-        .map_err(|error| {
-            tracing::error!(
-                server_id = %server_info.server_id,
-                error = %error,
-                "Capability detail read path failed"
-            );
-            crate::core::capability::service::map_capability_read_error(&error)
-        })?;
-    let item = match result.items {
-        crate::core::capability::runtime::CapabilityItems::Tools(items) => items
-            .into_iter()
-            .find(|item| item.name.as_ref() == key)
-            .and_then(|item| serde_json::to_value(item).ok()),
-        crate::core::capability::runtime::CapabilityItems::Prompts(items) => items
-            .into_iter()
-            .find(|item| item.name == key)
-            .and_then(|item| serde_json::to_value(item).ok()),
-        crate::core::capability::runtime::CapabilityItems::Resources(items) => items
-            .into_iter()
-            .find(|item| item.uri == key)
-            .and_then(|item| serde_json::to_value(item).ok()),
-        crate::core::capability::runtime::CapabilityItems::ResourceTemplates(items) => items
-            .into_iter()
-            .find(|item| item.uri_template == key)
-            .and_then(|item| serde_json::to_value(item).ok()),
-    };
+    let result = read_capability_list_result(state, &server_info.server_id, None, capability_type).await?;
+    let item = find_capability_detail_item(capability_type, key, result.items)?;
 
     Ok(CapabilityDetailLookup {
         item,
         cache_hit: result.meta.cache_hit,
         source: result.meta.source,
     })
+}
+
+fn find_capability_detail_item(
+    capability_type: CapabilityType,
+    key: &str,
+    items: crate::core::capability::runtime::CapabilityItems,
+) -> Result<Option<Value>, ApiError> {
+    let item = match items {
+        crate::core::capability::runtime::CapabilityItems::Tools(items) => items
+            .into_iter()
+            .find(|item| item.name.as_ref() == key)
+            .map(serde_json::to_value),
+        crate::core::capability::runtime::CapabilityItems::Prompts(items) => items
+            .into_iter()
+            .find(|item| item.name == key)
+            .map(serde_json::to_value),
+        crate::core::capability::runtime::CapabilityItems::Resources(items) => {
+            items.into_iter().find(|item| item.uri == key).map(serde_json::to_value)
+        }
+        crate::core::capability::runtime::CapabilityItems::ResourceTemplates(items) => items
+            .into_iter()
+            .find(|item| item.uri_template == key)
+            .map(serde_json::to_value),
+    };
+    match item {
+        Some(Ok(value)) => Ok(Some(value)),
+        Some(Err(error)) => {
+            tracing::error!(capability = ?capability_type, error = %error, "Failed to serialize capability detail item");
+            Err(ApiError::InternalError(format!(
+                "Failed to serialize capability detail item: {error}"
+            )))
+        }
+        None => Ok(None),
+    }
 }
 
 fn parse_capability_detail_type(kind: &str) -> Result<CapabilityType, StatusCode> {
@@ -872,7 +1190,7 @@ async fn cache_reset_core(state: &Arc<AppState>) -> Result<CacheResetResp, Statu
 #[inline]
 fn enrich_tool_item(
     item: serde_json::Value,
-    mapping: &HashMap<String, (String, String)>,
+    mapping: &CapabilityIdentityMapping,
 ) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
     let presented_name = item
@@ -880,9 +1198,10 @@ fn enrich_tool_item(
         .or_else(|| item.get("name"))
         .and_then(|value| value.as_str())
         .ok_or_else(|| ApiError::InternalError("Tool response is missing a capability name".to_string()))?;
-    let (upstream_name, id, unique_name) = find_capability_mapping(mapping, presented_name).ok_or_else(|| {
-        ApiError::InternalError(format!("Tool '{presented_name}' has no persisted external identifier"))
-    })?;
+    let (upstream_name, id, unique_name, ref_id) =
+        find_capability_mapping(mapping, presented_name).ok_or_else(|| {
+            ApiError::InternalError(format!("Tool '{presented_name}' has no persisted external identifier"))
+        })?;
     let obj = item
         .as_object_mut()
         .ok_or_else(|| ApiError::InternalError("Tool response is not an object".to_string()))?;
@@ -890,6 +1209,7 @@ fn enrich_tool_item(
     obj.insert("tool_name".to_string(), serde_json::json!(upstream_name));
     obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
     obj.insert("id".to_string(), serde_json::json!(id));
+    obj.insert("ref_id".to_string(), serde_json::json!(ref_id));
     Ok(item)
 }
 
@@ -897,7 +1217,7 @@ fn enrich_tool_item(
 #[inline]
 fn enrich_prompt_item(
     item: serde_json::Value,
-    mapping: &HashMap<String, (String, String)>,
+    mapping: &CapabilityIdentityMapping,
 ) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
     let presented_name = item
@@ -905,11 +1225,12 @@ fn enrich_prompt_item(
         .or_else(|| item.get("name"))
         .and_then(|value| value.as_str())
         .ok_or_else(|| ApiError::InternalError("Prompt response is missing a capability name".to_string()))?;
-    let (upstream_name, id, unique_name) = find_capability_mapping(mapping, presented_name).ok_or_else(|| {
-        ApiError::InternalError(format!(
-            "Prompt '{presented_name}' has no persisted external identifier"
-        ))
-    })?;
+    let (upstream_name, id, unique_name, ref_id) =
+        find_capability_mapping(mapping, presented_name).ok_or_else(|| {
+            ApiError::InternalError(format!(
+                "Prompt '{presented_name}' has no persisted external identifier"
+            ))
+        })?;
     let obj = item
         .as_object_mut()
         .ok_or_else(|| ApiError::InternalError("Prompt response is not an object".to_string()))?;
@@ -917,6 +1238,7 @@ fn enrich_prompt_item(
     obj.insert("prompt_name".to_string(), serde_json::json!(upstream_name));
     obj.insert("unique_name".to_string(), serde_json::json!(unique_name));
     obj.insert("id".to_string(), serde_json::json!(id));
+    obj.insert("ref_id".to_string(), serde_json::json!(ref_id));
     Ok(item)
 }
 
@@ -924,7 +1246,7 @@ fn enrich_prompt_item(
 #[inline]
 fn enrich_resource_item(
     item: serde_json::Value,
-    mapping: &HashMap<String, (String, String)>,
+    mapping: &CapabilityIdentityMapping,
 ) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
     let presented_uri = item
@@ -932,7 +1254,7 @@ fn enrich_resource_item(
         .or_else(|| item.get("uri"))
         .and_then(|value| value.as_str())
         .ok_or_else(|| ApiError::InternalError("Resource response is missing a URI".to_string()))?;
-    let (upstream_uri, id, unique_uri) = find_capability_mapping(mapping, presented_uri).ok_or_else(|| {
+    let (upstream_uri, id, unique_uri, ref_id) = find_capability_mapping(mapping, presented_uri).ok_or_else(|| {
         ApiError::InternalError(format!(
             "Resource '{presented_uri}' has no persisted external identifier"
         ))
@@ -944,6 +1266,7 @@ fn enrich_resource_item(
     obj.insert("resource_uri".to_string(), serde_json::json!(upstream_uri));
     obj.insert("unique_uri".to_string(), serde_json::json!(unique_uri));
     obj.insert("id".to_string(), serde_json::json!(id));
+    obj.insert("ref_id".to_string(), serde_json::json!(ref_id));
     Ok(item)
 }
 
@@ -951,7 +1274,7 @@ fn enrich_resource_item(
 #[inline]
 fn enrich_resource_template_item(
     item: serde_json::Value,
-    mapping: &HashMap<String, (String, String)>,
+    mapping: &CapabilityIdentityMapping,
 ) -> Result<serde_json::Value, ApiError> {
     let mut item = item;
     let presented_template = ["unique_uri_template", "uri_template", "uriTemplate"]
@@ -959,8 +1282,8 @@ fn enrich_resource_template_item(
         .filter_map(|field| item.get(field).and_then(|value| value.as_str()))
         .find(|value| !value.trim().is_empty())
         .ok_or_else(|| ApiError::InternalError("Resource template response is missing a template".to_string()))?;
-    let (upstream_template, id, unique_name) =
-        find_capability_mapping(mapping, presented_template).ok_or_else(|| {
+    let (upstream_template, id, unique_name, ref_id) = find_capability_mapping(mapping, presented_template)
+        .ok_or_else(|| {
             ApiError::InternalError(format!(
                 "Resource template '{presented_template}' has no persisted external identifier"
             ))
@@ -971,19 +1294,27 @@ fn enrich_resource_template_item(
     obj.insert("uri_template".to_string(), serde_json::json!(upstream_template));
     obj.insert("unique_uri_template".to_string(), serde_json::json!(unique_name));
     obj.insert("id".to_string(), serde_json::json!(id));
+    obj.insert("ref_id".to_string(), serde_json::json!(ref_id));
     Ok(item)
 }
 
 fn find_capability_mapping<'a>(
-    mapping: &'a HashMap<String, (String, String)>,
+    mapping: &'a CapabilityIdentityMapping,
     presented_value: &str,
-) -> Option<(&'a str, &'a str, &'a str)> {
+) -> Option<(&'a str, &'a str, &'a str, &'a str)> {
     mapping
         .iter()
-        .find(|(upstream_value, (_, external_value))| {
+        .find(|(upstream_value, (_, external_value, _))| {
             upstream_value.as_str() == presented_value || external_value == presented_value
         })
-        .map(|(upstream_value, (id, external_value))| (upstream_value.as_str(), id.as_str(), external_value.as_str()))
+        .map(|(upstream_value, (id, external_value, ref_id))| {
+            (
+                upstream_value.as_str(),
+                id.as_str(),
+                external_value.as_str(),
+                ref_id.as_str(),
+            )
+        })
 }
 
 /// Enrich capability items with database-stored identifiers

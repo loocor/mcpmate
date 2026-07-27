@@ -36,7 +36,8 @@ use mcpmate::{
 };
 use mcpmate_capability_store::{
     CapabilityCatalog, CapabilityKind, DeclarationState, DerivedCapabilityCache, InventoryState, KindObservation,
-    SnapshotState, SqliteCapabilityCatalog,
+    SnapshotState, SqliteCapabilityCatalog, SqliteSurfaceStore, SurfaceManifest, SurfaceManifestEntryInput,
+    SurfacePublication,
 };
 use rmcp::{
     ServerHandler, ServiceExt as _,
@@ -163,7 +164,40 @@ fn build_app_state(database: Arc<Database>) -> Arc<AppState> {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        unified_query: None,
+        client_service: None,
+        inspector_calls,
+        inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        oauth_manager: RwLock::new(None),
+        secret_store: RwLock::new(None),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness(
+            "test_unavailable",
+        )),
+    })
+}
+
+async fn build_capability_refresh_app_state(
+    database: Arc<Database>,
+    server_id: &str,
+) -> Arc<AppState> {
+    let (_, server_config) = load_server_config_strict(&database, server_id, None)
+        .await
+        .expect("load capability refresh server config");
+    let config = Arc::new(Config {
+        mcp_servers: HashMap::from([(server_id.to_string(), server_config)]),
+        ..Default::default()
+    });
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+
+    Arc::new(AppState {
+        connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(config, Some(database.clone())))),
+        metrics_collector: Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1))),
+        http_proxy: None,
+        profile_merge_service: None,
+        database: Some(database),
+        audit_database: None,
+        audit_service: None,
+        config_application_state: Arc::new(ConfigApplicationStateManager::new()),
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
@@ -620,12 +654,65 @@ async fn bind_client(
                 unify_workspace: None,
                 surface_fingerprint: None,
                 transport: ClientTransport::StreamableHttp,
-                source: ClientIdentitySource::SessionBinding,
+                source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
             },
         )
         .await
         .expect("bind managed client session");
+}
+
+async fn publish_current_surface(
+    database: &Database,
+    consumer_id: &str,
+    server_ids: &[&str],
+) {
+    sqlx::query(
+        "INSERT INTO client (id, name, identifier, config_mode, approval_status) VALUES (?, ?, ?, 'hosted', 'approved')",
+    )
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .execute(&database.pool)
+        .await
+        .expect("insert managed Consumer");
+    let catalog = SqliteCapabilityCatalog::new(database.pool.clone());
+    let mut entries = Vec::new();
+    for server_id in server_ids {
+        let snapshot = catalog
+            .load_snapshot(server_id)
+            .await
+            .expect("load current catalog snapshot")
+            .expect("current catalog snapshot exists");
+        entries.extend(snapshot.records.into_iter().map(|record| {
+            let kind = record.kind();
+            SurfaceManifestEntryInput::new(record.ref_id, record.capability_id, kind, record.external_key)
+        }));
+    }
+    let manifest = SurfaceManifest::compile(consumer_id, entries).expect("compile current Surface manifest");
+    let store = SqliteSurfaceStore::new(database.pool.clone());
+    let mut transaction = database.pool.begin().await.expect("begin Surface publication");
+    store
+        .insert_manifest_in_transaction(&mut transaction, &manifest)
+        .await
+        .expect("insert current Surface manifest");
+    store
+        .publish_and_bind_in_transaction(
+            &mut transaction,
+            &SurfacePublication::new(
+                format!("publication-{consumer_id}"),
+                consumer_id,
+                manifest.manifest_id,
+                None,
+                "test_fixture",
+                "test",
+                None,
+            ),
+            None,
+        )
+        .await
+        .expect("publish current Surface");
+    transaction.commit().await.expect("commit current Surface publication");
 }
 
 async fn call_managed_mcp_list(
@@ -669,17 +756,25 @@ async fn read_json(response: axum::response::Response) -> Value {
 }
 
 #[test]
-fn public_capability_surfaces_do_not_bypass_the_read_service() {
+fn public_capability_surfaces_use_their_authoritative_readers() {
     for path in [
         "src/core/proxy/server/tools.rs",
         "src/core/proxy/server/prompts.rs",
         "src/core/proxy/server/resources.rs",
-        "src/mcper/builtin/broker.rs",
-        "src/api/handlers/server/tools.rs",
-        "src/api/handlers/server/prompts.rs",
-        "src/api/handlers/server/resources.rs",
-        "src/api/handlers/server/capability.rs",
     ] {
+        let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap_or_else(|error| panic!("read {path}: {error}"));
+        assert!(
+            source.contains("load_active_surface"),
+            "{path} does not list from the active Surface publication"
+        );
+        assert!(
+            !source.contains("CapabilityReadService::from_runtime"),
+            "{path} recomputes a managed Consumer surface at request time"
+        );
+    }
+
+    for path in ["src/mcper/builtin/broker.rs", "src/api/handlers/server/capability.rs"] {
         let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
             .unwrap_or_else(|error| panic!("read {path}: {error}"));
         assert!(
@@ -689,6 +784,27 @@ fn public_capability_surfaces_do_not_bypass_the_read_service() {
         assert!(
             source.contains("CapabilityReadService::from_runtime"),
             "{path} does not call the unique CapabilityReadService"
+        );
+    }
+
+    for path in [
+        "src/api/handlers/server/tools.rs",
+        "src/api/handlers/server/prompts.rs",
+        "src/api/handlers/server/resources.rs",
+    ] {
+        let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap_or_else(|error| panic!("read {path}: {error}"));
+        assert!(
+            !source.contains("runtime::list("),
+            "{path} bypasses CapabilityReadService"
+        );
+        assert!(
+            source.contains("list_server_capability"),
+            "{path} does not route through the shared capability list reader"
+        );
+        assert!(
+            !source.contains("CapabilityReadService::from_runtime"),
+            "{path} should not construct CapabilityReadService directly"
         );
     }
 
@@ -1045,6 +1161,112 @@ async fn validation_sync_template_method_not_found_is_unsupported_complete() {
         1,
         "second tools page must forward nextCursor"
     );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn server_capability_refresh_commits_one_complete_catalog_observation() {
+    let temp_dir = TempDir::new().expect("create test directory");
+    let database = open_database(temp_dir.path().join("server-capability-refresh.db")).await;
+    let script = write_counted_stdio_fixture(&temp_dir);
+    let operations = temp_dir.path().join("server-capability-refresh.log");
+    let server_id = "server-capability-refresh";
+    let server_name = "capability_refresh_fixture";
+    insert_stdio_server_with_mode(&database, &script, &operations, server_id, server_name, "count_methods").await;
+    let state = build_capability_refresh_app_state(database.clone(), server_id).await;
+    let app = Router::new().merge(mcpmate::api::routes::server::routes(state));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp/servers/capabilities/refresh")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&json!({ "id": server_id })).expect("encode refresh request"),
+                ))
+                .expect("build capability refresh request"),
+        )
+        .await
+        .expect("call capability refresh route");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read capability refresh response");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "capability refresh failed: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let body: Value = serde_json::from_slice(&bytes).expect("decode capability refresh response");
+
+    assert_eq!(body.pointer("/data/server_id"), Some(&json!(server_id)));
+    assert_eq!(body.pointer("/data/catalog_revision"), Some(&json!(1)));
+    assert_eq!(body.pointer("/data/catalog_changed"), Some(&json!(true)));
+    for operation in [
+        "initialize",
+        "tools/list",
+        "prompts/list",
+        "resources/list",
+        "resources/templates/list",
+    ] {
+        assert_eq!(
+            operation_count(&operations, operation),
+            1,
+            "server refresh must execute {operation} exactly once"
+        );
+    }
+
+    let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
+        .load_snapshot(server_id)
+        .await
+        .expect("load refreshed catalog")
+        .expect("refreshed catalog exists");
+    assert_eq!(snapshot.revision, 1);
+    assert_eq!(snapshot.records.len(), 4);
+    assert_eq!(snapshot.kind_states.len(), 4);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp/servers/capabilities/refresh")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&json!({ "id": server_id })).expect("encode second refresh request"),
+                ))
+                .expect("build second capability refresh request"),
+        )
+        .await
+        .expect("call capability refresh route a second time");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read second capability refresh response");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "second capability refresh failed: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let body: Value = serde_json::from_slice(&bytes).expect("decode second capability refresh response");
+    assert_eq!(body.pointer("/data/catalog_revision"), Some(&json!(1)));
+    assert_eq!(body.pointer("/data/catalog_changed"), Some(&json!(false)));
+    for operation in [
+        "initialize",
+        "tools/list",
+        "prompts/list",
+        "resources/list",
+        "resources/templates/list",
+    ] {
+        assert_eq!(
+            operation_count(&operations, operation),
+            2,
+            "each server refresh must execute {operation} exactly once"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1474,7 +1696,7 @@ async fn successful_production_startup_has_one_capability_sync_owner() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn missing_and_invalidated_catalog_recover_through_each_mcp_list_surface() {
+async fn active_publication_never_recovers_or_recomputes_during_mcp_list_requests() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(temp_dir.path().join("mcp-recovery.db")).await;
     let script = write_counted_stdio_fixture(&temp_dir);
@@ -1490,64 +1712,54 @@ async fn missing_and_invalidated_catalog_recover_through_each_mcp_list_surface()
     )
     .await;
     let profile_id = insert_active_profile(&database, &["server-target", "server-unrelated"]).await;
+    commit_ready_catalog(&database, "server-target", "target_fixture", true).await;
     commit_ready_catalog(&database, "server-unrelated", "unrelated_fixture", false).await;
 
-    let proxy = build_proxy(database.clone());
     let client_id = "capability-surface-client";
+    publish_current_surface(&database, client_id, &["server-target"]).await;
+    let proxy = build_proxy(database.clone());
     let session_id = "capability-surface-session";
     bind_client(&proxy, client_id, session_id, &profile_id).await;
     let (context, client_service_guard, server_service_guard) = downstream_request_context(client_id, session_id).await;
 
+    let mut published = Vec::new();
     for kind in SurfaceKind::ALL {
-        let starts_before = start_count(&target_counter);
-        let first = call_managed_mcp_list(&proxy, kind, context.clone()).await;
+        let payload = call_managed_mcp_list(&proxy, kind, context.clone()).await;
         assert!(
-            first
+            payload
                 .pointer(kind.protocol_items_pointer())
                 .and_then(Value::as_array)
                 .is_some_and(|items| !items.is_empty()),
-            "{} missing-catalog recovery returned no protocol items: {first}",
+            "{} active publication returned no protocol items: {payload}",
             kind.label()
         );
-        assert_eq!(
-            start_count(&target_counter),
-            starts_before + 1,
-            "{} missing catalog should start only the target upstream once",
-            kind.label()
-        );
-        assert_eq!(
-            start_count(&unrelated_counter),
-            0,
-            "{} target recovery must not start an unrelated enabled server",
-            kind.label()
-        );
+        published.push((kind, payload));
+    }
+    SqliteCapabilityCatalog::new(database.pool.clone())
+        .invalidate_server("server-target", "public surface invalidation test")
+        .await
+        .expect("invalidate target catalog");
+    database.capability_cache.invalidate_server("server-target").await;
 
-        SqliteCapabilityCatalog::new(database.pool.clone())
-            .invalidate_server("server-target", "public surface invalidation test")
-            .await
-            .expect("invalidate target catalog");
-        database.capability_cache.invalidate_server("server-target").await;
-
-        let recovered = call_managed_mcp_list(&proxy, kind, context.clone()).await;
+    for (kind, expected) in published {
+        let after_invalidation = call_managed_mcp_list(&proxy, kind, context.clone()).await;
         assert_eq!(
-            start_count(&target_counter),
-            starts_before + 2,
-            "{} invalidated catalog should start only the target upstream once",
-            kind.label()
-        );
-        assert_eq!(
-            start_count(&unrelated_counter),
-            0,
-            "{} invalidated recovery must leave the unrelated server stopped",
-            kind.label()
-        );
-        assert_eq!(
-            first,
-            recovered,
-            "{} recovery changed the protocol payload",
+            expected,
+            after_invalidation,
+            "{} request-time read changed the pinned publication",
             kind.label()
         );
     }
+    assert_eq!(
+        start_count(&target_counter),
+        0,
+        "managed MCP list requests must not start the target upstream"
+    );
+    assert_eq!(
+        start_count(&unrelated_counter),
+        0,
+        "managed MCP list requests must not start an unrelated upstream"
+    );
 
     drop((client_service_guard, server_service_guard));
 }
@@ -1563,11 +1775,12 @@ async fn ready_sqlite_catalog_survives_restart_through_each_mcp_list_surface_wit
     insert_stdio_server(&first_database, &script, &counter, "server-restart", "restart_fixture").await;
     let profile_id = insert_active_profile(&first_database, &["server-restart"]).await;
     commit_ready_catalog(&first_database, "server-restart", "restart_fixture", true).await;
+    let client_id = "restart-client";
+    publish_current_surface(&first_database, client_id, &["server-restart"]).await;
     first_database.pool.close().await;
 
     let restarted_database = open_database(database_path).await;
     let proxy = build_proxy(restarted_database);
-    let client_id = "restart-client";
     let session_id = "restart-session";
     bind_client(&proxy, client_id, session_id, &profile_id).await;
     let (context, client_service_guard, server_service_guard) = downstream_request_context(client_id, session_id).await;
@@ -1594,7 +1807,7 @@ async fn ready_sqlite_catalog_survives_restart_through_each_mcp_list_surface_wit
 
 #[tokio::test]
 #[serial_test::serial]
-async fn invalidated_full_catalog_does_not_resurrect_an_unselected_prompt_after_tool_recovery() {
+async fn invalidated_catalog_cannot_mutate_a_pinned_surface_without_materialization() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(temp_dir.path().join("mcp-invalidated-full.db")).await;
     let script = write_counted_stdio_fixture(&temp_dir);
@@ -1639,8 +1852,9 @@ async fn invalidated_full_catalog_does_not_resurrect_an_unselected_prompt_after_
             .any(|record| record.kind() == CapabilityKind::Prompts)
     );
 
-    let proxy = build_proxy(database.clone());
     let client_id = "invalidated-full-client";
+    publish_current_surface(&database, client_id, &[server_id]).await;
+    let proxy = build_proxy(database.clone());
     let session_id = "invalidated-full-session";
     bind_client(&proxy, client_id, session_id, &profile_id).await;
     let (context, client_service_guard, server_service_guard) = downstream_request_context(client_id, session_id).await;
@@ -1658,30 +1872,26 @@ async fn invalidated_full_catalog_does_not_resurrect_an_unselected_prompt_after_
         .expect("invalidate full catalog");
     database.capability_cache.invalidate_server(server_id).await;
 
-    let recovered_tools = call_managed_mcp_list(&proxy, SurfaceKind::Tools, context.clone()).await;
+    let pinned_tools = call_managed_mcp_list(&proxy, SurfaceKind::Tools, context.clone()).await;
     assert!(
-        recovered_tools.to_string().contains("current_fixture_tool"),
-        "tool recovery did not return the current live payload: {recovered_tools}"
+        pinned_tools.to_string().contains("current_fixture_tool"),
+        "pinned Surface did not retain the published tool: {pinned_tools}"
     );
     assert_eq!(
         start_count(&counter),
-        1,
-        "tool recovery did not start upstream exactly once"
+        0,
+        "tool list recomputed an invalidated catalog at request time"
     );
 
-    let recovered_prompts = call_managed_mcp_list(&proxy, SurfaceKind::Prompts, context.clone()).await;
+    let pinned_prompts = call_managed_mcp_list(&proxy, SurfaceKind::Prompts, context.clone()).await;
     assert_eq!(
         start_count(&counter),
-        2,
-        "prompt read reused the invalidated Complete state instead of starting upstream"
+        0,
+        "prompt list recomputed an invalidated catalog at request time"
     );
     assert!(
-        recovered_prompts.to_string().contains("current_fixture_prompt"),
-        "prompt recovery did not return the current live payload: {recovered_prompts}"
-    );
-    assert!(
-        !recovered_prompts.to_string().contains("Stale invalidated prompt"),
-        "prompt recovery resurrected the invalidated payload: {recovered_prompts}"
+        pinned_prompts.to_string().contains("Stale invalidated prompt"),
+        "catalog invalidation mutated the active publication: {pinned_prompts}"
     );
 
     drop((client_service_guard, server_service_guard));
@@ -1794,41 +2004,50 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
         .with_state(build_app_state(first_database.clone()));
 
     for (kind_index, kind) in SurfaceKind::ALL.into_iter().enumerate() {
-        let live = call_rest_list(&first_app, kind, target_id).await;
-        assert_eq!(
-            live.pointer("/data/meta/source"),
-            Some(&json!("live")),
-            "{} initial discovery did not report live source: {live}",
-            kind.label()
-        );
-        assert_eq!(
-            live.pointer("/data/meta/cache_hit"),
-            Some(&json!(false)),
-            "{} live discovery was incorrectly reported as a cache hit",
-            kind.label()
-        );
+        let response = call_rest_list(&first_app, kind, target_id).await;
+        if kind_index == 0 {
+            assert_eq!(
+                response.pointer("/data/meta/source"),
+                Some(&json!("live")),
+                "{} initial discovery did not report live source: {response}",
+                kind.label()
+            );
+            assert_eq!(
+                response.pointer("/data/meta/cache_hit"),
+                Some(&json!(false)),
+                "{} live discovery was incorrectly reported as a cache hit",
+                kind.label()
+            );
+        } else {
+            assert_eq!(
+                response.pointer("/data/meta/cache_hit"),
+                Some(&json!(true)),
+                "{} follow-up kind read should come from the warmed catalog: {response}",
+                kind.label()
+            );
+        }
         assert!(
-            live.pointer("/data/items")
+            response
+                .pointer("/data/items")
                 .and_then(Value::as_array)
                 .is_some_and(|items| items.len() == 1),
-            "{} live discovery returned the wrong payload: {live}",
-            kind.label()
-        );
-        let memory = call_rest_list(&first_app, kind, target_id).await;
-        assert_eq!(
-            memory.pointer("/data/meta/source"),
-            Some(&json!("memory_cache")),
-            "{} immediate second read did not use the process-local LRU: {memory}",
+            "{} discovery returned the wrong payload: {response}",
             kind.label()
         );
         assert_eq!(
             start_count(&target_counter),
-            kind_index + 1,
-            "{} LRU read unexpectedly restarted upstream",
+            1,
+            "{} discovery unexpectedly restarted upstream",
             kind.label()
         );
     }
-    assert_eq!(start_count(&target_counter), SurfaceKind::ALL.len());
+    let memory = call_rest_list(&first_app, SurfaceKind::Tools, target_id).await;
+    assert_eq!(
+        memory.pointer("/data/meta/source"),
+        Some(&json!("memory_cache")),
+        "immediate second read did not use the process-local LRU: {memory}"
+    );
+    assert_eq!(start_count(&target_counter), 1);
     assert_eq!(start_count(&unrelated_counter), 0);
 
     let catalog = SqliteCapabilityCatalog::new(first_database.pool.clone());
@@ -1838,7 +2057,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
         .expect("load live snapshot")
         .expect("live snapshot exists");
     assert_eq!(live_snapshot.state, SnapshotState::Ready);
-    assert_eq!(live_snapshot.revision, SurfaceKind::ALL.len() as i64);
+    assert_eq!(live_snapshot.revision, 1);
     assert_eq!(live_snapshot.kind_states.len(), SurfaceKind::ALL.len());
     assert!(live_snapshot.kind_states.iter().all(|state| {
         state.declaration == mcpmate_capability_store::DeclarationState::Supported
@@ -1857,12 +2076,19 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .fetch_all(&first_database.pool)
             .await
             .expect("load kind revisions");
-    let record_revisions: Vec<i64> =
-        sqlx::query_scalar("SELECT catalog_revision FROM capability_records WHERE server_id = ? ORDER BY position")
-            .bind(target_id)
-            .fetch_all(&first_database.pool)
-            .await
-            .expect("load record revisions");
+    let record_revisions: Vec<i64> = sqlx::query_scalar(
+        r#"
+            SELECT c.catalog_revision
+            FROM capability_ref_current c
+            JOIN capability_refs r ON r.ref_id = c.ref_id
+            WHERE r.server_id = ? AND r.state = 'active'
+            ORDER BY r.kind, r.origin_key
+            "#,
+    )
+    .bind(target_id)
+    .fetch_all(&first_database.pool)
+    .await
+    .expect("load record revisions");
     assert_eq!(snapshot_revision, live_snapshot.revision);
     assert_eq!(kind_revisions, vec![snapshot_revision; SurfaceKind::ALL.len()]);
     assert_eq!(record_revisions, vec![snapshot_revision; SurfaceKind::ALL.len()]);
@@ -1916,7 +2142,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             kind.label()
         );
     }
-    assert_eq!(start_count(&target_counter), SurfaceKind::ALL.len());
+    assert_eq!(start_count(&target_counter), 1);
     assert_eq!(start_count(&unrelated_counter), 0);
 
     let before_reset = SqliteCapabilityCatalog::new(restarted_database.pool.clone())
@@ -1962,7 +2188,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .and_then(Value::as_array)
             .is_some_and(|items| items.len() == 1)
     );
-    assert_eq!(start_count(&target_counter), SurfaceKind::ALL.len() + 1);
+    assert_eq!(start_count(&target_counter), 2);
     assert_eq!(start_count(&unrelated_counter), 0);
 
     let recovered_snapshot = catalog
@@ -1996,7 +2222,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
         recovered_snapshot
             .kind_states
             .iter()
-            .all(|state| { state.kind == CapabilityKind::Tools || state.inventory == InventoryState::Unknown })
+            .all(|state| state.inventory == InventoryState::Complete)
     );
     let unrelated_final = catalog
         .load_snapshot(unrelated_id)
@@ -2018,15 +2244,30 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .fetch_one(&restarted_database.pool)
             .await
             .expect("load recovered kind revision count");
-    let distinct_record_revisions: i64 =
-        sqlx::query_scalar("SELECT COUNT(DISTINCT catalog_revision) FROM capability_records WHERE server_id = ?")
-            .bind(target_id)
-            .fetch_one(&restarted_database.pool)
-            .await
-            .expect("load recovered record revision count");
+    let current_ref_revisions: Vec<(String, i64)> = sqlx::query_as(
+        r#"
+            SELECT r.kind, c.catalog_revision
+            FROM capability_ref_current c
+            JOIN capability_refs r ON r.ref_id = c.ref_id
+            WHERE r.server_id = ? AND r.state = 'active'
+            ORDER BY r.kind
+            "#,
+    )
+    .bind(target_id)
+    .fetch_all(&restarted_database.pool)
+    .await
+    .expect("load recovered current ref revisions");
     assert_eq!(recovered_revision, recovered_snapshot.revision);
     assert_eq!(distinct_kind_revisions, 1);
-    assert_eq!(distinct_record_revisions, 1);
+    assert_eq!(
+        current_ref_revisions,
+        vec![
+            ("prompts".to_string(), recovered_snapshot.revision),
+            ("resource_templates".to_string(), recovered_snapshot.revision),
+            ("resources".to_string(), recovered_snapshot.revision),
+            ("tools".to_string(), recovered_snapshot.revision),
+        ]
+    );
     let mut recovered_shadow_counts = Vec::new();
     for table in [
         "server_tools",
@@ -2041,9 +2282,8 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .unwrap_or_else(|error| panic!("load recovered {table} index: {error}"));
         recovered_shadow_counts.push((table, count));
     }
-    // Retained history keeps the prompt/resource/template shadow rows in place even though
-    // only Tools was rediscovered this round; they are not resurrected as Ready inventory
-    // (see the `Unknown` assertion above), but their index rows must survive the reconcile.
+    // Full management warm rediscovers every kind in one observation, so all shadow rows
+    // remain present and move to the recovered catalog revision together.
     assert_eq!(
         recovered_shadow_counts,
         vec![

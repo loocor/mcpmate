@@ -1038,7 +1038,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(crate::core::profile::ConfigApplicationStateManager::new()),
-            unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),

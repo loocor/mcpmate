@@ -1,6 +1,10 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Instant,
+};
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use mcpmate_capability_store::CatalogError;
 use tokio::sync::Mutex;
 
@@ -12,8 +16,8 @@ use crate::core::capability::{
         PoolCapabilityConnectionProvider,
     },
     runtime::{
-        self, CapabilityDiscoveryObservation, CatalogReadFailure, ListCtx, ListResult, RefreshStrategy, RuntimeFailure,
-        RuntimeFailureKind,
+        self, CapabilityDiscoveryObservation, CatalogReadFailure, ListCtx, ListResult, NameDomain, RefreshStrategy,
+        RuntimeFailure, RuntimeFailureKind,
     },
 };
 use crate::core::pool::UpstreamConnectionPool;
@@ -42,7 +46,7 @@ pub(crate) enum CapabilityReadError {
         kind: CapabilityType,
         catalog_error: Option<CatalogError>,
         existing: Option<DiscoveryAttemptFailure>,
-        fresh: Option<DiscoveryAttemptFailure>,
+        fresh: Option<Box<DiscoveryAttemptFailure>>,
     },
     #[error(
         "capability owner cleanup failed for server '{server_name}' ({server_id}) during {operation}, instance '{instance_id}': {error}"
@@ -76,11 +80,11 @@ pub(crate) enum CapabilityReadError {
 impl CapabilityReadError {
     fn discovery_attempt_ms(
         existing: &Option<DiscoveryAttemptFailure>,
-        fresh: &Option<DiscoveryAttemptFailure>,
+        fresh: &Option<Box<DiscoveryAttemptFailure>>,
         extractor: impl Fn(&DiscoveryAttemptFailure) -> Option<u128>,
     ) -> Option<u128> {
         fresh
-            .as_ref()
+            .as_deref()
             .and_then(&extractor)
             .or_else(|| existing.as_ref().and_then(extractor))
     }
@@ -120,7 +124,7 @@ impl CapabilityReadError {
             return None;
         };
         fresh
-            .as_ref()
+            .as_deref()
             .and_then(DiscoveryAttemptFailure::authentication_reason)
             .or_else(|| {
                 existing
@@ -291,11 +295,48 @@ pub(crate) trait CapabilityReadBackend: Send + Sync {
         connection_generation: Option<u64>,
         reason: &str,
     ) -> Result<(), CatalogError>;
+    async fn discover_all_kinds(
+        &self,
+        ctx: &ListCtx,
+        owner: &CapabilityOwner,
+    ) -> Result<runtime::CapabilityFullDiscoveryObservation, RuntimeFailure>;
+    async fn commit_full_discovery(
+        &self,
+        owner: &CapabilityOwner,
+        observation: &runtime::CapabilityFullDiscoveryObservation,
+    ) -> Result<i64, CapabilityCommitFailure>;
 }
 
 pub(crate) struct CapabilityReadService {
     backend: Arc<dyn CapabilityReadBackend>,
     connection_provider: Arc<dyn CapabilityConnectionProvider>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CapabilityListsResult {
+    pub tools: ListResult,
+    pub resources: ListResult,
+    pub prompts: ListResult,
+    pub resource_templates: ListResult,
+}
+
+static MANAGEMENT_DISCOVERY_LOCKS: OnceLock<DashMap<String, Arc<Mutex<()>>>> = OnceLock::new();
+
+fn apply_batch_warm_meta(result: &mut ListResult) {
+    if result.meta.source == "live" {
+        return;
+    }
+    result.meta.cache_hit = false;
+    result.meta.source = "live".to_string();
+    result.meta.had_peer = true;
+}
+
+fn management_discovery_lock(server_id: &str) -> Arc<Mutex<()>> {
+    MANAGEMENT_DISCOVERY_LOCKS
+        .get_or_init(DashMap::new)
+        .entry(server_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
 struct RuntimeCapabilityReadBackend {
@@ -411,6 +452,28 @@ impl CapabilityReadBackend for RuntimeCapabilityReadBackend {
         )
         .await
     }
+
+    async fn discover_all_kinds(
+        &self,
+        ctx: &ListCtx,
+        owner: &CapabilityOwner,
+    ) -> Result<runtime::CapabilityFullDiscoveryObservation, RuntimeFailure> {
+        let result = runtime::discover_all_kinds_owner(ctx, owner).await;
+        if let Err(failure) = &result {
+            apply_owner_runtime_failure(self.pool.as_ref(), owner, failure).await;
+        }
+        result
+    }
+
+    async fn commit_full_discovery(
+        &self,
+        owner: &CapabilityOwner,
+        observation: &runtime::CapabilityFullDiscoveryObservation,
+    ) -> Result<i64, CapabilityCommitFailure> {
+        runtime::commit_full_discovery_observation(owner, observation, &self.database)
+            .await
+            .map_err(CapabilityCommitFailure::from_anyhow)
+    }
 }
 
 impl CapabilityReadService {
@@ -471,11 +534,224 @@ impl CapabilityReadService {
             }
         }
         let server_name = self.backend.canonical_server_name(ctx).await?;
-        let mut result = self
-            .discover_existing_then_fresh(ctx, &server_name, catalog_error)
-            .await?;
+        let mut result = if ctx.validation_session.is_none() {
+            let warmed = self
+                .ensure_management_catalog(ctx, &server_name, &mut catalog_error)
+                .await?;
+            let mut result = match self.backend.try_cache_first(ctx).await {
+                Ok(Some(result)) => result,
+                Ok(None) => {
+                    return Err(discovery_error(
+                        ctx,
+                        &server_name,
+                        catalog_error,
+                        Some(DiscoveryAttemptFailure::owner(
+                            OwnerSource::Fresh,
+                            CapabilityOwnerError::Missing {
+                                reason: format!(
+                                    "Management catalog warm completed without a readable '{}' snapshot",
+                                    capability_operation(ctx.capability)
+                                ),
+                            },
+                        )),
+                        None,
+                    ));
+                }
+                Err(CapabilityReadError::CatalogUntrusted { server_id, source }) => {
+                    return Err(CapabilityReadError::CatalogUntrusted { server_id, source });
+                }
+                Err(error) => return Err(error),
+            };
+            if warmed {
+                result.meta.cache_hit = false;
+                result.meta.source = "live".to_string();
+                result.meta.had_peer = true;
+            }
+            result
+        } else {
+            self.discover_existing_then_fresh(ctx, &server_name, catalog_error)
+                .await?
+        };
         result.meta.duration_ms = started.elapsed().as_millis() as u64;
         Ok(result)
+    }
+
+    pub(crate) async fn list_all_kinds(
+        &self,
+        server_id: &str,
+        refresh: Option<RefreshStrategy>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<CapabilityListsResult, CapabilityReadError> {
+        const ALL_KINDS: [CapabilityType; 4] = [
+            CapabilityType::Tools,
+            CapabilityType::Resources,
+            CapabilityType::Prompts,
+            CapabilityType::ResourceTemplates,
+        ];
+
+        let mut batch_warmed = false;
+        let mut tools = None;
+        let mut resources = None;
+        let mut prompts = None;
+        let mut resource_templates = None;
+
+        for (index, kind) in ALL_KINDS.into_iter().enumerate() {
+            let kind_refresh = match refresh {
+                Some(RefreshStrategy::Force) if index > 0 => Some(RefreshStrategy::CacheFirst),
+                other => other,
+            };
+            let ctx = ListCtx {
+                capability: kind,
+                server_id: server_id.to_string(),
+                refresh: kind_refresh,
+                timeout,
+                validation_session: None,
+                runtime_identity: None,
+                connection_selection: None,
+                visibility_snapshot: None,
+                name_domain: NameDomain::External,
+            };
+            let mut result = self.list(&ctx).await?;
+            if batch_warmed {
+                apply_batch_warm_meta(&mut result);
+            } else if result.meta.source == "live" && !result.meta.cache_hit {
+                batch_warmed = true;
+            }
+
+            match kind {
+                CapabilityType::Tools => tools = Some(result),
+                CapabilityType::Resources => resources = Some(result),
+                CapabilityType::Prompts => prompts = Some(result),
+                CapabilityType::ResourceTemplates => resource_templates = Some(result),
+            }
+        }
+
+        Ok(CapabilityListsResult {
+            tools: tools.expect("tools list result"),
+            resources: resources.expect("resources list result"),
+            prompts: prompts.expect("prompts list result"),
+            resource_templates: resource_templates.expect("resource templates list result"),
+        })
+    }
+
+    async fn ensure_management_catalog(
+        &self,
+        ctx: &ListCtx,
+        server_name: &str,
+        catalog_error: &mut Option<CatalogError>,
+    ) -> Result<bool, CapabilityReadError> {
+        let lock = management_discovery_lock(&ctx.server_id);
+        let _guard = lock.lock().await;
+
+        if !matches!(ctx.refresh, Some(RefreshStrategy::Force)) && self.backend.try_cache_first(ctx).await?.is_some() {
+            return Ok(false);
+        }
+
+        let fresh_owner = match self.connection_provider.fresh_owner(ctx).await {
+            Ok(owner) => owner,
+            Err(error) => {
+                let reason = error.to_string();
+                self.record_failure(ctx, server_name, None, None, &reason, catalog_error)
+                    .await;
+                return Err(discovery_error(
+                    ctx,
+                    server_name,
+                    catalog_error.take(),
+                    None,
+                    Some(DiscoveryAttemptFailure::owner(OwnerSource::Fresh, error)),
+                ));
+            }
+        };
+        let owner_instance_id = fresh_owner.instance_id.clone();
+        let owner_generation = fresh_owner.connection_generation;
+        let owner_source = fresh_owner.source;
+
+        let observation = match self.backend.discover_all_kinds(ctx, &fresh_owner).await {
+            Ok(observation) => observation,
+            Err(failure) => {
+                let discovery_failure = DiscoveryAttemptFailure::runtime(&fresh_owner, failure);
+                let reason = format!(
+                    "owner '{}' generation {:?}: {}",
+                    fresh_owner.instance_id, fresh_owner.connection_generation, discovery_failure.error
+                );
+                self.record_failure(
+                    ctx,
+                    server_name,
+                    Some(&fresh_owner.instance_id),
+                    fresh_owner.connection_generation,
+                    &reason,
+                    catalog_error,
+                )
+                .await;
+                if let Err(error) = self.connection_provider.release_owner(fresh_owner).await {
+                    return Err(CapabilityReadError::CleanupFailed {
+                        server_id: ctx.server_id.clone(),
+                        server_name: server_name.to_string(),
+                        operation: "management catalog warm",
+                        instance_id: owner_instance_id,
+                        connection_generation: owner_generation,
+                        owner_source,
+                        error,
+                    });
+                }
+                return Err(discovery_error(
+                    ctx,
+                    server_name,
+                    catalog_error.take(),
+                    None,
+                    Some(discovery_failure),
+                ));
+            }
+        };
+
+        if let Err(commit_failure) = self.backend.commit_full_discovery(&fresh_owner, &observation).await {
+            let discovery_failure = DiscoveryAttemptFailure::commit(&fresh_owner, commit_failure);
+            let reason = format!(
+                "owner '{}' generation {:?}: {}",
+                fresh_owner.instance_id, fresh_owner.connection_generation, discovery_failure.error
+            );
+            self.record_failure(
+                ctx,
+                server_name,
+                Some(&fresh_owner.instance_id),
+                fresh_owner.connection_generation,
+                &reason,
+                catalog_error,
+            )
+            .await;
+            if let Err(error) = self.connection_provider.release_owner(fresh_owner).await {
+                return Err(CapabilityReadError::CleanupFailed {
+                    server_id: ctx.server_id.clone(),
+                    server_name: server_name.to_string(),
+                    operation: "management catalog warm",
+                    instance_id: owner_instance_id,
+                    connection_generation: owner_generation,
+                    owner_source,
+                    error,
+                });
+            }
+            return Err(discovery_error(
+                ctx,
+                server_name,
+                catalog_error.take(),
+                None,
+                Some(discovery_failure),
+            ));
+        }
+
+        if let Err(error) = self.connection_provider.release_owner(fresh_owner).await {
+            return Err(CapabilityReadError::CleanupFailed {
+                server_id: ctx.server_id.clone(),
+                server_name: server_name.to_string(),
+                operation: "management catalog warm",
+                instance_id: owner_instance_id,
+                connection_generation: owner_generation,
+                owner_source,
+                error,
+            });
+        }
+
+        Ok(true)
     }
 
     async fn discover_existing_then_fresh(
@@ -744,7 +1020,7 @@ fn discovery_error(
         kind: ctx.capability,
         catalog_error,
         existing,
-        fresh,
+        fresh: fresh.map(Box::new),
     }
 }
 
@@ -760,7 +1036,7 @@ const fn capability_operation(capability: CapabilityType) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::VecDeque,
+        collections::{HashMap, VecDeque},
         path::PathBuf,
         sync::{
             Arc,
@@ -790,8 +1066,8 @@ mod tests {
         CapabilityType,
         connection_provider::{CapabilityConnectionProvider, CapabilityOwner, CapabilityOwnerError, OwnerSource},
         runtime::{
-            CapabilityDiscoveryObservation, CapabilityItems, ListCtx, ListResult, Meta, NameDomain, RefreshStrategy,
-            RuntimeFailure, RuntimeFailureKind,
+            self, CapabilityDiscoveryObservation, CapabilityItems, ListCtx, ListResult, Meta, NameDomain,
+            RefreshStrategy, RuntimeFailure, RuntimeFailureKind,
         },
     };
     use crate::core::{
@@ -834,6 +1110,7 @@ mod tests {
         cache_result: Mutex<Option<Result<Option<ListResult>, CapabilityReadError>>>,
         cache_calls: AtomicUsize,
         discoveries: Mutex<VecDeque<Result<CapabilityDiscoveryObservation, RuntimeFailure>>>,
+        warmed_cache: Mutex<HashMap<CapabilityType, ListResult>>,
         evidence: Mutex<Vec<EvidenceRecord>>,
         evidence_error: Mutex<Option<CatalogError>>,
         projection_error: Mutex<Option<CapabilityProjectionFailure>>,
@@ -910,6 +1187,28 @@ mod tests {
                 .record_failure(ctx, server_name, instance_id, connection_generation, reason)
                 .await
         }
+
+        async fn discover_all_kinds(
+            &self,
+            _ctx: &ListCtx,
+            _owner: &CapabilityOwner,
+        ) -> Result<runtime::CapabilityFullDiscoveryObservation, RuntimeFailure> {
+            Ok(observation_to_full(
+                self.observation
+                    .lock()
+                    .await
+                    .take()
+                    .expect("commit fixture observation"),
+            ))
+        }
+
+        async fn commit_full_discovery(
+            &self,
+            owner: &CapabilityOwner,
+            observation: &runtime::CapabilityFullDiscoveryObservation,
+        ) -> Result<i64, CapabilityCommitFailure> {
+            self.runtime.commit_full_discovery(owner, observation).await
+        }
     }
 
     impl FakeBackend {
@@ -918,6 +1217,7 @@ mod tests {
                 cache_result: Mutex::new(Some(cache_result)),
                 cache_calls: AtomicUsize::new(0),
                 discoveries: Mutex::new(VecDeque::new()),
+                warmed_cache: Mutex::new(HashMap::new()),
                 evidence: Mutex::new(Vec::new()),
                 evidence_error: Mutex::new(None),
                 projection_error: Mutex::new(None),
@@ -933,13 +1233,66 @@ mod tests {
         }
     }
 
+    fn observation_to_full(observation: CapabilityDiscoveryObservation) -> runtime::CapabilityFullDiscoveryObservation {
+        let CapabilityDiscoveryObservation {
+            items,
+            flags,
+            kind_states,
+        } = observation;
+        let mut full = runtime::CapabilityFullDiscoveryObservation {
+            tools: Vec::new(),
+            resources: Vec::new(),
+            prompts: Vec::new(),
+            templates: Vec::new(),
+            flags,
+            kind_states,
+        };
+        match items {
+            CapabilityItems::Tools(items) => full.tools = items,
+            CapabilityItems::Resources(items) => full.resources = items,
+            CapabilityItems::Prompts(items) => full.prompts = items,
+            CapabilityItems::ResourceTemplates(items) => full.templates = items,
+        }
+        full
+    }
+
+    fn warmed_result(
+        owner_source: OwnerSource,
+        capability: CapabilityType,
+    ) -> ListResult {
+        let source = match owner_source {
+            OwnerSource::Existing => "live_existing",
+            OwnerSource::Fresh => "live_fresh",
+            OwnerSource::Validation => "live_validation",
+        }
+        .to_string();
+        let items = match capability {
+            CapabilityType::Tools => CapabilityItems::Tools(Vec::new()),
+            CapabilityType::Resources => CapabilityItems::Resources(Vec::new()),
+            CapabilityType::Prompts => CapabilityItems::Prompts(Vec::new()),
+            CapabilityType::ResourceTemplates => CapabilityItems::ResourceTemplates(Vec::new()),
+        };
+        ListResult {
+            items,
+            meta: Meta {
+                cache_hit: false,
+                source,
+                duration_ms: 0,
+                had_peer: true,
+            },
+        }
+    }
+
     #[async_trait]
     impl CapabilityReadBackend for FakeBackend {
         async fn try_cache_first(
             &self,
-            _ctx: &ListCtx,
+            ctx: &ListCtx,
         ) -> Result<Option<ListResult>, CapabilityReadError> {
             self.cache_calls.fetch_add(1, Ordering::Relaxed);
+            if let Some(result) = self.warmed_cache.lock().await.get(&ctx.capability).cloned() {
+                return Ok(Some(result));
+            }
             self.cache_result.lock().await.take().unwrap_or(Ok(None))
         }
 
@@ -1016,6 +1369,37 @@ mod tests {
                 Some(error) => Err(error),
                 None => Ok(()),
             }
+        }
+
+        async fn discover_all_kinds(
+            &self,
+            _ctx: &ListCtx,
+            _owner: &CapabilityOwner,
+        ) -> Result<runtime::CapabilityFullDiscoveryObservation, RuntimeFailure> {
+            self.discoveries
+                .lock()
+                .await
+                .pop_front()
+                .expect("a discovery result must be configured")
+                .map(observation_to_full)
+        }
+
+        async fn commit_full_discovery(
+            &self,
+            owner: &CapabilityOwner,
+            _observation: &runtime::CapabilityFullDiscoveryObservation,
+        ) -> Result<i64, CapabilityCommitFailure> {
+            self.commits.fetch_add(1, Ordering::Relaxed);
+            let mut cache = self.warmed_cache.lock().await;
+            for capability in [
+                CapabilityType::Tools,
+                CapabilityType::Prompts,
+                CapabilityType::Resources,
+                CapabilityType::ResourceTemplates,
+            ] {
+                cache.insert(capability, warmed_result(owner.source, capability));
+            }
+            Ok(1)
         }
     }
 
@@ -1121,6 +1505,13 @@ mod tests {
         }
     }
 
+    fn inspector_list_ctx(refresh: Option<RefreshStrategy>) -> ListCtx {
+        ListCtx {
+            validation_session: Some("inspector-test".to_string()),
+            ..list_ctx(refresh)
+        }
+    }
+
     fn result(source: &str) -> ListResult {
         ListResult {
             items: CapabilityItems::Tools(Vec::new()),
@@ -1183,6 +1574,9 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("initialize client tables");
         crate::config::profile::init::initialize_profile_tables(&pool)
             .await
             .expect("initialize profile tables");
@@ -1272,6 +1666,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_all_kinds_force_refresh_reuses_single_discovery_warm() {
+        let backend = Arc::new(FakeBackend::new(Ok(None)));
+        backend.push_discovery(Ok(observation())).await;
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone());
+
+        let lists = service
+            .list_all_kinds("server-1", Some(RefreshStrategy::Force), None)
+            .await
+            .expect("forced list all kinds should succeed");
+
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 1);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(lists.tools.meta.source, "live");
+        assert_eq!(lists.resources.meta.source, "live");
+        assert_eq!(lists.prompts.meta.source, "live");
+        assert_eq!(lists.resource_templates.meta.source, "live");
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn list_all_kinds_reuses_single_discovery_warm() {
+        let backend = Arc::new(FakeBackend::new(Ok(None)));
+        backend.push_discovery(Ok(observation())).await;
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone());
+
+        let lists = service
+            .list_all_kinds("server-1", None, None)
+            .await
+            .expect("list all kinds should succeed");
+
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 1);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(lists.tools.meta.source, "live");
+        assert_eq!(lists.resources.meta.source, "live");
+        assert_eq!(lists.prompts.meta.source, "live");
+        assert_eq!(lists.resource_templates.meta.source, "live");
+        assert!(!lists.tools.meta.cache_hit);
+        assert!(!lists.resources.meta.cache_hit);
+        assert!(!lists.prompts.meta.cache_hit);
+        assert!(!lists.resource_templates.meta.cache_hit);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn missing_snapshot_uses_fresh_owner_for_management_catalog() {
+        let backend = Arc::new(FakeBackend::new(Ok(None)));
+        backend.push_discovery(Ok(observation())).await;
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend, provider.clone());
+
+        let listed = service
+            .list(&list_ctx(None))
+            .await
+            .expect("management discovery should succeed");
+
+        assert_eq!(listed.meta.source, "live");
+        assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(*provider.acquisition_order.lock().await, ["fresh"]);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn missing_snapshot_uses_existing_owner_before_fresh_owner() {
         let backend = Arc::new(FakeBackend::new(Ok(None)));
         backend.push_discovery(Ok(observation())).await;
@@ -1281,7 +1749,7 @@ mod tests {
         let service = CapabilityReadService::with_backend(backend, provider.clone());
 
         let listed = service
-            .list(&list_ctx(None))
+            .list(&inspector_list_ctx(None))
             .await
             .expect("existing discovery should succeed");
 
@@ -1307,7 +1775,7 @@ mod tests {
         let service = CapabilityReadService::with_backend(backend.clone(), provider.clone());
 
         let listed = service
-            .list(&list_ctx(None))
+            .list(&inspector_list_ctx(None))
             .await
             .expect("fresh discovery should recover");
 
@@ -1337,7 +1805,7 @@ mod tests {
         let service = CapabilityReadService::with_backend(backend.clone(), provider.clone());
 
         let error = service
-            .list(&list_ctx(None))
+            .list(&inspector_list_ctx(None))
             .await
             .expect_err("protocol failure must be returned");
 
@@ -1412,7 +1880,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(server_name, "docs");
-                assert_eq!(operation, "tools/list");
+                assert_eq!(operation, "management catalog warm");
                 assert_eq!(owner_source, OwnerSource::Fresh);
                 assert_eq!(reason, "shutdown join failed");
             }
@@ -1455,20 +1923,13 @@ mod tests {
             .await
             .expect_err("SQLite trigger should fail canonical commit through the read service");
 
-        match error {
-            CapabilityReadError::DiscoveryFailed {
-                fresh:
-                    Some(DiscoveryAttemptFailure {
-                        error:
-                            CapabilityAttemptError::Commit(
-                                CapabilityCommitFailure::Catalog(_) | CapabilityCommitFailure::Database(_),
-                            ),
-                        ..
-                    }),
-                ..
-            } => {}
-            other => panic!("catalog error must remain typed in the final read error: {other:?}"),
-        }
+        let CapabilityReadError::DiscoveryFailed { fresh: Some(fresh), .. } = error else {
+            panic!("catalog error must remain typed in the final read error");
+        };
+        assert!(matches!(
+            fresh.error,
+            CapabilityAttemptError::Commit(CapabilityCommitFailure::Catalog(_) | CapabilityCommitFailure::Database(_))
+        ));
         fixture.shutdown().await;
     }
 
@@ -1481,9 +1942,6 @@ mod tests {
         let fixture = test_peer().await;
         let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
         provider.set_existing(Ok(true)).await;
-        *provider.release_error.lock().await = Some(CapabilityOwnerError::Other {
-            reason: "shutdown join failed".to_string(),
-        });
         let service = CapabilityReadService::with_backend(backend.clone(), provider);
 
         let error = service
@@ -1512,7 +1970,7 @@ mod tests {
         let service = CapabilityReadService::with_backend(backend.clone(), provider.clone());
 
         let error = service
-            .list(&list_ctx(None))
+            .list(&inspector_list_ctx(None))
             .await
             .expect_err("post-commit projection failure must be surfaced");
 
@@ -1570,7 +2028,7 @@ mod tests {
         let service = CapabilityReadService::with_backend(backend, provider.clone());
 
         let error = service
-            .list(&list_ctx(None))
+            .list(&inspector_list_ctx(None))
             .await
             .expect_err("projection failure must remain visible after the durable commit");
 
@@ -1640,7 +2098,7 @@ mod tests {
         let service = CapabilityReadService::with_backend(backend, provider.clone());
 
         let error = service
-            .list(&list_ctx(None))
+            .list(&inspector_list_ctx(None))
             .await
             .expect_err("owner timeout must be returned without a fresh retry");
 
@@ -1682,7 +2140,7 @@ mod tests {
         let service = CapabilityReadService::with_backend(backend, provider.clone());
 
         let error = service
-            .list(&list_ctx(None))
+            .list(&inspector_list_ctx(None))
             .await
             .expect_err("runtime timeout must be returned without a fresh retry");
 
