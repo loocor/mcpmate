@@ -3,6 +3,8 @@ use rmcp::model::{InitializeResult, Prompt, Resource, ResourceTemplate, Tool};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::{CapabilityId, CapabilityRefId, CapabilitySourceIdentity, EffectiveCapabilityRecordV1, Result};
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityKind {
@@ -15,7 +17,7 @@ pub enum CapabilityKind {
 impl CapabilityKind {
     pub const ALL: [Self; 4] = [Self::Tools, Self::Prompts, Self::Resources, Self::ResourceTemplates];
 
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Tools => "tools",
             Self::Prompts => "prompts",
@@ -24,7 +26,7 @@ impl CapabilityKind {
         }
     }
 
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "tools" => Some(Self::Tools),
             "prompts" => Some(Self::Prompts),
@@ -134,34 +136,180 @@ impl CapabilityPayload {
             Self::ResourceTemplate(_) => CapabilityKind::ResourceTemplates,
         }
     }
+
+    pub fn origin_key(&self) -> &str {
+        match self {
+            Self::Tool(value) => value.name.as_ref(),
+            Self::Prompt(value) => &value.name,
+            Self::Resource(value) => &value.uri,
+            Self::ResourceTemplate(value) => &value.uri_template,
+        }
+    }
+
+    fn with_identity_key(
+        mut self,
+        identity_key: &str,
+    ) -> Self {
+        match &mut self {
+            Self::Tool(value) => value.name = identity_key.to_string().into(),
+            Self::Prompt(value) => value.name = identity_key.to_string(),
+            Self::Resource(value) => value.uri = identity_key.to_string(),
+            Self::ResourceTemplate(value) => value.uri_template = identity_key.to_string(),
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CatalogRecord {
-    pub stable_id: String,
+    pub ref_id: CapabilityRefId,
+    pub capability_id: CapabilityId,
     pub upstream_key: String,
     pub external_key: String,
+    pub canonical_record: Vec<u8>,
     pub payload: CapabilityPayload,
 }
 
 impl CatalogRecord {
-    pub fn new(
-        stable_id: impl Into<String>,
+    pub fn materialize(
+        server_id: impl Into<String>,
         upstream_key: impl Into<String>,
         external_key: impl Into<String>,
         payload: CapabilityPayload,
-    ) -> Self {
-        Self {
-            stable_id: stable_id.into(),
-            upstream_key: upstream_key.into(),
-            external_key: external_key.into(),
-            payload,
+    ) -> Result<Self> {
+        let server_id = server_id.into();
+        let upstream_key = upstream_key.into();
+        let external_key = external_key.into();
+        if payload.origin_key() != upstream_key {
+            return Err(crate::CatalogError::IntegrityMismatch {
+                identity: format!(
+                    "capability origin key '{}' does not match payload origin key '{}'",
+                    upstream_key,
+                    payload.origin_key()
+                ),
+            });
         }
+        let source = CapabilitySourceIdentity::new(&server_id, payload.kind(), &upstream_key);
+        let ref_id = CapabilityRefId::derive(&source)?;
+        let effective_payload = payload.clone().with_identity_key(&external_key);
+        let effective_record = EffectiveCapabilityRecordV1::new(ref_id.clone(), source, effective_payload.clone())?;
+        let capability_id = CapabilityId::derive(&effective_record)?;
+        let canonical_record = effective_record.canonical_bytes()?;
+        Ok(Self {
+            ref_id,
+            capability_id,
+            upstream_key,
+            external_key,
+            canonical_record,
+            payload: effective_payload,
+        })
+    }
+
+    pub(crate) fn from_effective_record(
+        capability_id: CapabilityId,
+        canonical_record: Vec<u8>,
+        effective_record: EffectiveCapabilityRecordV1,
+    ) -> Result<Self> {
+        effective_record.validate()?;
+        capability_id.verify_canonical_content(&canonical_record, &canonical_record)?;
+        let upstream_key = effective_record.source.origin_key.clone();
+        let external_key = effective_record.definition.external_key();
+        let payload = effective_record.definition.into_payload();
+        Ok(Self {
+            ref_id: effective_record.ref_id,
+            capability_id,
+            upstream_key,
+            external_key,
+            canonical_record,
+            payload,
+        })
     }
 
     pub const fn kind(&self) -> CapabilityKind {
         self.payload.kind()
     }
+
+    /// Runtime payload with upstream identity keys restored from [`Self::upstream_key`].
+    pub fn upstream_payload(&self) -> CapabilityPayload {
+        self.payload.clone().with_identity_key(&self.upstream_key)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityRefState {
+    Active,
+    Unresolved,
+    Retired,
+}
+
+impl CapabilityRefState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Unresolved => "unresolved",
+            Self::Retired => "retired",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "active" => Some(Self::Active),
+            "unresolved" => Some(Self::Unresolved),
+            "retired" => Some(Self::Retired),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityRefRecord {
+    pub ref_id: CapabilityRefId,
+    pub server_id: String,
+    pub kind: CapabilityKind,
+    pub origin_key: String,
+    pub state: CapabilityRefState,
+    pub state_generation: i64,
+    pub first_observed_revision: i64,
+    pub last_observed_revision: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityVersionRecord {
+    pub capability_id: CapabilityId,
+    pub ref_id: CapabilityRefId,
+    pub canonical_record: Vec<u8>,
+    pub record_format: String,
+    pub first_observed_revision: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityVersionChange {
+    pub ref_id: CapabilityRefId,
+    pub before_capability_id: CapabilityId,
+    pub target_capability_id: CapabilityId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KindCompleteness {
+    pub kind: CapabilityKind,
+    pub inventory: InventoryState,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CatalogDelta {
+    pub added_refs: Vec<CapabilityRefId>,
+    pub changed_versions: Vec<CapabilityVersionChange>,
+    pub unresolved_refs: Vec<CapabilityRefId>,
+    pub reappeared_refs: Vec<CapabilityRefId>,
+    pub unchanged_refs: Vec<CapabilityRefId>,
+    pub kind_completeness: Vec<KindCompleteness>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CatalogReconciliation {
+    pub commit: CatalogCommit,
+    pub delta: CatalogDelta,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -206,6 +354,7 @@ pub struct CapabilityObservation {
     pub observed_at: DateTime<Utc>,
     pub state: SnapshotState,
     pub last_error: Option<String>,
+    pub observed_kinds: Vec<CapabilityKind>,
 }
 
 impl CapabilityObservation {
@@ -217,6 +366,7 @@ impl CapabilityObservation {
         kind_states: Vec<KindObservation>,
         records: Vec<CatalogRecord>,
     ) -> Self {
+        let observed_kinds = kind_states.iter().map(|state| state.kind).collect();
         Self {
             server_id: server_id.into(),
             server_name: server_name.into(),
@@ -227,6 +377,7 @@ impl CapabilityObservation {
             observed_at: Utc::now(),
             state: SnapshotState::Ready,
             last_error: None,
+            observed_kinds,
         }
     }
 
@@ -239,12 +390,21 @@ impl CapabilityObservation {
         self.last_error = last_error;
         self
     }
+
+    pub fn with_observed_kinds(
+        mut self,
+        observed_kinds: impl IntoIterator<Item = CapabilityKind>,
+    ) -> Self {
+        self.observed_kinds = observed_kinds.into_iter().collect();
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogCommit {
     pub server_id: String,
     pub revision: i64,
+    pub changed: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
