@@ -10,12 +10,15 @@ type TruncatedTextProps = {
 	children: string;
 	className?: string;
 	tooltipClassName?: string;
+	/** When true, render the full text without single-line truncation. */
+	expanded?: boolean;
 };
 
 export function TruncatedText({
 	children,
 	className,
 	tooltipClassName,
+	expanded = false,
 }: TruncatedTextProps) {
 	const textRef = useRef<HTMLDivElement>(null);
 	const [isTruncated, setIsTruncated] = useState(false);
@@ -27,16 +30,34 @@ export function TruncatedText({
 	}, []);
 
 	useLayoutEffect(() => {
+		if (expanded) {
+			setIsTruncated(false);
+			return;
+		}
 		updateTruncation();
-	}, [children, updateTruncation]);
+	}, [children, expanded, updateTruncation]);
 
 	useEffect(() => {
+		if (expanded) return;
 		const element = textRef.current;
 		if (!element) return;
 		const observer = new ResizeObserver(updateTruncation);
 		observer.observe(element);
 		return () => observer.disconnect();
-	}, [updateTruncation]);
+	}, [expanded, updateTruncation]);
+
+	if (expanded) {
+		return (
+			<div
+				className={cn(
+					"block w-full min-w-0 whitespace-pre-wrap break-words",
+					className,
+				)}
+			>
+				{children}
+			</div>
+		);
+	}
 
 	return (
 		<Tooltip delayDuration={200} open={isTruncated ? undefined : false}>

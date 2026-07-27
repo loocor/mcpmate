@@ -21,7 +21,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import { CachedAvatar } from "../../components/cached-avatar";
 import {
@@ -34,6 +39,7 @@ import {
 } from "../../components/capsule-stripe-row";
 import { ClientFormDrawer } from "../../components/client-form-drawer";
 import { ConfirmDialog } from "../../components/confirm-dialog";
+import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
 import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 
@@ -89,6 +95,8 @@ import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import {
   formatCapabilityLifecycle,
+  getCapabilityLifecycle,
+  shouldDisplayCapabilityKind,
   type CapabilityLifecycleLabels,
 } from "../../lib/capability-lifecycle";
 import { useClientDetailTranslations } from "./client-detail-translations";
@@ -105,7 +113,7 @@ import type {
   ServerSummary,
   ServersImportData,
   TransportRuleData,
-  UnifyDirectCapabilityIds,
+  UnifyDirectCapabilityRefs,
 } from "../../lib/types";
 import { formatBackupTime } from "../../lib/utils";
 import { ClientImportReviewDrawer } from "./components/client-import-review-drawer";
@@ -191,14 +199,14 @@ function getUnifyServerSurfaces<T extends { server_id: string }>(
   return selectedSurfaces.filter((entry) => entry.server_id === serverId);
 }
 
-function normalizeDirectCapabilityIds(
-  ids?: UnifyDirectCapabilityIds,
-): UnifyDirectCapabilityIds {
+function normalizeDirectCapabilityRefs(
+  refs?: UnifyDirectCapabilityRefs,
+): UnifyDirectCapabilityRefs {
   return {
-    tool_ids: normalizeCapabilityIds(ids?.tool_ids),
-    prompt_ids: normalizeCapabilityIds(ids?.prompt_ids),
-    resource_ids: normalizeCapabilityIds(ids?.resource_ids),
-    template_ids: normalizeCapabilityIds(ids?.template_ids),
+    tool_refs: normalizeCapabilityIds(refs?.tool_refs),
+    prompt_refs: normalizeCapabilityIds(refs?.prompt_refs),
+    resource_refs: normalizeCapabilityIds(refs?.resource_refs),
+    template_refs: normalizeCapabilityIds(refs?.template_refs),
   };
 }
 
@@ -276,20 +284,21 @@ function buildCapabilityConfigPayloadBase(
     identifier,
     capability_source: currentConfig.capability_source,
     selected_profile_ids: currentConfig.selected_profile_ids,
+    source_revision_set: currentConfig.source_revision_set,
   };
 }
 
 function buildUnifyDirectExposurePayload(
   routeMode: UnifyRouteMode,
   serverIds: string[],
-  capabilityIds: UnifyDirectCapabilityIds,
+  capabilityRefs: UnifyDirectCapabilityRefs,
 ): NonNullable<ClientCapabilityConfigReq["unify_direct_exposure"]> {
   return {
     route_mode: routeMode,
     server_ids: routeMode === "server_level" ? serverIds : [],
-    capability_ids:
+    capability_refs:
       routeMode === "capability_level"
-        ? normalizeDirectCapabilityIds(capabilityIds)
+        ? normalizeDirectCapabilityRefs(capabilityRefs)
         : {},
   };
 }
@@ -315,14 +324,14 @@ function buildServerLevelExposureUpdate(
 function buildCapabilityLevelExposureUpdate(
   identifier: string,
   currentConfig: ClientCapabilityConfigData,
-  nextCapabilityIds: UnifyDirectCapabilityIds,
+  nextCapabilityRefs: UnifyDirectCapabilityRefs,
 ): ClientCapabilityConfigReq {
   return {
     ...buildCapabilityConfigPayloadBase(identifier, currentConfig),
     unify_direct_exposure: buildUnifyDirectExposurePayload(
       "capability_level",
       [],
-      nextCapabilityIds,
+      nextCapabilityRefs,
     ),
   };
 }
@@ -368,6 +377,8 @@ export function ClientDetailPage() {
   const { identifier } = useParams<{ identifier: string }>();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const reviewItemId = searchParams.get("review_item");
   useClientDetailTranslations();
   const { t } = useTranslation("clients");
   const showClientLiveLogs = useAppStore(
@@ -423,7 +434,7 @@ export function ClientDetailPage() {
     [],
   );
   const [unifyCapabilityIds, setUnifyCapabilityIds] =
-    useState<UnifyDirectCapabilityIds>({});
+    useState<UnifyDirectCapabilityRefs>({});
   const [hasUnifyDraftChanges, setHasUnifyDraftChanges] = useState(false);
 
   useEffect(() => {
@@ -544,27 +555,8 @@ export function ClientDetailPage() {
 
   const effectiveCapabilityConfig =
     useMemo<ClientCapabilityConfigData | null>(() => {
-      if (capabilityConfig) {
-        return capabilityConfig;
-      }
-      if (!identifier) {
-        return null;
-      }
-      return {
-        identifier,
-        capability_source: configDetails?.capability_source || "activated",
-        selected_profile_ids: configDetails?.selected_profile_ids || [],
-        custom_profile_id: configDetails?.custom_profile_id ?? null,
-        custom_profile_missing: configDetails?.custom_profile_missing ?? false,
-      };
-    }, [
-      capabilityConfig,
-      configDetails?.capability_source,
-      configDetails?.custom_profile_id,
-      configDetails?.custom_profile_missing,
-      configDetails?.selected_profile_ids,
-      identifier,
-    ]);
+      return capabilityConfig ?? null;
+    }, [capabilityConfig]);
 
   const customProfileMissing =
     effectiveCapabilityConfig?.custom_profile_missing ??
@@ -610,7 +602,7 @@ export function ClientDetailPage() {
       setUnifyRouteMode(exposure.route_mode || "broker_only");
       setUnifySelectedServers(exposure.server_ids ?? []);
       setUnifyCapabilityIds(
-        normalizeDirectCapabilityIds(exposure.capability_ids),
+        normalizeDirectCapabilityRefs(exposure.capability_refs),
       );
     } else {
       setUnifyRouteMode("broker_only");
@@ -1009,11 +1001,16 @@ export function ClientDetailPage() {
     if (!identifier) {
       throw new Error("No identifier provided");
     }
+    if (!effectiveCapabilityConfig) {
+      throw new Error("Client capability configuration is not loaded.");
+    }
 
     const payload: ClientCapabilityConfigReq = {
       identifier,
+      config_mode: mode,
       capability_source: "activated",
       selected_profile_ids: [],
+      source_revision_set: effectiveCapabilityConfig.source_revision_set,
     };
 
     if (mode === "unify") {
@@ -1085,28 +1082,21 @@ export function ClientDetailPage() {
         );
       }
 
-      const [
-        toolsResponse,
-        promptsResponse,
-        resourcesResponse,
-        templatesResponse,
-      ] = await Promise.all([
-        serversApi.listTools(server.id).catch(() => ({ items: [] })),
-        serversApi.listPrompts(server.id).catch(() => ({ items: [] })),
-        serversApi.listResources(server.id).catch(() => ({ items: [] })),
-        serversApi
-          .listResourceTemplates(server.id)
-          .catch(() => ({ items: [] })),
-      ]);
+      const {
+        tools: toolsResponse,
+        prompts: promptsResponse,
+        resources: resourcesResponse,
+        templates: templatesResponse,
+      } = await serversApi.listAllCapabilities(server.id);
 
       const currentUnifyExposure = currentConfig.unify_direct_exposure ?? {
         route_mode: "capability_level" as const,
         server_ids: [],
-        capability_ids: {},
+        capability_refs: {},
       };
 
-      const currentCapabilityIds = normalizeDirectCapabilityIds(
-        currentUnifyExposure.capability_ids,
+      const currentCapabilityRefs = normalizeDirectCapabilityRefs(
+        currentUnifyExposure.capability_refs,
       );
 
       const rawTools = Array.isArray(toolsResponse.items)
@@ -1123,18 +1113,16 @@ export function ClientDetailPage() {
         : [];
 
       const serverToolIds = rawTools
-        .map((tool) => getCapabilityId(tool, ["unique_name"]))
+        .map((tool) => getCapabilityId(tool, ["ref_id"]))
         .filter((id): id is string => Boolean(id));
       const serverPromptIds = rawPrompts
-        .map((prompt) => getCapabilityId(prompt, ["unique_name"]))
+        .map((prompt) => getCapabilityId(prompt, ["ref_id"]))
         .filter((id): id is string => Boolean(id));
       const serverResourceIds = rawResources
-        .map((resource) => getCapabilityId(resource, ["unique_uri"]))
+        .map((resource) => getCapabilityId(resource, ["ref_id"]))
         .filter((id): id is string => Boolean(id));
       const serverTemplateIds = rawTemplates
-        .map((template) =>
-          getCapabilityId(template, ["unique_uri_template", "unique_name"]),
-        )
+        .map((template) => getCapabilityId(template, ["ref_id"]))
         .filter((id): id is string => Boolean(id));
       const serverCapabilityIdSet = new Set([
         ...serverToolIds,
@@ -1143,30 +1131,30 @@ export function ClientDetailPage() {
         ...serverTemplateIds,
       ]);
       const hasAnySelectedForServer = [
-        ...(currentCapabilityIds.tool_ids ?? []),
-        ...(currentCapabilityIds.prompt_ids ?? []),
-        ...(currentCapabilityIds.resource_ids ?? []),
-        ...(currentCapabilityIds.template_ids ?? []),
+        ...(currentCapabilityRefs.tool_refs ?? []),
+        ...(currentCapabilityRefs.prompt_refs ?? []),
+        ...(currentCapabilityRefs.resource_refs ?? []),
+        ...(currentCapabilityRefs.template_refs ?? []),
       ].some((id) => serverCapabilityIdSet.has(id));
 
-      const nextCapabilityIds: UnifyDirectCapabilityIds = {
-        tool_ids: resolveNextCapabilityIds(
-          currentCapabilityIds.tool_ids,
+      const nextCapabilityRefs: UnifyDirectCapabilityRefs = {
+        tool_refs: resolveNextCapabilityIds(
+          currentCapabilityRefs.tool_refs,
           hasAnySelectedForServer,
           serverToolIds,
         ),
-        prompt_ids: resolveNextCapabilityIds(
-          currentCapabilityIds.prompt_ids,
+        prompt_refs: resolveNextCapabilityIds(
+          currentCapabilityRefs.prompt_refs,
           hasAnySelectedForServer,
           serverPromptIds,
         ),
-        resource_ids: resolveNextCapabilityIds(
-          currentCapabilityIds.resource_ids,
+        resource_refs: resolveNextCapabilityIds(
+          currentCapabilityRefs.resource_refs,
           hasAnySelectedForServer,
           serverResourceIds,
         ),
-        template_ids: resolveNextCapabilityIds(
-          currentCapabilityIds.template_ids,
+        template_refs: resolveNextCapabilityIds(
+          currentCapabilityRefs.template_refs,
           hasAnySelectedForServer,
           serverTemplateIds,
         ),
@@ -1176,7 +1164,7 @@ export function ClientDetailPage() {
         buildCapabilityLevelExposureUpdate(
           identifier,
           currentConfig,
-          nextCapabilityIds,
+          nextCapabilityRefs,
         ),
       );
     },
@@ -1246,21 +1234,27 @@ export function ClientDetailPage() {
     routeMode: DirectExposureRouteMode,
     exposedToolCount: number,
   ) => {
-		const cap = server.capability;
-		const lifecycleLabels: CapabilityLifecycleLabels = {
-			unavailable: t("servers:capabilityLifecycle.capabilityUnavailable"),
-			unsupported: t("servers:capabilityLifecycle.capabilityUnsupported"),
-			unknown: t("servers:capabilityLifecycle.capabilityUnknown"),
-			empty: t("servers:capabilityLifecycle.capabilityEmpty"),
-			ready: t("servers:capabilityLifecycle.capabilityReady"),
-		};
-		const toolsTotal = cap?.tools.currentAvailable
-			? cap.tools.currentCount
-			: undefined;
-    const toolsValue =
-      routeMode === "capability_level"
-				? `${exposedToolCount}/${toolsTotal ?? "—"} · ${formatCapabilityLifecycle(cap, "tools", lifecycleLabels)}`
-				: formatCapabilityLifecycle(cap, "tools", lifecycleLabels);
+    const cap = server.capability;
+    const lifecycleLabels: CapabilityLifecycleLabels = {
+      unavailable: t("servers:capabilityLifecycle.capabilityUnavailable"),
+      unsupported: t("servers:capabilityLifecycle.capabilityUnsupported"),
+      unknown: t("servers:capabilityLifecycle.capabilityUnknown"),
+      empty: t("servers:capabilityLifecycle.capabilityEmpty"),
+      ready: t("servers:capabilityLifecycle.capabilityReady"),
+    };
+    const toolsTotal = cap?.tools.currentAvailable
+      ? cap.tools.currentCount
+      : undefined;
+    // In capability_level mode the fraction already carries the total count, so append only
+    // the lifecycle label here. Reusing `formatCapabilityLifecycle` (which also prefixes its
+    // own count) would render the total twice, e.g. "3/10 · 10 · Ready" (Codex review
+    // follow-up, PR #160).
+    const toolsLifecycle = getCapabilityLifecycle(cap, "tools");
+    const toolsValue = !shouldDisplayCapabilityKind(cap, "tools")
+      ? null
+      : routeMode === "capability_level"
+        ? `${exposedToolCount}/${toolsTotal ?? "—"} · ${lifecycleLabels[toolsLifecycle.state]}`
+        : formatCapabilityLifecycle(cap, "tools", lifecycleLabels);
     const items = [
       {
         key: "tools",
@@ -1274,23 +1268,34 @@ export function ClientDetailPage() {
         label: t("detail.configuration.labels.resources", {
           defaultValue: "Resources",
         }),
-			value: formatCapabilityLifecycle(cap, "resources", lifecycleLabels),
+        value: formatCapabilityLifecycle(cap, "resources", lifecycleLabels),
       },
       {
         key: "prompts",
         label: t("detail.configuration.labels.prompts", {
           defaultValue: "Prompts",
         }),
-			value: formatCapabilityLifecycle(cap, "prompts", lifecycleLabels),
+        value: formatCapabilityLifecycle(cap, "prompts", lifecycleLabels),
       },
       {
         key: "resourceTemplates",
         label: t("detail.configuration.labels.resourceTemplates", {
           defaultValue: "Resource templates",
         }),
-			value: formatCapabilityLifecycle(cap, "resourceTemplates", lifecycleLabels),
+        value: formatCapabilityLifecycle(cap, "resourceTemplates", lifecycleLabels),
       },
-    ];
+    ].filter(
+      (
+        item,
+      ): item is {
+        key: string;
+        label: string;
+        value: string;
+      } => item.value != null,
+    );
+    if (items.length === 0) {
+      return null;
+    }
     return (
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
         {items.map((item) => (
@@ -1481,11 +1486,6 @@ export function ClientDetailPage() {
           );
         }
       }
-
-      await clientsApi.update({
-        identifier,
-        config_mode: mode,
-      });
 
       const capabilityData = await clientsApi.updateCapabilityConfig(
         buildCapabilityConfigPayload(),
@@ -2432,55 +2432,56 @@ export function ClientDetailPage() {
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="grid gap-4">
               <Card>
-                <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <CardTitle>
-                      {t("detail.configuration.title", {
-                        defaultValue: "Configuration Mode",
-                      })}
-                    </CardTitle>
-                    <CardDescription>
-                      {t("detail.configuration.description", {
-                        defaultValue:
-                          "If you don't understand what this means, please don't make any changes and keep the current settings.",
-                      })}
-                    </CardDescription>
+                <CardHeader className="space-y-0">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <CardTitle>
+                        {t("detail.configuration.title", {
+                          defaultValue: "Configuration Mode",
+                        })}
+                      </CardTitle>
+                      <CardDescription>
+                        {t("detail.configuration.description", {
+                          defaultValue:
+                            "If you don't understand what this means, please don't make any changes and keep the current settings.",
+                        })}
+                      </CardDescription>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => applyMutation.mutate({ preview: false })}
+                      disabled={
+                        loadingConfig ||
+                        applyMutation.isPending ||
+                        !canSaveManagementSettings ||
+                        (shouldRequireLocalConfigWrite &&
+                          !canApplyTransparentConfig)
+                      }
+                      className="shrink-0 gap-2"
+                    >
+                      <HardDrive
+                        className={`h-4 w-4 ${applyMutation.isPending ? "animate-pulse" : ""}`}
+                      />
+                      {t(
+                        isAttachmentApplicable && isAttachedClient
+                          ? "detail.configuration.reapply"
+                          : "detail.configuration.apply",
+                        {
+                          defaultValue:
+                            isAttachmentApplicable && isAttachedClient
+                              ? "Re-Apply"
+                              : "Apply",
+                        },
+                      )}
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="default"
-                    onClick={() => applyMutation.mutate({ preview: false })}
-                    disabled={
-                      loadingConfig ||
-                      applyMutation.isPending ||
-                      !canSaveManagementSettings ||
-                      (shouldRequireLocalConfigWrite &&
-                        !canApplyTransparentConfig)
-                    }
-                    className="gap-2"
-                  >
-                    <HardDrive
-                      className={`h-4 w-4 ${applyMutation.isPending ? "animate-pulse" : ""}`}
-                    />
-                    {t(
-                      isAttachmentApplicable && isAttachedClient
-                        ? "detail.configuration.reapply"
-                        : "detail.configuration.apply",
-                      {
-                        defaultValue:
-                          isAttachmentApplicable && isAttachedClient
-                            ? "Re-Apply"
-                            : "Apply",
-                      },
-                    )}
-                  </Button>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <div className="grid grid-cols-10 gap-8">
-                    {/* Left side - Mode and Source (4/10) */}
-                    <div className="col-span-4 space-y-6">
+                  <div className="grid min-w-0 grid-cols-1 gap-8 lg:grid-cols-2 lg:items-start">
+                    <div className="min-w-0 space-y-6">
                       {/* Mode Selection */}
-                      <div className="space-y-3">
+                      <div className="min-w-0 space-y-3">
                         <div className="space-y-1">
                           <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
                             {t("detail.configuration.sections.mode.title", {
@@ -2524,7 +2525,7 @@ export function ClientDetailPage() {
                       </div>
 
                       {/* Source Selection */}
-                      <div className="space-y-3">
+                      <div className="min-w-0 space-y-3">
                         <div className="space-y-1">
                           <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
                             {t("detail.configuration.sections.source.title", {
@@ -2642,11 +2643,11 @@ export function ClientDetailPage() {
                       </div>
                     </div>
 
-                    {/* Right side - Profiles List (6/10) */}
+                    {/* Direct exposure / profiles */}
                     {(mode === "unify" ||
                       mode === "hosted" ||
                       mode === "transparent") && (
-                        <div className="col-span-6">
+                        <div className="min-w-0">
                           <div className="mb-3">
                             <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
                               {mode === "unify"
@@ -2830,9 +2831,9 @@ export function ClientDetailPage() {
                                     const isMixed = isUnifyServerMixedRouting(
                                       unifyRouteMode,
                                       toolSurfaces.length,
-										server.capability?.tools.currentAvailable
-											? server.capability.tools.currentCount
-											: undefined,
+                                      server.capability?.tools.currentAvailable
+                                        ? server.capability.tools.currentCount
+                                        : undefined,
                                     );
                                     const showDirectSelection =
                                       unifyRouteMode === "capability_level"
@@ -3559,6 +3560,17 @@ export function ClientDetailPage() {
         }}
         onDeleteSuccess={() => {
           navigate("/clients");
+        }}
+      />
+      <SurfaceReviewDialog
+        reviewItemId={reviewItemId}
+        open={!!reviewItemId}
+        onOpenChange={(open) => {
+          if (open) return;
+          const next = new URLSearchParams(searchParams);
+          next.delete("review_item");
+          next.delete("ref_id");
+          setSearchParams(next, { replace: true });
         }}
       />
     </div>

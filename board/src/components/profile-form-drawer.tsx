@@ -12,6 +12,7 @@ import type {
 	ConfigSuitResource,
 	ConfigSuitServer,
 	ConfigSuitTool,
+	CatalogRevisionSet,
 	CreateConfigSuitRequest,
 	UpdateConfigSuitRequest,
 } from "../lib/types";
@@ -49,25 +50,15 @@ const arraysEqual = (a: string[], b: string[]) => {
 
 const syncSuitServers = async (
 	suitId: string,
-	previous: string[],
 	next: string[],
+	sourceRevisionSet: CatalogRevisionSet,
 ) => {
-	const previousSet = new Set(previous);
-	const nextSet = new Set(next);
-	const toEnable = next.filter((id) => !previousSet.has(id));
-	const toRemove = previous.filter((id) => !nextSet.has(id));
-
-	if (toEnable.length > 0) {
-		await Promise.all(
-			toEnable.map((id) => configSuitsApi.enableServer(suitId, id)),
-		);
-	}
-
-	if (toRemove.length > 0) {
-		await Promise.all(
-			toRemove.map((id) => configSuitsApi.removeServer(suitId, id)),
-		);
-	}
+	await configSuitsApi.bulkServers(
+		suitId,
+		next,
+		"replace",
+		sourceRevisionSet,
+	);
 };
 
 const formatProfileTypeLabel = (value: string) =>
@@ -380,10 +371,34 @@ export function ProfileFormDrawer({
 			data: CreateConfigSuitRequest;
 			selectedServers: string[];
 		}) => {
-			const result = await configSuitsApi.createSuit(data);
+			const sourceRevisionSet = suitsResponse?.source_revision_set;
+			if (!sourceRevisionSet) {
+				throw new Error(
+					"Capability catalog revisions are not loaded. Refresh profiles and retry.",
+				);
+			}
+			const desiredActive = data.is_active === true;
+			const desiredDefault = data.is_default === true;
+			const result = await configSuitsApi.createSuit({
+				...data,
+				is_active: false,
+				is_default: false,
+			});
 			const createdId = result.data?.id;
 			if (createdId) {
-				await syncSuitServers(createdId, [], selectedServers);
+				await syncSuitServers(
+					createdId,
+					selectedServers,
+					sourceRevisionSet,
+				);
+				if (desiredActive || desiredDefault) {
+					await configSuitsApi.activateSuit(createdId, sourceRevisionSet);
+				}
+				if (desiredDefault) {
+					await configSuitsApi.updateSuit(createdId, {
+						is_default: true,
+					});
+				}
 			}
 			return { createdId };
 		},
@@ -422,21 +437,51 @@ export function ProfileFormDrawer({
 		mutationFn: async ({
 			id,
 			data,
-			previousServers,
 			nextServers,
 		}: {
 			id: string;
 			data: UpdateConfigSuitRequest;
-			previousServers: string[];
 			nextServers: string[];
 		}) => {
-			const hasFieldUpdates = Object.values(data).some(
+			const sourceRevisionSet =
+				suit?.source_revision_set ?? suitsResponse?.source_revision_set;
+			if (!sourceRevisionSet) {
+				throw new Error(
+					"Capability catalog revisions are not loaded. Refresh profiles and retry.",
+				);
+			}
+			const requestedActive = data.is_active;
+			const requestedDefault = data.is_default;
+			const assignDefaultAfterActivation =
+				requestedDefault === true && requestedActive === true;
+			const metadataUpdates = {
+				...data,
+				is_active: undefined,
+				is_default: assignDefaultAfterActivation
+					? undefined
+					: requestedDefault,
+			};
+			const hasFieldUpdates = Object.values(metadataUpdates).some(
 				(value) => value !== undefined,
 			);
 			if (hasFieldUpdates) {
-				await configSuitsApi.updateSuit(id, data);
+				await configSuitsApi.updateSuit(id, metadataUpdates);
 			}
-			await syncSuitServers(id, previousServers, nextServers);
+			await syncSuitServers(
+				id,
+				nextServers,
+				sourceRevisionSet,
+			);
+			if (requestedActive !== undefined) {
+				if (requestedActive) {
+					await configSuitsApi.activateSuit(id, sourceRevisionSet);
+				} else {
+					await configSuitsApi.deactivateSuit(id, sourceRevisionSet);
+				}
+			}
+			if (assignDefaultAfterActivation) {
+				await configSuitsApi.updateSuit(id, { is_default: true });
+			}
 			return { id };
 		},
 		onSuccess: ({ id }) => {
@@ -549,7 +594,6 @@ export function ProfileFormDrawer({
 			updateMutation.mutate({
 				id: suit.id,
 				data: updateData,
-				previousServers: currentTargetKeys,
 				nextServers: selectedServerIds,
 			});
 		}

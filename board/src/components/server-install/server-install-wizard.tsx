@@ -25,7 +25,7 @@ import {
 import { useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { clientsApi, serversApi } from "../../lib/api";
+import { clientsApi, configSuitsApi, serversApi } from "../../lib/api";
 import {
 	resolveAutoAddTargetProfileId,
 	useAutoAddTargetProfile,
@@ -679,11 +679,30 @@ export const ServerInstallWizard = forwardRef(
 				await serversApi.updateServer(
 					publishedServerId,
 					draftToServerConfig(draft, {
-						enabled: true,
 						pending_import: false,
-						profile_ids: targetProfileId ? [targetProfileId] : undefined,
 					}),
 				);
+				const publishedServer = await serversApi.getServer(publishedServerId);
+				const sourceRevisionSet =
+					publishedServer.data?.source_revision_set;
+				if (!sourceRevisionSet) {
+					throw new Error(
+						"Capability catalog revisions are not loaded. Refresh the server and retry.",
+					);
+				}
+				await serversApi.enableServer(
+					publishedServerId,
+					sourceRevisionSet,
+				);
+				if (targetProfileId) {
+					const profileServers =
+						await configSuitsApi.getServers(targetProfileId);
+					await configSuitsApi.enableServer(
+						targetProfileId,
+						publishedServerId,
+						profileServers.source_revision_set,
+					);
+				}
 				await queryClient.invalidateQueries({ queryKey: ["servers"] });
 				if (targetProfileId) {
 					await queryClient.invalidateQueries({
@@ -1408,13 +1427,14 @@ export const ServerInstallWizard = forwardRef(
 						installPipeline.setPreviewLoading(true);
 						const hiddenServerId = pendingImportServerRef.current;
 						try {
-							const [tools, resources, prompts, resourceTemplates] =
-								await Promise.all([
-								serversApi.listTools(hiddenServerId, "force"),
-								serversApi.listResources(hiddenServerId, "force"),
-								serversApi.listPrompts(hiddenServerId, "force"),
-								serversApi.listResourceTemplates(hiddenServerId, "force"),
-							]);
+							const capabilityLists = await serversApi.listAllCapabilities(
+								hiddenServerId,
+								"force",
+							);
+							const tools = capabilityLists.tools;
+							const resources = capabilityLists.resources;
+							const prompts = capabilityLists.prompts;
+							const resourceTemplates = capabilityLists.templates;
 
 							if (previewEpoch !== wizardSessionEpochRef.current) {
 								return;
@@ -2459,7 +2479,6 @@ export const ServerInstallWizard = forwardRef(
 																			targetServerId,
 																			draftToServerConfig(draft, {
 																				pending_import: true,
-																				enabled: false,
 																			}),
 																		);
 																	} else {

@@ -91,6 +91,7 @@ export interface CapabilityListProps<T = CapabilityRecord> {
 	loadDetails?: CapabilityDetailsLoader<T>;
 	detailsCacheScope?: string | number | null;
 	renderAction?: (mapped: CapabilityMapItem<T>, item: T) => ReactNode;
+	getItemClassName?: (item: T) => string | undefined;
 	scrollBodyClassName?: string;
 	/**
 	 * When `asCard` is false and the list sits in a flex `Card` body, scroll inside this component so
@@ -307,8 +308,8 @@ const INTERACTIVE_TARGET_SELECTOR =
 	"button, a, input, textarea, select, [role=button]";
 
 function hasActiveTextSelection(): boolean {
-  const selection =
-    typeof window !== "undefined" ? window.getSelection() : null;
+	const selection =
+		typeof window !== "undefined" ? window.getSelection() : null;
 	return Boolean(selection?.toString().trim());
 }
 
@@ -356,27 +357,28 @@ export function CapabilityList<T = CapabilityRecord>({
 	loadDetails,
 	detailsCacheScope,
 	renderAction,
+	getItemClassName,
 	scrollBodyClassName,
 	scrollContainedBody,
 }: CapabilityListProps<T>) {
 	const [internalFilter, setInternalFilter] = useState("");
 	const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
-  const [lazyDetailsById, setLazyDetailsById] = useState<
-    Record<string, CapabilityRecord | null>
-  >({});
-  const [lazyDetailsLoadingById, setLazyDetailsLoadingById] = useState<
-    Record<string, boolean>
-  >({});
-  const [lazyDetailsErrorById, setLazyDetailsErrorById] = useState<
-    Record<string, string | null>
-  >({});
+	const [lazyDetailsById, setLazyDetailsById] = useState<
+		Record<string, CapabilityRecord | null>
+	>({});
+	const [lazyDetailsLoadingById, setLazyDetailsLoadingById] = useState<
+		Record<string, boolean>
+	>({});
+	const [lazyDetailsErrorById, setLazyDetailsErrorById] = useState<
+		Record<string, string | null>
+	>({});
 	const search = filterText ?? internalFilter;
 	const showRawJson = useAppStore(
 		(state) => state.dashboardSettings.showRawCapabilityJson,
 	);
 	const { t } = useTranslation();
 
-  const useCapsule = capsule ?? context === "server";
+	const useCapsule = capsule ?? context === "server";
 	const shouldClickToToggleDetails = clickToToggleDetails ?? true;
 
 	useEffect(() => {
@@ -398,10 +400,10 @@ export function CapabilityList<T = CapabilityRecord>({
 		[items, kind, getKind],
 	);
 	const data = useMemo(
-    () =>
-      mappedItems
-			.filter(({ mapped }) => matchText(mapped, search))
-			.sort((a, b) => a.mapped.title.localeCompare(b.mapped.title)),
+		() =>
+			mappedItems
+				.filter(({ mapped }) => matchText(mapped, search))
+				.sort((a, b) => a.mapped.title.localeCompare(b.mapped.title)),
 		[mappedItems, search],
 	);
 	const selectedIdSet = useMemo(
@@ -536,6 +538,7 @@ export function CapabilityList<T = CapabilityRecord>({
 		};
 		const isRowInteractive = hasDetails || isBulkSelectionMode;
 
+		const isDetailsOpen = !!openMap[id];
 		const titleClasses =
 			context === "profile" && isSelected
 				? "font-medium text-primary"
@@ -561,7 +564,10 @@ export function CapabilityList<T = CapabilityRecord>({
 			);
 
 		const descriptionBlock = mapped.description ? (
-			<TruncatedText className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+			<TruncatedText
+				expanded={isDetailsOpen}
+				className="mt-1 text-xs text-slate-600 dark:text-slate-300"
+			>
 				{mapped.description}
 			</TruncatedText>
 		) : null;
@@ -672,10 +678,10 @@ export function CapabilityList<T = CapabilityRecord>({
 						</div>
 					) : null}
 					{loadDetails &&
-					hasLazyDetails &&
-					!lazyDetails &&
-					!lazyDetailsLoading &&
-					!hasLoadedDetails ? (
+						hasLazyDetails &&
+						!lazyDetails &&
+						!lazyDetailsLoading &&
+						!hasLoadedDetails ? (
 						<div className="text-xs text-slate-500 dark:text-slate-400">
 							{t("servers:capabilityList.noDetails", {
 								defaultValue: "No additional details available.",
@@ -687,7 +693,12 @@ export function CapabilityList<T = CapabilityRecord>({
 		) : null;
 
 		const infoBlock = (
-			<div className="min-w-0 flex-1 overflow-hidden select-text">
+			<div
+				className={cn(
+					"min-w-0 flex-1 select-text",
+					isDetailsOpen ? "overflow-visible" : "overflow-hidden",
+				)}
+			>
 				<div
 					className={titleClasses}
 					title={
@@ -773,10 +784,9 @@ export function CapabilityList<T = CapabilityRecord>({
 
 		const actionSection = (
 			<div
-        className={`ml-auto flex items-start gap-2 ${
-          hoverActions
-            ? "opacity-0 group-hover:opacity-100 transition-opacity"
-            : ""
+				className={`ml-auto flex items-start gap-2 ${hoverActions
+						? "opacity-0 group-hover:opacity-100 transition-opacity"
+						: ""
 					}`}
 			>
 				{actions}
@@ -788,10 +798,9 @@ export function CapabilityList<T = CapabilityRecord>({
 				<CapsuleStripeListItem
 					key={id}
 					interactive={isRowInteractive}
-          className={`group relative px-3 transition-colors ${
-            isSelected
-						? "bg-primary/10 ring-1 ring-slate-200/80 dark:ring-slate-700/60"
-						: ""
+					className={`group relative px-3 transition-colors ${getItemClassName?.(item) ?? ""} ${isSelected
+							? "bg-primary/10 ring-1 ring-slate-200/80 dark:ring-slate-700/60"
+							: ""
 						}`}
 					onClick={handleItemClick}
 					onKeyDown={handleDetailsKeyDown}
@@ -809,7 +818,7 @@ export function CapabilityList<T = CapabilityRecord>({
 				<CapsuleStripeListItem
 					key={id}
 					interactive={isRowInteractive}
-					className="group"
+					className={`group ${getItemClassName?.(item) ?? ""}`}
 					onClick={handleItemClick}
 					onKeyDown={handleDetailsKeyDown}
 				>
@@ -824,7 +833,7 @@ export function CapabilityList<T = CapabilityRecord>({
 		return (
 			<li
 				key={id}
-				className={`rounded border p-3 ${isSelected ? "bg-accent/50 ring-1 ring-slate-200/80 dark:ring-slate-700/60" : ""}`}
+				className={`rounded border p-3 ${getItemClassName?.(item) ?? ""} ${isSelected ? "bg-accent/50 ring-1 ring-slate-200/80 dark:ring-slate-700/60" : ""}`}
 				role={isRowInteractive ? "button" : undefined}
 				tabIndex={isRowInteractive ? 0 : undefined}
 				onClick={handleItemClick}
@@ -912,7 +921,7 @@ export function CapabilityList<T = CapabilityRecord>({
 	});
 
 	const body = scrollContainedBody ? (
-    <CardListScrollBody className={scrollBodyClassName} scrollLocked={loading}>
+		<CardListScrollBody className={scrollBodyClassName} scrollLocked={loading}>
 			{list}
 		</CardListScrollBody>
 	) : (
@@ -921,9 +930,9 @@ export function CapabilityList<T = CapabilityRecord>({
 
 	return (
 		<Card
-      className={scrollContainedBody ? CAPABILITY_SCROLL_CARD_CLASS : undefined}
-			>
-      <CardHeader className={scrollContainedBody ? "shrink-0" : undefined}>
+			className={scrollContainedBody ? CAPABILITY_SCROLL_CARD_CLASS : undefined}
+		>
+			<CardHeader className={scrollContainedBody ? "shrink-0" : undefined}>
 				<div className="flex items-center justify-between gap-2">
 					<CardTitle>{title ?? kindLabel}</CardTitle>
 					{showSearch ? (

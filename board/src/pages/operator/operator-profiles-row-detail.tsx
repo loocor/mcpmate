@@ -4,7 +4,7 @@ import { Plus } from "lucide-react";
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { configSuitsApi } from "../../lib/api";
+import { configSuitsApi, requireProfileRevisionSet } from "../../lib/api";
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
@@ -148,9 +148,15 @@ export function OperatorProfilesRowDetail({
 			nextActive: boolean;
 		}) => {
 			if (nextActive) {
-				await configSuitsApi.activateSuit(profile.id);
+				await configSuitsApi.activateSuit(
+					profile.id,
+					requireProfileRevisionSet(profile),
+				);
 			} else {
-				await configSuitsApi.deactivateSuit(profile.id);
+				await configSuitsApi.deactivateSuit(
+					profile.id,
+					requireProfileRevisionSet(profile),
+				);
 			}
 		},
 		onSuccess: (_data, variables) => {

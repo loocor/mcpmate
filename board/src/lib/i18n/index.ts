@@ -17,6 +17,7 @@ import { settingsTranslations } from "../../pages/settings/i18n";
 import { systemTranslations } from "../../pages/system/i18n";
 import { commonTranslations } from "./common";
 import { navigationTranslations } from "./navigation";
+import { surfaceReviewTranslations } from "./surface-reviews";
 
 const baseResources = {
 	en: {
@@ -24,18 +25,21 @@ const baseResources = {
 			...commonTranslations.en,
 			...navigationTranslations.en,
 		},
+		surfaceReview: surfaceReviewTranslations.en,
 	},
 	"zh-CN": {
 		translation: {
 			...commonTranslations["zh-CN"],
 			...navigationTranslations["zh-CN"],
 		},
+		surfaceReview: surfaceReviewTranslations["zh-CN"],
 	},
 	"ja-JP": {
 		translation: {
 			...commonTranslations["ja-JP"],
 			...navigationTranslations["ja-JP"],
 		},
+		surfaceReview: surfaceReviewTranslations["ja-JP"],
 	},
 };
 

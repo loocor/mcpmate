@@ -123,6 +123,7 @@ export interface ServerSummary {
   oauth_requires_reconnect?: boolean | null;
   oauth_issue?: OAuthStatus["issue"] | null;
   namespace_issue?: ServerNamespaceIssue | null;
+  source_revision_set?: CatalogRevisionSet;
 }
 
 export interface ServerListResponse {
@@ -858,10 +859,12 @@ export interface ConfigSuit {
   is_default: boolean;
   role?: string;
   allowed_operations: string[];
+  source_revision_set?: CatalogRevisionSet;
 }
 
 export interface ConfigSuitListResponse {
   suits: ConfigSuit[];
+  source_revision_set: CatalogRevisionSet;
 }
 
 export interface CreateConfigSuitRequest {
@@ -896,6 +899,7 @@ export interface ConfigSuitServersResponse {
   suit_id: string;
   suit_name: string;
   servers: ConfigSuitServer[];
+  source_revision_set: CatalogRevisionSet;
 }
 
 export interface ConfigSuitTool {
@@ -913,6 +917,7 @@ export interface ConfigSuitToolsResponse {
   suit_id: string;
   suit_name: string;
   tools: ConfigSuitTool[];
+  source_revision_set: CatalogRevisionSet;
 }
 
 export interface ConfigSuitResource {
@@ -930,6 +935,7 @@ export interface ConfigSuitResourcesResponse {
   suit_id: string;
   suit_name: string;
   resources: ConfigSuitResource[];
+  source_revision_set: CatalogRevisionSet;
 }
 
 export interface ConfigSuitResourceTemplate {
@@ -947,6 +953,7 @@ export interface ConfigSuitResourceTemplatesResponse {
   suit_id: string;
   suit_name: string;
   templates: ConfigSuitResourceTemplate[];
+  source_revision_set: CatalogRevisionSet;
 }
 
 export interface ConfigSuitPrompt {
@@ -964,6 +971,7 @@ export interface ConfigSuitPromptsResponse {
   suit_id: string;
   suit_name: string;
   prompts: ConfigSuitPrompt[];
+  source_revision_set: CatalogRevisionSet;
 }
 
 export interface BatchOperationRequest {
@@ -1213,6 +1221,9 @@ export interface ClientInfo {
   logo_url?: string | null;
   last_detected?: string | null;
   last_modified?: string | null;
+  capability_source?: CapabilitySource;
+  selected_profile_ids?: string[];
+  custom_profile_id?: string | null;
   custom_profile_missing?: boolean;
   template: ClientTemplateMetadata;
   mcp_servers_count?: number | null;
@@ -1358,7 +1369,6 @@ export interface ClientSettingsSourceData {
 export interface ClientSettingsUpdateData {
   identifier: string;
   display_name: string;
-  config_mode?: string | null;
   transport: string;
   client_version?: string | null;
   config_file_state?: ClientConfigFileState | null;
@@ -1388,20 +1398,20 @@ export interface ClientConfigResp {
 
 export type CapabilitySource = "activated" | "profiles" | "custom";
 
-export interface UnifyDirectCapabilityIds {
-  tool_ids?: string[];
-  prompt_ids?: string[];
-  resource_ids?: string[];
-  template_ids?: string[];
+export interface UnifyDirectCapabilityRefs {
+  tool_refs?: string[];
+  prompt_refs?: string[];
+  resource_refs?: string[];
+  template_refs?: string[];
 }
 
 export interface UnifyDirectExposureConfig {
   route_mode: "broker_only" | "server_level" | "capability_level";
   server_ids?: string[];
-  capability_ids?: UnifyDirectCapabilityIds;
+  capability_refs?: UnifyDirectCapabilityRefs;
   diagnostics?: {
     invalid_server_ids?: string[];
-    invalid_capability_ids?: string[];
+    invalid_capability_refs?: string[];
     invalid_tool_surfaces?: {
       server_id: string;
       tool_name: string;
@@ -1440,6 +1450,7 @@ export interface ClientCapabilityConfigData {
   custom_profile_id?: string | null;
   custom_profile_missing?: boolean;
   unify_direct_exposure?: UnifyDirectExposureConfig | null;
+  source_revision_set: CatalogRevisionSet;
 }
 
 export interface ClientCapabilityConfigResp {
@@ -1450,9 +1461,126 @@ export interface ClientCapabilityConfigResp {
 
 export interface ClientCapabilityConfigReq {
   identifier: string;
+  config_mode?: string;
   capability_source: CapabilitySource;
   selected_profile_ids?: string[];
   unify_direct_exposure?: UnifyDirectExposureConfig | null;
+  source_revision_set: CatalogRevisionSet;
+}
+
+export type CatalogRevisionSet = Record<string, number>;
+
+export type SurfaceReviewLifecycle = "pending" | "resolved" | "obsolete";
+
+export type SurfaceReviewOwnerType =
+  | "standard_profile"
+  | "custom_profile"
+  | "consumer_direct_exposure"
+  | "profile_server_exposure"
+  | "consumer_server_exposure"
+  | "mode_rule";
+
+export type SurfaceReviewResolutionAction =
+  | "approve_target"
+  | "reject_target"
+  | "keep_intent"
+  | "remove_intent"
+  | "rebind_ref";
+
+export interface SurfaceReviewOwner {
+  owner_type: SurfaceReviewOwnerType;
+  owner_id: string;
+}
+
+export interface SurfaceReviewDecision {
+  decision_id: string;
+  resolution_action: SurfaceReviewResolutionAction;
+  resolution_payload?: unknown | null;
+  actor: string;
+  decided_at: string;
+  supersedes_decision_id?: string | null;
+}
+
+export interface SurfaceReviewFieldDiff {
+  path: string;
+  before?: unknown | null;
+  target?: unknown | null;
+}
+
+export interface SurfaceReviewItem {
+  review_item_id: string;
+  proposal_id: string;
+  consumer_id: string;
+  binding_generation: number;
+  ref_id: string;
+  before_capability_id?: string | null;
+  target_capability_id?: string | null;
+  target_key: string;
+  change_class: string;
+  policy_action: string;
+  lifecycle: SurfaceReviewLifecycle;
+  owners: SurfaceReviewOwner[];
+  current_decision?: SurfaceReviewDecision | null;
+  before_record?: unknown | null;
+  target_record?: unknown | null;
+  field_diff: SurfaceReviewFieldDiff[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SurfaceReviewSummaryEntry {
+  owner: SurfaceReviewOwner;
+  pending_count: number;
+  earliest_created_at: string;
+  change_classes: Record<string, number>;
+}
+
+export interface SurfaceReviewSummary {
+  pending_count: number;
+  failed_reconciliation_count: number;
+  entries: SurfaceReviewSummaryEntry[];
+}
+
+export interface SurfaceReviewActionReq {
+  expected_target_key: string;
+  expected_binding_generation: number;
+  actor: string;
+}
+
+export interface SurfaceReviewActionData {
+  review_item_id: string;
+  decision_id: string;
+  resolution_action: SurfaceReviewResolutionAction;
+  binding_generation: number;
+  effective_surface_changed: boolean;
+}
+
+export type SurfaceIntentResolutionAction =
+  | "keep_intent"
+  | "remove_intent"
+  | "rebind_ref";
+
+export interface SurfaceIntentPreviewReq {
+  action: SurfaceIntentResolutionAction;
+  owner?: SurfaceReviewOwner | null;
+  new_ref_id?: string | null;
+}
+
+export interface SurfaceIntentPreviewData {
+  review_item_id: string;
+  action: SurfaceIntentResolutionAction;
+  owner?: SurfaceReviewOwner | null;
+  owner_revision: string;
+  impacted_consumer_ids: string[];
+  impact_token: string;
+}
+
+export interface SurfaceIntentResolveReq extends SurfaceIntentPreviewReq {
+  expected_owner_revision: string;
+  impact_token: string;
+  expected_target_key: string;
+  expected_binding_generation: number;
+  actor: string;
 }
 
 export interface ClientConfigUpdateReq {

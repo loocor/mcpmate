@@ -25,13 +25,14 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "../../components/ui/select";
-import { clientsApi } from "../../lib/api";
+import { clientsApi, surfaceReviewsApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
 import type { ClientListDefaultFilter } from "../../lib/store";
 import type { ClientInfo } from "../../lib/types";
+import { getClientReviewCount } from "../../lib/surface-reviews";
 import {
 	getClientAttentionClasses,
 	getGovernanceStatus,
@@ -40,6 +41,7 @@ import {
 import { ClientCard } from "./components/client-card";
 
 const EMPTY_CLIENTS: ClientInfo[] = [];
+type ClientPageFilter = ClientListDefaultFilter | "needs_review";
 
 function renderGovernanceBadge(
 	status: ClientGovernanceStatus,
@@ -87,7 +89,7 @@ export function ClientsPage() {
 	const { filter, setFilter } = useUrlFilter({
 		paramName: "filter",
 		defaultValue: defaultFilter,
-		validValues: ["all", "allowed", "pending", "denied"],
+		validValues: ["all", "allowed", "pending", "denied", "needs_review"],
 	});
 
 	const { data: clientData, isLoading, isRefetching, refetch } = useQuery({
@@ -100,6 +102,15 @@ export function ClientsPage() {
 		retry: false,
 		refetchOnWindowFocus: false,
 		refetchOnReconnect: false,
+	});
+	const {
+		data: pendingReviewItems = [],
+		error: reviewItemsError,
+	} = useQuery({
+		queryKey: ["surfaceReviews", "pending"],
+		queryFn: () => surfaceReviewsApi.list({ state: "pending" }),
+		retry: 1,
+		refetchInterval: 30_000,
 	});
 
 	const clients: ClientInfo[] = clientData?.client ?? EMPTY_CLIENTS;
@@ -160,8 +171,16 @@ export function ClientsPage() {
 				return sourceClient ? getGovernanceStatus(sourceClient) === "denied" : false;
 			});
 		}
+		if (filter === "needs_review") {
+			return clientsAsEntities.filter((c) => {
+				const sourceClient = clientsByIdentifier.get(c.identifier);
+				return sourceClient
+					? getClientReviewCount(pendingReviewItems, sourceClient) > 0
+					: false;
+			});
+		}
 		return clientsAsEntities;
-	}, [clientsAsEntities, clientsByIdentifier, filter]);
+	}, [clientsAsEntities, clientsByIdentifier, filter, pendingReviewItems]);
 
 	const getGovernanceStatusLabel = (status: ClientGovernanceStatus) => {
 		if (status === "pending") {
@@ -239,6 +258,7 @@ export function ClientsPage() {
 		const governanceStatus = getGovernanceStatus(client);
 		const governanceLabel = getGovernanceStatusLabel(governanceStatus);
 		const attentionClasses = getClientAttentionClasses(governanceStatus);
+		const reviewCount = getClientReviewCount(pendingReviewItems, client);
 
 		const recordKindLabel = client.governed_by_default_policy
 			? t("entity.badge.defaultPolicy", { defaultValue: "Default Policy" })
@@ -254,6 +274,21 @@ export function ClientsPage() {
 				id={client.identifier}
 				title={displayName}
 				description={description}
+				titleBadges={
+					reviewCount > 0
+						? [
+							<Badge
+								key="needs-review"
+								className="border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+							>
+								{t("surfaceReview:badge", {
+									count: reviewCount,
+									defaultValue: "{{count}} to review",
+								})}
+							</Badge>,
+						]
+						: []
+				}
 				avatar={{
 					src: client.logo_url ?? undefined,
 					alt: displayName,
@@ -272,7 +307,11 @@ export function ClientsPage() {
 						governanceMutation.mutate({ identifier, approved: checked }),
 					disabled: governanceMutation.isPending || governanceStatus === "pending",
 				}}
-				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName}`.trim()}
+				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName} ${
+					reviewCount > 0
+						? "border-amber-400 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/20"
+						: ""
+				}`.trim()}
 				onClick={() => navigate(`/clients/${encodeURIComponent(identifier)}`)}
 			/>
 		);
@@ -342,7 +381,7 @@ export function ClientsPage() {
 			detectedCount,
 			approvedCount,
 			pendingCount,
-			i18n.language,
+			t,
 		],
 	);
 
@@ -509,6 +548,12 @@ export function ClientsPage() {
 			{ value: "allowed", label: t("toolbar.filters.options.allowed", { defaultValue: "Allowed" }) },
 			{ value: "pending", label: t("toolbar.filters.options.pending", { defaultValue: "Pending" }) },
 			{ value: "denied", label: t("toolbar.filters.options.denied", { defaultValue: "Denied" }) },
+			{
+				value: "needs_review",
+				label: t("surfaceReview:filter.needsReview", {
+					defaultValue: "Needs review",
+				}),
+			},
 		],
 		[t, i18n.language],
 	);
@@ -517,7 +562,7 @@ export function ClientsPage() {
 		<div className="w-32">
 			<Select
 				value={filter}
-				onValueChange={(value) => setFilter(value as ClientListDefaultFilter)}
+				onValueChange={(value) => setFilter(value as ClientPageFilter)}
 			>
 				<SelectTrigger className="h-9 w-full" aria-label={t("toolbar.filters.title", { defaultValue: "Filter" })}>
 					<SelectValue placeholder={t("toolbar.filters.title", { defaultValue: "Filter" })} />
@@ -581,6 +626,13 @@ export function ClientsPage() {
 			}
 			statsCards={<StatsCards cards={statsCards} />}
 		>
+			{reviewItemsError && (
+				<div className="mb-4 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+					{t("surfaceReview:errors.load", {
+						defaultValue: "Unable to load pending capability reviews.",
+					})}
+				</div>
+			)}
 			<div className="min-h-0 flex-1">
 				<ListGridContainer
 					loading={isLoading}
@@ -598,6 +650,10 @@ export function ClientsPage() {
 									onNavigate={(identifier) => navigate(`/clients/${encodeURIComponent(identifier)}`)}
 									onGovernanceChange={(identifier, approved) => governanceMutation.mutate({ identifier, approved })}
 									isGovernancePending={governanceMutation.isPending}
+									reviewCount={getClientReviewCount(
+										pendingReviewItems,
+										sourceClient,
+									)}
 								/>
 							) : null;
 						})

@@ -30,13 +30,26 @@ import {
 	CardHeader,
 } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "../../components/ui/select";
 import { ProfileSuitGridCard } from "./components/profile-suit-grid-card";
-import { configSuitsApi, serversApi } from "../../lib/api";
+import {
+	configSuitsApi,
+	requireProfileRevisionSet,
+	serversApi,
+	surfaceReviewsApi,
+} from "../../lib/api";
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
-import { useUrlView } from "../../lib/hooks/use-url-state";
+import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
+import { getProfileReviewCount } from "../../lib/surface-reviews";
 import type {
 	ConfigSuit,
 	InstanceSummary,
@@ -138,6 +151,11 @@ export function ProfilePage() {
 		validViews: ["grid", "list"],
 	});
 	const viewMode = view;
+	const { filter: reviewFilter, setFilter: setReviewFilter } = useUrlFilter({
+		paramName: "filter",
+		defaultValue: "all",
+		validValues: ["all", "needs_review"],
+	});
 
 	const [expanded, setExpanded] = useState(false);
 
@@ -155,6 +173,15 @@ export function ProfilePage() {
 		queryFn: () => configSuitsApi.getAll(),
 		retry: 1,
 		refetchInterval: 30000,
+	});
+	const {
+		data: pendingReviewItems = [],
+		error: reviewItemsError,
+	} = useQuery({
+		queryKey: ["surfaceReviews", "pending"],
+		queryFn: () => surfaceReviewsApi.list({ state: "pending" }),
+		retry: 1,
+		refetchInterval: 30_000,
 	});
 
 	// Get all active suits for aggregated statistics
@@ -225,7 +252,8 @@ export function ProfilePage() {
 
 	// Suit activation mutation
 	const activateSuitMutation = useMutation({
-		mutationFn: configSuitsApi.activateSuit,
+		mutationFn: (suit: ConfigSuit) =>
+			configSuitsApi.activateSuit(suit.id, requireProfileRevisionSet(suit)),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
 			notifySuccess(
@@ -249,7 +277,8 @@ export function ProfilePage() {
 
 	// Suit deactivation mutation
 	const deactivateSuitMutation = useMutation({
-		mutationFn: configSuitsApi.deactivateSuit,
+		mutationFn: (suit: ConfigSuit) =>
+			configSuitsApi.deactivateSuit(suit.id, requireProfileRevisionSet(suit)),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
 			notifySuccess(
@@ -274,9 +303,9 @@ export function ProfilePage() {
 	// Handle individual suit toggle
 	const handleSuitToggle = (suit: ConfigSuit) => {
 		if (suit.is_active) {
-			deactivateSuitMutation.mutate(suit.id);
+			deactivateSuitMutation.mutate(suit);
 		} else {
-			activateSuitMutation.mutate(suit.id);
+			activateSuitMutation.mutate(suit);
 		}
 	};
 
@@ -525,6 +554,7 @@ export function ProfilePage() {
 		const suitRole = suit.role ?? "user";
 		const isDefaultAnchor = suitRole === DEFAULT_ANCHOR_ROLE;
 		const isDefaultMember = suit.is_default;
+		const reviewCount = getProfileReviewCount(pendingReviewItems, suit.id);
 
 		return (
 			<EntityListItem
@@ -536,6 +566,17 @@ export function ProfilePage() {
 					fallback: avatarInitial,
 				}}
 				titleBadges={[
+					reviewCount > 0 ? (
+						<Badge
+							key="needs-review"
+							className="border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+						>
+							{t("surfaceReview:badge", {
+								count: reviewCount,
+								defaultValue: "{{count}} to review",
+							})}
+						</Badge>
+					) : null,
 					isDefaultAnchor ? (
 						<Badge key="default-anchor" variant="outline">
 							{t("profiles:badges.defaultAnchor", {
@@ -593,6 +634,11 @@ export function ProfilePage() {
 					disabled: isTogglePending || isDefaultAnchor,
 				}}
 				onClick={() => navigate(`/profiles/${suit.id}`)}
+				className={
+					reviewCount > 0
+						? "border-amber-400 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/20"
+						: undefined
+				}
 			/>
 		);
 	};
@@ -604,6 +650,7 @@ export function ProfilePage() {
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
 		const suitRole = suit.role ?? "user";
 		const isDefaultAnchor = suitRole === DEFAULT_ANCHOR_ROLE;
+		const reviewCount = getProfileReviewCount(pendingReviewItems, suit.id);
 		const statItems = [
 			{
 				label: t("profiles:badges.servers", { defaultValue: "Servers" }),
@@ -638,14 +685,23 @@ export function ProfilePage() {
 				profileServerCount={
 					statsLoading ? undefined : stats?.totalServers
 				}
+				reviewCount={reviewCount}
 			/>
 		);
 	};
 
 	// 使用排序后的数据，保持默认套件在前的顺序
 	const filteredAndSortedSuits = useMemo(
-		() => arrangeSuitsWithDefaultAnchor(sortedSuits),
-		[sortedSuits],
+		() => {
+			const arranged = arrangeSuitsWithDefaultAnchor(sortedSuits);
+			if (reviewFilter !== "needs_review") {
+				return arranged;
+			}
+			return arranged.filter(
+				(suit) => getProfileReviewCount(pendingReviewItems, suit.id) > 0,
+			);
+		},
+		[pendingReviewItems, reviewFilter, sortedSuits],
 	);
 
 	// Prepare stats cards data
@@ -844,6 +900,30 @@ export function ProfilePage() {
 			</Button>
 		</div>
 	);
+	const filterNode = (
+		<div className="w-36">
+			<Select value={reviewFilter} onValueChange={setReviewFilter}>
+				<SelectTrigger
+					className="h-9 w-full"
+					aria-label={t("surfaceReview:filter.label", {
+						defaultValue: "Review filter",
+					})}
+				>
+					<SelectValue />
+				</SelectTrigger>
+				<SelectContent align="end">
+					<SelectItem value="all">
+						{t("surfaceReview:filter.all", { defaultValue: "All" })}
+					</SelectItem>
+					<SelectItem value="needs_review">
+						{t("surfaceReview:filter.needsReview", {
+							defaultValue: "Needs review",
+						})}
+					</SelectItem>
+				</SelectContent>
+			</Select>
+		</div>
+	);
 
 	// Prepare empty state
 	const emptyState = (
@@ -883,6 +963,7 @@ export function ProfilePage() {
 					config={toolbarConfig as any}
 					state={toolbarState}
 					callbacks={toolbarCallbacks as any}
+					filters={filterNode}
 					actions={actions}
 				/>
 			}
@@ -896,6 +977,13 @@ export function ProfilePage() {
 						})}
 					</h3>
 					<p className="text-red-600 text-sm mt-1">{String(suitsError)}</p>
+				</div>
+			)}
+			{reviewItemsError && (
+				<div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+					{t("surfaceReview:errors.load", {
+						defaultValue: "Unable to load pending capability reviews.",
+					})}
 				</div>
 			)}
 

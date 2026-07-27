@@ -4,12 +4,12 @@ import type {
 	AuditListResp,
 	AuditPolicyResp,
 	AuditPolicySetReq,
-	BatchOperationResponse,
 	CapabilitiesKeysResponse,
 	CapabilitiesMetricsStats,
 	CapabilitiesStatsResponse,
 	CapabilitiesStorageStats,
 	CapabilityKindSummary,
+	CatalogRevisionSet,
 	ClearCacheResponse,
 	ClientBackupActionResp,
 	ClientBackupListResp,
@@ -75,6 +75,15 @@ import type {
 	ServerMetaInfo,
 	ServerNamespaceIssue,
 	ServerSource,
+	SurfaceIntentPreviewData,
+	SurfaceIntentPreviewReq,
+	SurfaceIntentResolveReq,
+	SurfaceReviewActionData,
+	SurfaceReviewActionReq,
+	SurfaceReviewItem,
+	SurfaceReviewLifecycle,
+	SurfaceReviewOwnerType,
+	SurfaceReviewSummary,
   StandardServerInfo,
 	SecretDeleteResp,
 	SecretKind,
@@ -110,6 +119,7 @@ import type {
 	LlmProviderUpdateInput,
 	LlmConnectivityResult,
 } from "./types";
+import { assertServerCrudUpdate } from "./server-update-contract";
 import { useMemo } from "react";
 import { isTauriEnvironmentSync } from "./platform";
 import { fetchCatalogEntryForSource } from "./market/refresh";
@@ -303,6 +313,19 @@ type CapabilityListResult = {
 	degraded_reason?: string;
 };
 
+type ServerCapabilityRefreshResult = {
+	server_id: string;
+	catalog_revision: number;
+	catalog_changed: boolean;
+};
+
+type ServerCapabilityListsResult = {
+	tools: CapabilityListResult;
+	resources: CapabilityListResult;
+	prompts: CapabilityListResult;
+	resource_templates: CapabilityListResult;
+};
+
 type CapabilityDetailResult = {
 	item?: unknown | null;
 	meta?: unknown;
@@ -327,7 +350,18 @@ function normalizeCapabilityListPayload(
 			degraded_reason: "empty_payload",
 		};
 	}
-	const items = Array.isArray(resp.data.items) ? resp.data.items : [];
+	const items = Array.isArray(resp.data.items)
+		? resp.data.items.map((item) => {
+				if (!item || typeof item !== "object" || Array.isArray(item)) {
+					return item;
+				}
+				const record = item as Record<string, unknown>;
+				const refId = record.ref_id;
+				return typeof refId === "string" && refId.trim()
+					? { ...record, id: refId }
+					: item;
+			})
+		: [];
 	if (items.length === 0 && !resp.data.state) {
 		return { ...resp.data, items, state: "empty_data" };
 	}
@@ -342,22 +376,24 @@ function capabilityTransportErrorResult(): CapabilityListResult {
   };
 }
 
-async function fetchCapabilityList(
-	path: string,
-	serverId: string,
-	refresh: "auto" | "force" | "cache",
-): Promise<CapabilityListResult> {
-	try {
-		const q = new URLSearchParams({ id: serverId, refresh });
-		const resp = await fetchApi<{
-			success: boolean;
-			data?: CapabilityListResult | null;
-			error?: unknown | null;
-		}>(`${path}?${q}`);
-		return normalizeCapabilityListPayload(resp);
-	} catch {
-		return capabilityTransportErrorResult();
-	}
+function normalizeBatchCapabilityLists(data: ServerCapabilityListsResult): {
+  tools: CapabilityListResult;
+  resources: CapabilityListResult;
+  prompts: CapabilityListResult;
+  templates: CapabilityListResult;
+} {
+  return {
+    tools: normalizeCapabilityListPayload({ success: true, data: data.tools }),
+    resources: normalizeCapabilityListPayload({
+      success: true,
+      data: data.resources,
+    }),
+    prompts: normalizeCapabilityListPayload({ success: true, data: data.prompts }),
+    templates: normalizeCapabilityListPayload({
+      success: true,
+      data: data.resource_templates,
+    }),
+  };
 }
 
 async function fetchCapabilityDetail(
@@ -381,17 +417,6 @@ async function fetchCapabilityDetail(
 	return resp.data;
 }
 
-async function fetchConfigSuitCapabilityList(
-	path: string,
-	serverId: string,
-	refresh?: "auto" | "force" | "cache",
-) {
-	const q = new URLSearchParams({ id: serverId });
-	if (refresh) q.set("refresh", refresh);
-	const resp = await fetchApi<ServerCapabilityResp>(`${path}?${q}`);
-	return extractApiData(resp);
-}
-
 /** Row shape from `/api/mcp/profile/list` */
 interface ProfileApiRow {
 	id: string;
@@ -406,7 +431,10 @@ interface ProfileApiRow {
 	allowed_operations?: string[];
 }
 
-function profileRowToConfigSuit(p: ProfileApiRow): ConfigSuit {
+function profileRowToConfigSuit(
+	p: ProfileApiRow,
+	sourceRevisionSet?: CatalogRevisionSet,
+): ConfigSuit {
 	return {
 		id: p.id,
 		name: p.name,
@@ -418,7 +446,19 @@ function profileRowToConfigSuit(p: ProfileApiRow): ConfigSuit {
 		is_default: p.is_default ?? false,
 		role: p.role ?? undefined,
 		allowed_operations: p.allowed_operations ?? [],
+		source_revision_set: sourceRevisionSet,
 	};
+}
+
+export function requireProfileRevisionSet(
+	profile: ConfigSuit,
+): CatalogRevisionSet {
+	if (!profile.source_revision_set) {
+		throw new Error(
+			"Capability catalog revisions are not loaded. Refresh profiles and retry.",
+		);
+	}
+	return profile.source_revision_set;
 }
 
 function asOptionalString(v: unknown): string | undefined {
@@ -827,6 +867,8 @@ function normalizeServerDetail(
           : undefined,
 		icons: normalizeServerIconList(enhanced?.icons),
 		capability: enhanced.capability as ServerCapabilitySummary | undefined,
+		source_revision_set:
+			enhanced.source_revision_set as CatalogRevisionSet | undefined,
 		namespace_issue:
 			typeof detailRecord.namespace_issue === "object" &&
 			detailRecord.namespace_issue !== null
@@ -907,23 +949,6 @@ function extractApiData<T>(response: ApiWrapper<T>): T {
     throw new Error(
         response.error ? String(response.error) : "API request failed",
     );
-}
-
-// Utility function for batch operations
-async function executeBatchOperation(
-	ids: string[],
-	operation: (id: string) => Promise<unknown>,
-): Promise<BatchOperationResponse> {
-	const results = await Promise.allSettled(ids.map(operation));
-	const successful = results.filter((r) => r.status === "fulfilled").length;
-
-	return {
-		success_count: successful,
-		successful_ids: ids.slice(0, successful),
-		failed_ids: Object.fromEntries(
-			ids.slice(successful).map((id) => [id, "Batch operation failed"]),
-		),
-	};
 }
 
 export const secretsApi = {
@@ -1410,36 +1435,61 @@ export const serversApi = {
 		serversApi._manageInstance(serverId, instanceId, "Cancel"),
 
 	// Server management operations
-	_manageServer: async (serverId: string, action: string, sync = false) => {
-		try {
-			return await fetchApi<ApiResponse<null>>("/api/mcp/servers/manage", {
-				method: "POST",
-				body: JSON.stringify({ id: serverId, action, sync }),
-			});
-		} catch (error) {
-			console.warn("API not available, using mock implementation:", error);
-			return {
-				status: "success",
-				message: `Server ${serverId} ${action.toLowerCase()}d successfully (mock)${sync ? " with sync" : ""}`,
-			};
-		}
-	},
+	_manageServer: (
+		serverId: string,
+		action:
+			| "Enable"
+			| "Disable"
+			| "Allow_Direct_Exposure"
+			| "Deny_Direct_Exposure",
+		sourceRevisionSet: CatalogRevisionSet,
+		sync = false,
+	) =>
+		fetchApi<ApiResponse<null>>("/api/mcp/servers/manage", {
+			method: "POST",
+			body: JSON.stringify({
+				id: serverId,
+				action,
+				sync,
+				source_revision_set: sourceRevisionSet,
+			}),
+		}),
 
-	enableServer: (serverId: string, sync?: boolean) =>
-		serversApi._manageServer(serverId, "Enable", sync),
+	enableServer: (
+		serverId: string,
+		sourceRevisionSet: CatalogRevisionSet,
+		sync?: boolean,
+	) => serversApi._manageServer(serverId, "Enable", sourceRevisionSet, sync),
 
-	disableServer: (serverId: string, sync?: boolean) =>
-		serversApi._manageServer(serverId, "Disable", sync),
+	disableServer: (
+		serverId: string,
+		sourceRevisionSet: CatalogRevisionSet,
+		sync?: boolean,
+	) => serversApi._manageServer(serverId, "Disable", sourceRevisionSet, sync),
 
-	reconnectAllInstances: (serverId: string) =>
-		serversApi._manageServer(serverId, "Reconnect"),
+	setDirectExposureEligibility: (
+		serverId: string,
+		eligible: boolean,
+		sourceRevisionSet: CatalogRevisionSet,
+	) =>
+		serversApi._manageServer(
+			serverId,
+			eligible ? "Allow_Direct_Exposure" : "Deny_Direct_Exposure",
+			sourceRevisionSet,
+		),
 
 	// Server start/stop operations (mapped to enable/disable)
-	startServer: (serverId: string, sync?: boolean) =>
-		serversApi._manageServer(serverId, "Enable", sync),
+	startServer: (
+		serverId: string,
+		sourceRevisionSet: CatalogRevisionSet,
+		sync?: boolean,
+	) => serversApi._manageServer(serverId, "Enable", sourceRevisionSet, sync),
 
-	stopServer: (serverId: string, sync?: boolean) =>
-		serversApi._manageServer(serverId, "Disable", sync),
+	stopServer: (
+		serverId: string,
+		sourceRevisionSet: CatalogRevisionSet,
+		sync?: boolean,
+	) => serversApi._manageServer(serverId, "Disable", sourceRevisionSet, sync),
 
 	// CRUD operations
 	createServer: async (serverConfig: Partial<MCPServerConfig>) => {
@@ -1487,10 +1537,9 @@ export const serversApi = {
 		serverId: string,
 		serverConfig: Partial<MCPServerConfig>,
 	) => {
+		assertServerCrudUpdate(serverConfig);
 		const sc = serverConfig as {
 			url?: string;
-			enabled?: boolean;
-			unify_direct_exposure_eligible?: boolean;
 		};
 		const serverType = serverConfig.kind as string | undefined;
 		const body: Record<string, unknown> = {
@@ -1499,10 +1548,6 @@ export const serversApi = {
 			args: serverConfig.args ?? undefined,
 			env: serverConfig.env ?? undefined,
 			headers: serverConfig.headers ?? undefined,
-			enabled: sc.enabled ?? undefined,
-			unify_direct_exposure_eligible:
-				sc.unify_direct_exposure_eligible ?? undefined,
-			profile_ids: serverConfig.profile_ids ?? undefined,
 			source: serverConfig.source ?? undefined,
 		};
 		if (serverConfig.pending_import !== undefined) {
@@ -1538,31 +1583,44 @@ export const serversApi = {
 			body: JSON.stringify({ id: serverId }),
 		}),
 
-	// Server capabilities listing
-	listTools: async (
+	listAllCapabilities: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> =>
-		fetchCapabilityList("/api/mcp/servers/tools", serverId, refresh),
-	listResources: async (
+	): Promise<{
+		tools: CapabilityListResult;
+		resources: CapabilityListResult;
+		prompts: CapabilityListResult;
+		templates: CapabilityListResult;
+	}> => {
+		try {
+			const q = new URLSearchParams({ id: serverId, refresh });
+			const resp = await fetchApi<ApiWrapper<ServerCapabilityListsResult>>(
+				`/api/mcp/servers/capabilities/lists?${q.toString()}`,
+			);
+			const data = extractApiData(resp);
+			return normalizeBatchCapabilityLists(data);
+		} catch {
+			const transportError = capabilityTransportErrorResult();
+			return {
+				tools: transportError,
+				resources: transportError,
+				prompts: transportError,
+				templates: transportError,
+			};
+		}
+	},
+	refreshCapabilities: async (
 		serverId: string,
-		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> =>
-		fetchCapabilityList("/api/mcp/servers/resources", serverId, refresh),
-	listPrompts: async (
-		serverId: string,
-		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> =>
-		fetchCapabilityList("/api/mcp/servers/prompts", serverId, refresh),
-	listResourceTemplates: async (
-		serverId: string,
-		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<CapabilityListResult> =>
-    fetchCapabilityList(
-      "/api/mcp/servers/resources/templates",
-      serverId,
-      refresh,
-    ),
+	): Promise<ServerCapabilityRefreshResult> => {
+		const resp = await fetchApi<ApiWrapper<ServerCapabilityRefreshResult>>(
+			"/api/mcp/servers/capabilities/refresh",
+			{
+				method: "POST",
+				body: JSON.stringify({ id: serverId }),
+			},
+		);
+		return extractApiData(resp);
+	},
 	getCapabilityDetail: fetchCapabilityDetail,
 
 	// Import servers from JSON-like configuration object, or from a registered client's config
@@ -1758,6 +1816,14 @@ export const inspectorApi = {
 	}) =>
 		fetchApi<ApiWrapper<InspectorSessionOpenData>>(
 			`/api/mcp/inspector/session/open`,
+			{
+				method: "POST",
+				body: JSON.stringify(req),
+			},
+		),
+	sessionRefresh: async (req: { session_id: string }) =>
+		fetchApi<ApiWrapper<InspectorSessionOpenData>>(
+			`/api/mcp/inspector/session/refresh`,
 			{
 				method: "POST",
 				body: JSON.stringify(req),
@@ -2274,76 +2340,53 @@ export const configApi = {
 		}),
 };
 
+type ProfileCapabilityWire<T extends { id: string }> = Omit<T, "id"> & {
+	ref_id: string;
+};
+
+function profileCapabilityFromWire<T extends { id: string }>(
+	item: ProfileCapabilityWire<T>,
+): T {
+	const { ref_id, ...capability } = item;
+	return { ...capability, id: ref_id } as T;
+}
+
 // Config Suits Management API
 export const configSuitsApi = {
 	getAll: async (): Promise<ConfigSuitListResponse> => {
-		try {
-			const response = await fetchApi<
-				ApiWrapper<{
-					profile: ProfileApiRow[];
-					total: number;
-					timestamp: string;
-				}>
-			>("/api/mcp/profile/list");
-			const data = extractApiData(response);
-      const suits: ConfigSuit[] = (data.profile || []).map(
-        profileRowToConfigSuit,
-      );
-			return { suits };
-		} catch (error) {
-			console.error("Failed to fetch config suits:", error);
-			return { suits: [] };
-		}
-	},
-	// Server capabilities
-	listTools: async (serverId: string, refresh?: "auto" | "force" | "cache") => {
-    return fetchConfigSuitCapabilityList(
-      "/api/mcp/servers/tools",
-      serverId,
-      refresh,
-    );
-	},
-  listResources: async (
-    serverId: string,
-    refresh?: "auto" | "force" | "cache",
-  ) => {
-    return fetchConfigSuitCapabilityList(
-      "/api/mcp/servers/resources",
-      serverId,
-      refresh,
-    );
-	},
-  listPrompts: async (
-    serverId: string,
-    refresh?: "auto" | "force" | "cache",
-  ) => {
-    return fetchConfigSuitCapabilityList(
-      "/api/mcp/servers/prompts",
-      serverId,
-      refresh,
-    );
-	},
-  listResourceTemplates: async (
-    serverId: string,
-    refresh?: "auto" | "force" | "cache",
-  ) => {
-    return fetchConfigSuitCapabilityList(
-      "/api/mcp/servers/resources/templates",
-      serverId,
-      refresh,
-    );
+		const response = await fetchApi<
+			ApiWrapper<{
+				profile: ProfileApiRow[];
+				total: number;
+				timestamp: string;
+				source_revision_set: CatalogRevisionSet;
+			}>
+		>("/api/mcp/profile/list");
+		const data = extractApiData(response);
+		const suits: ConfigSuit[] = data.profile.map((profile) =>
+			profileRowToConfigSuit(profile, data.source_revision_set),
+		);
+		return {
+			suits,
+			source_revision_set: data.source_revision_set,
+		};
 	},
 
 	getSuit: async (id: string): Promise<ConfigSuit> => {
 		const q = new URLSearchParams({ id });
-		const response = await fetchApi<ApiWrapper<{ profile: ProfileApiRow }>>(
+		const response = await fetchApi<
+			ApiWrapper<{
+				profile: ProfileApiRow;
+				source_revision_set: CatalogRevisionSet;
+			}>
+		>(
 			`/api/mcp/profile/details?${q}`,
 		);
 		const data = extractApiData(response);
 		if (!data.profile) {
 			throw new Error("Profile details response missing profile");
 		}
-		return profileRowToConfigSuit(data.profile);
+		return profileRowToConfigSuit(data.profile, data.source_revision_set);
 	},
 
 	createSuit: async (
@@ -2397,12 +2440,18 @@ export const configSuitsApi = {
 		return { status: "success", message: "Profile updated", data: result };
 	},
 
-	deleteSuit: async (id: string): Promise<ApiResponse<void>> => {
+	deleteSuit: async (
+		id: string,
+		sourceRevisionSet: CatalogRevisionSet,
+	): Promise<ApiResponse<void>> => {
 		const response = await fetchApi<ApiWrapper<void>>(
 			`/api/mcp/profile/delete`,
 			{
 				method: "DELETE",
-				body: JSON.stringify({ id }),
+				body: JSON.stringify({
+					id,
+					source_revision_set: sourceRevisionSet,
+				}),
 			},
 		);
 		extractApiData(response);
@@ -2413,12 +2462,20 @@ export const configSuitsApi = {
 	},
 
 	// Suit management operations
-	_manageSuit: async (id: string, action: "activate" | "deactivate") => {
+	_manageSuits: async (
+		ids: string[],
+		action: "activate" | "deactivate",
+		sourceRevisionSet: CatalogRevisionSet,
+	) => {
 		const response = await fetchApi<ApiWrapper<unknown>>(
 			"/api/mcp/profile/manage",
 			{
 				method: "POST",
-				body: JSON.stringify({ ids: [id], action }),
+				body: JSON.stringify({
+					ids,
+					action,
+					source_revision_set: sourceRevisionSet,
+				}),
 			},
 		);
 		extractApiData(response);
@@ -2429,14 +2486,16 @@ export const configSuitsApi = {
 		};
 	},
 
-	activateSuit: (id: string) => configSuitsApi._manageSuit(id, "activate"),
-	deactivateSuit: (id: string) => configSuitsApi._manageSuit(id, "deactivate"),
+	activateSuit: (id: string, sourceRevisionSet: CatalogRevisionSet) =>
+		configSuitsApi._manageSuits([id], "activate", sourceRevisionSet),
+	deactivateSuit: (id: string, sourceRevisionSet: CatalogRevisionSet) =>
+		configSuitsApi._manageSuits([id], "deactivate", sourceRevisionSet),
 
 	// Batch operations
-	batchActivate: (ids: string[]) =>
-		executeBatchOperation(ids, configSuitsApi.activateSuit),
-	batchDeactivate: (ids: string[]) =>
-		executeBatchOperation(ids, configSuitsApi.deactivateSuit),
+	batchActivate: (ids: string[], sourceRevisionSet: CatalogRevisionSet) =>
+		configSuitsApi._manageSuits(ids, "activate", sourceRevisionSet),
+	batchDeactivate: (ids: string[], sourceRevisionSet: CatalogRevisionSet) =>
+		configSuitsApi._manageSuits(ids, "deactivate", sourceRevisionSet),
 
 	// Suit content management
 	getServers: async (suitId: string): Promise<ConfigSuitServersResponse> => {
@@ -2446,6 +2505,7 @@ export const configSuitsApi = {
 				profile_id: string;
 				profile_name: string;
 				servers: ConfigSuitServer[];
+				source_revision_set: CatalogRevisionSet;
 			}>
 		>(`/api/mcp/profile/servers/list?${q}`);
 		const data = extractApiData(response);
@@ -2453,6 +2513,7 @@ export const configSuitsApi = {
 			suit_id: data.profile_id,
 			suit_name: data.profile_name,
 			servers: data.servers || [],
+			source_revision_set: data.source_revision_set,
 		};
 	},
 
@@ -2462,14 +2523,16 @@ export const configSuitsApi = {
 			ApiWrapper<{
 				profile_id: string;
 				profile_name: string;
-				tools: ConfigSuitTool[];
+				tools: ProfileCapabilityWire<ConfigSuitTool>[];
+				source_revision_set: CatalogRevisionSet;
 			}>
 		>(`/api/mcp/profile/tools/list?${q}`);
 		const data = extractApiData(response);
 		return {
 			suit_id: data.profile_id,
 			suit_name: data.profile_name,
-			tools: data.tools || [],
+			tools: (data.tools || []).map(profileCapabilityFromWire),
+			source_revision_set: data.source_revision_set,
 		};
 	},
 
@@ -2481,14 +2544,16 @@ export const configSuitsApi = {
 			ApiWrapper<{
 				profile_id: string;
 				profile_name: string;
-				resources: ConfigSuitResource[];
+				resources: ProfileCapabilityWire<ConfigSuitResource>[];
+				source_revision_set: CatalogRevisionSet;
 			}>
 		>(`/api/mcp/profile/resources/list?${q}`);
 		const data = extractApiData(response);
 		return {
 			suit_id: data.profile_id,
 			suit_name: data.profile_name,
-			resources: data.resources || [],
+			resources: (data.resources || []).map(profileCapabilityFromWire),
+			source_revision_set: data.source_revision_set,
 		};
 	},
 
@@ -2498,14 +2563,16 @@ export const configSuitsApi = {
 			ApiWrapper<{
 				profile_id: string;
 				profile_name: string;
-				prompts: ConfigSuitPrompt[];
+				prompts: ProfileCapabilityWire<ConfigSuitPrompt>[];
+				source_revision_set: CatalogRevisionSet;
 			}>
 		>(`/api/mcp/profile/prompts/list?${q}`);
 		const data = extractApiData(response);
 		return {
 			suit_id: data.profile_id,
 			suit_name: data.profile_name,
-			prompts: data.prompts || [],
+			prompts: (data.prompts || []).map(profileCapabilityFromWire),
+			source_revision_set: data.source_revision_set,
 		};
 	},
 
@@ -2517,14 +2584,16 @@ export const configSuitsApi = {
 			ApiWrapper<{
 				profile_id: string;
 				profile_name: string;
-				templates: ConfigSuitResourceTemplate[];
+				templates: ProfileCapabilityWire<ConfigSuitResourceTemplate>[];
+				source_revision_set: CatalogRevisionSet;
 			}>
 		>(`/api/mcp/profile/resource-templates/list?${q}`);
 		const data = extractApiData(response);
 		return {
 			suit_id: data.profile_id,
 			suit_name: data.profile_name,
-			templates: data.templates || [],
+			templates: (data.templates || []).map(profileCapabilityFromWire),
+			source_revision_set: data.source_revision_set,
 		};
 	},
 
@@ -2535,6 +2604,7 @@ export const configSuitsApi = {
 		suitId: string,
 		componentId: string,
 		action: "enable" | "disable" | "remove",
+		sourceRevisionSet: CatalogRevisionSet,
 	) =>
 		fetchApi<ApiResponse<null>>(`/api/mcp/profile/${endpoint}/manage`, {
 			method: "POST",
@@ -2542,6 +2612,7 @@ export const configSuitsApi = {
 				profile_id: suitId,
 				component_ids: [componentId],
 				action,
+				source_revision_set: sourceRevisionSet,
 			}),
 		}),
 
@@ -2552,6 +2623,7 @@ export const configSuitsApi = {
 		suitId: string,
 		componentIds: string[],
 		action: "enable" | "disable",
+		sourceRevisionSet: CatalogRevisionSet,
 	) =>
 		fetchApi<ApiResponse<null>>(`/api/mcp/profile/${endpoint}/manage`, {
 			method: "POST",
@@ -2559,67 +2631,100 @@ export const configSuitsApi = {
 				profile_id: suitId,
 				component_ids: componentIds,
 				action,
+				source_revision_set: sourceRevisionSet,
+			}),
+		}),
+	bulkCapabilities: (
+		suitId: string,
+		componentIds: string[],
+		action: "enable" | "disable",
+		sourceRevisionSet: CatalogRevisionSet,
+	) =>
+		fetchApi<ApiResponse<null>>("/api/mcp/profile/capabilities/manage", {
+			method: "POST",
+			body: JSON.stringify({
+				profile_id: suitId,
+				component_ids: componentIds,
+				action,
+				source_revision_set: sourceRevisionSet,
 			}),
 		}),
 
-	enableServer: (suitId: string, serverId: string) =>
-		configSuitsApi._manageComponent("servers", suitId, serverId, "enable"),
-	disableServer: (suitId: string, serverId: string) =>
-		configSuitsApi._manageComponent("servers", suitId, serverId, "disable"),
-	removeServer: (suitId: string, serverId: string) =>
-		configSuitsApi._manageComponent("servers", suitId, serverId, "remove"),
+	enableServer: (suitId: string, serverId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("servers", suitId, serverId, "enable", revisions),
+	disableServer: (suitId: string, serverId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("servers", suitId, serverId, "disable", revisions),
+	removeServer: (suitId: string, serverId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("servers", suitId, serverId, "remove", revisions),
 	// Some backends only support single-id manage for servers; do per-id with best-effort batching
 	bulkServers: async (
 		suitId: string,
 		ids: string[],
-		action: "enable" | "disable" | "remove",
+		action: "enable" | "disable" | "remove" | "replace",
+		revisions: CatalogRevisionSet,
 	) =>
-		executeBatchOperation(ids, (id) =>
-			configSuitsApi._manageComponent("servers", suitId, id, action),
-		),
-	enableTool: (suitId: string, toolId: string) =>
-		configSuitsApi._manageComponent("tools", suitId, toolId, "enable"),
-	disableTool: (suitId: string, toolId: string) =>
-		configSuitsApi._manageComponent("tools", suitId, toolId, "disable"),
-	bulkTools: (suitId: string, ids: string[], action: "enable" | "disable") =>
-		configSuitsApi._manageComponentsBatch("tools", suitId, ids, action),
-	enableResource: (suitId: string, resourceId: string) =>
-		configSuitsApi._manageComponent("resources", suitId, resourceId, "enable"),
-	disableResource: (suitId: string, resourceId: string) =>
-		configSuitsApi._manageComponent("resources", suitId, resourceId, "disable"),
+		fetchApi<ApiResponse<null>>("/api/mcp/profile/servers/manage", {
+			method: "POST",
+			body: JSON.stringify({
+				profile_id: suitId,
+				component_ids: ids,
+				action,
+				source_revision_set: revisions,
+			}),
+		}),
+	enableTool: (suitId: string, toolId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("tools", suitId, toolId, "enable", revisions),
+	disableTool: (suitId: string, toolId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("tools", suitId, toolId, "disable", revisions),
+	bulkTools: (
+		suitId: string,
+		ids: string[],
+		action: "enable" | "disable",
+		revisions: CatalogRevisionSet,
+	) => configSuitsApi._manageComponentsBatch("tools", suitId, ids, action, revisions),
+	enableResource: (suitId: string, resourceId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("resources", suitId, resourceId, "enable", revisions),
+	disableResource: (suitId: string, resourceId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("resources", suitId, resourceId, "disable", revisions),
 	bulkResources: (
 		suitId: string,
 		ids: string[],
 		action: "enable" | "disable",
-	) => configSuitsApi._manageComponentsBatch("resources", suitId, ids, action),
-	getResourceTemplatesForSuit: (suitId: string) =>
-		configSuitsApi.getResourceTemplates(suitId),
-	enableResourceTemplate: (suitId: string, id: string) =>
-		configSuitsApi._manageComponent("resource-templates", suitId, id, "enable"),
-	disableResourceTemplate: (suitId: string, id: string) =>
+		revisions: CatalogRevisionSet,
+	) => configSuitsApi._manageComponentsBatch("resources", suitId, ids, action, revisions),
+	enableResourceTemplate: (suitId: string, id: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("resource-templates", suitId, id, "enable", revisions),
+	disableResourceTemplate: (suitId: string, id: string, revisions: CatalogRevisionSet) =>
     configSuitsApi._manageComponent(
       "resource-templates",
       suitId,
       id,
       "disable",
+      revisions,
     ),
 	bulkResourceTemplates: (
 		suitId: string,
 		ids: string[],
 		action: "enable" | "disable",
+		revisions: CatalogRevisionSet,
 	) =>
 		configSuitsApi._manageComponentsBatch(
 			"resource-templates",
 			suitId,
 			ids,
 			action,
+			revisions,
 		),
-	enablePrompt: (suitId: string, promptId: string) =>
-		configSuitsApi._manageComponent("prompts", suitId, promptId, "enable"),
-	disablePrompt: (suitId: string, promptId: string) =>
-		configSuitsApi._manageComponent("prompts", suitId, promptId, "disable"),
-	bulkPrompts: (suitId: string, ids: string[], action: "enable" | "disable") =>
-		configSuitsApi._manageComponentsBatch("prompts", suitId, ids, action),
+	enablePrompt: (suitId: string, promptId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("prompts", suitId, promptId, "enable", revisions),
+	disablePrompt: (suitId: string, promptId: string, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageComponent("prompts", suitId, promptId, "disable", revisions),
+	bulkPrompts: (
+		suitId: string,
+		ids: string[],
+		action: "enable" | "disable",
+		revisions: CatalogRevisionSet,
+	) => configSuitsApi._manageComponentsBatch("prompts", suitId, ids, action, revisions),
 };
 
 // WebSocket Notifications Service
@@ -2877,7 +2982,6 @@ export const clientsApi = {
 	update: async (payload: {
 		identifier: string;
 		display_name?: string;
-		config_mode?: string;
 		transport?: string;
 		config_file_state?: ClientConfigFileState;
 		config_path?: string;
@@ -2960,6 +3064,96 @@ export const clientsApi = {
 			},
 		);
 		return extractApiData(resp);
+	},
+};
+
+export const surfaceReviewsApi = {
+	list: async (query?: {
+		consumerId?: string;
+		ownerType?: SurfaceReviewOwnerType;
+		ownerId?: string;
+		state?: SurfaceReviewLifecycle;
+	}): Promise<SurfaceReviewItem[]> => {
+		const params = new URLSearchParams();
+		if (query?.consumerId) params.set("consumer_id", query.consumerId);
+		if (query?.ownerType) params.set("owner_type", query.ownerType);
+		if (query?.ownerId) params.set("owner_id", query.ownerId);
+		if (query?.state) params.set("state", query.state);
+		const suffix = params.size > 0 ? `?${params}` : "";
+		const response = await fetchApi<ApiWrapper<{ items: SurfaceReviewItem[] }>>(
+			`/api/client/surface/reviews${suffix}`,
+		);
+		return extractApiData(response).items;
+	},
+
+	get: async (reviewItemId: string): Promise<SurfaceReviewItem> => {
+		const response = await fetchApi<ApiWrapper<SurfaceReviewItem>>(
+			`/api/client/surface/reviews/${encodeURIComponent(reviewItemId)}`,
+		);
+		return extractApiData(response);
+	},
+
+	summary: async (): Promise<SurfaceReviewSummary> => {
+		const response = await fetchApi<ApiWrapper<SurfaceReviewSummary>>(
+			"/api/client/surface/reviews/summary",
+		);
+		return extractApiData(response);
+	},
+
+	approveTarget: async (
+		reviewItemId: string,
+		request: SurfaceReviewActionReq,
+	): Promise<SurfaceReviewActionData> => {
+		const response = await fetchApi<ApiWrapper<SurfaceReviewActionData>>(
+			`/api/client/surface/reviews/${encodeURIComponent(reviewItemId)}/approve`,
+			{
+				method: "POST",
+				body: JSON.stringify(request),
+			},
+		);
+		return extractApiData(response);
+	},
+
+	rejectTarget: async (
+		reviewItemId: string,
+		request: SurfaceReviewActionReq,
+	): Promise<SurfaceReviewActionData> => {
+		const response = await fetchApi<ApiWrapper<SurfaceReviewActionData>>(
+			`/api/client/surface/reviews/${encodeURIComponent(reviewItemId)}/reject`,
+			{
+				method: "POST",
+				body: JSON.stringify(request),
+			},
+		);
+		return extractApiData(response);
+	},
+
+	previewIntent: async (
+		reviewItemId: string,
+		request: SurfaceIntentPreviewReq,
+	): Promise<SurfaceIntentPreviewData> => {
+		const response = await fetchApi<ApiWrapper<SurfaceIntentPreviewData>>(
+			`/api/client/surface/reviews/${encodeURIComponent(reviewItemId)}/resolve-intent/preview`,
+			{
+				method: "POST",
+				body: JSON.stringify(request),
+			},
+		);
+		return extractApiData(response);
+	},
+
+	resolveIntent: async (
+		reviewItemId: string,
+		request: SurfaceIntentResolveReq,
+	): Promise<SurfaceReviewActionData> => {
+		const response = await fetchApi<ApiWrapper<SurfaceReviewActionData>>(
+			`/api/client/surface/reviews/${encodeURIComponent(reviewItemId)}/resolve-intent`,
+			{
+				method: "POST",
+				body: JSON.stringify(request),
+			},
+		);
+		return extractApiData(response);
 	},
 };
 

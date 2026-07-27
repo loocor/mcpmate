@@ -71,6 +71,7 @@ interface ClientCardProps {
 	onNavigate: (identifier: string) => void;
 	onGovernanceChange: (identifier: string, approved: boolean) => void;
 	isGovernancePending: boolean;
+	reviewCount?: number;
 }
 
 export function ClientCard({
@@ -78,6 +79,7 @@ export function ClientCard({
 	onNavigate,
 	onGovernanceChange,
 	isGovernancePending,
+	reviewCount = 0,
 }: ClientCardProps) {
 	const { t } = useTranslation("clients");
 
@@ -198,12 +200,24 @@ export function ClientCard({
 			}}
 			avatarShape="rounded"
 			stats={statItems}
-			className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName}`.trim()}
+			className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName} ${
+				reviewCount > 0
+					? "border-amber-400 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/20"
+					: ""
+			}`.trim()}
 			titleClassName={attentionClasses.titleClassName}
 			topRightBadge={
-				quickLinks.length > 0 ? (
-					<>
-						{quickLinks.map((link) => (
+				<>
+					{reviewCount > 0 ? (
+						<span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+							{t("surfaceReview:badge", {
+								count: reviewCount,
+								defaultValue: "{{count}} to review",
+							})}
+						</span>
+					) : null}
+					{quickLinks.length > 0
+						? quickLinks.map((link) => (
 							<button
 								key={`${identifier}-${link.label}`}
 								type="button"
@@ -214,9 +228,9 @@ export function ClientCard({
 								<link.icon className="h-4 w-4" aria-hidden />
 								<span className="sr-only">{link.label}</span>
 							</button>
-						))}
-					</>
-				) : undefined
+						))
+						: null}
+				</>
 			}
 			bottomLeft={
 				<TooltipProvider delayDuration={200}>

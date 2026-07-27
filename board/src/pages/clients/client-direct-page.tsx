@@ -1,10 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useParams } from "react-router-dom";
-import CapabilityList from "../../components/capability-list";
+import { useParams, useSearchParams } from "react-router-dom";
+import {
+	useBulkSelection,
+	useEnableDisableBulkActions,
+} from "../../components/bulk-selection";
+import CapabilityList, {
+	type CapabilityKind,
+} from "../../components/capability-list";
+import { CapabilityManagementPanel } from "../../components/capability-management-panel";
+import type { CapabilityPreviewFlatItem } from "../../components/capability-preview-list";
+import { CAPABILITY_SCROLL_CARD_CLASS } from "../../components/capability-scroll-card-layout";
 import { CachedAvatar } from "../../components/cached-avatar";
-import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
+import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
 import {
 	Card,
 	CardContent,
@@ -13,26 +22,14 @@ import {
 	CardTitle,
 } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { ButtonGroup } from "../../components/ui/button-group";
-import { Input } from "../../components/ui/input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../../components/ui/select";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "../../components/ui/tabs";
 import { clientsApi, serversApi } from "../../lib/api";
-import { useUrlTab } from "../../lib/hooks/use-url-state";
+import { capabilityRecordMatchesSearch } from "../../lib/capability-search";
+import { capabilityKey, splitCapabilityKey } from "../../lib/capability-keys";
+import { capabilityKindLabel } from "../../lib/capability-kind-label";
+import { useCapabilityKindFilters } from "../../hooks/use-capability-kind-filters";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
+import type { CapabilityRecord } from "../../types/capabilities";
 import type {
 	ClientCapabilityConfigData,
 	ClientCapabilityConfigReq,
@@ -41,17 +38,14 @@ import type {
 	ConfigSuitResourceTemplate,
 	ConfigSuitTool,
 	ServerDetail,
-	UnifyDirectCapabilityIds,
+	UnifyDirectCapabilityRefs,
 } from "../../lib/types";
 
-type ToolStatusFilter = "all" | "enabled" | "disabled";
-type DirectCapabilityTab = "tools" | "prompts" | "resources" | "templates";
-const DIRECT_CAPABILITY_TABS: DirectCapabilityTab[] = [
-	"tools",
-	"prompts",
-	"resources",
-	"templates",
-];
+type CapabilityStatusFilter = "all" | "enabled" | "disabled";
+
+type DirectFlatCapabilityItem = CapabilityRecord & {
+	__directCapabilityKind: CapabilityKind;
+};
 
 function getServerIconSrc(server?: ServerDetail): string | undefined {
 	const icon = server?.icons?.find(
@@ -61,40 +55,34 @@ function getServerIconSrc(server?: ServerDetail): string | undefined {
 	return icon?.src;
 }
 
-function createEmptyCapabilityConfig(
-  identifier: string,
+function requireCapabilityConfig(
+	config: ClientCapabilityConfigData | null,
 ): ClientCapabilityConfigData {
-	return {
-		identifier,
-		capability_source: "activated",
-		selected_profile_ids: [],
-		unify_direct_exposure: {
-			route_mode: "capability_level",
-			server_ids: [],
-			capability_ids: {},
-		},
-	};
+	if (!config) {
+		throw new Error("Client capability configuration is not available.");
+	}
+	return config;
 }
 
 function normalizeCapabilityIds(ids: string[] = []): string[] {
 	return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean))).sort();
 }
 
-function getSelectedCapabilityIds(
+function getSelectedCapabilityRefs(
 	capabilityConfig: ClientCapabilityConfigData,
-): UnifyDirectCapabilityIds {
-	const capabilityIds = capabilityConfig.unify_direct_exposure?.capability_ids;
+): UnifyDirectCapabilityRefs {
+	const capabilityRefs = capabilityConfig.unify_direct_exposure?.capability_refs;
 	return {
-		tool_ids: normalizeCapabilityIds(capabilityIds?.tool_ids),
-		prompt_ids: normalizeCapabilityIds(capabilityIds?.prompt_ids),
-		resource_ids: normalizeCapabilityIds(capabilityIds?.resource_ids),
-		template_ids: normalizeCapabilityIds(capabilityIds?.template_ids),
+		tool_refs: normalizeCapabilityIds(capabilityRefs?.tool_refs),
+		prompt_refs: normalizeCapabilityIds(capabilityRefs?.prompt_refs),
+		resource_refs: normalizeCapabilityIds(capabilityRefs?.resource_refs),
+		template_refs: normalizeCapabilityIds(capabilityRefs?.template_refs),
 	};
 }
 
 function getCapabilityId(
-  item: Record<string, unknown>,
-  keys: string[],
+	item: Record<string, unknown>,
+	keys: string[],
 ): string | null {
 	for (const key of keys) {
 		const value = item[key];
@@ -105,77 +93,88 @@ function getCapabilityId(
 	return null;
 }
 
+function getCapabilityDetailKey(
+	item: Record<string, unknown>,
+	kind: CapabilityKind,
+): string | null {
+	switch (kind) {
+		case "tools":
+		case "prompts":
+			return getCapabilityId(item, ["unique_name"]);
+		case "resources":
+			return getCapabilityId(item, ["unique_uri"]);
+		case "templates":
+			return getCapabilityId(item, ["unique_uri_template"]);
+	}
+}
+
 function resolveNextCapabilityIdList(
-  currentIds: string[] = [],
-  capabilityId: string,
-  enable: boolean,
+	currentIds: string[] = [],
+	capabilityId: string,
+	enable: boolean,
 ): string[] {
 	const remainingIds = currentIds.filter((id) => id !== capabilityId);
-  return enable
-    ? normalizeCapabilityIds([...remainingIds, capabilityId])
-    : remainingIds;
+	return enable
+		? normalizeCapabilityIds([...remainingIds, capabilityId])
+		: remainingIds;
 }
 
 function createCapabilityConfigPayload(
 	identifier: string,
 	existingConfig: ClientCapabilityConfigData,
-	nextCapabilityIds: UnifyDirectCapabilityIds,
+	nextCapabilityRefs: UnifyDirectCapabilityRefs,
 ): ClientCapabilityConfigReq {
 	return {
 		identifier,
 		capability_source: existingConfig.capability_source,
 		selected_profile_ids: existingConfig.selected_profile_ids,
+		source_revision_set: existingConfig.source_revision_set,
 		unify_direct_exposure: {
 			route_mode: "capability_level",
 			server_ids: [],
-			capability_ids: nextCapabilityIds,
+			capability_refs: nextCapabilityRefs,
 		},
 	};
 }
 
-function filterVisibleTools<T extends { enabled: boolean }>(
-	tools: T[],
-	toolQuery: string,
-	toolStatus: ToolStatusFilter,
-	getSearchFields: (item: T) => string[],
-): T[] {
-	const keyword = toolQuery.trim().toLowerCase();
-
-	return tools.filter((tool) => {
-		if (toolStatus === "enabled" && !tool.enabled) return false;
-		if (toolStatus === "disabled" && tool.enabled) return false;
-		if (!keyword) return true;
-		return getSearchFields(tool)
-			.filter(Boolean)
-			.some((value) => value.toLowerCase().includes(keyword));
-	});
+function directCapabilityDetailsCacheToken(items: DirectFlatCapabilityItem[]) {
+	return items
+		.map((item) =>
+			[
+				item.__directCapabilityKind,
+				item.id,
+				item.enabled ? "1" : "0",
+				item.description ?? "",
+			].join(":"),
+		)
+		.join("|");
 }
 
 export function ClientDirectCapabilitiesPage() {
 	usePageTranslations("clients");
-	const { t } = useTranslation("clients");
+	usePageTranslations("servers");
+	usePageTranslations("profiles");
+	const { t, i18n } = useTranslation(["clients", "servers"]);
 	const { identifier, serverId } = useParams<{
 		identifier: string;
 		serverId: string;
 	}>();
-	const { activeTab, setActiveTab } = useUrlTab({
-		paramName: "tab",
-		defaultTab: "tools",
-		validTabs: DIRECT_CAPABILITY_TABS,
-	});
+	const [searchParams, setSearchParams] = useSearchParams();
+	const reviewItemId = searchParams.get("review_item");
+	const reviewRefId = searchParams.get("ref_id");
 	const queryClient = useQueryClient();
-	const [toolQuery, setToolQuery] = useState("");
-	const [toolStatus, setToolStatus] = useState<ToolStatusFilter>("all");
-	const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
-	const [promptQuery, setPromptQuery] = useState("");
-	const [promptStatus, setPromptStatus] = useState<ToolStatusFilter>("all");
-	const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
-	const [resourceQuery, setResourceQuery] = useState("");
-	const [resourceStatus, setResourceStatus] = useState<ToolStatusFilter>("all");
-	const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
-	const [templateQuery, setTemplateQuery] = useState("");
-	const [templateStatus, setTemplateStatus] = useState<ToolStatusFilter>("all");
-	const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+	const [capabilityQuery, setCapabilityQuery] = useState("");
+	const {
+		kindFilters: capabilityKindFilters,
+		kindMatches: capabilityKindMatches,
+		kindFilterLabel: capabilityKindFilterLabel,
+		kindFilterOptions: capabilityKindFilterOptions,
+		toggleKindFilter: toggleCapabilityKindFilter,
+		clearKindFilters: clearCapabilityKindFilters,
+	} = useCapabilityKindFilters(t);
+	const [capabilityStatus, setCapabilityStatus] =
+		useState<CapabilityStatusFilter>("all");
+	const capabilityBulk = useBulkSelection<string>();
 
 	async function loadCapabilityConfig(): Promise<ClientCapabilityConfigData | null> {
 		if (!identifier) {
@@ -223,30 +222,28 @@ export function ClientDirectCapabilitiesPage() {
 					templates: [] as ConfigSuitResourceTemplate[],
 				};
 			}
-      const [
-        serverToolsResponse,
-        serverPromptsResponse,
-        serverResourcesResponse,
-        serverTemplatesResponse,
-        clientCapabilityConfig,
-      ] = await Promise.all([
-				serversApi.listTools(serverId).catch(() => ({ items: [] })),
-				serversApi.listPrompts(serverId).catch(() => ({ items: [] })),
-				serversApi.listResources(serverId).catch(() => ({ items: [] })),
-				serversApi.listResourceTemplates(serverId).catch(() => ({ items: [] })),
-				clientsApi.getCapabilityConfig(identifier).catch(() => null),
+			const [
+				capabilityLists,
+				clientCapabilityConfig,
+			] = await Promise.all([
+				serversApi.listAllCapabilities(serverId),
+				clientsApi.getCapabilityConfig(identifier),
 			]);
-			const selectedCapabilityIds = getSelectedCapabilityIds(
-				clientCapabilityConfig ?? createEmptyCapabilityConfig(identifier),
+			const serverToolsResponse = capabilityLists.tools;
+			const serverPromptsResponse = capabilityLists.prompts;
+			const serverResourcesResponse = capabilityLists.resources;
+			const serverTemplatesResponse = capabilityLists.templates;
+			const selectedCapabilityRefs = getSelectedCapabilityRefs(
+				requireCapabilityConfig(clientCapabilityConfig),
 			);
-			const selectedToolSet = new Set(selectedCapabilityIds.tool_ids ?? []);
-			const selectedPromptSet = new Set(selectedCapabilityIds.prompt_ids ?? []);
-      const selectedResourceSet = new Set(
-        selectedCapabilityIds.resource_ids ?? [],
-      );
-      const selectedTemplateSet = new Set(
-        selectedCapabilityIds.template_ids ?? [],
-      );
+			const selectedToolSet = new Set(selectedCapabilityRefs.tool_refs ?? []);
+			const selectedPromptSet = new Set(selectedCapabilityRefs.prompt_refs ?? []);
+			const selectedResourceSet = new Set(
+				selectedCapabilityRefs.resource_refs ?? [],
+			);
+			const selectedTemplateSet = new Set(
+				selectedCapabilityRefs.template_refs ?? [],
+			);
 			const rawTools = Array.isArray(serverToolsResponse.items)
 				? (serverToolsResponse.items as Array<Record<string, unknown>>)
 				: [];
@@ -262,73 +259,82 @@ export function ClientDirectCapabilitiesPage() {
 
 			const tools: ConfigSuitTool[] = rawTools.flatMap((tool) => {
 				const toolName = String(tool["tool_name"] ?? tool["name"] ?? "");
-				const capabilityId = getCapabilityId(tool, ["unique_name"]);
-				if (!capabilityId) return [];
+				const capabilityRefId = getCapabilityId(tool, ["ref_id"]);
+				if (!capabilityRefId) return [];
 				return {
-					id: capabilityId,
+					...tool,
+					id: capabilityRefId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					tool_name: toolName,
-					unique_name: capabilityId,
-					enabled: selectedToolSet.has(capabilityId),
+					unique_name: String(tool["unique_name"] ?? tool["name"] ?? toolName),
+					enabled: selectedToolSet.has(capabilityRefId),
 					allowed_operations: [],
 				};
 			});
 			const prompts: ConfigSuitPrompt[] = rawPrompts.flatMap((prompt) => {
-        const promptName = String(
-          prompt["prompt_name"] ?? prompt["name"] ?? "",
-        );
-				const capabilityId = getCapabilityId(prompt, ["unique_name"]);
-				if (!capabilityId) return [];
+				const promptName = String(
+					prompt["prompt_name"] ?? prompt["name"] ?? "",
+				);
+				const capabilityRefId = getCapabilityId(prompt, ["ref_id"]);
+				if (!capabilityRefId) return [];
 				return {
-					id: capabilityId,
+					...prompt,
+					id: capabilityRefId,
 					server_id: serverId,
 					server_name: serverDetails?.name ?? serverId,
 					prompt_name: promptName,
-          unique_name: capabilityId,
-					enabled: selectedPromptSet.has(capabilityId),
+					unique_name: String(
+						prompt["unique_name"] ?? prompt["name"] ?? promptName,
+					),
+					enabled: selectedPromptSet.has(capabilityRefId),
 					allowed_operations: [],
 				};
 			});
-      const resources: ConfigSuitResource[] = rawResources.flatMap(
-        (resource) => {
-          const resourceUri = String(
-            resource["resource_uri"] ?? resource["uri"] ?? "",
-          );
-				const capabilityId = getCapabilityId(resource, ["unique_uri"]);
-				if (!capabilityId) return [];
-				return {
-					id: capabilityId,
-					server_id: serverId,
-					server_name: serverDetails?.name ?? serverId,
-					resource_uri: resourceUri,
-            unique_uri: capabilityId,
-					enabled: selectedResourceSet.has(capabilityId),
-					allowed_operations: [],
-				};
-        },
-      );
-      const templates: ConfigSuitResourceTemplate[] = rawTemplates.flatMap(
-        (template) => {
-				const uriTemplate = String(
-					template["uri_template"] ?? template["template"] ?? "",
-				);
-          const capabilityId = getCapabilityId(template, [
-            "unique_uri_template",
-            "unique_name",
-          ]);
-				if (!capabilityId) return [];
-				return {
-					id: capabilityId,
-					server_id: serverId,
-					server_name: serverDetails?.name ?? serverId,
-					uri_template: uriTemplate,
-            unique_uri_template: capabilityId,
-					enabled: selectedTemplateSet.has(capabilityId),
-					allowed_operations: [],
-				};
-        },
-      );
+			const resources: ConfigSuitResource[] = rawResources.flatMap(
+				(resource) => {
+					const resourceUri = String(
+						resource["resource_uri"] ?? resource["uri"] ?? "",
+					);
+					const capabilityRefId = getCapabilityId(resource, ["ref_id"]);
+					if (!capabilityRefId) return [];
+					return {
+						...resource,
+						id: capabilityRefId,
+						server_id: serverId,
+						server_name: serverDetails?.name ?? serverId,
+						resource_uri: resourceUri,
+						unique_uri: String(
+							resource["unique_uri"] ?? resource["uri"] ?? resourceUri,
+						),
+						enabled: selectedResourceSet.has(capabilityRefId),
+						allowed_operations: [],
+					};
+				},
+			);
+			const templates: ConfigSuitResourceTemplate[] = rawTemplates.flatMap(
+				(template) => {
+					const uriTemplate = String(
+						template["uri_template"] ?? template["template"] ?? "",
+					);
+					const capabilityRefId = getCapabilityId(template, ["ref_id"]);
+					if (!capabilityRefId) return [];
+					return {
+						...template,
+						id: capabilityRefId,
+						server_id: serverId,
+						server_name: serverDetails?.name ?? serverId,
+						uri_template: uriTemplate,
+						unique_uri_template: String(
+							template["unique_uri_template"] ??
+							template["uriTemplate"] ??
+							uriTemplate,
+						),
+						enabled: selectedTemplateSet.has(capabilityRefId),
+						allowed_operations: [],
+					};
+				},
+			);
 			return { tools, prompts, resources, templates };
 		},
 		enabled: Boolean(identifier && serverId),
@@ -351,98 +357,172 @@ export function ClientDirectCapabilitiesPage() {
 		() => (capabilityResponse?.templates ?? []) as ConfigSuitResourceTemplate[],
 		[capabilityResponse?.templates],
 	);
-	const enabledToolsCount = useMemo(
-		() => tools.filter((tool) => tool.enabled).length,
-		[tools],
-	);
-	const enabledPromptsCount = useMemo(
-		() => prompts.filter((entry) => entry.enabled).length,
-		[prompts],
-	);
-	const enabledResourcesCount = useMemo(
-		() => resources.filter((entry) => entry.enabled).length,
-		[resources],
-	);
-	const enabledTemplatesCount = useMemo(
-		() => templates.filter((entry) => entry.enabled).length,
-		[templates],
-	);
-	const visibleTools = useMemo(
-    () =>
-      filterVisibleTools(tools, toolQuery, toolStatus, (entry) => [
-        entry.unique_name,
-        entry.tool_name,
-        entry.server_name,
-      ]),
-		[toolQuery, toolStatus, tools],
-	);
-	const visiblePrompts = useMemo(
-		() =>
-			filterVisibleTools(prompts, promptQuery, promptStatus, (entry) => [
-        entry.unique_name,
-				entry.prompt_name,
-				entry.server_name,
-			]),
-		[prompts, promptQuery, promptStatus],
-	);
-	const visibleResources = useMemo(
-		() =>
-			filterVisibleTools(resources, resourceQuery, resourceStatus, (entry) => [
-        entry.unique_uri,
-				entry.resource_uri,
-				entry.server_name,
-			]),
-		[resources, resourceQuery, resourceStatus],
-	);
-	const visibleTemplates = useMemo(
-		() =>
-			filterVisibleTools(templates, templateQuery, templateStatus, (entry) => [
-        entry.unique_uri_template,
-				entry.uri_template,
-				entry.server_name,
-			]),
-		[templates, templateQuery, templateStatus],
+
+	const loadCapabilityDetails = useCallback(
+		async (
+			item: Record<string, unknown>,
+			kind: CapabilityKind,
+		): Promise<CapabilityRecord | null> => {
+			if (!serverId) return null;
+			const key = getCapabilityDetailKey(item, kind);
+			if (!key) return null;
+			const detail = await serversApi.getCapabilityDetail(serverId, kind, key);
+			return (detail.item ?? null) as CapabilityRecord | null;
+		},
+		[serverId],
 	);
 
-  const toolToggleMutation = useMutation<
-    unknown,
-    unknown,
-    { toolId: string; enable: boolean }
-  >({
+	useEffect(() => {
+		if (!reviewRefId) return;
+		setCapabilityQuery(reviewRefId);
+	}, [reviewRefId]);
+
+	const capabilityStatusFilter = useCallback(
+		(item: { enabled: boolean }) =>
+			capabilityStatus === "all" ||
+			(capabilityStatus === "enabled" ? item.enabled : !item.enabled),
+		[capabilityStatus],
+	);
+
+	const filteredTools = useMemo(
+		() => tools.filter(capabilityStatusFilter),
+		[capabilityStatusFilter, tools],
+	);
+	const filteredPrompts = useMemo(
+		() => prompts.filter(capabilityStatusFilter),
+		[capabilityStatusFilter, prompts],
+	);
+	const filteredResources = useMemo(
+		() => resources.filter(capabilityStatusFilter),
+		[capabilityStatusFilter, resources],
+	);
+	const filteredTemplates = useMemo(
+		() => templates.filter(capabilityStatusFilter),
+		[capabilityStatusFilter, templates],
+	);
+
+	const visibleCapabilityKeys = useMemo(
+		() => [
+			...(capabilityKindMatches("tools")
+				? filteredTools
+					.filter((tool) =>
+						capabilityRecordMatchesSearch(
+							tool as CapabilityRecord,
+							capabilityQuery,
+						),
+					)
+					.map((tool) => capabilityKey("tools", tool.id))
+				: []),
+			...(capabilityKindMatches("resources")
+				? filteredResources
+					.filter((resource) =>
+						capabilityRecordMatchesSearch(
+							resource as CapabilityRecord,
+							capabilityQuery,
+						),
+					)
+					.map((resource) => capabilityKey("resources", resource.id))
+				: []),
+			...(capabilityKindMatches("prompts")
+				? filteredPrompts
+					.filter((prompt) =>
+						capabilityRecordMatchesSearch(
+							prompt as CapabilityRecord,
+							capabilityQuery,
+						),
+					)
+					.map((prompt) => capabilityKey("prompts", prompt.id))
+				: []),
+			...(capabilityKindMatches("templates")
+				? filteredTemplates
+					.filter((template) =>
+						capabilityRecordMatchesSearch(
+							template as CapabilityRecord,
+							capabilityQuery,
+						),
+					)
+					.map((template) => capabilityKey("templates", template.id))
+				: []),
+		],
+		[
+			capabilityKindMatches,
+			capabilityQuery,
+			filteredPrompts,
+			filteredResources,
+			filteredTemplates,
+			filteredTools,
+		],
+	);
+
+	const capabilityStatusLabel = useMemo(() => {
+		if (capabilityStatus === "enabled") {
+			return t("servers:detail.filters.status.enabled", {
+				defaultValue: "Enabled",
+			});
+		}
+		if (capabilityStatus === "disabled") {
+			return t("servers:detail.filters.status.disabled", {
+				defaultValue: "Disabled",
+			});
+		}
+		return t("servers:detail.filters.status.all", {
+			defaultValue: "All",
+		});
+	}, [capabilityStatus, i18n.language, t]);
+
+	const updateCapabilityRefs = useCallback(
+		async (nextCapabilityRefs: UnifyDirectCapabilityRefs) => {
+			if (!identifier) return;
+			const existingConfig = requireCapabilityConfig(
+				await loadCapabilityConfig(),
+			);
+			await clientsApi.updateCapabilityConfig(
+				createCapabilityConfigPayload(
+					identifier,
+					existingConfig,
+					nextCapabilityRefs,
+				),
+			);
+		},
+		[identifier],
+	);
+
+	const toolToggleMutation = useMutation<
+		unknown,
+		unknown,
+		{ toolId: string; enable: boolean }
+	>({
 		mutationFn: async ({ toolId, enable }) => {
 			if (!identifier || !serverId) return null;
-			const existingConfig =
-        (await loadCapabilityConfig()) ??
-        createEmptyCapabilityConfig(identifier);
-			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
-
-			await clientsApi.updateCapabilityConfig(
-				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentCapabilityIds,
-          tool_ids: resolveNextCapabilityIdList(
-            currentCapabilityIds.tool_ids,
-            toolId,
-            enable,
-          ),
-				}),
+			const existingConfig = requireCapabilityConfig(
+				await loadCapabilityConfig(),
 			);
+			const currentCapabilityRefs = getSelectedCapabilityRefs(existingConfig);
+			await updateCapabilityRefs({
+				...currentCapabilityRefs,
+				tool_refs: resolveNextCapabilityIdList(
+					currentCapabilityRefs.tool_refs,
+					toolId,
+					enable,
+				),
+			});
 			return null;
 		},
 		onSuccess: () => {
 			invalidateDirectQueries();
 			void refetchCapabilities();
 			notifySuccess(
-				t("detail.directExposure.notifications.savedTitle", {
+				t("clients:detail.directExposure.notifications.savedTitle", {
 					defaultValue: "Direct capabilities updated",
 				}),
-				t("detail.directExposure.notifications.savedMessage", {
+				t("clients:detail.directExposure.notifications.savedMessage", {
 					defaultValue: "The direct capability exposure list has been updated.",
 				}),
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("detail.directExposure.notifications.saveFailedTitle", {
+				t("clients:detail.directExposure.notifications.saveFailedTitle", {
 					defaultValue: "Unable to update direct capabilities",
 				}),
 				String(error),
@@ -450,27 +530,25 @@ export function ClientDirectCapabilitiesPage() {
 		},
 	});
 
-  const promptToggleMutation = useMutation<
-    unknown,
-    unknown,
-    { promptId: string; enable: boolean }
-  >({
+	const promptToggleMutation = useMutation<
+		unknown,
+		unknown,
+		{ promptId: string; enable: boolean }
+	>({
 		mutationFn: async ({ promptId, enable }) => {
 			if (!identifier || !serverId) return null;
-			const existingConfig =
-        (await loadCapabilityConfig()) ??
-        createEmptyCapabilityConfig(identifier);
-			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
-			await clientsApi.updateCapabilityConfig(
-				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentCapabilityIds,
-          prompt_ids: resolveNextCapabilityIdList(
-            currentCapabilityIds.prompt_ids,
-            promptId,
-            enable,
-          ),
-				}),
+			const existingConfig = requireCapabilityConfig(
+				await loadCapabilityConfig(),
 			);
+			const currentCapabilityRefs = getSelectedCapabilityRefs(existingConfig);
+			await updateCapabilityRefs({
+				...currentCapabilityRefs,
+				prompt_refs: resolveNextCapabilityIdList(
+					currentCapabilityRefs.prompt_refs,
+					promptId,
+					enable,
+				),
+			});
 			return null;
 		},
 		onSuccess: () => {
@@ -479,27 +557,25 @@ export function ClientDirectCapabilitiesPage() {
 		},
 	});
 
-  const resourceToggleMutation = useMutation<
-    unknown,
-    unknown,
-    { resourceId: string; enable: boolean }
-  >({
+	const resourceToggleMutation = useMutation<
+		unknown,
+		unknown,
+		{ resourceId: string; enable: boolean }
+	>({
 		mutationFn: async ({ resourceId, enable }) => {
 			if (!identifier || !serverId) return null;
-			const existingConfig =
-        (await loadCapabilityConfig()) ??
-        createEmptyCapabilityConfig(identifier);
-			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
-			await clientsApi.updateCapabilityConfig(
-				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentCapabilityIds,
-          resource_ids: resolveNextCapabilityIdList(
-            currentCapabilityIds.resource_ids,
-            resourceId,
-            enable,
-          ),
-				}),
+			const existingConfig = requireCapabilityConfig(
+				await loadCapabilityConfig(),
 			);
+			const currentCapabilityRefs = getSelectedCapabilityRefs(existingConfig);
+			await updateCapabilityRefs({
+				...currentCapabilityRefs,
+				resource_refs: resolveNextCapabilityIdList(
+					currentCapabilityRefs.resource_refs,
+					resourceId,
+					enable,
+				),
+			});
 			return null;
 		},
 		onSuccess: () => {
@@ -508,27 +584,25 @@ export function ClientDirectCapabilitiesPage() {
 		},
 	});
 
-  const templateToggleMutation = useMutation<
-    unknown,
-    unknown,
-    { templateId: string; enable: boolean }
-  >({
+	const templateToggleMutation = useMutation<
+		unknown,
+		unknown,
+		{ templateId: string; enable: boolean }
+	>({
 		mutationFn: async ({ templateId, enable }) => {
 			if (!identifier || !serverId) return null;
-			const existingConfig =
-        (await loadCapabilityConfig()) ??
-        createEmptyCapabilityConfig(identifier);
-			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
-			await clientsApi.updateCapabilityConfig(
-				createCapabilityConfigPayload(identifier, existingConfig, {
-					...currentCapabilityIds,
-          template_ids: resolveNextCapabilityIdList(
-            currentCapabilityIds.template_ids,
-            templateId,
-            enable,
-          ),
-				}),
+			const existingConfig = requireCapabilityConfig(
+				await loadCapabilityConfig(),
 			);
+			const currentCapabilityRefs = getSelectedCapabilityRefs(existingConfig);
+			await updateCapabilityRefs({
+				...currentCapabilityRefs,
+				template_refs: resolveNextCapabilityIdList(
+					currentCapabilityRefs.template_refs,
+					templateId,
+					enable,
+				),
+			});
 			return null;
 		},
 		onSuccess: () => {
@@ -537,71 +611,87 @@ export function ClientDirectCapabilitiesPage() {
 		},
 	});
 
-	const bulkToolsMutation = useMutation<unknown, unknown, { enable: boolean }>({
-		mutationFn: async ({ enable }) => {
+	const bulkCapabilitiesMutation = useMutation<
+		unknown,
+		unknown,
+		{ enable: boolean; ids: string[] }
+	>({
+		mutationFn: async ({ enable, ids }) => {
 			if (!identifier || !serverId) return null;
-			const existingConfig =
-        (await loadCapabilityConfig()) ??
-        createEmptyCapabilityConfig(identifier);
-			const currentCapabilityIds = getSelectedCapabilityIds(existingConfig);
-			const selectedToolIdSet = new Set(selectedToolIds);
-			const selectedPromptIdSet = new Set(selectedPromptIds);
-			const selectedResourceIdSet = new Set(selectedResourceIds);
-			const selectedTemplateIdSet = new Set(selectedTemplateIds);
-      const resolveBulkIds = (
-        currentIds: string[] = [],
-        selectedIds: Set<string>,
-      ) => {
-				const remainingIds = currentIds.filter((id) => !selectedIds.has(id));
-        return enable
-          ? normalizeCapabilityIds([
-              ...remainingIds,
-              ...Array.from(selectedIds),
-            ])
-          : remainingIds;
+			const existingConfig = requireCapabilityConfig(
+				await loadCapabilityConfig(),
+			);
+			const currentCapabilityRefs = getSelectedCapabilityRefs(existingConfig);
+			const grouped = ids.reduce(
+				(acc, key) => {
+					const capability = splitCapabilityKey(key);
+					if (capability.capability_type === "tools") {
+						acc.tools.push(capability.capability_id);
+					} else if (capability.capability_type === "resources") {
+						acc.resources.push(capability.capability_id);
+					} else if (capability.capability_type === "prompts") {
+						acc.prompts.push(capability.capability_id);
+					} else if (capability.capability_type === "templates") {
+						acc.templates.push(capability.capability_id);
+					}
+					return acc;
+				},
+				{
+					tools: [] as string[],
+					resources: [] as string[],
+					prompts: [] as string[],
+					templates: [] as string[],
+				},
+			);
+
+			const resolveBulkIds = (
+				currentIds: string[] = [],
+				selectedIds: string[],
+			) => {
+				const selectedIdSet = new Set(selectedIds);
+				const remainingIds = currentIds.filter((id) => !selectedIdSet.has(id));
+				return enable
+					? normalizeCapabilityIds([...remainingIds, ...selectedIds])
+					: remainingIds;
 			};
 
-			await clientsApi.updateCapabilityConfig(
-				createCapabilityConfigPayload(identifier, existingConfig, {
-          tool_ids: resolveBulkIds(
-            currentCapabilityIds.tool_ids,
-            selectedToolIdSet,
-          ),
-          prompt_ids: resolveBulkIds(
-            currentCapabilityIds.prompt_ids,
-            selectedPromptIdSet,
-          ),
-          resource_ids: resolveBulkIds(
-            currentCapabilityIds.resource_ids,
-            selectedResourceIdSet,
-          ),
-          template_ids: resolveBulkIds(
-            currentCapabilityIds.template_ids,
-            selectedTemplateIdSet,
-          ),
-				}),
-			);
+			await updateCapabilityRefs({
+				tool_refs: resolveBulkIds(
+					currentCapabilityRefs.tool_refs,
+					grouped.tools,
+				),
+				prompt_refs: resolveBulkIds(
+					currentCapabilityRefs.prompt_refs,
+					grouped.prompts,
+				),
+				resource_refs: resolveBulkIds(
+					currentCapabilityRefs.resource_refs,
+					grouped.resources,
+				),
+				template_refs: resolveBulkIds(
+					currentCapabilityRefs.template_refs,
+					grouped.templates,
+				),
+			});
 			return null;
 		},
 		onSuccess: () => {
-			setSelectedToolIds([]);
-			setSelectedPromptIds([]);
-			setSelectedResourceIds([]);
-			setSelectedTemplateIds([]);
+			capabilityBulk.clearSelection();
+			capabilityBulk.exitBulkMode();
 			invalidateDirectQueries();
 			void refetchCapabilities();
 			notifySuccess(
-				t("detail.directExposure.notifications.savedTitle", {
+				t("clients:detail.directExposure.notifications.savedTitle", {
 					defaultValue: "Direct capabilities updated",
 				}),
-				t("detail.directExposure.notifications.savedMessage", {
+				t("clients:detail.directExposure.notifications.savedMessage", {
 					defaultValue: "The direct capability exposure list has been updated.",
 				}),
 			);
 		},
 		onError: (error) => {
 			notifyError(
-				t("detail.directExposure.notifications.saveFailedTitle", {
+				t("clients:detail.directExposure.notifications.saveFailedTitle", {
 					defaultValue: "Unable to update direct capabilities",
 				}),
 				String(error),
@@ -609,6 +699,96 @@ export function ClientDirectCapabilitiesPage() {
 		},
 	});
 
+	const capabilityBulkActions = useEnableDisableBulkActions(
+		capabilityBulk,
+		visibleCapabilityKeys,
+		bulkCapabilitiesMutation,
+	);
+
+	const renderDirectFlatCapabilityList = useCallback(
+		(items: CapabilityPreviewFlatItem[]) => {
+			const flatItems: DirectFlatCapabilityItem[] = items.map(
+				({ kind, item }) => ({
+					...item,
+					__directCapabilityKind: kind,
+				}),
+			);
+
+			return (
+				<CapabilityList<DirectFlatCapabilityItem>
+					asCard={false}
+					kind="tools"
+					getKind={(item) => item.__directCapabilityKind}
+					context="profile"
+					leadingIcon="kind"
+					items={flatItems}
+					scrollContainedBody
+					enableToggle
+					getId={(item) =>
+						capabilityKey(item.__directCapabilityKind, item.id)
+					}
+					getEnabled={(item) => !!item.enabled}
+					getItemClassName={(item) =>
+						reviewRefId && item.id === reviewRefId
+							? "border border-dashed border-amber-500 bg-amber-50/60 dark:border-amber-600 dark:bg-amber-950/30"
+							: undefined
+					}
+					onToggle={(_, next, item) => {
+						if (item.__directCapabilityKind === "tools") {
+							toolToggleMutation.mutate({
+								toolId: item.id,
+								enable: next,
+							});
+							return;
+						}
+						if (item.__directCapabilityKind === "resources") {
+							resourceToggleMutation.mutate({
+								resourceId: item.id,
+								enable: next,
+							});
+							return;
+						}
+						if (item.__directCapabilityKind === "prompts") {
+							promptToggleMutation.mutate({
+								promptId: item.id,
+								enable: next,
+							});
+							return;
+						}
+						templateToggleMutation.mutate({
+							templateId: item.id,
+							enable: next,
+						});
+					}}
+					emptyText={t("clients:detail.directExposure.empty.tools", {
+						defaultValue: "No capabilities found for this server.",
+					})}
+					selectable={capabilityBulk.isBulkMode}
+					selectedIds={capabilityBulk.selectedIds}
+					onSelectToggle={(id) => capabilityBulk.toggleItem(id)}
+					loadDetails={loadCapabilityDetails}
+					detailsCacheScope={directCapabilityDetailsCacheToken(flatItems)}
+				/>
+			);
+		},
+		[
+			capabilityBulk,
+			loadCapabilityDetails,
+			promptToggleMutation,
+			resourceToggleMutation,
+			reviewRefId,
+			t,
+			templateToggleMutation,
+			toolToggleMutation,
+		],
+	);
+
+	const panelTitle =
+		serverDetails?.name ??
+		serverId ??
+		t("clients:detail.directExposure.title", {
+			defaultValue: "Capability Level",
+		});
 	return (
 		<div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
 			<Card>
@@ -623,24 +803,18 @@ export function ClientDirectCapabilitiesPage() {
 								shape="rounded"
 							/>
 						) : null}
-						<div className="flex-1 min-w-0">
+						<div className="min-w-0 flex-1">
 							<div className="flex items-center gap-2">
-								<CardTitle>
-									{serverDetails?.name ??
-										serverId ??
-										t("detail.directExposure.title", {
-											defaultValue: "Capability Level",
-										})}
-								</CardTitle>
+								<CardTitle>{panelTitle}</CardTitle>
 								<Badge variant="outline">
-									{t("detail.directExposure.badge", {
+									{t("clients:detail.directExposure.badge", {
 										defaultValue: "Direct Exposure",
 									})}
 								</Badge>
 							</div>
 							<CardDescription>
 								{serverDetails?.meta?.description ||
-									t("detail.directExposure.serverDescriptionFallback", {
+									t("clients:detail.directExposure.serverDescriptionFallback", {
 										defaultValue:
 											"Choose which capabilities from this server should be exposed directly to the client.",
 									})}
@@ -650,550 +824,89 @@ export function ClientDirectCapabilitiesPage() {
 				</CardHeader>
 			</Card>
 
-			<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-				<Tabs
-					value={activeTab}
-					onValueChange={(value) => setActiveTab(value as DirectCapabilityTab)}
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<CardHeader className="shrink-0">
-						<div className="flex shrink-0 items-center justify-between">
-							<TabsList className="inline-flex w-auto justify-start items-center gap-2">
-								<TabsTrigger value="tools">
-									{t("detail.directExposure.tabs.toolsWithCounts", {
-										enabled: enabledToolsCount,
-										total: tools.length,
-										defaultValue: "Tools ({{enabled}}/{{total}})",
-									})}
-								</TabsTrigger>
-								<TabsTrigger value="prompts">
-									{t("detail.directExposure.tabs.promptsWithCounts", {
-										enabled: enabledPromptsCount,
-										total: prompts.length,
-										defaultValue: "Prompts ({{enabled}}/{{total}})",
-									})}
-								</TabsTrigger>
-								<TabsTrigger value="resources">
-									{t("detail.directExposure.tabs.resourcesWithCounts", {
-										enabled: enabledResourcesCount,
-										total: resources.length,
-										defaultValue: "Resources ({{enabled}}/{{total}})",
-									})}
-								</TabsTrigger>
-								<TabsTrigger value="templates">
-									{t("detail.directExposure.tabs.templatesWithCounts", {
-										enabled: enabledTemplatesCount,
-										total: templates.length,
-										defaultValue: "Templates ({{enabled}}/{{total}})",
-									})}
-								</TabsTrigger>
-							</TabsList>
-						</div>
-					</CardHeader>
-					<TabsContent value="tools" className={DETAIL_TAB_CONTENT_CLASS}>
-						<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
-							<div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-                <Input
-                  placeholder={t(
-                    "detail.directExposure.searchPlaceholders.tools",
-                    { defaultValue: "Search tools..." },
-                  )}
-                  value={toolQuery}
-                  onChange={(event) => setToolQuery(event.target.value)}
-                  className="w-48 h-9"
-                />
-                <Select
-                  value={toolStatus}
-                  onValueChange={(value) =>
-                    setToolStatus(value as ToolStatusFilter)
-                  }
-                >
-                  <SelectTrigger className="w-36 h-9">
-                    <SelectValue
-                      placeholder={t(
-                        "detail.directExposure.statusPlaceholder",
-                        { defaultValue: "Status" },
-                      )}
-                    />
-                  </SelectTrigger>
-									<SelectContent>
-                    <SelectItem value="all">
-                      {t("detail.directExposure.filters.status.all", {
-                        defaultValue: "All",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="enabled">
-                      {t("detail.directExposure.filters.status.enabled", {
-                        defaultValue: "Enabled",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="disabled">
-                      {t("detail.directExposure.filters.status.disabled", {
-                        defaultValue: "Disabled",
-                      })}
-                    </SelectItem>
-									</SelectContent>
-								</Select>
-								<ButtonGroup className="hidden md:flex ml-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setSelectedToolIds(visibleTools.map((tool) => tool.id))
-                    }
-                  >
-                    {t("detail.directExposure.buttons.selectAll", {
-                      defaultValue: "Select all",
-                    })}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedToolIds([])}
-                  >
-                    {t("detail.directExposure.buttons.clearSelection", {
-                      defaultValue: "Clear",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedToolIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: true })}
-                  >
-                    {t("detail.directExposure.buttons.enable", {
-                      defaultValue: "Enable",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedToolIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: false })}
-                  >
-                    {t("detail.directExposure.buttons.disable", {
-                      defaultValue: "Disable",
-                    })}
-                  </Button>
-								</ButtonGroup>
-							</div>
-              <CapabilityList
-                asCard={false}
-                scrollContainedBody
-                title={t("detail.directExposure.tabs.tools", {
-                  defaultValue: "Tools",
-                })}
-                kind="tools"
-                context="profile"
-                items={visibleTools}
-                loading={isLoadingCapabilities || isLoadingServer}
-                enableToggle
-                getId={(tool) => tool.id}
-                getEnabled={(tool) => tool.enabled}
-                onToggle={(toolId, next) =>
-                  toolToggleMutation.mutate({ toolId, enable: next })
-                }
-                emptyText={t("detail.directExposure.empty.tools", {
-                  defaultValue: "No tools found for this server.",
-                })}
-                filterText={toolQuery}
-                selectable
-                selectedIds={selectedToolIds}
-                onSelectToggle={(toolId) =>
-                  setSelectedToolIds((prev) =>
-                    prev.includes(toolId)
-                      ? prev.filter((entry) => entry !== toolId)
-                      : [...prev, toolId],
-                  )
-                }
-              />
-						</CardContent>
-					</TabsContent>
-					<TabsContent value="prompts" className={DETAIL_TAB_CONTENT_CLASS}>
-						<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
-							<div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-                <Input
-                  placeholder={t(
-                    "detail.directExposure.searchPlaceholders.prompts",
-                    { defaultValue: "Search prompts..." },
-                  )}
-                  value={promptQuery}
-                  onChange={(event) => setPromptQuery(event.target.value)}
-                  className="w-48 h-9"
-                />
-                <Select
-                  value={promptStatus}
-                  onValueChange={(value) =>
-                    setPromptStatus(value as ToolStatusFilter)
-                  }
-                >
-                  <SelectTrigger className="w-36 h-9">
-                    <SelectValue
-                      placeholder={t(
-                        "detail.directExposure.statusPlaceholder",
-                        { defaultValue: "Status" },
-                      )}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">
-                      {t("detail.directExposure.filters.status.all", {
-                        defaultValue: "All",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="enabled">
-                      {t("detail.directExposure.filters.status.enabled", {
-                        defaultValue: "Enabled",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="disabled">
-                      {t("detail.directExposure.filters.status.disabled", {
-                        defaultValue: "Disabled",
-                      })}
-                    </SelectItem>
-                  </SelectContent>
-								</Select>
-								<ButtonGroup className="hidden md:flex ml-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setSelectedPromptIds(
-                        visiblePrompts.map((entry) => entry.id),
-                      )
-                    }
-                  >
-                    {t("detail.directExposure.buttons.selectAll", {
-                      defaultValue: "Select all",
-                    })}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedPromptIds([])}
-                  >
-                    {t("detail.directExposure.buttons.clearSelection", {
-                      defaultValue: "Clear",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedPromptIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: true })}
-                  >
-                    {t("detail.directExposure.buttons.enable", {
-                      defaultValue: "Enable",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedPromptIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: false })}
-                  >
-                    {t("detail.directExposure.buttons.disable", {
-                      defaultValue: "Disable",
-                    })}
-                  </Button>
-								</ButtonGroup>
-							</div>
-              <CapabilityList
-                asCard={false}
-                scrollContainedBody
-                title={t("detail.directExposure.tabs.prompts", {
-                  defaultValue: "Prompts",
-                })}
-                kind="prompts"
-                context="profile"
-                items={visiblePrompts}
-                loading={isLoadingCapabilities || isLoadingServer}
-                enableToggle
-                getId={(entry) => entry.id}
-                getEnabled={(entry) => entry.enabled}
-                onToggle={(promptId, next) =>
-                  promptToggleMutation.mutate({ promptId, enable: next })
-                }
-                emptyText={t("detail.directExposure.empty.prompts", {
-                  defaultValue: "No prompts found for this server.",
-                })}
-                filterText={promptQuery}
-                selectable
-                selectedIds={selectedPromptIds}
-                onSelectToggle={(id) =>
-                  setSelectedPromptIds((prev) =>
-                    prev.includes(id)
-                      ? prev.filter((entry) => entry !== id)
-                      : [...prev, id],
-                  )
-                }
-              />
-						</CardContent>
-					</TabsContent>
-					<TabsContent value="resources" className={DETAIL_TAB_CONTENT_CLASS}>
-						<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
-							<div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-                <Input
-                  placeholder={t(
-                    "detail.directExposure.searchPlaceholders.resources",
-                    { defaultValue: "Search resources..." },
-                  )}
-                  value={resourceQuery}
-                  onChange={(event) => setResourceQuery(event.target.value)}
-                  className="w-48 h-9"
-                />
-                <Select
-                  value={resourceStatus}
-                  onValueChange={(value) =>
-                    setResourceStatus(value as ToolStatusFilter)
-                  }
-                >
-                  <SelectTrigger className="w-36 h-9">
-                    <SelectValue
-                      placeholder={t(
-                        "detail.directExposure.statusPlaceholder",
-                        { defaultValue: "Status" },
-                      )}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">
-                      {t("detail.directExposure.filters.status.all", {
-                        defaultValue: "All",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="enabled">
-                      {t("detail.directExposure.filters.status.enabled", {
-                        defaultValue: "Enabled",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="disabled">
-                      {t("detail.directExposure.filters.status.disabled", {
-                        defaultValue: "Disabled",
-                      })}
-                    </SelectItem>
-                  </SelectContent>
-								</Select>
-								<ButtonGroup className="hidden md:flex ml-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setSelectedResourceIds(
-                        visibleResources.map((entry) => entry.id),
-                      )
-                    }
-                  >
-                    {t("detail.directExposure.buttons.selectAll", {
-                      defaultValue: "Select all",
-                    })}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedResourceIds([])}
-                  >
-                    {t("detail.directExposure.buttons.clearSelection", {
-                      defaultValue: "Clear",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedResourceIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: true })}
-                  >
-                    {t("detail.directExposure.buttons.enable", {
-                      defaultValue: "Enable",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedResourceIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: false })}
-                  >
-                    {t("detail.directExposure.buttons.disable", {
-                      defaultValue: "Disable",
-                    })}
-                  </Button>
-								</ButtonGroup>
-							</div>
-              <CapabilityList
-                asCard={false}
-                scrollContainedBody
-                title={t("detail.directExposure.tabs.resources", {
-                  defaultValue: "Resources",
-                })}
-                kind="resources"
-                context="profile"
-                items={visibleResources}
-                loading={isLoadingCapabilities || isLoadingServer}
-                enableToggle
-                getId={(entry) => entry.id}
-                getEnabled={(entry) => entry.enabled}
-                onToggle={(resourceId, next) =>
-                  resourceToggleMutation.mutate({ resourceId, enable: next })
-                }
-                emptyText={t("detail.directExposure.empty.resources", {
-                  defaultValue: "No resources found for this server.",
-                })}
-                filterText={resourceQuery}
-                selectable
-                selectedIds={selectedResourceIds}
-                onSelectToggle={(id) =>
-                  setSelectedResourceIds((prev) =>
-                    prev.includes(id)
-                      ? prev.filter((entry) => entry !== id)
-                      : [...prev, id],
-                  )
-                }
-              />
-						</CardContent>
-					</TabsContent>
-					<TabsContent value="templates" className={DETAIL_TAB_CONTENT_CLASS}>
-						<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-4 pt-2">
-							<div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-                <Input
-                  placeholder={t(
-                    "detail.directExposure.searchPlaceholders.templates",
-                    { defaultValue: "Search templates..." },
-                  )}
-                  value={templateQuery}
-                  onChange={(event) => setTemplateQuery(event.target.value)}
-                  className="w-48 h-9"
-                />
-                <Select
-                  value={templateStatus}
-                  onValueChange={(value) =>
-                    setTemplateStatus(value as ToolStatusFilter)
-                  }
-                >
-                  <SelectTrigger className="w-36 h-9">
-                    <SelectValue
-                      placeholder={t(
-                        "detail.directExposure.statusPlaceholder",
-                        { defaultValue: "Status" },
-                      )}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">
-                      {t("detail.directExposure.filters.status.all", {
-                        defaultValue: "All",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="enabled">
-                      {t("detail.directExposure.filters.status.enabled", {
-                        defaultValue: "Enabled",
-                      })}
-                    </SelectItem>
-                    <SelectItem value="disabled">
-                      {t("detail.directExposure.filters.status.disabled", {
-                        defaultValue: "Disabled",
-                      })}
-                    </SelectItem>
-                  </SelectContent>
-								</Select>
-								<ButtonGroup className="hidden md:flex ml-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      setSelectedTemplateIds(
-                        visibleTemplates.map((entry) => entry.id),
-                      )
-                    }
-                  >
-                    {t("detail.directExposure.buttons.selectAll", {
-                      defaultValue: "Select all",
-                    })}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSelectedTemplateIds([])}
-                  >
-                    {t("detail.directExposure.buttons.clearSelection", {
-                      defaultValue: "Clear",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedTemplateIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: true })}
-                  >
-                    {t("detail.directExposure.buttons.enable", {
-                      defaultValue: "Enable",
-                    })}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={
-                      bulkToolsMutation.isPending ||
-                      selectedTemplateIds.length === 0
-                    }
-                    onClick={() => bulkToolsMutation.mutate({ enable: false })}
-                  >
-                    {t("detail.directExposure.buttons.disable", {
-                      defaultValue: "Disable",
-                    })}
-                  </Button>
-								</ButtonGroup>
-							</div>
-              <CapabilityList
-                asCard={false}
-                scrollContainedBody
-                title={t("detail.directExposure.tabs.templates", {
-                  defaultValue: "Templates",
-                })}
-                kind="templates"
-                context="profile"
-                items={visibleTemplates}
-                loading={isLoadingCapabilities || isLoadingServer}
-                enableToggle
-                getId={(entry) => entry.id}
-                getEnabled={(entry) => entry.enabled}
-                onToggle={(templateId, next) =>
-                  templateToggleMutation.mutate({ templateId, enable: next })
-                }
-                emptyText={t("detail.directExposure.empty.templates", {
-                  defaultValue: "No templates found for this server.",
-                })}
-                filterText={templateQuery}
-                selectable
-                selectedIds={selectedTemplateIds}
-                onSelectToggle={(id) =>
-                  setSelectedTemplateIds((prev) =>
-                    prev.includes(id)
-                      ? prev.filter((entry) => entry !== id)
-                      : [...prev, id],
-                  )
-                }
-              />
-						</CardContent>
-					</TabsContent>
-				</Tabs>
+			<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
+				<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+					<CapabilityManagementPanel
+						headerVariant="toolbar-inline"
+						isBulkMode={capabilityBulk.isBulkMode}
+						onToggleBulkMode={capabilityBulk.toggleMode}
+						bulkActions={capabilityBulkActions}
+						searchValue={capabilityQuery}
+						onSearchChange={setCapabilityQuery}
+						searchPlaceholder={t("servers:wizard.preview.filterCapabilities", {
+							defaultValue: "Filter capabilities...",
+						})}
+						kindFilter={{
+							label: capabilityKindFilterLabel,
+							allLabel: t("servers:detail.filters.kind.all", {
+								defaultValue: "All Types",
+							}),
+							options: capabilityKindFilterOptions,
+							selectedValues: capabilityKindFilters,
+							onClear: clearCapabilityKindFilters,
+							onToggle: (value, checked) =>
+								toggleCapabilityKindFilter(value as CapabilityKind, checked),
+						}}
+						statusFilter={{
+							label: capabilityStatusLabel,
+							value: capabilityStatus,
+							placeholder: t("clients:detail.directExposure.statusPlaceholder", {
+								defaultValue: "Status",
+							}),
+							options: [
+								{
+									value: "all",
+									label: t("clients:detail.directExposure.filters.status.all", {
+										defaultValue: "All",
+									}),
+								},
+								{
+									value: "enabled",
+									label: t(
+										"clients:detail.directExposure.filters.status.enabled",
+										{ defaultValue: "Enabled" },
+									),
+								},
+								{
+									value: "disabled",
+									label: t(
+										"clients:detail.directExposure.filters.status.disabled",
+										{ defaultValue: "Disabled" },
+									),
+								},
+							],
+							onValueChange: (value) =>
+								setCapabilityStatus(value as CapabilityStatusFilter),
+						}}
+						hasSource={Boolean(serverId)}
+						isLoading={isLoadingCapabilities || isLoadingServer}
+						tools={filteredTools as CapabilityRecord[]}
+						resources={filteredResources as CapabilityRecord[]}
+						prompts={filteredPrompts as CapabilityRecord[]}
+						templates={filteredTemplates as CapabilityRecord[]}
+						kindFilters={capabilityKindFilters}
+						emptyText={t("clients:detail.directExposure.empty.tools", {
+							defaultValue: "No capabilities found for this server.",
+						})}
+						emptySearchText={t("servers:detail.capabilityList.emptyAll", {
+							defaultValue: "No capabilities from this server",
+						})}
+						renderFlatList={renderDirectFlatCapabilityList}
+					/>
+				</CardContent>
 			</Card>
+
+			<SurfaceReviewDialog
+				reviewItemId={reviewItemId}
+				open={!!reviewItemId}
+				onOpenChange={(open) => {
+					if (open) return;
+					const next = new URLSearchParams(searchParams);
+					next.delete("review_item");
+					next.delete("ref_id");
+					setSearchParams(next, { replace: true });
+				}}
+			/>
 		</div>
 	);
 }

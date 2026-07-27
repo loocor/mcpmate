@@ -64,12 +64,42 @@ export function getCapabilityLifecycle(
 	};
 }
 
+export function shouldDisplayCapabilityKind(
+	summary: ServerCapabilitySummary | undefined,
+	kind: CapabilitySummaryKind,
+): boolean {
+	if (!summary) {
+		return true;
+	}
+
+	return summary[kind].declaration !== "unsupported";
+}
+
 export function formatCapabilityLifecycle(
 	summary: ServerCapabilitySummary | undefined,
 	kind: CapabilitySummaryKind,
 	labels: CapabilityLifecycleLabels,
-): string {
+): string | null {
+	if (!shouldDisplayCapabilityKind(summary, kind)) {
+		return null;
+	}
+
 	const lifecycle = getCapabilityLifecycle(summary, kind);
 	const label = labels[lifecycle.state];
 	return lifecycle.count === null ? label : `${lifecycle.count} · ${label}`;
+}
+
+export function totalCapabilityCount(
+	summary: ServerCapabilitySummary | undefined,
+): number {
+	if (!summary) {
+		return 0;
+	}
+
+	return (
+		summary.tools.currentCount +
+		summary.prompts.currentCount +
+		summary.resources.currentCount +
+		summary.resourceTemplates.currentCount
+	);
 }

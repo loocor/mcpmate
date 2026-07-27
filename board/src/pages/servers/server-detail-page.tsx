@@ -11,11 +11,11 @@ import {
 	Wrench,
 } from "lucide-react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+	type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
@@ -67,15 +67,15 @@ import {
 	TabsTrigger,
 } from "../../components/ui/tabs";
 import { auditApi, serversApi } from "../../lib/api";
+import { totalCapabilityCount } from "../../lib/capability-lifecycle";
+import {
+	useCapabilityKindFilters,
+} from "../../hooks/use-capability-kind-filters";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { mergeCapabilityInspectorItem } from "../../lib/capability-detail";
 import { collectLoadedInspectorOptions } from "../../lib/inspector-operation";
-import {
-	formatCapabilityLifecycle,
-	type CapabilityLifecycleLabels,
-} from "../../lib/capability-lifecycle";
 import { getServerDisplayName } from "../../lib/server-display";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
@@ -103,12 +103,6 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
 }
 
-interface CapabilityListResponse {
-	items: CapabilityRecord[];
-	meta?: unknown;
-	state?: string;
-}
-
 type InspectorTarget = {
 	kind: "tool" | "resource" | "prompt" | "template";
 	item: CapabilityRecord | null;
@@ -121,17 +115,10 @@ type ServerFlatCapabilityItem = CapabilityRecord & {
 	__serverCapabilityKind: CapabilityPreviewKind;
 };
 
-const SERVER_CAPABILITY_KINDS: CapabilityPreviewKind[] = [
-	"tools",
-	"resources",
-	"templates",
-	"prompts",
-];
-
 const readCapabilityIdentifier = (value: unknown): string | undefined => {
 	if (typeof value === "string" && value.trim()) return value;
-  if (typeof value === "number" || typeof value === "boolean")
-    return String(value);
+	if (typeof value === "number" || typeof value === "boolean")
+		return String(value);
 	return undefined;
 };
 
@@ -139,8 +126,8 @@ const serverCapabilityItemId = (item: ServerFlatCapabilityItem): string => {
 	const key =
 		readCapabilityIdentifier(item.id) ??
 		readCapabilityIdentifier(item.unique_name) ??
-    readCapabilityIdentifier(item.unique_uri) ??
-    readCapabilityIdentifier(item.unique_uri_template) ??
+		readCapabilityIdentifier(item.unique_uri) ??
+		readCapabilityIdentifier(item.unique_uri_template) ??
 		"unknown";
 	return `${item.__serverCapabilityKind}:${key}`;
 };
@@ -163,15 +150,15 @@ function serverCapabilityDetailKey(
 	kind: CapabilityPreviewKind,
 ) {
 	if (kind === "tools") {
-    return firstCapabilityString(item, ["unique_name"]);
+		return firstCapabilityString(item, ["unique_name"]);
 	}
 	if (kind === "resources") {
-    return firstCapabilityString(item, ["unique_uri"]);
+		return firstCapabilityString(item, ["unique_uri"]);
 	}
 	if (kind === "prompts") {
-    return firstCapabilityString(item, ["unique_name"]);
+		return firstCapabilityString(item, ["unique_name"]);
 	}
-  return firstCapabilityString(item, ["unique_uri_template"]);
+	return firstCapabilityString(item, ["unique_uri_template"]);
 }
 
 function toCapabilityPreviewKind(
@@ -188,35 +175,6 @@ function toInspectorKind(kind: CapabilityPreviewKind): InspectorTarget["kind"] {
 	if (kind === "resources") return "resource";
 	if (kind === "prompts") return "prompt";
 	return "template";
-}
-
-function normalizeCapabilityListResponse(response: {
-	items?: unknown;
-	meta?: unknown;
-	state?: unknown;
-}): CapabilityListResponse {
-	return {
-		items: Array.isArray(response.items)
-			? (response.items as CapabilityRecord[])
-			: [],
-		meta: response.meta,
-		state: typeof response.state === "string" ? response.state : undefined,
-	};
-}
-
-function capabilityKindLabel(
-	kind: CapabilityPreviewKind,
-	t: ReturnType<typeof useTranslation>["t"],
-): string {
-	if (kind === "templates") {
-		return t("detail.capabilityList.labels.templates", {
-			defaultValue: "Resource Templates",
-		});
-	}
-
-	return t(`detail.capabilityList.labels.${kind}`, {
-		defaultValue: kind.charAt(0).toUpperCase() + kind.slice(1),
-	});
 }
 
 const overviewMetadataGridClass =
@@ -323,9 +281,22 @@ export function ServerDetailPage() {
 	const toggleServerM = useMutation({
 		mutationFn: async (enable: boolean) => {
 			if (!serverId) throw new Error("Server ID is required");
+			if (!server?.source_revision_set) {
+				throw new Error(
+					"Capability catalog revisions are not loaded. Refresh the server and retry.",
+				);
+			}
 			return enable
-				? serversApi.enableServer(serverId, syncServerStateToClients)
-				: serversApi.disableServer(serverId, syncServerStateToClients);
+				? serversApi.enableServer(
+					serverId,
+					server.source_revision_set,
+					syncServerStateToClients,
+				)
+				: serversApi.disableServer(
+					serverId,
+					server.source_revision_set,
+					syncServerStateToClients,
+				);
 		},
 		onSuccess: (_, enable) => {
 			const titleKey = enable
@@ -360,59 +331,19 @@ export function ServerDetailPage() {
 	const refreshCapabilitiesMutation = useMutation({
 		mutationFn: async () => {
 			if (!serverId) throw new Error("Server ID is required");
-			const [tools, resources, prompts, templates] = await Promise.all([
-				serversApi.listTools(serverId, "force"),
-				serversApi.listResources(serverId, "force"),
-				serversApi.listPrompts(serverId, "force"),
-				serversApi.listResourceTemplates(serverId, "force"),
-			]);
-			return { tools, resources, prompts, templates };
+			return serversApi.refreshCapabilities(serverId);
 		},
-		onSuccess: async ({ tools, resources, prompts, templates }) => {
-			const normalize = (response: {
-				items: CapabilityRecord[] | undefined;
-				meta?: unknown;
-				state?: string;
-			}) => ({
-				items: Array.isArray(response.items) ? response.items : [],
-				meta: response.meta,
-				state: response.state,
-			});
-
-			queryClient.setQueryData(
-				["server-cap", "tools", serverId],
-				normalize({
-					items: tools.items as CapabilityRecord[] | undefined,
-					meta: tools.meta,
-					state: tools.state,
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: ["server", serverId],
+					refetchType: "active",
 				}),
-			);
-			queryClient.setQueryData(
-				["server-cap", "resources", serverId],
-				normalize({
-					items: resources.items as CapabilityRecord[] | undefined,
-					meta: resources.meta,
-					state: resources.state,
+				queryClient.invalidateQueries({
+					queryKey: ["server-cap"],
+					refetchType: "active",
 				}),
-			);
-			queryClient.setQueryData(
-				["server-cap", "prompts", serverId],
-				normalize({
-					items: prompts.items as CapabilityRecord[] | undefined,
-					meta: prompts.meta,
-					state: prompts.state,
-				}),
-			);
-			queryClient.setQueryData(
-				["server-cap", "templates", serverId],
-				normalize({
-					items: templates.items as CapabilityRecord[] | undefined,
-					meta: templates.meta,
-					state: templates.state,
-				}),
-			);
-
-			await queryClient.invalidateQueries({ queryKey: ["server", serverId] });
+			]);
 		},
 		onError: (error) => {
 			const message =
@@ -548,36 +479,20 @@ export function ServerDetailPage() {
 	const serverDisplayName = server ? getServerDisplayName(server) : serverId;
 	const namespaceIssueStatusLabel = server?.namespace_issue
 		? t(
-				server.namespace_issue.code === "capability_collision" ||
-					server.namespace_issue.conflicts?.length
-					? "detail.namespaceIssue.statusConflict"
-					: "detail.namespaceIssue.statusInvalid",
-			)
+			server.namespace_issue.code === "capability_collision" ||
+				server.namespace_issue.conflicts?.length
+				? "detail.namespaceIssue.statusConflict"
+				: "detail.namespaceIssue.statusInvalid",
+		)
 		: undefined;
 	const primaryIconSrc = server?.icons?.[0]?.src;
 	const primaryIconAlt = primaryIconSrc
 		? `${serverDisplayName} icon`
 		: undefined;
 	const serverCategory = (server?.meta as Record<string, unknown>)?.category as
-    string | undefined;
+		string | undefined;
 	const serverScenario = (server?.meta as Record<string, unknown>)
 		?.recommendedScenario as string | undefined;
-	const capabilitySummary = server?.capability;
-	const capabilityLifecycleLabels: CapabilityLifecycleLabels = {
-		unavailable: t("capabilityLifecycle.capabilityUnavailable"),
-		unsupported: t("capabilityLifecycle.capabilityUnsupported"),
-		unknown: t("capabilityLifecycle.capabilityUnknown"),
-		empty: t("capabilityLifecycle.capabilityEmpty"),
-		ready: t("capabilityLifecycle.capabilityReady"),
-	};
-	const capabilityOverviewText = server
-		? [
-				`${t("detail.capabilityList.labels.tools")} ${formatCapabilityLifecycle(capabilitySummary, "tools", capabilityLifecycleLabels)}`,
-				`${t("detail.capabilityList.labels.prompts")} ${formatCapabilityLifecycle(capabilitySummary, "prompts", capabilityLifecycleLabels)}`,
-				`${t("detail.capabilityList.labels.resources")} ${formatCapabilityLifecycle(capabilitySummary, "resources", capabilityLifecycleLabels)}`,
-				`${t("detail.capabilityList.labels.templates")} ${formatCapabilityLifecycle(capabilitySummary, "resourceTemplates", capabilityLifecycleLabels)}`,
-			].join(" | ")
-		: undefined;
 	const protocolVersion =
 		server?.protocol_version ?? readLegacyString(server, "protocolVersion");
 	const serverVersion =
@@ -586,12 +501,12 @@ export function ServerDetailPage() {
 		readLegacyString(server, "serverVersion");
 	const defaultTab = "overview";
 	const validTabs = ["overview", "capabilities"];
-  const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } =
-    useUrlTab({
-		paramName: "tab",
-		defaultTab,
-		validTabs,
-	});
+	const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } =
+		useUrlTab({
+			paramName: "tab",
+			defaultTab,
+			validTabs,
+		});
 	const [logFilter, setLogFilter] = useState("");
 	const [logPageSize, setLogPageSize] = useState<number>(10);
 	const [logPageCursors, setLogPageCursors] = useState<string[]>([]);
@@ -682,9 +597,9 @@ export function ServerDetailPage() {
 
 	if (isServerPending) {
 		return (
-			<div className="space-y-4">
-				<Card>
-					<CardContent className="flex min-h-[240px] flex-col items-center justify-center gap-3 p-6 text-center">
+			<div className="flex h-full min-h-0 flex-col">
+				<Card className="flex min-h-0 flex-1">
+					<CardContent className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
 						<Loader2 className="h-8 w-8 animate-spin text-slate-400" />
 						<div className="space-y-1">
 							<p className="text-sm font-medium text-slate-900 dark:text-slate-100">
@@ -735,7 +650,28 @@ export function ServerDetailPage() {
 						isOpen={isEditOpen}
 						onClose={() => setIsEditOpen(false)}
 						onSubmit={async (data) => {
-							await serversApi.updateServer(serverId, data);
+							const {
+								unify_direct_exposure_eligible:
+								requestedEligibility,
+								...crudConfig
+							} = data;
+							await serversApi.updateServer(serverId, crudConfig);
+							if (
+								requestedEligibility !== undefined &&
+								requestedEligibility !==
+								server.unify_direct_exposure_eligible
+							) {
+								if (!server.source_revision_set) {
+									throw new Error(
+										"Capability catalog revisions are not loaded. Refresh the server and retry.",
+									);
+								}
+								await serversApi.setDirectExposureEligibility(
+									serverId,
+									requestedEligibility,
+									server.source_revision_set,
+								);
+							}
 							queryClient.invalidateQueries({ queryKey: ["server", serverId] });
 							queryClient.invalidateQueries({ queryKey: ["servers"] });
 						}}
@@ -785,7 +721,7 @@ export function ServerDetailPage() {
 					className="flex min-h-0 flex-1 flex-col gap-4"
 				>
 					<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-						<ServerCapabilityTabsHeader serverId={serverId} />
+						<ServerCapabilityTabsHeader server={server} />
 						<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
 							<Button
 								size="sm"
@@ -817,8 +753,8 @@ export function ServerDetailPage() {
 								{server.namespace_issue
 									? t("detail.namespaceIssue.action")
 									: t("detail.actions.edit", {
-											defaultValue: "Edit",
-										})}
+										defaultValue: "Edit",
+									})}
 							</Button>
 						</ButtonGroup>
 					</div>
@@ -827,302 +763,288 @@ export function ServerDetailPage() {
 						value="overview"
 						className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
 					>
-							{isLoading ? (
+						{isLoading ? (
+							<Card>
+								<CardContent className="p-4">
+									<div className="h-24 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
+								</CardContent>
+							</Card>
+						) : (
+							<div className="grid gap-4">
 								<Card>
 									<CardContent className="p-4">
-										<div className="h-24 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
+										<div className="flex flex-col gap-4">
+											<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+												<div className="flex flex-wrap items-start gap-4">
+													<CachedAvatar
+														src={primaryIconSrc}
+														alt={primaryIconAlt}
+														fallback={serverDisplayName || "?"}
+														className="text-sm"
+													/>
+													<div
+														className={`min-w-0 flex-1 ${overviewMetadataGridClass}`}
+													>
+														<OverviewMetadataRow
+															label={t("detail.overview.labels.upstreamName")}
+														>
+															{server.server_info?.name?.trim() || "—"}
+														</OverviewMetadataRow>
+														<OverviewMetadataRow
+															label={t("detail.overview.labels.namespace")}
+														>
+															{server.namespace_issue ? (
+																<Button
+																	type="button"
+																	variant="ghost"
+																	onClick={() => setIsEditOpen(true)}
+																	className="h-auto p-0 font-normal text-inherit hover:bg-transparent hover:text-inherit"
+																>
+																	{server.name}
+																	<AlertTriangle
+																		className="ml-2 h-4 w-4 text-destructive"
+																		aria-label={t("detail.namespaceIssue.iconLabel")}
+																	/>
+																</Button>
+															) : (
+																server.name
+															)}
+														</OverviewMetadataRow>
+														<OverviewMetadataRow
+															label={t("detail.overview.labels.type", {
+																defaultValue: "Type",
+															})}
+														>
+															{server.server_type}
+														</OverviewMetadataRow>
+														{server.auth_mode ? (
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.auth", {
+																	defaultValue: "Auth",
+																})}
+															>
+																<ServerAuthBadge
+																	authMode={server.auth_mode}
+																	oauthStatus={authBadgeOAuthStatus}
+																	readiness={authReadiness}
+																	onAction={handleAuthAction}
+																/>
+															</OverviewMetadataRow>
+														) : null}
+														{protocolVersion ? (
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.protocol", {
+																	defaultValue: "Protocol",
+																})}
+															>
+																{protocolVersion}
+															</OverviewMetadataRow>
+														) : null}
+														{serverVersion ? (
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.version", {
+																	defaultValue: "Version",
+																})}
+															>
+																{serverVersion}
+															</OverviewMetadataRow>
+														) : null}
+														{serverCategory ? (
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.category", {
+																	defaultValue: "Category",
+																})}
+															>
+																<span className="text-slate-600 dark:text-slate-300">
+																	{serverCategory}
+																</span>
+															</OverviewMetadataRow>
+														) : null}
+														{serverScenario ? (
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.scenario", {
+																	defaultValue: "Scenario",
+																})}
+															>
+																<span className="text-slate-600 dark:text-slate-300">
+																	{serverScenario}
+																</span>
+															</OverviewMetadataRow>
+														) : null}
+														{server.command ? (
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.command", {
+																	defaultValue: "Command",
+																})}
+																multiline
+															>
+																<span className="break-all">
+																	{server.command}
+																</span>
+															</OverviewMetadataRow>
+														) : null}
+														<OverviewMetadataRow
+															label={t("detail.overview.labels.repository", {
+																defaultValue: "Repository",
+															})}
+														>
+															—
+														</OverviewMetadataRow>
+													</div>
+												</div>
+												<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+													<Button
+														size="sm"
+														variant="outline"
+														onClick={() => toggleServerM.mutate(!serverEnabled)}
+														disabled={toggleServerM.isPending}
+														className={overviewActionButtonClass}
+													>
+														{serverEnabled ? (
+															<>
+																<PowerOff className="h-4 w-4" />
+																{t("detail.actions.disable", {
+																	defaultValue: "Disable",
+																})}
+															</>
+														) : (
+															<>
+																<Power className="h-4 w-4" />
+																{t("detail.actions.enable", {
+																	defaultValue: "Enable",
+																})}
+															</>
+														)}
+													</Button>
+													<Button
+														size="sm"
+														variant="destructive"
+														onClick={() => setIsDeleteOpen(true)}
+														disabled={deleteServerM.isPending}
+														className={overviewActionButtonClass}
+													>
+														<Trash2 className="h-4 w-4" />
+														{t("detail.actions.delete", {
+															defaultValue: "Delete",
+														})}
+													</Button>
+												</ButtonGroup>
+											</div>
+										</div>
 									</CardContent>
 								</Card>
-							) : (
-								<div className="grid gap-4">
-									<Card>
-										<CardContent className="p-4">
-											<div className="flex flex-col gap-4">
-												<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-													<div className="flex flex-wrap items-start gap-4">
-														<CachedAvatar
-															src={primaryIconSrc}
-															alt={primaryIconAlt}
-															fallback={serverDisplayName || "?"}
-															className="text-sm"
-														/>
-                          <div
-                            className={`min-w-0 flex-1 ${overviewMetadataGridClass}`}
-															>
-												<OverviewMetadataRow
-													label={t("detail.overview.labels.upstreamName")}
-															>
-													{server.server_info?.name?.trim() || "—"}
-												</OverviewMetadataRow>
-										<OverviewMetadataRow
-											label={t("detail.overview.labels.namespace")}
-													>
-									{server.namespace_issue ? (
-										<Button
-											type="button"
-											variant="ghost"
-											onClick={() => setIsEditOpen(true)}
-											className="h-auto p-0 font-normal text-inherit hover:bg-transparent hover:text-inherit"
-										>
-											{server.name}
-											<AlertTriangle
-												className="ml-2 h-4 w-4 text-destructive"
-												aria-label={t("detail.namespaceIssue.iconLabel")}
-											/>
-										</Button>
-									) : (
-										server.name
-									)}
-										</OverviewMetadataRow>
-														<OverviewMetadataRow
-																label={t("detail.overview.labels.type", {
-																	defaultValue: "Type",
-																})}
-															>
-																{server.server_type}
-															</OverviewMetadataRow>
-															{server.auth_mode ? (
-																<OverviewMetadataRow
-																	label={t("detail.overview.labels.auth", {
-																		defaultValue: "Auth",
-																	})}
-																>
-																	<ServerAuthBadge
-																		authMode={server.auth_mode}
-																		oauthStatus={authBadgeOAuthStatus}
-																		readiness={authReadiness}
-																		onAction={handleAuthAction}
-																	/>
-																</OverviewMetadataRow>
-															) : null}
-															{protocolVersion ? (
-																<OverviewMetadataRow
-																	label={t("detail.overview.labels.protocol", {
-																		defaultValue: "Protocol",
-																	})}
-																>
-													{protocolVersion}
-																</OverviewMetadataRow>
-															) : null}
-															{serverVersion ? (
-																<OverviewMetadataRow
-																	label={t("detail.overview.labels.version", {
-																		defaultValue: "Version",
-																	})}
-																>
-													{serverVersion}
-																</OverviewMetadataRow>
-															) : null}
-															{capabilityOverviewText ? (
-																<OverviewMetadataRow
-                                label={t(
-                                  "detail.overview.labels.capabilities",
-                                  {
-																		defaultValue: "Capabilities",
-                                  },
-                                )}
-																	multiline
-																>
-																	<span className="text-slate-600 dark:text-slate-300">
-																		{capabilityOverviewText}
-																	</span>
-																</OverviewMetadataRow>
-															) : null}
-															{serverCategory ? (
-																<OverviewMetadataRow
-																	label={t("detail.overview.labels.category", {
-																		defaultValue: "Category",
-																	})}
-																>
-																	<span className="text-slate-600 dark:text-slate-300">
-																		{serverCategory}
-																	</span>
-																</OverviewMetadataRow>
-															) : null}
-															{serverScenario ? (
-																<OverviewMetadataRow
-																	label={t("detail.overview.labels.scenario", {
-																		defaultValue: "Scenario",
-																	})}
-																>
-																	<span className="text-slate-600 dark:text-slate-300">
-																		{serverScenario}
-																	</span>
-																</OverviewMetadataRow>
-															) : null}
-															{server.command ? (
-																<OverviewMetadataRow
-																	label={t("detail.overview.labels.command", {
-																		defaultValue: "Command",
-																	})}
-																	multiline
-																>
-															<span className="break-all">
-																		{server.command}
-																	</span>
-																</OverviewMetadataRow>
-															) : null}
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.repository", {
-																	defaultValue: "Repository",
-																})}
-															>
-																	—
-															</OverviewMetadataRow>
-														</div>
-													</div>
-													<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-														<Button
-															size="sm"
-															variant="outline"
-															onClick={() => toggleServerM.mutate(!serverEnabled)}
-															disabled={toggleServerM.isPending}
-															className={overviewActionButtonClass}
-														>
-															{serverEnabled ? (
-																<>
-																	<PowerOff className="h-4 w-4" />
-																	{t("detail.actions.disable", {
-																		defaultValue: "Disable",
-																	})}
-																</>
-															) : (
-																<>
-																	<Power className="h-4 w-4" />
-																	{t("detail.actions.enable", {
-																		defaultValue: "Enable",
-																	})}
-																</>
-															)}
-														</Button>
-														<Button
-															size="sm"
-															variant="destructive"
-															onClick={() => setIsDeleteOpen(true)}
-															disabled={deleteServerM.isPending}
-															className={overviewActionButtonClass}
-														>
-															<Trash2 className="h-4 w-4" />
-															{t("detail.actions.delete", {
-																defaultValue: "Delete",
-															})}
-														</Button>
-													</ButtonGroup>
-												</div>
-											</div>
-										</CardContent>
-									</Card>
 
-									<Card>
-										<CardHeader>
-											<CardTitle>
-												{t("detail.instances.title", {
-													count: server.instances?.length || 0,
-													defaultValue: "Instances ({{count}})",
+								<Card>
+									<CardHeader>
+										<CardTitle>
+											{t("detail.instances.title", {
+												count: server.instances?.length || 0,
+												defaultValue: "Instances ({{count}})",
+											})}
+										</CardTitle>
+									</CardHeader>
+									<CardContent>
+										{server.instances?.length ? (
+											<CapsuleStripeList>
+												{server.instances.map((i) => (
+													<CapsuleStripeListItem
+														key={i.id}
+														interactive
+														onClick={() =>
+															navigate(
+																`/servers/${encodeURIComponent(serverId)}/instances/${encodeURIComponent(i.id)}`,
+															)
+														}
+													>
+														<div className="font-mono truncate">{i.id}</div>
+														<StatusBadge
+															status={i.status}
+															className="text-xs"
+														/>
+													</CapsuleStripeListItem>
+												))}
+											</CapsuleStripeList>
+										) : (
+											<div className="text-slate-500">
+												{t("detail.instances.empty", {
+													defaultValue: "No instances.",
 												})}
-											</CardTitle>
-										</CardHeader>
-										<CardContent>
-											{server.instances?.length ? (
-												<CapsuleStripeList>
-													{server.instances.map((i) => (
-														<CapsuleStripeListItem
-															key={i.id}
-															interactive
-															onClick={() =>
-																navigate(
-																	`/servers/${encodeURIComponent(serverId)}/instances/${encodeURIComponent(i.id)}`,
-																)
-															}
-														>
-															<div className="font-mono truncate">{i.id}</div>
-															<StatusBadge
-																status={i.status}
-																className="text-xs"
-															/>
-														</CapsuleStripeListItem>
-													))}
-												</CapsuleStripeList>
-											) : (
-												<div className="text-slate-500">
-													{t("detail.instances.empty", {
-														defaultValue: "No instances.",
-													})}
-												</div>
-											)}
-										</CardContent>
-									</Card>
-									{showServerLevelLogs ? (
-										<AuditLogsPanel
-											title={t("detail.logs.title", { defaultValue: "Logs" })}
-											description={t("detail.logs.description", {
-												defaultValue:
-													"Runtime and activity logs related to this server.",
-											})}
-											searchPlaceholder={t("detail.logs.searchPlaceholder", {
-												defaultValue: "Search logs...",
-											})}
-											refreshLabel={t("detail.logs.refresh", {
-												defaultValue: "Refresh Logs",
-											})}
-											loadingLabel={t("detail.logs.loading", {
-												defaultValue: "Loading logs...",
-											})}
-											emptyLabel={t("detail.logs.empty", {
-												defaultValue:
-													"No log entries recorded for this server yet.",
-											})}
-											headers={{
-												timestamp: t("detail.logs.headers.timestamp", {
-													defaultValue: "Timestamp",
-												}),
-												action: t("detail.logs.headers.action", {
-													defaultValue: "Action",
-												}),
-												category: t("detail.logs.headers.category", {
-													defaultValue: "Category",
-												}),
-												status: t("detail.logs.headers.status", {
-													defaultValue: "Status",
-												}),
-												target: t("detail.logs.headers.target", {
-													defaultValue: "Target",
-												}),
-											}}
-											searchValue={logFilter}
-											onSearchChange={setLogFilter}
-											onRefresh={() => void serverLogsQuery.refetch()}
-											rows={filteredServerLogs}
-											isLoading={serverLogsQuery.isLoading}
-											isFetching={serverLogsQuery.isFetching}
-											isPaginationActionLoading={isLogPaginationActionLoading}
-											currentPage={logCurrentPageIndex + 1}
-											hasPreviousPage={logCurrentPageIndex > 0}
-											hasNextPage={Boolean(serverLogsQuery.data?.next_cursor)}
-											itemsPerPage={logPageSize}
-											onItemsPerPageChange={setLogPageSize}
-											onPreviousPage={handleServerLogsPrevPage}
-											onFirstPage={handleServerLogsFirstPage}
-											onNextPage={handleServerLogsNextPage}
-											onLastPage={() => void handleServerLogsLastPage()}
-                    expandLabel={t("detail.logs.expand", {
-                      defaultValue: "Expand Logs",
-                    })}
-                    collapseLabel={t("detail.logs.collapse", {
-                      defaultValue: "Collapse Logs",
-                    })}
-										/>
-									) : null}
-								</div>
-							)}
+											</div>
+										)}
+									</CardContent>
+								</Card>
+								{showServerLevelLogs ? (
+									<AuditLogsPanel
+										title={t("detail.logs.title", { defaultValue: "Logs" })}
+										description={t("detail.logs.description", {
+											defaultValue:
+												"Runtime and activity logs related to this server.",
+										})}
+										searchPlaceholder={t("detail.logs.searchPlaceholder", {
+											defaultValue: "Search logs...",
+										})}
+										refreshLabel={t("detail.logs.refresh", {
+											defaultValue: "Refresh Logs",
+										})}
+										loadingLabel={t("detail.logs.loading", {
+											defaultValue: "Loading logs...",
+										})}
+										emptyLabel={t("detail.logs.empty", {
+											defaultValue:
+												"No log entries recorded for this server yet.",
+										})}
+										headers={{
+											timestamp: t("detail.logs.headers.timestamp", {
+												defaultValue: "Timestamp",
+											}),
+											action: t("detail.logs.headers.action", {
+												defaultValue: "Action",
+											}),
+											category: t("detail.logs.headers.category", {
+												defaultValue: "Category",
+											}),
+											status: t("detail.logs.headers.status", {
+												defaultValue: "Status",
+											}),
+											target: t("detail.logs.headers.target", {
+												defaultValue: "Target",
+											}),
+										}}
+										searchValue={logFilter}
+										onSearchChange={setLogFilter}
+										onRefresh={() => void serverLogsQuery.refetch()}
+										rows={filteredServerLogs}
+										isLoading={serverLogsQuery.isLoading}
+										isFetching={serverLogsQuery.isFetching}
+										isPaginationActionLoading={isLogPaginationActionLoading}
+										currentPage={logCurrentPageIndex + 1}
+										hasPreviousPage={logCurrentPageIndex > 0}
+										hasNextPage={Boolean(serverLogsQuery.data?.next_cursor)}
+										itemsPerPage={logPageSize}
+										onItemsPerPageChange={setLogPageSize}
+										onPreviousPage={handleServerLogsPrevPage}
+										onFirstPage={handleServerLogsFirstPage}
+										onNextPage={handleServerLogsNextPage}
+										onLastPage={() => void handleServerLogsLastPage()}
+										expandLabel={t("detail.logs.expand", {
+											defaultValue: "Expand Logs",
+										})}
+										collapseLabel={t("detail.logs.collapse", {
+											defaultValue: "Collapse Logs",
+										})}
+									/>
+								) : null}
+							</div>
+						)}
 					</TabsContent>
 
-          <TabsContent
-            value="capabilities"
-            className={DETAIL_TAB_CONTENT_CLASS}
-          >
+					<TabsContent
+						value="capabilities"
+						className={DETAIL_TAB_CONTENT_CLASS}
+					>
 						<ServerCapabilitiesPanel
 							serverId={serverId}
+							enabled={capabilityTab === "capabilities"}
 							enableInspect={enableServerDebug}
 							onInspect={(kind, item, capabilityOptions) =>
 								handleInspect(kind, item, capabilityOptions)
@@ -1146,31 +1068,9 @@ export function ServerDetailPage() {
 	);
 }
 
-function ServerCapabilityTabsHeader({ serverId }: { serverId: string }) {
+function ServerCapabilityTabsHeader({ server }: { server: ServerDetail }) {
 	const { t } = useTranslation("servers");
-	const toolsQ = useQuery({
-		queryKey: ["server-cap", "tools", serverId],
-		queryFn: () => serversApi.listTools(serverId),
-	});
-	const resQ = useQuery({
-		queryKey: ["server-cap", "resources", serverId],
-		queryFn: () => serversApi.listResources(serverId),
-	});
-	const prmQ = useQuery({
-		queryKey: ["server-cap", "prompts", serverId],
-		queryFn: () => serversApi.listPrompts(serverId),
-	});
-	const tmpQ = useQuery({
-		queryKey: ["server-cap", "templates", serverId],
-		queryFn: () => serversApi.listResourceTemplates(serverId),
-	});
-
-	const toolsCount = toolsQ.data?.items?.length ?? 0;
-	const resourcesCount = resQ.data?.items?.length ?? 0;
-	const promptsCount = prmQ.data?.items?.length ?? 0;
-	const templatesCount = tmpQ.data?.items?.length ?? 0;
-	const totalCount =
-		toolsCount + resourcesCount + promptsCount + templatesCount;
+	const totalCount = totalCapabilityCount(server.capability);
 	return (
 		<TabsList className="flex flex-wrap gap-2">
 			<TabsTrigger value="overview">
@@ -1188,86 +1088,48 @@ function ServerCapabilityTabsHeader({ serverId }: { serverId: string }) {
 
 function ServerCapabilitiesPanel({
 	serverId,
+	enabled = true,
 	enableInspect = false,
 	onInspect,
-	}: {
-		serverId: string;
-		enableInspect?: boolean;
-		onInspect: (
-			kind: InspectorTarget["kind"],
-			item: CapabilityRecord | null,
-			capabilityOptionsByKind?: InspectorTarget["capabilityOptionsByKind"],
-		) => void | Promise<void>;
-	}) {
+}: {
+	serverId: string;
+	enabled?: boolean;
+	enableInspect?: boolean;
+	onInspect: (
+		kind: InspectorTarget["kind"],
+		item: CapabilityRecord | null,
+		capabilityOptionsByKind?: InspectorTarget["capabilityOptionsByKind"],
+	) => void | Promise<void>;
+}) {
 	const [search, setSearch] = useState("");
-	const [kindFilters, setKindFilters] = useState<CapabilityPreviewKind[]>([]);
 	const { t } = useTranslation("servers");
+	const {
+		kindFilters,
+		kindMatches,
+		kindFilterOptions,
+		kindFilterLabel,
+		toggleKindFilter,
+		clearKindFilters,
+	} = useCapabilityKindFilters(t, { filterKeyPrefix: "detail.filters.kind" });
 	const capabilityQueryOptions = {
 		staleTime: 0,
 		refetchOnMount: "always" as const,
+		enabled,
 	};
-	const toolsQ = useQuery<CapabilityListResponse>({
-		queryKey: ["server-cap", "tools", serverId],
-		queryFn: async () => {
-			const response = await serversApi.listTools(serverId);
-			return normalizeCapabilityListResponse(response);
-		},
+	const capabilitiesQ = useQuery({
+		queryKey: ["server-cap", "all", serverId],
+		queryFn: () => serversApi.listAllCapabilities(serverId),
 		...capabilityQueryOptions,
 	});
-	const resourcesQ = useQuery<CapabilityListResponse>({
-		queryKey: ["server-cap", "resources", serverId],
-		queryFn: async () => {
-			const response = await serversApi.listResources(serverId);
-			return normalizeCapabilityListResponse(response);
-		},
-		...capabilityQueryOptions,
-	});
-	const promptsQ = useQuery<CapabilityListResponse>({
-		queryKey: ["server-cap", "prompts", serverId],
-		queryFn: async () => {
-			const response = await serversApi.listPrompts(serverId);
-			return normalizeCapabilityListResponse(response);
-		},
-		...capabilityQueryOptions,
-	});
-	const templatesQ = useQuery<CapabilityListResponse>({
-		queryKey: ["server-cap", "templates", serverId],
-		queryFn: async () => {
-			const response = await serversApi.listResourceTemplates(serverId);
-			return normalizeCapabilityListResponse(response);
-		},
-		...capabilityQueryOptions,
-	});
-	const kindFilterOptions = useMemo(
-		() =>
-			SERVER_CAPABILITY_KINDS.map((kind) => ({
-				value: kind,
-				label: capabilityKindLabel(kind, t),
-			})),
-		[t],
-	);
-	const kindFilterLabel = useMemo(() => {
-		if (kindFilters.length === 0) {
-			return t("detail.filters.kind.all", { defaultValue: "All Types" });
-		}
-		if (kindFilters.length === 1) {
-			const [kind] = kindFilters;
-			return capabilityKindLabel(kind, t);
-		}
-		return t("detail.filters.kind.selected", {
-			count: kindFilters.length,
-			defaultValue: "{{count}} Types",
-		});
-	}, [kindFilters, t]);
-	const kindMatches = (kind: CapabilityPreviewKind) =>
-		kindFilters.length === 0 || kindFilters.includes(kind);
-	const toggleKindFilter = (kind: CapabilityPreviewKind, checked: boolean) => {
-		setKindFilters((current) => {
-			if (checked) {
-				return current.includes(kind) ? current : [...current, kind];
-			}
-			return current.filter((value) => value !== kind);
-		});
+	const toolsQ = { data: capabilitiesQ.data?.tools, isLoading: capabilitiesQ.isLoading };
+	const resourcesQ = {
+		data: capabilitiesQ.data?.resources,
+		isLoading: capabilitiesQ.isLoading,
+	};
+	const promptsQ = { data: capabilitiesQ.data?.prompts, isLoading: capabilitiesQ.isLoading };
+	const templatesQ = {
+		data: capabilitiesQ.data?.templates,
+		isLoading: capabilitiesQ.isLoading,
 	};
 	const resolveVisibleItems = (
 		kind: CapabilityPreviewKind,
@@ -1315,9 +1177,9 @@ function ServerCapabilitiesPanel({
 		templatesQ.isLoading;
 	const hasLoadedCapabilityItems = Boolean(
 		toolsQ.data?.items.length ||
-			resourcesQ.data?.items.length ||
-			promptsQ.data?.items.length ||
-			templatesQ.data?.items.length,
+		resourcesQ.data?.items.length ||
+		promptsQ.data?.items.length ||
+		templatesQ.data?.items.length,
 	);
 	const initialCapabilitiesLoading =
 		anyCapabilitiesLoading && !hasLoadedCapabilityItems;
@@ -1345,12 +1207,12 @@ function ServerCapabilitiesPanel({
 	const renderServerFlatCapabilityList = (
 		items: CapabilityPreviewFlatItem[],
 	): ReactNode => {
-    const flatItems: ServerFlatCapabilityItem[] = items.map(
-      ({ kind, item }) => ({
-			...item,
-			__serverCapabilityKind: kind,
-      }),
-    );
+		const flatItems: ServerFlatCapabilityItem[] = items.map(
+			({ kind, item }) => ({
+				...item,
+				__serverCapabilityKind: kind,
+			}),
+		);
 
 		return (
 			<CapabilityList<ServerFlatCapabilityItem>
@@ -1385,7 +1247,7 @@ function ServerCapabilitiesPanel({
 				allLabel: t("detail.filters.kind.all", { defaultValue: "All Types" }),
 				options: kindFilterOptions,
 				selectedValues: kindFilters,
-				onClear: () => setKindFilters([]),
+				onClear: clearKindFilters,
 				onToggle: (value, checked) =>
 					toggleKindFilter(value as CapabilityPreviewKind, checked),
 			}}

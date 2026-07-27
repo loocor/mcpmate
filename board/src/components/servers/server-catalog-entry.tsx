@@ -66,9 +66,20 @@ function buildCapabilityStats(
 		},
 		{
 			label: statsLabels.templates,
-			value: formatCapabilityLifecycle(server.capability, "resourceTemplates", lifecycleLabels),
+			value: formatCapabilityLifecycle(
+				server.capability,
+				"resourceTemplates",
+				lifecycleLabels,
+			),
 		},
-	];
+	].filter(
+		(
+			item,
+		): item is {
+			label: string;
+			value: string;
+		} => item.value != null,
+	);
 }
 
 function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
@@ -97,9 +108,9 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 	const iconSrc = server.icons?.[0]?.src;
 	const iconAlt = displayName
 		? t("entity.iconAlt.named", {
-				name: displayName,
-				defaultValue: "{{name}} icon",
-			})
+			name: displayName,
+			defaultValue: "{{name}} icon",
+		})
 		: t("entity.iconAlt.fallback", { defaultValue: "Server icon" });
 
 	const handleOpen = useCallback(() => {
@@ -215,11 +226,11 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		const namespaceIssue = server.namespace_issue;
 		const namespaceIssueLabel = namespaceIssue
 			? t(
-					namespaceIssue.code === "capability_collision" ||
-						namespaceIssue.conflicts?.length
-						? "detail.namespaceIssue.statusConflict"
-						: "detail.namespaceIssue.statusInvalid",
-				)
+				namespaceIssue.code === "capability_collision" ||
+					namespaceIssue.conflicts?.length
+					? "detail.namespaceIssue.statusConflict"
+					: "detail.namespaceIssue.statusInvalid",
+			)
 			: undefined;
 
 		return (
@@ -323,19 +334,19 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 				actionButtons={
 					enableServerDebug && onOpenDebug
 						? [
-								<Button
-									key="debug"
-									size="sm"
-									variant="outline"
-									className="p-2"
-									onClick={handleOpenDebug}
-									title={t("actions.debug.open", {
-										defaultValue: "Open inspect view",
-									})}
-								>
-									<Bug className="h-4 w-4" />
-								</Button>,
-							]
+							<Button
+								key="debug"
+								size="sm"
+								variant="outline"
+								className="p-2"
+								onClick={handleOpenDebug}
+								title={t("actions.debug.open", {
+									defaultValue: "Open inspect view",
+								})}
+							>
+								<Bug className="h-4 w-4" />
+							</Button>,
+						]
 						: []
 				}
 				onClick={handleOpen}
