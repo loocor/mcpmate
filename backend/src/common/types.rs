@@ -8,7 +8,9 @@ use std::str::FromStr;
 use thiserror::Error;
 
 use sqlx::{
-    Decode, Encode, Sqlite, Type, encode::IsNull, error::BoxDynError,
+    Decode, Encode, Sqlite, Type,
+    encode::IsNull,
+    error::BoxDynError,
     sqlite::{SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef},
 };
 
@@ -253,7 +255,10 @@ pub struct ServerSource {
 }
 
 impl ServerSource {
-    pub fn new(source_type: ServerSourceType, ref_id: Option<String>) -> Self {
+    pub fn new(
+        source_type: ServerSourceType,
+        ref_id: Option<String>,
+    ) -> Self {
         let mut s = Self { source_type, ref_id };
         s.normalize();
         s
@@ -288,11 +293,18 @@ impl FromStr for ServerSource {
         let mut source = if let Some(colon_pos) = s.find(':') {
             let source_type = ServerSourceType::from_str(&s[..colon_pos])?;
             let ref_id = s[colon_pos + 1..].trim();
-            let ref_id = if ref_id.is_empty() { None } else { Some(ref_id.to_string()) };
+            let ref_id = if ref_id.is_empty() {
+                None
+            } else {
+                Some(ref_id.to_string())
+            };
             ServerSource { source_type, ref_id }
         } else {
             let source_type = ServerSourceType::from_str(s)?;
-            ServerSource { source_type, ref_id: None }
+            ServerSource {
+                source_type,
+                ref_id: None,
+            }
         };
         source.normalize();
         Ok(source)

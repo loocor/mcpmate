@@ -1,287 +1,147 @@
-// Profile Resource operations
-// Contains functions for managing resources in profile
+use std::str::FromStr;
 
 use anyhow::{Context, Result};
+use mcpmate_capability_store::{CapabilityKind, CapabilityRefId, EffectiveCapabilityDefinition};
 use sqlx::{Pool, Sqlite};
-use tracing;
 
-use crate::generate_id;
+use crate::config::{
+    models::ProfileResource,
+    profile::capability_ref::{
+        load_capability_server_name, load_profile_capability_refs, upsert_profile_capability_ref,
+    },
+};
 
-/// Add a resource to a profile in the database
-///
-/// This function adds a resource to a profile in the database.
-/// If the resource is added or updated, it also publishes a ResourceEnabledInProfileChanged event.
 pub async fn add_resource_to_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
-    resource_uri: &str,
+    ref_id: &str,
     enabled: bool,
 ) -> Result<String> {
-    tracing::debug!(
-        "Adding resource '{}' from server ID {} to profile ID {}, enabled: {}",
-        resource_uri,
-        server_id,
-        profile_id,
-        enabled
-    );
-
-    // Generate an ID for the profile resource
-    let resource_id = generate_id!("sres");
-
-    // Check if the resource already exists in the profile and get its current enabled status
-    let existing_enabled = sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT enabled FROM profile_resource
-        WHERE profile_id = ? AND server_id = ? AND resource_uri = ?
-        "#,
-    )
-    .bind(profile_id)
-    .bind(server_id)
-    .bind(resource_uri)
-    .fetch_optional(pool)
-    .await
-    .context("Failed to get existing resource enabled status")?;
-
-    // Get the server name (safe version with underscores)
-    let server_name = crate::config::operations::server::get_server_namespace(pool, server_id)
-        .await
-        .context("Failed to get server name")?;
-
-    let result = sqlx::query(
-        r#"
-        INSERT INTO profile_resource (id, profile_id, server_id, server_name, resource_uri, enabled)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(profile_id, server_id, resource_uri) DO UPDATE SET
-            server_name = excluded.server_name,
-            enabled = excluded.enabled,
-            updated_at = CURRENT_TIMESTAMP
-        "#,
-    )
-    .bind(&resource_id)
-    .bind(profile_id)
-    .bind(server_id)
-    .bind(&server_name)
-    .bind(resource_uri)
-    .bind(enabled)
-    .execute(pool)
-    .await
-    .context("Failed to add resource to profile")?;
-
-    let is_new = result.rows_affected() > 0;
-    let id_to_return = if is_new {
-        resource_id.clone()
-    } else {
-        // If no rows were affected, get the existing ID
-        sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT id FROM profile_resource
-            WHERE profile_id = ? AND server_id = ? AND resource_uri = ?
-            "#,
-        )
-        .bind(profile_id)
-        .bind(server_id)
-        .bind(resource_uri)
-        .fetch_one(pool)
-        .await
-        .context("Failed to get profile resource association ID")?
-    };
-
-    // Publish event if the resource is new or its enabled status has changed
-    if is_new || (existing_enabled != Some(enabled)) {
-        // Publish the event
-        crate::core::events::EventBus::global().publish(crate::core::events::Event::ResourceEnabledInProfileChanged {
-            resource_id: id_to_return.clone(),
-            resource_uri: resource_uri.to_string(),
-            profile_id: profile_id.to_string(),
-            enabled,
-        });
-
-        tracing::debug!(
-            "Published ResourceEnabledInProfileChanged event for resource '{}' in profile ID {} ({})",
-            resource_uri,
-            profile_id,
-            enabled
-        );
-    }
-
-    Ok(id_to_return)
+    let ref_id = parse_owned_ref(pool, server_id, ref_id).await?;
+    upsert_profile_capability_ref(pool, profile_id, &ref_id, enabled).await?;
+    Ok(ref_id.to_string())
 }
 
-/// Remove a resource from a profile in the database
 pub async fn remove_resource_from_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
-    resource_uri: &str,
+    ref_id: &str,
 ) -> Result<bool> {
-    tracing::debug!(
-        "Removing resource '{}' from server ID {} from profile ID {}",
-        resource_uri,
-        server_id,
-        profile_id
-    );
-
-    let result = sqlx::query(
-        r#"
-        DELETE FROM profile_resource
-        WHERE profile_id = ? AND server_id = ? AND resource_uri = ?
-        "#,
-    )
-    .bind(profile_id)
-    .bind(server_id)
-    .bind(resource_uri)
-    .execute(pool)
-    .await
-    .context("Failed to remove resource from profile")?;
-
-    Ok(result.rows_affected() > 0)
+    let ref_id = parse_owned_ref(pool, server_id, ref_id).await?;
+    let result = sqlx::query("DELETE FROM profile_capability_refs WHERE profile_id = ? AND ref_id = ?")
+        .bind(profile_id)
+        .bind(ref_id.as_str())
+        .execute(pool)
+        .await
+        .context("Failed to remove Resource capability ref from Profile")?;
+    Ok(result.rows_affected() == 1)
 }
 
-/// Get all resources for a profile
 pub async fn get_resources_for_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
-) -> Result<Vec<crate::config::models::ProfileResource>> {
-    tracing::debug!("Getting all resources for profile ID {}", profile_id);
-
-    let resources = sqlx::query_as::<_, crate::config::models::ProfileResource>(
-        r#"
-        SELECT id, profile_id, server_id, server_name, resource_uri, enabled, created_at, updated_at
-        FROM profile_resource
-        WHERE profile_id = ?
-          AND EXISTS (
-              SELECT 1
-              FROM profile_server ps
-              WHERE ps.profile_id = profile_resource.profile_id
-                AND ps.server_id = profile_resource.server_id
-          )
-        ORDER BY server_name, resource_uri
-        "#,
-    )
-    .bind(profile_id)
-    .fetch_all(pool)
-    .await
-    .context("Failed to get resources for profile")?;
-
+) -> Result<Vec<ProfileResource>> {
+    let relationships = load_profile_capability_refs(pool, profile_id, Some(CapabilityKind::Resources)).await?;
+    let mut resources = Vec::with_capacity(relationships.len());
+    for relationship in relationships {
+        let server_name = load_capability_server_name(pool, &relationship.server_id).await?;
+        let EffectiveCapabilityDefinition::Resource(resource) = relationship.definition else {
+            anyhow::bail!(
+                "Capability ref '{}' does not contain a Resource definition",
+                relationship.ref_id
+            );
+        };
+        resources.push(ProfileResource {
+            id: Some(relationship.ref_id.to_string()),
+            profile_id: relationship.profile_id,
+            server_id: relationship.server_id,
+            server_name,
+            resource_uri: relationship.origin_key,
+            unique_uri: relationship.external_key,
+            description: resource.description,
+            enabled: relationship.enabled,
+            state: relationship.state.as_str().to_string(),
+            state_generation: relationship.state_generation,
+        });
+    }
     Ok(resources)
 }
 
-/// Get enabled resources for a profile
 pub async fn get_enabled_resources_for_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
-) -> Result<Vec<crate::config::models::ProfileResource>> {
-    tracing::debug!("Getting enabled resources for profile ID {}", profile_id);
-
-    let resources = sqlx::query_as::<_, crate::config::models::ProfileResource>(
-        r#"
-        SELECT id, profile_id, server_id, server_name, resource_uri, enabled, created_at, updated_at
-        FROM profile_resource
-        WHERE profile_id = ?
-          AND enabled = 1
-          AND EXISTS (
-              SELECT 1
-              FROM profile_server ps
-              WHERE ps.profile_id = profile_resource.profile_id
-                AND ps.server_id = profile_resource.server_id
-          )
-        ORDER BY server_name, resource_uri
-        "#,
-    )
-    .bind(profile_id)
-    .fetch_all(pool)
-    .await
-    .context("Failed to get enabled resources for profile")?;
-
-    Ok(resources)
+) -> Result<Vec<ProfileResource>> {
+    Ok(get_resources_for_profile(pool, profile_id)
+        .await?
+        .into_iter()
+        .filter(|resource| resource.enabled && resource.state == "active")
+        .collect())
 }
 
-/// Update resource enabled status in a profile
 pub async fn update_resource_enabled_status(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
-    resource_uri: &str,
+    ref_id: &str,
     enabled: bool,
-) -> Result<bool> {
-    tracing::debug!(
-        "Updating resource '{}' enabled status to {} in profile ID {}",
-        resource_uri,
-        enabled,
-        profile_id
-    );
-
-    let result = sqlx::query(
-        r#"
-        UPDATE profile_resource
-        SET enabled = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE profile_id = ? AND server_id = ? AND resource_uri = ?
-        "#,
-    )
-    .bind(enabled)
-    .bind(profile_id)
-    .bind(server_id)
-    .bind(resource_uri)
-    .execute(pool)
-    .await
-    .context("Failed to update resource enabled status")?;
-
-    let updated = result.rows_affected() > 0;
-
-    if updated {
-        if enabled {
-            crate::config::profile::server::ensure_server_enabled_for_profile(pool, profile_id, server_id).await?;
-        } else {
-            crate::config::profile::server::disable_server_if_all_capabilities_disabled(pool, profile_id, server_id)
-                .await?;
-        }
-
-        // Publish event for the status change
-        if let Ok(resource_id) = sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT id FROM profile_resource
-            WHERE profile_id = ? AND server_id = ? AND resource_uri = ?
-            "#,
-        )
+) -> Result<()> {
+    let ref_id = parse_owned_ref(pool, server_id, ref_id).await?;
+    let result = sqlx::query("UPDATE profile_capability_refs SET enabled = ? WHERE profile_id = ? AND ref_id = ?")
+        .bind(enabled)
         .bind(profile_id)
-        .bind(server_id)
-        .bind(resource_uri)
-        .fetch_one(pool)
+        .bind(ref_id.as_str())
+        .execute(pool)
         .await
-        {
-            crate::core::events::EventBus::global().publish(
-                crate::core::events::Event::ResourceEnabledInProfileChanged {
-                    resource_id,
-                    resource_uri: resource_uri.to_string(),
-                    profile_id: profile_id.to_string(),
-                    enabled,
-                },
-            );
-        }
+        .context("Failed to update Resource capability ref")?;
+    if result.rows_affected() != 1 {
+        anyhow::bail!(
+            "Resource relationship '{}' not found in Profile '{}'",
+            ref_id,
+            profile_id
+        );
     }
-
-    Ok(updated)
+    Ok(())
 }
 
-/// Common query builder for enabled resources from active profile.
-/// This helper reduces code duplication and ensures consistency.
 pub fn build_enabled_resources_query(additional_where: Option<&str>) -> String {
-    // Note: select original server name from server_config (sc.name) instead of the
-    // underscored safe name stored in profile_resource.csr.server_name to keep
-    // unique-name generation consistent with aggregation path.
     let base_query = r#"
-        SELECT DISTINCT sc.id as server_id, sc.name as server_name, csr.resource_uri
-        FROM profile_resource csr
-        JOIN profile cs ON csr.profile_id = cs.id
-        JOIN server_config sc ON csr.server_id = sc.id
-        WHERE cs.is_active = true
-          AND csr.enabled = true
-          AND sc.enabled = 1
-    "#;
-
+        SELECT DISTINCT cr.server_id, sc.name AS server_name, cr.origin_key AS resource_uri
+        FROM profile_capability_refs pcr
+        JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+        JOIN profile p ON p.id = pcr.profile_id
+        JOIN server_config sc ON sc.id = cr.server_id
+        WHERE p.is_active = 1
+          AND pcr.enabled = 1
+          AND cr.state = 'active'
+          AND cr.kind = 'resources'
+          AND sc.enabled = 1"#;
     match additional_where {
-        Some(condition) => format!("{} AND {}", base_query, condition),
+        Some(condition) => format!("{base_query} AND {condition}"),
         None => base_query.to_string(),
     }
+}
+
+async fn parse_owned_ref(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    ref_id: &str,
+) -> Result<CapabilityRefId> {
+    let ref_id =
+        CapabilityRefId::from_str(ref_id).with_context(|| format!("Invalid Resource capability ref '{ref_id}'"))?;
+    let owner: (String, String) = sqlx::query_as("SELECT server_id, kind FROM capability_refs WHERE ref_id = ?")
+        .bind(ref_id.as_str())
+        .fetch_optional(pool)
+        .await
+        .context("Failed to load Resource capability ref")?
+        .ok_or_else(|| anyhow::anyhow!("Capability ref '{}' is not registered", ref_id))?;
+    if owner.0 != server_id || CapabilityKind::parse(&owner.1) != Some(CapabilityKind::Resources) {
+        anyhow::bail!(
+            "Capability ref '{}' is not a Resource owned by server '{}'",
+            ref_id,
+            server_id
+        );
+    }
+    Ok(ref_id)
 }

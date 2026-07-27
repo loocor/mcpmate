@@ -84,8 +84,7 @@ pub(crate) fn parse_config_fallback(
     }
 
     if let Some(rule) = parse_rule {
-        return parse_config_for_format(raw_content, rule.format, JsonReadPolicy::Tolerant)
-            .unwrap_or(Value::Null);
+        return parse_config_for_format(raw_content, rule.format, JsonReadPolicy::Tolerant).unwrap_or(Value::Null);
     }
 
     if let Ok(document) = parse_config_autodetect(raw_content, config_path) {

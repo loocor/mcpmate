@@ -74,6 +74,33 @@ pub struct VisibilitySnapshot {
     has_prompt_policy: bool,
 }
 
+#[cfg(test)]
+impl VisibilitySnapshot {
+    /// Builds a fixture snapshot for tests outside this module. Production code always
+    /// derives a `VisibilitySnapshot` through `ProfileVisibilityService::resolve_snapshot_for_client`.
+    pub(crate) fn for_test(
+        client_id: &str,
+        surface_fingerprint: &str,
+        server_ids: Vec<String>,
+        has_tool_policy: bool,
+    ) -> Self {
+        Self {
+            client_id: client_id.to_string(),
+            surface_fingerprint: surface_fingerprint.to_string(),
+            profile_ids: Vec::new(),
+            server_ids,
+            allowed_tools: HashSet::new(),
+            allowed_resources: HashSet::new(),
+            allowed_resource_templates: HashSet::new(),
+            allowed_prompts: HashSet::new(),
+            has_tool_policy,
+            has_resource_policy: false,
+            has_resource_template_policy: false,
+            has_prompt_policy: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ClientCapabilityRow {
     capability_source: Option<String>,
@@ -684,15 +711,39 @@ impl ProfileVisibilityService {
                 r#"
                 SELECT DISTINCT sc.id
                 FROM server_config sc
-                JOIN profile_server ps ON sc.id = ps.server_id
-                WHERE ps.profile_id IN ({placeholders})
-                  AND ps.enabled = 1
-                  AND sc.enabled = 1
+                WHERE sc.enabled = 1
+                  AND (
+                    EXISTS (
+                      SELECT 1
+                      FROM profile_server_relationships psr
+                      WHERE psr.server_id = sc.id
+                        AND psr.enabled = 1
+                        AND psr.profile_id IN ({placeholders})
+                    )
+                    OR EXISTS (
+                      SELECT 1
+                      FROM profile_capability_refs pcr
+                      JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                      WHERE cr.server_id = sc.id
+                        AND pcr.enabled = 1
+                        AND pcr.profile_id IN ({placeholders})
+                        AND NOT EXISTS (
+                          SELECT 1
+                          FROM profile_server_relationships gate
+                          WHERE gate.profile_id = pcr.profile_id
+                            AND gate.server_id = cr.server_id
+                            AND gate.enabled = 0
+                        )
+                    )
+                  )
                 ORDER BY sc.name, sc.id
                 "#,
             );
 
             let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for profile_id in profile_ids {
+                query = query.bind(profile_id);
+            }
             for profile_id in profile_ids {
                 query = query.bind(profile_id);
             }
@@ -734,42 +785,16 @@ impl ProfileVisibilityService {
         server_ids: &[String],
         profile_ids: &[String],
     ) -> Result<(HashSet<String>, bool)> {
-        if server_ids.is_empty() {
-            return Ok((HashSet::new(), false));
-        }
-
-        let has_policy = has_profile_rows(pool, "profile_tool", profile_ids).await?;
-        let values = if has_policy {
-            let profile_placeholders = repeat_placeholders(profile_ids.len());
-            let server_placeholders = repeat_placeholders(server_ids.len());
-            let sql = format!(
-                r#"
-                SELECT DISTINCT st.unique_name
-                FROM profile_tool pt
-                JOIN server_tools st ON pt.server_tool_id = st.id
-                JOIN server_config sc ON st.server_id = sc.id
-                WHERE pt.profile_id IN ({profile_placeholders})
-                  AND st.server_id IN ({server_placeholders})
-                  AND pt.enabled = 1
-                  AND sc.enabled = 1
-                "#,
-            );
-
-            let mut query = sqlx::query_scalar::<_, String>(&sql);
-            for profile_id in profile_ids {
-                query = query.bind(profile_id);
-            }
-            for server_id in server_ids {
-                query = query.bind(server_id);
-            }
-            query.fetch_all(pool).await.context("Failed to load tool policy rows")?
-        } else {
-            query_unique_values(pool, "server_tools", "unique_name", "server_id", server_ids)
-                .await
-                .context("Failed to load visible tools for snapshot")?
-        };
-
-        Ok((values.into_iter().collect(), has_policy))
+        self.resolve_allowed_kind(
+            pool,
+            server_ids,
+            profile_ids,
+            "tools",
+            "server_tools",
+            "unique_name",
+            "tool_name",
+        )
+        .await
     }
 
     async fn resolve_allowed_resources(
@@ -778,50 +803,16 @@ impl ProfileVisibilityService {
         server_ids: &[String],
         profile_ids: &[String],
     ) -> Result<(HashSet<String>, bool)> {
-        if server_ids.is_empty() {
-            return Ok((HashSet::new(), false));
-        }
-
-        let has_policy = has_profile_rows(pool, "profile_resource", profile_ids).await?;
-        let values = if has_policy {
-            let profile_placeholders = repeat_placeholders(profile_ids.len());
-            let server_placeholders = repeat_placeholders(server_ids.len());
-            let sql = format!(
-                r#"
-                SELECT DISTINCT sr.unique_uri
-                FROM profile_resource pr
-                JOIN server_config sc ON pr.server_id = sc.id
-                JOIN server_resources sr
-                  ON sr.server_id = pr.server_id
-                 AND sr.resource_uri = pr.resource_uri
-                WHERE pr.profile_id IN ({profile_placeholders})
-                  AND pr.server_id IN ({server_placeholders})
-                  AND pr.enabled = 1
-                  AND sc.enabled = 1
-                "#,
-            );
-
-            let mut query = sqlx::query_scalar::<_, String>(&sql);
-            for profile_id in profile_ids {
-                query = query.bind(profile_id);
-            }
-            for server_id in server_ids {
-                query = query.bind(server_id);
-            }
-
-            query
-                .fetch_all(pool)
-                .await
-                .context("Failed to load resource policy rows")?
-                .into_iter()
-                .collect()
-        } else {
-            query_unique_values(pool, "server_resources", "unique_uri", "server_id", server_ids)
-                .await
-                .context("Failed to load visible resources for snapshot")?
-        };
-
-        Ok((values.into_iter().collect(), has_policy))
+        self.resolve_allowed_kind(
+            pool,
+            server_ids,
+            profile_ids,
+            "resources",
+            "server_resources",
+            "unique_uri",
+            "resource_uri",
+        )
+        .await
     }
 
     async fn resolve_allowed_resource_templates(
@@ -830,54 +821,16 @@ impl ProfileVisibilityService {
         server_ids: &[String],
         profile_ids: &[String],
     ) -> Result<(HashSet<String>, bool)> {
-        if server_ids.is_empty() {
-            return Ok((HashSet::new(), false));
-        }
-
-        let has_policy = has_profile_rows(pool, "profile_resource_template", profile_ids).await?;
-        let values = if has_policy {
-            let profile_placeholders = repeat_placeholders(profile_ids.len());
-            let server_placeholders = repeat_placeholders(server_ids.len());
-            let sql = format!(
-                r#"
-                SELECT DISTINCT srt.unique_name
-                FROM profile_resource_template prt
-                JOIN server_config sc ON prt.server_id = sc.id
-                JOIN server_resource_templates srt
-                  ON srt.server_id = prt.server_id
-                 AND srt.uri_template = prt.uri_template
-                WHERE prt.profile_id IN ({profile_placeholders})
-                  AND prt.server_id IN ({server_placeholders})
-                  AND prt.enabled = 1
-                  AND sc.enabled = 1
-                "#,
-            );
-
-            let mut query = sqlx::query_scalar::<_, String>(&sql);
-            for profile_id in profile_ids {
-                query = query.bind(profile_id);
-            }
-            for server_id in server_ids {
-                query = query.bind(server_id);
-            }
-
-            query
-                .fetch_all(pool)
-                .await
-                .context("Failed to load resource template policy rows")?
-        } else {
-            query_unique_values(
-                pool,
-                "server_resource_templates",
-                "unique_name",
-                "server_id",
-                server_ids,
-            )
-            .await
-            .context("Failed to load visible resource templates for snapshot")?
-        };
-
-        Ok((values.into_iter().collect(), has_policy))
+        self.resolve_allowed_kind(
+            pool,
+            server_ids,
+            profile_ids,
+            "resource_templates",
+            "server_resource_templates",
+            "unique_name",
+            "uri_template",
+        )
+        .await
     }
 
     async fn resolve_allowed_prompts(
@@ -886,50 +839,140 @@ impl ProfileVisibilityService {
         server_ids: &[String],
         profile_ids: &[String],
     ) -> Result<(HashSet<String>, bool)> {
+        self.resolve_allowed_kind(
+            pool,
+            server_ids,
+            profile_ids,
+            "prompts",
+            "server_prompts",
+            "unique_name",
+            "prompt_name",
+        )
+        .await
+    }
+
+    async fn resolve_allowed_kind(
+        &self,
+        pool: &sqlx::Pool<sqlx::Sqlite>,
+        server_ids: &[String],
+        profile_ids: &[String],
+        kind: &str,
+        projection_table: &str,
+        external_column: &str,
+        origin_column: &str,
+    ) -> Result<(HashSet<String>, bool)> {
         if server_ids.is_empty() {
             return Ok((HashSet::new(), false));
         }
-
-        let has_policy = has_profile_rows(pool, "profile_prompt", profile_ids).await?;
-        let values = if has_policy {
-            let profile_placeholders = repeat_placeholders(profile_ids.len());
+        if profile_ids.is_empty() {
             let server_placeholders = repeat_placeholders(server_ids.len());
             let sql = format!(
                 r#"
-                SELECT DISTINCT sp.unique_name
-                FROM profile_prompt pp
-                JOIN server_config sc ON pp.server_id = sc.id
-                JOIN server_prompts sp
-                  ON sp.server_id = pp.server_id
-                 AND sp.prompt_name = pp.prompt_name
-                WHERE pp.profile_id IN ({profile_placeholders})
-                  AND pp.server_id IN ({server_placeholders})
-                  AND pp.enabled = 1
-                  AND sc.enabled = 1
-                "#,
+                SELECT DISTINCT projection.{external_column}
+                FROM capability_refs cr
+                JOIN {projection_table} projection
+                  ON projection.server_id = cr.server_id
+                 AND projection.{origin_column} = cr.origin_key
+                WHERE cr.kind = ?
+                  AND cr.state = 'active'
+                  AND cr.server_id IN ({server_placeholders})
+                "#
             );
-
-            let mut query = sqlx::query_scalar::<_, String>(&sql);
-            for profile_id in profile_ids {
-                query = query.bind(profile_id);
-            }
+            let mut query = sqlx::query_scalar::<_, String>(&sql).bind(kind);
             for server_id in server_ids {
                 query = query.bind(server_id);
             }
-
-            query
+            let values = query
                 .fetch_all(pool)
                 .await
-                .context("Failed to load prompt policy rows")?
-                .into_iter()
-                .collect()
-        } else {
-            query_unique_values(pool, "server_prompts", "unique_name", "server_id", server_ids)
-                .await
-                .context("Failed to load visible prompts for snapshot")?
-        };
+                .context("Failed to expand globally active CapabilityRefs")?;
+            return Ok((values.into_iter().collect(), false));
+        }
+        let profile_placeholders = repeat_placeholders(profile_ids.len());
+        let server_placeholders = repeat_placeholders(server_ids.len());
+        let policy_sql = format!(
+            r#"
+            SELECT EXISTS (
+              SELECT 1
+              FROM profile_capability_refs pcr
+              JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+              WHERE pcr.profile_id IN ({profile_placeholders})
+                AND cr.kind = ?
+              UNION ALL
+              SELECT 1
+              FROM profile_server_relationships psr
+              WHERE psr.profile_id IN ({profile_placeholders})
+            )
+            "#
+        );
+        let mut policy_query = sqlx::query_scalar::<_, bool>(&policy_sql);
+        for profile_id in profile_ids {
+            policy_query = policy_query.bind(profile_id);
+        }
+        policy_query = policy_query.bind(kind);
+        for profile_id in profile_ids {
+            policy_query = policy_query.bind(profile_id);
+        }
+        let has_policy = policy_query
+            .fetch_one(pool)
+            .await
+            .context("Failed to resolve authoring policy presence")?;
+        if !has_policy {
+            return Ok((HashSet::new(), false));
+        }
 
-        Ok((values.into_iter().collect(), has_policy))
+        let values_sql = format!(
+            r#"
+            SELECT DISTINCT projection.{external_column}
+            FROM capability_refs cr
+            JOIN server_config sc ON sc.id = cr.server_id
+            JOIN {projection_table} projection
+              ON projection.server_id = cr.server_id
+             AND projection.{origin_column} = cr.origin_key
+            WHERE cr.kind = ?
+              AND cr.state = 'active'
+              AND cr.server_id IN ({server_placeholders})
+              AND sc.enabled = 1
+              AND (
+                EXISTS (
+                  SELECT 1
+                  FROM profile_capability_refs pcr
+                  WHERE pcr.ref_id = cr.ref_id
+                    AND pcr.enabled = 1
+                    AND pcr.profile_id IN ({profile_placeholders})
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM profile_server_relationships gate
+                      WHERE gate.profile_id = pcr.profile_id
+                        AND gate.server_id = cr.server_id
+                        AND gate.enabled = 0
+                    )
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM profile_server_relationships psr
+                  WHERE psr.server_id = cr.server_id
+                    AND psr.enabled = 1
+                    AND psr.profile_id IN ({profile_placeholders})
+                )
+              )
+            "#
+        );
+        let mut values_query = sqlx::query_scalar::<_, String>(&values_sql).bind(kind);
+        for server_id in server_ids {
+            values_query = values_query.bind(server_id);
+        }
+        for profile_id in profile_ids {
+            values_query = values_query.bind(profile_id);
+        }
+        for profile_id in profile_ids {
+            values_query = values_query.bind(profile_id);
+        }
+        let values = values_query
+            .fetch_all(pool)
+            .await
+            .context("Failed to expand Profile authoring relationships")?;
+        Ok((values.into_iter().collect(), true))
     }
 }
 
@@ -957,53 +1000,6 @@ fn resource_allowed_from_snapshot(
     }
 
     false
-}
-
-async fn has_profile_rows(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    table: &str,
-    profile_ids: &[String],
-) -> Result<bool> {
-    if profile_ids.is_empty() {
-        return Ok(false);
-    }
-
-    let placeholders = repeat_placeholders(profile_ids.len());
-    let sql = format!("SELECT COUNT(1) FROM {table} WHERE profile_id IN ({placeholders})");
-    let mut query = sqlx::query_scalar::<_, i64>(&sql);
-    for profile_id in profile_ids {
-        query = query.bind(profile_id);
-    }
-    Ok(query
-        .fetch_one(pool)
-        .await
-        .with_context(|| format!("Failed to query profile rows from '{table}'"))?
-        > 0)
-}
-
-async fn query_unique_values(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    table: &str,
-    value_column: &str,
-    filter_column: &str,
-    filter_values: &[String],
-) -> Result<Vec<String>> {
-    if filter_values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let placeholders = repeat_placeholders(filter_values.len());
-    let sql = format!(
-        "SELECT DISTINCT {value_column} FROM {table} WHERE {filter_column} IN ({placeholders}) ORDER BY {value_column}"
-    );
-    let mut query = sqlx::query_scalar::<_, String>(&sql);
-    for filter_value in filter_values {
-        query = query.bind(filter_value);
-    }
-    query
-        .fetch_all(pool)
-        .await
-        .with_context(|| format!("Failed to load values from '{table}'"))
 }
 
 fn repeat_placeholders(count: usize) -> String {
@@ -1124,6 +1120,10 @@ mod tests {
         server::{self, init::initialize_server_tables},
     };
     use crate::core::capability::resource_uri::{encode_resource_template, encode_resource_uri};
+    use mcpmate_capability_store::{
+        CapabilityCatalog, CapabilityKind as CatalogCapabilityKind, CapabilityObservation, CapabilityPayload,
+        CatalogRecord, DeclarationState, InventoryState, KindObservation, SqliteCapabilityCatalog,
+    };
     use serial_test::serial;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
@@ -1137,8 +1137,11 @@ mod tests {
             .expect("sqlite pool");
 
         initialize_server_tables(&pool).await.expect("init server tables");
-        initialize_profile_tables(&pool).await.expect("init profile tables");
         initialize_client_table(&pool).await.expect("init client table");
+        crate::config::database::initialize_capability_catalog(&pool)
+            .await
+            .expect("init capability catalog");
+        initialize_profile_tables(&pool).await.expect("init profile tables");
         crate::config::client::init::initialize_system_settings(&pool)
             .await
             .expect("init system settings table");
@@ -1187,7 +1190,20 @@ mod tests {
             crate::config::server::tools::upsert_server_tool(&db.pool, server_id, server_name, tool_name, None)
                 .await
                 .expect("upsert server tool");
-        profile::add_tool_to_profile(&db.pool, profile_id, server_id, tool_name, true)
+        let tool: rmcp::model::Tool = serde_json::from_value(serde_json::json!({
+            "name": tool_name,
+            "inputSchema": {"type": "object"}
+        }))
+        .expect("build Tool");
+        let ref_id = commit_catalog_record(
+            db,
+            server_id,
+            server_name,
+            CatalogRecord::materialize(server_id, tool_name, &result.unique_name, CapabilityPayload::Tool(tool))
+                .expect("materialize Tool"),
+        )
+        .await;
+        profile::add_tool_to_profile(&db.pool, profile_id, server_id, &ref_id, true)
             .await
             .expect("add tool to profile");
         result.unique_name
@@ -1209,8 +1225,20 @@ mod tests {
         )
         .await
         .expect("upsert server prompt");
-
-        profile::add_prompt_to_profile(&db.pool, profile_id, server_id, prompt_name, true)
+        let prompt: rmcp::model::Prompt = serde_json::from_value(serde_json::json!({
+            "name": prompt_name,
+            "arguments": []
+        }))
+        .expect("build Prompt");
+        let ref_id = commit_catalog_record(
+            db,
+            server_id,
+            server_name,
+            CatalogRecord::materialize(server_id, prompt_name, &unique_name, CapabilityPayload::Prompt(prompt))
+                .expect("materialize Prompt"),
+        )
+        .await;
+        profile::add_prompt_to_profile(&db.pool, profile_id, server_id, &ref_id, true)
             .await
             .expect("add prompt to profile");
         unique_name
@@ -1234,8 +1262,23 @@ mod tests {
         )
         .await
         .expect("upsert server resource");
-
-        profile::add_resource_to_profile(&db.pool, profile_id, server_id, resource_uri, true)
+        let resource: rmcp::model::Resource =
+            serde_json::from_value(serde_json::json!({"uri": resource_uri, "name": resource_uri}))
+                .expect("build Resource");
+        let ref_id = commit_catalog_record(
+            db,
+            server_id,
+            server_name,
+            CatalogRecord::materialize(
+                server_id,
+                resource_uri,
+                &unique_uri,
+                CapabilityPayload::Resource(resource),
+            )
+            .expect("materialize Resource"),
+        )
+        .await;
+        profile::add_resource_to_profile(&db.pool, profile_id, server_id, &ref_id, true)
             .await
             .expect("add resource to profile");
         unique_uri
@@ -1258,11 +1301,65 @@ mod tests {
         )
         .await
         .expect("upsert server resource template");
-
-        profile::add_resource_template_to_profile(&db.pool, profile_id, server_id, uri_template, true)
+        let template: rmcp::model::ResourceTemplate =
+            serde_json::from_value(serde_json::json!({"uriTemplate": uri_template, "name": uri_template}))
+                .expect("build Resource Template");
+        let ref_id = commit_catalog_record(
+            db,
+            server_id,
+            server_name,
+            CatalogRecord::materialize(
+                server_id,
+                uri_template,
+                &unique_name,
+                CapabilityPayload::ResourceTemplate(template),
+            )
+            .expect("materialize Resource Template"),
+        )
+        .await;
+        profile::add_resource_template_to_profile(&db.pool, profile_id, server_id, &ref_id, true)
             .await
             .expect("add resource template to profile");
         unique_name
+    }
+
+    async fn commit_catalog_record(
+        db: &Arc<Database>,
+        server_id: &str,
+        server_name: &str,
+        record: CatalogRecord,
+    ) -> String {
+        let kind = record.kind();
+        let ref_id = record.ref_id.to_string();
+        let capabilities = match kind {
+            CatalogCapabilityKind::Tools => serde_json::json!({"tools": {}}),
+            CatalogCapabilityKind::Prompts => serde_json::json!({"prompts": {}}),
+            CatalogCapabilityKind::Resources | CatalogCapabilityKind::ResourceTemplates => {
+                serde_json::json!({"resources": {}})
+            }
+        };
+        let initialize_result: rmcp::model::InitializeResult = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": capabilities,
+            "serverInfo": {"name": server_name, "version": "1.0.0"}
+        }))
+        .expect("build InitializeResult");
+        SqliteCapabilityCatalog::new(db.pool.clone())
+            .commit_observation(CapabilityObservation::new(
+                server_id,
+                server_name,
+                "test-config",
+                initialize_result,
+                vec![KindObservation::new(
+                    kind,
+                    DeclarationState::Supported,
+                    InventoryState::Complete,
+                )],
+                vec![record],
+            ))
+            .await
+            .expect("commit catalog observation");
+        ref_id
     }
 
     async fn insert_client_config(
@@ -1387,6 +1484,46 @@ mod tests {
         assert_eq!(snapshot.server_ids, vec![selected_server_id]);
         assert!(snapshot.allowed_tools.contains(&selected_tool));
         assert_eq!(snapshot.allowed_tools.len(), 1);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn resolve_snapshot_excludes_a_disabled_profile_server_without_erasing_capability_preferences() {
+        let (_temp_dir, db, service) = create_visibility_service().await;
+
+        let profile_id = insert_profile(&db, "selected", ProfileType::Shared, false).await;
+        let server_id = insert_server(&db, "selected_server").await;
+        profile::add_server_to_profile(&db.pool, &profile_id, &server_id, true)
+            .await
+            .expect("add selected server");
+        let tool = seed_tool(&db, &profile_id, &server_id, "selected_server", "tool_selected").await;
+        profile::add_server_to_profile(&db.pool, &profile_id, &server_id, false)
+            .await
+            .expect("disable selected server");
+        insert_client_config(
+            &db,
+            "client-disabled-profile-server",
+            CapabilitySource::Profiles,
+            vec![profile_id.clone()],
+            None,
+        )
+        .await;
+
+        let snapshot = service
+            .resolve_snapshot("client-disabled-profile-server", None)
+            .await
+            .expect("resolve snapshot");
+
+        assert_eq!(snapshot.profile_ids, vec![profile_id]);
+        assert!(snapshot.server_ids.is_empty());
+        assert!(!snapshot.allowed_tools.contains(&tool));
+        let saved_preference: bool =
+            sqlx::query_scalar("SELECT enabled FROM profile_capability_refs WHERE profile_id = ?")
+                .bind(&snapshot.profile_ids[0])
+                .fetch_one(&db.pool)
+                .await
+                .expect("load saved capability preference");
+        assert!(saved_preference);
     }
 
     #[tokio::test]

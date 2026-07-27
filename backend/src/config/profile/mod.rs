@@ -2,6 +2,7 @@
 // Contains CRUD operations for profile, organized by functional domains
 
 pub mod basic;
+pub mod capability_ref;
 pub mod constants;
 pub mod init;
 pub mod mgmt;
@@ -34,10 +35,7 @@ pub use prompt::{
 };
 
 // Server association operations
-pub use server::{
-    ServerCapabilityAction, add_server_to_profile, get_profile_servers, remove_server_from_profile,
-    sync_server_capabilities,
-};
+pub use server::{add_server_to_profile, get_profile_servers, remove_server_from_profile};
 
 // Resource association operations
 pub use resource::{

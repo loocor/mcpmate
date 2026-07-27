@@ -44,7 +44,6 @@ pub struct ClientStateRow {
     pub(super) template_identifier: Option<String>,
     pub(super) selected_profile_ids: Option<String>,
     pub(super) custom_profile_id: Option<String>,
-    pub(super) unify_direct_exposure_intent: Option<String>,
     pub(super) approval_status: Option<String>,
     pub(super) attachment_state: Option<String>,
     #[allow(dead_code)]
@@ -342,13 +341,6 @@ impl ClientStateRow {
             self.custom_profile_id.clone(),
         )
         .map_err(ConfigError::DataAccessError)
-    }
-
-    pub(super) fn unify_direct_exposure_intent(
-        &self
-    ) -> ConfigResult<crate::clients::models::UnifyDirectExposureIntent> {
-        crate::clients::models::UnifyDirectExposureIntent::from_parts(self.unify_direct_exposure_intent.as_deref())
-            .map_err(ConfigError::DataAccessError)
     }
 
     pub fn runtime_client_metadata(&self) -> RuntimeClientMetadata {

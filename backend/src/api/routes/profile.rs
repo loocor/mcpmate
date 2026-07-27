@@ -53,6 +53,10 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         )
         .api_route("/mcp/profile/tools/list", get_with(tools_list_aide, tools_list_docs))
         .api_route(
+            "/mcp/profile/capabilities/manage",
+            post_with(component_manage_aide, component_manage_docs),
+        )
+        .api_route(
             "/mcp/profile/tools/manage",
             post_with(component_manage_aide, component_manage_docs),
         )

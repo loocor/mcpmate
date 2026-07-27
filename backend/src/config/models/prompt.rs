@@ -1,7 +1,6 @@
 // Prompt models for MCPMate
 // Contains data models for prompt configuration
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -16,14 +15,14 @@ pub struct ProfilePrompt {
     pub server_id: String,
     /// Server name (for human identification during development)
     pub server_name: String,
-    /// Prompt name (original name from upstream server)
+    /// Prompt origin name returned by the upstream server.
     pub prompt_name: String,
-    /// Whether the prompt is enabled in this profile
+    /// Current external name used for management display.
+    pub unique_name: String,
+    pub description: Option<String>,
     pub enabled: bool,
-    /// When the association was created
-    pub created_at: Option<DateTime<Utc>>,
-    /// When the association was last updated
-    pub updated_at: Option<DateTime<Utc>>,
+    pub state: String,
+    pub state_generation: i64,
 }
 
 /// Prompt configuration update model

@@ -27,10 +27,6 @@ pub async fn token_estimate(
     let profile_id = params.profile_id;
 
     let db = get_database(&state).await?;
-    let unified_query = state
-        .unified_query
-        .clone()
-        .ok_or_else(|| ApiError::InternalError("Unified capability query is unavailable".to_string()))?;
 
     let profile = crate::config::profile::get_profile(&db.pool, &profile_id)
         .await
@@ -60,7 +56,7 @@ pub async fn token_estimate(
         let server_id = &profile_server.server_id;
 
         accumulate_estimate(
-            query_unified_capabilities(&unified_query, server_id, CapabilityType::Tools, &params).await,
+            query_unified_capabilities(&state, server_id, CapabilityType::Tools, &params).await,
             &mut tools_estimate,
             profile_server.enabled,
             |item| match item {
@@ -71,7 +67,7 @@ pub async fn token_estimate(
         );
 
         accumulate_estimate(
-            query_unified_capabilities(&unified_query, server_id, CapabilityType::Prompts, &params).await,
+            query_unified_capabilities(&state, server_id, CapabilityType::Prompts, &params).await,
             &mut prompts_estimate,
             profile_server.enabled,
             |item| match item {
@@ -82,7 +78,7 @@ pub async fn token_estimate(
         );
 
         accumulate_estimate(
-            query_unified_capabilities(&unified_query, server_id, CapabilityType::Resources, &params).await,
+            query_unified_capabilities(&state, server_id, CapabilityType::Resources, &params).await,
             &mut resources_estimate,
             profile_server.enabled,
             |item| match item {
@@ -93,7 +89,7 @@ pub async fn token_estimate(
         );
 
         accumulate_estimate(
-            query_unified_capabilities(&unified_query, server_id, CapabilityType::ResourceTemplates, &params).await,
+            query_unified_capabilities(&state, server_id, CapabilityType::ResourceTemplates, &params).await,
             &mut templates_estimate,
             profile_server.enabled,
             |item| match item {
@@ -274,31 +270,80 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("create test database");
-        crate::config::server::init::initialize_server_tables(&pool)
+        crate::config::initialization::run_initialization(&pool)
             .await
-            .expect("initialize server tables");
-        crate::config::profile::init::initialize_profile_tables(&pool)
-            .await
-            .expect("initialize profile tables");
+            .expect("initialize database");
 
         for statement in [
             "INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')",
             "INSERT INTO profile (id, name, type) VALUES ('profile-a', 'Profile A', 'shared')",
-            "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) VALUES ('profile-server-a', 'profile-a', 'server-a', 'docs', 1)",
-            "INSERT INTO server_tools (id, server_id, server_name, tool_name, unique_name) VALUES ('tool-a', 'server-a', 'docs', 'read', 'docs_read')",
-            "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES ('prompt-a', 'server-a', 'docs', 'review', 'docs_review')",
-            "INSERT INTO server_resources (id, server_id, server_name, resource_uri, unique_uri) VALUES ('resource-a', 'server-a', 'docs', 'file:///guide.md', 'mcpmate://resources/docs/file/guide.md')",
-            "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, route_uri, name) VALUES ('template-a', 'server-a', 'docs', 'file:///{path}', 'mcpmate://resources/template/docs/file/{path}', 'mcpmate://resources/template/docs/file/{}', 'File')",
-            "INSERT INTO profile_tool (id, profile_id, server_tool_id, enabled) VALUES ('profile-tool-a', 'profile-a', 'tool-a', 1)",
-            "INSERT INTO profile_prompt (id, profile_id, server_id, server_name, prompt_name, enabled) VALUES ('profile-prompt-a', 'profile-a', 'server-a', 'docs', 'review', 1)",
-            "INSERT INTO profile_resource (id, profile_id, server_id, server_name, resource_uri, enabled) VALUES ('profile-resource-a', 'profile-a', 'server-a', 'docs', 'file:///guide.md', 1)",
-            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-a', 'profile-a', 'server-a', 'docs', 'file:///{path}', 1)",
+            "INSERT INTO profile_server_relationships (profile_id, server_id, new_ref_policy) VALUES ('profile-a', 'server-a', 'follow')",
         ] {
             sqlx::query(statement)
                 .execute(&pool)
                 .await
                 .expect("insert capability fixture");
         }
+        crate::config::server::capabilities::commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(
+                serde_json::from_value(serde_json::json!({
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {
+                        "tools": {"listChanged": true},
+                        "prompts": {"listChanged": true},
+                        "resources": {"subscribe": false, "listChanged": true}
+                    },
+                    "serverInfo": {"name": "docs", "version": "1.0.0"}
+                }))
+                .expect("decode initialize fixture"),
+            ),
+            vec![
+                serde_json::from_value(serde_json::json!({
+                    "name": "read",
+                    "description": "Read a document",
+                    "inputSchema": {"type": "object"}
+                }))
+                .expect("decode tool fixture"),
+            ],
+            vec![
+                serde_json::from_value(serde_json::json!({
+                    "uri": "file:///guide.md",
+                    "name": "Guide"
+                }))
+                .expect("decode resource fixture"),
+            ],
+            vec![
+                serde_json::from_value(serde_json::json!({
+                    "name": "review",
+                    "description": "Review a document"
+                }))
+                .expect("decode prompt fixture"),
+            ],
+            vec![
+                serde_json::from_value(serde_json::json!({
+                    "uriTemplate": "file:///{path}",
+                    "name": "File"
+                }))
+                .expect("decode resource template fixture"),
+            ],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit capability fixture");
+        sqlx::query(
+            r#"
+            INSERT INTO profile_capability_refs (profile_id, ref_id, enabled)
+            SELECT 'profile-a', ref_id, 1
+            FROM capability_refs
+            WHERE server_id = 'server-a'
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("attach capability refs to profile");
 
         assert_eq!(
             get_enabled_tools_for_profile(&pool, "profile-a")

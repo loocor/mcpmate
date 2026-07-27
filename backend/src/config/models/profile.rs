@@ -94,6 +94,8 @@ pub struct ProfileServer {
     pub server_id: String,
     /// Whether the server is enabled in this profile
     pub enabled: bool,
+    /// Policy applied when the server later exposes a new CapabilityRef.
+    pub new_ref_policy: String,
     /// When the association was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the association was last updated
@@ -121,46 +123,25 @@ pub struct ServerTool {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-/// Profile tool association model - references server_tools
+/// Profile capability-level Tool relationship.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ProfileTool {
-    /// Unique ID (generated with "ptool" prefix)
-    pub id: String,
-    /// Profile ID
     pub profile_id: String,
-    /// Server tool ID (references server_tools.id)
-    pub server_tool_id: String,
-    /// Whether the tool is enabled in this profile
+    pub ref_id: String,
     pub enabled: bool,
-    /// When the association was created
-    pub created_at: Option<DateTime<Utc>>,
-    /// When the association was last updated
-    pub updated_at: Option<DateTime<Utc>>,
 }
 
-/// Profile tool with server tool details (for JOIN queries)
+/// Profile Tool relationship with current display projection.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ProfileToolWithDetails {
-    /// Profile tool ID
-    pub id: String,
-    /// Profile ID
     pub profile_id: String,
-    /// Server tool ID (references server_tools.id)
-    pub server_tool_id: String,
-    /// Whether the tool is enabled in this profile
+    pub ref_id: String,
     pub enabled: bool,
-    /// When the association was created
-    pub created_at: Option<DateTime<Utc>>,
-    /// When the association was last updated
-    pub updated_at: Option<DateTime<Utc>>,
-    /// Server ID (from server_tools)
     pub server_id: String,
-    /// Server name (from server_tools)
     pub server_name: String,
-    /// Tool name (from server_tools)
     pub tool_name: String,
-    /// Unique name (from server_tools)
     pub unique_name: String,
-    /// Tool description (from server_tools)
     pub description: Option<String>,
+    pub state: String,
+    pub state_generation: i64,
 }

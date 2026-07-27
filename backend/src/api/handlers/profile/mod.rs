@@ -20,6 +20,40 @@ mod server;
 mod token_estimate;
 mod unified_capability_query;
 
+pub(crate) async fn emit_surface_publication_audits(
+    state: &std::sync::Arc<crate::api::routes::AppState>,
+    actor: &str,
+    profile_id: Option<&str>,
+    route: &str,
+    materializations: Vec<crate::core::capability::management::ConsumerMaterialization>,
+) {
+    for materialization in materializations {
+        if !materialization.commit.effective_surface_changed {
+            continue;
+        }
+        let Some(binding) = materialization.commit.binding else {
+            continue;
+        };
+        let mut event = crate::audit::AuditEvent::new(
+            crate::audit::AuditAction::SurfacePublish,
+            crate::audit::AuditStatus::Success,
+        )
+        .with_http_route("POST", route)
+        .with_actor(actor)
+        .with_client_id(materialization.consumer_id)
+        .with_target(binding.active_publication_id)
+        .with_data(serde_json::json!({
+            "binding_generation": binding.generation,
+            "proposal_id": materialization.commit.proposal_id,
+            "trigger": "management_save",
+        }));
+        if let Some(profile_id) = profile_id {
+            event = event.with_profile_id(profile_id);
+        }
+        crate::audit::interceptor::emit_event(state.audit_service.as_ref(), event.build()).await;
+    }
+}
+
 // Common imports for all submodules
 pub(crate) mod common {
     pub use std::sync::Arc;

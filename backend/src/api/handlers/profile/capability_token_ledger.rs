@@ -29,10 +29,6 @@ pub async fn capability_token_ledger(
     let profile_id = params.profile_id;
 
     let db = get_database(&state).await?;
-    let unified_query = state
-        .unified_query
-        .clone()
-        .ok_or_else(|| ApiError::InternalError("Unified capability query is unavailable".to_string()))?;
 
     let profile = crate::config::profile::get_profile(&db.pool, &profile_id)
         .await
@@ -59,10 +55,10 @@ pub async fn capability_token_ledger(
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile tools: {e}")))?;
 
     for t in profile_tools {
-        let live = query_unified_capabilities(&unified_query, &t.server_id, CapabilityType::Tools, &inspect).await;
+        let live = query_unified_capabilities(&state, &t.server_id, CapabilityType::Tools, &inspect).await;
         let payload = ledger_tool_payload(live.as_deref(), &t)?;
         items.push(CapabilityTokenLedgerRow {
-            profile_row_id: t.id,
+            profile_row_id: t.ref_id,
             kind: "tool".to_string(),
             server_id: t.server_id.clone(),
             server_enabled_in_profile: *server_enabled.get(&t.server_id).unwrap_or(&false),
@@ -75,7 +71,7 @@ pub async fn capability_token_ledger(
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile prompts: {e}")))?;
 
     for p in profile_prompts {
-        let live = query_unified_capabilities(&unified_query, &p.server_id, CapabilityType::Prompts, &inspect).await;
+        let live = query_unified_capabilities(&state, &p.server_id, CapabilityType::Prompts, &inspect).await;
         let external_name = load_external_identifier(&db.pool, NamingKind::Prompt, &p.server_id, &p.prompt_name)
             .await
             .map_err(|error| ApiError::InternalError(error.to_string()))?;
@@ -95,7 +91,7 @@ pub async fn capability_token_ledger(
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile resources: {e}")))?;
 
     for r in profile_resources {
-        let live = query_unified_capabilities(&unified_query, &r.server_id, CapabilityType::Resources, &inspect).await;
+        let live = query_unified_capabilities(&state, &r.server_id, CapabilityType::Resources, &inspect).await;
         let external_uri = load_external_identifier(&db.pool, NamingKind::Resource, &r.server_id, &r.resource_uri)
             .await
             .map_err(|error| ApiError::InternalError(error.to_string()))?;
@@ -115,13 +111,8 @@ pub async fn capability_token_ledger(
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile templates: {e}")))?;
 
     for tmpl in profile_templates {
-        let live = query_unified_capabilities(
-            &unified_query,
-            &tmpl.server_id,
-            CapabilityType::ResourceTemplates,
-            &inspect,
-        )
-        .await;
+        let live =
+            query_unified_capabilities(&state, &tmpl.server_id, CapabilityType::ResourceTemplates, &inspect).await;
         let external_name = load_external_identifier(
             &db.pool,
             NamingKind::ResourceTemplate,
@@ -279,26 +270,27 @@ mod tests {
             server_id: "server".to_string(),
             server_name: "server".to_string(),
             resource_uri: raw.to_string(),
+            unique_uri: raw.to_string(),
+            description: None,
             enabled: true,
-            created_at: None,
-            updated_at: None,
+            state: "active".to_string(),
+            state_generation: 0,
         }
     }
 
     #[test]
     fn fallback_payloads_expose_only_catalog_identifiers() {
         let tool = crate::config::models::ProfileToolWithDetails {
-            id: "profile-tool".to_string(),
             profile_id: "profile".to_string(),
-            server_tool_id: "server-tool".to_string(),
+            ref_id: "cref_sha256:fixture".to_string(),
             enabled: true,
-            created_at: None,
-            updated_at: None,
             server_id: "server".to_string(),
             server_name: "server".to_string(),
             tool_name: "upstream_tool".to_string(),
             unique_name: "server_tool".to_string(),
             description: None,
+            state: "active".to_string(),
+            state_generation: 0,
         };
         let prompt = crate::config::models::ProfilePrompt {
             id: Some("profile-prompt".to_string()),
@@ -306,9 +298,11 @@ mod tests {
             server_id: "server".to_string(),
             server_name: "server".to_string(),
             prompt_name: "upstream_prompt".to_string(),
+            unique_name: "server_prompt".to_string(),
+            description: None,
             enabled: true,
-            created_at: None,
-            updated_at: None,
+            state: "active".to_string(),
+            state_generation: 0,
         };
         let resource = profile_resource("file:///upstream");
         let template = profile_resource("repo://{owner}/{name}");

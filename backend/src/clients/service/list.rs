@@ -240,7 +240,7 @@ mod tests {
         let (_temp_dir, service) = create_test_service().await;
 
         service
-            .set_client_settings("custom.runtime", Some("hosted".to_string()), None, None)
+            .set_client_settings("custom.runtime", None, None)
             .await
             .expect("create active runtime-only client");
 

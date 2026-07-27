@@ -118,14 +118,35 @@ impl ClientConfigService {
                     r#"
                     SELECT sc.id, sc.name, sc.command, sc.url, sc.server_type
                     FROM server_config sc
-                    JOIN profile_server ps ON sc.id = ps.server_id
-                    WHERE ps.profile_id = ?
-                        AND ps.enabled = 1
-                        AND sc.enabled = 1
-                    ORDER BY ps.server_name
+                    WHERE sc.enabled = 1
+                      AND (
+                        EXISTS (
+                          SELECT 1 FROM profile_server_relationships psr
+                          WHERE psr.profile_id = ?
+                            AND psr.server_id = sc.id
+                            AND psr.enabled = 1
+                        )
+                        OR EXISTS (
+                          SELECT 1
+                          FROM profile_capability_refs pcr
+                          JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                          WHERE pcr.profile_id = ?
+                            AND cr.server_id = sc.id
+                            AND pcr.enabled = 1
+                            AND NOT EXISTS (
+                              SELECT 1
+                              FROM profile_server_relationships gate
+                              WHERE gate.profile_id = pcr.profile_id
+                                AND gate.server_id = cr.server_id
+                                AND gate.enabled = 0
+                            )
+                        )
+                      )
+                    ORDER BY sc.name
                     "#,
                 )
-                .bind(profile_id)
+                .bind(&profile_id)
+                .bind(&profile_id)
                 .fetch_all(&*self.db_pool)
                 .await
                 .map_err(|err| crate::clients::ConfigError::DataAccessError(err.to_string()))?;
@@ -140,16 +161,39 @@ impl ClientConfigService {
                     r#"
                     SELECT DISTINCT sc.id, sc.name, sc.command, sc.url, sc.server_type
                     FROM server_config sc
-                    JOIN profile_server ps ON sc.id = ps.server_id
-                    WHERE ps.profile_id IN ({})
-                        AND ps.enabled = 1
-                        AND sc.enabled = 1
+                    WHERE sc.enabled = 1
+                      AND (
+                        EXISTS (
+                          SELECT 1 FROM profile_server_relationships psr
+                          WHERE psr.profile_id IN ({})
+                            AND psr.server_id = sc.id
+                            AND psr.enabled = 1
+                        )
+                        OR EXISTS (
+                          SELECT 1
+                          FROM profile_capability_refs pcr
+                          JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                          WHERE pcr.profile_id IN ({})
+                            AND cr.server_id = sc.id
+                            AND pcr.enabled = 1
+                            AND NOT EXISTS (
+                              SELECT 1
+                              FROM profile_server_relationships gate
+                              WHERE gate.profile_id = pcr.profile_id
+                                AND gate.server_id = cr.server_id
+                                AND gate.enabled = 0
+                            )
+                        )
+                      )
                     ORDER BY sc.name
                     "#,
-                    placeholders
+                    placeholders, placeholders
                 );
                 let mut query = sqlx::query_as::<_, ServerRow>(&sql);
-                for id in profile_ids {
+                for id in &profile_ids {
+                    query = query.bind(id);
+                }
+                for id in &profile_ids {
                     query = query.bind(id);
                 }
                 query
@@ -226,14 +270,9 @@ mod tests {
     use crate::clients::models::ConfigMode;
     use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
     use crate::common::profile::ProfileType;
-    use crate::config::{
-        client::init::{initialize_client_table, initialize_system_settings},
-        models::Profile,
-        profile::{self, init::initialize_profile_tables},
-        server::init::initialize_server_tables,
-    };
+    use crate::config::{models::Profile, profile};
     use sqlx::sqlite::SqlitePoolOptions;
-    use std::sync::Arc;
+    use std::{collections::HashMap, sync::Arc};
     use tempfile::TempDir;
 
     async fn create_test_service() -> (TempDir, ClientConfigService) {
@@ -245,16 +284,9 @@ mod tests {
                 .await
                 .expect("sqlite pool"),
         );
-        initialize_server_tables(pool.as_ref())
+        crate::config::initialization::run_initialization(pool.as_ref())
             .await
-            .expect("init server tables");
-        initialize_profile_tables(pool.as_ref())
-            .await
-            .expect("init profile tables");
-        initialize_client_table(pool.as_ref()).await.expect("init client table");
-        initialize_system_settings(pool.as_ref())
-            .await
-            .expect("init system settings table");
+            .expect("initialize database");
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
         let source = Arc::new(
@@ -347,7 +379,7 @@ mod tests {
         let (_temp_dir, service) = create_test_service().await;
 
         let error = service
-            .update_capability_config_and_invalidate("client-a", CapabilitySource::Profiles, Vec::new())
+            .update_capability_config_and_invalidate("client-a", CapabilitySource::Profiles, Vec::new(), HashMap::new())
             .await
             .expect_err("empty profiles selection should fail");
 

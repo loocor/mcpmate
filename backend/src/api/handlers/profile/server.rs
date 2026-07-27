@@ -71,6 +71,13 @@ pub async fn servers_list(
         profile_name: profile.name,
         servers,
         total,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            &db.pool,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?
+        .into_iter()
+        .collect(),
     };
 
     Ok(Json(ProfileServersListResp::success(response)))
@@ -89,106 +96,87 @@ pub async fn server_manage(
     // Verify profile exists
     let _profile = get_profile_or_error(&db, &request.profile_id).await?;
 
-    // Get component ID (server.rs only supports single server operations)
-    if request.component_ids.len() != 1 {
-        return Err(ApiError::BadRequest(
-            "Server operations only support single component ID".to_string(),
-        ));
+    if request.component_ids.is_empty() && !matches!(request.action, ProfileComponentAction::Replace) {
+        return Err(ApiError::BadRequest("component_ids cannot be empty".to_string()));
     }
-    let component_id = &request.component_ids[0];
 
-    // Get server details (verify server exists)
-    let _server = crate::api::handlers::server::common::get_server_or_error(&db.pool, component_id).await?;
-
-    // Perform the action
     let (audit_action, result, status) = match request.action {
-        ProfileComponentAction::Enable => {
-            // Add server to profile (this enables it)
-            crate::config::profile::add_server_to_profile(&db.pool, &request.profile_id, component_id, true)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to enable server: {e}")))?;
-
-            // Sync server capabilities: add if not exists, then enable
-            crate::config::profile::sync_server_capabilities(
-                &db.pool,
-                &request.profile_id,
-                component_id,
-                crate::config::profile::ServerCapabilityAction::Add,
-            )
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to add server capabilities: {e}")))?;
-
-            // Enable all capabilities for this server
-            crate::config::profile::sync_server_capabilities(
-                &db.pool,
-                &request.profile_id,
-                component_id,
-                crate::config::profile::ServerCapabilityAction::Enable,
-            )
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to add server capabilities: {e}")))?;
-
-            (AuditAction::ProfileServerEnable, "enabled", "active")
-        }
-        ProfileComponentAction::Disable => {
-            // Disable server in profile
-            crate::config::profile::add_server_to_profile(&db.pool, &request.profile_id, component_id, false)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to disable server: {e}")))?;
-
-            // Sync capabilities: disable all tools, resources, and prompts for this server
-            crate::config::profile::sync_server_capabilities(
-                &db.pool,
-                &request.profile_id,
-                component_id,
-                crate::config::profile::ServerCapabilityAction::Disable,
-            )
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to disable server capabilities: {e}")))?;
-
-            (AuditAction::ProfileServerDisable, "disabled", "inactive")
-        }
-        ProfileComponentAction::Remove => {
-            // Remove server from profile completely
-            crate::config::profile::remove_server_from_profile(&db.pool, &request.profile_id, component_id)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to remove server: {e}")))?;
-
-            // Remove all capabilities: delete all tools, resources, and prompts for this server
-            crate::config::profile::sync_server_capabilities(
-                &db.pool,
-                &request.profile_id,
-                component_id,
-                crate::config::profile::ServerCapabilityAction::Remove,
-            )
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to remove server capabilities: {e}")))?;
-
-            (AuditAction::ProfileServerRemove, "removed", "removed")
-        }
+        ProfileComponentAction::Enable => (AuditAction::ProfileServerEnable, "enabled", "active"),
+        ProfileComponentAction::Disable => (AuditAction::ProfileServerDisable, "disabled", "inactive"),
+        ProfileComponentAction::Remove => (AuditAction::ProfileServerRemove, "removed", "removed"),
+        ProfileComponentAction::Replace => (AuditAction::ProfileServerReplace, "replaced", "active"),
     };
+    let materializations = match request.action {
+        ProfileComponentAction::Replace => {
+            crate::core::capability::management::ProfileSurfaceManagement::replace_servers(
+                &db.pool,
+                &request.profile_id,
+                &request.component_ids,
+                request.source_revision_set.clone().into_iter().collect(),
+                "profile_management",
+            )
+            .await
+        }
+        action => {
+            let relationship_action = match action {
+                ProfileComponentAction::Enable => {
+                    crate::core::capability::management::ProfileRelationshipAction::Enable
+                }
+                ProfileComponentAction::Disable => {
+                    crate::core::capability::management::ProfileRelationshipAction::Disable
+                }
+                ProfileComponentAction::Remove => {
+                    crate::core::capability::management::ProfileRelationshipAction::Remove
+                }
+                ProfileComponentAction::Replace => unreachable!(),
+            };
+            crate::core::capability::management::ProfileSurfaceManagement::mutate_servers(
+                &db.pool,
+                &request.profile_id,
+                &request.component_ids,
+                relationship_action,
+                request.source_revision_set.clone().into_iter().collect(),
+                "profile_management",
+            )
+            .await
+        }
+    }
+    .map_err(map_catalog_error)?;
 
-    // Invalidate cache
     invalidate_profile_cache(&state).await;
+    super::emit_surface_publication_audits(
+        &state,
+        "profile_management",
+        Some(&request.profile_id),
+        "/api/mcp/profile/servers/manage",
+        materializations,
+    )
+    .await;
 
     let response = ProfileServerManageData {
         profile_id: request.profile_id.clone(),
-        results: vec![crate::api::models::profile::ComponentOperationResult {
-            component_id: component_id.clone(),
-            component_type: "server".to_string(),
-            success: true,
-            result: result.to_string(),
-            error: None,
-        }],
-        summary: format!("Server {}", result),
+        results: request
+            .component_ids
+            .iter()
+            .map(|component_id| crate::api::models::profile::ComponentOperationResult {
+                component_id: component_id.clone(),
+                component_type: "server".to_string(),
+                success: true,
+                result: result.to_string(),
+                error: None,
+            })
+            .collect(),
+        summary: format!("{} server(s) {result}", request.component_ids.len()),
         status: status.to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
 
-    // Emit audit event
     let mut data = Map::new();
     data.insert("profile_id".to_string(), Value::String(request.profile_id.clone()));
-    data.insert("server_id".to_string(), Value::String(component_id.clone()));
+    data.insert(
+        "server_ids".to_string(),
+        Value::Array(request.component_ids.iter().cloned().map(Value::String).collect()),
+    );
     data.insert("action".to_string(), Value::String(result.to_string()));
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
@@ -198,7 +186,7 @@ pub async fn server_manage(
             "POST",
             "/api/mcp/profile/servers/manage",
             Some(started_at.elapsed().as_millis() as u64),
-            Some(component_id.clone()),
+            (request.component_ids.len() == 1).then(|| request.component_ids[0].clone()),
             Some(request.profile_id.clone()),
             Some(data),
             None,
@@ -207,4 +195,11 @@ pub async fn server_manage(
     .await;
 
     Ok(Json(ProfileServerManageResp::success(response)))
+}
+
+fn map_catalog_error(error: mcpmate_capability_store::CatalogError) -> ApiError {
+    match error {
+        mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => ApiError::Conflict(error.to_string()),
+        _ => ApiError::InternalError(error.to_string()),
+    }
 }

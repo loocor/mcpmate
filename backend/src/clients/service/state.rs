@@ -4,6 +4,10 @@ use crate::clients::models::{
     AttachmentState, BackupPolicySetting, ClientConnectionMode, ClientGovernanceKind, ClientRegistrationOrigin,
     FirstContactBehavior,
 };
+use crate::core::capability::materializer::{
+    MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader,
+};
+use mcpmate_capability_store::CatalogError;
 use std::collections::HashMap;
 
 fn approval_status_for_first_contact_behavior(behavior: FirstContactBehavior) -> &'static str {
@@ -17,7 +21,7 @@ fn approval_status_for_first_contact_behavior(behavior: FirstContactBehavior) ->
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -63,7 +67,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, unify_direct_exposure_intent, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
@@ -224,17 +228,35 @@ impl ClientConfigService {
     pub async fn approve_client(
         &self,
         identifier: &str,
-    ) -> ConfigResult<String> {
+    ) -> ConfigResult<(
+        String,
+        Option<crate::core::capability::materializer::MaterializationCommit>,
+    )> {
         let name = self.resolve_client_name(identifier).await?;
-        let row = self
-            .ensure_active_state_row_with_name(identifier, &name, Some("approved"))
+        if let Some(existing) = self.fetch_state(identifier).await? {
+            self.promote_existing_state(identifier, &name, None, existing).await?;
+        } else {
+            self.create_state_row(
+                identifier,
+                &name,
+                ClientGovernanceKind::Active,
+                "pending",
+                None,
+                ClientRegistrationOrigin::Manual,
+                false,
+            )
             .await?;
-
-        if row.approval_status() == "approved" {
-            self.ensure_local_config_target_metadata(identifier).await?;
-            return Ok(row.approval_status().to_string());
         }
 
+        self.ensure_local_config_target_metadata(identifier).await?;
+        let default_config_mode = crate::config::client::init::resolve_default_client_config_mode(&self.db_pool)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let mut transaction = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
         sqlx::query(
             r#"
             UPDATE client
@@ -243,13 +265,32 @@ impl ClientConfigService {
             "#,
         )
         .bind(identifier)
-        .execute(&*self.db_pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        let source_revision_set = SurfaceAuthoringLoader::load_catalog_revision_set_in_transaction(&mut transaction)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let materialization = self
+            .materialize_managed_surface_in_transaction(
+                &mut transaction,
+                identifier,
+                &default_config_mode,
+                &MaterializationTrigger::new(
+                    "consumer_approval",
+                    format!("approve:{identifier}"),
+                    source_revision_set,
+                    "client_management",
+                ),
+            )
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
 
-        self.ensure_local_config_target_metadata(identifier).await?;
-
-        Ok("approved".to_string())
+        Ok(("approved".to_string(), materialization))
     }
 
     /// Load client state and repair local-config metadata drift when needed.
@@ -396,6 +437,95 @@ impl ClientConfigService {
         Ok(())
     }
 
+    /// Request bootstrap of the managed Consumer Surface through the shared materialization pipeline.
+    ///
+    /// This is the client-management notification entrypoint: it delegates to the same
+    /// bootstrap path used at startup and does not materialize inline from ad-hoc logic.
+    pub async fn notify_managed_consumer_surface_bootstrap(
+        &self,
+        identifier: &str,
+        trigger_kind: &str,
+        trigger_id: impl Into<String>,
+    ) -> ConfigResult<Option<crate::core::capability::materializer::MaterializationCommit>> {
+        let Some(state) = self.fetch_state(identifier).await? else {
+            return Ok(None);
+        };
+        let default_config_mode = crate::config::client::init::resolve_default_client_config_mode(&self.db_pool)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let effective_config_mode = crate::config::client::init::effective_client_config_mode(
+            state.config_mode.as_deref(),
+            &default_config_mode,
+        );
+        if !state.is_approved() || !crate::config::client::init::is_managed_client_config_mode(effective_config_mode) {
+            return Ok(None);
+        }
+
+        let materialization = crate::core::capability::materializer::bootstrap_managed_consumer_surface_if_missing(
+            self.db_pool.as_ref(),
+            identifier,
+            trigger_kind,
+            trigger_id,
+            "client_management",
+        )
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        if let Some(materialization) = &materialization {
+            tracing::info!(
+                client = %identifier,
+                trigger = %trigger_kind,
+                generation = ?materialization.binding.as_ref().map(|binding| binding.generation),
+                "Published managed Consumer Surface through bootstrap notification"
+            );
+        }
+        Ok(materialization)
+    }
+
+    /// Publish the initial managed Surface for a client that was created after startup.
+    ///
+    /// The managed Surface is materialized when MCPMate configuration is saved, never lazily
+    /// while serving a downstream MCP request. Existing bindings are deliberately left intact.
+    pub async fn ensure_initial_managed_surface(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<Option<crate::core::capability::materializer::MaterializationCommit>> {
+        self.notify_managed_consumer_surface_bootstrap(
+            identifier,
+            "consumer_attachment",
+            format!("attach:{identifier}"),
+        )
+        .await
+    }
+
+    pub(super) async fn materialize_managed_surface_in_transaction(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        identifier: &str,
+        default_config_mode: &str,
+        trigger: &MaterializationTrigger,
+    ) -> Result<Option<crate::core::capability::materializer::MaterializationCommit>, CatalogError> {
+        let state: Option<(Option<String>, String)> =
+            sqlx::query_as("SELECT config_mode, approval_status FROM client WHERE identifier = ?")
+                .bind(identifier)
+                .fetch_optional(&mut **transaction)
+                .await?;
+        let Some((config_mode, approval_status)) = state else {
+            return Ok(None);
+        };
+        let effective_config_mode =
+            crate::config::client::init::effective_client_config_mode(config_mode.as_deref(), default_config_mode);
+        if approval_status != "approved"
+            || !crate::config::client::init::is_managed_client_config_mode(effective_config_mode)
+        {
+            return Ok(None);
+        }
+
+        MaterializationCoordinator::new(self.db_pool.as_ref().clone())
+            .compile_consumer_in_transaction_with_default(transaction, identifier, default_config_mode, trigger)
+            .await
+            .map(Some)
+    }
+
     pub async fn mark_client_detached(
         &self,
         identifier: &str,
@@ -510,12 +640,21 @@ impl ClientConfigService {
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
-        self.fetch_state(identifier).await?.ok_or_else(|| {
+        let state = self.fetch_state(identifier).await?.ok_or_else(|| {
             ConfigError::DataAccessError(format!(
                 "Failed to reload first-contact state for client {}",
                 identifier
             ))
-        })
+        })?;
+        if state.is_approved() {
+            self.notify_managed_consumer_surface_bootstrap(
+                identifier,
+                "consumer_first_contact",
+                format!("first-contact:{identifier}"),
+            )
+            .await?;
+        }
+        Ok(state)
     }
 
     pub(crate) async fn ensure_active_state_row_with_name(
@@ -726,12 +865,8 @@ impl ClientConfigService {
 mod tests {
     use super::*;
     use crate::clients::models::OnboardingPolicy;
+    use crate::clients::service::settings::ActiveClientSettingsUpdate;
     use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
-    use crate::config::{
-        client::init::{initialize_client_table, initialize_system_settings},
-        profile::init::initialize_profile_tables,
-        server::init::initialize_server_tables,
-    };
     use sqlx::sqlite::SqlitePoolOptions;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -746,16 +881,9 @@ mod tests {
                 .expect("sqlite pool"),
         );
 
-        initialize_server_tables(pool.as_ref())
+        crate::config::initialization::run_initialization(pool.as_ref())
             .await
-            .expect("init server tables");
-        initialize_profile_tables(pool.as_ref())
-            .await
-            .expect("init profile tables");
-        initialize_client_table(pool.as_ref()).await.expect("init client table");
-        initialize_system_settings(pool.as_ref())
-            .await
-            .expect("init system settings table");
+            .expect("initialize database");
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
         let source = Arc::new(
@@ -918,7 +1046,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_client_approval_is_not_rewritten_by_first_contact_policy() {
+    async fn active_client_creation_materializes_initial_managed_surface() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        service
+            .set_active_client_settings(
+                "cherry-studio",
+                ActiveClientSettingsUpdate {
+                    display_name: Some("Cherry Studio".to_string()),
+                    transport: None,
+                    client_version: None,
+                    config_file_state: None,
+                    config_path: None,
+                    description: None,
+                    homepage_url: None,
+                    docs_url: None,
+                    support_url: None,
+                    logo_url: None,
+                    config_file_parse: None,
+                    clear_config_file_parse: false,
+                    transports: None,
+                    clear_transports: false,
+                },
+            )
+            .await
+            .expect("register client through settings save");
+
+        assert!(
+            mcpmate_capability_store::SqliteSurfaceStore::new(service.db_pool.as_ref().clone())
+                .load_binding("cherry-studio")
+                .await
+                .expect("load managed Consumer Surface")
+                .is_some(),
+            "creating an approved managed Consumer must publish its initial Surface"
+        );
+    }
+
+    #[tokio::test]
+    async fn active_client_approval_materializes_inherited_managed_mode() {
         let (_temp_dir, service) = create_test_service().await;
 
         set_onboarding_policy(&service, OnboardingPolicy::RequireApproval)
@@ -928,7 +1093,25 @@ mod tests {
             .ensure_passive_observed_row("test.client", "Test Client", None)
             .await
             .expect("create pending passive client");
+        let explicit_mode: Option<String> =
+            sqlx::query_scalar("SELECT config_mode FROM client WHERE identifier = 'test.client'")
+                .fetch_one(service.db_pool.as_ref())
+                .await
+                .expect("load explicit client mode");
+        assert_eq!(explicit_mode, None);
         service.approve_client("test.client").await.expect("approve client");
+        let consumer_id: String = sqlx::query_scalar("SELECT identifier FROM client WHERE identifier = 'test.client'")
+            .fetch_one(service.db_pool.as_ref())
+            .await
+            .expect("load Consumer id");
+        assert!(
+            mcpmate_capability_store::SqliteSurfaceStore::new(service.db_pool.as_ref().clone())
+                .load_binding(&consumer_id)
+                .await
+                .expect("load approval publication")
+                .is_some(),
+            "approving a managed Consumer must create its initial publication"
+        );
 
         set_onboarding_policy(&service, OnboardingPolicy::Manual)
             .await
@@ -971,7 +1154,7 @@ mod tests {
         assert_eq!(passive.governance_kind().as_str(), "passive");
 
         service
-            .set_client_settings("test.client", Some("hosted".to_string()), None, None)
+            .set_client_settings("test.client", None, None)
             .await
             .expect("promote via settings update");
 
@@ -981,7 +1164,7 @@ mod tests {
             .expect("fetch state")
             .expect("state exists");
         assert_eq!(promoted.governance_kind().as_str(), "active");
-        assert_eq!(promoted.config_mode.as_deref(), Some("hosted"));
+        assert_eq!(promoted.config_mode, None);
     }
 
     #[tokio::test]
@@ -1166,7 +1349,7 @@ mod tests {
         let (_temp_dir, service) = create_test_service().await;
 
         service
-            .set_client_settings("test.client", Some("hosted".to_string()), None, None)
+            .set_client_settings("test.client", None, None)
             .await
             .expect("create active client state");
 

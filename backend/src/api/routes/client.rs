@@ -6,10 +6,11 @@ use crate::api::models::client::{
     ClientConfigFileParseInspectExistingReq, ClientConfigFileParseInspectExistingResp, ClientConfigFileParseInspectReq,
     ClientConfigFileParseInspectResp, ClientConfigReq, ClientConfigResp, ClientConfigRestoreReq, ClientConfigUpdateReq,
     ClientConfigUpdateResp, ClientDeleteReq, ClientDeleteResp, ClientDetachReq, ClientDetachResp, ClientDetectReq,
-    ClientSettingsUpdateReq, ClientSettingsUpdateResp,
+    ClientSettingsUpdateReq, ClientSettingsUpdateResp, SurfacePublicationListQuery, SurfacePublicationListResp,
+    SurfaceReviewItemResp, SurfaceReviewListQuery, SurfaceReviewListResp, SurfaceReviewPath, SurfaceReviewSummaryResp,
 };
 use crate::api::routes::AppState;
-use crate::{aide_wrapper_payload, aide_wrapper_query};
+use crate::{aide_wrapper, aide_wrapper_path, aide_wrapper_path_payload, aide_wrapper_payload, aide_wrapper_query};
 use aide::axum::{
     ApiRouter,
     routing::{get_with, post_with},
@@ -153,6 +154,73 @@ aide_wrapper_payload!(
     "Re-attach MCPMate to a client's external configuration"
 );
 
+aide_wrapper_query!(
+    client::list_surface_reviews,
+    SurfaceReviewListQuery,
+    SurfaceReviewListResp,
+    "List Consumer Surface review items."
+);
+
+aide_wrapper!(
+    client::summarize_surface_reviews,
+    SurfaceReviewSummaryResp,
+    "Summarize pending Consumer Surface review items."
+);
+
+aide_wrapper_query!(
+    client::list_surface_publications,
+    SurfacePublicationListQuery,
+    SurfacePublicationListResp,
+    "List Consumer Surface publication history."
+);
+
+aide_wrapper_path!(
+    client::get_surface_review,
+    SurfaceReviewPath,
+    SurfaceReviewItemResp,
+    "Get a Consumer Surface review item and its field diff."
+);
+
+aide_wrapper_path_payload!(
+    client::approve_surface_review,
+    SurfaceReviewPath,
+    crate::api::models::client::SurfaceReviewActionReq,
+    crate::api::models::client::SurfaceReviewActionResp,
+    "Approve the current target of a Consumer Surface review item."
+);
+
+aide_wrapper_path_payload!(
+    client::rollback_surface_publication,
+    crate::api::models::client::SurfacePublicationPath,
+    crate::api::models::client::SurfaceRollbackReq,
+    crate::api::models::client::SurfaceRollbackResp,
+    "Rollback a Consumer Surface to an executable historical publication."
+);
+
+aide_wrapper_path_payload!(
+    client::preview_surface_intent_resolution,
+    SurfaceReviewPath,
+    crate::api::models::client::SurfaceIntentPreviewReq,
+    crate::api::models::client::SurfaceIntentPreviewResp,
+    "Preview the Owner-scoped impact of a Surface intent action."
+);
+
+aide_wrapper_path_payload!(
+    client::resolve_surface_intent,
+    SurfaceReviewPath,
+    crate::api::models::client::SurfaceIntentResolveReq,
+    crate::api::models::client::SurfaceReviewActionResp,
+    "Resolve a Missing or manual-rebind Surface review item."
+);
+
+aide_wrapper_path_payload!(
+    client::reject_surface_review,
+    SurfaceReviewPath,
+    crate::api::models::client::SurfaceReviewActionReq,
+    crate::api::models::client::SurfaceReviewActionResp,
+    "Reject the current target of a Consumer Surface review item."
+);
+
 /// Create client management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
@@ -205,5 +273,44 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         )
         .api_route("/client/detach", post_with(client_detach_aide, client_detach_docs))
         .api_route("/client/attach", post_with(client_attach_aide, client_attach_docs))
+        .api_route(
+            "/client/surface/reviews/summary",
+            get_with(summarize_surface_reviews_aide, summarize_surface_reviews_docs),
+        )
+        .api_route(
+            "/client/surface/reviews",
+            get_with(list_surface_reviews_aide, list_surface_reviews_docs),
+        )
+        .api_route(
+            "/client/surface/reviews/{review_item_id}",
+            get_with(get_surface_review_aide, get_surface_review_docs),
+        )
+        .api_route(
+            "/client/surface/reviews/{review_item_id}/approve",
+            post_with(approve_surface_review_aide, approve_surface_review_docs),
+        )
+        .api_route(
+            "/client/surface/reviews/{review_item_id}/reject",
+            post_with(reject_surface_review_aide, reject_surface_review_docs),
+        )
+        .api_route(
+            "/client/surface/reviews/{review_item_id}/resolve-intent/preview",
+            post_with(
+                preview_surface_intent_resolution_aide,
+                preview_surface_intent_resolution_docs,
+            ),
+        )
+        .api_route(
+            "/client/surface/reviews/{review_item_id}/resolve-intent",
+            post_with(resolve_surface_intent_aide, resolve_surface_intent_docs),
+        )
+        .api_route(
+            "/client/surface/publications",
+            get_with(list_surface_publications_aide, list_surface_publications_docs),
+        )
+        .api_route(
+            "/client/surface/publications/{publication_id}/rollback",
+            post_with(rollback_surface_publication_aide, rollback_surface_publication_docs),
+        )
         .with_state(state)
 }

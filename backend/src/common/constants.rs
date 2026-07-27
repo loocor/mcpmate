@@ -139,11 +139,6 @@ pub mod protocol {
 pub mod database {
     /// Database table name constants
     pub mod tables {
-        pub const PROFILE_PROMPT: &str = "profile_prompt";
-        pub const PROFILE_RESOURCE: &str = "profile_resource";
-        pub const PROFILE_RESOURCE_TEMPLATE: &str = "profile_resource_template";
-        pub const PROFILE_SERVER: &str = "profile_server";
-        pub const PROFILE_TOOL: &str = "profile_tool";
         pub const PROFILE: &str = "profile";
         pub const CLIENT: &str = "client";
         pub const CLIENT_TEMPLATE_RUNTIME: &str = "client_template_runtime";

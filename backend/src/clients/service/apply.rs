@@ -232,20 +232,21 @@ impl ClientConfigService {
             }
         });
 
-        let Some(summary) = parse_rule
-            .as_ref()
-            .and_then(|rule| match Self::summarize_servers_for_probe(rendered_config, rule) {
-                Ok(result) => result,
-                Err(err) => {
-                    tracing::debug!(
-                        target: "mcpmate::client::apply_probe",
-                        client = %client_id,
-                        error = %err,
-                        "write-probe: failed to parse rendered config for summary"
-                    );
-                    None
-                }
-            })
+        let Some(summary) =
+            parse_rule
+                .as_ref()
+                .and_then(|rule| match Self::summarize_servers_for_probe(rendered_config, rule) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        tracing::debug!(
+                            target: "mcpmate::client::apply_probe",
+                            client = %client_id,
+                            error = %err,
+                            "write-probe: failed to parse rendered config for summary"
+                        );
+                        None
+                    }
+                })
         else {
             tracing::debug!(
                 target: "mcpmate::client::apply_probe",

@@ -89,12 +89,15 @@ pub fn read_path_from_path_helper() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 pub fn parse_path_helper_output(output: &str) -> Option<String> {
-    extract_path_value(output, "PATH=\"", "\";")
-        .or_else(|| extract_path_value(output, "PATH='", "';"))
+    extract_path_value(output, "PATH=\"", "\";").or_else(|| extract_path_value(output, "PATH='", "';"))
 }
 
 #[cfg(target_os = "macos")]
-pub fn extract_path_value(output: &str, prefix: &str, end_marker: &str) -> Option<String> {
+pub fn extract_path_value(
+    output: &str,
+    prefix: &str,
+    end_marker: &str,
+) -> Option<String> {
     let start = output.find(prefix)?;
     let rest = output.get(start + prefix.len()..)?;
     let end = rest.find(end_marker)?;

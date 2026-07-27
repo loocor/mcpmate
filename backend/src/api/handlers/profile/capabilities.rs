@@ -9,8 +9,6 @@ use crate::api::models::profile::{
     ProfileResourcesListData, ProfileResourcesListResp, ProfileServerManageData, ProfileServerManageResp,
     ProfileToolData, ProfileToolsListData, ProfileToolsListResp,
 };
-use crate::core::capability::descriptions::load_cached_capability_descriptions;
-use crate::core::capability::naming::{NamingKind, load_external_identifier};
 use serde_json::{Map, Value};
 
 type CapabilityAuditDetails = Value;
@@ -25,14 +23,13 @@ enum ComponentType {
 }
 
 impl ComponentType {
-    /// Detect component type from ID prefix
-    fn from_id(id: &str) -> Result<Self, ApiError> {
-        match id.to_uppercase().as_str() {
-            s if s.starts_with("CSTOOL") => Ok(Self::Tool),
-            s if s.starts_with("SRES") => Ok(Self::Resource),
-            s if s.starts_with("SPMT") => Ok(Self::Prompt),
-            s if s.starts_with("SRST") => Ok(Self::ResourceTemplate),
-            _ => Err(ApiError::NotFound(format!("Unknown component type for ID: {}", id))),
+    fn from_kind(kind: &str) -> Result<Self, ApiError> {
+        match kind {
+            "tools" => Ok(Self::Tool),
+            "resources" => Ok(Self::Resource),
+            "prompts" => Ok(Self::Prompt),
+            "resource_templates" => Ok(Self::ResourceTemplate),
+            _ => Err(ApiError::NotFound(format!("Unknown Capability kind: {kind}"))),
         }
     }
 
@@ -63,27 +60,19 @@ pub async fn prompts_list(
     let prompt_configs = crate::config::profile::get_prompts_for_profile(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile prompts: {e}")))?;
-    let descriptions =
-        load_cached_capability_descriptions(&db, prompt_configs.iter().map(|config| config.server_id.clone())).await;
-
-    // Convert to response format
     let mut prompts = Vec::new();
     for config in prompt_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
-        let description = descriptions.prompt(&config.server_id, &config.prompt_name);
-        let unique_name =
-            load_external_identifier(&db.pool, NamingKind::Prompt, &config.server_id, &config.prompt_name)
-                .await
-                .map_err(|error| ApiError::InternalError(error.to_string()))?;
-
         prompts.push(ProfilePromptData {
-            id: config.id.unwrap_or_default(),
+            ref_id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             prompt_name: config.prompt_name.clone(),
-            unique_name,
-            description,
+            unique_name: config.unique_name,
+            description: config.description,
             enabled: config.enabled,
+            state: config.state,
+            state_generation: config.state_generation,
             allowed_operations,
         });
     }
@@ -99,6 +88,13 @@ pub async fn prompts_list(
         profile_name: profile.name,
         prompts,
         total,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            &db.pool,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?
+        .into_iter()
+        .collect(),
     };
 
     Ok(Json(ProfilePromptsListResp::success(response)))
@@ -120,27 +116,19 @@ pub async fn resources_list(
     let resource_configs = crate::config::profile::get_resources_for_profile(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile resources: {e}")))?;
-    let descriptions =
-        load_cached_capability_descriptions(&db, resource_configs.iter().map(|config| config.server_id.clone())).await;
-
-    // Convert to response format
     let mut resources = Vec::new();
     for config in resource_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
-        let description = descriptions.resource(&config.server_id, &config.resource_uri);
-        let unique_uri =
-            load_external_identifier(&db.pool, NamingKind::Resource, &config.server_id, &config.resource_uri)
-                .await
-                .map_err(|error| ApiError::InternalError(error.to_string()))?;
-
         resources.push(ProfileResourceData {
-            id: config.id.unwrap_or_default(),
+            ref_id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             resource_uri: config.resource_uri.clone(),
-            unique_uri,
-            description,
+            unique_uri: config.unique_uri,
+            description: config.description,
             enabled: config.enabled,
+            state: config.state,
+            state_generation: config.state_generation,
             allowed_operations,
         });
     }
@@ -156,6 +144,13 @@ pub async fn resources_list(
         profile_name: profile.name,
         resources,
         total,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            &db.pool,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?
+        .into_iter()
+        .collect(),
     };
 
     Ok(Json(ProfileResourcesListResp::success(response)))
@@ -172,81 +167,23 @@ pub async fn resource_templates_list(
 
     let profile = get_profile_or_error(&db, &request.profile_id).await?;
 
-    let mut template_configs =
-        crate::config::profile::get_resource_templates_for_profile(&db.pool, &request.profile_id)
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to get profile resource templates: {e}")))?;
-
-    // Lazy backfill: if no templates are recorded yet, but upstream templates exist for bound servers,
-    // perform a one-time sync to populate profile_resource_template for parity with other capabilities.
-    if template_configs.is_empty() {
-        let upstream_count: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(1)
-            FROM server_resource_templates srt
-            WHERE srt.server_id IN (
-                SELECT server_id FROM profile_server WHERE profile_id = ?
-            )
-            "#,
-        )
-        .bind(&request.profile_id)
-        .fetch_one(&db.pool)
+    let template_configs = crate::config::profile::get_resource_templates_for_profile(&db.pool, &request.profile_id)
         .await
-        .unwrap_or(0);
-
-        if upstream_count > 0 {
-            let server_ids: Vec<String> =
-                sqlx::query_scalar("SELECT server_id FROM profile_server WHERE profile_id = ?")
-                    .bind(&request.profile_id)
-                    .fetch_all(&db.pool)
-                    .await
-                    .unwrap_or_default();
-
-            for sid in server_ids {
-                let _ = crate::config::profile::sync_server_capabilities(
-                    &db.pool,
-                    &request.profile_id,
-                    &sid,
-                    crate::config::profile::server::ServerCapabilityAction::Add,
-                )
-                .await;
-            }
-
-            // Re-fetch after backfill
-            template_configs =
-                crate::config::profile::get_resource_templates_for_profile(&db.pool, &request.profile_id)
-                    .await
-                    .map_err(|e| {
-                        ApiError::InternalError(format!(
-                            "Failed to get profile resource templates (after backfill): {e}"
-                        ))
-                    })?;
-        }
-    }
-
-    let descriptions =
-        load_cached_capability_descriptions(&db, template_configs.iter().map(|config| config.server_id.clone())).await;
+        .map_err(|e| ApiError::InternalError(format!("Failed to get profile resource templates: {e}")))?;
 
     let mut templates = Vec::new();
     for config in template_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
-        let description = descriptions.template(&config.server_id, &config.resource_uri);
-        let unique_uri_template = load_external_identifier(
-            &db.pool,
-            NamingKind::ResourceTemplate,
-            &config.server_id,
-            &config.resource_uri,
-        )
-        .await
-        .map_err(|error| ApiError::InternalError(error.to_string()))?;
         templates.push(ProfileResourceTemplateData {
-            id: config.id.unwrap_or_default(),
+            ref_id: config.id.unwrap_or_default(),
             server_id: config.server_id.clone(),
             server_name: config.server_name.clone(),
             uri_template: config.resource_uri.clone(),
-            unique_uri_template,
-            description,
+            unique_uri_template: config.unique_uri,
+            description: config.description,
             enabled: config.enabled,
+            state: config.state,
+            state_generation: config.state_generation,
             allowed_operations,
         });
     }
@@ -261,6 +198,13 @@ pub async fn resource_templates_list(
         profile_name: profile.name,
         templates,
         total,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            &db.pool,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?
+        .into_iter()
+        .collect(),
     };
 
     Ok(Json(ProfileResourceTemplatesListResp::success(response)))
@@ -282,25 +226,21 @@ pub async fn tools_list(
     let tool_configs = crate::config::profile::get_profile_tools(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile tools: {e}")))?;
-    let descriptions =
-        load_cached_capability_descriptions(&db, tool_configs.iter().map(|tool| tool.server_id.clone())).await;
-
     // Convert to response format
     let mut tools = Vec::new();
     for tool_config in tool_configs {
         // Get server details to include server name
         if let Ok(Some(server)) = crate::config::server::get_server_by_id(&db.pool, &tool_config.server_id).await {
-            let description = descriptions
-                .tool(&tool_config.server_id, &tool_config.tool_name)
-                .or_else(|| tool_config.description.clone());
             tools.push(ProfileToolData {
-                id: tool_config.id.clone(),
+                ref_id: tool_config.ref_id.clone(),
                 server_id: tool_config.server_id.clone(),
                 server_name: server.name,
                 tool_name: tool_config.tool_name.clone(),
                 unique_name: tool_config.unique_name.clone(),
-                description,
+                description: tool_config.description,
                 enabled: tool_config.enabled,
+                state: tool_config.state,
+                state_generation: tool_config.state_generation,
                 allowed_operations: vec!["enable".to_string(), "disable".to_string()],
             });
         }
@@ -317,6 +257,13 @@ pub async fn tools_list(
         profile_name: profile.name,
         tools,
         total,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            &db.pool,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?
+        .into_iter()
+        .collect(),
     };
 
     Ok(Json(ProfileToolsListResp::success(response)))
@@ -344,7 +291,7 @@ pub async fn component_manage(
     let audit_server_id = extract_single_component_string(&capability_details, "server_id");
 
     // Execute unified operations (single or batch)
-    let result = execute_unified_operations(&state, &request, enabled).await;
+    let result = execute_unified_operations(&state, &request).await;
     let mut data = Map::new();
     data.insert(
         "component_count".to_string(),
@@ -389,113 +336,39 @@ async fn collect_capability_audit_details(
     let mut details = Vec::new();
 
     for component_id in component_ids {
-        let component_type = match ComponentType::from_id(component_id) {
-            Ok(component_type) => component_type,
-            Err(_) => {
-                details.push(serde_json::json!({
-                    "component_id": component_id,
-                    "component_type": "unknown",
-                }));
-                continue;
-            }
+        let row = sqlx::query_as::<_, (String, String, String, String)>(
+            r#"
+            SELECT cr.kind, cr.server_id, sc.name, cr.origin_key
+            FROM capability_refs cr
+            JOIN server_config sc ON sc.id = cr.server_id
+            WHERE cr.ref_id = ?
+            "#,
+        )
+        .bind(component_id)
+        .fetch_optional(&db.pool)
+        .await
+        .ok()
+        .flatten();
+        let Some((kind, server_id, server_name, origin_key)) = row else {
+            details.push(serde_json::json!({
+                "ref_id": component_id,
+                "component_type": "unknown",
+            }));
+            continue;
         };
-
-        let detail = match component_type {
-            ComponentType::Tool => sqlx::query_as::<_, (String, String, String, String)>(
-                r#"
-                    SELECT st.server_id, st.server_name, st.tool_name, st.unique_name
-                    FROM profile_tool pt
-                    JOIN server_tools st ON pt.server_tool_id = st.id
-                    WHERE pt.id = ?
-                    "#,
-            )
-            .bind(component_id)
-            .fetch_optional(&db.pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|(server_id, server_name, tool_name, unique_name)| {
-                serde_json::json!({
-                    "component_id": component_id,
-                    "component_type": component_type.as_str(),
-                    "server_id": server_id,
-                    "server_name": server_name,
-                    "tool_name": tool_name,
-                    "unique_name": unique_name,
-                })
-            }),
-            ComponentType::Resource => sqlx::query_as::<_, (String, String, String)>(
-                r#"
-                    SELECT pr.server_id, sc.name, pr.resource_uri
-                    FROM profile_resource pr
-                    JOIN server_config sc ON pr.server_id = sc.id
-                    WHERE pr.id = ?
-                    "#,
-            )
-            .bind(component_id)
-            .fetch_optional(&db.pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|(server_id, server_name, resource_uri)| {
-                serde_json::json!({
-                    "component_id": component_id,
-                    "component_type": component_type.as_str(),
-                    "server_id": server_id,
-                    "server_name": server_name,
-                    "resource_uri": resource_uri,
-                })
-            }),
-            ComponentType::Prompt => sqlx::query_as::<_, (String, String, String)>(
-                r#"
-                    SELECT pp.server_id, pp.server_name, pp.prompt_name
-                    FROM profile_prompt pp
-                    WHERE pp.id = ?
-                    "#,
-            )
-            .bind(component_id)
-            .fetch_optional(&db.pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|(server_id, server_name, prompt_name)| {
-                serde_json::json!({
-                    "component_id": component_id,
-                    "component_type": component_type.as_str(),
-                    "server_id": server_id,
-                    "server_name": server_name,
-                    "prompt_name": prompt_name,
-                })
-            }),
-            ComponentType::ResourceTemplate => sqlx::query_as::<_, (String, String, String)>(
-                r#"
-                    SELECT prt.server_id, sc.name, prt.uri_template
-                    FROM profile_resource_template prt
-                    JOIN server_config sc ON prt.server_id = sc.id
-                    WHERE prt.id = ?
-                    "#,
-            )
-            .bind(component_id)
-            .fetch_optional(&db.pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|(server_id, server_name, uri_template)| {
-                serde_json::json!({
-                    "component_id": component_id,
-                    "component_type": component_type.as_str(),
-                    "server_id": server_id,
-                    "server_name": server_name,
-                    "uri_template": uri_template,
-                })
-            }),
+        let Ok(component_type) = ComponentType::from_kind(&kind) else {
+            details.push(serde_json::json!({
+                "ref_id": component_id,
+                "component_type": "unknown",
+            }));
+            continue;
         };
-
-        details.push(detail.unwrap_or_else(|| {
-            serde_json::json!({
-                "component_id": component_id,
-                "component_type": component_type.as_str(),
-            })
+        details.push(serde_json::json!({
+            "ref_id": component_id,
+            "component_type": component_type.as_str(),
+            "server_id": server_id,
+            "server_name": server_name,
+            "origin_key": origin_key,
         }));
     }
 
@@ -531,121 +404,75 @@ fn validate_component_ids(request: &ProfileComponentManageReq) -> Result<(), Api
 async fn execute_unified_operations(
     state: &Arc<AppState>,
     request: &ProfileComponentManageReq,
-    enabled: bool,
 ) -> Result<Json<ProfileServerManageResp>, ApiError> {
     let db = get_database(state).await?;
-    let mut results = Vec::new();
-    let mut success_count = 0;
-    let mut failed_count = 0;
-
-    // Process each component individually via config layer (unified events inside)
-    for component_id in &request.component_ids {
-        let result = process_single_component(&db, &request.profile_id, component_id, enabled).await;
-
-        match result {
-            Ok(component_type) => {
-                success_count += 1;
-                results.push(ComponentOperationResult {
-                    component_id: component_id.clone(),
-                    component_type: component_type.as_str().to_string(),
-                    success: true,
-                    result: if enabled { "enabled" } else { "disabled" }.to_string(),
-                    error: None,
-                });
-            }
-            Err(e) => {
-                failed_count += 1;
-                results.push(ComponentOperationResult {
-                    component_id: component_id.clone(),
-                    component_type: "unknown".to_string(),
-                    success: false,
-                    result: "failed".to_string(),
-                    error: Some(e.to_string()),
-                });
-            }
+    let action = match request.action {
+        ProfileComponentAction::Enable => crate::core::capability::management::ProfileRelationshipAction::Enable,
+        ProfileComponentAction::Disable => crate::core::capability::management::ProfileRelationshipAction::Disable,
+        ProfileComponentAction::Remove => crate::core::capability::management::ProfileRelationshipAction::Remove,
+        ProfileComponentAction::Replace => {
+            return Err(ApiError::BadRequest(
+                "Replace is only supported for profile server selections".to_string(),
+            ));
         }
-    }
+    };
+    let management = crate::core::capability::management::ProfileSurfaceManagement::mutate_capabilities(
+        &db.pool,
+        &request.profile_id,
+        &request.component_ids,
+        action,
+        request.source_revision_set.clone().into_iter().collect(),
+        "profile_management",
+    )
+    .await
+    .map_err(map_catalog_error)?;
+    invalidate_profile_cache(state).await;
+    super::emit_surface_publication_audits(
+        state,
+        "profile_management",
+        Some(&request.profile_id),
+        "/api/mcp/profile/capabilities/manage",
+        management.materializations,
+    )
+    .await;
 
-    // Invalidate cache after any successful operation
-    if success_count > 0 {
-        invalidate_profile_cache(state).await;
-    }
-
-    // Build unified response
+    let result_label = match request.action {
+        ProfileComponentAction::Enable => "enabled",
+        ProfileComponentAction::Disable => "disabled",
+        ProfileComponentAction::Remove => "removed",
+        ProfileComponentAction::Replace => unreachable!(),
+    };
+    let results = request
+        .component_ids
+        .iter()
+        .zip(management.mutations)
+        .map(|(component_id, mutation)| ComponentOperationResult {
+            component_id: component_id.clone(),
+            component_type: ComponentType::from_kind(mutation.kind.as_str())
+                .expect("validated capability kind")
+                .as_str()
+                .to_string(),
+            success: true,
+            result: result_label.to_string(),
+            error: None,
+        })
+        .collect();
     let response = ProfileServerManageData {
         profile_id: request.profile_id.clone(),
         results,
-        summary: format!("{} succeeded, {} failed", success_count, failed_count),
-        status: if failed_count == 0 { "completed" } else { "partial" }.to_string(),
+        summary: format!("{} succeeded, 0 failed", request.component_ids.len()),
+        status: "completed".to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
 
     Ok(Json(ProfileServerManageResp::success(response)))
 }
 
-/// Process a single component within a transaction
-async fn process_single_component(
-    db: &crate::config::database::Database,
-    profile_id: &str,
-    component_id: &str,
-    enabled: bool,
-) -> Result<ComponentType, ApiError> {
-    let component_type = ComponentType::from_id(component_id)?;
-
-    // Execute the appropriate management action within the transaction
-    match component_type {
-        ComponentType::Tool => {
-            crate::config::profile::update_tool_enabled_status(&db.pool, component_id, enabled)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to update tool status: {e}")))?;
-        }
-        ComponentType::Resource => {
-            // For resources, get context then call config-layer updater (which publishes events)
-            let (server_id, resource_uri): (String, String) =
-                sqlx::query_as("SELECT server_id, resource_uri FROM profile_resource WHERE id = ?")
-                    .bind(component_id)
-                    .fetch_optional(&db.pool)
-                    .await
-                    .map_err(|e| ApiError::InternalError(format!("Failed to get resource: {e}")))?
-                    .ok_or_else(|| ApiError::NotFound("Resource not found".to_string()))?;
-
-            crate::config::profile::update_resource_enabled_status(
-                &db.pool,
-                profile_id,
-                &server_id,
-                &resource_uri,
-                enabled,
-            )
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update resource status: {e}")))?;
-        }
-        ComponentType::ResourceTemplate => {
-            let (server_id, uri_template): (String, String) =
-                sqlx::query_as("SELECT server_id, uri_template FROM profile_resource_template WHERE id = ?")
-                    .bind(component_id)
-                    .fetch_optional(&db.pool)
-                    .await
-                    .map_err(|e| ApiError::InternalError(format!("Failed to get resource template: {e}")))?
-                    .ok_or_else(|| ApiError::NotFound("Resource template not found".to_string()))?;
-
-            crate::config::profile::update_resource_template_enabled_status(
-                &db.pool,
-                profile_id,
-                &server_id,
-                &uri_template,
-                enabled,
-            )
-            .await
-            .map_err(|e| ApiError::InternalError(format!("Failed to update resource template status: {e}")))?;
-        }
-        ComponentType::Prompt => {
-            crate::config::profile::update_prompt_enabled_status(&db.pool, component_id, enabled)
-                .await
-                .map_err(|e| ApiError::InternalError(format!("Failed to update prompt status: {e}")))?;
-        }
+fn map_catalog_error(error: mcpmate_capability_store::CatalogError) -> ApiError {
+    match error {
+        mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => ApiError::Conflict(error.to_string()),
+        _ => ApiError::InternalError(error.to_string()),
     }
-
-    Ok(component_type)
 }
 
 /// Invalidate profile cache if merge service is available

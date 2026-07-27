@@ -346,14 +346,10 @@ async fn repair_namespace(
     }
     for table in [
         "server_meta",
-        "profile_server",
         "server_tools",
         "server_prompts",
         "server_resources",
         "server_resource_templates",
-        "profile_prompt",
-        "profile_resource",
-        "profile_resource_template",
     ] {
         let update = format!("UPDATE {table} SET server_name = ?, updated_at = CURRENT_TIMESTAMP WHERE server_id = ?");
         sqlx::query(&update)
@@ -500,7 +496,7 @@ mod tests {
             .await
             .expect("insert profile");
         sqlx::query(
-            "INSERT INTO profile_server (id, profile_id, server_id, server_name, enabled) VALUES ('profile-server-1', 'profile-1', 'server-legacy', 'Sequential Thinking', 1)",
+            "INSERT INTO profile_server_relationships (profile_id, server_id, new_ref_policy) VALUES ('profile-1', 'server-legacy', 'review')",
         )
         .execute(pool)
         .await
@@ -537,47 +533,16 @@ mod tests {
         .await
         .expect("insert issued resource");
 
+        sqlx::query("INSERT INTO client (id, name, identifier) VALUES ('client-1', 'Test Client', 'test-client')")
+            .execute(pool)
+            .await
+            .expect("insert client");
         sqlx::query(
-            "INSERT INTO profile_tool (id, profile_id, server_tool_id, enabled) VALUES ('profile-tool-1', 'profile-1', 'tool-1', 0)",
+            "INSERT INTO direct_exposure_servers (consumer_id, server_id, new_ref_policy) VALUES ('test-client', 'server-legacy', 'follow')",
         )
         .execute(pool)
         .await
-        .expect("insert profile tool");
-        sqlx::query(
-            "INSERT INTO profile_prompt (id, profile_id, server_id, server_name, prompt_name, enabled) VALUES ('profile-prompt-1', 'profile-1', 'server-legacy', 'Sequential Thinking', 'sequential_thinking_help', 0)",
-        )
-        .execute(pool)
-        .await
-        .expect("insert profile prompt");
-        sqlx::query(
-            "INSERT INTO profile_resource (id, profile_id, server_id, server_name, resource_uri, enabled) VALUES ('profile-resource-1', 'profile-1', 'server-legacy', 'Sequential Thinking', 'file:///guide.md', 0)",
-        )
-        .execute(pool)
-        .await
-        .expect("insert profile resource");
-        sqlx::query(
-            "INSERT INTO profile_resource_template (id, profile_id, server_id, server_name, uri_template, enabled) VALUES ('profile-template-1', 'profile-1', 'server-legacy', 'Sequential Thinking', 'demo://resource/lookup/{id}', 0)",
-        )
-        .execute(pool)
-        .await
-        .expect("insert profile resource template");
-
-        let intent = serde_json::json!({
-            "route_mode": "capability_level",
-            "capability_ids": {
-                "tool_ids": ["old_tool"],
-                "prompt_ids": ["old_prompt"],
-                "resource_ids": ["old_resource"],
-                "template_ids": ["old_template"]
-            }
-        });
-        sqlx::query(
-            "INSERT INTO client (id, name, identifier, unify_direct_exposure_intent) VALUES ('client-1', 'Test Client', 'test-client', ?)",
-        )
-        .bind(intent.to_string())
-        .execute(pool)
-        .await
-        .expect("insert client intent");
+        .expect("insert direct exposure server");
     }
 
     #[tokio::test]
@@ -865,15 +830,11 @@ mod tests {
             "server_args",
             "server_env",
             "server_meta",
-            "profile_server",
             "server_tools",
             "server_prompts",
             "server_resources",
             "server_resource_templates",
             "server_issued_resources",
-            "profile_prompt",
-            "profile_resource",
-            "profile_resource_template",
         ] {
             let query = format!("SELECT server_name FROM {table} WHERE server_id = 'server-legacy'");
             let values = sqlx::query_scalar::<_, String>(&query)
@@ -961,37 +922,22 @@ mod tests {
             assert_eq!(actual_external, external);
         }
 
-        let profile_tool_enabled: bool =
-            sqlx::query_scalar("SELECT enabled FROM profile_tool WHERE id = 'profile-tool-1'")
-                .fetch_one(&pool)
-                .await
-                .expect("load profile tool toggle");
-        assert!(!profile_tool_enabled);
+        let profile_policy: String = sqlx::query_scalar(
+            "SELECT new_ref_policy FROM profile_server_relationships WHERE profile_id = 'profile-1' AND server_id = 'server-legacy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load profile server policy");
+        assert_eq!(profile_policy, "review");
 
-        let intent_json: String =
-            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE id = 'client-1'")
+        let direct_policy: String =
+            sqlx::query_scalar(
+                "SELECT new_ref_policy FROM direct_exposure_servers WHERE consumer_id = 'test-client' AND server_id = 'server-legacy'",
+            )
                 .fetch_one(&pool)
                 .await
-                .expect("load rewritten client intent");
-        let intent: crate::clients::models::UnifyDirectExposureIntent =
-            serde_json::from_str(&intent_json).expect("parse client intent");
-        assert_eq!(intent.capability_ids.tool_ids, ["sequential_thinking_get_status"]);
-        assert_eq!(intent.capability_ids.prompt_ids, ["sequential_thinking_help"]);
-        assert_eq!(
-            intent.capability_ids.resource_ids,
-            [
-                crate::core::capability::resource_uri::encode_resource_uri("sequential_thinking", "file:///guide.md",)
-                    .expect("encode rewritten resource intent")
-            ]
-        );
-        assert_eq!(
-            intent.capability_ids.template_ids,
-            [crate::core::capability::resource_uri::encode_resource_template(
-                "sequential_thinking",
-                "demo://resource/lookup/{id}",
-            )
-            .expect("encode rewritten template intent")]
-        );
+                .expect("load direct exposure server policy");
+        assert_eq!(direct_policy, "follow");
 
         let second = ensure_canonical_namespace_before_exposure(&pool, "server-legacy")
             .await
@@ -1061,11 +1007,12 @@ mod tests {
                 .expect("load rolled back tool");
         assert_eq!(server_name, "Sequential Thinking");
         assert_eq!(unique_name, "old_tool");
-        let intent: String =
-            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE id = 'client-1'")
-                .fetch_one(&pool)
-                .await
-                .expect("load rolled back client intent");
-        assert!(intent.contains("old_tool"));
+        let direct_policy: String = sqlx::query_scalar(
+            "SELECT new_ref_policy FROM direct_exposure_servers WHERE consumer_id = 'test-client' AND server_id = 'server-legacy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load rolled back direct exposure policy");
+        assert_eq!(direct_policy, "follow");
     }
 }

@@ -329,7 +329,9 @@ mod tests {
         for table in [
             "capability_server_snapshots",
             "capability_kind_states",
-            "capability_records",
+            "capability_refs",
+            "capability_versions",
+            "capability_ref_current",
         ] {
             let exists: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")

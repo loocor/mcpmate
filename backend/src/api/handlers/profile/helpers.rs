@@ -30,11 +30,13 @@ pub async fn get_tool_or_error(
     db: &Database,
     tool_id: &str,
 ) -> Result<ProfileTool, ApiError> {
-    let tool = sqlx::query_as::<_, ProfileTool>("SELECT * FROM profile_tool WHERE id = ?")
-        .bind(tool_id)
-        .fetch_optional(&db.pool)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
+    let tool = sqlx::query_as::<_, ProfileTool>(
+        "SELECT profile_id, ref_id, enabled FROM profile_capability_refs WHERE ref_id = ?",
+    )
+    .bind(tool_id)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| ApiError::InternalError(format!("Failed to get tool: {e}")))?;
 
     match tool {
         Some(t) => Ok(t),
@@ -47,7 +49,7 @@ pub async fn get_tool_with_details_or_error(
     db: &Database,
     tool_id: &str,
 ) -> Result<crate::config::models::ProfileToolWithDetails, ApiError> {
-    let query = crate::config::profile::tool::build_tool_details_query(Some("cst.id = ?"));
+    let query = crate::config::profile::tool::build_tool_details_query(Some("pcr.ref_id = ?"));
     let tool = sqlx::query_as::<_, crate::config::models::ProfileToolWithDetails>(&query)
         .bind(tool_id)
         .fetch_optional(&db.pool)

@@ -69,6 +69,30 @@ fn reconcile_default_flags(profile: &mut crate::config::models::Profile) {
     }
 }
 
+fn validate_profile_create_activation_contract(request: &ProfileCreateReq) -> Result<(), ApiError> {
+    if request.is_active == Some(true) {
+        return Err(ApiError::BadRequest(
+            "Create profiles as inactive, then activate them through /api/mcp/profile/manage".to_string(),
+        ));
+    }
+    if request.is_default == Some(true) {
+        return Err(ApiError::BadRequest(
+            "Create profiles as non-default, activate them through /api/mcp/profile/manage, then assign the default flag"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_profile_update_activation_contract(request: &ProfileUpdateReq) -> Result<(), ApiError> {
+    if request.is_active.is_some() {
+        return Err(ApiError::BadRequest(
+            "Update profile activation through /api/mcp/profile/manage".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate profile name uniqueness
 ///
 /// Checks if a profile with the given name already exists, optionally excluding a specific ID
@@ -148,11 +172,20 @@ pub async fn profile_list(
     let paginated_profile: Vec<_> = filtered_profile.into_iter().skip(offset).take(limit).collect();
 
     let profile_responses = paginated_profile.iter().map(profile_to_response).collect();
+    let source_revision_set = sqlx::query_as::<_, (String, i64)>(
+        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|error| ApiError::InternalError(format!("Failed to load catalog revisions: {error}")))?
+    .into_iter()
+    .collect();
 
     let response = ProfileListData {
         profile: profile_responses,
         total,
         timestamp: Utc::now().to_rfc3339(),
+        source_revision_set,
     };
 
     Ok(Json(ProfileListResp::success(response)))
@@ -200,6 +233,14 @@ pub async fn profile_details(
     // For now, set resources and prompts counts to 0 (implement later)
     let resources_count = 0;
     let prompts_count = 0;
+    let source_revision_set = sqlx::query_as::<_, (String, i64)>(
+        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
+    )
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|error| ApiError::InternalError(format!("Failed to load catalog revisions: {error}")))?
+    .into_iter()
+    .collect();
 
     let response = ProfileDetailsData {
         profile: profile_to_response(&profile),
@@ -207,6 +248,7 @@ pub async fn profile_details(
         tools_count,
         resources_count,
         prompts_count,
+        source_revision_set,
     };
 
     Ok(Json(ProfileDetailsResp::success(response)))
@@ -221,38 +263,21 @@ pub async fn profile_delete(
 ) -> Result<Json<ProfileManageResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
-
-    // Get the existing profile to check if it exists and get its name
-    let existing_profile = crate::config::profile::get_profile(&db.pool, &request.id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile: {e}")))?;
-
-    let profile = match existing_profile {
-        Some(s) => s,
-        None => {
-            return Err(ApiError::NotFound(format!(
-                "Profile with ID '{}' not found",
-                request.id
-            )));
-        }
-    };
-
-    // Check if it's the default profile (prevent deletion)
-    if profile.is_default || is_default_anchor_profile(&profile) {
-        return Err(ApiError::Forbidden("Cannot delete the default profile".to_string()));
-    }
-
-    // Delete the profile (cascade will handle related records)
-    crate::config::profile::delete_profile(&db.pool, &request.id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to delete profile: {e}")))?;
+    let management = crate::core::capability::management::ProfileSurfaceManagement::delete_profile(
+        &db.pool,
+        &request.id,
+        request.source_revision_set.clone().into_iter().collect(),
+        "profile_management",
+    )
+    .await
+    .map_err(profile_management_error)?;
 
     let response = ProfileManageData {
         success_count: 1,
         failed_count: 0,
         results: vec![ProfileOperationResult {
             id: request.id.clone(),
-            name: profile.name,
+            name: management.profile_name,
             result: "deleted".to_string(),
             status: "inactive".to_string(),
             error: None,
@@ -276,6 +301,19 @@ pub async fn profile_delete(
         ),
     )
     .await;
+    super::emit_surface_publication_audits(
+        &state,
+        "profile_management",
+        response
+            .0
+            .data
+            .as_ref()
+            .and_then(|data| data.results.first())
+            .map(|result| result.id.as_str()),
+        "/api/mcp/profile/delete",
+        management.materializations,
+    )
+    .await;
     Ok(response)
 }
 
@@ -287,6 +325,7 @@ pub async fn profile_create(
     Json(request): Json<ProfileCreateReq>,
 ) -> Result<Json<ProfileResp>, ApiError> {
     let started_at = std::time::Instant::now();
+    validate_profile_create_activation_contract(&request)?;
     let db = get_database(&state).await?;
 
     // Validate name uniqueness
@@ -309,17 +348,6 @@ pub async fn profile_create(
     if let Some(priority) = request.priority {
         new_profile.priority = priority;
     }
-    if let Some(is_active) = request.is_active {
-        new_profile.is_active = is_active;
-    }
-    if let Some(is_default) = request.is_default {
-        new_profile.is_default = is_default;
-    }
-
-    if new_profile.is_default {
-        new_profile.is_active = true;
-    }
-
     // Insert the new profile and get the ID
     let profile_id = crate::config::profile::upsert_profile(&db.pool, &new_profile)
         .await
@@ -365,6 +393,7 @@ pub async fn profile_update(
     Json(request): Json<ProfileUpdateReq>,
 ) -> Result<Json<ProfileResp>, ApiError> {
     let started_at = std::time::Instant::now();
+    validate_profile_update_activation_contract(&request)?;
     let db = get_database(&state).await?;
 
     // 1. Get existing profile by ID
@@ -421,30 +450,40 @@ pub async fn profile_manage(
 ) -> Result<Json<ProfileManageResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
-
-    let mut results = Vec::new();
-    let mut success_count = 0;
-    let mut failed_count = 0;
-
-    // Process each profile ID
-    for profile_id in &request.ids {
-        match profile_operation_core(&db.pool, profile_id, &request.action).await {
-            Ok(result) => {
-                success_count += 1;
-                results.push(result);
-            }
-            Err(e) => {
-                failed_count += 1;
-                results.push(ProfileOperationResult {
-                    id: profile_id.clone(),
-                    name: "Unknown".to_string(),
-                    result: "failed".to_string(),
-                    status: "unknown".to_string(),
-                    error: Some(e.to_string()),
-                });
-            }
-        }
-    }
+    let activation_action = match &request.action {
+        ProfileAction::Activate => crate::core::capability::management::ProfileActivationAction::Activate,
+        ProfileAction::Deactivate => crate::core::capability::management::ProfileActivationAction::Deactivate,
+    };
+    let management = crate::core::capability::management::ProfileSurfaceManagement::set_profiles_active(
+        &db.pool,
+        &request.ids,
+        activation_action,
+        request.source_revision_set.clone().into_iter().collect(),
+        "profile_management",
+    )
+    .await
+    .map_err(profile_management_error)?;
+    let results = management
+        .mutations
+        .iter()
+        .map(|mutation| ProfileOperationResult {
+            id: mutation.profile_id.clone(),
+            name: mutation.name.clone(),
+            result: if mutation.is_active {
+                "activated".to_string()
+            } else {
+                "deactivated".to_string()
+            },
+            status: if mutation.is_active {
+                "active".to_string()
+            } else {
+                "inactive".to_string()
+            },
+            error: None,
+        })
+        .collect::<Vec<_>>();
+    let success_count = results.len();
+    let failed_count = 0;
 
     // Sync server connections if merge service is available and any profile were processed successfully
     if success_count > 0 {
@@ -497,11 +536,7 @@ pub async fn profile_manage(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             audit_action,
-            if failed_count > 0 {
-                crate::audit::AuditStatus::Failed
-            } else {
-                crate::audit::AuditStatus::Success
-            },
+            crate::audit::AuditStatus::Success,
             "POST",
             "/api/mcp/profile/manage",
             Some(started_at.elapsed().as_millis() as u64),
@@ -512,72 +547,29 @@ pub async fn profile_manage(
         ),
     )
     .await;
+    for mutation in &management.mutations {
+        crate::core::events::EventBus::global().publish(crate::core::events::Event::ProfileStatusChanged {
+            profile_id: mutation.profile_id.clone(),
+            enabled: mutation.is_active,
+        });
+    }
+    super::emit_surface_publication_audits(
+        &state,
+        "profile_management",
+        request.ids.first().map(String::as_str),
+        "/api/mcp/profile/manage",
+        management.materializations,
+    )
+    .await;
     Ok(response)
 }
 
-/// Process a single profile operation with complete functionality
-async fn profile_operation_core(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    profile_id: &str,
-    action: &ProfileAction,
-) -> Result<ProfileOperationResult, ApiError> {
-    // Get the existing profile
-    let existing_profile = crate::config::profile::get_profile(pool, profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile: {e}")))?;
-
-    let mut profile = match existing_profile {
-        Some(s) => s,
-        None => {
-            return Err(ApiError::NotFound(format!(
-                "Profile with ID '{}' not found",
-                profile_id
-            )));
-        }
-    };
-
-    // Perform the action
-    let (result, new_status) = match action {
-        ProfileAction::Activate => {
-            profile.is_active = true;
-            ("activated", "active")
-        }
-        ProfileAction::Deactivate => {
-            if is_default_anchor_profile(&profile) {
-                return Err(ApiError::Forbidden(
-                    "Cannot deactivate the default anchor profile".to_string(),
-                ));
-            }
-            profile.is_active = false;
-            ("deactivated", "inactive")
-        }
-    };
-
-    reconcile_default_flags(&mut profile);
-
-    crate::config::profile::set_profile_active(pool, profile_id, profile.is_active)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to update profile: {e}")))?;
-
-    // Publish event to trigger server synchronization
-    let enabled = matches!(action, ProfileAction::Activate);
-    crate::core::events::EventBus::global().publish(crate::core::events::Event::ProfileStatusChanged {
-        profile_id: profile_id.to_string(),
-        enabled,
-    });
-    tracing::info!(
-        "Published ProfileStatusChanged event for profile {}: {}",
-        profile_id,
-        if enabled { "activation" } else { "deactivation" }
-    );
-
-    Ok(ProfileOperationResult {
-        id: profile_id.to_string(),
-        name: profile.name,
-        result: result.to_string(),
-        status: new_status.to_string(),
-        error: None,
-    })
+fn profile_management_error(error: mcpmate_capability_store::CatalogError) -> ApiError {
+    match error {
+        mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => ApiError::Conflict(error.to_string()),
+        mcpmate_capability_store::CatalogError::InvalidSurfaceValue { .. } => ApiError::BadRequest(error.to_string()),
+        _ => ApiError::InternalError(error.to_string()),
+    }
 }
 
 /// Apply partial updates to a profile
@@ -609,14 +601,6 @@ fn profile_updates_core(
     if let Some(priority) = updates.priority {
         profile.priority = priority;
     }
-    if let Some(is_active) = updates.is_active {
-        if is_default_anchor_profile(profile) && !is_active {
-            return Err(ApiError::BadRequest(
-                "Default anchor profile must stay active".to_string(),
-            ));
-        }
-        profile.is_active = is_active;
-    }
     if let Some(is_default) = updates.is_default {
         if is_default_anchor_profile(profile) && !is_default {
             return Err(ApiError::BadRequest(
@@ -624,9 +608,6 @@ fn profile_updates_core(
             ));
         }
         profile.is_default = is_default;
-        if profile.is_default {
-            profile.is_active = true;
-        }
     }
 
     // Update timestamp
@@ -681,7 +662,7 @@ async fn profile_cloning_core(
             pool,
             target_profile_id,
             &tool_config.server_id,
-            &tool_config.tool_name,
+            &tool_config.ref_id,
             tool_config.enabled,
         )
         .await
@@ -689,4 +670,155 @@ async fn profile_cloning_core(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mcpmate_capability_store::{
+        CapabilityCatalog, CapabilityKind, CapabilityObservation, CapabilityPayload, CatalogRecord, DeclarationState,
+        InventoryState, KindObservation, SqliteCapabilityCatalog,
+    };
+    use rmcp::model::{InitializeResult, Tool};
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn profile_create_requires_activation_through_management_endpoint() {
+        let request = ProfileCreateReq {
+            name: "Research".to_string(),
+            description: None,
+            profile_type: "scenario".to_string(),
+            multi_select: None,
+            priority: None,
+            is_active: Some(true),
+            is_default: None,
+            clone_from_id: None,
+        };
+
+        let error = validate_profile_create_activation_contract(&request).unwrap_err();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn profile_create_requires_default_assignment_after_activation() {
+        let request = ProfileCreateReq {
+            name: "Research".to_string(),
+            description: None,
+            profile_type: "scenario".to_string(),
+            multi_select: None,
+            priority: None,
+            is_active: Some(false),
+            is_default: Some(true),
+            clone_from_id: None,
+        };
+
+        let error = validate_profile_create_activation_contract(&request).unwrap_err();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn profile_update_requires_activation_through_management_endpoint() {
+        let request = ProfileUpdateReq {
+            id: "profile-1".to_string(),
+            name: None,
+            description: None,
+            profile_type: None,
+            multi_select: None,
+            priority: None,
+            is_active: Some(false),
+            is_default: None,
+        };
+
+        let error = validate_profile_update_activation_contract(&request).unwrap_err();
+
+        assert!(matches!(error, ApiError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn profile_clone_preserves_tool_capability_ref_identity() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .unwrap();
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .unwrap();
+        crate::config::database::initialize_capability_catalog(&pool)
+            .await
+            .unwrap();
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-a', 'Server A', 'stdio', '', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO profile (id, name, description, type, role)
+            VALUES ('profile-source', 'Source', '', 'shared', 'user'),
+                   ('profile-target', 'Target', '', 'shared', 'user')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let tool: Tool = serde_json::from_value(json!({
+            "name": "analyze",
+            "description": "Analyze",
+            "inputSchema": {"type": "object"}
+        }))
+        .unwrap();
+        let record = CatalogRecord::materialize(
+            "server-a",
+            "analyze",
+            "server_a__analyze",
+            CapabilityPayload::Tool(tool),
+        )
+        .unwrap();
+        let initialize: InitializeResult = serde_json::from_value(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "Server A", "version": "1.0.0"}
+        }))
+        .unwrap();
+        SqliteCapabilityCatalog::new(pool.clone())
+            .commit_observation(CapabilityObservation::new(
+                "server-a",
+                "Server A",
+                "config-v1",
+                initialize,
+                vec![KindObservation::new(
+                    CapabilityKind::Tools,
+                    DeclarationState::Supported,
+                    InventoryState::Complete,
+                )],
+                vec![record.clone()],
+            ))
+            .await
+            .unwrap();
+        crate::config::profile::add_tool_to_profile(&pool, "profile-source", "server-a", record.ref_id.as_str(), true)
+            .await
+            .unwrap();
+
+        profile_cloning_core(&pool, "profile-target", "profile-source")
+            .await
+            .unwrap();
+
+        let cloned = crate::config::profile::get_profile_tools(&pool, "profile-target")
+            .await
+            .unwrap();
+        assert_eq!(cloned.len(), 1);
+        assert_eq!(cloned[0].ref_id, record.ref_id.to_string());
+    }
 }

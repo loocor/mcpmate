@@ -1,19 +1,25 @@
-//! Shared unified-query helper for token estimate and capability ledger handlers.
+//! Shared capability query helper for token estimate and capability ledger handlers.
 
 use crate::{
-    api::handlers::server::common::InspectParams,
-    core::capability::{CapabilityItem, CapabilityType, UnifiedQueryAdapter},
+    api::{handlers::server::common::InspectParams, routes::AppState},
+    core::capability::{CapabilityItem, CapabilityType, query},
 };
 
 pub async fn query_unified_capabilities(
-    unified_query: &UnifiedQueryAdapter,
+    state: &AppState,
     server_id: &str,
     capability_type: CapabilityType,
     params: &InspectParams,
 ) -> Option<Vec<CapabilityItem>> {
-    match unified_query
-        .query_capabilities(server_id, capability_type, params)
-        .await
+    let database = state.database.as_ref()?;
+    match query::query_capabilities(
+        state.connection_pool.clone(),
+        database.clone(),
+        server_id,
+        capability_type,
+        params,
+    )
+    .await
     {
         Ok(result) => Some(result.items),
         Err(error) => {
