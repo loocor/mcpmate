@@ -2,7 +2,7 @@ use sqlx::{Pool, Sqlite};
 
 use crate::Result;
 
-const CAPABILITY_SCHEMA_EPOCH: i64 = 2;
+const CAPABILITY_SCHEMA_EPOCH: i64 = 4;
 const LEGACY_CAPABILITY_TABLES: &[&str] = &[
     "capability_records",
     "profile_tool",
@@ -44,6 +44,8 @@ pub(crate) async fn ensure_schema(pool: &Pool<Sqlite>) -> Result<()> {
             declaration_state TEXT NOT NULL,
             inventory_state TEXT NOT NULL,
             error TEXT,
+            failure_kind TEXT,
+            timeout_ms INTEGER,
             catalog_revision INTEGER NOT NULL,
             observed_at TEXT NOT NULL,
             PRIMARY KEY (server_id, kind),
@@ -83,6 +85,8 @@ pub(crate) async fn ensure_schema(pool: &Pool<Sqlite>) -> Result<()> {
             capability_id TEXT PRIMARY KEY,
             ref_id TEXT NOT NULL,
             canonical_record BLOB NOT NULL,
+            source_payload BLOB NOT NULL,
+            effective_payload BLOB NOT NULL,
             record_format TEXT NOT NULL,
             first_observed_revision INTEGER NOT NULL,
             FOREIGN KEY (ref_id) REFERENCES capability_refs(ref_id) ON DELETE CASCADE,
@@ -398,6 +402,30 @@ pub(crate) async fn ensure_schema(pool: &Pool<Sqlite>) -> Result<()> {
         r#"
         CREATE INDEX IF NOT EXISTS idx_capability_change_events_consumer_time
         ON capability_change_events(consumer_id, occurred_at)
+        "#,
+    )
+    .execute(&mut *transaction)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS configuration_mode_transitions (
+            transition_id TEXT PRIMARY KEY,
+            previous_mode TEXT NOT NULL CHECK (previous_mode IN ('unify', 'hosted', 'transparent')),
+            target_mode TEXT NOT NULL CHECK (target_mode IN ('unify', 'hosted', 'transparent')),
+            status TEXT NOT NULL CHECK (status IN ('pending', 'completed')),
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        "#,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        r#"
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_configuration_mode_transitions_single_pending
+        ON configuration_mode_transitions(status)
+        WHERE status = 'pending'
         "#,
     )
     .execute(&mut *transaction)

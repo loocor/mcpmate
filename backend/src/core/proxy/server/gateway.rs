@@ -950,6 +950,19 @@ impl ProxyServer {
         crate::core::capability::naming::initialize(db_arc.pool.clone());
         self.profile_service = Some(Arc::new(crate::core::profile::ProfileService::new(db_arc.clone())));
         self.bootstrap_client_services(&db_arc).await;
+        let resumed_transitions = crate::system::settings::resume_pending_configuration_mode_transitions(
+            crate::common::paths::global_paths(),
+            &db_arc.pool,
+            self.client_config_service.clone(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("Configuration mode transition recovery failed: {error}"))?;
+        if resumed_transitions > 0 {
+            tracing::info!(
+                resumed_transitions,
+                "Pending configuration mode transitions completed before capability bootstrap"
+            );
+        }
         let builtin_records = self
             .builtin_services
             .catalog_records()

@@ -167,7 +167,8 @@ pub struct CatalogRecord {
     pub upstream_key: String,
     pub external_key: String,
     pub canonical_record: Vec<u8>,
-    pub payload: CapabilityPayload,
+    pub source_payload: CapabilityPayload,
+    pub effective_payload: CapabilityPayload,
 }
 
 impl CatalogRecord {
@@ -201,37 +202,63 @@ impl CatalogRecord {
             upstream_key,
             external_key,
             canonical_record,
-            payload: effective_payload,
+            source_payload: payload,
+            effective_payload,
         })
     }
 
-    pub(crate) fn from_effective_record(
+    pub(crate) fn from_persisted_record(
         capability_id: CapabilityId,
         canonical_record: Vec<u8>,
+        source_payload: CapabilityPayload,
+        effective_payload: CapabilityPayload,
         effective_record: EffectiveCapabilityRecordV1,
     ) -> Result<Self> {
         effective_record.validate()?;
         capability_id.verify_canonical_content(&canonical_record, &canonical_record)?;
         let upstream_key = effective_record.source.origin_key.clone();
         let external_key = effective_record.definition.external_key();
-        let payload = effective_record.definition.into_payload();
+        Self::validate_persisted_payloads(&capability_id, &source_payload, &effective_payload, &effective_record)?;
         Ok(Self {
             ref_id: effective_record.ref_id,
             capability_id,
             upstream_key,
             external_key,
             canonical_record,
-            payload,
+            source_payload,
+            effective_payload,
         })
     }
 
-    pub const fn kind(&self) -> CapabilityKind {
-        self.payload.kind()
+    pub(crate) fn validate_persisted_payloads(
+        capability_id: &CapabilityId,
+        source_payload: &CapabilityPayload,
+        effective_payload: &CapabilityPayload,
+        effective_record: &EffectiveCapabilityRecordV1,
+    ) -> Result<()> {
+        let canonical_effective_payload = effective_record.definition.clone().into_payload();
+        let normalized_source_payload = source_payload
+            .clone()
+            .with_identity_key(&effective_record.definition.external_key());
+        if source_payload.kind() != effective_record.source.kind
+            || source_payload.origin_key() != effective_record.source.origin_key
+            || normalized_source_payload != *effective_payload
+            || *effective_payload != canonical_effective_payload
+        {
+            return Err(crate::CatalogError::IntegrityMismatch {
+                identity: capability_id.to_string(),
+            });
+        }
+        Ok(())
     }
 
-    /// Runtime payload with upstream identity keys restored from [`Self::upstream_key`].
+    pub const fn kind(&self) -> CapabilityKind {
+        self.source_payload.kind()
+    }
+
+    /// Exact payload observed from the upstream source.
     pub fn upstream_payload(&self) -> CapabilityPayload {
-        self.payload.clone().with_identity_key(&self.upstream_key)
+        self.source_payload.clone()
     }
 }
 
@@ -312,12 +339,68 @@ pub struct CatalogReconciliation {
     pub delta: CatalogDelta,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KindFailureKind {
+    Timeout,
+    SessionGone,
+    TransportClosed,
+    StaleGeneration,
+    Authentication,
+    AuthRequired,
+    Unauthorized,
+    Forbidden,
+    InsufficientScope,
+    Protocol,
+    Application,
+    Other,
+}
+
+impl KindFailureKind {
+    pub(crate) const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::SessionGone => "session_gone",
+            Self::TransportClosed => "transport_closed",
+            Self::StaleGeneration => "stale_generation",
+            Self::Authentication => "authentication",
+            Self::AuthRequired => "auth_required",
+            Self::Unauthorized => "unauthorized",
+            Self::Forbidden => "forbidden",
+            Self::InsufficientScope => "insufficient_scope",
+            Self::Protocol => "protocol",
+            Self::Application => "application",
+            Self::Other => "other",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "timeout" => Some(Self::Timeout),
+            "session_gone" => Some(Self::SessionGone),
+            "transport_closed" => Some(Self::TransportClosed),
+            "stale_generation" => Some(Self::StaleGeneration),
+            "authentication" => Some(Self::Authentication),
+            "auth_required" => Some(Self::AuthRequired),
+            "unauthorized" => Some(Self::Unauthorized),
+            "forbidden" => Some(Self::Forbidden),
+            "insufficient_scope" => Some(Self::InsufficientScope),
+            "protocol" => Some(Self::Protocol),
+            "application" => Some(Self::Application),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct KindObservation {
     pub kind: CapabilityKind,
     pub declaration: DeclarationState,
     pub inventory: InventoryState,
     pub error: Option<String>,
+    pub failure_kind: Option<KindFailureKind>,
+    pub timeout_ms: Option<u64>,
 }
 
 impl KindObservation {
@@ -331,6 +414,8 @@ impl KindObservation {
             declaration,
             inventory,
             error: None,
+            failure_kind: None,
+            timeout_ms: None,
         }
     }
 
@@ -339,6 +424,18 @@ impl KindObservation {
         error: impl Into<String>,
     ) -> Self {
         self.error = Some(error.into());
+        self
+    }
+
+    pub fn with_failure(
+        mut self,
+        failure_kind: KindFailureKind,
+        error: impl Into<String>,
+        timeout_ms: Option<u64>,
+    ) -> Self {
+        self.failure_kind = Some(failure_kind);
+        self.error = Some(error.into());
+        self.timeout_ms = timeout_ms;
         self
     }
 }
@@ -447,8 +544,10 @@ pub struct CapabilityFailureObservation {
     pub server_id: String,
     pub server_name: String,
     pub config_fingerprint: String,
-    pub kind: CapabilityKind,
+    pub kinds: Vec<CapabilityKind>,
     pub reason: String,
+    pub failure_kind: Option<KindFailureKind>,
+    pub timeout_ms: Option<u64>,
     pub observed_at: DateTime<Utc>,
 }
 
@@ -460,13 +559,40 @@ impl CapabilityFailureObservation {
         kind: CapabilityKind,
         reason: impl Into<String>,
     ) -> Self {
+        Self::for_kinds(server_id, server_name, config_fingerprint, [kind], reason)
+    }
+
+    pub fn for_kinds(
+        server_id: impl Into<String>,
+        server_name: impl Into<String>,
+        config_fingerprint: impl Into<String>,
+        kinds: impl IntoIterator<Item = CapabilityKind>,
+        reason: impl Into<String>,
+    ) -> Self {
+        let kinds = kinds.into_iter().collect::<Vec<_>>();
+        assert!(
+            !kinds.is_empty(),
+            "failure observation requires at least one capability kind"
+        );
         Self {
             server_id: server_id.into(),
             server_name: server_name.into(),
             config_fingerprint: config_fingerprint.into(),
-            kind,
+            kinds,
             reason: reason.into(),
+            failure_kind: None,
+            timeout_ms: None,
             observed_at: Utc::now(),
         }
+    }
+
+    pub fn with_failure(
+        mut self,
+        failure_kind: KindFailureKind,
+        timeout_ms: Option<u64>,
+    ) -> Self {
+        self.failure_kind = Some(failure_kind);
+        self.timeout_ms = timeout_ms;
+        self
     }
 }

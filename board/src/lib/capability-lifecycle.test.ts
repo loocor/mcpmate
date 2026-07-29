@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
 	formatCapabilityLifecycle,
+	hasCapabilityAuthenticationFailure,
 	resolveCapabilityLifecycle,
 	shouldDisplayCapabilityKind,
 } from "./capability-lifecycle";
@@ -91,5 +92,32 @@ describe("resolveCapabilityLifecycle", () => {
 				},
 			),
 		).toBeNull();
+	});
+
+	test("distinguishes authentication failures from transport failures", () => {
+		const summary = {
+			snapshotState: "unavailable" as const,
+			revision: 1,
+			observedAt: "2026-01-01T00:00:00Z",
+			tools: kind({
+				inventory: "failed",
+				currentAvailable: false,
+				failureKind: "auth_required",
+			}),
+			prompts: kind({ inventory: "failed", currentAvailable: false }),
+			resources: kind({ inventory: "failed", currentAvailable: false }),
+			resourceTemplates: kind({
+				inventory: "failed",
+				currentAvailable: false,
+			}),
+		};
+
+		expect(hasCapabilityAuthenticationFailure(summary)).toBe(true);
+		expect(
+			hasCapabilityAuthenticationFailure({
+				...summary,
+				tools: { ...summary.tools, failureKind: "timeout" },
+			}),
+		).toBe(false);
 	});
 });

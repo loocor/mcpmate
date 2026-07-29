@@ -1,12 +1,51 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { serversApi } from "./api";
+import {
+	assertCompleteCapabilityBatch,
+	assertCompleteServerImport,
+	getCapabilityBatchFailures,
+	serversApi,
+} from "./api";
 import { getServerDisplayName } from "./server-display";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe("assertCompleteServerImport", () => {
+	test("rejects persisted imports whose runtime synchronization failed", () => {
+		expect(() =>
+			assertCompleteServerImport({
+				importedCount: 1,
+				importedServers: ["docs"],
+				skippedCount: 0,
+				skippedServers: [],
+				skippedDetails: [],
+				failedCount: 0,
+				failedServers: [],
+				runtimeSyncError: "pool update failed",
+			}),
+		).toThrow(
+			"Servers were imported, but runtime synchronization failed: pool update failed",
+		);
+	});
+
+	test("accepts an import only when persistence and runtime synchronization completed", () => {
+		expect(() =>
+			assertCompleteServerImport({
+				importedCount: 1,
+				importedServers: ["docs"],
+				skippedCount: 0,
+				skippedServers: [],
+				skippedDetails: [],
+				failedCount: 0,
+				failedServers: [],
+				runtimeSyncError: null,
+			}),
+		).not.toThrow();
+	});
 });
 
 describe("serversApi.getServer", () => {
@@ -238,5 +277,110 @@ describe("serversApi capability lists", () => {
 		expect(result.resources).toEqual(result.tools);
 		expect(result.prompts).toEqual(result.tools);
 		expect(result.templates).toEqual(result.tools);
+	});
+
+	test("preserves successful kinds when one batch capability kind failed", async () => {
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					success: true,
+					data: {
+						tools: {
+							items: [{ ref_id: "cref_sha256:tool", name: "docs_search" }],
+							state: "ok",
+						},
+						resources: {
+							items: [],
+							state: "failed",
+							degraded_reason: "resource inventory failed",
+						},
+						prompts: { items: [], state: "ok" },
+						resource_templates: { items: [], state: "ok" },
+					},
+				}),
+				{ headers: { "content-type": "application/json" } },
+			);
+
+		const result = await serversApi.listAllCapabilities("server-docs");
+
+		expect(result.tools.items).toEqual([
+			{
+				id: "cref_sha256:tool",
+				ref_id: "cref_sha256:tool",
+				name: "docs_search",
+			},
+		]);
+		expect(result.resources).toEqual({
+			items: [],
+			state: "failed",
+			degraded_reason: "resource inventory failed",
+		});
+		expect(result.prompts.state).toBe("ok");
+		expect(result.templates.state).toBe("ok");
+		expect(getCapabilityBatchFailures(result)).toEqual([
+			{ kind: "resources", reason: "resource inventory failed" },
+		]);
+		expect(() => assertCompleteCapabilityBatch(result)).toThrow(
+			"Capability discovery is incomplete: resources: resource inventory failed",
+		);
+	});
+
+	test("preserves one structured authentication failure without duplicating kind failures", async () => {
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					success: true,
+					data: {
+						tools: {
+							items: [],
+							state: "failed",
+							degraded_reason: "request_failed",
+						},
+						resources: {
+							items: [],
+							state: "failed",
+							degraded_reason: "request_failed",
+						},
+						prompts: {
+							items: [],
+							state: "failed",
+							degraded_reason: "request_failed",
+						},
+						resource_templates: {
+							items: [],
+							state: "failed",
+							degraded_reason: "request_failed",
+						},
+						authentication: {
+							code: "insufficient_scope",
+							reason: "OAuth token lacks the required scope",
+						},
+					},
+				}),
+				{ headers: { "content-type": "application/json" } },
+			);
+
+		const result = await serversApi.listAllCapabilities("server-sentry");
+
+		expect(result.authentication).toEqual({
+			code: "insufficient_scope",
+			reason: "OAuth token lacks the required scope",
+		});
+		expect(getCapabilityBatchFailures(result)).toEqual([]);
+		expect(() => assertCompleteCapabilityBatch(result)).toThrow(
+			"Capability discovery is blocked by authentication: insufficient_scope",
+		);
+	});
+
+	test("allows capability mutations only after every kind completes", () => {
+		const complete = {
+			tools: { items: [], state: "ok" },
+			resources: { items: [], state: "ok" },
+			prompts: { items: [], state: "ok" },
+			templates: { items: [], state: "ok" },
+		};
+
+		expect(getCapabilityBatchFailures(complete)).toEqual([]);
+		expect(() => assertCompleteCapabilityBatch(complete)).not.toThrow();
 	});
 });

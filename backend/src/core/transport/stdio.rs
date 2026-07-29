@@ -11,12 +11,9 @@ use sysinfo;
 use tokio::{io::AsyncReadExt, time::timeout};
 use tokio_util::sync::CancellationToken;
 
-use crate::core::foundation::utils::{
-    get_connection_timeout, // connection timeout
-    get_tools_timeout,      // tools timeout
-    prepare_command,        // prepare command
-};
+use crate::core::foundation::utils::prepare_command;
 use crate::core::models::MCPServerConfig;
+use crate::core::transport::timeout_policy::McpTimeoutPolicy;
 
 /// Prepare and configure command with environment variables.
 ///
@@ -157,15 +154,11 @@ pub(crate) async fn connect_stdio_initialized_for_validation(
     server_config: &MCPServerConfig,
     ct: CancellationToken,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+    startup_timeout: std::time::Duration,
 ) -> Result<crate::core::transport::ClientService> {
     let (mut cmd, transformed_command) = prepare_server_command(server_config).await?;
     setup_command_environment(&mut cmd, server_config, &transformed_command, database_pool).await?;
-    let command = server_config
-        .command
-        .as_ref()
-        .expect("command already validated in prepare_server_command");
-
-    connect_with_timeout(cmd, ct, server_name, get_connection_timeout(command)).await
+    connect_with_timeout(cmd, ct, server_name, startup_timeout).await
 }
 
 async fn initialize_service_with_timeout<T, E, A>(
@@ -275,8 +268,10 @@ async fn connect_stdio_server_inner(
         .command
         .as_ref()
         .expect("command already validated in prepare_server_command");
-    let (connection_timeout, tools_timeout) =
-        custom_timeouts.unwrap_or_else(|| (get_connection_timeout(command), get_tools_timeout(command)));
+    let (connection_timeout, tools_timeout) = custom_timeouts.unwrap_or_else(|| {
+        let policy = McpTimeoutPolicy::for_server(crate::common::server::ServerType::Stdio, Some(command), None);
+        (policy.startup, policy.capability_operation)
+    });
 
     tracing::debug!(
         "Using timeouts for '{}': connection={}s, tools={}s",

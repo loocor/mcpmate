@@ -13,6 +13,10 @@ use sqlx::{Pool, Row, Sqlite, Transaction};
 use uuid::Uuid;
 
 use super::change_policy::{ChangeClass, NewRefPolicy, PolicyAction, RelationshipLevel, policy_action};
+use super::mode_policy::{
+    DirectExposurePolicy, EffectiveConfigMode, ProfileScopePolicy, SurfaceParticipation,
+    resolve_surface_composition_policy,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthoringRelationship {
@@ -460,7 +464,8 @@ impl SurfaceAuthoringLoader {
     ) -> Result<MaterializationInput> {
         let row = sqlx::query(
             r#"
-            SELECT config_mode, capability_source, selected_profile_ids, custom_profile_id, approval_status
+            SELECT config_mode, capability_source, selected_profile_ids, custom_profile_id, approval_status,
+                   unify_route_mode
             FROM client
             WHERE identifier = ?
             "#,
@@ -476,64 +481,78 @@ impl SurfaceAuthoringLoader {
         let config_mode: Option<String> = row.try_get("config_mode")?;
         let effective_config_mode =
             crate::config::client::init::effective_client_config_mode(config_mode.as_deref(), default_config_mode);
-        if approval_status != "approved"
-            || !crate::config::client::init::is_managed_client_config_mode(effective_config_mode)
-        {
+        let effective_mode =
+            EffectiveConfigMode::parse(effective_config_mode).ok_or_else(|| CatalogError::InvalidSurfaceValue {
+                field: "effective config mode",
+                value: effective_config_mode.to_string(),
+            })?;
+        let capability_source_value: String = row.try_get("capability_source")?;
+        let capability_source = capability_source_value
+            .parse()
+            .map_err(|_| CatalogError::InvalidSurfaceValue {
+                field: "capability source",
+                value: capability_source_value,
+            })?;
+        let unify_route_mode_value: String = row.try_get("unify_route_mode")?;
+        let unify_route_mode = unify_route_mode_value
+            .parse()
+            .map_err(|_| CatalogError::InvalidSurfaceValue {
+                field: "unify route mode",
+                value: unify_route_mode_value,
+            })?;
+        let composition_policy =
+            resolve_surface_composition_policy(effective_mode, capability_source, unify_route_mode);
+        if approval_status != "approved" || composition_policy.participation != SurfaceParticipation::Managed {
             return Err(CatalogError::InvalidSurfaceValue {
                 field: "managed consumer state",
                 value: format!("{approval_status}/{effective_config_mode}"),
             });
         }
-        let capability_source: String = row.try_get("capability_source")?;
         let selected_profile_ids: Option<String> = row.try_get("selected_profile_ids")?;
         let custom_profile_id: Option<String> = row.try_get("custom_profile_id")?;
-        let profiles = if effective_config_mode == "unify" {
-            Vec::new()
-        } else {
-            match capability_source.as_str() {
-                "activated" => {
-                    let ids: Vec<String> =
-                        sqlx::query_scalar("SELECT id FROM profile WHERE is_active = 1 ORDER BY priority DESC, id")
-                            .fetch_all(&mut **transaction)
-                            .await?;
-                    ids.into_iter()
-                        .map(|id| {
-                            ProfileAuthoringOwner::new(id, mcpmate_capability_store::ReviewOwnerType::StandardProfile)
-                        })
-                        .collect()
-                }
-                "profiles" => {
-                    let ids = selected_profile_ids
-                        .map(|value| serde_json::from_str::<Vec<String>>(&value))
-                        .transpose()?
-                        .unwrap_or_default();
-                    ids.into_iter()
-                        .map(|id| {
-                            ProfileAuthoringOwner::new(id, mcpmate_capability_store::ReviewOwnerType::StandardProfile)
-                        })
-                        .collect()
-                }
-                "custom" => vec![ProfileAuthoringOwner::new(
-                    custom_profile_id.ok_or_else(|| CatalogError::InvalidSurfaceValue {
-                        field: "custom profile id",
-                        value: consumer_id.to_string(),
-                    })?,
-                    mcpmate_capability_store::ReviewOwnerType::CustomProfile,
-                )],
-                _ => {
-                    return Err(CatalogError::InvalidSurfaceValue {
-                        field: "capability source",
-                        value: capability_source,
-                    });
-                }
+        let profiles = match composition_policy.profile_scope {
+            ProfileScopePolicy::Ignored => Vec::new(),
+            ProfileScopePolicy::Activated => {
+                let ids: Vec<String> =
+                    sqlx::query_scalar("SELECT id FROM profile WHERE is_active = 1 ORDER BY priority DESC, id")
+                        .fetch_all(&mut **transaction)
+                        .await?;
+                ids.into_iter()
+                    .map(|id| {
+                        ProfileAuthoringOwner::new(id, mcpmate_capability_store::ReviewOwnerType::StandardProfile)
+                    })
+                    .collect()
             }
+            ProfileScopePolicy::Selected => {
+                let ids = selected_profile_ids
+                    .map(|value| serde_json::from_str::<Vec<String>>(&value))
+                    .transpose()?
+                    .unwrap_or_default();
+                ids.into_iter()
+                    .map(|id| {
+                        ProfileAuthoringOwner::new(id, mcpmate_capability_store::ReviewOwnerType::StandardProfile)
+                    })
+                    .collect()
+            }
+            ProfileScopePolicy::Custom => vec![ProfileAuthoringOwner::new(
+                custom_profile_id.ok_or_else(|| CatalogError::InvalidSurfaceValue {
+                    field: "custom profile id",
+                    value: consumer_id.to_string(),
+                })?,
+                mcpmate_capability_store::ReviewOwnerType::CustomProfile,
+            )],
         };
-        let mut relationships =
-            Self::load_relationships_in_transaction(transaction, consumer_id, &profiles, &[], None).await?;
-        let allowed_names = crate::mcper::builtin::names::builtin_tool_names_for_surface(
-            effective_config_mode,
-            capability_source.as_str(),
-        );
+        let mut relationships = Self::load_relationships_in_transaction(
+            transaction,
+            consumer_id,
+            &profiles,
+            composition_policy.direct_exposure,
+            &[],
+            None,
+        )
+        .await?;
+        let allowed_names =
+            crate::mcper::builtin::names::builtin_tool_names_for_surface_set(composition_policy.builtins);
         if !allowed_names.is_empty() {
             let builtin_rows = sqlx::query(
                 r#"
@@ -610,6 +629,7 @@ impl SurfaceAuthoringLoader {
         transaction: &mut Transaction<'_, Sqlite>,
         consumer_id: &str,
         profiles: &[ProfileAuthoringOwner],
+        direct_exposure_policy: DirectExposurePolicy,
         builtin_records: &[mcpmate_capability_store::CatalogRecord],
         builtin_owner_id: Option<&str>,
     ) -> Result<Vec<AuthoringRelationship>> {
@@ -637,6 +657,7 @@ impl SurfaceAuthoringLoader {
                 )
                 WHERE p.profile_id = ?
                   AND p.enabled = 1
+                  AND r.state <> 'retired'
                   AND COALESCE(profile_server.enabled, 1) = 1
                 "#,
             )
@@ -670,6 +691,7 @@ impl SurfaceAuthoringLoader {
                 )
                 WHERE p.profile_id = ?
                   AND p.enabled = 1
+                  AND r.state <> 'retired'
                   AND NOT EXISTS (
                       SELECT 1
                       FROM profile_capability_refs explicit
@@ -695,81 +717,88 @@ impl SurfaceAuthoringLoader {
             }
         }
 
-        let direct = sqlx::query(
-            r#"
-            SELECT r.ref_id, r.kind, v.canonical_record
-            FROM direct_exposure_refs d
-            JOIN capability_refs r ON r.ref_id = d.ref_id
-            JOIN server_config server
-              ON server.id = r.server_id
-             AND server.enabled = 1
-             AND server.unify_direct_exposure_eligible = 1
-            LEFT JOIN capability_ref_current c ON c.ref_id = r.ref_id
-            JOIN capability_versions v ON v.capability_id = COALESCE(
-                c.capability_id,
-                (
-                    SELECT previous.capability_id
-                    FROM capability_versions previous
-                    WHERE previous.ref_id = r.ref_id
-                    ORDER BY previous.first_observed_revision DESC, previous.capability_id
-                    LIMIT 1
+        if direct_exposure_policy == DirectExposurePolicy::CapabilityLevel {
+            let direct = sqlx::query(
+                r#"
+                SELECT r.ref_id, r.kind, v.canonical_record
+                FROM direct_exposure_refs d
+                JOIN capability_refs r ON r.ref_id = d.ref_id
+                JOIN server_config server
+                  ON server.id = r.server_id
+                 AND server.enabled = 1
+                 AND server.unify_direct_exposure_eligible = 1
+                LEFT JOIN capability_ref_current c ON c.ref_id = r.ref_id
+                JOIN capability_versions v ON v.capability_id = COALESCE(
+                    c.capability_id,
+                    (
+                        SELECT previous.capability_id
+                        FROM capability_versions previous
+                        WHERE previous.ref_id = r.ref_id
+                        ORDER BY previous.first_observed_revision DESC, previous.capability_id
+                        LIMIT 1
+                    )
                 )
+                WHERE d.consumer_id = ?
+                  AND d.enabled = 1
+                  AND r.state <> 'retired'
+                "#,
             )
-            WHERE d.consumer_id = ? AND d.enabled = 1
-            "#,
-        )
-        .bind(consumer_id)
-        .fetch_all(&mut **transaction)
-        .await?;
-        for row in direct {
-            relationships.push(parse_authoring_row(
-                row,
-                SurfaceReviewOwner::new(
-                    mcpmate_capability_store::ReviewOwnerType::ConsumerDirectExposure,
-                    consumer_id,
-                ),
-                RelationshipLevel::Capability,
-                NewRefPolicy::Review,
-            )?);
+            .bind(consumer_id)
+            .fetch_all(&mut **transaction)
+            .await?;
+            for row in direct {
+                relationships.push(parse_authoring_row(
+                    row,
+                    SurfaceReviewOwner::new(
+                        mcpmate_capability_store::ReviewOwnerType::ConsumerDirectExposure,
+                        consumer_id,
+                    ),
+                    RelationshipLevel::Capability,
+                    NewRefPolicy::Review,
+                )?);
+            }
         }
 
-        let direct_servers = sqlx::query(
-            r#"
-            SELECT r.ref_id, r.kind, v.canonical_record, d.new_ref_policy
-            FROM direct_exposure_servers d
-            JOIN capability_refs r ON r.server_id = d.server_id
-            JOIN server_config server
-              ON server.id = r.server_id
-             AND server.enabled = 1
-             AND server.unify_direct_exposure_eligible = 1
-            LEFT JOIN capability_ref_current c ON c.ref_id = r.ref_id
-            JOIN capability_versions v ON v.capability_id = COALESCE(
-                c.capability_id,
-                (
-                    SELECT previous.capability_id
-                    FROM capability_versions previous
-                    WHERE previous.ref_id = r.ref_id
-                    ORDER BY previous.first_observed_revision DESC, previous.capability_id
-                    LIMIT 1
+        if direct_exposure_policy == DirectExposurePolicy::ServerLevel {
+            let direct_servers = sqlx::query(
+                r#"
+                SELECT r.ref_id, r.kind, v.canonical_record, d.new_ref_policy
+                FROM direct_exposure_servers d
+                JOIN capability_refs r ON r.server_id = d.server_id
+                JOIN server_config server
+                  ON server.id = r.server_id
+                 AND server.enabled = 1
+                 AND server.unify_direct_exposure_eligible = 1
+                LEFT JOIN capability_ref_current c ON c.ref_id = r.ref_id
+                JOIN capability_versions v ON v.capability_id = COALESCE(
+                    c.capability_id,
+                    (
+                        SELECT previous.capability_id
+                        FROM capability_versions previous
+                        WHERE previous.ref_id = r.ref_id
+                        ORDER BY previous.first_observed_revision DESC, previous.capability_id
+                        LIMIT 1
+                    )
                 )
+                WHERE d.consumer_id = ?
+                  AND r.state <> 'retired'
+                "#,
             )
-            WHERE d.consumer_id = ?
-            "#,
-        )
-        .bind(consumer_id)
-        .fetch_all(&mut **transaction)
-        .await?;
-        for row in direct_servers {
-            let policy: String = row.try_get("new_ref_policy")?;
-            relationships.push(parse_authoring_row(
-                row,
-                SurfaceReviewOwner::new(
-                    mcpmate_capability_store::ReviewOwnerType::ConsumerServerExposure,
-                    consumer_id,
-                ),
-                RelationshipLevel::Server,
-                parse_new_ref_policy(&policy)?,
-            )?);
+            .bind(consumer_id)
+            .fetch_all(&mut **transaction)
+            .await?;
+            for row in direct_servers {
+                let policy: String = row.try_get("new_ref_policy")?;
+                relationships.push(parse_authoring_row(
+                    row,
+                    SurfaceReviewOwner::new(
+                        mcpmate_capability_store::ReviewOwnerType::ConsumerServerExposure,
+                        consumer_id,
+                    ),
+                    RelationshipLevel::Server,
+                    parse_new_ref_policy(&policy)?,
+                )?);
+            }
         }
         if let Some(owner_id) = builtin_owner_id {
             relationships.extend(
@@ -1496,6 +1525,81 @@ pub async fn synchronize_builtin_catalog_and_bootstrap_managed_surfaces(
     transaction.commit().await?;
     warm_managed_surfaces(pool, &consumer_ids).await?;
     Ok((catalog_commit, materializations))
+}
+
+pub async fn converge_inherited_consumers_for_default_mode_in_transaction(
+    pool: &Pool<Sqlite>,
+    transaction: &mut Transaction<'_, Sqlite>,
+    target_mode: &str,
+    trigger: &MaterializationTrigger,
+) -> Result<Vec<(String, MaterializationCommit)>> {
+    let mode = EffectiveConfigMode::parse(target_mode).ok_or_else(|| CatalogError::InvalidSurfaceValue {
+        field: "default client config mode",
+        value: target_mode.to_string(),
+    })?;
+    let consumer_ids = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT identifier
+        FROM client
+        WHERE approval_status = 'approved'
+          AND (config_mode IS NULL OR TRIM(config_mode) = '')
+        ORDER BY identifier
+        "#,
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+
+    if mode == EffectiveConfigMode::Transparent {
+        for consumer_id in &consumer_ids {
+            revoke_managed_surface_in_transaction(pool, transaction, consumer_id, &trigger.id).await?;
+        }
+        return Ok(Vec::new());
+    }
+
+    let coordinator = MaterializationCoordinator::new(pool.clone());
+    let mut commits = Vec::with_capacity(consumer_ids.len());
+    for consumer_id in consumer_ids {
+        let commit = coordinator
+            .compile_consumer_in_transaction_with_default(transaction, &consumer_id, target_mode, trigger)
+            .await?;
+        commits.push((consumer_id, commit));
+    }
+    Ok(commits)
+}
+
+pub async fn revoke_managed_surface_in_transaction(
+    pool: &Pool<Sqlite>,
+    transaction: &mut Transaction<'_, Sqlite>,
+    consumer_id: &str,
+    trigger_id: &str,
+) -> Result<bool> {
+    let store = SqliteSurfaceStore::new(pool.clone());
+    let Some(binding) = store.load_binding_in_transaction(transaction, consumer_id).await? else {
+        return Ok(false);
+    };
+    store
+        .enqueue_outbox_event_in_transaction(
+            transaction,
+            &SurfaceOutboxEvent::new(
+                format!(
+                    "outbox-managed-revocation-{trigger_id}-{consumer_id}-{}",
+                    binding.generation
+                ),
+                "surface_publication_changed",
+                consumer_id,
+                json!({
+                    "publicationId": binding.active_publication_id,
+                    "generation": binding.generation,
+                    "reason": "managed_access_revoked",
+                }),
+            ),
+        )
+        .await?;
+    sqlx::query("DELETE FROM consumer_surface_bindings WHERE consumer_id = ?")
+        .bind(consumer_id)
+        .execute(&mut **transaction)
+        .await?;
+    Ok(true)
 }
 
 pub async fn load_default_config_mode(pool: &Pool<Sqlite>) -> Result<String> {

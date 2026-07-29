@@ -61,18 +61,16 @@ impl ClientConfigService {
             match capability_config.capability_source {
                 CapabilitySource::Activated => {}
                 CapabilitySource::Profiles => {
-                    let profile_ids = capability_config.selected_profile_ids;
-                    if profile_ids.len() == 1 {
-                        return Ok(ServerSelection::Profile(profile_ids[0].clone()));
-                    }
-                    if !profile_ids.is_empty() {
-                        return Ok(ServerSelection::Profiles(profile_ids));
-                    }
+                    return Ok(ServerSelection::Profiles(capability_config.selected_profile_ids));
                 }
                 CapabilitySource::Custom => {
-                    if let Some(profile_id) = capability_config.custom_profile_id {
-                        return Ok(ServerSelection::Profile(profile_id));
-                    }
+                    let profile_id = capability_config.custom_profile_id.ok_or_else(|| {
+                        ConfigError::DataAccessError(format!(
+                            "custom capability source requires a custom profile for {}",
+                            options.client_id
+                        ))
+                    })?;
+                    return Ok(ServerSelection::Profile(profile_id));
                 }
             }
         }
@@ -417,7 +415,7 @@ mod tests {
             .expect("resolve selection");
 
         match selection {
-            ServerSelection::Profile(profile_id) => assert_eq!(profile_id, selected_profile_id),
+            ServerSelection::Profiles(profile_ids) => assert_eq!(profile_ids, vec![selected_profile_id.clone()]),
             other => panic!("expected selected profile, got {other:?}"),
         }
 
@@ -450,5 +448,40 @@ mod tests {
             }
             other => panic!("expected custom profile, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn resolve_server_selection_rejects_custom_source_without_its_profile() {
+        let (_temp_dir, service) = create_test_service().await;
+        service
+            .set_capability_config("client-a", CapabilitySource::Activated, Vec::new())
+            .await
+            .expect("create client capability config");
+        let updated = sqlx::query(
+            "UPDATE client \
+             SET capability_source = 'custom', custom_profile_id = NULL \
+             WHERE identifier = 'client-a'",
+        )
+        .execute(service.db_pool.as_ref())
+        .await
+        .expect("corrupt custom capability config");
+        assert_eq!(updated.rows_affected(), 1);
+
+        let error = service
+            .resolve_server_selection(&crate::clients::ClientRenderOptions {
+                client_id: "client-a".to_string(),
+                mode: ConfigMode::Native,
+                profile_id: None,
+                server_ids: None,
+                dry_run: true,
+            })
+            .await
+            .expect_err("custom capability source without a profile must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("custom capability source requires a custom profile")
+        );
     }
 }

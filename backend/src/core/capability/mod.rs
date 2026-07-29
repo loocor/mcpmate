@@ -13,6 +13,7 @@ pub mod index;
 mod internal;
 pub mod management;
 pub mod materializer;
+pub mod mode_policy;
 pub mod naming;
 pub mod prompts;
 pub mod query;

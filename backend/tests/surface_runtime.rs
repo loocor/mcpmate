@@ -10,77 +10,12 @@ use sqlx::sqlite::SqlitePoolOptions;
 
 #[tokio::test]
 async fn list_and_call_authorization_read_the_same_active_publication_on_every_request() {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    let catalog = SqliteCapabilityCatalog::new(pool.clone());
-    catalog.ensure_schema().await.unwrap();
-    let tool: Tool = serde_json::from_value(json!({
-        "name": "analyze",
-        "description": "fixture",
-        "inputSchema": {"type": "object"}
-    }))
-    .unwrap();
-    let record =
-        CatalogRecord::materialize("server-a", "analyze", "fixture__analyze", CapabilityPayload::Tool(tool)).unwrap();
-    let initialize: InitializeResult = serde_json::from_value(json!({
-        "protocolVersion": "2025-11-25",
-        "capabilities": {"tools": {"listChanged": true}},
-        "serverInfo": {"name": "fixture", "version": "1.0.0"}
-    }))
-    .unwrap();
-    catalog
-        .commit_observation(CapabilityObservation::new(
-            "server-a",
-            "fixture",
-            "config-v1",
-            initialize,
-            vec![KindObservation::new(
-                CapabilityKind::Tools,
-                DeclarationState::Supported,
-                InventoryState::Complete,
-            )],
-            vec![record.clone()],
-        ))
-        .await
-        .unwrap();
+    let (pool, _, _, _) = published_tool_surface().await;
     let store = SqliteSurfaceStore::new(pool.clone());
-    let manifest = SurfaceManifest::compile(
-        "consumer-a",
-        vec![SurfaceManifestEntryInput::new(
-            record.ref_id.clone(),
-            record.capability_id.clone(),
-            record.kind(),
-            record.external_key,
-        )],
-    )
-    .unwrap();
     let empty = SurfaceManifest::compile("consumer-a", vec![]).unwrap();
     let mut transaction = pool.begin().await.unwrap();
     store
-        .insert_manifest_in_transaction(&mut transaction, &manifest)
-        .await
-        .unwrap();
-    store
         .insert_manifest_in_transaction(&mut transaction, &empty)
-        .await
-        .unwrap();
-    store
-        .publish_and_bind_in_transaction(
-            &mut transaction,
-            &SurfacePublication::new(
-                "publication-1",
-                "consumer-a",
-                manifest.manifest_id,
-                None,
-                "initial",
-                "system",
-                None,
-            ),
-            None,
-        )
         .await
         .unwrap();
     transaction.commit().await.unwrap();
@@ -106,7 +41,7 @@ async fn list_and_call_authorization_read_the_same_active_publication_on_every_r
                 None,
                 "safe_contraction",
                 "system",
-                Some("publication-1".to_string()),
+                Some("publication-stale".to_string()),
             ),
             Some(1),
         )
@@ -122,6 +57,147 @@ async fn list_and_call_authorization_read_the_same_active_publication_on_every_r
             .is_err()
     );
     assert!(reader.load("unknown-consumer").await.is_err());
+}
+
+async fn published_tool_surface() -> (
+    sqlx::SqlitePool,
+    SqliteCapabilityCatalog,
+    CatalogRecord,
+    InitializeResult,
+) {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    catalog.ensure_schema().await.unwrap();
+    let initialize: InitializeResult = serde_json::from_value(json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {"tools": {"listChanged": true}},
+        "serverInfo": {"name": "fixture", "version": "1.0.0"}
+    }))
+    .unwrap();
+    let first_tool: Tool = serde_json::from_value(json!({
+        "name": "analyze",
+        "description": "version one",
+        "inputSchema": {"type": "object"}
+    }))
+    .unwrap();
+    let first = CatalogRecord::materialize(
+        "server-a",
+        "analyze",
+        "fixture__analyze",
+        CapabilityPayload::Tool(first_tool),
+    )
+    .unwrap();
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-a",
+            "fixture",
+            "config-v1",
+            initialize.clone(),
+            vec![KindObservation::new(
+                CapabilityKind::Tools,
+                DeclarationState::Supported,
+                InventoryState::Complete,
+            )],
+            vec![first.clone()],
+        ))
+        .await
+        .unwrap();
+
+    let manifest = SurfaceManifest::compile(
+        "consumer-a",
+        vec![SurfaceManifestEntryInput::new(
+            first.ref_id.clone(),
+            first.capability_id.clone(),
+            first.kind(),
+            first.external_key.clone(),
+        )],
+    )
+    .unwrap();
+    let store = SqliteSurfaceStore::new(pool.clone());
+    let mut transaction = pool.begin().await.unwrap();
+    store
+        .insert_manifest_in_transaction(&mut transaction, &manifest)
+        .await
+        .unwrap();
+    store
+        .publish_and_bind_in_transaction(
+            &mut transaction,
+            &SurfacePublication::new(
+                "publication-stale",
+                "consumer-a",
+                manifest.manifest_id,
+                None,
+                "initial",
+                "system",
+                None,
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+    (pool, catalog, first, initialize)
+}
+
+#[tokio::test]
+async fn active_surface_keeps_its_pinned_version_after_the_catalog_current_pointer_advances() {
+    let (pool, catalog, first, initialize) = published_tool_surface().await;
+
+    let second_tool: Tool = serde_json::from_value(json!({
+        "name": "analyze",
+        "description": "version two",
+        "inputSchema": {"type": "object"}
+    }))
+    .unwrap();
+    let second = CatalogRecord::materialize(
+        "server-a",
+        "analyze",
+        "fixture__analyze",
+        CapabilityPayload::Tool(second_tool),
+    )
+    .unwrap();
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-a",
+            "fixture",
+            "config-v1",
+            initialize,
+            vec![KindObservation::new(
+                CapabilityKind::Tools,
+                DeclarationState::Supported,
+                InventoryState::Complete,
+            )],
+            vec![second],
+        ))
+        .await
+        .unwrap();
+
+    let surface = SurfaceReader::new(pool)
+        .load("consumer-a")
+        .await
+        .expect("the committed publication remains active until it is replaced");
+    assert_eq!(surface.entries.len(), 1);
+    assert_eq!(surface.entries[0].capability_id, first.capability_id);
+    assert_eq!(surface.tools()[0].description.as_deref(), Some("version one"));
+}
+
+#[tokio::test]
+async fn active_surface_rejects_manifest_content_and_entry_row_divergence() {
+    let (pool, _, _, _) = published_tool_surface().await;
+    sqlx::query("DELETE FROM surface_manifest_entries")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let error = SurfaceReader::new(pool)
+        .load("consumer-a")
+        .await
+        .expect_err("manifest entry divergence must fail closed");
+    assert!(error.to_string().contains("surf_sha256:"));
 }
 
 #[tokio::test]

@@ -326,9 +326,42 @@ async fn build_config_from_servers(
     let oauth_manager = OAuthManager::new_optional_store(db.pool.clone(), secret_store);
     let degrade = build_policy.degrades();
 
-    for server in servers {
-        let Some(server_id) = server.id.as_ref() else {
+    for selected_server in servers {
+        let Some(server_id) = selected_server.id.as_ref() else {
             continue;
+        };
+        let initial_fingerprint =
+            match crate::config::server::capabilities::current_config_fingerprint(&db.pool, server_id).await {
+                Ok(fingerprint) => fingerprint,
+                Err(error) if degrade => {
+                    warn_degraded_server_field(
+                        server_id,
+                        &selected_server.name,
+                        "source_fingerprint",
+                        "server_fingerprint_load_failed",
+                        "omit_server_from_startup_pool",
+                        &error,
+                        "Skipping server whose configuration fingerprint could not be loaded",
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).context("Failed to get server headers or capture a stable server configuration");
+                }
+            };
+        let Some(server) = crate::config::server::get_server_by_id(&db.pool, server_id).await? else {
+            if degrade {
+                warn_omit_server_from_startup(
+                    server_id,
+                    &selected_server.name,
+                    StartupSkipReason {
+                        code: "server_disappeared",
+                        detail: "server disappeared while its runtime configuration was being loaded",
+                    },
+                );
+                continue;
+            }
+            anyhow::bail!("Server '{server_id}' disappeared while loading its runtime configuration");
         };
 
         let (args, args_degraded) = load_server_args(&db.pool, server_id, &server.name, degrade).await?;
@@ -336,14 +369,32 @@ async fn build_config_from_servers(
         let (headers, headers_degraded) =
             load_server_headers(&db.pool, &oauth_manager, server_id, &server.name, degrade).await?;
 
-        if degrade && let Some(reason) = startup_skip_reason(server, args_degraded, env_degraded, headers_degraded) {
+        if degrade && let Some(reason) = startup_skip_reason(&server, args_degraded, env_degraded, headers_degraded) {
             warn_omit_server_from_startup(server_id, &server.name, reason);
             continue;
+        }
+
+        let final_fingerprint =
+            crate::config::server::capabilities::current_config_fingerprint(&db.pool, server_id).await?;
+        if initial_fingerprint != final_fingerprint {
+            if degrade {
+                warn_omit_server_from_startup(
+                    server_id,
+                    &server.name,
+                    StartupSkipReason {
+                        code: "server_configuration_changed",
+                        detail: "server configuration changed while its runtime configuration was being loaded",
+                    },
+                );
+                continue;
+            }
+            anyhow::bail!("Server '{server_id}' changed while loading its runtime configuration");
         }
 
         config.mcp_servers.insert(
             server_id.clone(),
             MCPServerConfig {
+                source_fingerprint: Some(final_fingerprint),
                 kind: server.server_type,
                 command: server.command.clone(),
                 args,

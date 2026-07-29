@@ -206,6 +206,7 @@ impl Server {
     /// This eliminates duplicate config construction code across the codebase
     pub fn to_mcp_config(&self) -> crate::core::models::MCPServerConfig {
         crate::core::models::MCPServerConfig {
+            source_fingerprint: None,
             kind: self.server_type,
             command: self.command.clone(),
             url: self.url.clone(),

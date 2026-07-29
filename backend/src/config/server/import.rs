@@ -4,7 +4,8 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Semaphore;
 
 use crate::api::models::server::{ServerMetaPayload, ServersImportConfig};
 use crate::clients::analyzer::{ConfigImportSkipReason, InspectedServerEntry};
@@ -13,13 +14,23 @@ use crate::clients::service::ClientConfigService;
 use crate::common::constants::profile_keys;
 use crate::common::server::ServerType;
 use crate::common::types::{ServerSource, ServerSourceType};
+use crate::config::database::Database;
 use crate::config::models::{Server, ServerMeta};
 use crate::config::server as server_ops;
 use crate::config::server::{args, env, fingerprint, get_all_servers, upsert_server};
 
 // Capability sync utilities for the transactional SQLite catalog.
-use crate::config::server::capabilities::{record_capability_failure, sync_via_connection_pool_deferred};
+use crate::core::capability::read_service::CapabilityReadService;
 use crate::core::pool::UpstreamConnectionPool;
+
+const IMPORT_DISCOVERY_CONCURRENCY: usize = 2;
+static IMPORT_DISCOVERY_PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+fn import_discovery_permits() -> Arc<Semaphore> {
+    IMPORT_DISCOVERY_PERMITS
+        .get_or_init(|| Arc::new(Semaphore::new(IMPORT_DISCOVERY_CONCURRENCY)))
+        .clone()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictPolicy {
@@ -71,6 +82,7 @@ pub struct ImportOutcome {
     pub skipped: Vec<SkippedServer>,
     pub failed: HashMap<String, String>,
     pub scheduled: bool,
+    pub runtime_sync_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -376,13 +388,14 @@ pub async fn plan_import_from_client_inspection(
 /// Import a batch of servers with consistent deduplication and capability sync.
 /// - `items`: map of server name -> ServersImportConfig (kind/command/url/args/env)
 pub async fn import_batch(
-    db_pool: &Pool<Sqlite>,
-    capability_cache: Arc<mcpmate_capability_store::DerivedCapabilityCache>,
-    connection_pool: &Arc<tokio::sync::Mutex<UpstreamConnectionPool>>,
+    database: Arc<Database>,
+    connection_pool: Option<&Arc<tokio::sync::Mutex<UpstreamConnectionPool>>>,
     items: HashMap<String, ServersImportConfig>,
     opts: ImportOptions,
 ) -> Result<ImportOutcome> {
+    let db_pool = &database.pool;
     let mut outcome = ImportOutcome::default();
+    let mut pending_discoveries = Vec::new();
     tracing::info!(
         target: "mcpmate::config::server::import",
         count = items.len(),
@@ -472,99 +485,19 @@ pub async fn import_batch(
                     error = %err,
                     "Failed to associate imported server with target profile"
                 );
+                outcome
+                    .failed
+                    .insert(name.clone(), format!("Failed to associate with profile '{pid}': {err}"));
+                continue;
             }
         }
 
         // Update resolver cache (id <-> name) so capability service can map server_id to server_name immediately
         crate::core::capability::resolver::upsert(&server_id, &name).await;
 
-        // Capability discovery is scheduled in the background to avoid blocking import.
-        {
-            let cp = connection_pool.clone();
-            let dbp = db_pool.clone();
-            let capability_cache = capability_cache.clone();
-            let sid = server_id.clone();
-            let sname = name.clone();
-            tokio::spawn(async move {
-                use tokio::time::{Duration, sleep};
-                tracing::info!(
-                    target: "mcpmate::config::server::import",
-                    server_id = %sid,
-                    server_name = %sname,
-                    "Scheduling capability sync"
-                );
-
-                let max_retries: u32 = std::env::var("MCPMATE_IMPORT_CAP_SYNC_RETRIES")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(2);
-                let mut delay_ms: u64 = std::env::var("MCPMATE_IMPORT_CAP_SYNC_BACKOFF_MS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(2000);
-
-                for attempt in 0..=max_retries {
-                    match sync_via_connection_pool_deferred(
-                        &cp,
-                        &dbp,
-                        capability_cache.as_ref(),
-                        &sid,
-                        &sname,
-                        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-                    )
-                    .await
-                    {
-                        Ok(_) => {
-                            tracing::info!(
-                                target: "mcpmate::config::server::import",
-                                server_id = %sid,
-                                server_name = %sname,
-                                attempt,
-                                "Capability sync finished"
-                            );
-                            break;
-                        }
-                        Err(e) => {
-                            if attempt >= max_retries {
-                                if let Some(evidence) = e.evidence().cloned()
-                                    && let Err(record_error) =
-                                        record_capability_failure(&dbp, capability_cache.as_ref(), evidence).await
-                                {
-                                    tracing::error!(
-                                        target: "mcpmate::config::server::import",
-                                        server_id = %sid,
-                                        server_name = %sname,
-                                        error = %record_error,
-                                        "Failed to persist terminal imported capability evidence"
-                                    );
-                                }
-                                tracing::warn!(
-                                    target: "mcpmate::config::server::import",
-                                    server_id = %sid,
-                                    server_name = %sname,
-                                    attempt,
-                                    error = %e,
-                                    "Capability sync failed after retries"
-                                );
-                                break;
-                            }
-                            tracing::warn!(
-                                target: "mcpmate::config::server::import",
-                                server_id = %sid,
-                                server_name = %sname,
-                                attempt,
-                                backoff_ms = delay_ms,
-                                error = %e,
-                                "Capability sync failed, will retry"
-                            );
-                            sleep(Duration::from_millis(delay_ms)).await;
-                            delay_ms = (delay_ms.saturating_mul(2)).min(30_000);
-                        }
-                    }
-                }
-            });
+        if connection_pool.is_some() {
+            pending_discoveries.push((server_id.clone(), name.clone()));
         }
-        outcome.scheduled = true;
 
         outcome.imported.push(build_imported_server(
             name,
@@ -573,6 +506,72 @@ pub async fn import_batch(
             env_norm,
             candidate.persisted_kind,
         ));
+    }
+
+    if !opts.preview
+        && !pending_discoveries.is_empty()
+        && let Some(connection_pool) = connection_pool
+    {
+        let sync_result = {
+            let mut pool = connection_pool.lock().await;
+            pool.sync_servers_from_active_profile().await
+        };
+        if let Err(error) = sync_result {
+            let reason = format!("Failed to synchronize the production pool after server import: {error}");
+            tracing::error!(
+                target: "mcpmate::config::server::import",
+                error = %error,
+                "Imported servers were persisted, but production pool synchronization failed"
+            );
+            outcome.runtime_sync_error = Some(reason);
+        } else {
+            for (sid, sname) in pending_discoveries {
+                let cp = connection_pool.clone();
+                let database = database.clone();
+                tokio::spawn(async move {
+                    let _permit = import_discovery_permits()
+                        .acquire_owned()
+                        .await
+                        .expect("import discovery semaphore is never closed");
+                    tracing::info!(
+                        target: "mcpmate::config::server::import",
+                        server_id = %sid,
+                        server_name = %sname,
+                        "Starting coordinated capability discovery"
+                    );
+
+                    let service = CapabilityReadService::from_runtime(database, cp);
+                    match service.list_all_kinds(&sid, None).await {
+                        Ok(lists) if !lists.has_failures() => {
+                            tracing::info!(
+                                target: "mcpmate::config::server::import",
+                                server_id = %sid,
+                                server_name = %sname,
+                                "Coordinated capability discovery finished"
+                            );
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                target: "mcpmate::config::server::import",
+                                server_id = %sid,
+                                server_name = %sname,
+                                "Coordinated capability discovery completed with one or more failed kinds"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "mcpmate::config::server::import",
+                                server_id = %sid,
+                                server_name = %sname,
+                                error = %error,
+                                "Coordinated capability discovery failed"
+                            );
+                        }
+                    }
+                });
+            }
+            outcome.scheduled = true;
+        }
     }
 
     Ok(outcome)
@@ -851,9 +850,12 @@ mod tests {
         )]);
 
         let outcome = import_batch(
-            &pool,
-            Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
-            &connection_pool,
+            Arc::new(Database {
+                pool: pool.clone(),
+                path: std::path::PathBuf::new(),
+                capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+            }),
+            Some(&connection_pool),
             items,
             ImportOptions::dashboard_import(true, None),
         )
@@ -864,5 +866,64 @@ mod tests {
         assert_eq!(outcome.failed.len(), 1);
         assert!(outcome.failed["Sequential Thinking-v2"].contains("Suggested namespace: 'sequential_thinking_v2'"));
         assert!(get_all_servers(&pool).await.expect("load servers").is_empty());
+    }
+
+    #[tokio::test]
+    async fn import_batch_reports_runtime_sync_failure_after_persistence() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        let database = Arc::new(Database {
+            pool: pool.clone(),
+            path: std::path::PathBuf::new(),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        });
+        let connection_pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+            Arc::new(Config::default()),
+            None,
+        )));
+        let items = HashMap::from([(
+            "docs".to_string(),
+            ServersImportConfig {
+                kind: "stdio".to_string(),
+                command: Some("server-command".to_string()),
+                args: None,
+                url: None,
+                env: None,
+                headers: None,
+                source: None,
+                meta: None,
+            },
+        )]);
+
+        let outcome = import_batch(
+            database,
+            Some(&connection_pool),
+            items,
+            ImportOptions::dashboard_import(false, None),
+        )
+        .await
+        .expect("persisted import returns its runtime convergence status");
+
+        assert_eq!(outcome.imported.len(), 1);
+        assert!(!outcome.scheduled);
+        assert!(
+            outcome
+                .runtime_sync_error
+                .as_deref()
+                .is_some_and(|error| error.contains("Database not available for server sync"))
+        );
+        assert!(
+            get_all_servers(&pool)
+                .await
+                .expect("load imported servers")
+                .iter()
+                .any(|server| server.name == "docs")
+        );
     }
 }

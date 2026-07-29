@@ -89,6 +89,7 @@ async fn streamable_http_carries_bearer_on_init_sse_delete() -> anyhow::Result<(
     let mut headers = std::collections::HashMap::new();
     headers.insert("Authorization".to_string(), "Bearer SECRET-XYZ".to_string());
     let server_cfg = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::StreamableHttp,
         command: None,
         args: None,

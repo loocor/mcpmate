@@ -6,6 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::fs;
+use uuid::Uuid;
 
 use crate::clients::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
@@ -15,7 +16,7 @@ use crate::common::constants::ports;
 use crate::common::paths::global_paths;
 use crate::config::client::init::DEFAULT_CONFIG_MODE;
 use crate::system::config::init_port_config;
-use crate::system::paths::get_path_service;
+use crate::system::paths::PathService;
 
 pub const DEFAULT_INSPECTOR_TIMEOUT_MS: u64 = 8_000;
 const SETTINGS_BACKUP_LIMIT: usize = 5;
@@ -164,6 +165,23 @@ pub async fn apply_settings_with_effects_for_paths(
     apply_settings_with_effects_at_path(&paths.config_path(), previous, next, client_service, None).await
 }
 
+pub async fn apply_settings_with_effects_for_paths_and_pool(
+    paths: &MCPMatePaths,
+    pool: &SqlitePool,
+    previous: &SystemSettings,
+    next: &SystemSettings,
+    client_service: Option<Arc<ClientConfigService>>,
+) -> ConfigResult<SystemSettingsApplyResult> {
+    apply_settings_with_effects_at_path(
+        &paths.config_path(),
+        previous,
+        next,
+        client_service,
+        Some(Arc::new(pool.clone())),
+    )
+    .await
+}
+
 async fn apply_settings_with_effects_at_path(
     path: &Path,
     previous: &SystemSettings,
@@ -173,7 +191,36 @@ async fn apply_settings_with_effects_at_path(
 ) -> ConfigResult<SystemSettingsApplyResult> {
     next.validate()?;
 
+    let mode_transition = if previous.default_config_mode != next.default_config_mode {
+        if client_service.is_none() {
+            return Err(ConfigError::DataAccessError(
+                "a client configuration service is required to converge a default configuration mode change"
+                    .to_string(),
+            ));
+        }
+        let pool = pool.as_deref().ok_or_else(|| {
+            ConfigError::DataAccessError(
+                "a database pool is required to converge a default configuration mode change".to_string(),
+            )
+        })?;
+        Some(begin_configuration_mode_transition(pool, &previous.default_config_mode, &next.default_config_mode).await?)
+    } else {
+        None
+    };
+
     write_settings_path_async(path, next).await?;
+
+    if let Some(transition_id) = mode_transition {
+        complete_configuration_mode_transition(
+            pool.as_deref().expect("mode transition requires database pool"),
+            &transition_id,
+            &next.default_config_mode,
+            client_service
+                .as_deref()
+                .expect("mode transition requires client configuration service"),
+        )
+        .await?;
+    }
 
     let api_port_changed = previous.api_port != next.api_port;
     let mcp_port_changed = previous.mcp_port != next.mcp_port;
@@ -194,6 +241,180 @@ async fn apply_settings_with_effects_at_path(
         settings: next.clone(),
         client_reapply_task,
     })
+}
+
+async fn begin_configuration_mode_transition(
+    pool: &SqlitePool,
+    previous_mode: &str,
+    target_mode: &str,
+) -> ConfigResult<String> {
+    let transition_id = format!("configuration-mode-{}", Uuid::new_v4());
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    sqlx::query(
+        r#"
+        INSERT INTO configuration_mode_transitions (
+            transition_id, previous_mode, target_mode, status, created_at
+        )
+        VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+        "#,
+    )
+    .bind(&transition_id)
+    .bind(previous_mode)
+    .bind(target_mode)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    Ok(transition_id)
+}
+
+async fn complete_configuration_mode_transition(
+    pool: &SqlitePool,
+    transition_id: &str,
+    target_mode: &str,
+    client_service: &ClientConfigService,
+) -> ConfigResult<()> {
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    let pending_target: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT target_mode
+        FROM configuration_mode_transitions
+        WHERE transition_id = ? AND status = 'pending'
+        "#,
+    )
+    .bind(transition_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    let pending_target = pending_target.ok_or_else(|| {
+        ConfigError::DataAccessError(format!(
+            "pending configuration mode transition not found: {transition_id}"
+        ))
+    })?;
+    if pending_target != target_mode {
+        return Err(ConfigError::DataAccessError(format!(
+            "configuration mode transition target mismatch: expected {pending_target}, received {target_mode}"
+        )));
+    }
+
+    let source_revision_set = sqlx::query_as::<_, (String, i64)>(
+        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?
+    .into_iter()
+    .collect();
+    let trigger = crate::core::capability::materializer::MaterializationTrigger::new(
+        "default_config_mode_transition",
+        transition_id,
+        source_revision_set,
+        "system_settings",
+    );
+    crate::core::capability::materializer::converge_inherited_consumers_for_default_mode_in_transaction(
+        pool,
+        &mut transaction,
+        target_mode,
+        &trigger,
+    )
+    .await
+    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+
+    let reapply = client_service
+        .reapply_inherited_clients_after_default_mode_change(target_mode)
+        .await?;
+    if !reapply.failures.is_empty() {
+        return Err(ConfigError::DataAccessError(format!(
+            "default configuration mode client convergence failed: {}",
+            reapply
+                .failures
+                .iter()
+                .map(|(client_id, error)| format!("{client_id}: {error}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
+
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    let updated = sqlx::query(
+        r#"
+        UPDATE configuration_mode_transitions
+        SET status = 'completed', completed_at = CURRENT_TIMESTAMP
+        WHERE transition_id = ? AND status = 'pending'
+        "#,
+    )
+    .bind(transition_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    if updated.rows_affected() != 1 {
+        return Err(ConfigError::DataAccessError(format!(
+            "pending configuration mode transition not found: {transition_id}"
+        )));
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))
+}
+
+pub async fn resume_pending_configuration_mode_transitions(
+    paths: &MCPMatePaths,
+    pool: &SqlitePool,
+    client_service: Option<Arc<ClientConfigService>>,
+) -> ConfigResult<usize> {
+    let pending = sqlx::query_as::<_, (String, String)>(
+        r#"
+        SELECT transition_id, target_mode
+        FROM configuration_mode_transitions
+        WHERE status = 'pending'
+        ORDER BY created_at, transition_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+    let client_service = if pending.is_empty() {
+        None
+    } else {
+        Some(client_service.ok_or_else(|| {
+            ConfigError::DataAccessError(
+                "a client configuration service is required to recover pending default mode transitions".to_string(),
+            )
+        })?)
+    };
+    for (transition_id, target_mode) in &pending {
+        let mut settings = read_settings_async(&paths.config_path()).await?;
+        settings.default_config_mode = target_mode.clone();
+        settings.validate()?;
+        write_settings_path_async(&paths.config_path(), &settings).await?;
+        complete_configuration_mode_transition(
+            pool,
+            transition_id,
+            target_mode,
+            client_service
+                .as_deref()
+                .expect("pending transition requires client configuration service"),
+        )
+        .await?;
+    }
+    Ok(pending.len())
 }
 
 pub fn spawn_mcp_port_reapply_result_logger(
@@ -279,6 +500,7 @@ pub async fn get_default_config_mode(pool: &SqlitePool) -> ConfigResult<String> 
     Ok(get_settings(pool).await?.default_config_mode)
 }
 
+#[cfg(test)]
 pub async fn set_default_config_mode(
     pool: &SqlitePool,
     mode: &str,
@@ -303,7 +525,7 @@ async fn write_settings_path_async(
     let mut content = serde_json::to_vec_pretty(settings)?;
     content.push(b'\n');
 
-    get_path_service()
+    settings_path_service(path)?
         .atomic_write_with_backup(
             path,
             &content,
@@ -343,7 +565,7 @@ fn write_settings_path_sync(
     let mut content = serde_json::to_vec_pretty(settings)?;
     content.push(b'\n');
 
-    get_path_service()
+    settings_path_service(path)?
         .atomic_write_with_backup_sync(
             path,
             &content,
@@ -353,6 +575,18 @@ fn write_settings_path_sync(
         .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
     Ok(())
+}
+
+fn settings_path_service(path: &Path) -> ConfigResult<PathService> {
+    let parent = path.parent().ok_or_else(|| {
+        ConfigError::PathResolutionError(format!(
+            "system settings path has no parent directory: {}",
+            path.display()
+        ))
+    })?;
+    PathService::new()
+        .map(|service| service.with_backup_root(parent.join("backups").join("client")))
+        .map_err(|error| ConfigError::PathResolutionError(error.to_string()))
 }
 
 async fn read_settings_async(path: &Path) -> ConfigResult<SystemSettings> {

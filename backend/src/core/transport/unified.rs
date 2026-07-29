@@ -33,10 +33,10 @@ where
     .await
     .map_err(|_| {
         cancellation.cancel();
-        anyhow::anyhow!(
-            "Connection timeout for server '{server_name}' after {}s",
-            connection_timeout.as_secs()
-        )
+        anyhow::Error::new(super::timeout_policy::ServerStartupTimeout {
+            timeout_ms: connection_timeout.as_millis(),
+        })
+        .context(format!("Failed to start server '{server_name}'"))
     })?
     .map_err(anyhow::Error::new)
     .with_context(|| format!("Failed to initialize server '{server_name}'"))?;
@@ -56,6 +56,7 @@ pub(crate) async fn connect_server_initialized_for_validation(
     transport_type: TransportType,
     ct: Option<CancellationToken>,
     database_pool: Option<&sqlx::Pool<sqlx::Sqlite>>,
+    startup_timeout: std::time::Duration,
 ) -> Result<crate::core::transport::ClientService> {
     match server_type {
         ServerType::Stdio => {
@@ -64,6 +65,7 @@ pub(crate) async fn connect_server_initialized_for_validation(
                 server_config,
                 ct.unwrap_or_default(),
                 database_pool,
+                startup_timeout,
             )
             .await
         }
@@ -73,6 +75,7 @@ pub(crate) async fn connect_server_initialized_for_validation(
                 server_config,
                 transport_type,
                 ct.unwrap_or_default(),
+                startup_timeout,
             )
             .await
         }

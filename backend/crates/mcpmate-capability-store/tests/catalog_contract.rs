@@ -1,8 +1,8 @@
 use mcpmate_capability_store::{
-    CapabilityCatalog, CapabilityId, CapabilityKind, CapabilityObservation, CapabilityPayload, CapabilityRefId,
-    CapabilityRefState, CatalogRecord, DeclarationState, DerivedCapabilityCache, EffectiveCapabilityRecordV1,
-    InventoryState, KindObservation, ProjectionKey, ProjectionNameDomain, ProjectionPayload, SnapshotState,
-    SqliteCapabilityCatalog,
+    CapabilityCatalog, CapabilityFailureObservation, CapabilityId, CapabilityKind, CapabilityObservation,
+    CapabilityPayload, CapabilityRefId, CapabilityRefState, CatalogRecord, DeclarationState, DerivedCapabilityCache,
+    EffectiveCapabilityRecordV1, InventoryState, KindFailureKind, KindObservation, ProjectionKey, ProjectionNameDomain,
+    ProjectionPayload, SnapshotState, SqliteCapabilityCatalog,
 };
 use rmcp::model::{InitializeResult, Prompt, Resource, ResourceTemplate, Tool};
 use serde::de::DeserializeOwned;
@@ -504,7 +504,7 @@ async fn ordinary_initialize_metadata_does_not_change_catalog_semantics() {
 async fn origin_key_change_creates_new_ref_and_unresolves_old_ref_only_when_complete() {
     let catalog = catalog().await;
     let old_record = materialized_tool_record("Stable content");
-    let mut renamed_payload = old_record.payload.clone();
+    let mut renamed_payload = old_record.source_payload.clone();
     if let CapabilityPayload::Tool(tool) = &mut renamed_payload {
         tool.name = "analyze-v2".to_string().into();
     }
@@ -543,6 +543,93 @@ async fn origin_key_change_creates_new_ref_and_unresolves_old_ref_only_when_comp
     assert_eq!(
         catalog.load_ref(&new_record.ref_id).await.unwrap().unwrap().state,
         CapabilityRefState::Active
+    );
+}
+
+#[tokio::test]
+async fn catalog_round_trip_preserves_source_and_effective_payloads_separately() {
+    let catalog = catalog().await;
+    let source_tool: Tool = serde_json::from_value(json!({
+        "name": "analyze",
+        "description": "Analyze input",
+        "inputSchema": {"type": "object"}
+    }))
+    .unwrap();
+    let record = CatalogRecord::materialize(
+        "server-versioned",
+        "analyze",
+        "server_versioned__analyze",
+        CapabilityPayload::Tool(source_tool),
+    )
+    .unwrap();
+    let expected_capability_id = record.capability_id.clone();
+
+    catalog
+        .commit_observation(tools_observation(InventoryState::Complete, vec![record]))
+        .await
+        .unwrap();
+
+    let snapshot = catalog
+        .load_snapshot("server-versioned")
+        .await
+        .unwrap()
+        .expect("catalog snapshot");
+    let stored = snapshot.records.first().expect("stored capability");
+    assert_eq!(stored.source_payload.origin_key(), "analyze");
+    assert_eq!(stored.effective_payload.origin_key(), "server_versioned__analyze");
+    assert_eq!(stored.capability_id, expected_capability_id);
+}
+
+#[tokio::test]
+async fn catalog_rejects_source_payload_content_that_diverges_from_the_effective_record() {
+    let catalog = catalog().await;
+    let record = materialized_tool_record("Stable content");
+    let capability_id = record.capability_id.clone();
+    let mut tampered_source = record.source_payload.clone();
+    let CapabilityPayload::Tool(tool) = &mut tampered_source else {
+        panic!("fixture must be a tool");
+    };
+    tool.description = Some("Tampered source content".to_string().into());
+    catalog
+        .commit_observation(tools_observation(InventoryState::Complete, vec![record]))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE capability_versions SET source_payload = ? WHERE capability_id = ?")
+        .bind(serde_json::to_vec(&tampered_source).unwrap())
+        .bind(capability_id.as_str())
+        .execute(catalog.pool())
+        .await
+        .unwrap();
+
+    let error = catalog
+        .load_snapshot("server-versioned")
+        .await
+        .expect_err("source and effective payload content must remain bound");
+
+    assert!(error.to_string().contains("integrity mismatch"));
+}
+
+#[tokio::test]
+async fn catalog_rejects_inconsistent_observation_payloads_before_committing_a_revision() {
+    let catalog = catalog().await;
+    let mut record = materialized_tool_record("Stable content");
+    let CapabilityPayload::Tool(tool) = &mut record.source_payload else {
+        panic!("fixture must be a tool");
+    };
+    tool.description = Some("Tampered observation content".to_string().into());
+
+    let error = catalog
+        .commit_observation(tools_observation(InventoryState::Complete, vec![record]))
+        .await
+        .expect_err("inconsistent observation payloads must be rejected before persistence");
+
+    assert!(error.to_string().contains("integrity mismatch"));
+    assert!(
+        catalog
+            .load_snapshot("server-versioned")
+            .await
+            .expect("load snapshot after rejected observation")
+            .is_none()
     );
 }
 
@@ -779,6 +866,70 @@ async fn rejects_unknown_record_format_version() {
     let error = catalog.load_snapshot("server-version").await.unwrap_err();
 
     assert!(error.to_string().contains("unsupported record format version 99"));
+}
+
+#[tokio::test]
+async fn rejects_unknown_persisted_failure_kind() {
+    let catalog = catalog().await;
+    catalog
+        .commit_observation(complete_observation("server-invalid-failure-kind"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE capability_kind_states SET failure_kind = 'unexpected' WHERE server_id = ? AND kind = 'tools'")
+        .bind("server-invalid-failure-kind")
+        .execute(catalog.pool())
+        .await
+        .unwrap();
+
+    let error = catalog.load_snapshot("server-invalid-failure-kind").await.unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid capability catalog value for failure_kind")
+    );
+}
+
+#[tokio::test]
+async fn rejects_negative_persisted_timeout() {
+    let catalog = catalog().await;
+    catalog
+        .commit_observation(complete_observation("server-negative-timeout"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE capability_kind_states SET timeout_ms = -1 WHERE server_id = ? AND kind = 'tools'")
+        .bind("server-negative-timeout")
+        .execute(catalog.pool())
+        .await
+        .unwrap();
+
+    let error = catalog.load_snapshot("server-negative-timeout").await.unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid capability catalog value for timeout_ms: -1")
+    );
+}
+
+#[tokio::test]
+async fn rejects_timeout_that_cannot_be_persisted() {
+    let catalog = catalog().await;
+    let mut observation = complete_observation("server-overflow-timeout");
+    observation.kind_states[0] = KindObservation::new(
+        CapabilityKind::Tools,
+        DeclarationState::Supported,
+        InventoryState::Failed,
+    )
+    .with_failure(KindFailureKind::Timeout, "timeout", Some(u64::MAX));
+
+    let error = catalog.commit_observation(observation).await.unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid capability catalog value for timeout_ms: 18446744073709551615")
+    );
 }
 
 #[tokio::test]
@@ -1083,6 +1234,37 @@ async fn record_failure_creates_the_kind_state_row_when_it_never_existed() {
 }
 
 #[tokio::test]
+async fn multi_kind_failure_commits_one_atomic_revision() {
+    let pool = test_pool().await;
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+
+    let commit = catalog
+        .record_failure_in_transaction(
+            &mut transaction,
+            CapabilityFailureObservation::for_kinds(
+                "server-auth",
+                "fixture-server",
+                "config-v1",
+                CapabilityKind::ALL,
+                "token lacks the required scope",
+            )
+            .with_failure(KindFailureKind::InsufficientScope, None),
+        )
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+
+    assert_eq!(commit.revision, 1);
+    let snapshot = catalog.load_snapshot("server-auth").await.unwrap().unwrap();
+    assert_eq!(snapshot.revision, 1);
+    assert_eq!(snapshot.kind_states.len(), CapabilityKind::ALL.len());
+    assert!(snapshot.kind_states.iter().all(|state| {
+        state.inventory == InventoryState::Failed && state.failure_kind == Some(KindFailureKind::InsufficientScope)
+    }));
+}
+
+#[tokio::test]
 async fn lifecycle_updates_preserve_payload_and_advance_revision() {
     let catalog = catalog().await;
     catalog
@@ -1259,11 +1441,11 @@ async fn invalidate_all_preserves_payload_and_advances_each_revision_atomically(
             snapshot
                 .records
                 .iter()
-                .map(|record| &record.payload)
+                .map(|record| (&record.source_payload, &record.effective_payload))
                 .collect::<Vec<_>>(),
             expected_records
                 .iter()
-                .map(|record| &record.payload)
+                .map(|record| (&record.source_payload, &record.effective_payload))
                 .collect::<Vec<_>>()
         );
         assert_eq!(snapshot.last_error.as_deref(), Some("explicit reset"));

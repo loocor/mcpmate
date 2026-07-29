@@ -187,7 +187,7 @@ pub(super) async fn read_resource(
                     &server_filter,
                     mcpmate_capability_store::CapabilityKind::Resources,
                     None,
-                    &e.to_string(),
+                    &e,
                 )
                 .await;
             }

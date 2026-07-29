@@ -27,6 +27,7 @@ pub async fn server_resources(
     Ok(Json(ServerResourcesResp::success(ServerResourcesData {
         items: payload.items,
         state: payload.state,
+        degraded_reason: payload.degraded_reason,
         meta: payload.meta,
     })))
 }
@@ -41,6 +42,7 @@ pub async fn server_resource_templates(
         ServerResourceTemplatesData {
             items: payload.items,
             state: payload.state,
+            degraded_reason: payload.degraded_reason,
             meta: payload.meta,
         },
     )))

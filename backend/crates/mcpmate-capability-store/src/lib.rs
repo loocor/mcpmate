@@ -17,7 +17,7 @@ pub use domain::{
     CapabilityFailureObservation, CapabilityKind, CapabilityObservation, CapabilityPayload, CapabilityRefRecord,
     CapabilityRefState, CapabilityVersionChange, CapabilityVersionRecord, CatalogCommit, CatalogDelta,
     CatalogInvalidation, CatalogReconciliation, CatalogRecord, CatalogSnapshot, CatalogStats, DeclarationState,
-    InventoryState, KindCompleteness, KindObservation, SnapshotState,
+    InventoryState, KindCompleteness, KindFailureKind, KindObservation, SnapshotState,
 };
 pub use error::{CatalogError, Result};
 pub use identity::{

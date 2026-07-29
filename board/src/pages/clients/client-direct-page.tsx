@@ -22,10 +22,14 @@ import {
 	CardTitle,
 } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
-import { clientsApi, serversApi } from "../../lib/api";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import {
+	assertCompleteCapabilityBatch,
+	clientsApi,
+	serversApi,
+} from "../../lib/api";
 import { capabilityRecordMatchesSearch } from "../../lib/capability-search";
 import { capabilityKey, splitCapabilityKey } from "../../lib/capability-keys";
-import { capabilityKindLabel } from "../../lib/capability-kind-label";
 import { useCapabilityKindFilters } from "../../hooks/use-capability-kind-filters";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
@@ -210,6 +214,8 @@ export function ClientDirectCapabilitiesPage() {
 	const {
 		data: capabilityResponse,
 		isLoading: isLoadingCapabilities,
+		isError: isCapabilitiesError,
+		error: capabilitiesError,
 		refetch: refetchCapabilities,
 	} = useQuery({
 		queryKey: ["client-direct-tools", identifier, serverId],
@@ -229,6 +235,7 @@ export function ClientDirectCapabilitiesPage() {
 				serversApi.listAllCapabilities(serverId),
 				clientsApi.getCapabilityConfig(identifier),
 			]);
+			assertCompleteCapabilityBatch(capabilityLists);
 			const serverToolsResponse = capabilityLists.tools;
 			const serverPromptsResponse = capabilityLists.prompts;
 			const serverResourcesResponse = capabilityLists.resources;
@@ -823,6 +830,18 @@ export function ClientDirectCapabilitiesPage() {
 					</div>
 				</CardHeader>
 			</Card>
+
+			{isCapabilitiesError ? (
+				<Alert variant="destructive">
+					<AlertDescription>
+						{capabilitiesError instanceof Error
+							? capabilitiesError.message
+							: t("clients:detail.directExposure.loadFailed", {
+									defaultValue: "Failed to load the complete capability catalog.",
+								})}
+					</AlertDescription>
+				</Alert>
+			) : null}
 
 			<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
 				<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">

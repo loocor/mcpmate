@@ -74,6 +74,8 @@ impl UpstreamConnectionPool {
                 kind,
                 instance_id: Some(instance_id.to_string()),
                 connection_generation: None,
+                failure_kind: None,
+                timeout_ms: None,
                 reason,
             },
         )
@@ -192,6 +194,8 @@ impl UpstreamConnectionPool {
             );
             return Ok(());
         };
+        let config_fingerprint =
+            crate::config::server::capabilities::current_config_fingerprint(&db.pool, &resolved_server_id).await?;
 
         tracing::debug!(
             "Syncing capabilities (flags: {:?}) from server '{}' (ID: {}, instance: {}) to {} profiles",
@@ -336,6 +340,7 @@ impl UpstreamConnectionPool {
             db.capability_cache.as_ref(),
             &resolved_server_id,
             &server_name,
+            &config_fingerprint,
             CapabilityProtocolObservation {
                 initialize,
                 tools: discovered_tools,

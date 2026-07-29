@@ -24,6 +24,7 @@ pub async fn server_prompts(
     Ok(Json(ServerPromptsResp::success(ServerPromptsData {
         items: payload.items,
         state: payload.state,
+        degraded_reason: payload.degraded_reason,
         meta: payload.meta,
     })))
 }

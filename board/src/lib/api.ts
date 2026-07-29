@@ -65,7 +65,6 @@ import type {
 	RegistryRepositoryInfo,
 	RuntimeCacheResponse,
 	RuntimeStatusResponse,
-	ServerCapabilityResp,
 	ServerCapabilitySummary,
 	ServerDetail,
 	ServerDetailsResp,
@@ -306,12 +305,83 @@ interface SuitTool {
 }
 
 /** Tools/resources/prompts list payloads from server capability endpoints */
-type CapabilityListResult = {
+export type CapabilityListResult = {
 	items: unknown[];
 	meta?: unknown;
 	state?: string;
 	degraded_reason?: string;
 };
+
+export type CapabilityAuthenticationCode =
+	| "auth_required"
+	| "unauthorized"
+	| "forbidden"
+	| "insufficient_scope";
+
+export type CapabilityAuthenticationFailure = {
+	code: CapabilityAuthenticationCode;
+	reason: string;
+};
+
+export type CapabilityBatchLists = {
+	tools: CapabilityListResult;
+	resources: CapabilityListResult;
+	prompts: CapabilityListResult;
+	templates: CapabilityListResult;
+	authentication?: CapabilityAuthenticationFailure | null;
+};
+
+type CapabilityBatchKind = "tools" | "resources" | "prompts" | "templates";
+
+export type CapabilityBatchFailure = {
+	kind: CapabilityBatchKind;
+	reason: string;
+};
+
+export function getCapabilityBatchFailures(
+	lists: CapabilityBatchLists,
+): CapabilityBatchFailure[] {
+	if (lists.authentication) {
+		return [];
+	}
+
+	const kindResults: Array<[CapabilityBatchKind, CapabilityListResult]> = [
+		["tools", lists.tools],
+		["resources", lists.resources],
+		["prompts", lists.prompts],
+		["templates", lists.templates],
+	];
+	return kindResults.flatMap(([kind, result]) => {
+		if (!result.degraded_reason && result.state !== "failed" && result.state !== "transport_error") {
+			return [];
+		}
+		return [
+			{
+				kind,
+				reason: result.degraded_reason ?? result.state ?? "capability discovery failed",
+			},
+		];
+	});
+}
+
+export function assertCompleteCapabilityBatch(
+	lists: CapabilityBatchLists,
+): void {
+	if (lists.authentication) {
+		throw new Error(
+			`Capability discovery is blocked by authentication: ${lists.authentication.code}`,
+		);
+	}
+	const failures = getCapabilityBatchFailures(lists);
+	if (failures.length === 0) {
+		return;
+	}
+	throw new Error(
+		`Capability discovery is incomplete: ${failures
+			.map(({ kind, reason }) => `${kind}: ${reason}`)
+			.join("; ")}`,
+	);
+}
 
 type ServerCapabilityRefreshResult = {
 	server_id: string;
@@ -324,6 +394,7 @@ type ServerCapabilityListsResult = {
 	resources: CapabilityListResult;
 	prompts: CapabilityListResult;
 	resource_templates: CapabilityListResult;
+	authentication?: CapabilityAuthenticationFailure | null;
 };
 
 type CapabilityDetailResult = {
@@ -376,12 +447,9 @@ function capabilityTransportErrorResult(): CapabilityListResult {
   };
 }
 
-function normalizeBatchCapabilityLists(data: ServerCapabilityListsResult): {
-  tools: CapabilityListResult;
-  resources: CapabilityListResult;
-  prompts: CapabilityListResult;
-  templates: CapabilityListResult;
-} {
+function normalizeBatchCapabilityLists(
+	data: ServerCapabilityListsResult,
+): CapabilityBatchLists {
   return {
     tools: normalizeCapabilityListPayload({ success: true, data: data.tools }),
     resources: normalizeCapabilityListPayload({
@@ -393,6 +461,7 @@ function normalizeBatchCapabilityLists(data: ServerCapabilityListsResult): {
       success: true,
       data: data.resource_templates,
     }),
+		authentication: data.authentication,
   };
 }
 
@@ -1586,12 +1655,7 @@ export const serversApi = {
 	listAllCapabilities: async (
 		serverId: string,
 		refresh: "auto" | "force" | "cache" = "auto",
-	): Promise<{
-		tools: CapabilityListResult;
-		resources: CapabilityListResult;
-		prompts: CapabilityListResult;
-		templates: CapabilityListResult;
-	}> => {
+	): Promise<CapabilityBatchLists> => {
 		try {
 			const q = new URLSearchParams({ id: serverId, refresh });
 			const resp = await fetchApi<ApiWrapper<ServerCapabilityListsResult>>(
@@ -1677,6 +1741,7 @@ export interface ImportStats {
 	failedCount: number;
 	failedServers: string[];
 	errorDetails?: Record<string, string> | null;
+	runtimeSyncError?: string | null;
 }
 
 export function extractImportStats(
@@ -1723,7 +1788,23 @@ export function extractImportStats(
 		failedCount,
 		failedServers,
 		errorDetails: payload?.error_details ?? null,
+		runtimeSyncError: payload?.runtime_sync_error ?? null,
 	};
+}
+
+export function assertCompleteServerImport(stats: ImportStats): void {
+	if (stats.failedCount > 0) {
+		throw new Error(
+			stats.errorDetails
+				? JSON.stringify(stats.errorDetails)
+				: `${stats.failedCount} server import(s) failed`,
+		);
+	}
+	if (stats.runtimeSyncError) {
+		throw new Error(
+			`Servers were imported, but runtime synchronization failed: ${stats.runtimeSyncError}`,
+		);
+	}
 }
 
 interface InspectorTargetQuery {
@@ -1905,7 +1986,11 @@ export const auditApi = {
 		if (query?.server_id) qs.set("server_id", query.server_id);
 		if (query?.session_id) qs.set("session_id", query.session_id);
 		const resp = await fetchApi<AuditListResp>(`/api/audit/events?${qs}`);
-		return extractApiData(resp);
+		const page = extractApiData(resp);
+		if (!page) {
+			throw new Error("Audit list response missing data");
+		}
+		return page;
 	},
 	details: async (id: number) => {
 		const qs = new URLSearchParams({ id: String(id) });
@@ -2344,11 +2429,11 @@ type ProfileCapabilityWire<T extends { id: string }> = Omit<T, "id"> & {
 	ref_id: string;
 };
 
-function profileCapabilityFromWire<T extends { id: string }>(
-	item: ProfileCapabilityWire<T>,
-): T {
+function profileCapabilityFromWire<T extends { ref_id: string }>(
+	item: T,
+): Omit<T, "ref_id"> & { id: string } {
 	const { ref_id, ...capability } = item;
-	return { ...capability, id: ref_id } as T;
+	return { ...capability, id: ref_id };
 }
 
 // Config Suits Management API

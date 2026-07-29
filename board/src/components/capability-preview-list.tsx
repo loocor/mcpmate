@@ -37,6 +37,7 @@ type CapabilityPreviewListProps = {
 	toolbar?: ReactNode;
 	selectHintText?: string;
 	emptyText?: string;
+	emptyContent?: ReactNode;
 	emptySearchText?: string;
 	showSectionLabels?: boolean;
 	showSectionCounts?: boolean;
@@ -151,6 +152,7 @@ export function CapabilityPreviewList({
 	toolbar,
 	selectHintText,
 	emptyText,
+	emptyContent,
 	emptySearchText,
 	showSectionLabels = true,
 	showSectionCounts = false,
@@ -291,12 +293,14 @@ export function CapabilityPreviewList({
 						})}
 					</div>
 				) : totalSourceCount === 0 ? (
-					<div className={emptyStateClassName}>
-						{emptyText ??
-							t("wizard.preview.emptyCapabilities", {
-								defaultValue: "No capabilities discovered for this server.",
-							})}
-					</div>
+					emptyContent ?? (
+						<div className={emptyStateClassName}>
+							{emptyText ??
+								t("wizard.preview.emptyCapabilities", {
+									defaultValue: "No capabilities discovered for this server.",
+								})}
+						</div>
+					)
 				) : searchQuery && visibleSections.length === 0 ? (
 					<div className={emptyStateClassName}>
 						{emptySearchText ??

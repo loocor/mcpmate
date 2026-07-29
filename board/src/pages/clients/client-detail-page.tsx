@@ -78,6 +78,8 @@ import {
 } from "../../components/ui/tabs";
 import {
   auditApi,
+  assertCompleteCapabilityBatch,
+  assertCompleteServerImport,
   clientsApi,
   configSuitsApi,
   extractImportStats,
@@ -1082,12 +1084,14 @@ export function ClientDetailPage() {
         );
       }
 
+      const capabilityLists = await serversApi.listAllCapabilities(server.id);
+      assertCompleteCapabilityBatch(capabilityLists);
       const {
         tools: toolsResponse,
         prompts: promptsResponse,
         resources: resourcesResponse,
         templates: templatesResponse,
-      } = await serversApi.listAllCapabilities(server.id);
+      } = capabilityLists;
 
       const currentUnifyExposure = currentConfig.unify_direct_exposure ?? {
         route_mode: "capability_level" as const,
@@ -1612,13 +1616,7 @@ export function ClientDetailPage() {
         );
       }
       const stats = extractImportStats(resp);
-      if (stats.failedCount > 0) {
-        throw new Error(
-          stats.errorDetails
-            ? JSON.stringify(stats.errorDetails)
-            : "Import failed",
-        );
-      }
+      assertCompleteServerImport(stats);
       return {
         imported_count: stats.importedCount,
         imported_servers: stats.importedServers,
@@ -1627,9 +1625,16 @@ export function ClientDetailPage() {
         failed_count: stats.failedCount,
         failed_servers: stats.failedServers,
         error_details: stats.errorDetails ?? null,
+        runtime_sync_error: stats.runtimeSyncError ?? null,
       };
     },
     onSuccess: (res) => {
+      if (res.runtime_sync_error) {
+        notifyError(
+          "Runtime synchronization failed",
+          res.runtime_sync_error,
+        );
+      }
       const imported = res.imported_count ?? 0;
       if (imported > 0) {
         notifySuccess(

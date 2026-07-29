@@ -28,6 +28,9 @@ pub struct Config {
 /// MCP server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MCPServerConfig {
+    /// Canonical database configuration fingerprint used to materialize this runtime config.
+    #[serde(skip)]
+    pub source_fingerprint: Option<String>,
     /// Type of the server (stdio, streamable_http)
     #[serde(rename = "type")]
     pub kind: ServerType,

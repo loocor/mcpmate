@@ -138,7 +138,7 @@ pub(super) async fn get_prompt(
                     &server_filter,
                     mcpmate_capability_store::CapabilityKind::Prompts,
                     None,
-                    &e.to_string(),
+                    &e,
                 )
                 .await;
             }

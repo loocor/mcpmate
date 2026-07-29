@@ -5,9 +5,13 @@ import { useTranslation } from "react-i18next";
 import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
 import {
 	formatCapabilityLifecycle,
+	hasCapabilityAuthenticationFailure,
 	type CapabilityLifecycleLabels,
 } from "../../lib/capability-lifecycle";
-import { getServerDisplayName } from "../../lib/server-display";
+import {
+	formatServerEndpoint,
+	getServerDisplayName,
+} from "../../lib/server-display";
 import type { ServerSummary } from "../../lib/types";
 import { EntityCard } from "../entity-card";
 import { EntityListItem } from "../entity-list-item";
@@ -255,7 +259,9 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		t,
 	]);
 
-	const stats = buildCapabilityStats(server, statsLabels, lifecycleLabels);
+	const stats = hasCapabilityAuthenticationFailure(server.capability)
+		? []
+		: buildCapabilityStats(server, statsLabels, lifecycleLabels);
 
 	const gridDescription = useMemo(() => {
 		const serverTypeRaw = server.server_type || "";
@@ -265,7 +271,12 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		if (serverType.includes("stdio") || serverType.includes("process")) {
 			technicalLine = `stdio://${server.name || server.id}`;
 		} else if (serverType.includes("http") || serverType.includes("sse")) {
-			technicalLine = `http://localhost:3000/${server.id}`;
+			technicalLine =
+				formatServerEndpoint(server.url) ??
+				t("entity.description.serverLabel", {
+					name: server.name || server.id,
+					defaultValue: "Server: {{name}}",
+				});
 		} else {
 			technicalLine = t("entity.description.serverLabel", {
 				name: server.name || server.id,
@@ -291,6 +302,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		server.meta?.description,
 		server.name,
 		server.server_type,
+		server.url,
 		t,
 	]);
 

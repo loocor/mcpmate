@@ -15,6 +15,7 @@ interface ServerAuthBadgeProps {
   authMode?: string | null;
   oauthStatus?: string | null;
   readiness?: OAuthReadiness | null;
+  showOff?: boolean;
   showLabel?: boolean;
   onAction?: () => void;
 }
@@ -36,15 +37,26 @@ function resolveServerAuthBadgeDisplay({
   authMode,
   oauthStatus,
   readiness,
+  showOff,
   t,
 }: {
   authMode?: string | null;
   oauthStatus?: string | null;
   readiness?: OAuthReadiness | null;
+  showOff: boolean;
   t: TFunction<"servers">;
 }): ServerAuthBadgeDisplay {
   const normalizedMode = (authMode ?? "").toLowerCase();
   const normalizedStatus = (oauthStatus ?? "").toLowerCase();
+
+  if (!normalizedMode && showOff) {
+    return {
+      kind: "warning",
+      label: t("entity.connectionTags.authOff", {
+        defaultValue: "Off",
+      }),
+    };
+  }
 
   if (normalizedMode === "header") {
     return {
@@ -95,6 +107,7 @@ export function ServerAuthBadge({
   authMode,
   oauthStatus,
   readiness,
+  showOff = false,
   showLabel = true,
   onAction,
 }: ServerAuthBadgeProps) {
@@ -103,6 +116,7 @@ export function ServerAuthBadge({
     authMode,
     oauthStatus,
     readiness,
+    showOff,
     t,
   });
 
@@ -138,15 +152,17 @@ export function ServerAuthBadge({
           type="button"
           onClick={onAction}
           aria-label={display.label}
-          className="w-fit cursor-pointer text-left text-sm text-red-600 underline underline-offset-2 transition-colors hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+          className="inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 transition-colors hover:border-red-300 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300 dark:hover:border-red-800 dark:hover:bg-red-950/70"
         >
+          <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
           {display.label}
         </button>
       );
     }
 
     return (
-      <span className="text-sm text-red-600 dark:text-red-400">
+      <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
         {display.label}
       </span>
     );

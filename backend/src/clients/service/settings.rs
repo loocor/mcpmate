@@ -12,10 +12,11 @@ use crate::clients::service::core::{ClientStateRow, PersistedTemplateConfig, Run
 use crate::common::profile::{ProfileRole, ProfileType};
 use crate::config::database::Database;
 use crate::config::models::Profile;
-use crate::core::capability::materializer::{MaterializationCoordinator, MaterializationTrigger};
+use crate::core::capability::materializer::{
+    MaterializationCoordinator, MaterializationTrigger, revoke_managed_surface_in_transaction,
+};
 use crate::core::proxy::server::{ClientContext, ClientIdentitySource, ClientTransport};
 use crate::system::paths::get_path_service;
-use mcpmate_capability_store::{SqliteSurfaceStore, SurfaceOutboxEvent};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -1289,34 +1290,14 @@ impl ClientConfigService {
                     }
                     _ => ConfigError::DataAccessError(error.to_string()),
                 })?;
-            let surface_store = SqliteSurfaceStore::new(self.db_pool.as_ref().clone());
-            if let Some(binding) = surface_store
-                .load_binding_in_transaction(&mut transaction, &consumer_id)
-                .await
-                .map_err(|error| ConfigError::DataAccessError(error.to_string()))?
-            {
-                surface_store
-                    .enqueue_outbox_event_in_transaction(
-                        &mut transaction,
-                        &SurfaceOutboxEvent::new(
-                            format!("outbox-managed-revocation-{}-{}", consumer_id, binding.generation),
-                            "surface_publication_changed",
-                            &consumer_id,
-                            json!({
-                                "publicationId": binding.active_publication_id,
-                                "generation": binding.generation,
-                                "reason": "managed_access_revoked",
-                            }),
-                        ),
-                    )
-                    .await
-                    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
-            }
-            sqlx::query("DELETE FROM consumer_surface_bindings WHERE consumer_id = ?")
-                .bind(&consumer_id)
-                .execute(&mut *transaction)
-                .await
-                .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+            revoke_managed_surface_in_transaction(
+                self.db_pool.as_ref(),
+                &mut transaction,
+                &consumer_id,
+                "client-capability-config",
+            )
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
             None
         };
         transaction
@@ -1405,6 +1386,14 @@ impl ClientConfigService {
         consumer_id: &str,
         intent: &UnifyDirectExposureIntent,
     ) -> ConfigResult<()> {
+        let capability_refs = if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+            let refs = self.normalize_unify_direct_capability_refs(intent.capability_refs.clone());
+            self.validate_unify_direct_capability_ref_kinds(transaction, &refs)
+                .await?;
+            Some(refs)
+        } else {
+            None
+        };
         sqlx::query("UPDATE client SET unify_route_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ?")
             .bind(intent.route_mode.as_str())
             .bind(consumer_id)
@@ -1436,7 +1425,7 @@ impl ClientConfigService {
                 }
             }
             crate::clients::models::UnifyRouteMode::CapabilityLevel => {
-                let refs = self.normalize_unify_direct_capability_refs(intent.capability_refs.clone());
+                let refs = capability_refs.expect("capability-level Direct Exposure validates typed refs");
                 for ref_id in refs
                     .tool_refs
                     .into_iter()
@@ -1450,6 +1439,37 @@ impl ClientConfigService {
                         .execute(&mut **transaction)
                         .await
                         .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_unify_direct_capability_ref_kinds(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        refs: &UnifyDirectCapabilityRefs,
+    ) -> ConfigResult<()> {
+        for (expected_kind, ref_ids) in [
+            ("tools", &refs.tool_refs),
+            ("prompts", &refs.prompt_refs),
+            ("resources", &refs.resource_refs),
+            ("resource_templates", &refs.template_refs),
+        ] {
+            for ref_id in ref_ids {
+                let actual_kind: Option<String> =
+                    sqlx::query_scalar("SELECT kind FROM capability_refs WHERE ref_id = ?")
+                        .bind(ref_id)
+                        .fetch_optional(&mut **transaction)
+                        .await
+                        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+                let actual_kind = actual_kind.ok_or_else(|| {
+                    ConfigError::DataAccessError(format!("Direct Exposure Capability Ref not found: {ref_id}"))
+                })?;
+                if actual_kind != expected_kind {
+                    return Err(ConfigError::DataAccessError(format!(
+                        "Direct Exposure Capability Ref {ref_id} expected {expected_kind} but catalog Ref is {actual_kind}"
+                    )));
                 }
             }
         }

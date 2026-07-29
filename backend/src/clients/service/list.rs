@@ -152,6 +152,10 @@ mod tests {
         initialize_system_settings(pool.as_ref())
             .await
             .expect("init system settings table");
+        mcpmate_capability_store::SqliteCapabilityCatalog::new(pool.as_ref().clone())
+            .ensure_schema()
+            .await
+            .expect("init capability schema");
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
         let source = Arc::new(

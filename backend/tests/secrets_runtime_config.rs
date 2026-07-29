@@ -14,6 +14,7 @@ fn resolves_stdio_runtime_args_and_env_placeholders() {
         ("workspace_token", "workspace-secret"),
     ]);
     let config = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::Stdio,
         command: Some("node".to_string()),
         args: Some(vec![
@@ -57,6 +58,7 @@ fn resolves_streamable_http_runtime_url_and_headers() {
     let resolver =
         InMemorySecretResolver::from_pairs([("http_token", "http-runtime-token"), ("api_key", "runtime-api-key")]);
     let config = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::StreamableHttp,
         command: None,
         args: None,
@@ -86,6 +88,7 @@ fn resolves_streamable_http_runtime_url_and_headers() {
 fn unavailable_resolver_allows_plain_config_and_rejects_secret_placeholders() {
     let resolver = UnavailableSecretResolver;
     let plain = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::StreamableHttp,
         command: None,
         args: None,
@@ -99,6 +102,7 @@ fn unavailable_resolver_allows_plain_config_and_rejects_secret_placeholders() {
     assert_eq!(resolved_plain.url.as_deref(), Some("https://mcp.example.test/mcp"));
 
     let secret_config = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::StreamableHttp,
         command: None,
         args: None,

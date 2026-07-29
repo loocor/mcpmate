@@ -166,9 +166,9 @@ export function DashboardPage() {
 	const statsGridBleedClass = showLocalCoreBanner ? "-mt-1 pt-1" : "pt-1";
 
 	return (
-		<div className="space-y-4">
+		<div className="flex min-h-full flex-col gap-4">
 			{showLocalCoreBanner ? (
-				<div className="flex w-full items-center justify-between gap-4 px-1 py-2">
+				<div className="flex w-full shrink-0 items-center justify-between gap-4 px-1 py-2">
 					<div className="min-w-0 space-y-1">
 						<div className="flex items-center gap-2">
 							<span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -227,7 +227,7 @@ export function DashboardPage() {
 					</div>
 				</div>
 			) : null}
-			<div className={cn("px-0.5", statsGridBleedClass)}>
+			<div className={cn("shrink-0 px-0.5", statsGridBleedClass)}>
 				<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 					<Link to="/runtime" className="block h-full">
 						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
@@ -419,7 +419,33 @@ export function DashboardPage() {
 				</div>
 			</div>
 
-			<Card>
+			<div className="grid shrink-0 items-stretch gap-4 md:grid-cols-2">
+				<div className="h-full">
+					<Card className="h-full">
+						<CardHeader>
+							<div className="flex items-center gap-2">
+								<Activity className="h-5 w-5 text-sky-500" />
+								<CardTitle className="text-base">
+									{t("dashboard:metrics.title", { defaultValue: "Metrics" })}
+								</CardTitle>
+							</div>
+							<CardDescription className="text-xs">
+								{t("dashboard:metrics.description", {
+									defaultValue:
+										"MCPMate process CPU and memory utilization sampled every 30 seconds",
+								})}
+							</CardDescription>
+						</CardHeader>
+						<CardContent>
+							<MetricsTrendChart />
+						</CardContent>
+					</Card>
+				</div>
+
+				<TokenSavingsTrendCard className="h-full" />
+			</div>
+
+			<Card className="flex flex-1 flex-col">
 				<CardHeader className="pb-3">
 					<div className="flex items-start justify-between gap-3">
 						<div>
@@ -520,32 +546,6 @@ export function DashboardPage() {
 					)}
 				</CardContent>
 			</Card>
-
-			<div className="grid items-stretch gap-4 md:grid-cols-2">
-				<div className="h-full">
-					<Card className="h-full">
-						<CardHeader>
-							<div className="flex items-center gap-2">
-								<Activity className="h-5 w-5 text-sky-500" />
-								<CardTitle className="text-base">
-									{t("dashboard:metrics.title", { defaultValue: "Metrics" })}
-								</CardTitle>
-							</div>
-							<CardDescription className="text-xs">
-								{t("dashboard:metrics.description", {
-									defaultValue:
-										"MCPMate process CPU and memory utilization sampled every 30 seconds",
-								})}
-							</CardDescription>
-						</CardHeader>
-						<CardContent>
-							<MetricsTrendChart />
-						</CardContent>
-					</Card>
-				</div>
-
-				<TokenSavingsTrendCard className="h-full" />
-			</div>
 		</div>
 	);
 }

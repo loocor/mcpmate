@@ -13,7 +13,6 @@ use crate::{
         common::{internal_error, map_anyhow_error, map_database_error},
     },
     common::server::ServerType,
-    config::server::capabilities::sync_via_connection_pool,
     config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
     config::server::{
         get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update, merge_headers_for_update,
@@ -33,6 +32,26 @@ use std::{
     collections::{BTreeSet, HashMap},
     str::FromStr,
 };
+
+async fn discover_server_capabilities(
+    state: &Arc<AppState>,
+    database: Arc<Database>,
+    server_id: &str,
+) -> Result<(), crate::core::capability::read_service::CapabilityReadError> {
+    let lists = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+        database,
+        state.connection_pool.clone(),
+    )
+    .list_all_kinds(
+        server_id,
+        Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
+    )
+    .await?;
+    if let Some(error) = lists.into_first_error() {
+        return Err(error);
+    }
+    Ok(())
+}
 
 /// Validate server configuration
 #[inline]
@@ -491,16 +510,7 @@ pub async fn create_server(
 
     // Initial capability discovery persists the transactional SQLite catalog.
     if !server.pending_import {
-        if let Err(error) = sync_via_connection_pool(
-            &state.connection_pool,
-            &db.pool,
-            db.capability_cache.as_ref(),
-            &server_id,
-            &payload.name,
-            crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-        )
-        .await
-        {
+        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
             tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
         }
     }
@@ -628,6 +638,10 @@ pub async fn update_server(
         .id
         .clone()
         .ok_or_else(|| internal_error("Server ID not found"))?;
+    let previous_config_fingerprint =
+        crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
 
     // Strictly validate server type format (if provided)
     let validated_server_type = if let Some(ref kind) = payload.kind {
@@ -717,18 +731,24 @@ pub async fn update_server(
         upsert_meta_payload(&db, &server_id, meta_payload).await?;
     }
 
-    if existing_server.pending_import && !updated_server.pending_import {
-        if let Err(error) = sync_via_connection_pool(
-            &state.connection_pool,
-            &db.pool,
-            db.capability_cache.as_ref(),
-            &server_id,
-            &existing_server.name,
-            crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-        )
-        .await
-        {
-            tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after completing server import");
+    let current_config_fingerprint =
+        crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+    let configuration_changed = previous_config_fingerprint != current_config_fingerprint;
+
+    if !updated_server.pending_import && configuration_changed {
+        let mut pool = state.connection_pool.lock().await;
+        pool.invalidate_server_runtime(&server_id).await;
+        pool.sync_servers_from_active_profile()
+            .await
+            .map_err(map_anyhow_error)?;
+        drop(pool);
+    }
+
+    if !updated_server.pending_import && (configuration_changed || existing_server.pending_import) {
+        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
+            tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after server configuration update");
         }
     }
 
@@ -878,9 +898,8 @@ pub async fn import_servers(
     };
 
     let outcome = import_batch(
-        &db.pool,
-        db.capability_cache.clone(),
-        &state.connection_pool,
+        db.clone(),
+        Some(&state.connection_pool),
         mcp_servers,
         ImportOptions::dashboard_import(payload.dry_run, payload.target_profile_id.clone()),
     )
@@ -892,6 +911,7 @@ pub async fn import_servers(
         skipped,
         failed,
         scheduled: _,
+        runtime_sync_error,
     } = outcome;
 
     let imported_servers: Vec<String> = imported.into_iter().map(|s| s.name).collect();
@@ -907,6 +927,7 @@ pub async fn import_servers(
         failed_count: failed_servers.len(),
         failed_servers,
         error_details,
+        runtime_sync_error,
     };
 
     let mut data = Map::new();
@@ -919,11 +940,15 @@ pub async fn import_servers(
         Value::from(import_data.skipped_count as u64),
     );
     data.insert("failed_count".to_string(), Value::from(import_data.failed_count as u64));
+    if let Some(error) = import_data.runtime_sync_error.as_ref() {
+        data.insert("runtime_sync_error".to_string(), Value::from(error.clone()));
+    }
+    let audit_error = import_data.runtime_sync_error.clone();
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             crate::audit::AuditAction::ServerImport,
-            if import_data.failed_count > 0 {
+            if import_data.failed_count > 0 || audit_error.is_some() {
                 crate::audit::AuditStatus::Failed
             } else {
                 crate::audit::AuditStatus::Success
@@ -934,7 +959,7 @@ pub async fn import_servers(
             None,
             payload.target_profile_id,
             Some(data),
-            None,
+            audit_error,
         ),
     )
     .await;

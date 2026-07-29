@@ -29,10 +29,10 @@ use crate::api::models::cache::{
     CacheMetricsStats, CacheResetData, CacheResetResp, CacheStorageStats, CacheViewType,
 };
 use crate::api::models::server::{
-    ServerCapabilityDetailData, ServerCapabilityDetailReq, ServerCapabilityDetailResp, ServerCapabilityListsData,
-    ServerCapabilityListsResp, ServerCapabilityMeta, ServerCapabilityRefreshData, ServerCapabilityRefreshReq,
-    ServerCapabilityRefreshResp, ServerCapabilityReq, ServerPromptsData, ServerResourceTemplatesData,
-    ServerResourcesData, ServerToolsData,
+    ServerCapabilityAuthenticationCode, ServerCapabilityAuthenticationFailure, ServerCapabilityDetailData,
+    ServerCapabilityDetailReq, ServerCapabilityDetailResp, ServerCapabilityListsData, ServerCapabilityListsResp,
+    ServerCapabilityMeta, ServerCapabilityRefreshData, ServerCapabilityRefreshReq, ServerCapabilityRefreshResp,
+    ServerCapabilityReq, ServerPromptsData, ServerResourceTemplatesData, ServerResourcesData, ServerToolsData,
 };
 use crate::api::routes::AppState;
 use crate::audit::{AuditAction, AuditStatus};
@@ -86,7 +86,7 @@ fn list_ctx(
         capability: runtime_kind(capability_type),
         server_id: server_id.to_string(),
         refresh: runtime_list_refresh(refresh),
-        timeout: Some(std::time::Duration::from_secs(10)),
+        operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
         validation_session: None,
         runtime_identity: None,
         connection_selection: None,
@@ -143,22 +143,43 @@ pub async fn refresh_server_capabilities(
         .await
         .map_err(crate::api::handlers::common::errors::map_anyhow_error)?
         .ok_or_else(|| ApiError::NotFound(format!("Server '{}' not found", request.id)))?;
-    let commit = crate::config::server::capabilities::sync_via_connection_pool(
-        &state.connection_pool,
-        &database.pool,
-        database.capability_cache.as_ref(),
-        &request.id,
-        &server.name,
-        crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-    )
-    .await
-    .map_err(crate::api::handlers::common::errors::map_anyhow_error)?;
+    let previous_revision = database
+        .load_capability_snapshot(&request.id)
+        .await
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?
+        .0
+        .map(|snapshot| snapshot.revision);
+    let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+        database.clone(),
+        state.connection_pool.clone(),
+    );
+    let lists = service
+        .list_all_kinds(
+            &request.id,
+            Some(crate::core::capability::runtime::RefreshStrategy::Force),
+        )
+        .await
+        .map_err(|error| crate::core::capability::service::map_capability_read_error(&error))?;
+    if let Some(error) = lists.into_first_error() {
+        return Err(crate::core::capability::service::map_capability_read_error(&error));
+    }
+    let snapshot = database
+        .load_capability_snapshot(&request.id)
+        .await
+        .map_err(crate::api::handlers::common::errors::map_anyhow_error)?
+        .0
+        .ok_or_else(|| {
+            ApiError::ServiceUnavailable(format!(
+                "Capability refresh completed without a catalog snapshot for server '{}'",
+                server.name
+            ))
+        })?;
 
     Ok(Json(ServerCapabilityRefreshResp::success(
         ServerCapabilityRefreshData {
-            server_id: commit.server_id,
-            catalog_revision: commit.revision,
-            catalog_changed: commit.changed,
+            server_id: request.id,
+            catalog_revision: snapshot.revision,
+            catalog_changed: previous_revision != Some(snapshot.revision),
         },
     )))
 }
@@ -174,11 +195,7 @@ pub async fn server_capability_lists(
         state.connection_pool.clone(),
     );
     let lists = service
-        .list_all_kinds(
-            &server_id,
-            runtime_list_refresh(refresh),
-            Some(std::time::Duration::from_secs(10)),
-        )
+        .list_all_kinds(&server_id, runtime_list_refresh(refresh))
         .await
         .map_err(|error| {
             tracing::error!(
@@ -188,13 +205,22 @@ pub async fn server_capability_lists(
             );
             crate::core::capability::service::map_capability_read_error(&error)
         })?;
+    let authentication = [
+        lists.tools.as_ref().err(),
+        lists.resources.as_ref().err(),
+        lists.prompts.as_ref().err(),
+        lists.resource_templates.as_ref().err(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(capability_authentication_failure);
 
-    let tools = project_list_payload(&db, &server_id, CapabilityType::Tools, lists.tools, refresh).await?;
+    let tools = project_list_outcome(&db, &server_id, CapabilityType::Tools, lists.tools, refresh).await?;
     let resources_payload =
-        project_list_payload(&db, &server_id, CapabilityType::Resources, lists.resources, refresh).await?;
+        project_list_outcome(&db, &server_id, CapabilityType::Resources, lists.resources, refresh).await?;
     let prompts_payload =
-        project_list_payload(&db, &server_id, CapabilityType::Prompts, lists.prompts, refresh).await?;
-    let resource_templates_payload = project_list_payload(
+        project_list_outcome(&db, &server_id, CapabilityType::Prompts, lists.prompts, refresh).await?;
+    let resource_templates_payload = project_list_outcome(
         &db,
         &server_id,
         CapabilityType::ResourceTemplates,
@@ -204,23 +230,70 @@ pub async fn server_capability_lists(
     .await?;
 
     Ok(Json(ServerCapabilityListsResp::success(ServerCapabilityListsData {
+        authentication,
         tools,
         resources: ServerResourcesData {
             items: resources_payload.items,
             state: resources_payload.state,
+            degraded_reason: resources_payload.degraded_reason,
             meta: resources_payload.meta,
         },
         prompts: ServerPromptsData {
             items: prompts_payload.items,
             state: prompts_payload.state,
+            degraded_reason: prompts_payload.degraded_reason,
             meta: prompts_payload.meta,
         },
         resource_templates: ServerResourceTemplatesData {
             items: resource_templates_payload.items,
             state: resource_templates_payload.state,
+            degraded_reason: resource_templates_payload.degraded_reason,
             meta: resource_templates_payload.meta,
         },
     })))
+}
+
+fn capability_authentication_failure(
+    error: &crate::core::capability::read_service::CapabilityReadError
+) -> Option<ServerCapabilityAuthenticationFailure> {
+    use crate::core::capability::connection_provider::CapabilityAuthenticationFailureCode;
+
+    let (code, reason) = error.authentication_failure()?;
+    let code = match code {
+        CapabilityAuthenticationFailureCode::AuthRequired => ServerCapabilityAuthenticationCode::AuthRequired,
+        CapabilityAuthenticationFailureCode::Unauthorized => ServerCapabilityAuthenticationCode::Unauthorized,
+        CapabilityAuthenticationFailureCode::Forbidden => ServerCapabilityAuthenticationCode::Forbidden,
+        CapabilityAuthenticationFailureCode::InsufficientScope => ServerCapabilityAuthenticationCode::InsufficientScope,
+    };
+    Some(ServerCapabilityAuthenticationFailure {
+        code,
+        reason: reason.to_string(),
+    })
+}
+
+async fn project_list_outcome(
+    db: &Arc<crate::config::database::Database>,
+    server_id: &str,
+    capability_type: CapabilityType,
+    outcome: Result<
+        crate::core::capability::runtime::ListResult,
+        crate::core::capability::read_service::CapabilityReadError,
+    >,
+    refresh: Option<RefreshStrategy>,
+) -> Result<ServerToolsData, ApiError> {
+    match outcome {
+        Ok(result) => project_list_payload(db, server_id, capability_type, result, refresh).await,
+        Err(error) => Ok(ServerToolsData {
+            items: Vec::new(),
+            state: "failed".to_string(),
+            degraded_reason: Some(error.to_string()),
+            meta: ServerCapabilityMeta {
+                cache_hit: false,
+                strategy: capability_list_strategy(refresh),
+                source: "catalog_failure".to_string(),
+            },
+        }),
+    }
 }
 
 async fn project_list_payload(
@@ -269,6 +342,7 @@ fn build_capability_list_data(
     ServerToolsData {
         items,
         state: capability_list_state(&meta.source),
+        degraded_reason: None,
         meta: ServerCapabilityMeta {
             cache_hit: meta.cache_hit,
             strategy: capability_list_strategy(refresh),
@@ -338,9 +412,10 @@ fn capability_items_to_json(
 #[cfg(test)]
 mod tests {
     use super::{
-        CapabilityIdentityMapping, CapabilityType, ExtractedCapability, enrich_prompt_item, enrich_resource_item,
-        enrich_resource_template_item, enrich_tool_item, persist_extracted_inventory, prompt_json, resource_json,
-        resource_template_json, resource_template_json_from_cached, tool_json,
+        CapabilityIdentityMapping, CapabilityType, ExtractedCapability, capability_authentication_failure,
+        enrich_prompt_item, enrich_resource_item, enrich_resource_template_item, enrich_tool_item,
+        persist_extracted_inventory, prompt_json, resource_json, resource_template_json,
+        resource_template_json_from_cached, tool_json,
     };
     use crate::{
         api::{handlers::server::common::ServerIdentification, routes::AppState},
@@ -431,6 +506,35 @@ mod tests {
         assert_eq!(prompt["name"], "everything_args-prompt");
         assert!(prompt.get("unique_name").is_none());
         assert!(prompt.get("id").is_none());
+    }
+
+    #[test]
+    fn capability_batch_exposes_insufficient_scope_as_structured_authentication() {
+        use crate::core::capability::connection_provider::{
+            CapabilityAuthenticationFailureCode, CapabilityOwnerError, OwnerSource,
+        };
+        use crate::core::capability::read_service::CapabilityReadError;
+
+        let error = CapabilityReadError::CleanupFailed {
+            server_id: "server-a".to_string(),
+            server_name: "auth_server".to_string(),
+            operation: "management catalog warm",
+            instance_id: "instance-a".to_string(),
+            connection_generation: None,
+            owner_source: OwnerSource::Fresh,
+            error: CapabilityOwnerError::Authentication {
+                code: CapabilityAuthenticationFailureCode::InsufficientScope,
+                reason: "upstream requires an additional scope".to_string(),
+            },
+        };
+
+        let failure = capability_authentication_failure(&error).expect("authentication remains structured");
+
+        assert_eq!(
+            failure.code,
+            crate::api::models::server::ServerCapabilityAuthenticationCode::InsufficientScope
+        );
+        assert!(failure.reason.contains("additional scope"));
     }
 
     #[test]

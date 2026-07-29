@@ -330,6 +330,7 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
     ) -> Result<()> {
+        self.invalidate_health_reconnect(server_id, instance_id);
         if let Some(database) = &self.database {
             crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(
                 &database.pool,
@@ -358,6 +359,7 @@ impl UpstreamConnectionPool {
             .get(server_id)
             .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_id))?
             .clone();
+        let config_fingerprint = server_config.source_fingerprint.clone();
 
         // Update connection status to initializing
         {
@@ -381,6 +383,7 @@ impl UpstreamConnectionPool {
                 );
                 self.clear_failure_state(server_id);
                 if let Ok(conn) = self.get_instance_mut(server_id, instance_id) {
+                    conn.config_fingerprint = config_fingerprint;
                     conn.reset_connection_attempts();
                 }
                 // Publish success event via unified outlet
@@ -388,9 +391,16 @@ impl UpstreamConnectionPool {
                 Ok(())
             }
             Err(e) => {
-                // Set simple error status; pool-level backoff governs throttling
+                let requires_manual_intervention =
+                    crate::core::capability::connection_provider::PoolCapabilityConnectionProvider::authentication_failure_code(&e)
+                        .is_some();
                 if let Ok(conn) = self.get_instance_mut(server_id, instance_id) {
-                    conn.update_failed(format!("Connection failed: {}", e));
+                    let message = format!("Connection failed: {}", e);
+                    if requires_manual_intervention {
+                        conn.update_permanent_error(message);
+                    } else {
+                        conn.update_failed(message);
+                    }
                 }
 
                 tracing::error!(
@@ -400,11 +410,59 @@ impl UpstreamConnectionPool {
                     e
                 );
                 let failure_reason = format!("{}", e);
-                self.register_failure(server_id, FailureKind::Connect, Some(failure_reason));
+                if requires_manual_intervention {
+                    self.clear_failure_state(server_id);
+                } else {
+                    self.register_failure(server_id, FailureKind::Connect, Some(failure_reason));
+                }
                 // Publish failure event via unified outlet
                 self.publish_startup_event(server_id, false, Some(format!("{}", e)))
                     .await;
                 Err(e)
+            }
+        }
+    }
+
+    pub(crate) async fn connect_transport_for_health(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        debug_assert!(
+            self.database.is_none(),
+            "detached health transport workers must not publish database side effects"
+        );
+        let server_config = self
+            .config
+            .mcp_servers
+            .get(server_id)
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_id))?
+            .clone();
+        let config_fingerprint = server_config.source_fingerprint.clone();
+        let result = match server_config.kind {
+            ServerType::Stdio => self.connect_stdio(server_id, instance_id).await,
+            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
+        };
+
+        match result {
+            Ok(()) => {
+                let connection = self.get_instance_mut(server_id, instance_id)?;
+                connection.config_fingerprint = config_fingerprint;
+                connection.reset_connection_attempts();
+                Ok(())
+            }
+            Err(error) => {
+                let requires_manual_intervention =
+                    crate::core::capability::connection_provider::PoolCapabilityConnectionProvider::authentication_failure_code(&error)
+                        .is_some();
+                let connection = self.get_instance_mut(server_id, instance_id)?;
+                let message = format!("Connection failed: {error}");
+                if requires_manual_intervention {
+                    connection.update_permanent_error(message);
+                } else {
+                    connection.update_failed(message);
+                }
+                Err(error)
             }
         }
     }
@@ -471,8 +529,17 @@ impl UpstreamConnectionPool {
         success: bool,
         error: Option<String>,
     ) {
+        Self::publish_startup_result(self.database.clone(), server_id, success, error).await;
+    }
+
+    pub(crate) async fn publish_startup_result(
+        database: Option<Arc<crate::config::database::Database>>,
+        server_id: &str,
+        success: bool,
+        error: Option<String>,
+    ) {
         // Resolve server_name for event payload when database is available
-        let server_name = if let Some(db) = &self.database {
+        let server_name = if let Some(db) = database {
             match crate::config::operations::utils::get_server_name(&db.pool, server_id).await {
                 Ok(name) => name,
                 Err(_) => server_id.to_string(),
@@ -763,30 +830,7 @@ impl UpstreamConnectionPool {
         tools: Vec<Tool>,
         capabilities: Option<rmcp::model::ServerCapabilities>,
     ) -> Result<()> {
-        // Check server capabilities
-        let supports_resources = capabilities.as_ref().and_then(|caps| caps.resources.as_ref()).is_some();
-        let supports_prompts = capabilities.as_ref().and_then(|caps| caps.prompts.as_ref()).is_some();
-
-        // Clone service metadata before moving into Arc
-        let peer_info = service.peer_info();
-        let server_icons_payload = peer_info.as_ref().and_then(|info| info.server_info.icons.clone());
-
-        // Clone service for database sync operations
-        let service_for_sync = service.peer().clone();
-
-        if let (Some(db), Some(peer)) = (&self.database, peer_info.as_ref()) {
-            crate::config::server::meta::update_server_info(
-                &db.pool,
-                server_id,
-                peer.server_info.name.clone(),
-                peer.server_info.title.clone(),
-                Some(peer.server_info.version.clone()),
-                peer.protocol_version.to_string(),
-            )
-            .await
-            .with_context(|| format!("Failed to persist standard server information for '{server_id}'"))?;
-        }
-
+        let service = Arc::new(service);
         let conn = self
             .get_instance_mut(server_id, instance_id)
             .with_context(|| format!("Connection '{instance_id}' for server '{server_id}' was not found"))?;
@@ -794,9 +838,9 @@ impl UpstreamConnectionPool {
         // Update connection properties
         // Set server_id on upstream client handler so notifications can be forwarded correctly
         service.service().set_server_id(server_id);
-        conn.service = Some(Arc::new(service));
+        conn.service = Some(service.clone());
         conn.tools = tools.clone();
-        conn.capabilities = capabilities;
+        conn.capabilities = capabilities.clone();
         conn.update_ready();
 
         tracing::debug!(
@@ -806,36 +850,66 @@ impl UpstreamConnectionPool {
             conn.tools.len()
         );
 
-        // Handle database sync (early return if no database)
-        let Some(db) = &self.database else {
-            return Ok(()); // No database available, skip sync operations
-        };
-
-        if peer_info.is_some() {
-            let db_clone = db.clone();
-            let server_id_clone = server_id.to_string();
-            let icons_for_update = server_icons_payload.clone();
-
-            tokio::spawn(async move {
-                if let Err(e) =
-                    crate::config::server::meta::update_server_icons(&db_clone.pool, &server_id_clone, icons_for_update)
-                        .await
-                {
-                    tracing::warn!(
-                        server_id = %server_id_clone,
-                        error = %e,
-                        "Failed to upsert server icons"
-                    );
-                }
-            });
-        }
-
-        self.spawn_database_sync_task(
-            db.clone(),
+        Self::publish_connection_side_effects(
+            self.database.clone(),
             server_id.to_string(),
             instance_id.to_string(),
+            service,
             tools,
-            service_for_sync,
+            capabilities,
+        )
+        .await
+    }
+
+    pub(crate) async fn publish_connection_side_effects(
+        database: Option<Arc<crate::config::database::Database>>,
+        server_id: String,
+        instance_id: String,
+        service: Arc<crate::core::transport::ClientService>,
+        tools: Vec<Tool>,
+        capabilities: Option<ServerCapabilities>,
+    ) -> Result<()> {
+        let Some(database) = database else {
+            return Ok(());
+        };
+        let peer_info = service.peer_info();
+        if let Some(peer) = peer_info.as_ref() {
+            crate::config::server::meta::update_server_info(
+                &database.pool,
+                &server_id,
+                peer.server_info.name.clone(),
+                peer.server_info.title.clone(),
+                Some(peer.server_info.version.clone()),
+                peer.protocol_version.to_string(),
+            )
+            .await
+            .with_context(|| format!("Failed to persist standard server information for '{server_id}'"))?;
+        }
+
+        let server_icons = peer_info.as_ref().and_then(|info| info.server_info.icons.clone());
+        let icons_database = database.clone();
+        let icons_server_id = server_id.clone();
+        tokio::spawn(async move {
+            if let Err(error) =
+                crate::config::server::meta::update_server_icons(&icons_database.pool, &icons_server_id, server_icons)
+                    .await
+            {
+                tracing::warn!(
+                    server_id = %icons_server_id,
+                    error = %error,
+                    "Failed to upsert server icons"
+                );
+            }
+        });
+
+        let supports_resources = capabilities.as_ref().and_then(|caps| caps.resources.as_ref()).is_some();
+        let supports_prompts = capabilities.as_ref().and_then(|caps| caps.prompts.as_ref()).is_some();
+        Self::spawn_database_sync_task(
+            database,
+            server_id,
+            instance_id,
+            tools,
+            service.peer().clone(),
             supports_resources,
             supports_prompts,
         );
@@ -844,7 +918,6 @@ impl UpstreamConnectionPool {
 
     /// Spawn database sync operations in background task
     fn spawn_database_sync_task(
-        &self,
         db_clone: Arc<crate::config::database::Database>,
         server_id_clone: String,
         instance_id_clone: String,
@@ -1132,6 +1205,20 @@ impl UpstreamConnectionPool {
             server_id,
             "Removed capability-collision challenger from production exposure"
         );
+    }
+
+    /// Drop every runtime route and instance for a server whose persisted transport
+    /// configuration changed. The next pool synchronization recreates one idle placeholder
+    /// from the new canonical configuration.
+    pub(crate) async fn invalidate_server_runtime(
+        &mut self,
+        server_id: &str,
+    ) {
+        self.disconnect_all_instances(server_id).await;
+        self.connections.remove(server_id);
+        self.cancellation_tokens.remove(server_id);
+        self.remove_all_client_bound_connections_for_server(server_id);
+        self.remove_all_production_routes_for_server(server_id);
     }
 
     /// Helper method to disconnect all instances of a server

@@ -133,6 +133,7 @@ export const ServerInstallManualForm = forwardRef<
 			serverId,
 			namespaceRemediationAllowed = false,
 			onInitiateOAuth,
+			onOAuthConnected,
 			extraTab,
 		}: ServerInstallManualFormProps,
 		ref,
@@ -1350,6 +1351,7 @@ export const ServerInstallManualForm = forwardRef<
 															viewMode={viewMode}
 															isNewServer={false}
 															onInitiateOAuth={onInitiateOAuth}
+															onOAuthConnected={onOAuthConnected}
 														/>
 													) : null}
 

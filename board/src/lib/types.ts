@@ -33,6 +33,19 @@ export interface RegistryMetaPayload {
 export type SnapshotState = "ready" | "invalidated" | "unavailable";
 export type DeclarationState = "unknown" | "unsupported" | "supported";
 export type InventoryState = "unknown" | "complete" | "failed";
+export type CapabilityFailureKind =
+  | "timeout"
+  | "session_gone"
+  | "transport_closed"
+  | "stale_generation"
+  | "authentication"
+  | "auth_required"
+  | "unauthorized"
+  | "forbidden"
+  | "insufficient_scope"
+  | "protocol"
+  | "application"
+  | "other";
 
 export interface CapabilityKindSummary {
   declaration: DeclarationState;
@@ -40,6 +53,7 @@ export interface CapabilityKindSummary {
   currentCount: number;
   currentAvailable: boolean;
   lastError?: string | null;
+  failureKind?: CapabilityFailureKind | null;
 }
 
 export interface ServerCapabilitySummary {
@@ -239,6 +253,7 @@ export interface ServersImportData {
   failed_count: number;
   failed_servers: string[];
   error_details?: Record<string, string> | null;
+  runtime_sync_error?: string | null;
 }
 
 export interface SkippedServer {
@@ -288,6 +303,7 @@ export type AuditCategory =
   | "mcp_request"
   | "server_config"
   | "profile_config"
+  | "capability_control"
   | "management"
   | "client_config"
   | "runtime_control";
@@ -344,9 +360,14 @@ export type AuditAction =
   | "desktop_managed_core_stop"
   | "capability_grant"
   | "capability_revoke"
+  | "surface_review_resolve"
+  | "surface_publish"
+  | "surface_rollback"
+  | "surface_reconciliation"
   | "profile_server_enable"
   | "profile_server_disable"
   | "profile_server_remove"
+  | "profile_server_replace"
   | "server_instance_disconnect"
   | "server_instance_force_disconnect"
   | "server_instance_reconnect"
@@ -910,6 +931,8 @@ export interface ConfigSuitTool {
   unique_name: string;
   description?: string | null;
   enabled: boolean;
+  state: string;
+  state_generation: number;
   allowed_operations: string[];
 }
 
@@ -928,6 +951,8 @@ export interface ConfigSuitResource {
   unique_uri: string;
   description?: string | null;
   enabled: boolean;
+  state: string;
+  state_generation: number;
   allowed_operations: string[];
 }
 
@@ -946,6 +971,8 @@ export interface ConfigSuitResourceTemplate {
   unique_uri_template: string;
   description?: string | null;
   enabled: boolean;
+  state: string;
+  state_generation: number;
   allowed_operations: string[];
 }
 
@@ -964,6 +991,8 @@ export interface ConfigSuitPrompt {
   unique_name: string;
   description?: string | null;
   enabled: boolean;
+  state: string;
+  state_generation: number;
   allowed_operations: string[];
 }
 

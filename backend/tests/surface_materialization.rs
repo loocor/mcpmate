@@ -5,6 +5,7 @@ use mcpmate::core::capability::materializer::{
     AuthoringRelationship, CatalogTarget, MaterializationCoordinator, MaterializationInput, MaterializationTrigger,
     ReviewDecisionState, SurfaceAuthoringLoader, SurfaceMaterializer,
 };
+use mcpmate::core::capability::mode_policy::DirectExposurePolicy;
 use mcpmate_capability_store::{
     CapabilityCatalog, CapabilityKind, CapabilityObservation, CapabilityPayload, CatalogRecord, DeclarationState,
     InventoryState, KindObservation, ReviewOwnerType, ReviewResolutionAction, SqliteCapabilityCatalog,
@@ -446,6 +447,7 @@ async fn authoring_loader_combines_direct_exposure_and_builtin_records_without_s
         &mut transaction,
         "consumer-a",
         &[],
+        DirectExposurePolicy::CapabilityLevel,
         std::slice::from_ref(&builtin),
         Some("unify"),
     )

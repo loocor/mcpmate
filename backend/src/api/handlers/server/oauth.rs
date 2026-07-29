@@ -77,6 +77,10 @@ pub async fn complete_oauth(
         .exchange_code(&payload.state, &payload.code)
         .await
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let mut pool = state.connection_pool.lock().await;
+    pool.invalidate_validation_attempts_for_server(&status.server_id);
+    pool.clear_failure_state(&format!("validation:{}", status.server_id));
+    drop(pool);
     Ok(Json(OAuthStatusResp::success(status)))
 }
 

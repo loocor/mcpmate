@@ -1,3 +1,5 @@
+use crate::core::capability::mode_policy::BuiltinSurfaceSet;
+
 pub const MCPMATE_UCAN_CATALOG_TOOL: &str = "mcpmate_ucan_catalog";
 pub const MCPMATE_UCAN_DETAILS_TOOL: &str = "mcpmate_ucan_details";
 pub const MCPMATE_UCAN_CALL_TOOL: &str = "mcpmate_ucan_call";
@@ -37,36 +39,59 @@ pub const HOSTED_BUILTIN_TOOL_NAMES: [&str; 7] = [
 /// Legacy alias — prefer HOSTED_BUILTIN_TOOL_NAMES.
 pub const PROFILE_MODE_BUILTIN_TOOL_NAMES: [&str; 7] = HOSTED_BUILTIN_TOOL_NAMES;
 
-pub(crate) fn builtin_tool_names_for_surface(
-    config_mode: &str,
-    capability_source: &str,
-) -> &'static [&'static str] {
-    match (config_mode, capability_source) {
-        ("unify", _) => &UNIFY_BUILTIN_TOOL_NAMES,
-        ("hosted", "profiles") => &HOSTED_BUILTIN_TOOL_NAMES,
-        _ => &[],
+pub(crate) fn builtin_tool_names_for_surface_set(set: BuiltinSurfaceSet) -> &'static [&'static str] {
+    match set {
+        BuiltinSurfaceSet::None => &[],
+        BuiltinSurfaceSet::Unify => &UNIFY_BUILTIN_TOOL_NAMES,
+        BuiltinSurfaceSet::Hosted => &HOSTED_BUILTIN_TOOL_NAMES,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{HOSTED_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES, builtin_tool_names_for_surface};
+    use crate::clients::models::{CapabilitySource, UnifyRouteMode};
+    use crate::core::capability::mode_policy::{EffectiveConfigMode, resolve_surface_composition_policy};
+
+    use super::{HOSTED_BUILTIN_TOOL_NAMES, UNIFY_BUILTIN_TOOL_NAMES, builtin_tool_names_for_surface_set};
 
     #[test]
     fn builtin_surface_matrix_matches_the_pre_surface_runtime_contract() {
-        for source in ["activated", "profiles", "custom"] {
+        for source in [
+            CapabilitySource::Activated,
+            CapabilitySource::Profiles,
+            CapabilitySource::Custom,
+        ] {
             assert_eq!(
-                builtin_tool_names_for_surface("unify", source),
+                builtin_tool_names_for_surface_set(
+                    resolve_surface_composition_policy(EffectiveConfigMode::Unify, source, UnifyRouteMode::BrokerOnly,)
+                        .builtins,
+                ),
                 UNIFY_BUILTIN_TOOL_NAMES
             );
         }
 
         assert_eq!(
-            builtin_tool_names_for_surface("hosted", "profiles"),
+            builtin_tool_names_for_surface_set(
+                resolve_surface_composition_policy(
+                    EffectiveConfigMode::Hosted,
+                    CapabilitySource::Profiles,
+                    UnifyRouteMode::BrokerOnly,
+                )
+                .builtins,
+            ),
             HOSTED_BUILTIN_TOOL_NAMES
         );
-        assert!(builtin_tool_names_for_surface("hosted", "activated").is_empty());
-        assert!(builtin_tool_names_for_surface("hosted", "custom").is_empty());
-        assert!(builtin_tool_names_for_surface("transparent", "profiles").is_empty());
+        for (mode, source) in [
+            (EffectiveConfigMode::Hosted, CapabilitySource::Activated),
+            (EffectiveConfigMode::Hosted, CapabilitySource::Custom),
+            (EffectiveConfigMode::Transparent, CapabilitySource::Profiles),
+        ] {
+            assert!(
+                builtin_tool_names_for_surface_set(
+                    resolve_surface_composition_policy(mode, source, UnifyRouteMode::BrokerOnly).builtins,
+                )
+                .is_empty()
+            );
+        }
     }
 }

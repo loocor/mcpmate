@@ -75,4 +75,21 @@ describe("surface review ownership", () => {
       "/clients/client-a/direct/server-a?review_item=review-a&ref_id=ref-a",
     );
   });
+
+  test("uses the canonical before record source when a review removes a capability", () => {
+    const removal = {
+      ...item,
+      target_record: null,
+      before_record: item.target_record,
+    } as SurfaceReviewItem;
+
+    expect(
+      getSurfaceReviewDestination(removal, {
+        owner_type: "consumer_direct_exposure",
+        owner_id: "client-a",
+      }),
+    ).toBe(
+      "/clients/client-a/direct/server-a?review_item=review-a&ref_id=ref-a",
+    );
+  });
 });

@@ -27,12 +27,16 @@ const reviewItem = {
     },
   ],
   before_record: {
-    server_id: "server-a",
+    source: {
+      serverId: "server-a",
+    },
     name: "weather",
     description: "Old description",
   },
   target_record: {
-    server_id: "server-a",
+    source: {
+      serverId: "server-a",
+    },
     name: "weather",
     description: "New description",
   },

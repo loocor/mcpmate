@@ -90,6 +90,8 @@ impl EventDrivenCapabilityManager {
                                 kind: failure.kind,
                                 instance_id: Some(instance_id),
                                 connection_generation: None,
+                                failure_kind: None,
+                                timeout_ms: None,
                                 reason: format!("{error:#}"),
                             },
                         )

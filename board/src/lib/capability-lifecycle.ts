@@ -19,6 +19,33 @@ export type CapabilitySummaryKind =
 
 export type CapabilityLifecycleLabels = Record<CapabilityLifecycleState, string>;
 
+const AUTHENTICATION_FAILURE_KINDS = new Set([
+	"authentication",
+	"auth_required",
+	"unauthorized",
+	"forbidden",
+	"insufficient_scope",
+]);
+
+export function hasCapabilityAuthenticationFailure(
+	summary: ServerCapabilitySummary | undefined,
+): boolean {
+	if (!summary) {
+		return false;
+	}
+
+	return [
+		summary.tools,
+		summary.prompts,
+		summary.resources,
+		summary.resourceTemplates,
+	].some((kind) =>
+		kind.failureKind
+			? AUTHENTICATION_FAILURE_KINDS.has(kind.failureKind)
+			: false,
+	);
+}
+
 export function resolveCapabilityLifecycle(
 	snapshotState: SnapshotState,
 	kind: CapabilityKindSummary,

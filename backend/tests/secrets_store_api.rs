@@ -225,6 +225,7 @@ async fn local_store_encrypts_values_and_resolves_runtime_placeholders() {
     assert!(!stored.0.contains("ghp_runtime_token"));
 
     let config = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::Stdio,
         command: Some("node".to_string()),
         args: Some(vec!["--token=[[secret:server/github/token]]".to_string()]),
@@ -545,6 +546,7 @@ async fn usage_sync_detects_placeholders_in_server_runtime_config() {
         .expect("create header secret");
 
     let stdio_config = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::Stdio,
         command: Some("node".to_string()),
         args: Some(vec![
@@ -559,6 +561,7 @@ async fn usage_sync_detects_placeholders_in_server_runtime_config() {
         headers: None,
     };
     let http_config = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::StreamableHttp,
         command: None,
         args: None,
@@ -628,6 +631,7 @@ async fn usage_sync_deduplicates_same_placeholder_twice_in_one_value() {
     // this would produce duplicate usage entries that violate the UNIQUE
     // constraint on (alias, server_id, location_kind, location_name, location_index).
     let config = MCPServerConfig {
+        source_fingerprint: None,
         kind: ServerType::StreamableHttp,
         command: None,
         args: None,

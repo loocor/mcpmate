@@ -62,7 +62,7 @@ pub async fn query_capabilities(
         capability: capability_type,
         server_id: server_id.to_string(),
         refresh: Some(map_refresh_strategy(params.refresh)),
-        timeout: Some(timeout),
+        operation_timeout: timeout,
         validation_session: None,
         runtime_identity: None,
         connection_selection: None,

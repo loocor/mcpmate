@@ -326,7 +326,10 @@ impl SurfaceReconciliationWorker {
         job: &SurfaceReconciliationJob,
     ) -> Result<()> {
         let source_revision_set = parse_target_revision_set(&job.target_revision_set)?;
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        self.store
+            .validate_reconciliation_lease_owner_in_transaction(&mut transaction, job, &self.worker_id)
+            .await?;
         let actual_revision_set = sqlx::query_as::<_, (String, i64)>(
             "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
         )
@@ -374,9 +377,6 @@ impl SurfaceReconciliationWorker {
             self.emit_audit(job, &receipt).await;
             return Ok(());
         }
-        self.store
-            .validate_reconciliation_lease_in_transaction(&mut transaction, job, &self.worker_id)
-            .await?;
         let (changes, baseline_manifest_id) = load_job_changes(&mut transaction, job).await?;
         let trigger = MaterializationTrigger::new(&job.cause_kind, &job.cause_id, source_revision_set, &self.worker_id)
             .with_review_baseline_manifest_id(baseline_manifest_id);

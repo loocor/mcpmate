@@ -16,7 +16,7 @@ pub mod system;
 use std::sync::Arc;
 
 use aide::{axum::ApiRouter, openapi::OpenApi};
-use axum::http::{Request, Response};
+use axum::http::{Request, Response, StatusCode};
 use axum::{Router, routing::get};
 use std::time::Duration as StdDuration;
 use tokio::sync::{Mutex, RwLock};
@@ -33,6 +33,24 @@ use crate::{
 
 pub fn unavailable_secret_store_readiness(reason_code: &str) -> crate::core::secrets::store::SecretStoreReadiness {
     crate::core::secrets::store::SecretStoreReadiness::unavailable(reason_code, "Secret store is unavailable")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpResponseLogLevel {
+    Error,
+    Warn,
+    Debug,
+}
+
+fn http_response_log_level(status: StatusCode) -> HttpResponseLogLevel {
+    match status {
+        StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT => {
+            HttpResponseLogLevel::Warn
+        }
+        _ if status.is_server_error() => HttpResponseLogLevel::Error,
+        _ if status.is_client_error() => HttpResponseLogLevel::Warn,
+        _ => HttpResponseLogLevel::Debug,
+    }
 }
 
 /// Application state shared across all routes
@@ -253,8 +271,8 @@ async fn create_router_internal(
         .nest("/api", api_router)
         .nest("/ws", inspector_ws)
         .merge(openapi::openapi_routes(api))
-        // Lightweight request/response logging for debugging 5xx issues
-        // Logs method, path, status, and latency. 5xx at ERROR, 4xx at WARN, others at DEBUG.
+        // Lightweight request/response logging with one event per completed request.
+        // Internal 5xx failures use ERROR; expected upstream/temporary failures and 4xx use WARN.
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|req: &Request<_>| {
@@ -270,28 +288,54 @@ async fn create_router_internal(
                 })
                 .on_response(|res: &Response<_>, latency: StdDuration, span: &tracing::Span| {
                     let status = res.status();
-                    if status.is_server_error() {
-                        tracing::error!(
+                    match http_response_log_level(status) {
+                        HttpResponseLogLevel::Error => tracing::error!(
                             parent: span,
                             status = %status,
                             latency_ms = %latency.as_millis(),
-                            "HTTP response completed with 5xx"
-                        );
-                    } else if status.is_client_error() {
-                        tracing::warn!(
+                            "HTTP response completed with unexpected 5xx"
+                        ),
+                        HttpResponseLogLevel::Warn if status.is_server_error() => tracing::warn!(
+                            parent: span,
+                            status = %status,
+                            latency_ms = %latency.as_millis(),
+                            "HTTP response completed with upstream or temporary 5xx"
+                        ),
+                        HttpResponseLogLevel::Warn => tracing::warn!(
                             parent: span,
                             status = %status,
                             latency_ms = %latency.as_millis(),
                             "HTTP response completed with 4xx"
-                        );
-                    } else {
-                        tracing::debug!(
+                        ),
+                        HttpResponseLogLevel::Debug => tracing::debug!(
                             parent: span,
                             status = %status,
                             latency_ms = %latency.as_millis(),
                             "HTTP response completed"
-                        );
+                        ),
                     }
-                }),
+                })
+                .on_failure(()),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use super::{HttpResponseLogLevel, http_response_log_level};
+
+    #[test]
+    fn expected_upstream_http_failures_are_warnings_without_hiding_internal_errors() {
+        for (status, expected) in [
+            (StatusCode::INTERNAL_SERVER_ERROR, HttpResponseLogLevel::Error),
+            (StatusCode::BAD_GATEWAY, HttpResponseLogLevel::Warn),
+            (StatusCode::SERVICE_UNAVAILABLE, HttpResponseLogLevel::Warn),
+            (StatusCode::GATEWAY_TIMEOUT, HttpResponseLogLevel::Warn),
+            (StatusCode::BAD_REQUEST, HttpResponseLogLevel::Warn),
+            (StatusCode::OK, HttpResponseLogLevel::Debug),
+        ] {
+            assert_eq!(http_response_log_level(status), expected, "status {status}");
+        }
+    }
 }

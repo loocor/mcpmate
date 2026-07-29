@@ -69,9 +69,6 @@ fn sorted_unify_builtin_tool_names() -> Vec<String> {
 
 async fn fixture() -> (sqlx::SqlitePool, CatalogRecord) {
     let pool = init_management_pool().await;
-    mcpmate::config::client::init::set_default_client_config_mode(&pool, "hosted")
-        .await
-        .unwrap();
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
 
     sqlx::query(
@@ -93,7 +90,7 @@ async fn fixture() -> (sqlx::SqlitePool, CatalogRecord) {
             capability_source, selected_profile_ids
         )
         VALUES (
-            'consumer-a', 'client-a', 'Client A', NULL, 'approved',
+            'consumer-a', 'client-a', 'Client A', 'hosted', 'approved',
             'profiles', '["profile-a"]'
         )
         "#,
@@ -183,6 +180,39 @@ async fn add_sibling_tool(
         .await
         .unwrap();
     sibling_record
+}
+
+#[tokio::test]
+async fn hosted_profile_surface_ignores_preserved_unify_direct_exposure_intent() {
+    let (pool, profile_record) = fixture().await;
+    let direct_record = add_sibling_tool(&pool, &profile_record).await;
+    sqlx::query("UPDATE server_config SET unify_direct_exposure_eligible = 1 WHERE id = 'server-a'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO direct_exposure_refs (consumer_id, ref_id, enabled) VALUES ('client-a', ?, 1)")
+        .bind(direct_record.ref_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    bootstrap_managed_surfaces(&pool).await.unwrap();
+
+    let published_ref_ids: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT entry.ref_id
+        FROM consumer_surface_bindings binding
+        JOIN surface_publications publication
+          ON publication.publication_id = binding.active_publication_id
+        JOIN surface_manifest_entries entry ON entry.manifest_id = publication.manifest_id
+        WHERE binding.consumer_id = 'client-a'
+        ORDER BY entry.ref_id
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(published_ref_ids, vec![profile_record.ref_id.to_string()]);
 }
 
 #[tokio::test]
@@ -890,9 +920,6 @@ async fn startup_bootstrap_creates_initial_publications_for_managed_consumers() 
 #[tokio::test]
 async fn startup_bootstrap_publishes_an_empty_surface_for_inherited_managed_mode() {
     let pool = init_management_pool().await;
-    mcpmate::config::client::init::set_default_client_config_mode(&pool, "unify")
-        .await
-        .unwrap();
     sqlx::query(
         r#"
         INSERT INTO client (

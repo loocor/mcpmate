@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	assertCompleteServerImport,
 	extractImportStats,
 	serversApi,
   systemApi,
@@ -347,10 +348,6 @@ export function useServerInstallPipeline(
 					targetProfileId: effectiveTargetProfileId,
 				});
 				const result = await serversApi.importServers(requestBody);
-				setImportResult({
-					success: result.success,
-					error: typeof result.error === "string" ? result.error : undefined,
-				});
 
 				const didSucceed =
 					typeof result?.success === "boolean"
@@ -359,6 +356,8 @@ export function useServerInstallPipeline(
 							!("error" in (result ?? {}));
 				if (didSucceed) {
 					const stats = extractImportStats(result);
+					assertCompleteServerImport(stats);
+					setImportResult({ success: true });
 					const {
 						importedCount,
 						skippedCount,
@@ -395,12 +394,16 @@ export function useServerInstallPipeline(
 					}
 					return true;
 				}
-        notifyError("Import failed", String(result.error ?? "Unknown error"));
+				const failureMessage = String(result.error ?? "Unknown error");
+				setImportResult({ success: false, error: failureMessage });
+				notifyError("Import failed", failureMessage);
 				return false;
 			} catch (error) {
 				const message =
 					error instanceof Error ? error.message : String(error ?? "");
-				notifyError("Import failed", message || "Unexpected error");
+				const failureMessage = message || "Unexpected error";
+				setImportResult({ success: false, error: failureMessage });
+				notifyError("Import failed", failureMessage);
 				return false;
 			} finally {
 				setImporting(false);

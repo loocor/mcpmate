@@ -315,6 +315,8 @@ pub struct CapabilityKindSummary {
     pub current_available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<mcpmate_capability_store::KindFailureKind>,
 }
 
 /// Server capability state derived from one durable catalog snapshot.
@@ -349,6 +351,7 @@ mod capability_summary_tests {
             current_count,
             current_available,
             last_error: last_error.map(str::to_string),
+            failure_kind: None,
         }
     }
 
@@ -417,6 +420,23 @@ mod capability_summary_tests {
         assert_eq!(values[4]["tools"]["lastError"], "upstream unavailable");
         assert_eq!(values[4]["revision"], 42);
         assert_eq!(values[4]["observedAt"], "2026-07-20T10:00:00Z");
+    }
+
+    #[test]
+    fn capability_summary_serializes_typed_authentication_failure() {
+        let capability = CapabilityKindSummary {
+            declaration: DeclarationState::Unknown,
+            inventory: InventoryState::Failed,
+            current_count: 0,
+            current_available: false,
+            last_error: Some("authorization required".to_string()),
+            failure_kind: Some(mcpmate_capability_store::KindFailureKind::AuthRequired),
+        };
+
+        let value = serde_json::to_value(summary(SnapshotState::Unavailable, capability))
+            .expect("serialize capability summary");
+
+        assert_eq!(value["tools"]["failureKind"], "auth_required");
     }
 }
 
@@ -752,6 +772,9 @@ pub struct ServerToolsData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -764,6 +787,9 @@ pub struct ServerResourcesData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -776,6 +802,9 @@ pub struct ServerResourceTemplatesData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -788,6 +817,9 @@ pub struct ServerPromptsData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -816,10 +848,27 @@ pub struct ServerCapabilityRefreshData {
     pub catalog_changed: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerCapabilityAuthenticationCode {
+    AuthRequired,
+    Unauthorized,
+    Forbidden,
+    InsufficientScope,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
+pub struct ServerCapabilityAuthenticationFailure {
+    pub code: ServerCapabilityAuthenticationCode,
+    pub reason: String,
+}
+
 /// All capability kinds for one server after a single discovery pass.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "All capability kinds for one server")]
 pub struct ServerCapabilityListsData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<ServerCapabilityAuthenticationFailure>,
     pub tools: ServerToolsData,
     pub resources: ServerResourcesData,
     pub prompts: ServerPromptsData,
@@ -1113,6 +1162,9 @@ pub struct ServersImportData {
     /// Detailed error information for failed servers
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_details: Option<HashMap<String, String>>,
+    /// Runtime pool convergence error after records were persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_sync_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]

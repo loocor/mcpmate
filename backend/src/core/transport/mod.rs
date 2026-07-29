@@ -6,6 +6,7 @@ pub mod http;
 // sse functions are merged into http module
 pub mod client;
 pub mod stdio;
+pub(crate) mod timeout_policy;
 pub mod unified;
 
 // Unified alias for upstream client service with our handler type

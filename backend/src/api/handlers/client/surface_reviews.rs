@@ -1367,8 +1367,10 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO client (
-                id, name, identifier, config_mode, capability_source, approval_status
-            ) VALUES ('consumer-a', 'Consumer A', 'consumer-a', 'unify', 'activated', 'approved')
+                id, name, identifier, config_mode, capability_source, unify_route_mode, approval_status
+            ) VALUES (
+                'consumer-a', 'Consumer A', 'consumer-a', 'unify', 'activated', 'capability_level', 'approved'
+            )
             "#,
         )
         .execute(&pool)

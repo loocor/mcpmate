@@ -352,6 +352,7 @@ pub fn is_managed_client_config_mode(mode: &str) -> bool {
     matches!(mode, "unify" | "hosted")
 }
 
+#[cfg(test)]
 pub async fn set_default_client_config_mode(
     pool: &Pool<Sqlite>,
     mode: &str,

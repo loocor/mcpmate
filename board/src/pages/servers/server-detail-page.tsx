@@ -20,6 +20,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import CapabilityList from "../../components/capability-list";
+import { CapabilityEmptyState } from "../../components/capability-empty-state";
 import { CapabilityToolbar } from "../../components/capability-toolbar";
 import {
 	CapabilityPreviewList,
@@ -38,6 +39,7 @@ import {
 	getOAuthReadinessActionTarget,
 	resolveOAuthReadiness,
 	resolveServerOAuthReadiness,
+	type OAuthReadiness,
 } from "../../lib/oauth-readiness";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { StatusBadge } from "../../components/status-badge";
@@ -51,6 +53,7 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { CachedAvatar } from "../../components/cached-avatar";
 import { Button } from "../../components/ui/button";
 import { ButtonGroup } from "../../components/ui/button-group";
@@ -66,7 +69,13 @@ import {
 	TabsList,
 	TabsTrigger,
 } from "../../components/ui/tabs";
-import { auditApi, serversApi } from "../../lib/api";
+import {
+	auditApi,
+	getCapabilityBatchFailures,
+	serversApi,
+	type CapabilityAuthenticationFailure,
+	type CapabilityBatchLists,
+} from "../../lib/api";
 import { totalCapabilityCount } from "../../lib/capability-lifecycle";
 import {
 	useCapabilityKindFilters,
@@ -77,6 +86,7 @@ import { notifyError, notifySuccess } from "../../lib/notify";
 import { mergeCapabilityInspectorItem } from "../../lib/capability-detail";
 import { collectLoadedInspectorOptions } from "../../lib/inspector-operation";
 import { getServerDisplayName } from "../../lib/server-display";
+import { syncAuthenticatedServerCapabilities } from "../../lib/server-auth-sync";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import type { ServerDetail } from "../../lib/types";
@@ -345,7 +355,19 @@ export function ServerDetailPage() {
 				}),
 			]);
 		},
-		onError: (error) => {
+		onError: async (error) => {
+			await queryClient.invalidateQueries({
+				queryKey: ["server-cap", "all", serverId],
+				refetchType: "active",
+			});
+			const capabilityBatch = queryClient.getQueryData<CapabilityBatchLists>([
+				"server-cap",
+				"all",
+				serverId,
+			]);
+			if (capabilityBatch?.authentication) {
+				return;
+			}
 			const message =
 				error instanceof Error
 					? error.message
@@ -363,6 +385,27 @@ export function ServerDetailPage() {
 			);
 		},
 	});
+	const handleOAuthConnected = useCallback(
+		(connectedServerId: string) => {
+			if (connectedServerId !== serverId) {
+				return;
+			}
+
+			void syncAuthenticatedServerCapabilities({
+				serverId: connectedServerId,
+				queryClient,
+				refreshCapabilities: serversApi.refreshCapabilities,
+			}).catch((error) => {
+				notifyError(
+					t("detail.notifications.refreshFailed.title", {
+						defaultValue: "Refresh failed",
+					}),
+					error instanceof Error ? error.message : String(error),
+				);
+			});
+		},
+		[queryClient, serverId, t],
+	);
 
 	const isOverviewRefreshing =
 		isRefetching || refreshCapabilitiesMutation.isPending;
@@ -574,6 +617,9 @@ export function ServerDetailPage() {
 		isOAuthServer && liveOAuthStatus
 			? liveOAuthStatus.state
 			: server?.oauth_status;
+	const isRemoteHttpServer = ["streamable_http", "sse"].includes(
+		String(server?.server_type ?? "").toLowerCase(),
+	);
 	const handleAuthAction = useCallback(() => {
 		if (getOAuthReadinessActionTarget(authReadiness) === "security-settings") {
 			navigate("/settings?tab=security");
@@ -649,6 +695,7 @@ export function ServerDetailPage() {
 						server={server}
 						isOpen={isEditOpen}
 						onClose={() => setIsEditOpen(false)}
+						onOAuthConnected={handleOAuthConnected}
 						onSubmit={async (data) => {
 							const {
 								unify_direct_exposure_eligible:
@@ -817,7 +864,7 @@ export function ServerDetailPage() {
 														>
 															{server.server_type}
 														</OverviewMetadataRow>
-														{server.auth_mode ? (
+														{server.auth_mode || isRemoteHttpServer ? (
 															<OverviewMetadataRow
 																label={t("detail.overview.labels.auth", {
 																	defaultValue: "Auth",
@@ -827,6 +874,7 @@ export function ServerDetailPage() {
 																	authMode={server.auth_mode}
 																	oauthStatus={authBadgeOAuthStatus}
 																	readiness={authReadiness}
+																	showOff={isRemoteHttpServer}
 																	onAction={handleAuthAction}
 																/>
 															</OverviewMetadataRow>
@@ -1044,8 +1092,15 @@ export function ServerDetailPage() {
 					>
 						<ServerCapabilitiesPanel
 							serverId={serverId}
+							server={server}
+							oauthStatus={authBadgeOAuthStatus}
+							authReadiness={authReadiness}
 							enabled={capabilityTab === "capabilities"}
 							enableInspect={enableServerDebug}
+							onAuthenticationAction={handleAuthAction}
+							onViewLogs={() =>
+								navigate(`/audit?server_id=${encodeURIComponent(serverId)}`)
+							}
 							onInspect={(kind, item, capabilityOptions) =>
 								handleInspect(kind, item, capabilityOptions)
 							}
@@ -1088,13 +1143,23 @@ function ServerCapabilityTabsHeader({ server }: { server: ServerDetail }) {
 
 function ServerCapabilitiesPanel({
 	serverId,
+	server,
+	oauthStatus,
+	authReadiness,
 	enabled = true,
 	enableInspect = false,
+	onAuthenticationAction,
+	onViewLogs,
 	onInspect,
 }: {
 	serverId: string;
+	server: ServerDetail;
+	oauthStatus?: string | null;
+	authReadiness?: OAuthReadiness | null;
 	enabled?: boolean;
 	enableInspect?: boolean;
+	onAuthenticationAction: () => void;
+	onViewLogs: () => void;
 	onInspect: (
 		kind: InspectorTarget["kind"],
 		item: CapabilityRecord | null,
@@ -1120,6 +1185,27 @@ function ServerCapabilitiesPanel({
 		queryKey: ["server-cap", "all", serverId],
 		queryFn: () => serversApi.listAllCapabilities(serverId),
 		...capabilityQueryOptions,
+	});
+	const capabilityFailures = capabilitiesQ.data
+		? getCapabilityBatchFailures(capabilitiesQ.data)
+		: [];
+	const authenticationFailure = capabilitiesQ.data?.authentication ?? null;
+	const isOAuth = (server.auth_mode ?? "").toLowerCase() === "oauth";
+	const hasHeaderAuth =
+		(server.auth_mode ?? "").toLowerCase() === "header";
+	const oauthNeedsAuthorization =
+		isOAuth &&
+		["not_configured", "disconnected", "expired"].includes(
+			String(oauthStatus ?? "").toLowerCase(),
+		);
+	const authenticationNotice = resolveCapabilityAuthenticationNotice({
+		failure: authenticationFailure,
+		isOAuth,
+		hasHeaderAuth,
+		oauthNeedsAuthorization,
+		secureStoreUnavailable:
+			authReadiness?.notice?.kind === "secure-store-unavailable",
+		t,
 	});
 	const toolsQ = { data: capabilitiesQ.data?.tools, isLoading: capabilitiesQ.isLoading };
 	const resourcesQ = {
@@ -1190,6 +1276,28 @@ function ServerCapabilitiesPanel({
 	const emptyText = t("detail.capabilityList.emptyAll", {
 		defaultValue: "No capabilities from this server",
 	});
+	const emptyContent = authenticationNotice ? (
+		<CapabilityEmptyState
+			title={authenticationNotice.title}
+			description={authenticationNotice.description}
+			actionLabel={authenticationNotice.action}
+			onAction={onAuthenticationAction}
+		/>
+	) : capabilityFailures.length > 0 ? (
+		<CapabilityEmptyState
+			title={t("detail.capabilityList.partialFailure", {
+				defaultValue: "Some capabilities could not be discovered",
+			})}
+			description={t("detail.capabilityList.partialFailureDescription", {
+				defaultValue:
+					"Capability discovery was incomplete. Open logs for diagnostic details.",
+			})}
+			actionLabel={t("detail.capabilityList.viewLogs", {
+				defaultValue: "View logs",
+			})}
+			onAction={onViewLogs}
+		/>
+	) : undefined;
 	const loadServerCapabilityDetails = useCallback(
 		async (
 			item: ServerFlatCapabilityItem,
@@ -1257,6 +1365,34 @@ function ServerCapabilitiesPanel({
 	return (
 		<Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
 			<CardContent className="flex min-h-0 flex-1 flex-col p-4">
+				{capabilityFailures.length > 0 && hasLoadedCapabilityItems ? (
+					<Alert className="mb-3 shrink-0 border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+						<AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+						<AlertTitle>
+							{t("detail.capabilityList.partialFailure", {
+								defaultValue: "Some capabilities could not be discovered",
+							})}
+						</AlertTitle>
+						<AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+							<span>
+								{t("detail.capabilityList.partialFailureDescription", {
+									defaultValue:
+										"Capability discovery was incomplete. Open logs for diagnostic details.",
+								})}
+							</span>
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								onClick={onViewLogs}
+							>
+								{t("detail.capabilityList.viewLogs", {
+									defaultValue: "View logs",
+								})}
+							</Button>
+						</AlertDescription>
+					</Alert>
+				) : null}
 				<div className="shrink-0 pb-3">{toolbar}</div>
 				<CapabilityPreviewList
 					className="min-h-0 flex-1"
@@ -1270,11 +1406,168 @@ function ServerCapabilitiesPanel({
 					isLoading={initialCapabilitiesLoading}
 					searchValue={search}
 					emptyText={emptyText}
+					emptyContent={emptyContent}
 					renderFlatList={renderServerFlatCapabilityList}
 				/>
 			</CardContent>
 		</Card>
 	);
+}
+
+function resolveCapabilityAuthenticationNotice({
+	failure,
+	isOAuth,
+	hasHeaderAuth,
+	oauthNeedsAuthorization,
+	secureStoreUnavailable,
+	t,
+}: {
+	failure: CapabilityAuthenticationFailure | null;
+	isOAuth: boolean;
+	hasHeaderAuth: boolean;
+	oauthNeedsAuthorization: boolean;
+	secureStoreUnavailable: boolean;
+	t: ReturnType<typeof useTranslation>["t"];
+}): { title: string; description: string; action: string } | null {
+	if (secureStoreUnavailable) {
+		return {
+			title: t("detail.capabilityList.authentication.secureStore.title", {
+				defaultValue: "Secure Store is unavailable",
+			}),
+			description: t(
+				"detail.capabilityList.authentication.secureStore.description",
+				{
+					defaultValue:
+						"OAuth credentials cannot be accessed until Secure Store is ready.",
+				},
+			),
+			action: t("detail.capabilityList.authentication.secureStore.action", {
+				defaultValue: "Open security settings",
+			}),
+		};
+	}
+
+	if (failure) {
+		switch (failure.code) {
+			case "auth_required":
+			case "unauthorized":
+				return isOAuth
+					? {
+							title: t(
+								"detail.capabilityList.authentication.oauthRequired.title",
+								{ defaultValue: "OAuth authorization required" },
+							),
+							description: t(
+								"detail.capabilityList.authentication.oauthRequired.description",
+								{
+									defaultValue:
+										"Authorize this server before discovering its capabilities.",
+								},
+							),
+							action: t(
+								"detail.capabilityList.authentication.oauthRequired.action",
+								{ defaultValue: "Authorize" },
+							),
+						}
+					: hasHeaderAuth
+						? {
+							title: t(
+								"detail.capabilityList.authentication.headerRequired.title",
+								{ defaultValue: "Header authentication required" },
+							),
+							description: t(
+								"detail.capabilityList.authentication.headerRequired.description",
+								{
+									defaultValue:
+										"The upstream requires or rejected the configured header credential. Review the server authentication settings.",
+								},
+							),
+							action: t(
+								"detail.capabilityList.authentication.headerRequired.action",
+								{ defaultValue: "Edit authentication" },
+							),
+						}
+						: {
+								title: t(
+									"detail.capabilityList.authentication.required.title",
+									{ defaultValue: "Authentication required" },
+								),
+								description: t(
+									"detail.capabilityList.authentication.required.description",
+									{
+										defaultValue:
+											"Configure authentication before discovering this server's capabilities.",
+									},
+								),
+								action: t(
+									"detail.capabilityList.authentication.required.action",
+									{ defaultValue: "Edit authentication" },
+								),
+							};
+			case "forbidden":
+				return {
+					title: t(
+						"detail.capabilityList.authentication.forbidden.title",
+						{ defaultValue: "Authorization rejected" },
+					),
+					description: t(
+						"detail.capabilityList.authentication.forbidden.description",
+						{
+							defaultValue:
+								"The upstream denied capability access for the current authorization.",
+						},
+					),
+					action: t(
+						isOAuth
+							? "detail.capabilityList.authentication.reauthorizeAction"
+							: "detail.capabilityList.authentication.editAction",
+						{ defaultValue: isOAuth ? "Reauthorize" : "Edit authentication" },
+					),
+				};
+			case "insufficient_scope":
+				return {
+					title: t(
+						"detail.capabilityList.authentication.insufficientScope.title",
+						{ defaultValue: "Additional authorization scope required" },
+					),
+					description: t(
+						"detail.capabilityList.authentication.insufficientScope.description",
+						{
+							defaultValue:
+								"The current authorization does not grant the scope required to discover capabilities.",
+						},
+					),
+					action: t(
+						isOAuth
+							? "detail.capabilityList.authentication.reauthorizeAction"
+							: "detail.capabilityList.authentication.editAction",
+						{ defaultValue: isOAuth ? "Reauthorize" : "Edit authentication" },
+					),
+				};
+		}
+	}
+
+	if (oauthNeedsAuthorization) {
+		return {
+			title: t(
+				"detail.capabilityList.authentication.oauthRequired.title",
+				{ defaultValue: "OAuth authorization required" },
+			),
+			description: t(
+				"detail.capabilityList.authentication.oauthRequired.description",
+				{
+					defaultValue:
+						"Authorize this server before discovering its capabilities.",
+				},
+			),
+			action: t(
+				"detail.capabilityList.authentication.oauthRequired.action",
+				{ defaultValue: "Authorize" },
+			),
+		};
+	}
+
+	return null;
 }
 
 export default ServerDetailPage;

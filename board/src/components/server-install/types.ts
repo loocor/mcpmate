@@ -207,6 +207,8 @@ export interface ServerInstallManualFormProps {
 	namespaceRemediationAllowed?: boolean;
 	/** Callback for OAuth initiation */
 	onInitiateOAuth?: (config: OAuthConfigRequest) => Promise<void>;
+	/** Callback after OAuth credentials are connected for this server. */
+	onOAuthConnected?: (serverId: string) => void;
 	onAuthModeChange?: (mode: "header" | "oauth") => void;
 	/** Optional initial draft used to hydrate the form when editing an existing server. */
 	initialDraft?: ServerInstallDraft | null;

@@ -12,7 +12,7 @@ use crate::{
     CapabilityRefRecord, CapabilityRefState, CapabilityVersionChange, CapabilityVersionRecord, CatalogCommit,
     CatalogDelta, CatalogError, CatalogInvalidation, CatalogReconciliation, CatalogRecord, CatalogSnapshot,
     CatalogStats, DeclarationState, EFFECTIVE_CAPABILITY_FORMAT_V1, EffectiveCapabilityRecordV1, InventoryState,
-    KindCompleteness, KindObservation, RECORD_FORMAT_VERSION, Result, SnapshotState, schema,
+    KindCompleteness, KindFailureKind, KindObservation, RECORD_FORMAT_VERSION, Result, SnapshotState, schema,
 };
 
 #[async_trait]
@@ -59,6 +59,37 @@ impl SqliteCapabilityCatalog {
 
     pub async fn ensure_schema(&self) -> Result<()> {
         schema::ensure_schema(&self.pool).await
+    }
+
+    pub async fn invalidate_server_if_current(
+        &self,
+        server_id: &str,
+        expected_revision: i64,
+        expected_config_fingerprint: &str,
+        reason: &str,
+    ) -> Result<CatalogCommit> {
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let current = sqlx::query_as::<_, (i64, String)>(
+            "SELECT catalog_revision, config_fingerprint FROM capability_server_snapshots WHERE server_id = ?",
+        )
+        .bind(server_id)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or_else(|| CatalogError::SnapshotNotFound {
+            server_id: server_id.to_string(),
+        })?;
+        if current.0 != expected_revision || current.1 != expected_config_fingerprint {
+            transaction.commit().await?;
+            return Ok(CatalogCommit {
+                server_id: server_id.to_string(),
+                revision: current.0,
+                changed: false,
+            });
+        }
+        let commit =
+            update_snapshot_state(&mut transaction, server_id, SnapshotState::Invalidated, reason, None).await?;
+        transaction.commit().await?;
+        Ok(commit)
     }
 
     pub async fn commit_observation_in_transaction(
@@ -336,6 +367,8 @@ struct KindStateRow {
     declaration_state: String,
     inventory_state: String,
     error: Option<String>,
+    failure_kind: Option<String>,
+    timeout_ms: Option<i64>,
 }
 
 #[derive(FromRow)]
@@ -346,6 +379,8 @@ struct CurrentRecordRow {
     origin_key: String,
     capability_id: String,
     canonical_record: Vec<u8>,
+    source_payload: Vec<u8>,
+    effective_payload: Vec<u8>,
     record_format: String,
 }
 
@@ -366,6 +401,8 @@ struct CapabilityVersionRow {
     capability_id: String,
     ref_id: String,
     canonical_record: Vec<u8>,
+    source_payload: Vec<u8>,
+    effective_payload: Vec<u8>,
     record_format: String,
     first_observed_revision: i64,
 }
@@ -488,7 +525,7 @@ async fn load_snapshot_on_connection(
     };
     validate_version(row.record_format_version)?;
     let kind_rows = sqlx::query_as::<_, KindStateRow>(
-        "SELECT kind, declaration_state, inventory_state, error FROM capability_kind_states WHERE server_id = ? ORDER BY position",
+        "SELECT kind, declaration_state, inventory_state, error, failure_kind, timeout_ms FROM capability_kind_states WHERE server_id = ? ORDER BY position",
     )
     .bind(server_id)
     .fetch_all(&mut **transaction)
@@ -496,7 +533,7 @@ async fn load_snapshot_on_connection(
     let record_rows = sqlx::query_as::<_, CurrentRecordRow>(
         r#"
         SELECT r.ref_id, r.server_id, r.kind, r.origin_key,
-               c.capability_id, v.canonical_record, v.record_format
+               c.capability_id, v.canonical_record, v.source_payload, v.effective_payload, v.record_format
         FROM capability_refs r
         JOIN capability_ref_current c ON c.ref_id = r.ref_id
         JOIN capability_versions v ON v.capability_id = c.capability_id
@@ -560,22 +597,27 @@ async fn record_failure_on_connection(
     .fetch_optional(&mut **transaction)
     .await?;
     let current_revision = current.as_ref().map(|(revision, _, _, _)| *revision);
-    let current_kind_inventory = sqlx::query_scalar::<_, String>(
-        "SELECT inventory_state FROM capability_kind_states WHERE server_id = ? AND kind = ?",
+    let current_kind_inventories = sqlx::query_as::<_, (String, String)>(
+        "SELECT kind, inventory_state FROM capability_kind_states WHERE server_id = ?",
     )
     .bind(&observation.server_id)
-    .bind(observation.kind.as_str())
-    .fetch_optional(&mut **transaction)
+    .fetch_all(&mut **transaction)
     .await?;
+    let all_requested_kinds_failed = observation.kinds.iter().all(|kind| {
+        current_kind_inventories.iter().any(|(persisted_kind, inventory)| {
+            persisted_kind == kind.as_str() && InventoryState::parse(inventory) == Some(InventoryState::Failed)
+        })
+    });
     let changed = match current.as_ref() {
         Some((_, server_name, config_fingerprint, snapshot_state)) => {
             server_name != &observation.server_name
                 || config_fingerprint != &observation.config_fingerprint
                 || parse_snapshot_state(snapshot_state)? != SnapshotState::Unavailable
-                || current_kind_inventory.as_deref().and_then(InventoryState::parse) != Some(InventoryState::Failed)
+                || !all_requested_kinds_failed
         }
         None => true,
     };
+    let timeout_ms = encode_timeout_ms(observation.timeout_ms)?;
     if !changed {
         let observed_at = observation.observed_at.to_rfc3339();
         sqlx::query("UPDATE capability_server_snapshots SET observed_at = ?, last_error = ? WHERE server_id = ?")
@@ -584,13 +626,19 @@ async fn record_failure_on_connection(
             .bind(&observation.server_id)
             .execute(&mut **transaction)
             .await?;
-        sqlx::query("UPDATE capability_kind_states SET error = ?, observed_at = ? WHERE server_id = ? AND kind = ?")
+        for kind in &observation.kinds {
+            sqlx::query(
+                "UPDATE capability_kind_states SET error = ?, failure_kind = ?, timeout_ms = ?, observed_at = ? WHERE server_id = ? AND kind = ?",
+            )
             .bind(&observation.reason)
+            .bind(observation.failure_kind.as_ref().map(KindFailureKind::as_str))
+            .bind(timeout_ms)
             .bind(&observed_at)
             .bind(&observation.server_id)
-            .bind(observation.kind.as_str())
+            .bind(kind.as_str())
             .execute(&mut **transaction)
             .await?;
+        }
         return Ok(CatalogCommit {
             server_id: observation.server_id,
             revision: current_revision.expect("an unchanged failure has a persisted snapshot"),
@@ -629,32 +677,39 @@ async fn record_failure_on_connection(
     .execute(&mut **transaction)
     .await?;
     sync_child_revisions(transaction, &observation.server_id, revision).await?;
-    let position = CapabilityKind::ALL
-        .iter()
-        .position(|kind| *kind == observation.kind)
-        .unwrap_or_default() as i64;
-    sqlx::query(
-        r#"
-        INSERT INTO capability_kind_states (
-            server_id, position, kind, declaration_state, inventory_state, error, catalog_revision, observed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(server_id, kind) DO UPDATE SET
-            inventory_state = excluded.inventory_state,
-            error = excluded.error,
-            catalog_revision = excluded.catalog_revision,
-            observed_at = excluded.observed_at
-        "#,
-    )
-    .bind(&observation.server_id)
-    .bind(position)
-    .bind(observation.kind.as_str())
-    .bind(DeclarationState::Unknown.as_str())
-    .bind(InventoryState::Failed.as_str())
-    .bind(&observation.reason)
-    .bind(revision)
-    .bind(&observed_at)
-    .execute(&mut **transaction)
-    .await?;
+    for kind in &observation.kinds {
+        let position = CapabilityKind::ALL
+            .iter()
+            .position(|candidate| candidate == kind)
+            .unwrap_or_default() as i64;
+        sqlx::query(
+            r#"
+            INSERT INTO capability_kind_states (
+                server_id, position, kind, declaration_state, inventory_state, error, failure_kind, timeout_ms,
+                catalog_revision, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(server_id, kind) DO UPDATE SET
+                inventory_state = excluded.inventory_state,
+                error = excluded.error,
+                failure_kind = excluded.failure_kind,
+                timeout_ms = excluded.timeout_ms,
+                catalog_revision = excluded.catalog_revision,
+                observed_at = excluded.observed_at
+            "#,
+        )
+        .bind(&observation.server_id)
+        .bind(position)
+        .bind(kind.as_str())
+        .bind(DeclarationState::Unknown.as_str())
+        .bind(InventoryState::Failed.as_str())
+        .bind(&observation.reason)
+        .bind(observation.failure_kind.as_ref().map(KindFailureKind::as_str))
+        .bind(timeout_ms)
+        .bind(revision)
+        .bind(&observed_at)
+        .execute(&mut **transaction)
+        .await?;
+    }
     Ok(CatalogCommit {
         server_id: observation.server_id,
         revision,
@@ -685,11 +740,41 @@ impl From<CatalogInvalidationRow> for CatalogInvalidation {
     }
 }
 
+fn validate_observation_record(
+    server_id: &str,
+    record: &CatalogRecord,
+) -> Result<()> {
+    let effective_record: EffectiveCapabilityRecordV1 = serde_json::from_slice(&record.canonical_record)?;
+    effective_record.validate()?;
+    if effective_record.source.server_id != server_id
+        || effective_record.source.kind != record.kind()
+        || effective_record.source.origin_key != record.upstream_key
+        || effective_record.ref_id != record.ref_id
+    {
+        return Err(CatalogError::IntegrityMismatch {
+            identity: record.capability_id.to_string(),
+        });
+    }
+    CatalogRecord::validate_persisted_payloads(
+        &record.capability_id,
+        &record.source_payload,
+        &record.effective_payload,
+        &effective_record,
+    )?;
+    record
+        .capability_id
+        .verify_canonical_content(&record.canonical_record, &record.canonical_record)
+}
+
 async fn reconcile_observation_on_connection(
     transaction: &mut Transaction<'_, Sqlite>,
     observation: CapabilityObservation,
     previous_revision: Option<i64>,
 ) -> Result<CatalogReconciliation> {
+    for record in &observation.records {
+        validate_observation_record(&observation.server_id, record)?;
+    }
+
     let committed_at = Utc::now();
     let initialize_payload = serde_json::to_string(&observation.initialize)?;
     let current_snapshot_semantics = sqlx::query_as::<_, (String, String)>(
@@ -698,9 +783,20 @@ async fn reconcile_observation_on_connection(
     .bind(&observation.server_id)
     .fetch_optional(&mut **transaction)
     .await?;
-    let existing_kind_semantics = sqlx::query_as::<_, (String, String, String, String)>(
+    let existing_kind_semantics = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            String,
+        ),
+    >(
         r#"
-        SELECT kind, declaration_state, inventory_state, observed_at
+        SELECT kind, declaration_state, inventory_state, error, failure_kind, timeout_ms, observed_at
         FROM capability_kind_states
         WHERE server_id = ?
         ORDER BY kind
@@ -754,17 +850,34 @@ async fn reconcile_observation_on_connection(
     .collect::<Result<HashMap<_, _>>>()?;
     let existing_kind_states = existing_kind_semantics
         .iter()
-        .map(|(kind, declaration, inventory, _)| {
+        .map(|(kind, declaration, inventory, error, failure_kind, timeout_ms, _)| {
             Ok((
                 parse_kind(kind)?,
-                (parse_declaration_state(declaration)?, parse_inventory_state(inventory)?),
+                (
+                    parse_declaration_state(declaration)?,
+                    parse_inventory_state(inventory)?,
+                    error.clone(),
+                    parse_optional_failure_kind(failure_kind.as_deref())?,
+                    decode_timeout_ms(*timeout_ms)?,
+                ),
             ))
         })
         .collect::<Result<HashMap<_, _>>>()?;
     let observed_kind_states = observation
         .kind_states
         .iter()
-        .map(|state| (state.kind, (state.declaration, state.inventory)))
+        .map(|state| {
+            (
+                state.kind,
+                (
+                    state.declaration,
+                    state.inventory,
+                    state.error.clone(),
+                    state.failure_kind.clone(),
+                    state.timeout_ms,
+                ),
+            )
+        })
         .collect::<HashMap<_, _>>();
     let snapshot_semantics_changed = match current_snapshot_semantics.as_ref() {
         Some((config_fingerprint, snapshot_state)) => {
@@ -776,7 +889,7 @@ async fn reconcile_observation_on_connection(
     };
     let previous_kind_observed_at = existing_kind_semantics
         .into_iter()
-        .map(|(kind, _, _, observed_at)| Ok((parse_kind(&kind)?, observed_at)))
+        .map(|(kind, _, _, _, _, _, observed_at)| Ok((parse_kind(&kind)?, observed_at)))
         .collect::<Result<HashMap<_, _>>>()?;
 
     sqlx::query("SAVEPOINT capability_catalog_observation")
@@ -820,11 +933,13 @@ async fn reconcile_observation_on_connection(
         .await?;
 
     for (position, state) in observation.kind_states.iter().enumerate() {
+        let timeout_ms = encode_timeout_ms(state.timeout_ms)?;
         sqlx::query(
             r#"
             INSERT INTO capability_kind_states (
-                server_id, position, kind, declaration_state, inventory_state, error, catalog_revision, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                server_id, position, kind, declaration_state, inventory_state, error, failure_kind, timeout_ms,
+                catalog_revision, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&observation.server_id)
@@ -833,6 +948,8 @@ async fn reconcile_observation_on_connection(
         .bind(state.declaration.as_str())
         .bind(state.inventory.as_str())
         .bind(&state.error)
+        .bind(state.failure_kind.as_ref().map(|kind| kind.as_str()))
+        .bind(timeout_ms)
         .bind(revision)
         .bind(if observation.observed_kinds.contains(&state.kind) {
             observation.observed_at.to_rfc3339()
@@ -870,20 +987,6 @@ async fn reconcile_observation_on_connection(
         .iter()
         .filter(|record| complete_kinds.contains(&record.kind()))
     {
-        let effective_record: EffectiveCapabilityRecordV1 = serde_json::from_slice(&record.canonical_record)?;
-        effective_record.validate()?;
-        if effective_record.source.server_id != observation.server_id
-            || effective_record.source.kind != record.kind()
-            || effective_record.source.origin_key != record.upstream_key
-            || effective_record.ref_id != record.ref_id
-        {
-            return Err(CatalogError::IntegrityMismatch {
-                identity: record.capability_id.to_string(),
-            });
-        }
-        record
-            .capability_id
-            .verify_canonical_content(&record.canonical_record, &record.canonical_record)?;
         if !observed_refs.insert(record.ref_id.clone()) {
             return Err(CatalogError::DuplicateOrigin {
                 server_id: observation.server_id.clone(),
@@ -937,26 +1040,38 @@ async fn reconcile_observation_on_connection(
         let inserted = sqlx::query(
             r#"
             INSERT OR IGNORE INTO capability_versions (
-                capability_id, ref_id, canonical_record, record_format, first_observed_revision
-            ) VALUES (?, ?, ?, ?, ?)
+                capability_id, ref_id, canonical_record, source_payload, effective_payload,
+                record_format, first_observed_revision
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(record.capability_id.as_str())
         .bind(record.ref_id.as_str())
         .bind(&record.canonical_record)
+        .bind(serde_json_canonicalizer::to_vec(&record.source_payload)?)
+        .bind(serde_json_canonicalizer::to_vec(&record.effective_payload)?)
         .bind(EFFECTIVE_CAPABILITY_FORMAT_V1)
         .bind(revision)
         .execute(&mut **transaction)
         .await?;
         if inserted.rows_affected() == 0 {
-            let saved: Vec<u8> =
-                sqlx::query_scalar("SELECT canonical_record FROM capability_versions WHERE capability_id = ?")
-                    .bind(record.capability_id.as_str())
-                    .fetch_one(&mut **transaction)
-                    .await?;
+            let saved: (Vec<u8>, Vec<u8>, Vec<u8>) = sqlx::query_as(
+                "SELECT canonical_record, source_payload, effective_payload \
+                 FROM capability_versions WHERE capability_id = ?",
+            )
+            .bind(record.capability_id.as_str())
+            .fetch_one(&mut **transaction)
+            .await?;
             record
                 .capability_id
-                .verify_canonical_content(&saved, &record.canonical_record)?;
+                .verify_canonical_content(&saved.0, &record.canonical_record)?;
+            if saved.1 != serde_json_canonicalizer::to_vec(&record.source_payload)?
+                || saved.2 != serde_json_canonicalizer::to_vec(&record.effective_payload)?
+            {
+                return Err(CatalogError::IntegrityMismatch {
+                    identity: record.capability_id.to_string(),
+                });
+            }
         }
 
         sqlx::query(
@@ -1099,14 +1214,17 @@ async fn reconcile_observation_on_connection(
             .iter()
             .filter(|state| observation.observed_kinds.contains(&state.kind))
         {
+            let timeout_ms = encode_timeout_ms(state.timeout_ms)?;
             sqlx::query(
                 r#"
                 UPDATE capability_kind_states
-                SET error = ?, observed_at = ?
+                SET error = ?, failure_kind = ?, timeout_ms = ?, observed_at = ?
                 WHERE server_id = ? AND kind = ?
                 "#,
             )
             .bind(&state.error)
+            .bind(state.failure_kind.as_ref().map(|kind| kind.as_str()))
+            .bind(timeout_ms)
             .bind(observation.observed_at.to_rfc3339())
             .bind(&observation.server_id)
             .bind(state.kind.as_str())
@@ -1176,7 +1294,7 @@ async fn update_snapshot_state(
             .await?;
         if let Some(kind) = failed_kind {
             sqlx::query(
-                "UPDATE capability_kind_states SET error = ?, observed_at = ? WHERE server_id = ? AND kind = ?",
+                "UPDATE capability_kind_states SET error = ?, failure_kind = NULL, timeout_ms = NULL, observed_at = ? WHERE server_id = ? AND kind = ?",
             )
             .bind(reason)
             .bind(&now)
@@ -1219,11 +1337,14 @@ async fn update_snapshot_state(
         sqlx::query(
             r#"
             INSERT INTO capability_kind_states
-                (server_id, position, kind, declaration_state, inventory_state, error, catalog_revision, observed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (server_id, position, kind, declaration_state, inventory_state, error, failure_kind, timeout_ms,
+                 catalog_revision, observed_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
             ON CONFLICT(server_id, kind) DO UPDATE SET
                 inventory_state = excluded.inventory_state,
                 error = excluded.error,
+                failure_kind = NULL,
+                timeout_ms = NULL,
                 observed_at = excluded.observed_at,
                 catalog_revision = excluded.catalog_revision
             "#,
@@ -1284,6 +1405,34 @@ fn parse_inventory_state(value: &str) -> Result<InventoryState> {
     parse_labeled("inventory_state", value, InventoryState::parse)
 }
 
+fn parse_optional_failure_kind(value: Option<&str>) -> Result<Option<crate::KindFailureKind>> {
+    value
+        .map(|value| parse_labeled("failure_kind", value, crate::KindFailureKind::parse))
+        .transpose()
+}
+
+fn decode_timeout_ms(value: Option<i64>) -> Result<Option<u64>> {
+    value
+        .map(|value| {
+            u64::try_from(value).map_err(|_| CatalogError::InvalidValue {
+                field: "timeout_ms",
+                value: value.to_string(),
+            })
+        })
+        .transpose()
+}
+
+fn encode_timeout_ms(value: Option<u64>) -> Result<Option<i64>> {
+    value
+        .map(|value| {
+            i64::try_from(value).map_err(|_| CatalogError::InvalidValue {
+                field: "timeout_ms",
+                value: value.to_string(),
+            })
+        })
+        .transpose()
+}
+
 fn parse_ref_state(value: &str) -> Result<CapabilityRefState> {
     parse_labeled("ref_state", value, CapabilityRefState::parse)
 }
@@ -1313,7 +1462,8 @@ async fn load_version_history_on_pool(
 ) -> Result<Vec<CapabilityVersionRecord>> {
     sqlx::query_as::<_, CapabilityVersionRow>(
         r#"
-        SELECT capability_id, ref_id, canonical_record, record_format, first_observed_revision
+        SELECT capability_id, ref_id, canonical_record, source_payload, effective_payload,
+               record_format, first_observed_revision
         FROM capability_versions
         WHERE ref_id = ?
         ORDER BY first_observed_revision, capability_id
@@ -1378,6 +1528,8 @@ impl TryFrom<KindStateRow> for KindObservation {
             declaration: parse_declaration_state(&row.declaration_state)?,
             inventory: parse_inventory_state(&row.inventory_state)?,
             error: row.error,
+            failure_kind: parse_optional_failure_kind(row.failure_kind.as_deref())?,
+            timeout_ms: decode_timeout_ms(row.timeout_ms)?,
         })
     }
 }
@@ -1399,7 +1551,15 @@ impl TryFrom<CurrentRecordRow> for CatalogRecord {
                 identity: capability_id.to_string(),
             });
         }
-        CatalogRecord::from_effective_record(capability_id, row.canonical_record, effective_record)
+        let source_payload = serde_json::from_slice(&row.source_payload)?;
+        let effective_payload = serde_json::from_slice(&row.effective_payload)?;
+        CatalogRecord::from_persisted_record(
+            capability_id,
+            row.canonical_record,
+            source_payload,
+            effective_payload,
+            effective_record,
+        )
     }
 }
 
@@ -1441,6 +1601,14 @@ impl TryFrom<CapabilityVersionRow> for CapabilityVersionRecord {
                 identity: capability_id.to_string(),
             });
         }
+        let source_payload: crate::CapabilityPayload = serde_json::from_slice(&row.source_payload)?;
+        let effective_payload: crate::CapabilityPayload = serde_json::from_slice(&row.effective_payload)?;
+        CatalogRecord::validate_persisted_payloads(
+            &capability_id,
+            &source_payload,
+            &effective_payload,
+            &effective_record,
+        )?;
         capability_id.verify_canonical_content(&row.canonical_record, &row.canonical_record)?;
         Ok(Self {
             capability_id,

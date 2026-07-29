@@ -1,5 +1,23 @@
 import type { ServerSummary } from "./types";
 
+export function formatServerEndpoint(endpoint?: string | null): string | null {
+  const value = endpoint?.trim();
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, url.pathname === "/" ? "" : "/");
+  } catch {
+    return null;
+  }
+}
+
 export function formatServerNamespaceTitle(namespace: string): string {
   return namespace
     .split(/[_\s-]+/)

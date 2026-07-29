@@ -1281,21 +1281,9 @@ impl SqliteSurfaceStore {
         job: &SurfaceReconciliationJob,
         worker_id: &str,
     ) -> Result<()> {
-        let current = load_reconciliation_job_with_executor(&mut **transaction, &job.idempotency_key)
-            .await?
-            .ok_or_else(|| CatalogError::SurfaceNotFound {
-                entity: "surface reconciliation job",
-                id: job.idempotency_key.clone(),
-            })?;
-        if current.status != ReconciliationJobStatus::Leased
-            || current.leased_by.as_deref() != Some(worker_id)
-            || current.attempt_count != job.attempt_count
-        {
-            return Err(CatalogError::ConcurrencyConflict {
-                entity: "surface reconciliation lease",
-                id: job.idempotency_key.clone(),
-            });
-        }
+        let current = self
+            .load_and_validate_reconciliation_lease_owner_in_transaction(transaction, job, worker_id)
+            .await?;
         let revisions = current
             .target_revision_set
             .as_object()
@@ -1332,6 +1320,41 @@ impl SqliteSurfaceStore {
             });
         }
         Ok(())
+    }
+
+    pub async fn validate_reconciliation_lease_owner_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        job: &SurfaceReconciliationJob,
+        worker_id: &str,
+    ) -> Result<()> {
+        self.load_and_validate_reconciliation_lease_owner_in_transaction(transaction, job, worker_id)
+            .await
+            .map(|_| ())
+    }
+
+    async fn load_and_validate_reconciliation_lease_owner_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        job: &SurfaceReconciliationJob,
+        worker_id: &str,
+    ) -> Result<SurfaceReconciliationJob> {
+        let current = load_reconciliation_job_with_executor(&mut **transaction, &job.idempotency_key)
+            .await?
+            .ok_or_else(|| CatalogError::SurfaceNotFound {
+                entity: "surface reconciliation job",
+                id: job.idempotency_key.clone(),
+            })?;
+        if current.status != ReconciliationJobStatus::Leased
+            || current.leased_by.as_deref() != Some(worker_id)
+            || current.attempt_count != job.attempt_count
+        {
+            return Err(CatalogError::ConcurrencyConflict {
+                entity: "surface reconciliation lease",
+                id: job.idempotency_key.clone(),
+            });
+        }
+        Ok(current)
     }
 
     pub async fn enqueue_outbox_event_in_transaction(

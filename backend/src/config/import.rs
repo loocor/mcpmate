@@ -2,7 +2,7 @@
 // Contains functions for importing configuration from JSON files to database
 
 use crate::common::types::{ServerSource, ServerSourceType};
-use crate::core::models::Config;
+use crate::{config::database::Database, core::models::Config};
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 use std::collections::HashMap;
@@ -43,14 +43,14 @@ async fn import_config(
         })
         .collect();
 
-    let dummy_pool = Arc::new(tokio::sync::Mutex::new(crate::core::pool::UpstreamConnectionPool::new(
-        Arc::new(Default::default()),
-        None,
-    )));
+    let database = Arc::new(Database {
+        pool: pool.clone(),
+        path: std::path::PathBuf::new(),
+        capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+    });
     let _ = crate::config::server::import_batch(
-        pool,
-        Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
-        &dummy_pool,
+        database,
+        None,
         items,
         crate::config::server::ImportOptions::dashboard_import(false, None),
     )

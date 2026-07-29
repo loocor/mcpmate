@@ -32,7 +32,7 @@ pub use oauth::{
     upsert_server_oauth_config, upsert_server_oauth_token,
 };
 
-pub use capabilities::{CapabilitySnapshot, discover_from_config, discover_from_connection, sync_via_connection_pool};
+pub use capabilities::{CapabilitySnapshot, discover_from_config, discover_from_connection};
 pub use enabled::{
     ServerEnabledService, get_enabled_servers, get_enabled_servers_by_profile, get_server_global_status,
     is_server_enabled_in_any_active_profile, is_server_enabled_in_any_profile, is_server_in_profile,

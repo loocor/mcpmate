@@ -1,7 +1,12 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
-import { extractImportStats, serversApi, type ImportStats } from "../../lib/api";
+import {
+	assertCompleteServerImport,
+	extractImportStats,
+	serversApi,
+	type ImportStats,
+} from "../../lib/api";
 import { resolveAutoAddTargetProfileId } from "../../lib/default-profile";
 import {
 	normalizeIngestPayload,
@@ -285,6 +290,7 @@ export function useOperatorServerImport({
 				setPhase("ready");
 				return false;
 			}
+			assertCompleteServerImport(stats);
 
 			const { importedCount, skippedCount } = stats;
 			const skippedDescription = buildSkippedInstallDescription(stats, t);

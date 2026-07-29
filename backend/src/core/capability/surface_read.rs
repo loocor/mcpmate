@@ -2,10 +2,19 @@ use std::collections::{BTreeMap, HashSet};
 
 use mcpmate_capability_store::{
     CapabilityId, CapabilityKind, CapabilityRefId, CatalogError, EffectiveCapabilityDefinition,
-    EffectiveCapabilityRecordV1, Result, SurfaceManifestId,
+    EffectiveCapabilityRecordV1, Result, SURFACE_MANIFEST_FORMAT_V1, SurfaceManifestEntry, SurfaceManifestId,
 };
 use rmcp::model::{Prompt, Resource, ResourceTemplate, Tool};
+use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Row, Sqlite};
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedManifestContent {
+    format: String,
+    consumer_id: String,
+    entries: Vec<SurfaceManifestEntry>,
+}
 
 #[derive(Clone, Debug)]
 pub struct ActiveSurfaceEntry {
@@ -118,9 +127,14 @@ impl SurfaceReader {
         }
         let manifest_id: SurfaceManifestId = binding.try_get::<String, _>("manifest_id")?.parse()?;
         let canonical_content: Vec<u8> = binding.try_get("canonical_content")?;
-        let content: serde_json::Value = serde_json::from_slice(&canonical_content)?;
+        let content: PersistedManifestContent = serde_json::from_slice(&canonical_content)?;
         manifest_id.verify_content(&content)?;
         if serde_json_canonicalizer::to_vec(&content)? != canonical_content {
+            return Err(CatalogError::IntegrityMismatch {
+                identity: manifest_id.to_string(),
+            });
+        }
+        if content.format != SURFACE_MANIFEST_FORMAT_V1 || content.consumer_id != consumer_id {
             return Err(CatalogError::IntegrityMismatch {
                 identity: manifest_id.to_string(),
             });
@@ -128,8 +142,10 @@ impl SurfaceReader {
 
         let rows = sqlx::query(
             r#"
-            SELECT e.ref_id, e.capability_id, v.canonical_record
+            SELECT e.position, e.ref_id, e.capability_id, v.canonical_record,
+                   r.server_id, r.kind AS ref_kind, r.origin_key
             FROM surface_manifest_entries e
+            JOIN capability_refs r ON r.ref_id = e.ref_id
             JOIN capability_versions v
               ON v.ref_id = e.ref_id AND v.capability_id = e.capability_id
             WHERE e.manifest_id = ?
@@ -141,16 +157,37 @@ impl SurfaceReader {
         .await?;
         let mut entries = Vec::with_capacity(rows.len());
         let mut external_keys = HashSet::with_capacity(rows.len());
-        for row in rows {
+        if rows.len() != content.entries.len() {
+            return Err(CatalogError::IntegrityMismatch {
+                identity: manifest_id.to_string(),
+            });
+        }
+        for (position, row) in rows.into_iter().enumerate() {
             let ref_id: CapabilityRefId = row.try_get::<String, _>("ref_id")?.parse()?;
             let capability_id: CapabilityId = row.try_get::<String, _>("capability_id")?.parse()?;
+            let persisted_position: i64 = row.try_get("position")?;
+            if persisted_position != position as i64
+                || content.entries[position].ref_id != ref_id
+                || content.entries[position].capability_id != capability_id
+            {
+                return Err(CatalogError::IntegrityMismatch {
+                    identity: ref_id.to_string(),
+                });
+            }
             let canonical_record: Vec<u8> = row.try_get("canonical_record")?;
             capability_id.verify_canonical_content(&canonical_record, &canonical_record)?;
             let record: EffectiveCapabilityRecordV1 = serde_json::from_slice(&canonical_record)?;
             record.validate()?;
-            if record.ref_id != ref_id {
+            let ref_kind: String = row.try_get("ref_kind")?;
+            let source_server_id: String = row.try_get("server_id")?;
+            let upstream_key: String = row.try_get("origin_key")?;
+            if record.ref_id != ref_id
+                || record.source.server_id != source_server_id
+                || record.source.kind.as_str() != ref_kind
+                || record.source.origin_key != upstream_key
+            {
                 return Err(CatalogError::IntegrityMismatch {
-                    identity: capability_id.to_string(),
+                    identity: ref_id.to_string(),
                 });
             }
             let kind = record.definition.kind();
@@ -166,8 +203,8 @@ impl SurfaceReader {
                 capability_id,
                 kind,
                 external_key,
-                source_server_id: record.source.server_id,
-                upstream_key: record.source.origin_key,
+                source_server_id,
+                upstream_key,
                 definition: record.definition,
             });
         }

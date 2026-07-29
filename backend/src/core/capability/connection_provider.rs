@@ -26,6 +26,7 @@ pub(crate) enum OwnerSource {
 pub(crate) struct CapabilityOwner {
     pub server_id: String,
     pub server_name: String,
+    pub config_fingerprint: String,
     pub instance_id: String,
     pub connection_generation: Option<u64>,
     pub peer: Peer<RoleClient>,
@@ -104,7 +105,15 @@ pub(crate) enum DiscoveryRetryDisposition {
     DoNotRetry,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CapabilityAuthenticationFailureCode {
+    AuthRequired,
+    Unauthorized,
+    Forbidden,
+    InsufficientScope,
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
 pub(crate) enum CapabilityOwnerError {
     #[error("no capability owner is available: {reason}")]
     Missing { reason: String },
@@ -112,8 +121,13 @@ pub(crate) enum CapabilityOwnerError {
     Stale { reason: String },
     #[error("capability owner acquisition timed out after {timeout_ms} ms")]
     Timeout { timeout_ms: u128 },
-    #[error("capability owner authentication failed: {reason}")]
-    Authentication { reason: String },
+    #[error("capability owner acquisition deferred by backoff for {remaining_ms} ms")]
+    Backoff { remaining_ms: u128 },
+    #[error("capability owner authentication failed ({code:?}): {reason}")]
+    Authentication {
+        code: CapabilityAuthenticationFailureCode,
+        reason: String,
+    },
     #[error("capability owner configuration is invalid: {reason}")]
     Configuration { reason: String },
     #[error("capability owner acquisition failed: {reason}")]
@@ -124,9 +138,11 @@ impl CapabilityOwnerError {
     pub(crate) const fn retry_disposition(&self) -> DiscoveryRetryDisposition {
         match self {
             Self::Missing { .. } | Self::Stale { .. } => DiscoveryRetryDisposition::FreshOnce,
-            Self::Timeout { .. } | Self::Authentication { .. } | Self::Configuration { .. } | Self::Other { .. } => {
-                DiscoveryRetryDisposition::DoNotRetry
-            }
+            Self::Timeout { .. }
+            | Self::Backoff { .. }
+            | Self::Authentication { .. }
+            | Self::Configuration { .. }
+            | Self::Other { .. } => DiscoveryRetryDisposition::DoNotRetry,
         }
     }
 }
@@ -167,45 +183,69 @@ impl PoolCapabilityConnectionProvider {
         }
     }
 
-    fn is_unauthorized_or_forbidden(status: reqwest::StatusCode) -> bool {
-        status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN
+    fn authentication_status_code(status: reqwest::StatusCode) -> Option<CapabilityAuthenticationFailureCode> {
+        match status {
+            reqwest::StatusCode::UNAUTHORIZED => Some(CapabilityAuthenticationFailureCode::Unauthorized),
+            reqwest::StatusCode::FORBIDDEN => Some(CapabilityAuthenticationFailureCode::Forbidden),
+            _ => None,
+        }
     }
 
-    fn is_authentication_error(error: &anyhow::Error) -> bool {
-        if error
-            .downcast_ref::<reqwest::Error>()
-            .and_then(reqwest::Error::status)
-            .is_some_and(Self::is_unauthorized_or_forbidden)
-        {
-            return true;
-        }
-
-        let Some(rmcp::service::ClientInitializeError::TransportError { error, .. }) =
-            error.downcast_ref::<rmcp::service::ClientInitializeError>()
-        else {
-            return false;
-        };
-        let Some(streamable) = error
-            .error
-            .downcast_ref::<rmcp::transport::streamable_http_client::StreamableHttpError<reqwest::Error>>()
-        else {
-            return false;
-        };
-
-        match streamable {
-            rmcp::transport::streamable_http_client::StreamableHttpError::AuthRequired(_)
-            | rmcp::transport::streamable_http_client::StreamableHttpError::InsufficientScope(_) => true,
-            rmcp::transport::streamable_http_client::StreamableHttpError::Client(client_error) => {
-                client_error.status().is_some_and(Self::is_unauthorized_or_forbidden)
+    pub(crate) fn authentication_failure_code(error: &anyhow::Error) -> Option<CapabilityAuthenticationFailureCode> {
+        for source in error.chain() {
+            if let Some(code) = source
+                .downcast_ref::<reqwest::Error>()
+                .and_then(reqwest::Error::status)
+                .and_then(Self::authentication_status_code)
+            {
+                return Some(code);
             }
-            _ => false,
+            let Some(rmcp::service::ClientInitializeError::TransportError { error, .. }) =
+                source.downcast_ref::<rmcp::service::ClientInitializeError>()
+            else {
+                continue;
+            };
+            let Some(streamable) = error
+                .error
+                .downcast_ref::<rmcp::transport::streamable_http_client::StreamableHttpError<reqwest::Error>>()
+            else {
+                continue;
+            };
+            return match streamable {
+                rmcp::transport::streamable_http_client::StreamableHttpError::AuthRequired(_) => {
+                    Some(CapabilityAuthenticationFailureCode::AuthRequired)
+                }
+                rmcp::transport::streamable_http_client::StreamableHttpError::InsufficientScope(_) => {
+                    Some(CapabilityAuthenticationFailureCode::InsufficientScope)
+                }
+                rmcp::transport::streamable_http_client::StreamableHttpError::Client(client_error) => {
+                    client_error.status().and_then(Self::authentication_status_code)
+                }
+                _ => None,
+            };
         }
+        None
     }
 
     fn classify_acquisition_error(error: anyhow::Error) -> CapabilityOwnerError {
-        if Self::is_authentication_error(&error) {
+        if let Some(code) = Self::authentication_failure_code(&error) {
             CapabilityOwnerError::Authentication {
+                code,
                 reason: error.to_string(),
+            }
+        } else if let Some(timeout) = error
+            .chain()
+            .find_map(|source| source.downcast_ref::<crate::core::transport::timeout_policy::ServerStartupTimeout>())
+        {
+            CapabilityOwnerError::Timeout {
+                timeout_ms: timeout.timeout_ms,
+            }
+        } else if let Some(backoff) = error
+            .chain()
+            .find_map(|source| source.downcast_ref::<crate::core::pool::ValidationConnectionBackoff>())
+        {
+            CapabilityOwnerError::Backoff {
+                remaining_ms: backoff.remaining_ms,
             }
         } else {
             CapabilityOwnerError::Other {
@@ -274,10 +314,21 @@ impl PoolCapabilityConnectionProvider {
                 ),
             });
         }
+        let config_fingerprint =
+            connection
+                .config_fingerprint
+                .clone()
+                .ok_or_else(|| CapabilityOwnerError::Configuration {
+                    reason: format!(
+                        "validation owner '{}' for server '{}' has no bound configuration fingerprint",
+                        connection.id, ctx.server_id
+                    ),
+                })?;
 
         Ok(CapabilityOwner {
             server_id: ctx.server_id.clone(),
             server_name: connection.server_name.clone(),
+            config_fingerprint,
             instance_id: connection.id.clone(),
             connection_generation: Some(reservation.generation()),
             peer: service.peer().clone(),
@@ -387,7 +438,7 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
         else {
             return Ok(None);
         };
-        let closed_or_peer = {
+        let closed_or_owner = {
             let connection =
                 pool.get_instance(&ctx.server_id, &instance_id)
                     .map_err(|error| CapabilityOwnerError::Stale {
@@ -404,11 +455,16 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
             if service.is_closed() {
                 Err(format!("selected owner '{instance_id}' is closed"))
             } else {
-                Ok(service.peer().clone())
+                let Some(config_fingerprint) = connection.config_fingerprint.clone() else {
+                    return Err(CapabilityOwnerError::Configuration {
+                        reason: format!("selected owner '{instance_id}' has no bound configuration fingerprint"),
+                    });
+                };
+                Ok((service.peer().clone(), config_fingerprint))
             }
         };
-        let peer = match closed_or_peer {
-            Ok(peer) => peer,
+        let (peer, config_fingerprint) = match closed_or_owner {
+            Ok(owner) => owner,
             Err(reason) => {
                 pool.register_failure(
                     &ctx.server_id,
@@ -434,6 +490,7 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
         Ok(Some(CapabilityOwner {
             server_id: ctx.server_id.clone(),
             server_name,
+            config_fingerprint,
             instance_id,
             connection_generation: None,
             peer,
@@ -447,16 +504,7 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
         ctx: &ListCtx,
     ) -> Result<CapabilityOwner, CapabilityOwnerError> {
         let (session_id, owns_session) = Self::validation_session(ctx);
-        let acquisition = self.create_fresh_owner(ctx, &session_id, owns_session);
-        match ctx.timeout {
-            Some(timeout) => match tokio::time::timeout(timeout, acquisition).await {
-                Ok(result) => result,
-                Err(_) => Err(CapabilityOwnerError::Timeout {
-                    timeout_ms: timeout.as_millis(),
-                }),
-            },
-            None => acquisition.await,
-        }
+        self.create_fresh_owner(ctx, &session_id, owns_session).await
     }
 
     async fn release_owner(
@@ -484,8 +532,8 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
     use super::{
-        CapabilityConnectionProvider, CapabilityOwnerCleanup, CapabilityOwnerError, DiscoveryRetryDisposition,
-        OwnerSource, PoolCapabilityConnectionProvider,
+        CapabilityAuthenticationFailureCode, CapabilityConnectionProvider, CapabilityOwnerCleanup,
+        CapabilityOwnerError, DiscoveryRetryDisposition, OwnerSource, PoolCapabilityConnectionProvider,
     };
     use crate::config::database::Database;
     use crate::core::{
@@ -512,7 +560,7 @@ mod tests {
             capability: CapabilityType::Tools,
             server_id: "server-1".to_string(),
             refresh: None,
-            timeout: Some(Duration::from_secs(1)),
+            operation_timeout: Duration::from_secs(1),
             validation_session: validation_session.map(str::to_string),
             runtime_identity: None,
             connection_selection,
@@ -560,6 +608,7 @@ mod tests {
             .expect("client should initialize");
         let mut connection = UpstreamConnection::new("selected-server".to_string());
         connection.update_connected(service, Vec::new(), Some(rmcp::model::ServerCapabilities::default()));
+        connection.config_fingerprint = Some("test-config".to_string());
         (connection, server_handle)
     }
 
@@ -790,7 +839,10 @@ mod tests {
 
     #[tokio::test]
     async fn fresh_http_initialize_auth_failure_remains_typed_and_does_not_retry() {
-        for status in [401, 403] {
+        for (status, expected_code) in [
+            (401, CapabilityAuthenticationFailureCode::AuthRequired),
+            (403, CapabilityAuthenticationFailureCode::InsufficientScope),
+        ] {
             let upstream = MockServer::start().await;
             Mock::given(method("POST"))
                 .respond_with(ResponseTemplate::new(status).insert_header(
@@ -816,9 +868,26 @@ mod tests {
                 Ok(_) => panic!("{status} initialize must fail acquisition"),
             };
 
-            assert!(matches!(error, CapabilityOwnerError::Authentication { .. }));
+            assert!(matches!(
+                error,
+                CapabilityOwnerError::Authentication { code, .. } if code == expected_code
+            ));
             assert_eq!(error.retry_disposition(), DiscoveryRetryDisposition::DoNotRetry);
         }
+    }
+
+    #[test]
+    fn validation_backoff_remains_typed() {
+        let error = PoolCapabilityConnectionProvider::classify_acquisition_error(
+            crate::core::pool::ValidationConnectionBackoff {
+                server_name: "auth_fixture".to_string(),
+                remaining_ms: 10_000,
+            }
+            .into(),
+        );
+
+        assert!(matches!(error, CapabilityOwnerError::Backoff { remaining_ms: 10_000 }));
+        assert_eq!(error.retry_disposition(), DiscoveryRetryDisposition::DoNotRetry);
     }
 
     #[tokio::test]
@@ -1081,6 +1150,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn existing_owner_keeps_the_configuration_bound_to_its_connection() {
+        let database = test_database().await;
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command) VALUES ('server-1', 'selected_server', 'stdio', 'old-command')",
+        )
+        .execute(&database.pool)
+        .await
+        .expect("insert server record");
+        let old_fingerprint =
+            crate::config::server::capabilities::current_config_fingerprint(&database.pool, "server-1")
+                .await
+                .expect("load original fingerprint");
+        let (mut connection, server_handle) = connected_instance().await;
+        connection.id = "selected-instance".to_string();
+        connection.config_fingerprint = Some(old_fingerprint.clone());
+        let mut raw_pool = empty_pool();
+        raw_pool.database = Some(database.clone());
+        raw_pool
+            .connections
+            .entry("server-1".to_string())
+            .or_default()
+            .insert(connection.id.clone(), connection);
+        sqlx::query("UPDATE server_config SET command = 'new-command' WHERE id = 'server-1'")
+            .execute(&database.pool)
+            .await
+            .expect("update server configuration");
+        let pool = Arc::new(Mutex::new(raw_pool));
+        let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database.clone());
+
+        let owner = provider
+            .existing_owner(&list_ctx(None, None))
+            .await
+            .expect("owner lookup should succeed")
+            .expect("existing owner should exist");
+
+        assert_eq!(owner.config_fingerprint, old_fingerprint);
+        let error = crate::config::server::capabilities::commit_capability_protocol_observation(
+            &database.pool,
+            database.capability_cache.as_ref(),
+            &owner.server_id,
+            &owner.server_name,
+            &owner.config_fingerprint,
+            crate::config::server::capabilities::CapabilityProtocolObservation {
+                initialize: None,
+                tools: Vec::new(),
+                resources: Vec::new(),
+                prompts: Vec::new(),
+                templates: Vec::new(),
+                kinds: crate::core::pool::CapSyncFlags::TOOLS,
+                kind_states: Vec::new(),
+            },
+        )
+        .await
+        .expect_err("stale connection configuration must be rejected");
+        assert!(
+            error
+                .downcast_ref::<crate::config::server::capabilities::CapabilityConfigurationChanged>()
+                .is_some()
+        );
+        drop(owner);
+
+        let mut guard = pool.lock().await;
+        let mut connection = guard
+            .connections
+            .get_mut("server-1")
+            .expect("server map")
+            .remove("selected-instance")
+            .expect("selected connection");
+        let service = connection.service.take().expect("service owner");
+        drop(guard);
+        Arc::try_unwrap(service)
+            .expect("test should retain the only RunningService owner")
+            .cancel()
+            .await
+            .expect("client should cancel");
+        server_handle
+            .await
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    #[tokio::test]
     async fn existing_owner_uses_the_canonical_database_namespace() {
         let database = test_database().await;
         sqlx::query(
@@ -1181,6 +1332,18 @@ mod tests {
             .await
             .expect("server task should join")
             .expect("server should stop");
+    }
+
+    #[test]
+    fn typed_startup_timeout_preserves_the_timeout_evidence() {
+        let error =
+            anyhow::Error::new(crate::core::transport::timeout_policy::ServerStartupTimeout { timeout_ms: 321 })
+                .context("validation owner startup failed");
+
+        assert!(matches!(
+            PoolCapabilityConnectionProvider::classify_acquisition_error(error),
+            CapabilityOwnerError::Timeout { timeout_ms: 321 }
+        ));
     }
 
     #[test]

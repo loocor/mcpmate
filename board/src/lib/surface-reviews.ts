@@ -14,6 +14,21 @@ const CLIENT_OWNER_TYPES = new Set([
   "consumer_server_exposure",
 ]);
 
+function getCanonicalSourceServerId(record: unknown): string | null {
+  if (
+    typeof record !== "object" ||
+    record === null ||
+    !("source" in record) ||
+    typeof record.source !== "object" ||
+    record.source === null ||
+    !("serverId" in record.source) ||
+    typeof record.source.serverId !== "string"
+  ) {
+    return null;
+  }
+  return record.source.serverId;
+}
+
 export function getProfileReviewCount(
   items: SurfaceReviewItem[],
   profileId: string,
@@ -65,20 +80,7 @@ export function getSurfaceReviewDestination(
       typeof item.target_record === "object" && item.target_record !== null
         ? item.target_record
         : item.before_record;
-    const source =
-      typeof record === "object" &&
-      record !== null &&
-      "source" in record &&
-      typeof record.source === "object" &&
-      record.source !== null
-        ? record.source
-        : null;
-    const serverId =
-      source &&
-      "serverId" in source &&
-      typeof source.serverId === "string"
-        ? source.serverId
-        : null;
+    const serverId = getCanonicalSourceServerId(record);
     const clientId = encodeURIComponent(
       customProfileClient?.identifier ?? owner.owner_id,
     );

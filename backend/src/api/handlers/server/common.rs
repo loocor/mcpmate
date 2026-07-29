@@ -571,6 +571,7 @@ pub(crate) fn build_server_capability_summary(
             current_count,
             current_available,
             last_error,
+            failure_kind: observation.and_then(|state| state.failure_kind.clone()),
         }
     };
 
