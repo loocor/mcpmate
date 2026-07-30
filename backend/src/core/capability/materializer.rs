@@ -1578,6 +1578,9 @@ pub async fn revoke_managed_surface_in_transaction(
         return Ok(false);
     };
     store
+        .obsolete_consumer_review_items_in_transaction(transaction, consumer_id)
+        .await?;
+    store
         .enqueue_outbox_event_in_transaction(
             transaction,
             &SurfaceOutboxEvent::new(

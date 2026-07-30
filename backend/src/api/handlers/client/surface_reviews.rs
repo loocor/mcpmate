@@ -553,13 +553,15 @@ async fn resolve_intent_review(
         SurfaceIntentResolutionActionData::RebindRef => ReviewResolutionAction::RebindRef,
     };
     let decision_id = format!("decision-{}", uuid::Uuid::new_v4());
-    let resolution_payload = if request.action == SurfaceIntentResolutionActionData::RebindRef {
-        Some(serde_json::json!({
-            "owner": request.owner,
-            "new_ref_id": request.new_ref_id,
-        }))
-    } else {
-        None
+    let resolution_payload = match request.action {
+        SurfaceIntentResolutionActionData::KeepIntent => None,
+        SurfaceIntentResolutionActionData::RemoveIntent => Some(serde_json::json!({
+            "owner": request.owner.as_ref(),
+        })),
+        SurfaceIntentResolutionActionData::RebindRef => Some(serde_json::json!({
+            "owner": request.owner.as_ref(),
+            "new_ref_id": request.new_ref_id.as_ref(),
+        })),
     };
     store
         .append_review_decision_in_transaction(
@@ -642,6 +644,7 @@ async fn resolve_intent_review(
                 "before_capability_id": item.item.before_capability_id,
                 "target_capability_id": item.item.target_capability_id,
                 "action": review_resolution_action_name(resolution_action),
+                "owner": request.owner,
                 "impacted_consumer_ids": impact.impacted_consumer_ids,
                 "binding_generation": response_generation,
                 "effective_surface_changed": effective_surface_changed,
@@ -1079,16 +1082,17 @@ async fn review_item_data(
     record: SurfaceReviewRecord,
 ) -> Result<SurfaceReviewItemData, ApiError> {
     let store = SqliteSurfaceStore::new(pool.clone());
-    let binding = store
+    let binding_generation = store
         .load_binding(&record.item.consumer_id)
         .await
         .map_err(store_error)?
-        .ok_or_else(|| {
-            ApiError::Conflict(format!(
-                "Consumer '{}' has no active Surface publication",
-                record.item.consumer_id
-            ))
-        })?;
+        .map(|binding| binding.generation);
+    if binding_generation.is_none() && record.item.lifecycle != ReviewLifecycle::Obsolete {
+        return Err(ApiError::Conflict(format!(
+            "Consumer '{}' has no active Surface publication",
+            record.item.consumer_id
+        )));
+    }
     let before_record = load_effective_record(pool, record.item.before_capability_id.as_ref()).await?;
     let target_record = load_effective_record(pool, record.item.target_capability_id.as_ref()).await?;
     let field_diff = field_diff(before_record.as_ref(), target_record.as_ref());
@@ -1096,7 +1100,7 @@ async fn review_item_data(
         review_item_id: record.item.review_item_id,
         proposal_id: record.item.created_by_proposal_id,
         consumer_id: record.item.consumer_id,
-        binding_generation: binding.generation,
+        binding_generation,
         ref_id: record.item.ref_id.to_string(),
         before_capability_id: record.item.before_capability_id.map(|id| id.to_string()),
         target_capability_id: record.item.target_capability_id.map(|id| id.to_string()),
@@ -1503,6 +1507,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn managed_surface_revocation_obsoletes_reviews_without_breaking_projection() {
+        let (state, review_item_id, _) = review_fixture().await;
+        let pool = &state.database.as_ref().expect("test database").pool;
+        let mut transaction = pool.begin().await.expect("revocation transaction");
+        crate::core::capability::materializer::revoke_managed_surface_in_transaction(
+            pool,
+            &mut transaction,
+            "consumer-a",
+            "test-revocation",
+        )
+        .await
+        .expect("revoke managed Surface");
+        transaction.commit().await.expect("commit revocation");
+
+        let pending = list_surface_reviews(
+            State(state.clone()),
+            Query(SurfaceReviewListQuery {
+                consumer_id: None,
+                owner_type: None,
+                owner_id: None,
+                state: Some(SurfaceReviewLifecycleData::Pending),
+            }),
+        )
+        .await
+        .expect("pending review projection remains available")
+        .0
+        .data
+        .expect("pending review data");
+        assert!(pending.items.is_empty());
+
+        let obsolete = get_surface_review(
+            State(state.clone()),
+            Path(SurfaceReviewPath {
+                review_item_id: review_item_id.clone(),
+            }),
+        )
+        .await
+        .expect("obsolete review remains readable")
+        .0
+        .data
+        .expect("obsolete review data");
+        assert_eq!(obsolete.lifecycle, SurfaceReviewLifecycleData::Obsolete);
+        assert!(obsolete.owners.is_empty());
+        assert!(obsolete.binding_generation.is_none());
+
+        let active_owner_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM surface_review_owners WHERE review_item_id = ? AND active = 1")
+                .bind(review_item_id)
+                .fetch_one(pool)
+                .await
+                .expect("count active review owners");
+        assert_eq!(active_owner_count, 0);
+    }
+
+    #[tokio::test]
     async fn review_detail_exposes_current_binding_generation() {
         let (state, review_item_id, _) = review_fixture().await;
 
@@ -1517,7 +1576,7 @@ mod tests {
         let data = response.0.data.expect("review detail data");
 
         assert_eq!(data.review_item_id, review_item_id);
-        assert_eq!(data.binding_generation, 1);
+        assert_eq!(data.binding_generation, Some(1));
     }
 
     #[tokio::test]
@@ -1681,7 +1740,7 @@ mod tests {
         assert_eq!(relationship_count, 1);
 
         let _ = resolve_intent_review(
-            state,
+            state.clone(),
             review_item_id,
             SurfaceIntentResolveReq {
                 action: SurfaceIntentResolutionActionData::RemoveIntent,
@@ -1696,6 +1755,19 @@ mod tests {
         )
         .await
         .expect("remove intent");
+
+        let payload: String = sqlx::query_scalar(
+            "SELECT resolution_payload FROM surface_review_decisions WHERE resolution_action = 'remove_intent'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("load owner-scoped decision payload");
+        let payload: Value = serde_json::from_str(&payload).expect("parse decision payload");
+        assert_eq!(
+            payload["owner"]["owner_type"],
+            serde_json::json!("consumer_direct_exposure")
+        );
+        assert_eq!(payload["owner"]["owner_id"], serde_json::json!("consumer-a"));
     }
 
     #[tokio::test]

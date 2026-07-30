@@ -1540,7 +1540,7 @@ export interface SurfaceReviewItem {
   review_item_id: string;
   proposal_id: string;
   consumer_id: string;
-  binding_generation: number;
+  binding_generation: number | null;
   ref_id: string;
   before_capability_id?: string | null;
   target_capability_id?: string | null;

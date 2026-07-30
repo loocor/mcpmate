@@ -585,7 +585,7 @@ async fn load_job_changes(
             let state_generation: i64 = row.try_get("state_generation")?;
             let current: Option<String> = row.try_get("current_capability_id")?;
             let baseline: Option<String> = row.try_get("baseline_capability_id")?;
-            let change = if state == "unresolved" {
+            let change = if matches!(state.as_str(), "unresolved" | "retired") {
                 ChangeClass::Missing
             } else if current != baseline && baseline.is_some() {
                 classify_version_change(

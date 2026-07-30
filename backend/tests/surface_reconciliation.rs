@@ -14,7 +14,7 @@ use mcpmate_capability_store::{
 };
 use rmcp::model::{InitializeResult, Tool};
 use serde_json::json;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::{Pool, Sqlite, sqlite::SqlitePoolOptions};
 
 fn initialize() -> InitializeResult {
     serde_json::from_value(json!({
@@ -48,6 +48,28 @@ fn observation(record: CatalogRecord) -> CapabilityObservation {
         )],
         vec![record],
     )
+}
+
+async fn initialized_surface_pool() -> Pool<Sqlite> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    mcpmate::config::server::init::initialize_server_tables(&pool)
+        .await
+        .unwrap();
+    mcpmate::config::client::init::initialize_client_table(&pool)
+        .await
+        .unwrap();
+    mcpmate::config::profile::init::initialize_profile_tables(&pool)
+        .await
+        .unwrap();
+    SqliteCapabilityCatalog::new(pool.clone())
+        .ensure_schema()
+        .await
+        .unwrap();
+    pool
 }
 
 struct FailingOutboxDelivery;
@@ -183,22 +205,8 @@ async fn identical_catalog_observation_does_not_touch_surface_governance() {
 
 #[tokio::test]
 async fn catalog_and_all_consumer_safe_contractions_commit_or_roll_back_together() {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    mcpmate::config::server::init::initialize_server_tables(&pool)
-        .await
-        .unwrap();
-    mcpmate::config::client::init::initialize_client_table(&pool)
-        .await
-        .unwrap();
-    mcpmate::config::profile::init::initialize_profile_tables(&pool)
-        .await
-        .unwrap();
+    let pool = initialized_surface_pool().await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
-    catalog.ensure_schema().await.unwrap();
     let first = record("version one");
     catalog.commit_observation(observation(first.clone())).await.unwrap();
     let store = SqliteSurfaceStore::new(pool.clone());
@@ -284,23 +292,104 @@ async fn catalog_and_all_consumer_safe_contractions_commit_or_roll_back_together
 }
 
 #[tokio::test]
-async fn durable_worker_materializes_and_records_a_success_receipt() {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    mcpmate::config::server::init::initialize_server_tables(&pool)
-        .await
-        .unwrap();
-    mcpmate::config::client::init::initialize_client_table(&pool)
-        .await
-        .unwrap();
-    mcpmate::config::profile::init::initialize_profile_tables(&pool)
-        .await
-        .unwrap();
+async fn retired_server_reconciliation_converges_after_safe_contraction() {
+    let pool = initialized_surface_pool().await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
-    catalog.ensure_schema().await.unwrap();
+    let first = record("version one");
+    catalog.commit_observation(observation(first.clone())).await.unwrap();
+    sqlx::query(
+        r#"
+        INSERT INTO client (
+            id, identifier, name, config_mode, approval_status,
+            capability_source, selected_profile_ids
+        ) VALUES (
+            'consumer-a', 'client-a', 'Client A', 'hosted', 'approved',
+            'activated', '[]'
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let store = SqliteSurfaceStore::new(pool.clone());
+    let manifest = SurfaceManifest::compile(
+        "client-a",
+        vec![SurfaceManifestEntryInput::new(
+            first.ref_id.clone(),
+            first.capability_id.clone(),
+            first.kind(),
+            first.external_key.clone(),
+        )],
+    )
+    .unwrap();
+    let mut transaction = pool.begin().await.unwrap();
+    store
+        .insert_manifest_in_transaction(&mut transaction, &manifest)
+        .await
+        .unwrap();
+    store
+        .publish_and_bind_in_transaction(
+            &mut transaction,
+            &SurfacePublication::new(
+                "publication-client-a-1",
+                "client-a",
+                manifest.manifest_id,
+                None,
+                "initial",
+                "system",
+                None,
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+
+    let reconciler = CatalogSurfaceReconciler::new(pool.clone());
+    let mut transaction = pool.begin().await.unwrap();
+    reconciler
+        .retire_server_in_transaction(&mut transaction, "server-a")
+        .await
+        .unwrap()
+        .expect("server retirement changes the catalog");
+    transaction.commit().await.unwrap();
+
+    let worker = SurfaceReconciliationWorker::new(pool.clone(), "worker-a");
+    assert!(worker.run_once().await.unwrap());
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM surface_reconciliation_jobs WHERE consumer_id = 'client-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "succeeded");
+    let (generation, entry_count): (i64, i64) = sqlx::query_as(
+        r#"
+        SELECT binding.generation, COUNT(entry.ref_id)
+        FROM consumer_surface_bindings binding
+        JOIN surface_publications publication
+          ON publication.publication_id = binding.active_publication_id
+        LEFT JOIN surface_manifest_entries entry
+          ON entry.manifest_id = publication.manifest_id
+        WHERE binding.consumer_id = 'client-a'
+        GROUP BY binding.generation
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(generation, 2);
+    assert_eq!(entry_count, 0);
+    assert!(
+        !worker.run_once().await.unwrap(),
+        "the retired-server job must not retry"
+    );
+}
+
+#[tokio::test]
+async fn durable_worker_materializes_and_records_a_success_receipt() {
+    let pool = initialized_surface_pool().await;
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
     sqlx::query(
         "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-a', 'fixture', 'stdio', '', 1)",
     )

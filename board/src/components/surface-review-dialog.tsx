@@ -3,6 +3,10 @@ import { AlertTriangle, ArrowRight } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { surfaceReviewsApi } from "../lib/api";
+import {
+  getInitialSurfaceReviewOwnerKey,
+  getSurfaceReviewOwnerKey,
+} from "../lib/surface-reviews";
 import type {
   SurfaceIntentPreviewData,
   SurfaceIntentResolutionAction,
@@ -34,10 +38,6 @@ interface SurfaceReviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   preferredOwner?: SurfaceReviewOwner | null;
-}
-
-function ownerKey(owner: SurfaceReviewOwner): string {
-  return `${owner.owner_type}:${owner.owner_id}`;
 }
 
 function formatValue(value: unknown): string {
@@ -81,19 +81,18 @@ export function SurfaceReviewDialog({
 
   const selectedOwner = useMemo(
     () =>
-      item?.owners.find((owner) => ownerKey(owner) === selectedOwnerKey) ??
+      item?.owners.find(
+        (owner) => getSurfaceReviewOwnerKey(owner) === selectedOwnerKey,
+      ) ??
       null,
     [item?.owners, selectedOwnerKey],
   );
 
   useEffect(() => {
     if (!item) return;
-    const preferred = preferredOwner
-      ? item.owners.find(
-          (owner) => ownerKey(owner) === ownerKey(preferredOwner),
-        )
-      : undefined;
-    setSelectedOwnerKey(ownerKey(preferred ?? item.owners[0]));
+    setSelectedOwnerKey(
+      getInitialSurfaceReviewOwnerKey(item.owners, preferredOwner ?? null),
+    );
   }, [item, preferredOwner]);
 
   useEffect(() => {
@@ -113,6 +112,9 @@ export function SurfaceReviewDialog({
   const targetMutation = useMutation({
     mutationFn: async (action: "approve" | "reject") => {
       if (!item) throw new Error("Surface review detail is unavailable");
+      if (item.binding_generation === null) {
+        throw new Error("Surface review has no active publication");
+      }
       const request = {
         expected_target_key: item.target_key,
         expected_binding_generation: item.binding_generation,
@@ -155,6 +157,9 @@ export function SurfaceReviewDialog({
     mutationFn: async () => {
       if (!item || !selectedOwner || !preview) {
         throw new Error("Intent impact must be previewed before confirmation");
+      }
+      if (item.binding_generation === null) {
+        throw new Error("Surface review has no active publication");
       }
       return surfaceReviewsApi.resolveIntent(item.review_item_id, {
         action: preview.action,
@@ -237,24 +242,35 @@ export function SurfaceReviewDialog({
                   defaultValue: "Affected configuration",
                 })}
               </div>
-              <Select
-                value={selectedOwnerKey}
-                onValueChange={(value) => {
-                  setSelectedOwnerKey(value);
-                  setPreview(null);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {item.owners.map((owner) => (
-                    <SelectItem key={ownerKey(owner)} value={ownerKey(owner)}>
-                      {owner.owner_type} · {owner.owner_id}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {item.owners.length > 0 ? (
+                <Select
+                  value={selectedOwnerKey}
+                  onValueChange={(value) => {
+                    setSelectedOwnerKey(value);
+                    setPreview(null);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {item.owners.map((owner) => (
+                      <SelectItem
+                        key={getSurfaceReviewOwnerKey(owner)}
+                        value={getSurfaceReviewOwnerKey(owner)}
+                      >
+                        {owner.owner_type} · {owner.owner_id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  {t("surfaceReview:dialog.noActiveOwner", {
+                    defaultValue: "No active configuration",
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">

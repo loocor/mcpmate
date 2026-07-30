@@ -498,8 +498,13 @@ fn runtime_failure_from_capability(failure: Option<CapabilityFetchFailure>) -> O
             message: Some(message),
             timeout_ms: None,
         },
-        CapabilityFetchFailure::Authentication { message } => RuntimeFailure {
-            kind: RuntimeFailureKind::Authentication,
+        CapabilityFetchFailure::AuthRequired { message } => RuntimeFailure {
+            kind: RuntimeFailureKind::AuthRequired,
+            message: Some(message),
+            timeout_ms: None,
+        },
+        CapabilityFetchFailure::InsufficientScope { message } => RuntimeFailure {
+            kind: RuntimeFailureKind::InsufficientScope,
             message: Some(message),
             timeout_ms: None,
         },
@@ -1671,6 +1676,21 @@ mod tests {
             path: PathBuf::new(),
             capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         })
+    }
+
+    #[test]
+    fn insufficient_scope_fetch_preserves_runtime_and_persisted_failure_kinds() {
+        let failure = runtime_failure_from_capability(Some(CapabilityFetchFailure::InsufficientScope {
+            message: "scope tools.read is required".to_string(),
+        }))
+        .expect("fetch failure maps to a runtime failure");
+
+        assert_eq!(failure.kind, RuntimeFailureKind::InsufficientScope);
+        assert_eq!(failure.kind.persisted(), KindFailureKind::InsufficientScope);
+        assert_eq!(
+            failure.kind.authentication_code(),
+            Some(CapabilityAuthenticationFailureCode::InsufficientScope)
+        );
     }
 
     fn runtime_initialize_result() -> rmcp::model::InitializeResult {

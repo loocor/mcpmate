@@ -14,6 +14,25 @@ const CLIENT_OWNER_TYPES = new Set([
   "consumer_server_exposure",
 ]);
 
+export function getSurfaceReviewOwnerKey(
+  owner: SurfaceReviewOwner,
+): string {
+  return `${owner.owner_type}:${owner.owner_id}`;
+}
+
+export function getInitialSurfaceReviewOwnerKey(
+  owners: SurfaceReviewOwner[],
+  preferredOwner: SurfaceReviewOwner | null,
+): string {
+  if (preferredOwner) {
+    const preferredKey = getSurfaceReviewOwnerKey(preferredOwner);
+    if (owners.some((owner) => getSurfaceReviewOwnerKey(owner) === preferredKey)) {
+      return preferredKey;
+    }
+  }
+  return owners[0] ? getSurfaceReviewOwnerKey(owners[0]) : "";
+}
+
 function getCanonicalSourceServerId(record: unknown): string | null {
   if (
     typeof record !== "object" ||

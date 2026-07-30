@@ -617,7 +617,8 @@ pub struct SurfaceReviewItemData {
     pub review_item_id: String,
     pub proposal_id: String,
     pub consumer_id: String,
-    pub binding_generation: i64,
+    #[serde(default)]
+    pub binding_generation: Option<i64>,
     pub ref_id: String,
     #[serde(default)]
     pub before_capability_id: Option<String>,

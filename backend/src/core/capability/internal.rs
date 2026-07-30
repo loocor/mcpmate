@@ -23,7 +23,8 @@ pub enum CapabilityFetchFailure {
     Timeout { timeout_ms: u128 },
     TransportClosed,
     Unsupported { message: String },
-    Authentication { message: String },
+    AuthRequired { message: String },
+    InsufficientScope { message: String },
     Other { message: String },
 }
 
@@ -48,7 +49,8 @@ pub fn require_complete_capability_fetch<T>(
         CapabilityFetchFailure::Timeout { timeout_ms } => format!("request timed out after {timeout_ms} ms"),
         CapabilityFetchFailure::TransportClosed => "transport closed".to_string(),
         CapabilityFetchFailure::Unsupported { message }
-        | CapabilityFetchFailure::Authentication { message }
+        | CapabilityFetchFailure::AuthRequired { message }
+        | CapabilityFetchFailure::InsufficientScope { message }
         | CapabilityFetchFailure::Other { message } => message,
     };
     Err(anyhow::anyhow!(
@@ -72,27 +74,22 @@ fn classify_service_error(error: &ServiceError) -> CapabilityFetchFailure {
         ServiceError::Timeout { timeout } => CapabilityFetchFailure::Timeout {
             timeout_ms: timeout.as_millis(),
         },
-        ServiceError::TransportSend(error)
-            if error
-                .error
-                .downcast_ref::<StreamableHttpError<reqwest::Error>>()
-                .is_some_and(|error| {
-                    matches!(
-                        error,
-                        StreamableHttpError::AuthRequired(_) | StreamableHttpError::InsufficientScope(_)
-                    )
-                }) =>
-        {
-            CapabilityFetchFailure::Authentication {
+        ServiceError::TransportSend(error) => match error.error.downcast_ref::<StreamableHttpError<reqwest::Error>>() {
+            Some(StreamableHttpError::AuthRequired(_)) => CapabilityFetchFailure::AuthRequired {
+                message: error.to_string(),
+            },
+            Some(StreamableHttpError::InsufficientScope(_)) => CapabilityFetchFailure::InsufficientScope {
+                message: error.to_string(),
+            },
+            _ => CapabilityFetchFailure::Other {
+                message: error.to_string(),
+            },
+        },
+        ServiceError::McpError(_) | ServiceError::UnexpectedResponse | ServiceError::Cancelled { .. } => {
+            CapabilityFetchFailure::Other {
                 message: error.to_string(),
             }
         }
-        ServiceError::McpError(_)
-        | ServiceError::TransportSend(_)
-        | ServiceError::UnexpectedResponse
-        | ServiceError::Cancelled { .. } => CapabilityFetchFailure::Other {
-            message: error.to_string(),
-        },
         _ => CapabilityFetchFailure::Other {
             message: error.to_string(),
         },
@@ -250,29 +247,29 @@ mod tests {
 
     #[test]
     fn streamable_http_auth_failures_remain_typed_without_message_matching() {
-        for error in [
-            StreamableHttpError::<reqwest::Error>::AuthRequired(AuthRequiredError::new(
-                "Bearer resource_metadata=\"https://example.com\"".to_string(),
+        let auth_required = classify_service_error(&ServiceError::TransportSend(DynamicTransportError::from_parts(
+            "streamable-http-client",
+            TypeId::of::<()>(),
+            Box::new(StreamableHttpError::<reqwest::Error>::AuthRequired(
+                AuthRequiredError::new("Bearer resource_metadata=\"https://example.com\"".to_string()),
             )),
-            StreamableHttpError::<reqwest::Error>::InsufficientScope(InsufficientScopeError::new(
-                "Bearer error=\"insufficient_scope\"".to_string(),
-                Some("tools.read".to_string()),
-            )),
-        ] {
-            let service_error = ServiceError::TransportSend(DynamicTransportError::from_parts(
+        )));
+        let insufficient_scope =
+            classify_service_error(&ServiceError::TransportSend(DynamicTransportError::from_parts(
                 "streamable-http-client",
                 TypeId::of::<()>(),
-                Box::new(error),
-            ));
+                Box::new(StreamableHttpError::<reqwest::Error>::InsufficientScope(
+                    InsufficientScopeError::new(
+                        "Bearer error=\"insufficient_scope\"".to_string(),
+                        Some("tools.read".to_string()),
+                    ),
+                )),
+            )));
 
-            assert!(matches!(
-                classify_service_error(&service_error),
-                CapabilityFetchFailure::Authentication { .. }
-            ));
-            assert_eq!(
-                crate::core::capability::runtime::RuntimeFailureKind::Authentication.retry_disposition(),
-                crate::core::capability::connection_provider::DiscoveryRetryDisposition::DoNotRetry
-            );
-        }
+        assert!(matches!(auth_required, CapabilityFetchFailure::AuthRequired { .. }));
+        assert!(matches!(
+            insufficient_scope,
+            CapabilityFetchFailure::InsufficientScope { .. }
+        ));
     }
 }

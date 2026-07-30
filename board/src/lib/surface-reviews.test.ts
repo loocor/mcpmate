@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   getClientReviewCount,
+  getInitialSurfaceReviewOwnerKey,
   getProfileReviewCount,
   getSurfaceReviewDestination,
 } from "./surface-reviews";
@@ -42,6 +43,10 @@ const item = {
 } as SurfaceReviewItem;
 
 describe("surface review ownership", () => {
+  test("leaves obsolete reviews without active owners unselected", () => {
+    expect(getInitialSurfaceReviewOwnerKey([], null)).toBe("");
+  });
+
   test("counts profile and client ownership without double counting an item", () => {
     expect(getProfileReviewCount([item], "profile-a")).toBe(1);
     expect(getClientReviewCount([item], client)).toBe(1);

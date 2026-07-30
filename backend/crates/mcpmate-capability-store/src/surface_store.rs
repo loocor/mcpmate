@@ -498,6 +498,40 @@ impl SqliteSurfaceStore {
         Ok(())
     }
 
+    pub async fn obsolete_consumer_review_items_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        consumer_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE surface_review_owners
+            SET active = 0
+            WHERE active = 1
+              AND review_item_id IN (
+                  SELECT review_item_id
+                  FROM surface_review_items
+                  WHERE consumer_id = ?
+              )
+            "#,
+        )
+        .bind(consumer_id)
+        .execute(&mut **transaction)
+        .await?;
+        sqlx::query(
+            r#"
+            UPDATE surface_review_items
+            SET lifecycle = 'obsolete', updated_at = ?
+            WHERE consumer_id = ? AND lifecycle <> 'obsolete'
+            "#,
+        )
+        .bind(Utc::now().to_rfc3339())
+        .bind(consumer_id)
+        .execute(&mut **transaction)
+        .await?;
+        Ok(())
+    }
+
     pub async fn sync_existing_review_item_owners_in_transaction(
         &self,
         transaction: &mut Transaction<'_, Sqlite>,
@@ -596,7 +630,17 @@ impl SqliteSurfaceStore {
         expected_current_decision_id: Option<&str>,
     ) -> Result<()> {
         let payload_is_valid = match decision.resolution_action {
-            ReviewResolutionAction::RebindRef => decision.resolution_payload.is_some(),
+            ReviewResolutionAction::RemoveIntent => decision
+                .resolution_payload
+                .as_ref()
+                .is_some_and(review_payload_has_owner),
+            ReviewResolutionAction::RebindRef => decision.resolution_payload.as_ref().is_some_and(|payload| {
+                review_payload_has_owner(payload)
+                    && payload
+                        .get("new_ref_id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|ref_id| !ref_id.is_empty())
+            }),
             _ => decision.resolution_payload.is_none(),
         };
         if !payload_is_valid {
@@ -701,13 +745,27 @@ impl SqliteSurfaceStore {
                 .bind(review_item_id)
                 .fetch_one(&mut **transaction)
                 .await?;
-        let lifecycle = if active_count == 0 { "obsolete" } else { "pending" };
-        sqlx::query("UPDATE surface_review_items SET lifecycle = ?, updated_at = ? WHERE review_item_id = ?")
-            .bind(lifecycle)
+        if active_count == 0 {
+            sqlx::query(
+                "UPDATE surface_review_items SET lifecycle = 'obsolete', updated_at = ? WHERE review_item_id = ?",
+            )
             .bind(Utc::now().to_rfc3339())
             .bind(review_item_id)
             .execute(&mut **transaction)
             .await?;
+        } else {
+            sqlx::query(
+                r#"
+                UPDATE surface_review_items
+                SET lifecycle = 'pending', current_decision_id = NULL, updated_at = ?
+                WHERE review_item_id = ?
+                "#,
+            )
+            .bind(Utc::now().to_rfc3339())
+            .bind(review_item_id)
+            .execute(&mut **transaction)
+            .await?;
+        }
         Ok(())
     }
 
@@ -1441,6 +1499,21 @@ impl SqliteSurfaceStore {
         }
         Ok(())
     }
+}
+
+fn review_payload_has_owner(payload: &serde_json::Value) -> bool {
+    let Some(owner) = payload.get("owner") else {
+        return false;
+    };
+    owner
+        .get("owner_type")
+        .and_then(serde_json::Value::as_str)
+        .and_then(ReviewOwnerType::parse)
+        .is_some()
+        && owner
+            .get("owner_id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|owner_id| !owner_id.is_empty())
 }
 
 async fn load_review_item_with_executor<'e, E>(

@@ -87,6 +87,67 @@ async fn insert_manifest(
 }
 
 #[tokio::test]
+async fn owner_scoped_review_decisions_reject_incomplete_payloads() {
+    let (pool, _, store) = test_store().await;
+    let invalid_decisions = [
+        (
+            "null payload",
+            SurfaceReviewDecisionDraft::new(
+                "decision-remove-null",
+                "review-a",
+                ReviewResolutionAction::RemoveIntent,
+                Some(json!(null)),
+                "reviewer-a",
+            ),
+        ),
+        (
+            "owner without ID",
+            SurfaceReviewDecisionDraft::new(
+                "decision-remove-owner",
+                "review-a",
+                ReviewResolutionAction::RemoveIntent,
+                Some(json!({"owner": {"owner_type": "standard_profile"}})),
+                "reviewer-a",
+            ),
+        ),
+        (
+            "rebind without ref ID",
+            SurfaceReviewDecisionDraft::new(
+                "decision-rebind-ref",
+                "review-a",
+                ReviewResolutionAction::RebindRef,
+                Some(json!({
+                    "owner": {
+                        "owner_type": "standard_profile",
+                        "owner_id": "profile-a"
+                    }
+                })),
+                "reviewer-a",
+            ),
+        ),
+    ];
+
+    for (case, decision) in invalid_decisions {
+        let mut transaction = pool.begin().await.unwrap();
+        let error = store
+            .append_review_decision_in_transaction(&mut transaction, &decision, None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                CatalogError::InvalidSurfaceValue {
+                    field: "review decision payload",
+                    ..
+                }
+            ),
+            "{case}"
+        );
+        transaction.rollback().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn manifest_identity_is_deterministic_consumer_scoped_and_insert_or_verify() {
     let (pool, catalog, store) = test_store().await;
     let first = tool_record("zeta", "first");
@@ -356,8 +417,13 @@ async fn review_queries_share_owner_decision_and_lifecycle_facts() {
             &SurfaceReviewDecisionDraft::new(
                 "decision-query",
                 "review-query",
-                ReviewResolutionAction::RejectTarget,
-                None,
+                ReviewResolutionAction::RemoveIntent,
+                Some(json!({
+                    "owner": {
+                        "owner_type": "standard_profile",
+                        "owner_id": "profile-a"
+                    }
+                })),
                 "reviewer-a",
             ),
             None,
@@ -383,7 +449,7 @@ async fn review_queries_share_owner_decision_and_lifecycle_facts() {
             .current_decision
             .as_ref()
             .map(|decision| decision.resolution_action),
-        Some(ReviewResolutionAction::RejectTarget)
+        Some(ReviewResolutionAction::RemoveIntent)
     );
     assert_eq!(
         store.load_review_record("review-query").await.unwrap().unwrap(),
@@ -410,13 +476,32 @@ async fn review_queries_share_owner_decision_and_lifecycle_facts() {
             "consumer-a",
         )]
     );
-    assert_eq!(
-        remaining
-            .current_decision
-            .as_ref()
-            .map(|decision| decision.resolution_action),
-        Some(ReviewResolutionAction::RejectTarget)
-    );
+    assert!(remaining.current_decision.is_none());
+
+    let mut transaction = pool.begin().await.unwrap();
+    store
+        .sync_review_item_owners_in_transaction(
+            &mut transaction,
+            "review-query",
+            "proposal-query",
+            &[SurfaceReviewOwner::new(
+                ReviewOwnerType::ConsumerDirectExposure,
+                "consumer-a",
+            )],
+        )
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+
+    let resynchronized = store.load_review_record("review-query").await.unwrap().unwrap();
+    assert_eq!(resynchronized.item.lifecycle, ReviewLifecycle::Pending);
+    assert!(resynchronized.current_decision.is_none());
+    let decision_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM surface_review_decisions WHERE review_item_id = 'review-query'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(decision_count, 1, "owner-scoped decision history remains immutable");
 }
 
 #[tokio::test]
