@@ -218,41 +218,26 @@ pub async fn tools_list(
     Query(request): Query<ProfileComponentListReq>,
 ) -> Result<Json<ProfileToolsListResp>, ApiError> {
     let db = get_database(&state).await?;
+    let response = load_profile_tools_list_data(db.as_ref(), request).await?;
+    Ok(Json(ProfileToolsListResp::success(response)))
+}
 
-    // Verify profile exists
-    let profile = get_profile_or_error(&db, &request.profile_id).await?;
-
-    // Get tools in the profile
+async fn load_profile_tools_list_data(
+    db: &crate::config::database::Database,
+    request: ProfileComponentListReq,
+) -> Result<ProfileToolsListData, ApiError> {
+    let profile = get_profile_or_error(db, &request.profile_id).await?;
     let tool_configs = crate::config::profile::get_profile_tools(&db.pool, &request.profile_id)
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile tools: {e}")))?;
-    // Convert to response format
-    let mut tools = Vec::new();
-    for tool_config in tool_configs {
-        // Get server details to include server name
-        if let Ok(Some(server)) = crate::config::server::get_server_by_id(&db.pool, &tool_config.server_id).await {
-            tools.push(ProfileToolData {
-                ref_id: tool_config.ref_id.clone(),
-                server_id: tool_config.server_id.clone(),
-                server_name: server.name,
-                tool_name: tool_config.tool_name.clone(),
-                unique_name: tool_config.unique_name.clone(),
-                description: tool_config.description,
-                enabled: tool_config.enabled,
-                state: tool_config.state,
-                state_generation: tool_config.state_generation,
-                allowed_operations: vec!["enable".to_string(), "disable".to_string()],
-            });
-        }
-    }
+    let mut tools = tool_configs.into_iter().map(profile_tool_data).collect::<Vec<_>>();
 
-    // Apply enabled filter if requested
     if request.enabled_only.unwrap_or(false) {
         tools.retain(|t| t.enabled);
     }
 
     let total = tools.len();
-    let response = ProfileToolsListData {
+    Ok(ProfileToolsListData {
         profile_id: request.profile_id,
         profile_name: profile.name,
         tools,
@@ -264,9 +249,7 @@ pub async fn tools_list(
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .into_iter()
         .collect(),
-    };
-
-    Ok(Json(ProfileToolsListResp::success(response)))
+    })
 }
 
 /// Manage capability operations (enable/disable tools, resources, prompts)
@@ -486,4 +469,126 @@ async fn invalidate_profile_cache(state: &Arc<AppState>) {
 // Small helpers to reduce duplication
 fn allowed_ops(enabled: bool) -> Vec<String> {
     vec![if enabled { "disable" } else { "enable" }.to_string()]
+}
+
+fn profile_tool_data(tool: crate::config::models::ProfileToolWithDetails) -> ProfileToolData {
+    ProfileToolData {
+        ref_id: tool.ref_id,
+        server_id: tool.server_id,
+        server_name: tool.server_name,
+        tool_name: tool.tool_name,
+        unique_name: tool.unique_name,
+        description: tool.description,
+        enabled: tool.enabled,
+        state: tool.state,
+        state_generation: tool.state_generation,
+        allowed_operations: vec!["enable".to_string(), "disable".to_string()],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::database::Database;
+    use mcpmate_capability_store::{
+        CapabilityCatalog, CapabilityKind, CapabilityObservation, CapabilityPayload, CatalogRecord, DeclarationState,
+        InventoryState, KindObservation, SqliteCapabilityCatalog,
+    };
+    use rmcp::model::{InitializeResult, Tool};
+    use serde_json::json;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use std::{path::PathBuf, sync::Arc};
+
+    #[tokio::test]
+    async fn profile_tools_list_keeps_retired_refs_without_a_live_server() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect database");
+        crate::config::initialization::run_initialization(&pool)
+            .await
+            .expect("initialize database");
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-retired', 'Retired Server', 'stdio', '', 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert server");
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role) VALUES ('profile-a', 'Profile A', '', 'shared', 'user')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert profile");
+
+        let initialize: InitializeResult = serde_json::from_value(json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "Retired Server", "version": "1.0.0"}
+        }))
+        .expect("initialize payload");
+        let tool: Tool = serde_json::from_value(json!({
+            "name": "analyze",
+            "description": "Analyze input",
+            "inputSchema": {"type": "object"}
+        }))
+        .expect("tool payload");
+        let record = CatalogRecord::materialize(
+            "server-retired",
+            "analyze",
+            "retired__analyze",
+            CapabilityPayload::Tool(tool),
+        )
+        .expect("materialize tool");
+        let catalog = SqliteCapabilityCatalog::new(pool.clone());
+        catalog
+            .commit_observation(CapabilityObservation::new(
+                "server-retired",
+                "Retired Server",
+                "config-v1",
+                initialize,
+                vec![KindObservation::new(
+                    CapabilityKind::Tools,
+                    DeclarationState::Supported,
+                    InventoryState::Complete,
+                )],
+                vec![record.clone()],
+            ))
+            .await
+            .expect("commit catalog");
+        crate::config::profile::capability_ref::upsert_profile_capability_ref(&pool, "profile-a", &record.ref_id, true)
+            .await
+            .expect("insert profile intent");
+
+        let mut transaction = pool.begin().await.expect("retirement transaction");
+        catalog
+            .retire_server_in_transaction(&mut transaction, "server-retired")
+            .await
+            .expect("retire server");
+        transaction.commit().await.expect("commit retirement");
+        sqlx::query("DELETE FROM server_config WHERE id = 'server-retired'")
+            .execute(&pool)
+            .await
+            .expect("delete live server");
+
+        let database = Database {
+            pool,
+            path: PathBuf::from(":memory:"),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        };
+        let response = load_profile_tools_list_data(
+            &database,
+            ProfileComponentListReq {
+                profile_id: "profile-a".to_string(),
+                enabled_only: None,
+            },
+        )
+        .await
+        .expect("list profile tools");
+
+        assert_eq!(response.tools.len(), 1);
+        assert_eq!(response.tools[0].server_name, "Retired Server");
+        assert_eq!(response.tools[0].state, "retired");
+    }
 }

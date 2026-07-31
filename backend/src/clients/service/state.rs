@@ -5,7 +5,7 @@ use crate::clients::models::{
     FirstContactBehavior,
 };
 use crate::core::capability::materializer::{
-    MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader,
+    MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader, revoke_managed_surface_in_transaction,
 };
 use mcpmate_capability_store::CatalogError;
 use std::collections::HashMap;
@@ -97,15 +97,24 @@ impl ClientConfigService {
                 .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
         }
 
+        let mut transaction = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        revoke_managed_surface_in_transaction(self.db_pool.as_ref(), &mut transaction, identifier, "client-delete")
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
         sqlx::query("DELETE FROM client_template_runtime WHERE identifier = ?")
             .bind(identifier)
-            .execute(&*self.db_pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         let result = sqlx::query("DELETE FROM client WHERE identifier = ?")
             .bind(identifier)
-            .execute(&*self.db_pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
@@ -113,6 +122,10 @@ impl ClientConfigService {
             return Ok(false);
         }
 
+        transaction
+            .commit()
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
         Ok(true)
     }
 
@@ -1352,6 +1365,14 @@ mod tests {
             .set_client_settings("test.client", None, None)
             .await
             .expect("create active client state");
+        let surface_store = mcpmate_capability_store::SqliteSurfaceStore::new(service.db_pool.as_ref().clone());
+        assert!(
+            surface_store
+                .load_binding("test.client")
+                .await
+                .expect("load managed surface before delete")
+                .is_some()
+        );
 
         sqlx::query(
             "INSERT OR REPLACE INTO client_template_runtime (identifier, payload_json, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
@@ -1382,6 +1403,13 @@ mod tests {
                 .await
                 .expect("query runtime snapshot after delete");
         assert!(runtime_payload.is_none());
+        assert!(
+            surface_store
+                .load_binding("test.client")
+                .await
+                .expect("load managed surface after delete")
+                .is_none()
+        );
 
         let recreated = service
             .ensure_passive_observed_row("test.client", "Test Client", None)

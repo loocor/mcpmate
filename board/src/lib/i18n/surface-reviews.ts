@@ -12,6 +12,14 @@ export const surfaceReviewTranslations = {
       action: "Unable to complete the review action.",
       summary: "Unable to load Surface reconciliation status.",
       conflict: "The Surface changed while this review was open. Refresh and review the latest state.",
+      validation: {
+        itemRequired: "A Surface review item is required.",
+        detailUnavailable: "Surface review detail is unavailable.",
+        publicationUnavailable: "Surface review has no active publication.",
+        ownerRequired: "Select an affected configuration.",
+        refRequired: "Enter a Capability Ref ID.",
+        previewRequired: "Preview the intent impact before confirming.",
+      },
     },
     dialog: {
       title: "Capability change review",
@@ -59,6 +67,14 @@ export const surfaceReviewTranslations = {
       action: "无法完成复核操作。",
       summary: "无法加载能力面协调状态。",
       conflict: "复核期间能力面已发生变化，请刷新后检查最新状态。",
+      validation: {
+        itemRequired: "请选择一项能力面复核记录。",
+        detailUnavailable: "能力变更复核详情不可用。",
+        publicationUnavailable: "该能力变更复核没有生效中的发布版本。",
+        ownerRequired: "请选择一个受影响的配置。",
+        refRequired: "请输入 Capability Ref ID。",
+        previewRequired: "确认前请先预览意图变更的影响。",
+      },
     },
     dialog: {
       title: "能力变更复核",
@@ -105,6 +121,14 @@ export const surfaceReviewTranslations = {
       action: "確認操作を完了できませんでした。",
       summary: "Surface 調整状態を読み込めませんでした。",
       conflict: "確認中に Surface が変更されました。更新して最新状態を確認してください。",
+      validation: {
+        itemRequired: "Surface 確認項目を選択してください。",
+        detailUnavailable: "Surface 確認の詳細を利用できません。",
+        publicationUnavailable: "Surface 確認に有効な公開バージョンがありません。",
+        ownerRequired: "影響を受ける設定を選択してください。",
+        refRequired: "Capability Ref ID を入力してください。",
+        previewRequired: "確定する前に意図への影響を確認してください。",
+      },
     },
     dialog: {
       title: "Capability 変更の確認",

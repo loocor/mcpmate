@@ -163,6 +163,9 @@ export const clientsTranslations = {
           resources: "No resources found for this server.",
           templates: "No templates found for this server.",
         },
+        loadFailed: "Unable to load capabilities",
+        loadFailedDescription:
+          "No capability kind could be loaded. Open logs for diagnostic details.",
         statusPlaceholder: "Status",
         filters: {
           status: {
@@ -982,6 +985,8 @@ export const clientsTranslations = {
           resources: "未找到该服务器的资源。",
           templates: "未找到该服务器的模板。",
         },
+        loadFailed: "无法加载能力",
+        loadFailedDescription: "没有任何能力类别加载成功，请打开日志查看诊断详情。",
         statusPlaceholder: "状态",
         filters: {
           status: {
@@ -1786,6 +1791,9 @@ export const clientsTranslations = {
           resources: "このサーバーにリソースが見つかりません。",
           templates: "このサーバーにテンプレートが見つかりません。",
         },
+        loadFailed: "Capability を読み込めません",
+        loadFailedDescription:
+          "Capability の種類を読み込めませんでした。診断の詳細はログを確認してください。",
         statusPlaceholder: "状態",
         filters: {
           status: {

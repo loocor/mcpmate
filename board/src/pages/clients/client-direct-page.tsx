@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
 	useBulkSelection,
 	useEnableDisableBulkActions,
@@ -14,6 +15,9 @@ import type { CapabilityPreviewFlatItem } from "../../components/capability-prev
 import { CAPABILITY_SCROLL_CARD_CLASS } from "../../components/capability-scroll-card-layout";
 import { CachedAvatar } from "../../components/cached-avatar";
 import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
+import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import {
 	Card,
 	CardContent,
@@ -21,13 +25,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
-import { Alert, AlertDescription } from "../../components/ui/alert";
-import {
-	assertCompleteCapabilityBatch,
-	clientsApi,
-	serversApi,
-} from "../../lib/api";
+import { clientsApi, serversApi } from "../../lib/api";
 import { capabilityRecordMatchesSearch } from "../../lib/capability-search";
 import { capabilityKey, splitCapabilityKey } from "../../lib/capability-keys";
 import { useCapabilityKindFilters } from "../../hooks/use-capability-kind-filters";
@@ -44,6 +42,11 @@ import type {
 	ServerDetail,
 	UnifyDirectCapabilityRefs,
 } from "../../lib/types";
+import {
+	getDirectAuthenticationNotice,
+	getCapabilityId,
+	projectDirectCapabilities,
+} from "./client-direct-capabilities";
 
 type CapabilityStatusFilter = "all" | "enabled" | "disabled";
 
@@ -82,19 +85,6 @@ function getSelectedCapabilityRefs(
 		resource_refs: normalizeCapabilityIds(capabilityRefs?.resource_refs),
 		template_refs: normalizeCapabilityIds(capabilityRefs?.template_refs),
 	};
-}
-
-function getCapabilityId(
-	item: Record<string, unknown>,
-	keys: string[],
-): string | null {
-	for (const key of keys) {
-		const value = item[key];
-		if (typeof value === "string" && value.trim()) {
-			return value;
-		}
-	}
-	return null;
 }
 
 function getCapabilityDetailKey(
@@ -159,6 +149,7 @@ export function ClientDirectCapabilitiesPage() {
 	usePageTranslations("servers");
 	usePageTranslations("profiles");
 	const { t, i18n } = useTranslation(["clients", "servers"]);
+	const navigate = useNavigate();
 	const { identifier, serverId } = useParams<{
 		identifier: string;
 		serverId: string;
@@ -226,6 +217,9 @@ export function ClientDirectCapabilitiesPage() {
 					prompts: [] as ConfigSuitPrompt[],
 					resources: [] as ConfigSuitResource[],
 					templates: [] as ConfigSuitResourceTemplate[],
+					failures: [],
+					failureState: "none" as const,
+					authentication: null,
 				};
 			}
 			const [
@@ -235,114 +229,15 @@ export function ClientDirectCapabilitiesPage() {
 				serversApi.listAllCapabilities(serverId),
 				clientsApi.getCapabilityConfig(identifier),
 			]);
-			assertCompleteCapabilityBatch(capabilityLists);
-			const serverToolsResponse = capabilityLists.tools;
-			const serverPromptsResponse = capabilityLists.prompts;
-			const serverResourcesResponse = capabilityLists.resources;
-			const serverTemplatesResponse = capabilityLists.templates;
 			const selectedCapabilityRefs = getSelectedCapabilityRefs(
 				requireCapabilityConfig(clientCapabilityConfig),
 			);
-			const selectedToolSet = new Set(selectedCapabilityRefs.tool_refs ?? []);
-			const selectedPromptSet = new Set(selectedCapabilityRefs.prompt_refs ?? []);
-			const selectedResourceSet = new Set(
-				selectedCapabilityRefs.resource_refs ?? [],
+			return projectDirectCapabilities(
+				capabilityLists,
+				selectedCapabilityRefs,
+				serverId,
+				serverDetails?.name ?? serverId,
 			);
-			const selectedTemplateSet = new Set(
-				selectedCapabilityRefs.template_refs ?? [],
-			);
-			const rawTools = Array.isArray(serverToolsResponse.items)
-				? (serverToolsResponse.items as Array<Record<string, unknown>>)
-				: [];
-			const rawPrompts = Array.isArray(serverPromptsResponse.items)
-				? (serverPromptsResponse.items as Array<Record<string, unknown>>)
-				: [];
-			const rawResources = Array.isArray(serverResourcesResponse.items)
-				? (serverResourcesResponse.items as Array<Record<string, unknown>>)
-				: [];
-			const rawTemplates = Array.isArray(serverTemplatesResponse.items)
-				? (serverTemplatesResponse.items as Array<Record<string, unknown>>)
-				: [];
-
-			const tools: ConfigSuitTool[] = rawTools.flatMap((tool) => {
-				const toolName = String(tool["tool_name"] ?? tool["name"] ?? "");
-				const capabilityRefId = getCapabilityId(tool, ["ref_id"]);
-				if (!capabilityRefId) return [];
-				return {
-					...tool,
-					id: capabilityRefId,
-					server_id: serverId,
-					server_name: serverDetails?.name ?? serverId,
-					tool_name: toolName,
-					unique_name: String(tool["unique_name"] ?? tool["name"] ?? toolName),
-					enabled: selectedToolSet.has(capabilityRefId),
-					allowed_operations: [],
-				};
-			});
-			const prompts: ConfigSuitPrompt[] = rawPrompts.flatMap((prompt) => {
-				const promptName = String(
-					prompt["prompt_name"] ?? prompt["name"] ?? "",
-				);
-				const capabilityRefId = getCapabilityId(prompt, ["ref_id"]);
-				if (!capabilityRefId) return [];
-				return {
-					...prompt,
-					id: capabilityRefId,
-					server_id: serverId,
-					server_name: serverDetails?.name ?? serverId,
-					prompt_name: promptName,
-					unique_name: String(
-						prompt["unique_name"] ?? prompt["name"] ?? promptName,
-					),
-					enabled: selectedPromptSet.has(capabilityRefId),
-					allowed_operations: [],
-				};
-			});
-			const resources: ConfigSuitResource[] = rawResources.flatMap(
-				(resource) => {
-					const resourceUri = String(
-						resource["resource_uri"] ?? resource["uri"] ?? "",
-					);
-					const capabilityRefId = getCapabilityId(resource, ["ref_id"]);
-					if (!capabilityRefId) return [];
-					return {
-						...resource,
-						id: capabilityRefId,
-						server_id: serverId,
-						server_name: serverDetails?.name ?? serverId,
-						resource_uri: resourceUri,
-						unique_uri: String(
-							resource["unique_uri"] ?? resource["uri"] ?? resourceUri,
-						),
-						enabled: selectedResourceSet.has(capabilityRefId),
-						allowed_operations: [],
-					};
-				},
-			);
-			const templates: ConfigSuitResourceTemplate[] = rawTemplates.flatMap(
-				(template) => {
-					const uriTemplate = String(
-						template["uri_template"] ?? template["template"] ?? "",
-					);
-					const capabilityRefId = getCapabilityId(template, ["ref_id"]);
-					if (!capabilityRefId) return [];
-					return {
-						...template,
-						id: capabilityRefId,
-						server_id: serverId,
-						server_name: serverDetails?.name ?? serverId,
-						uri_template: uriTemplate,
-						unique_uri_template: String(
-							template["unique_uri_template"] ??
-							template["uriTemplate"] ??
-							uriTemplate,
-						),
-						enabled: selectedTemplateSet.has(capabilityRefId),
-						allowed_operations: [],
-					};
-				},
-			);
-			return { tools, prompts, resources, templates };
 		},
 		enabled: Boolean(identifier && serverId),
 		retry: 1,
@@ -364,6 +259,15 @@ export function ClientDirectCapabilitiesPage() {
 		() => (capabilityResponse?.templates ?? []) as ConfigSuitResourceTemplate[],
 		[capabilityResponse?.templates],
 	);
+	const capabilityFailureState = capabilityResponse?.failureState ?? "none";
+	const authenticationFailure = capabilityResponse?.authentication ?? null;
+	const authenticationNotice =
+		getDirectAuthenticationNotice(authenticationFailure);
+	const openServerLogs = () => {
+		if (serverId) {
+			navigate(`/audit?server_id=${encodeURIComponent(serverId)}`);
+		}
+	};
 
 	const loadCapabilityDetails = useCallback(
 		async (
@@ -831,14 +735,66 @@ export function ClientDirectCapabilitiesPage() {
 				</CardHeader>
 			</Card>
 
-			{isCapabilitiesError ? (
-				<Alert variant="destructive">
-					<AlertDescription>
-						{capabilitiesError instanceof Error
-							? capabilitiesError.message
-							: t("clients:detail.directExposure.loadFailed", {
-									defaultValue: "Failed to load the complete capability catalog.",
+				{isCapabilitiesError || capabilityFailureState === "complete" ? (
+					<Alert variant="destructive">
+						<AlertTitle>
+							{t("clients:detail.directExposure.loadFailed", {
+								defaultValue: "Unable to load capabilities",
+							})}
+						</AlertTitle>
+						<AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+							<span>
+								{capabilitiesError instanceof Error
+									? capabilitiesError.message
+									: t("clients:detail.directExposure.loadFailedDescription", {
+											defaultValue:
+												"No capability kind could be loaded. Open logs for diagnostic details.",
+										})}
+							</span>
+							<Button type="button" size="sm" variant="outline" onClick={openServerLogs}>
+								{t("servers:detail.capabilityList.viewLogs", {
+									defaultValue: "View logs",
 								})}
+							</Button>
+						</AlertDescription>
+					</Alert>
+			) : null}
+
+			{capabilityFailureState === "partial" ? (
+				<Alert className="border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
+					<AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+					<AlertTitle>
+						{t("servers:detail.capabilityList.partialFailure", {
+							defaultValue: "Some capabilities could not be discovered",
+						})}
+					</AlertTitle>
+						<AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+							<span>
+								{t("servers:detail.capabilityList.partialFailureDescription", {
+									defaultValue:
+										"Capability discovery was incomplete. Open logs for diagnostic details.",
+								})}
+							</span>
+							<Button type="button" size="sm" variant="outline" onClick={openServerLogs}>
+								{t("servers:detail.capabilityList.viewLogs", {
+									defaultValue: "View logs",
+								})}
+							</Button>
+						</AlertDescription>
+				</Alert>
+			) : null}
+
+			{authenticationNotice ? (
+				<Alert variant="destructive">
+					<AlertTitle>
+						{t(authenticationNotice.titleKey, {
+							defaultValue: authenticationNotice.titleDefault,
+						})}
+					</AlertTitle>
+					<AlertDescription>
+						{t(authenticationNotice.descriptionKey, {
+							defaultValue: authenticationNotice.descriptionDefault,
+						})}
 					</AlertDescription>
 				</Alert>
 			) : null}

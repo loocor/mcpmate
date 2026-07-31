@@ -70,7 +70,11 @@ export function SurfaceReviewDialog({
     queryKey: ["surfaceReview", reviewItemId],
     queryFn: () => {
       if (!reviewItemId) {
-        throw new Error("Surface review item ID is required");
+        throw new Error(
+          t("surfaceReview:errors.validation.itemRequired", {
+            defaultValue: "A Surface review item is required.",
+          }),
+        );
       }
       return surfaceReviewsApi.get(reviewItemId);
     },
@@ -111,9 +115,19 @@ export function SurfaceReviewDialog({
 
   const targetMutation = useMutation({
     mutationFn: async (action: "approve" | "reject") => {
-      if (!item) throw new Error("Surface review detail is unavailable");
+      if (!item) {
+        throw new Error(
+          t("surfaceReview:errors.validation.detailUnavailable", {
+            defaultValue: "Surface review detail is unavailable.",
+          }),
+        );
+      }
       if (item.binding_generation === null) {
-        throw new Error("Surface review has no active publication");
+        throw new Error(
+          t("surfaceReview:errors.validation.publicationUnavailable", {
+            defaultValue: "Surface review has no active publication.",
+          }),
+        );
       }
       const request = {
         expected_target_key: item.target_key,
@@ -135,10 +149,18 @@ export function SurfaceReviewDialog({
   const previewMutation = useMutation({
     mutationFn: async () => {
       if (!item || !selectedOwner) {
-        throw new Error("A review owner must be selected");
+        throw new Error(
+          t("surfaceReview:errors.validation.ownerRequired", {
+            defaultValue: "Select an affected configuration.",
+          }),
+        );
       }
       if (intentAction === "rebind_ref" && !newRefId.trim()) {
-        throw new Error("A Capability Ref ID is required");
+        throw new Error(
+          t("surfaceReview:errors.validation.refRequired", {
+            defaultValue: "Enter a Capability Ref ID.",
+          }),
+        );
       }
       return surfaceReviewsApi.previewIntent(item.review_item_id, {
         action: intentAction,
@@ -156,10 +178,18 @@ export function SurfaceReviewDialog({
   const resolveMutation = useMutation({
     mutationFn: async () => {
       if (!item || !selectedOwner || !preview) {
-        throw new Error("Intent impact must be previewed before confirmation");
+        throw new Error(
+          t("surfaceReview:errors.validation.previewRequired", {
+            defaultValue: "Preview the intent impact before confirming.",
+          }),
+        );
       }
       if (item.binding_generation === null) {
-        throw new Error("Surface review has no active publication");
+        throw new Error(
+          t("surfaceReview:errors.validation.publicationUnavailable", {
+            defaultValue: "Surface review has no active publication.",
+          }),
+        );
       }
       return surfaceReviewsApi.resolveIntent(item.review_item_id, {
         action: preview.action,
