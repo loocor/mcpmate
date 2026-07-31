@@ -88,25 +88,6 @@ function tryAction(action: () => void): boolean {
 	}
 }
 
-function buildOAuthCallbackStorageSignal(
-	type: OAuthCallbackNotificationPayload["type"],
-): OAuthCallbackNotificationPayload | null {
-	switch (type) {
-		case "OAUTH_CALLBACK_SUCCESS":
-			return {
-				type: "OAUTH_CALLBACK_SUCCESS",
-				timestamp: Date.now(),
-			};
-		case "OAUTH_CALLBACK_ERROR":
-			return {
-				type: "OAUTH_CALLBACK_ERROR",
-				timestamp: Date.now(),
-			};
-		default:
-			return null;
-	}
-}
-
 export function publishOAuthCallbackNotification(
 	payload: OAuthCallbackNotificationPayload,
 ): void {
@@ -130,9 +111,22 @@ export function publishOAuthCallbackNotification(
 		}
 	}
 
-	const storageSignal = buildOAuthCallbackStorageSignal(payload.type);
-	if (!storageSignal) {
-		return;
+	let storageSignal: OAuthCallbackNotificationPayload;
+	switch (payload.type) {
+		case "OAUTH_CALLBACK_SUCCESS":
+			storageSignal = {
+				type: "OAUTH_CALLBACK_SUCCESS",
+				timestamp: Date.now(),
+			};
+			break;
+		case "OAUTH_CALLBACK_ERROR":
+			storageSignal = {
+				type: "OAUTH_CALLBACK_ERROR",
+				timestamp: Date.now(),
+			};
+			break;
+		default:
+			return;
 	}
 
 	tryAction(() => {
