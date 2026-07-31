@@ -452,12 +452,13 @@ pub async fn discover_from_service(
     capabilities: Option<rmcp::model::ServerCapabilities>,
 ) -> Result<CapabilitySnapshot> {
     let peer_info = service.peer_info();
+    let initialize = crate::core::transport::client::legacy_initialize_result(peer_info.as_deref())?;
     let mut snap = CapabilitySnapshot {
-        protocol_version: peer_info.as_deref().map(|info| info.protocol_version.to_string()),
-        upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
-        upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
-        server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
-        initialize: peer_info.as_deref().cloned(),
+        protocol_version: initialize.as_ref().map(|info| info.protocol_version.to_string()),
+        upstream_name: initialize.as_ref().map(|info| info.server_info.name.clone()),
+        upstream_title: initialize.as_ref().and_then(|info| info.server_info.title.clone()),
+        server_version: initialize.as_ref().map(|info| info.server_info.version.clone()),
+        initialize,
         ..Default::default()
     };
 
@@ -511,12 +512,13 @@ pub async fn discover_from_config(
     };
 
     let peer_info = service.peer_info();
+    let initialize = crate::core::transport::client::legacy_initialize_result(peer_info.as_deref())?;
     let mut snap = CapabilitySnapshot {
-        protocol_version: peer_info.as_deref().map(|info| info.protocol_version.to_string()),
-        upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
-        upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
-        server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
-        initialize: peer_info.as_deref().cloned(),
+        protocol_version: initialize.as_ref().map(|info| info.protocol_version.to_string()),
+        upstream_name: initialize.as_ref().map(|info| info.server_info.name.clone()),
+        upstream_title: initialize.as_ref().and_then(|info| info.server_info.title.clone()),
+        server_version: initialize.as_ref().map(|info| info.server_info.version.clone()),
+        initialize,
         ..Default::default()
     };
 
@@ -604,12 +606,13 @@ pub async fn discover_from_config_preview(
     };
 
     let peer_info = service.peer_info();
+    let initialize = crate::core::transport::client::legacy_initialize_result(peer_info.as_deref())?;
     let mut snap = CapabilitySnapshot {
-        protocol_version: peer_info.as_deref().map(|info| info.protocol_version.to_string()),
-        upstream_name: peer_info.as_deref().map(|info| info.server_info.name.clone()),
-        upstream_title: peer_info.as_deref().and_then(|info| info.server_info.title.clone()),
-        server_version: peer_info.as_deref().map(|info| info.server_info.version.clone()),
-        initialize: peer_info.as_deref().cloned(),
+        protocol_version: initialize.as_ref().map(|info| info.protocol_version.to_string()),
+        upstream_name: initialize.as_ref().map(|info| info.server_info.name.clone()),
+        upstream_title: initialize.as_ref().and_then(|info| info.server_info.title.clone()),
+        server_version: initialize.as_ref().map(|info| info.server_info.version.clone()),
+        initialize,
         ..Default::default()
     };
     snap.set_tools(tools);

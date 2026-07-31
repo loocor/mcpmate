@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use rmcp::{
-    RoleServer, Service,
+    RoleServer, ServerHandler,
     model::InitializeRequestParams,
     service::RequestContext,
     transport::{
@@ -956,7 +956,7 @@ impl UnifiedHttpServer {
     ) -> Result<()>
     where
         F: Fn() -> S + Clone + Send + Sync + 'static,
-        S: Service<RoleServer> + Send + Sync + 'static,
+        S: ServerHandler + Send + Sync + 'static,
     {
         tracing::info!(
             "Starting unified HTTP server on {} with Streamable HTTP at {}",
@@ -967,7 +967,7 @@ impl UnifiedHttpServer {
         let streamable_http_config = StreamableHttpServerConfig::default()
             .with_sse_keep_alive(self.config.keep_alive_interval)
             .with_sse_retry(Some(std::time::Duration::from_secs(3)))
-            .with_stateful_mode(true)
+            .with_legacy_session_mode(true)
             .with_json_response(false)
             .with_cancellation_token(self.config.cancellation_token.clone());
 
@@ -1756,7 +1756,7 @@ mod tests {
             || Ok(RejectingInitializeServer),
             Arc::new(LocalSessionManager::default()),
             StreamableHttpServerConfig::default()
-                .with_stateful_mode(true)
+                .with_legacy_session_mode(true)
                 .with_json_response(false),
         );
         let app = axum::Router::new()

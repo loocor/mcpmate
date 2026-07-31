@@ -864,7 +864,7 @@ pub(crate) async fn commit_full_discovery_observation(
         &owner.server_name,
         &owner.config_fingerprint,
         crate::config::server::capabilities::CapabilityProtocolObservation {
-            initialize: owner.peer.peer_info().as_deref().cloned(),
+            initialize: crate::core::transport::client::legacy_initialize_result(owner.peer.peer_info().as_deref())?,
             tools: observation.tools.clone(),
             resources: observation.resources.clone(),
             prompts: observation.prompts.clone(),
@@ -898,7 +898,7 @@ pub(crate) async fn commit_discovery_observation(
         &owner.server_name,
         &owner.config_fingerprint,
         crate::config::server::capabilities::CapabilityProtocolObservation {
-            initialize: owner.peer.peer_info().as_deref().cloned(),
+            initialize: crate::core::transport::client::legacy_initialize_result(owner.peer.peer_info().as_deref())?,
             tools,
             resources,
             prompts,

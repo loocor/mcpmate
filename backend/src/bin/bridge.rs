@@ -8,11 +8,11 @@ use reqwest::{
 use rmcp::{
     ClientHandler, ErrorData as McpError, RoleClient, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, CancelledNotificationParam, ClientCapabilities, ClientInfo,
-        CompleteRequestParams, CompleteResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
-        InitializeResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
-        PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, ServerCapabilities,
-        ServerInfo, SubscribeRequestParams, UnsubscribeRequestParams,
+        CallToolRequestParams, CancelledNotificationParam, ClientCapabilities, ClientInfo, CompleteRequestParams,
+        CompleteResult, GetPromptRequestParams, InitializeRequestParams, InitializeResult, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        ReadResourceRequestParams, ServerCapabilities, ServerInfo, ServerPeerInfo, SubscribeRequestParams,
+        UnsubscribeRequestParams,
     },
     serve_server,
     service::{NotificationContext, RequestContext, ServiceExt},
@@ -184,6 +184,21 @@ enum UpstreamKind {
     Streamable(String),
 }
 
+fn legacy_bridge_server_info(peer: &ServerPeerInfo) -> Result<ServerInfo, McpError> {
+    let server_info = peer
+        .server_info
+        .clone()
+        .ok_or_else(|| McpError::internal_error("Legacy initialize omitted server implementation information", None))?;
+    let mut result = ServerInfo::new(peer.capabilities.clone())
+        .with_protocol_version(peer.protocol_version.clone())
+        .with_server_info(server_info);
+    if let Some(instructions) = peer.instructions.clone() {
+        result = result.with_instructions(instructions);
+    }
+    result.meta = peer.meta.clone();
+    Ok(result)
+}
+
 fn remap_sse_to_mcp(url: &str) -> Option<String> {
     let mut parsed = reqwest::Url::parse(url).ok()?;
     let trimmed = parsed.path().trim_end_matches('/');
@@ -252,7 +267,7 @@ impl BridgeServer {
             return Ok(());
         }
 
-        let protocol_version = ProtocolVersion::LATEST.to_string();
+        let protocol_version = ProtocolVersion::V_2025_11_25.to_string();
         let mut default_headers = HeaderMap::new();
         let header_value = HeaderValue::from_str(&protocol_version).map_err(|err| {
             tracing::error!("Invalid MCP protocol version header: {err}");
@@ -315,10 +330,13 @@ impl BridgeServer {
 
         match service_result {
             Ok(service) => {
+                service
+                    .set_response_cache_config(rmcp::ClientCacheConfig::disabled())
+                    .await;
                 let service = Arc::new(service);
                 if let Some(info) = service.peer().peer_info() {
                     let mut guard = self.server_info.write().expect("server_info poisoned");
-                    *guard = Some(info.as_ref().clone());
+                    *guard = Some(legacy_bridge_server_info(info.as_ref())?);
                 }
                 self.runtime.set(service).await;
                 tracing::info!("Successfully initialized upstream MCP client");
@@ -406,7 +424,7 @@ impl BridgeServer {
             ServerInfo::new(ServerCapabilities::builder().build())
                 .with_server_info(branding::bridge::create_server_implementation())
                 .with_instructions(branding::bridge::DESCRIPTION.to_string())
-                .with_protocol_version(ProtocolVersion::LATEST)
+                .with_protocol_version(ProtocolVersion::V_2025_11_25)
         }
     }
 }
@@ -430,7 +448,7 @@ impl ClientHandler for BridgeClient {
             ClientCapabilities::default(),
             branding::bridge::create_client_implementation(&appid),
         )
-        .with_protocol_version(ProtocolVersion::LATEST)
+        .with_protocol_version(ProtocolVersion::V_2025_11_25)
     }
 
     async fn on_tool_list_changed(
@@ -491,6 +509,17 @@ impl ClientHandler for BridgeClient {
 /// The bridge server simply proxies upstream capabilities.
 #[allow(clippy::manual_async_fn)]
 impl ServerHandler for BridgeServer {
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        protocol::supported_downstream_protocol_versions()
+    }
+
+    fn discover(
+        &self,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<rmcp::model::DiscoverResult, McpError>> + Send + '_ {
+        std::future::ready(Err(McpError::method_not_found::<rmcp::model::DiscoverRequestMethod>()))
+    }
+
     fn get_info(&self) -> ServerInfo {
         self.downstream_server_info()
     }
@@ -501,6 +530,12 @@ impl ServerHandler for BridgeServer {
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<InitializeResult, McpError>> + Send + '_ {
         async move {
+            if !protocol::supports_downstream_protocol_version(request.protocol_version.as_str()) {
+                return Err(McpError::unsupported_protocol_version(
+                    request.protocol_version.clone(),
+                    protocol::supported_downstream_protocol_versions().as_ref(),
+                ));
+            }
             if context.peer.peer_info().is_none() {
                 context.peer.set_peer_info(request);
             }
@@ -541,13 +576,14 @@ impl ServerHandler for BridgeServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<rmcp::model::CallToolResponse, McpError>> + Send + '_ {
         async move {
             self.forward_request(&context, move |service| {
                 let req = request;
                 async move { service.call_tool(req).await }
             })
             .await
+            .map(Into::into)
         }
     }
 
@@ -583,16 +619,21 @@ impl ServerHandler for BridgeServer {
         &self,
         request: ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<rmcp::model::ReadResourceResponse, McpError>> + Send + '_ {
         async move {
             self.forward_request(&context, move |service| {
                 let req = request;
                 async move { service.read_resource(req).await }
             })
             .await
+            .map(Into::into)
         }
     }
 
+    #[expect(
+        deprecated,
+        reason = "MCPMate intentionally preserves pre-2026 resource subscriptions"
+    )]
     fn subscribe(
         &self,
         request: SubscribeRequestParams,
@@ -607,6 +648,10 @@ impl ServerHandler for BridgeServer {
         }
     }
 
+    #[expect(
+        deprecated,
+        reason = "MCPMate intentionally preserves pre-2026 resource subscriptions"
+    )]
     fn unsubscribe(
         &self,
         request: UnsubscribeRequestParams,
@@ -625,13 +670,14 @@ impl ServerHandler for BridgeServer {
         &self,
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<rmcp::model::GetPromptResponse, McpError>> + Send + '_ {
         async move {
             self.forward_request(&context, move |service| {
                 let req = request;
                 async move { service.get_prompt(req).await }
             })
             .await
+            .map(Into::into)
         }
     }
 
@@ -719,7 +765,7 @@ async fn main() -> Result<()> {
         .init();
 
     tracing::info!("Starting stdio ↔ MCP bridge");
-    tracing::info!("Using protocol version: {}", ProtocolVersion::LATEST);
+    tracing::info!("Using protocol version: {}", ProtocolVersion::V_2025_11_25);
 
     let notifications = Arc::new(BridgeNotifications::default());
     let runtime = Arc::new(BridgeRuntimeStore::default());
@@ -769,6 +815,71 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     use rmcp::model::RequestId;
+
+    fn test_bridge_server() -> BridgeServer {
+        BridgeServer::new(
+            "http://127.0.0.1:0/mcp".to_string(),
+            None,
+            Arc::new(BridgeNotifications::default()),
+            Arc::new(BridgeRuntimeStore::default()),
+            Arc::new(RwLock::new(None)),
+        )
+    }
+
+    #[test]
+    fn bridge_server_limits_downstream_protocol_versions_to_supported_compatibility_set() {
+        let server = test_bridge_server();
+
+        assert_eq!(
+            server.supported_protocol_versions().as_ref(),
+            &[
+                ProtocolVersion::V_2025_11_25,
+                ProtocolVersion::V_2025_06_18,
+                ProtocolVersion::V_2025_03_26,
+                ProtocolVersion::V_2024_11_05,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn bridge_server_rejects_discover() {
+        let server = test_bridge_server();
+        let (server_transport, _client_transport) = tokio::io::duplex(4096);
+        let running =
+            rmcp::service::serve_directly::<RoleServer, _, _, _, _>(test_bridge_server(), server_transport, None);
+        let context = RequestContext::new(RequestId::String("discover-test".into()), running.peer().clone());
+
+        let error = server
+            .discover(context)
+            .await
+            .expect_err("compatibility mode must not expose server/discover");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::METHOD_NOT_FOUND);
+        running.cancel().await.expect("cancel test server");
+    }
+
+    #[tokio::test]
+    async fn bridge_server_rejects_2026_initialize_before_starting_upstream() {
+        let server = test_bridge_server();
+        let (server_transport, _client_transport) = tokio::io::duplex(4096);
+        let running =
+            rmcp::service::serve_directly::<RoleServer, _, _, _, _>(test_bridge_server(), server_transport, None);
+        let context = RequestContext::new(RequestId::String("initialize-test".into()), running.peer().clone());
+        let request = InitializeRequestParams::new(
+            ClientCapabilities::default(),
+            rmcp::model::Implementation::new("protocol-client", "1.0.0"),
+        )
+        .with_protocol_version(ProtocolVersion::V_2026_07_28);
+
+        let error = server
+            .initialize(request, context)
+            .await
+            .expect_err("2026-07-28 must be rejected before upstream startup");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION);
+        assert!(!server.runtime.is_some().await);
+        running.cancel().await.expect("cancel test server");
+    }
 
     #[tokio::test]
     async fn bridge_notifications_drop_cancellation_without_request_id() {
