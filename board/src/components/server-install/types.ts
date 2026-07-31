@@ -206,7 +206,7 @@ export interface ServerInstallManualFormProps {
 	/** Allow the edit flow to repair a reported namespace issue. */
 	namespaceRemediationAllowed?: boolean;
 	/** Callback for OAuth initiation */
-	onInitiateOAuth?: (config: OAuthConfigRequest) => Promise<void>;
+	onInitiateOAuth?: (config: OAuthConfigRequest, authorizationWindow?: Window) => Promise<void>;
 	/** Callback after OAuth credentials are connected for this server. */
 	onOAuthConnected?: (serverId: string) => void;
 	onAuthModeChange?: (mode: "header" | "oauth") => void;

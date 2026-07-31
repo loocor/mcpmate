@@ -744,6 +744,12 @@ export const serversTranslations = {
 					listenerNotReady:
 						"OAuth callback listener is still initializing. Please try again in a moment.",
 					connectFailedTitle: "Unable to start OAuth",
+					preparingWindowTitle: "MCPMate OAuth",
+					preparingHeading: "Preparing authorization",
+					preparingDescription:
+						"Discovering OAuth metadata and registering a secure client. The authorization page will open here shortly.",
+					popupBlocked:
+						"OAuth popup was blocked. Allow popups for MCPMate and try again.",
 					revokedTitle: "OAuth token revoked",
           revokedMessage:
             "Stored OAuth credentials were removed for this server.",
@@ -1755,6 +1761,11 @@ export const serversTranslations = {
 					connectedMessage: "授权成功。",
 					listenerNotReady: "OAuth 回调监听仍在初始化，请稍后再试。",
 					connectFailedTitle: "无法启动 OAuth",
+					preparingWindowTitle: "MCPMate OAuth",
+					preparingHeading: "正在准备授权",
+					preparingDescription:
+						"正在发现 OAuth 元数据并注册安全客户端，授权页面即将在此窗口打开。",
+					popupBlocked: "OAuth 授权窗口被浏览器拦截。请允许 MCPMate 打开弹窗后重试。",
 					revokedTitle: "OAuth 令牌已撤销",
 					revokedMessage: "已移除该服务器保存的 OAuth 凭据。",
 					revokeFailedTitle: "撤销 OAuth 失败",
@@ -2755,6 +2766,12 @@ export const serversTranslations = {
 					listenerNotReady:
 						"OAuth コールバックの待受けを初期化中です。しばらくしてから再度お試しください。",
 					connectFailedTitle: "OAuth を開始できませんでした",
+					preparingWindowTitle: "MCPMate OAuth",
+					preparingHeading: "認可を準備しています",
+					preparingDescription:
+						"OAuth メタデータを確認し、安全なクライアントを登録しています。まもなくこのウィンドウに認可ページが表示されます。",
+					popupBlocked:
+						"OAuth 認可ウィンドウがブロックされました。MCPMate のポップアップを許可して再度お試しください。",
 					revokedTitle: "OAuth トークンを削除しました",
           revokedMessage:
             "このサーバーに保存されていた OAuth 資格情報を削除しました。",

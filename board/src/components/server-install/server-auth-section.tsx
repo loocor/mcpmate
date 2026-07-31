@@ -6,6 +6,7 @@ import { notifyError, notifySuccess } from "../../lib/notify";
 import {
 	bindDesktopOAuthCallback,
 	getOAuthRedirectUriForForm,
+	reserveOAuthAuthorizationWindow,
 } from "../../lib/oauth-callback-access";
 import { serversApi } from "../../lib/api";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
@@ -35,7 +36,7 @@ interface ServerAuthSectionProps {
 	viewMode: "form" | "json";
 	isNewServer?: boolean;
 	suggestedAuthMode?: "header" | "oauth";
-	onInitiateOAuth: (config: OAuthConfigRequest) => Promise<void>;
+	onInitiateOAuth: (config: OAuthConfigRequest, authorizationWindow?: Window) => Promise<void>;
 	onAuthModeChange?: (mode: "header" | "oauth") => void;
 	onOAuthConnected?: (serverId: string) => void;
 }
@@ -329,7 +330,7 @@ export function ServerAuthSection({
 	}, [isDirty, oauthStatusQ.data, serverId]);
 
 	const connectMutation = useMutation({
-		mutationFn: async () => {
+		mutationFn: async (authorizationWindow?: Window) => {
 			if (isDesktopEnvironment && !desktopListenerReady) {
 				throw new Error(
 					t("manual.auth.oauth.listenerNotReady", {
@@ -350,12 +351,13 @@ export function ServerAuthSection({
 					scopes: formState.scopes,
 					redirect_uri: formState.redirect_uri,
 				};
-			await onInitiateOAuth(payload);
+			await onInitiateOAuth(payload, authorizationWindow);
 		},
 		onSuccess: () => {
 			setProgressState("awaiting_callback");
 		},
-		onError: (error) => {
+		onError: (error, authorizationWindow) => {
+			authorizationWindow?.close();
 			setProgressState("error");
 			notifyError(
 				t("manual.auth.oauth.connectFailedTitle", { defaultValue: "Unable to start OAuth" }),
@@ -385,6 +387,38 @@ export function ServerAuthSection({
 			);
 		},
 	});
+
+	function handleConnect(): void {
+		const authorizationWindow = reserveOAuthAuthorizationWindow({
+			title: t("manual.auth.oauth.preparingWindowTitle", {
+				defaultValue: "MCPMate OAuth",
+			}),
+			heading: t("manual.auth.oauth.preparingHeading", {
+				defaultValue: "Preparing authorization",
+			}),
+			description: t("manual.auth.oauth.preparingDescription", {
+				defaultValue:
+					"Discovering OAuth metadata and registering a secure client. The authorization page will open here shortly.",
+			}),
+			language: i18n.language,
+		});
+
+		if (!authorizationWindow && !isDesktopEnvironment) {
+			setProgressState("error");
+			notifyError(
+				t("manual.auth.oauth.connectFailedTitle", {
+					defaultValue: "Unable to start OAuth",
+				}),
+				t("manual.auth.oauth.popupBlocked", {
+					defaultValue:
+						"OAuth popup was blocked. Allow popups for MCPMate and try again.",
+				}),
+			);
+			return;
+		}
+
+		connectMutation.mutate(authorizationWindow);
+	}
 
 	const status = oauthStatusQ.data ?? {
 		server_id: serverId ?? "",
@@ -622,7 +656,7 @@ export function ServerAuthSection({
 						<Button
 							type="button"
 							size="sm"
-							onClick={() => connectMutation.mutate()}
+							onClick={handleConnect}
 							disabled={isConnectDisabled}
 						>
 							{connectMutation.isPending ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Link2 className="mr-2 h-3 w-3" />}

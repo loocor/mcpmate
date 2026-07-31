@@ -63,8 +63,86 @@ export async function resolveOAuthCallbackAccess(
 	});
 }
 
+function popupFeatures(): string {
+	const width = Math.min(500, window.outerWidth - 40);
+	const height = Math.min(700, window.outerHeight - 60);
+	const left = window.screenX + (window.outerWidth - width) / 2;
+	const top = window.screenY + (window.outerHeight - height) / 2;
+	return `width=${width},height=${height},left=${left},top=${top}`;
+}
+
+interface OAuthPopupPreparationCopy {
+	title: string;
+	heading: string;
+	description: string;
+	language: string;
+}
+
+function escapeHtml(value: string): string {
+	return value
+		.replaceAll("&", "&amp;")
+		.replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;")
+		.replaceAll('"', "&quot;")
+		.replaceAll("'", "&#039;");
+}
+
+function renderOAuthPreparation(
+	authorizationWindow: Window,
+	copy: OAuthPopupPreparationCopy,
+): void {
+	const popupDocument = authorizationWindow.document;
+	popupDocument.open();
+	popupDocument.write(`<!doctype html>
+<html lang="${escapeHtml(copy.language)}">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>${escapeHtml(copy.title)}</title>
+		<style>
+			:root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+			body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; }
+			main { width: min(360px, calc(100vw - 48px)); text-align: center; }
+			.spinner { width: 28px; height: 28px; margin: 0 auto 20px; border: 3px solid #cbd5e1; border-top-color: #0f172a; border-radius: 9999px; animation: spin 0.8s linear infinite; }
+			h1 { margin: 0; font-size: 18px; line-height: 1.4; font-weight: 600; }
+			p { margin: 10px 0 0; color: #64748b; font-size: 14px; line-height: 1.6; }
+			@keyframes spin { to { transform: rotate(360deg); } }
+			@media (prefers-color-scheme: dark) {
+				body { background: #020617; color: #f8fafc; }
+				.spinner { border-color: #334155; border-top-color: #f8fafc; }
+				p { color: #94a3b8; }
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<div class="spinner" aria-hidden="true"></div>
+			<h1>${escapeHtml(copy.heading)}</h1>
+			<p>${escapeHtml(copy.description)}</p>
+		</main>
+	</body>
+</html>`);
+	popupDocument.close();
+}
+
+export function reserveOAuthAuthorizationWindow(
+	copy: OAuthPopupPreparationCopy,
+): Window | null | undefined {
+	if (isTauriEnvironmentSync()) {
+		return undefined;
+	}
+
+	const authorizationWindow = window.open("", "_blank", popupFeatures());
+	if (authorizationWindow) {
+		renderOAuthPreparation(authorizationWindow, copy);
+		authorizationWindow.opener = null;
+	}
+	return authorizationWindow;
+}
+
 async function openOAuthAuthorizationUrl(
 	authorizationUrl: string,
+	authorizationWindow?: Window,
 ): Promise<void> {
 	if (isTauriEnvironmentSync()) {
 		const { invoke } = await import("@tauri-apps/api/core");
@@ -72,24 +150,25 @@ async function openOAuthAuthorizationUrl(
 		return;
 	}
 
-	const width = Math.min(500, window.outerWidth - 40);
-	const height = Math.min(700, window.outerHeight - 60);
-	const left = window.screenX + (window.outerWidth - width) / 2;
-	const top = window.screenY + (window.outerHeight - height) / 2;
-	const popup = window.open(
-		authorizationUrl,
-		"oauth_window",
-		`width=${width},height=${height},left=${left},top=${top}`,
-	);
-	if (!popup) {
-		window.location.assign(authorizationUrl);
+	if (!authorizationWindow) {
+		throw new Error("OAuth popup is unavailable");
 	}
+	if (authorizationWindow.closed) {
+		throw new Error("OAuth popup was closed before authorization could begin");
+	}
+
+	authorizationWindow.location.replace(authorizationUrl);
 }
 
 export async function startOAuthAccessFlow(
 	serverId: string,
 	config: OAuthConfigRequest,
+	authorizationWindow?: Window,
 ): Promise<void> {
+	if (!isTauriEnvironmentSync() && !authorizationWindow) {
+		throw new Error("OAuth popup is unavailable");
+	}
+
 	const callbackAccess = await resolveOAuthCallbackAccess(serverId);
 	const effectiveConfig = {
 		...config,
@@ -111,7 +190,10 @@ export async function startOAuthAccessFlow(
 
 	const redirectRes = await serversApi.initiateOAuth(serverId);
 	if (redirectRes.authorization_url) {
-		await openOAuthAuthorizationUrl(redirectRes.authorization_url);
+		await openOAuthAuthorizationUrl(
+			redirectRes.authorization_url,
+			authorizationWindow,
+		);
 	}
 }
 

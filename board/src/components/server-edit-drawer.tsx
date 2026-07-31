@@ -363,11 +363,14 @@ export function ServerEditDrawer({
 	);
 
 	const handleInitiateOAuth = useCallback(
-		async (config: import("../lib/types").OAuthConfigRequest) => {
+		async (
+			config: import("../lib/types").OAuthConfigRequest,
+			authorizationWindow?: Window,
+		) => {
 			if (!server?.id) return;
 
 			try {
-				await startOAuthAccessFlow(server.id, config);
+				await startOAuthAccessFlow(server.id, config, authorizationWindow);
 			} catch (error) {
 				console.error("Failed to initiate OAuth:", error);
 				throw error;
