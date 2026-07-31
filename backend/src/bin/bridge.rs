@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use anyhow::Result;
 use clap::Parser;
 use mcpmate::common::constants::{branding, client_headers, protocol};
