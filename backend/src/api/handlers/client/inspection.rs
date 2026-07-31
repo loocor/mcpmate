@@ -4,8 +4,10 @@ use crate::api::models::client::{
 };
 use crate::clients::ClientConfigService;
 use crate::clients::analyzer::{ConfigAnalysis, ConfigInspectionReport, inspect_config_content};
+use crate::clients::error::ConfigResult;
 use crate::clients::models::{
-    AttachmentState, ClientConfigFileParse, ContainerType, FormatRule, TemplateFormat, canonical_config_transport_key,
+    AttachmentState, ClientConfigFileParse, ContainerType, FormatRule, MergeStrategy, TemplateFormat,
+    canonical_config_transport_key,
 };
 use crate::clients::service::core::ClientStateRow;
 use crate::clients::service::rules::ConfigRuleInspection;
@@ -53,6 +55,39 @@ pub(super) fn build_parse_metadata(
         .map(parse_data_from_rule);
     let uses_default = override_parse.is_none();
     (effective, override_parse, uses_default)
+}
+
+pub(super) struct MergeStrategyMetadata {
+    pub template_merge_strategy: MergeStrategy,
+    pub system_merge_strategy_override: Option<MergeStrategy>,
+    pub merge_strategy_override: Option<MergeStrategy>,
+    pub effective_merge_strategy: MergeStrategy,
+    pub merge_strategy_source: String,
+    pub supported_merge_strategies: Vec<MergeStrategy>,
+}
+
+pub(super) fn build_merge_strategy_metadata(
+    state: &ClientStateRow,
+    system_override: Option<MergeStrategy>,
+) -> ConfigResult<MergeStrategyMetadata> {
+    let template_strategy = state.template_merge_strategy()?;
+    let override_strategy = state.merge_strategy_override_value()?;
+    let effective_strategy = state.effective_merge_strategy_value(system_override)?;
+    let source = match (override_strategy, system_override, state.merge_strategy()) {
+        (Some(_), _, _) => "client_override",
+        (None, Some(_), _) => "system_override",
+        (None, None, Some(_)) => "template",
+        (None, None, None) => "system_default",
+    };
+
+    Ok(MergeStrategyMetadata {
+        template_merge_strategy: template_strategy,
+        system_merge_strategy_override: system_override,
+        merge_strategy_override: override_strategy,
+        effective_merge_strategy: effective_strategy,
+        merge_strategy_source: source.to_string(),
+        supported_merge_strategies: vec![MergeStrategy::DeepMerge, MergeStrategy::Replace],
+    })
 }
 
 pub(super) fn inspect_client_config_lenient(

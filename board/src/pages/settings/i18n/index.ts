@@ -197,6 +197,22 @@ export const settingsTranslations = {
       },
       policySaved: "Default client policy updated.",
       policySaveFailed: "Failed to update default client policy",
+      writebackDefaultTitle: "Config Writeback Default",
+      writebackDefaultDescription:
+        "Choose the default config writeback behavior. You can also set it per client.",
+      writebackDefault: {
+        auto: "Auto",
+        autoTooltip:
+          "Uses the writeback behavior recommended by each client. Per-client overrides take priority.",
+        deepMerge: "Merge",
+        deepMergeTooltip:
+          "Preserves your existing services and inserts the new MCPMate configuration into them.",
+        replace: "Replace",
+        replaceTooltip:
+          "Removes the existing client config and replaces it with MCPMate-managed content. You can restore your previous config from backups.",
+      },
+      writebackDefaultSaved: "Default config writeback behavior updated.",
+      writebackDefaultSaveFailed: "Failed to update config writeback default",
       backupStrategyTitle: "Client Backup Strategy",
       backupStrategyDescription:
         "Define how client configurations should be backed up.",
@@ -670,6 +686,20 @@ export const settingsTranslations = {
       },
       policySaved: "默认客户端策略已更新。",
       policySaveFailed: "更新默认客户端策略失败",
+      writebackDefaultTitle: "配置写入默认行为",
+      writebackDefaultDescription:
+        "选择写入配置文件的默认方式；你也可以在各个客户端里单独设置。",
+      writebackDefault: {
+        auto: "自动",
+        autoTooltip: "使用各客户端建议的写入行为；客户端单独设置的选项优先。",
+        deepMerge: "合并",
+        deepMergeTooltip: "保留你原有的服务，并把新的 MCPMate 配置插入进去。",
+        replace: "替换",
+        replaceTooltip:
+          "会移除客户端现有的配置，用 MCPMate 管理的内容替换；你可以从备份中找回原有配置。",
+      },
+      writebackDefaultSaved: "默认配置写入行为已更新。",
+      writebackDefaultSaveFailed: "更新默认配置写入行为失败",
       backupStrategyTitle: "客户端备份策略",
       backupStrategyDescription: "定义客户端配置应如何备份。",
       backupLimitTitle: "最大备份副本数",
@@ -1140,6 +1170,22 @@ export const settingsTranslations = {
       },
       policySaved: "既定のクライアントポリシーを更新しました。",
       policySaveFailed: "既定のクライアントポリシーを更新できませんでした",
+      writebackDefaultTitle: "設定書き戻しの既定値",
+      writebackDefaultDescription:
+        "設定ファイルの書き込み方法の既定値を選択します。クライアントごとに個別設定もできます。",
+      writebackDefault: {
+        auto: "自動",
+        autoTooltip:
+          "各クライアントが推奨する書き戻し動作を使用します。クライアントごとの設定が優先されます。",
+        deepMerge: "マージ",
+        deepMergeTooltip:
+          "既存のサービスを保持し、新しい MCPMate 構成を挿入します。",
+        replace: "置換",
+        replaceTooltip:
+          "既存のクライアント設定を削除し、MCPMate 管理の構成に置き換えます。以前の構成はバックアップから復元できます。",
+      },
+      writebackDefaultSaved: "設定書き戻しの既定動作を更新しました。",
+      writebackDefaultSaveFailed: "設定書き戻しの既定動作を更新できませんでした",
       backupStrategyTitle: "クライアントバックアップ戦略",
       backupStrategyDescription:
         "クライアント設定をどのようにバックアップするかを定義します。",

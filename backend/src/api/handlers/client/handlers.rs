@@ -3,9 +3,10 @@
 use super::backups::parse_policy_payload;
 use super::inspection::{
     ClientFileGuardRejection, attachment_state_drift_reason, build_config_file_parse_inspect_data,
-    build_parse_metadata, configured_server_entries_data, derive_attachment_state, detect_mcpmate_in_client_config,
-    evaluate_client_attach_file_guard, evaluate_client_detach_file_guard, inspect_client_config_lenient,
-    mark_configured_server_managed_status, parse_api_transports, parse_rule_from_api_data, transports_data_from_state,
+    build_merge_strategy_metadata, build_parse_metadata, configured_server_entries_data, derive_attachment_state,
+    detect_mcpmate_in_client_config, evaluate_client_attach_file_guard, evaluate_client_detach_file_guard,
+    inspect_client_config_lenient, mark_configured_server_managed_status, parse_api_transports,
+    parse_rule_from_api_data, transports_data_from_state,
 };
 use crate::api::models::client::{
     ClientAttachData, ClientAttachReq, ClientAttachResp, ClientBackupActionData, ClientBackupActionResp,
@@ -371,6 +372,23 @@ pub async fn config_details(
         });
     let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
         build_parse_metadata(&state);
+    let system_merge_strategy_override = service.default_merge_strategy_override().await.map_err(|err| {
+        tracing::error!(
+            client = %request.identifier,
+            error = %err,
+            "Failed to load the system writeback default"
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let merge_strategy_metadata =
+        build_merge_strategy_metadata(&state, system_merge_strategy_override).map_err(|err| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                "Failed to resolve client writeback behavior"
+            );
+            map_config_error_status(&err)
+        })?;
     let transports = transports_data_from_state(&state);
 
     let data = ClientConfigData {
@@ -403,6 +421,12 @@ pub async fn config_details(
         config_file_parse_effective,
         config_file_parse_override,
         uses_template_parse_default,
+        template_merge_strategy: merge_strategy_metadata.template_merge_strategy,
+        system_merge_strategy_override: merge_strategy_metadata.system_merge_strategy_override,
+        merge_strategy_override: merge_strategy_metadata.merge_strategy_override,
+        effective_merge_strategy: merge_strategy_metadata.effective_merge_strategy,
+        merge_strategy_source: merge_strategy_metadata.merge_strategy_source,
+        supported_merge_strategies: merge_strategy_metadata.supported_merge_strategies,
         warnings,
         degraded_reasons,
     };
@@ -829,6 +853,8 @@ pub async fn update_settings(
         config_file_state = ?request.config_file_state,
         config_path = ?request.config_path,
         clear_config_file_parse = %request.clear_config_file_parse,
+        merge_strategy_override = ?request.merge_strategy_override,
+        clear_merge_strategy_override = %request.clear_merge_strategy_override,
         "update_settings: received request"
     );
 
@@ -855,6 +881,8 @@ pub async fn update_settings(
                 logo_url: request.logo_url.clone(),
                 config_file_parse: request.config_file_parse.as_ref().map(parse_rule_from_api_data),
                 clear_config_file_parse: request.clear_config_file_parse,
+                merge_strategy_override: request.merge_strategy_override,
+                clear_merge_strategy_override: request.clear_merge_strategy_override,
                 transports: parsed_transports,
                 clear_transports: request.clear_transports,
             },
@@ -907,6 +935,25 @@ pub async fn update_settings(
         RuntimeClientMetadata::resolve_with_template_metadata(&stored_runtime_metadata, template_metadata);
     let (config_file_parse_effective, config_file_parse_override, uses_template_parse_default) =
         build_parse_metadata(&state);
+    let system_merge_strategy_override = service.default_merge_strategy_override().await.map_err(|err| {
+        tracing::error!(
+            client = %request.identifier,
+            error = %err,
+            "Failed to load the system writeback default after settings update"
+        );
+        client_settings_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+    })?;
+    let merge_strategy_metadata =
+        build_merge_strategy_metadata(&state, system_merge_strategy_override).map_err(|err| {
+            let status = map_config_error_status(&err);
+            tracing::error!(
+                client = %request.identifier,
+                error = %err,
+                status = %status.as_u16(),
+                "Failed to resolve client writeback behavior after settings update"
+            );
+            client_settings_error(status, err.to_string())
+        })?;
     let transports = transports_data_from_state(&state);
 
     let data = crate::api::models::client::ClientSettingsUpdateData {
@@ -927,6 +974,12 @@ pub async fn update_settings(
         config_file_parse_effective,
         config_file_parse_override,
         uses_template_parse_default,
+        template_merge_strategy: merge_strategy_metadata.template_merge_strategy,
+        system_merge_strategy_override: merge_strategy_metadata.system_merge_strategy_override,
+        merge_strategy_override: merge_strategy_metadata.merge_strategy_override,
+        effective_merge_strategy: merge_strategy_metadata.effective_merge_strategy,
+        merge_strategy_source: merge_strategy_metadata.merge_strategy_source,
+        supported_merge_strategies: merge_strategy_metadata.supported_merge_strategies,
         setting_sources: crate::api::models::client::ClientSettingsSourceData {
             display_name: settings_result.display_name_source.to_string(),
             approval_status: settings_result.approval_status_source.to_string(),
@@ -950,6 +1003,9 @@ pub async fn update_settings(
             "transports": data.transports,
             "config_file_parse_effective": data.config_file_parse_effective,
             "config_file_parse_override": data.config_file_parse_override,
+            "merge_strategy_override": data.merge_strategy_override,
+            "effective_merge_strategy": data.effective_merge_strategy,
+            "merge_strategy_source": data.merge_strategy_source,
         })),
         None,
     )
@@ -1636,6 +1692,8 @@ mod tests {
             logo_url: None,
             config_file_parse: None,
             clear_config_file_parse: false,
+            merge_strategy_override: None,
+            clear_merge_strategy_override: false,
             transports: None,
             clear_transports: false,
         }

@@ -61,6 +61,7 @@ pub struct ClientStateRow {
     pub(super) storage_adapter: Option<String>,
     pub(super) storage_path_strategy: Option<String>,
     pub(super) merge_strategy: Option<String>,
+    pub(super) merge_strategy_override: Option<String>,
     pub(super) keep_original_config: Option<i64>,
     pub(super) managed_source: Option<String>,
     pub(super) transports: Option<String>,
@@ -402,6 +403,59 @@ impl ClientStateRow {
         self.merge_strategy.as_deref().filter(|v| !v.trim().is_empty())
     }
 
+    pub fn merge_strategy_override(&self) -> Option<&str> {
+        self.merge_strategy_override
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    fn parse_persisted_merge_strategy(
+        &self,
+        value: Option<&str>,
+        field: &str,
+    ) -> ConfigResult<MergeStrategy> {
+        let value = value.ok_or_else(|| {
+            ConfigError::DataAccessError(format!(
+                "Client '{}' is missing persisted {field}; cannot resolve writeback behavior",
+                self.identifier()
+            ))
+        })?;
+
+        match value {
+            "replace" => Ok(MergeStrategy::Replace),
+            "deep_merge" => Ok(MergeStrategy::DeepMerge),
+            value => Err(ConfigError::DataAccessError(format!(
+                "Client '{}' has unsupported persisted {field} '{value}'",
+                self.identifier()
+            ))),
+        }
+    }
+
+    pub fn template_merge_strategy(&self) -> ConfigResult<MergeStrategy> {
+        match self.merge_strategy() {
+            Some(value) => self.parse_persisted_merge_strategy(Some(value), "merge_strategy"),
+            None => Ok(MergeStrategy::default()),
+        }
+    }
+
+    pub fn merge_strategy_override_value(&self) -> ConfigResult<Option<MergeStrategy>> {
+        self.merge_strategy_override()
+            .map(|value| self.parse_persisted_merge_strategy(Some(value), "merge_strategy_override"))
+            .transpose()
+    }
+
+    pub fn effective_merge_strategy_value(
+        &self,
+        system_override: Option<MergeStrategy>,
+    ) -> ConfigResult<MergeStrategy> {
+        match self.merge_strategy_override_value()? {
+            Some(strategy) => Ok(strategy),
+            None => system_override
+                .map(Ok)
+                .unwrap_or_else(|| self.template_merge_strategy()),
+        }
+    }
+
     pub fn keep_original_config(&self) -> bool {
         self.keep_original_config.map(|v| v != 0).unwrap_or(false)
     }
@@ -630,7 +684,18 @@ impl ClientConfigService {
             })
     }
 
-    pub fn build_render_definition_from_state(state: &ClientStateRow) -> ConfigResult<ClientRenderDefinition> {
+    pub async fn default_merge_strategy_override(&self) -> ConfigResult<Option<MergeStrategy>> {
+        Ok(
+            crate::config::client::runtime_settings::get_client_runtime_defaults(self.db_pool.as_ref())
+                .await?
+                .default_merge_strategy_override,
+        )
+    }
+
+    pub fn build_render_definition_from_state(
+        state: &ClientStateRow,
+        system_override: Option<MergeStrategy>,
+    ) -> ConfigResult<ClientRenderDefinition> {
         let parse = state.effective_config_file_parse()?.ok_or_else(|| {
             ConfigError::DataAccessError(format!(
                 "Client '{}' is missing persisted config_file_parse; cannot render configuration",
@@ -670,10 +735,7 @@ impl ClientConfigService {
         let config_mapping = ConfigMapping {
             container_keys: parse.container_keys.clone(),
             container_type: parse.container_type,
-            merge_strategy: match state.merge_strategy() {
-                Some("deep_merge") => MergeStrategy::DeepMerge,
-                _ => MergeStrategy::Replace,
-            },
+            merge_strategy: state.effective_merge_strategy_value(system_override)?,
             keep_original_config: state.keep_original_config(),
             managed_endpoint: Some(ManagedEndpointConfig {
                 source: state.managed_source().map(str::to_string),
@@ -1161,7 +1223,7 @@ mod render_definition_tests {
             ..ClientStateRow::default()
         };
 
-        let definition = ClientConfigService::build_render_definition_from_state(&state)
+        let definition = ClientConfigService::build_render_definition_from_state(&state, None)
             .expect("metadata transports should not affect render definition");
 
         assert!(definition.config_mapping.format_rules.contains_key("stdio"));
@@ -1198,7 +1260,7 @@ mod render_definition_tests {
             ..ClientStateRow::default()
         };
 
-        let definition = ClientConfigService::build_render_definition_from_state(&state)
+        let definition = ClientConfigService::build_render_definition_from_state(&state, None)
             .expect("render definition should derive transports from format rules");
 
         assert!(definition.config_mapping.format_rules.contains_key("streamable_http"));
@@ -1234,7 +1296,7 @@ mod render_definition_tests {
             ..ClientStateRow::default()
         };
 
-        let error = ClientConfigService::build_render_definition_from_state(&state)
+        let error = ClientConfigService::build_render_definition_from_state(&state, None)
             .expect_err("alias transport keys should be rejected");
 
         assert!(error.to_string().contains("missing persisted transports"));

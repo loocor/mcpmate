@@ -67,7 +67,8 @@ impl ClientConfigService {
             .fetch_state(&options.client_id)
             .await?
             .ok_or_else(|| ConfigError::DataAccessError(format!("Client state not found: {}", options.client_id)))?;
-        let render_definition = Self::build_render_definition_from_state(&state)?;
+        let system_override = self.default_merge_strategy_override().await?;
+        let render_definition = Self::build_render_definition_from_state(&state, system_override)?;
         let transports = (!render_definition.config_mapping.format_rules.is_empty())
             .then(|| render_definition.config_mapping.format_rules.clone());
 

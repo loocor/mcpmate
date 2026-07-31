@@ -272,6 +272,22 @@ export const clientsTranslations = {
             copyFailedTitle: "Copy failed",
           },
         },
+        writeback: {
+          label: "Writeback Behavior",
+          loadError: "Writeback behavior could not be loaded. Try again before saving.",
+          description:
+            "Choose how MCPMate writes MCP server entries into this client's configuration when applying or re-applying.",
+          options: {
+            deepMerge: "Merge",
+            replace: "Replace",
+          },
+          descriptions: {
+            deepMerge:
+              "If you were in replace mode, the config may contain only MCPMate. Switching to merge keeps newly added servers on future writes, but servers already managed by MCPMate are not restored.",
+            replace:
+              "You were previously in merge mode, so the config may contain other MCP servers alongside MCPMate. Replace will replace them with MCPMate's rendered list.",
+          },
+        },
         transportSupport: {
           label: "Transport Support",
           placeholder: "Select supported transports",
@@ -459,6 +475,14 @@ export const clientsTranslations = {
         managementSettingsPendingReason: "Save management settings after this client leaves pending approval.",
         apply: "Apply",
         reapply: "Re-apply",
+        writeback: {
+          notifications: {
+            savedTitle: "Writeback behavior updated",
+            savedMessage: "Future apply, re-apply, and detach operations will use this writeback behavior.",
+            saveFailedTitle: "Unable to update writeback behavior",
+            operationPending: "Wait for the current client configuration operation to finish.",
+          },
+        },
         sections: {
           mode: {
             title: "1. Management Mode",
@@ -1092,6 +1116,22 @@ export const clientsTranslations = {
             copyFailedTitle: "复制失败",
           },
         },
+        writeback: {
+          label: "配置写入方式",
+          loadError: "无法加载配置写入方式，请重试后再保存。",
+          description:
+            "选择应用或重新应用配置时 MCPMate 如何把 MCP 服务器条目写入该客户端的配置。",
+          options: {
+            deepMerge: "合并",
+            replace: "替换",
+          },
+          descriptions: {
+            deepMerge:
+              "之前如果是“替换”模式，配置里可能只有 MCPMate。切到“合并”后，新加入的 MCP 服务器在后续写入时会被保留；但已经纳入 MCPMate 管理的部分不会被还原。",
+            replace:
+              "你之前可能是“合并”模式，除了 MCPMate 之外可能还有其他 MCP 服务器；“替换”会把它们替换成 MCPMate 渲染的结果。",
+          },
+        },
         transportSupport: {
           label: "传输支持",
           placeholder: "选择支持的传输方式",
@@ -1278,6 +1318,14 @@ export const clientsTranslations = {
         managementSettingsPendingReason: "请在该客户端结束待审批状态后再保存管理设置。",
         apply: "应用",
         reapply: "重新应用",
+        writeback: {
+          notifications: {
+            savedTitle: "写入方式已更新",
+            savedMessage: "后续应用、重新应用和分离操作将使用此写入方式。",
+            saveFailedTitle: "无法更新写入方式",
+            operationPending: "请等待当前客户端配置操作完成。",
+          },
+        },
         sections: {
           mode: {
             title: "1. 管理模式",
@@ -1899,6 +1947,22 @@ export const clientsTranslations = {
             copyFailedTitle: "コピーに失敗しました",
           },
         },
+        writeback: {
+          label: "書き戻し方法",
+          loadError: "書き戻し方法を読み込めませんでした。再試行してから保存してください。",
+          description:
+            "適用または再適用時に、MCPMate がこのクライアントの設定へ MCP サーバーエントリを書き込む方法を選択します。",
+          options: {
+            deepMerge: "マージ",
+            replace: "置換",
+          },
+          descriptions: {
+            deepMerge:
+              "以前 replace モードだった場合、設定には MCPMate のみが含まれている可能性があります。マージへ切り替えると今後追加されるサーバーは保持されますが、既に MCPMate 管理下にあるサーバーは復元されません。",
+            replace:
+              "以前マージモードだった場合、MCPMate 以外の MCP サーバーが存在する可能性があります。置換ではそれらを MCPMate のレンダリング結果で置き換えます。",
+          },
+        },
         transportSupport: {
           label: "対応トランスポート",
           placeholder: "対応するトランスポートを選択",
@@ -2092,6 +2156,14 @@ export const clientsTranslations = {
         managementSettingsPendingReason: "このクライアントが承認待ち状態を抜けてから管理設定を保存してください。",
         apply: "適用",
         reapply: "再適用",
+        writeback: {
+          notifications: {
+            savedTitle: "書き戻し方法を更新しました",
+            savedMessage: "今後の適用、再適用、切断ではこの書き戻し方法が使用されます。",
+            saveFailedTitle: "書き戻し方法を更新できません",
+            operationPending: "現在のクライアント設定操作が完了するまでお待ちください。",
+          },
+        },
         sections: {
           mode: {
             title: "1. 管理モード",

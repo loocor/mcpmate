@@ -259,6 +259,10 @@ describe("admin discovery adapter", () => {
 						type: "standard",
 						keys: ["mcpServers"],
 					},
+					merge: {
+						strategy: "deep_merge",
+						keepOriginal: true,
+					},
 				},
 				transports: {
 					stdio: {
@@ -284,6 +288,7 @@ describe("admin discovery adapter", () => {
 			configFileParseFormat: "json",
 			configFileParseContainerType: "standard",
 			configFileParseContainerKeysText: "mcpServers",
+			mergeStrategy: "deep_merge",
 			supportedTransports: ["stdio"],
 		});
 	});

@@ -185,6 +185,8 @@ pub struct SystemSettingsData {
     pub inspector_timeout_ms: u64,
     #[schemars(description = "Default mode for unrecognized or unconfigured clients")]
     pub default_config_mode: String,
+    #[serde(default)]
+    pub default_merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -205,6 +207,31 @@ pub struct SystemSettingsUpdateReq {
     #[schemars(description = "Default mode for unrecognized or unconfigured clients")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_config_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+    #[serde(default)]
+    pub clear_default_merge_strategy_override: bool,
+}
+
+impl SystemSettingsUpdateReq {
+    pub fn has_file_settings_update(&self) -> bool {
+        self.api_port.is_some()
+            || self.mcp_port.is_some()
+            || self.first_contact_behavior.is_some()
+            || self.inspector_timeout_ms.is_some()
+            || self.default_config_mode.is_some()
+    }
+
+    pub fn has_client_defaults_update(&self) -> bool {
+        self.clear_default_merge_strategy_override || self.default_merge_strategy_override.is_some()
+    }
+
+    pub fn validate_storage_boundary(&self) -> Result<(), &'static str> {
+        if self.has_file_settings_update() && self.has_client_defaults_update() {
+            return Err("file-backed system settings and database-backed client defaults must be updated separately");
+        }
+        Ok(())
+    }
 }
 
 api_resp!(

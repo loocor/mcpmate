@@ -62,7 +62,10 @@ async fn get_readiness_status(state: &AppState) -> SystemReadinessResp {
     }
 }
 
-fn system_settings_data(settings: crate::system::settings::SystemSettings) -> SystemSettingsData {
+fn system_settings_data(
+    settings: crate::system::settings::SystemSettings,
+    default_merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+) -> SystemSettingsData {
     SystemSettingsData {
         api_port: settings.api_port,
         mcp_port: settings.mcp_port,
@@ -72,6 +75,7 @@ fn system_settings_data(settings: crate::system::settings::SystemSettings) -> Sy
         onboarding_policy: settings.onboarding_policy().as_str().to_string(),
         inspector_timeout_ms: settings.inspector_timeout_ms,
         default_config_mode: settings.default_config_mode,
+        default_merge_strategy_override,
     }
 }
 
@@ -156,8 +160,14 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Sys
     let settings = crate::system::settings::get_settings(&db.pool)
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
+    let client_defaults = crate::config::client::runtime_settings::get_client_runtime_defaults(&db.pool)
+        .await
+        .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
-    Ok(Json(SystemSettingsResp::success(system_settings_data(settings))))
+    Ok(Json(SystemSettingsResp::success(system_settings_data(
+        settings,
+        client_defaults.default_merge_strategy_override,
+    ))))
 }
 
 pub async fn set_settings(
@@ -168,12 +178,21 @@ pub async fn set_settings(
         .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
+    request
+        .validate_storage_boundary()
+        .map_err(|message| ApiError::BadRequest(message.to_string()))?;
 
     let mut settings = crate::system::settings::get_settings(&db.pool)
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
     let previous = settings.clone();
+    let file_settings_update_requested = request.has_file_settings_update();
+    let merge_strategy_update = if request.clear_default_merge_strategy_override {
+        Some(None)
+    } else {
+        request.default_merge_strategy_override.map(Some)
+    };
 
     if let Some(api_port) = request.api_port {
         settings.api_port = api_port;
@@ -197,23 +216,33 @@ pub async fn set_settings(
         settings.default_config_mode = default_config_mode;
     }
 
-    let applied = crate::system::settings::apply_settings_with_effects(
-        &db.pool,
-        &previous,
-        &settings,
-        state.client_service.clone(),
-    )
-    .await
-    .map_err(|err| match err {
-        ConfigError::DataAccessError(message) => ApiError::BadRequest(message),
-        _ => ApiError::InternalError(err.to_string()),
-    })?;
+    let settings = if file_settings_update_requested {
+        let applied = crate::system::settings::apply_settings_with_effects(
+            &db.pool,
+            &previous,
+            &settings,
+            state.client_service.clone(),
+        )
+        .await
+        .map_err(|err| match err {
+            ConfigError::DataAccessError(message) => ApiError::BadRequest(message),
+            _ => ApiError::InternalError(err.to_string()),
+        })?;
 
-    if let Some(task) = applied.client_reapply_task {
-        crate::system::settings::spawn_mcp_port_reapply_result_logger(task);
+        if let Some(task) = applied.client_reapply_task {
+            crate::system::settings::spawn_mcp_port_reapply_result_logger(task);
+        }
+        applied.settings
+    } else {
+        settings
+    };
+    let client_defaults = match merge_strategy_update {
+        Some(strategy) => {
+            crate::config::client::runtime_settings::set_default_merge_strategy_override(&db.pool, strategy).await
+        }
+        None => crate::config::client::runtime_settings::get_client_runtime_defaults(&db.pool).await,
     }
-
-    let settings = applied.settings;
+    .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
     let mut data = Map::new();
     data.insert("api_port".to_string(), Value::from(settings.api_port));
@@ -229,6 +258,11 @@ pub async fn set_settings(
     data.insert(
         "default_config_mode".to_string(),
         Value::String(settings.default_config_mode.clone()),
+    );
+    data.insert(
+        "default_merge_strategy_override".to_string(),
+        serde_json::to_value(client_defaults.default_merge_strategy_override)
+            .expect("merge strategy serialization must succeed"),
     );
 
     crate::audit::interceptor::emit_event(
@@ -247,7 +281,10 @@ pub async fn set_settings(
     )
     .await;
 
-    Ok(Json(SystemSettingsResp::success(system_settings_data(settings))))
+    Ok(Json(SystemSettingsResp::success(system_settings_data(
+        settings,
+        client_defaults.default_merge_strategy_override,
+    ))))
 }
 
 /// Get system metrics

@@ -1354,6 +1354,8 @@ export interface ServerEntryData {
   url?: string | null;
 }
 
+export type ClientMergeStrategy = "deep_merge" | "replace";
+
 export interface ClientConfigData {
   config_exists: boolean;
   config_path: string;
@@ -1376,6 +1378,16 @@ export interface ClientConfigData {
   attachment_state?: "attached" | "detached" | "not_applicable" | string | null;
   writable_config?: boolean | null;
   governed_by_default_policy?: boolean | null;
+  template_merge_strategy: ClientMergeStrategy;
+  merge_strategy_override?: ClientMergeStrategy | null;
+  system_merge_strategy_override?: ClientMergeStrategy | null;
+  effective_merge_strategy: ClientMergeStrategy;
+  merge_strategy_source:
+    | "template"
+    | "system_default"
+    | "system_override"
+    | "client_override";
+  supported_merge_strategies: ClientMergeStrategy[];
   template: ClientTemplateMetadata;
   description?: string | null;
   homepage_url?: string | null;
@@ -1409,6 +1421,16 @@ export interface ClientSettingsUpdateData {
   docs_url?: string | null;
   support_url?: string | null;
   logo_url?: string | null;
+  template_merge_strategy: ClientMergeStrategy;
+  merge_strategy_override?: ClientMergeStrategy | null;
+  system_merge_strategy_override?: ClientMergeStrategy | null;
+  effective_merge_strategy: ClientMergeStrategy;
+  merge_strategy_source:
+    | "template"
+    | "system_default"
+    | "system_override"
+    | "client_override";
+  supported_merge_strategies: ClientMergeStrategy[];
   setting_sources?: ClientSettingsSourceData | null;
   transports?: Record<string, TransportRuleData> | null;
 }

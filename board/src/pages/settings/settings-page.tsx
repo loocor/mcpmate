@@ -121,6 +121,12 @@ import {
 } from "../../lib/store";
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
+import {
+	buildClientWritebackDefaultUpdate,
+	removeClientWritebackDecisionCache,
+	resolveClientWritebackDefaultSelection,
+	type ClientWritebackDefaultSelection,
+} from "./client-writeback-default";
 import { ProvidersSettings } from "./providers-settings";
 
 const PROVIDER_SWITCH_CONFIRMATION_PHRASE = "ROTATE SECRETS";
@@ -450,6 +456,8 @@ export function SettingsPage() {
 					| "deny"
 					| "review"
 					| "allow",
+				default_merge_strategy_override:
+					settings.default_merge_strategy_override,
 			};
 		},
 	});
@@ -1103,11 +1111,15 @@ export function SettingsPage() {
 			}
 			// Sync cache immediately so duplicate Radix `onValueChange` (same tick / refetch race)
 			// sees the new policy and skips a second mutate + notify.
-			queryClient.setQueryData(["client", "policy", "default"], {
-				config_mode: data.config_mode,
-				capability_source: data.capability_source,
-				first_contact_behavior: data.first_contact_behavior,
-			});
+			queryClient.setQueryData(
+				["client", "policy", "default"],
+				(previous: typeof defaultClientPolicyQuery.data) => ({
+					...previous,
+					config_mode: data.config_mode,
+					capability_source: data.capability_source,
+					first_contact_behavior: data.first_contact_behavior,
+				}),
+			);
 			setDashboardSetting("clientDefaultMode", data.config_mode as ClientDefaultMode);
 			notifySuccess(
 				t("settings:clients.modeTitle", {
@@ -1123,6 +1135,39 @@ export function SettingsPage() {
 			notifyError(
 				t("settings:clients.policySaveFailed", {
 					defaultValue: "Failed to update default client policy",
+				}),
+				stringifyError(error),
+			);
+		},
+	});
+
+	const clientWritebackDefaultMutation = useMutation({
+		mutationFn: async (selection: ClientWritebackDefaultSelection) =>
+			systemApi.setSettings(buildClientWritebackDefaultUpdate(selection)),
+		onSuccess: (settings) => {
+			removeClientWritebackDecisionCache(queryClient);
+			queryClient.setQueryData(["system", "settings"], settings);
+			queryClient.setQueryData(
+				["client", "policy", "default"],
+				(previous: typeof defaultClientPolicyQuery.data) => ({
+					...previous,
+					default_merge_strategy_override:
+						settings.default_merge_strategy_override,
+				}),
+			);
+			notifySuccess(
+				t("settings:clients.writebackDefaultTitle", {
+					defaultValue: "Config Writeback Default",
+				}),
+				t("settings:clients.writebackDefaultSaved", {
+					defaultValue: "Default config writeback behavior updated.",
+				}),
+			);
+		},
+		onError: (error) => {
+			notifyError(
+				t("settings:clients.writebackDefaultSaveFailed", {
+					defaultValue: "Failed to update config writeback default",
 				}),
 				stringifyError(error),
 			);
@@ -1466,16 +1511,58 @@ export function SettingsPage() {
 		[t, i18n.language],
 	);
 
+	const clientWritebackDefaultOptions = useMemo<SegmentOption[]>(
+		() => [
+			{
+				value: "default",
+				label: t("settings:clients.writebackDefault.auto", {
+					defaultValue: "Auto",
+				}),
+				tooltip: t("settings:clients.writebackDefault.autoTooltip", {
+					defaultValue:
+						"Uses the writeback behavior recommended by each client. Per-client overrides take priority.",
+				}),
+			},
+			{
+				value: "deep_merge",
+				label: t("settings:clients.writebackDefault.deepMerge", {
+					defaultValue: "Merge",
+				}),
+				tooltip: t("settings:clients.writebackDefault.deepMergeTooltip", {
+					defaultValue:
+						"Preserves your existing services and inserts the new MCPMate configuration into them.",
+				}),
+			},
+			{
+				value: "replace",
+				label: t("settings:clients.writebackDefault.replace", {
+					defaultValue: "Replace",
+				}),
+				tooltip: t("settings:clients.writebackDefault.replaceTooltip", {
+					defaultValue:
+						"Replaces the client config with the MCPMate-managed content.",
+				}),
+			},
+		],
+		[t, i18n.language],
+	);
+
 	const currentFirstContactBehavior =
 		(defaultClientPolicyQuery.data?.first_contact_behavior as
 			| "deny"
 			| "review"
 			| "allow"
 			| undefined) ?? "review";
+	const currentClientWritebackDefault = resolveClientWritebackDefaultSelection(
+		defaultClientPolicyQuery.data?.default_merge_strategy_override,
+	);
+	const clientDefaultsMutationPending =
+		defaultClientPolicyMutation.isPending ||
+		clientWritebackDefaultMutation.isPending;
 
 	const handleClientDefaultModeSegmentChange = useCallback(
 		(value: string) => {
-			if (defaultClientPolicyMutation.isPending) {
+			if (clientDefaultsMutationPending) {
 				return;
 			}
 			const next = value as ClientDefaultMode;
@@ -1501,6 +1588,7 @@ export function SettingsPage() {
 		[
 			currentFirstContactBehavior,
 			dashboardSettings.clientDefaultMode,
+			clientDefaultsMutationPending,
 			defaultClientPolicyMutation,
 			defaultClientPolicyQuery.data,
 		],
@@ -1508,7 +1596,7 @@ export function SettingsPage() {
 
 	const handleFirstContactSegmentChange = useCallback(
 		(value: string) => {
-			if (defaultClientPolicyMutation.isPending) {
+			if (clientDefaultsMutationPending) {
 				return;
 			}
 			const next = value as "deny" | "review" | "allow";
@@ -1533,8 +1621,29 @@ export function SettingsPage() {
 		[
 			currentFirstContactBehavior,
 			dashboardSettings.clientDefaultMode,
+			clientDefaultsMutationPending,
 			defaultClientPolicyMutation,
 			defaultClientPolicyQuery.data,
+		],
+	);
+
+	const handleClientWritebackDefaultChange = useCallback(
+		(value: string) => {
+			if (clientDefaultsMutationPending) {
+				return;
+			}
+
+			const next = value as ClientWritebackDefaultSelection;
+			if (next === currentClientWritebackDefault) {
+				return;
+			}
+
+			clientWritebackDefaultMutation.mutate(next);
+		},
+		[
+			clientDefaultsMutationPending,
+			clientWritebackDefaultMutation,
+			currentClientWritebackDefault,
 		],
 	);
 
@@ -2107,7 +2216,7 @@ export function SettingsPage() {
 											options={clientModeOptions}
 											value={defaultClientPolicyQuery.data?.config_mode ?? dashboardSettings.clientDefaultMode}
 											onValueChange={handleClientDefaultModeSegmentChange}
-											disabled={defaultClientPolicyMutation.isPending}
+											disabled={clientDefaultsMutationPending}
 											showDots={false}
 										/>
 									</div>
@@ -2132,7 +2241,7 @@ export function SettingsPage() {
 											options={firstContactOptions}
 											value={currentFirstContactBehavior}
 											onValueChange={handleFirstContactSegmentChange}
-											disabled={defaultClientPolicyMutation.isPending}
+											disabled={clientDefaultsMutationPending}
 											showDots={false}
 										/>
 									</div>
@@ -2162,6 +2271,31 @@ export function SettingsPage() {
 													value as ClientListDefaultFilter,
 												)
 											}
+											showDots={false}
+										/>
+									</div>
+								</div>
+
+								<div className={clientsSettingsRowClass}>
+									<div className={clientsSettingsLabelClass}>
+										<h3 className="text-base font-medium">
+											{t("settings:clients.writebackDefaultTitle", {
+												defaultValue: "Config Writeback Default",
+											})}
+										</h3>
+										<p className="text-sm text-muted-foreground">
+											{t("settings:clients.writebackDefaultDescription", {
+												defaultValue:
+													"Choose the default config writeback behavior. You can also set it per client.",
+											})}
+										</p>
+									</div>
+									<div className={clientsSettingsControlClass}>
+										<Segment
+											options={clientWritebackDefaultOptions}
+											value={currentClientWritebackDefault}
+											onValueChange={handleClientWritebackDefaultChange}
+											disabled={clientDefaultsMutationPending}
 											showDots={false}
 										/>
 									</div>

@@ -26,6 +26,7 @@ import type {
 	ClientConfigRestoreReq,
 	ClientConfigUpdateReq,
 	ClientConfigUpdateResp,
+	ClientMergeStrategy,
 	ClientAttachResp,
 	ClientDeleteResp,
 	ClientDetachResp,
@@ -2150,6 +2151,7 @@ export const systemApi = {
 		onboarding_policy: "auto_manage" | "require_approval" | "manual" | string;
 		inspector_timeout_ms: number;
 		default_config_mode: "unify" | "hosted" | "transparent" | string;
+		default_merge_strategy_override: "deep_merge" | "replace" | null;
 	}> => {
 		const response = await fetchApi<
 			ApiWrapper<{
@@ -2162,6 +2164,7 @@ export const systemApi = {
           "auto_manage" | "require_approval" | "manual" | string;
 				inspector_timeout_ms: number;
 				default_config_mode: "unify" | "hosted" | "transparent" | string;
+				default_merge_strategy_override: "deep_merge" | "replace" | null;
 			}>
 		>("/api/system/settings");
 		return extractApiData(response);
@@ -2172,6 +2175,8 @@ export const systemApi = {
 		first_contact_behavior?: "deny" | "review" | "allow" | string;
 		inspector_timeout_ms?: number;
 		default_config_mode?: "unify" | "hosted" | "transparent" | string;
+		default_merge_strategy_override?: "deep_merge" | "replace";
+		clear_default_merge_strategy_override?: boolean;
 	}) => {
 		const response = await fetchApi<
 			ApiWrapper<{
@@ -2184,6 +2189,7 @@ export const systemApi = {
           "auto_manage" | "require_approval" | "manual" | string;
 				inspector_timeout_ms: number;
 				default_config_mode: "unify" | "hosted" | "transparent" | string;
+				default_merge_strategy_override: "deep_merge" | "replace" | null;
 			}>
 		>("/api/system/settings", {
 			method: "POST",
@@ -3078,6 +3084,8 @@ export const clientsApi = {
 		logo_url?: string;
 		config_file_parse?: ClientConfigFileParse;
 		clear_config_file_parse?: boolean;
+		merge_strategy_override?: ClientMergeStrategy;
+		clear_merge_strategy_override?: boolean;
 		transports?: Record<string, TransportRuleData>;
 		clear_transports?: boolean;
 	}) => {

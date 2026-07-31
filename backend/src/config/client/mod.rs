@@ -2,3 +2,4 @@
 // Provides initialization and state management helpers for client tables
 
 pub mod init;
+pub mod runtime_settings;

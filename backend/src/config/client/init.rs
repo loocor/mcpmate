@@ -12,6 +12,7 @@ const DEFAULT_GOVERNANCE_KIND: &str = "passive";
 const DEFAULT_REGISTRATION_ORIGIN: &str = "manual";
 pub(crate) const CLIENT_RUNTIME_SETTINGS_TABLE: &str = "client_runtime_settings";
 pub(crate) const CLIENT_TEMPLATE_RUNTIME_TABLE: &str = "client_template_runtime";
+pub(crate) const CLIENT_WRITEBACK_POLICY_TABLE: &str = "client_writeback_policy";
 pub(crate) const DEFAULT_CONFIG_MODE_SETTING_KEY: &str = "default_config_mode";
 pub(crate) const DEFAULT_CONFIG_MODE: &str = "unify";
 const OPTIONAL_CONFIG_MODE_SCHEMA_FRAGMENT: &str =
@@ -150,6 +151,26 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
     .map_err(|e| {
         tracing::error!("Failed to create {} table: {}", CLIENT_TEMPLATE_RUNTIME_TABLE, e);
         anyhow::anyhow!("Failed to create {} table: {}", CLIENT_TEMPLATE_RUNTIME_TABLE, e)
+    })?;
+
+    sqlx::query(&format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {table} (
+            client_identifier TEXT PRIMARY KEY,
+            merge_strategy TEXT NOT NULL CHECK (merge_strategy IN ('replace', 'deep_merge')),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (client_identifier) REFERENCES {client_table}(identifier) ON DELETE CASCADE
+        )
+        "#,
+        table = CLIENT_WRITEBACK_POLICY_TABLE,
+        client_table = tables::CLIENT,
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to create {} table: {}", CLIENT_WRITEBACK_POLICY_TABLE, e);
+        anyhow::anyhow!("Failed to create {} table: {}", CLIENT_WRITEBACK_POLICY_TABLE, e)
     })?;
 
     ensure_column(

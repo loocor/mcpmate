@@ -398,6 +398,21 @@ pub struct ClientConfigData {
     #[schemars(description = "Whether this client currently falls back to the stored default parsing rules")]
     #[serde(default)]
     pub uses_template_parse_default: bool,
+    #[schemars(description = "Merge strategy recommended by the client template or MCPMate system default")]
+    pub template_merge_strategy: crate::clients::models::MergeStrategy,
+    #[serde(default)]
+    pub system_merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+    #[schemars(description = "Client-specific merge strategy override, if configured")]
+    #[serde(default)]
+    pub merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+    #[schemars(description = "Effective merge strategy used by preview, apply, and re-apply")]
+    pub effective_merge_strategy: crate::clients::models::MergeStrategy,
+    #[schemars(
+        description = "Source of the effective merge strategy: template, system_default, system_override, or client_override"
+    )]
+    pub merge_strategy_source: String,
+    #[schemars(description = "Merge strategies supported by this client configuration target")]
+    pub supported_merge_strategies: Vec<crate::clients::models::MergeStrategy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -969,6 +984,12 @@ pub struct ClientSettingsUpdateReq {
     )]
     #[serde(default)]
     pub clear_config_file_parse: bool,
+    #[schemars(description = "Client-specific merge strategy override")]
+    #[serde(default)]
+    pub merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+    #[schemars(description = "Clear the client-specific merge strategy override and use the template recommendation")]
+    #[serde(default)]
+    pub clear_merge_strategy_override: bool,
     #[schemars(description = "Fine-grained transport rules to persist for runtime rendering")]
     #[serde(default)]
     pub transports: Option<std::collections::HashMap<String, ClientFormatRuleData>>,
@@ -1010,6 +1031,14 @@ pub struct ClientSettingsUpdateData {
     pub config_file_parse_override: Option<ClientConfigFileParseData>,
     #[serde(default)]
     pub uses_template_parse_default: bool,
+    pub template_merge_strategy: crate::clients::models::MergeStrategy,
+    #[serde(default)]
+    pub system_merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+    #[serde(default)]
+    pub merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+    pub effective_merge_strategy: crate::clients::models::MergeStrategy,
+    pub merge_strategy_source: String,
+    pub supported_merge_strategies: Vec<crate::clients::models::MergeStrategy>,
     #[serde(default)]
     pub setting_sources: ClientSettingsSourceData,
 }

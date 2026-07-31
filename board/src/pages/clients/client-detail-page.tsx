@@ -19,7 +19,7 @@ import {
   Trash2,
   Unlink,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Link,
@@ -121,6 +121,7 @@ import { formatBackupTime } from "../../lib/utils";
 import { ClientImportReviewDrawer } from "./components/client-import-review-drawer";
 import { ConfigurationProfileTokenChart } from "./components/configuration-profile-token-chart";
 import { ServerEntryTransportBadge } from "./components/server-entry-transport-badge";
+import { hasPendingClientWritebackMutation } from "./client-writeback-policy";
 import { formatTransportTag } from "./transport-labels";
 
 type UnifyRouteMode = "broker_only" | "server_level" | "capability_level";
@@ -1397,10 +1398,48 @@ export function ClientDetailPage() {
       ),
   });
 
+  const clientWritebackMutationLock = useRef<
+    "apply" | "attachment" | null
+  >(null);
+
+  function beginClientWritebackMutation(
+    operation: "apply" | "attachment",
+  ): () => void {
+    if (clientWritebackMutationLock.current) {
+      throw new Error(
+        t("detail.configuration.writeback.notifications.operationPending", {
+          defaultValue:
+            "Wait for the current client configuration operation to finish.",
+        }),
+      );
+    }
+
+    clientWritebackMutationLock.current = operation;
+    return () => {
+      if (clientWritebackMutationLock.current === operation) {
+        clientWritebackMutationLock.current = null;
+      }
+    };
+  }
+
+  async function runClientWritebackMutation<T>(
+    operation: "apply" | "attachment",
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const release = beginClientWritebackMutation(operation);
+    try {
+      return await mutation();
+    } finally {
+      release();
+    }
+  }
+
   const detachMutation = useMutation({
     mutationFn: async () => {
       if (!identifier) throw new Error("No identifier provided");
-      return clientsApi.detach(identifier);
+      return runClientWritebackMutation("attachment", () =>
+        clientsApi.detach(identifier),
+      );
     },
     onSuccess: () => {
       notifySuccess(
@@ -1427,7 +1466,9 @@ export function ClientDetailPage() {
   const attachMutation = useMutation({
     mutationFn: async () => {
       if (!identifier) throw new Error("No identifier provided");
-      return clientsApi.attach(identifier);
+      return runClientWritebackMutation("attachment", () =>
+        clientsApi.attach(identifier),
+      );
     },
     onSuccess: () => {
       notifySuccess(
@@ -1491,50 +1532,52 @@ export function ClientDetailPage() {
         }
       }
 
-      const capabilityData = await clientsApi.updateCapabilityConfig(
-        buildCapabilityConfigPayload(),
-      );
-      if (!capabilityData) {
-        throw new Error(
-          t("detail.configuration.errors.capabilityConfigMissing", {
-            defaultValue:
-              "Capability configuration update returned no data. Please try again.",
-          }),
+      return runClientWritebackMutation("apply", async () => {
+        const capabilityData = await clientsApi.updateCapabilityConfig(
+          buildCapabilityConfigPayload(),
         );
-      }
+        if (!capabilityData) {
+          throw new Error(
+            t("detail.configuration.errors.capabilityConfigMissing", {
+              defaultValue:
+                "Capability configuration update returned no data. Please try again.",
+            }),
+          );
+        }
 
-      const selectedConfigForManagedApply =
-        mode === "unify"
-          ? "default"
-          : buildClientApplySelectedConfig(capabilityData);
+        const selectedConfigForManagedApply =
+          mode === "unify"
+            ? "default"
+            : buildClientApplySelectedConfig(capabilityData);
 
-      if (shouldRequireLocalConfigWrite) {
+        if (shouldRequireLocalConfigWrite) {
+          const data = await clientsApi.applyConfig({
+            identifier,
+            mode,
+            selected_config: buildClientApplySelectedConfig(capabilityData),
+            preview,
+            backup_policy: preview
+              ? undefined
+              : mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
+          });
+          return { data: data ?? null, preview, clientConfigApplied: true };
+        }
+
+        if (!canSyncManagedConfig) {
+          return { data: null, preview, clientConfigApplied: false };
+        }
+
         const data = await clientsApi.applyConfig({
           identifier,
           mode,
-          selected_config: buildClientApplySelectedConfig(capabilityData),
+          selected_config: selectedConfigForManagedApply,
           preview,
           backup_policy: preview
             ? undefined
             : mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
         });
         return { data: data ?? null, preview, clientConfigApplied: true };
-      }
-
-      if (!canSyncManagedConfig) {
-        return { data: null, preview, clientConfigApplied: false };
-      }
-
-      const data = await clientsApi.applyConfig({
-        identifier,
-        mode,
-        selected_config: selectedConfigForManagedApply,
-        preview,
-        backup_policy: preview
-          ? undefined
-          : mapDashboardSettingsToClientBackupPolicy(dashboardSettings),
       });
-      return { data: data ?? null, preview, clientConfigApplied: true };
     },
     onSuccess: ({ data, preview, clientConfigApplied }) => {
       if (preview) {
@@ -1588,6 +1631,12 @@ export function ClientDetailPage() {
         }),
         resolveClientConfigSyncErrorMessage(e, t),
       ),
+  });
+
+  const clientWritebackMutationPending = hasPendingClientWritebackMutation({
+    applyPending: applyMutation.isPending,
+    attachmentPending:
+      detachMutation.isPending || attachMutation.isPending,
   });
 
   const importMutation = useMutation<ServersImportData, Error, string[]>({
@@ -2162,8 +2211,7 @@ export function ClientDetailPage() {
                             }
                             disabled={
                               !canWriteClientConfig ||
-                              detachMutation.isPending ||
-                              attachMutation.isPending
+                              clientWritebackMutationPending
                             }
                             className="gap-2"
                           >
@@ -2458,7 +2506,7 @@ export function ClientDetailPage() {
                       onClick={() => applyMutation.mutate({ preview: false })}
                       disabled={
                         loadingConfig ||
-                        applyMutation.isPending ||
+                        clientWritebackMutationPending ||
                         !canSaveManagementSettings ||
                         (shouldRequireLocalConfigWrite &&
                           !canApplyTransparentConfig)
@@ -2646,6 +2694,7 @@ export function ClientDetailPage() {
                           />
                         )}
                       </div>
+
                     </div>
 
                     {/* Direct exposure / profiles */}
@@ -3100,13 +3149,14 @@ export function ClientDetailPage() {
 
                               {mode !== "unify" && (
                                 <CapsuleStripeListItem
-                                  interactive
+                                  interactive={!clientWritebackMutationPending}
                                   className={
                                     selectedConfig === "custom" && customProfileId
                                       ? "border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
                                       : "border-dashed border-slate-300 dark:border-slate-600 hover:border-slate-400 dark:hover:border-slate-500"
                                   }
                                   onClick={() => {
+                                    if (clientWritebackMutationPending) return;
                                     if (selectedConfig === "custom") {
                                       if (customProfileId) {
                                         navigate(
@@ -3441,9 +3491,14 @@ export function ClientDetailPage() {
           defaultValue: "Cancel",
         })}
         variant="default"
-        isLoading={detachMutation.isPending || attachMutation.isPending}
+        isLoading={clientWritebackMutationPending}
         onConfirm={async () => {
-          if (!attachmentActionConfirm || !identifier) return;
+          if (
+            !attachmentActionConfirm ||
+            !identifier ||
+            clientWritebackMutationPending
+          )
+            return;
           if (attachmentActionConfirm === "detach") {
             await detachMutation.mutateAsync();
           } else {
