@@ -22,7 +22,6 @@ mod types;
 pub use connection::UpstreamConnectionPool;
 pub(crate) use connection::{
     ValidationConnectionBackoff, ValidationReservationLease, ValidationReservationToken, ValidationShutdownError,
-    apply_pool_failure_updates,
 };
 
 // Re-export selected types for external coordination

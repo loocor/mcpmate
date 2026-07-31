@@ -426,6 +426,54 @@ impl UpstreamConnectionPool {
         }
     }
 
+    /// Connect the transport for a detached production startup worker.
+    ///
+    /// Unlike the health variant this retains the database reference so the
+    /// normal connection side effects (namespace repair, server meta updates)
+    /// still run. The worker never publishes startup events; the coordinator
+    /// publishes exactly once after conditional publication.
+    pub(crate) async fn connect_transport_for_startup(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        let server_config = self
+            .config
+            .mcp_servers
+            .get(server_id)
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_id))?
+            .clone();
+        let config_fingerprint = server_config.source_fingerprint.clone();
+        let result = match server_config.kind {
+            ServerType::Stdio => self.connect_stdio(server_id, instance_id).await,
+            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
+        };
+
+        match result {
+            Ok(()) => {
+                let connection = self.get_instance_mut(server_id, instance_id)?;
+                connection.config_fingerprint = config_fingerprint;
+                connection.reset_connection_attempts();
+                Ok(())
+            }
+            Err(error) => {
+                let requires_manual_intervention =
+                    crate::core::capability::connection_provider::PoolCapabilityConnectionProvider::authentication_failure_code(
+                        &error,
+                    )
+                    .is_some();
+                let connection = self.get_instance_mut(server_id, instance_id)?;
+                let message = format!("Connection failed: {error}");
+                if requires_manual_intervention {
+                    connection.update_permanent_error(message);
+                } else {
+                    connection.update_failed(message);
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Connect to stdio server
     async fn connect_stdio(
         &mut self,

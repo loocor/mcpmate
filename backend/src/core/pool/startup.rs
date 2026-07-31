@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::core::capability::{AffinityKey, ConnectionSelection};
 use crate::core::foundation::types::ConnectionStatus;
-use crate::core::pool::{ProductionRouteKey, UpstreamConnection, UpstreamConnectionPool, apply_pool_failure_updates};
+use crate::core::pool::{ProductionRouteKey, UpstreamConnection, UpstreamConnectionPool};
 
 /// Typed outcome shared by all demands waiting on one startup attempt.
 #[derive(Clone, Debug)]
@@ -112,7 +112,7 @@ impl UpstreamConnectionPool {
             let prepared = {
                 let mut guard = pool.lock().await;
                 guard.prepare_startup_attempt(selection)
-            };
+            }?;
             match prepared {
                 StartupPrepare::Ready(instance_id) => return Ok(instance_id),
                 StartupPrepare::Join(mut outcome_rx) => {
@@ -137,10 +137,37 @@ impl UpstreamConnectionPool {
                     }
                 }
                 StartupPrepare::Own(attempt) => {
+                    let cleanup_route_key = attempt.route_key.clone();
+                    let cleanup_attempt_id = attempt.attempt_id;
+                    let cleanup_server_id = attempt.server_id.clone();
+                    let cleanup_instance_id = attempt.instance_id.clone();
+                    let cleanup_created_at = attempt.created_at;
                     let task_pool = pool.clone();
-                    let outcome = tokio::spawn(async move { run_startup_attempt(&task_pool, *attempt).await })
+                    let outcome = match tokio::spawn(async move { run_startup_attempt(&task_pool, *attempt).await })
                         .await
-                        .context("startup attempt task failed")??;
+                    {
+                        Ok(outcome) => outcome,
+                        Err(join_error) => {
+                            // A panic inside the attempt must never strand the
+                            // registry entry: claim it and fail every joiner.
+                            let mut guard = pool.lock().await;
+                            if let Some(entry) = guard.claim_startup_attempt(&cleanup_route_key, cleanup_attempt_id) {
+                                let _ = entry.outcome_tx.send(Some(StartupAttemptOutcome::Failed(format!(
+                                    "Startup attempt task failed: {join_error}"
+                                ))));
+                            }
+                            if let Ok(connection) = guard.get_instance_mut(&cleanup_server_id, &cleanup_instance_id)
+                                && connection.created_at == cleanup_created_at
+                            {
+                                connection.update_failed("Startup attempt task failed".to_string());
+                            }
+                            drop(guard);
+                            return Err(anyhow::anyhow!(
+                                "Startup attempt task failed for server '{}': {join_error}",
+                                selection.server_id
+                            ));
+                        }
+                    };
                     match outcome {
                         StartupAttemptOutcome::Published(instance_id) => return Ok(instance_id),
                         StartupAttemptOutcome::Failed(error) => return Err(anyhow::anyhow!("{error}")),
@@ -165,23 +192,43 @@ impl UpstreamConnectionPool {
     pub(crate) fn prepare_startup_attempt(
         &mut self,
         selection: &ConnectionSelection,
-    ) -> StartupPrepare {
+    ) -> Result<StartupPrepare> {
         if let Some(instance_id) = self.resolve_production_route(selection)
             && let Ok(Some(ready_id)) = self.select_ready_instance_id(selection)
             && ready_id == instance_id
         {
-            return StartupPrepare::Ready(instance_id);
+            return Ok(StartupPrepare::Ready(instance_id));
+        }
+
+        if let Some(remaining) = self.remaining_backoff(&selection.server_id) {
+            tracing::warn!(
+                server_id = %selection.server_id,
+                wait_secs = remaining.as_secs_f32(),
+                "Connection attempt blocked due to active backoff"
+            );
+            return Err(anyhow::anyhow!(
+                "Server '{}' is backing off for {:.1}s",
+                selection.server_id,
+                remaining.as_secs_f32()
+            ));
+        }
+        if !self.config.mcp_servers.contains_key(&selection.server_id) {
+            return Err(anyhow::anyhow!(
+                "Server '{}' not found in configuration",
+                selection.server_id
+            ));
         }
 
         let route_key = ProductionRouteKey::new(selection.server_id.clone(), selection.affinity_key.clone());
         if let Some(entry) = self.startup_attempts.get(&route_key) {
-            return StartupPrepare::Join(entry.outcome_tx.subscribe());
+            return Ok(StartupPrepare::Join(entry.outcome_tx.subscribe()));
         }
 
         let instance_id = match self.resolve_production_route(selection) {
             Some(instance_id) => instance_id,
             None => self.allocate_production_route(selection),
         };
+        self.invalidate_health_reconnect(&selection.server_id, &instance_id);
         let created_at = self
             .get_instance(&selection.server_id, &instance_id)
             .expect("allocated production instance exists")
@@ -206,7 +253,7 @@ impl UpstreamConnectionPool {
         self.startup_attempts
             .insert(route_key.clone(), StartupAttemptEntry { attempt_id, outcome_tx });
         let worker = self.clone();
-        StartupPrepare::Own(Box::new(StartupAttempt {
+        Ok(StartupPrepare::Own(Box::new(StartupAttempt {
             route_key,
             server_id: selection.server_id.clone(),
             instance_id,
@@ -214,7 +261,7 @@ impl UpstreamConnectionPool {
             config_fingerprint,
             attempt_id,
             worker,
-        }))
+        })))
     }
 
     /// Locked claim: remove the attempt registry entry only when this attempt
@@ -249,7 +296,6 @@ impl UpstreamConnectionPool {
         result: Result<()>,
         worker_connection: Option<UpstreamConnection>,
         worker_token: Option<CancellationToken>,
-        failure_updates: Vec<(String, crate::core::pool::types::FailureState)>,
     ) -> StartupPublish {
         let Some(entry) = self.claim_startup_attempt(route_key, attempt_id) else {
             return StartupPublish::Invalidated {
@@ -287,19 +333,19 @@ impl UpstreamConnectionPool {
 
         match result {
             Ok(()) => {
-                apply_pool_failure_updates(self, failure_updates);
+                self.clear_failure_state(server_id);
                 let connection = worker_connection.expect("successful startup attempt retains its worker connection");
                 let replaced_connection = self
                     .instance_map_mut(route_key)
                     .insert(instance_id.to_string(), connection);
-                let replaced_token = self
-                    .cancellation_tokens
-                    .entry(server_id.to_string())
-                    .or_default()
-                    .insert(
-                        instance_id.to_string(),
-                        worker_token.expect("successful startup attempt retains its worker token"),
-                    );
+                // Only stdio transports register a cancellation token; HTTP/SSE
+                // transports do not, matching the pre-existing pool behavior.
+                let replaced_token = worker_token.and_then(|token| {
+                    self.cancellation_tokens
+                        .entry(server_id.to_string())
+                        .or_default()
+                        .insert(instance_id.to_string(), token)
+                });
                 let _ = entry
                     .outcome_tx
                     .send(Some(StartupAttemptOutcome::Published(instance_id.to_string())));
@@ -309,16 +355,24 @@ impl UpstreamConnectionPool {
                 }
             }
             Err(error) => {
-                apply_pool_failure_updates(self, failure_updates);
+                let requires_manual_intervention =
+                    crate::core::capability::connection_provider::PoolCapabilityConnectionProvider::authentication_failure_code(
+                        &error,
+                    )
+                    .is_some();
+                if requires_manual_intervention {
+                    self.clear_failure_state(server_id);
+                } else {
+                    self.register_failure(
+                        server_id,
+                        crate::core::pool::FailureKind::Connect,
+                        Some(error.to_string()),
+                    );
+                }
                 if let Ok(connection) = self.get_instance_mut(server_id, instance_id)
                     && connection.created_at == created_at
                 {
                     let message = format!("Connection failed: {}", error);
-                    let requires_manual_intervention =
-                        crate::core::capability::connection_provider::PoolCapabilityConnectionProvider::authentication_failure_code(
-                            &error,
-                        )
-                        .is_some();
                     if requires_manual_intervention {
                         connection.update_permanent_error(message);
                     } else {
@@ -387,23 +441,25 @@ impl UpstreamConnectionPool {
 async fn run_startup_attempt(
     pool: &Arc<Mutex<UpstreamConnectionPool>>,
     attempt: StartupAttempt,
-) -> Result<StartupAttemptOutcome> {
+) -> StartupAttemptOutcome {
     let mut worker = attempt.worker;
-    let initial_failure_states = worker.failure_states.clone();
-    let result = worker.connect_internal(&attempt.server_id, &attempt.instance_id).await;
-    let worker_connection = worker
-        .connections
-        .get_mut(&attempt.server_id)
-        .and_then(|instances| instances.remove(&attempt.instance_id));
+    let result = worker
+        .connect_transport_for_startup(&attempt.server_id, &attempt.instance_id)
+        .await;
+    let worker_connection = match &attempt.route_key.affinity_key {
+        AffinityKey::Default => worker
+            .connections
+            .get_mut(&attempt.server_id)
+            .and_then(|instances| instances.remove(&attempt.instance_id)),
+        AffinityKey::PerClient(bound_id) | AffinityKey::PerSession(bound_id) => worker
+            .client_bound_connections
+            .get_mut(&(attempt.server_id.clone(), bound_id.clone()))
+            .and_then(|instances| instances.remove(&attempt.instance_id)),
+    };
     let worker_token = worker
         .cancellation_tokens
         .get_mut(&attempt.server_id)
         .and_then(|tokens| tokens.remove(&attempt.instance_id));
-    let failure_updates = worker
-        .failure_states
-        .into_iter()
-        .filter(|(key, state)| initial_failure_states.get(key) != Some(state))
-        .collect::<Vec<_>>();
 
     let failure_message = result.as_ref().err().map(ToString::to_string);
     let publish = {
@@ -418,7 +474,6 @@ async fn run_startup_attempt(
             result,
             worker_connection,
             worker_token,
-            failure_updates,
         )
     };
 
@@ -428,14 +483,9 @@ async fn run_startup_attempt(
             replaced_token,
         } => {
             UpstreamConnectionPool::discard_startup_result(replaced_connection, replaced_token).await;
-            UpstreamConnectionPool::publish_startup_result(
-                pool.lock().await.database.clone(),
-                &attempt.server_id,
-                true,
-                None,
-            )
-            .await;
-            Ok(StartupAttemptOutcome::Published(attempt.instance_id))
+            let event_database = pool.lock().await.database.clone();
+            UpstreamConnectionPool::publish_startup_result(event_database, &attempt.server_id, true, None).await;
+            StartupAttemptOutcome::Published(attempt.instance_id)
         }
         StartupPublish::Failed {
             connection,
@@ -443,21 +493,17 @@ async fn run_startup_attempt(
             error,
         } => {
             UpstreamConnectionPool::discard_startup_result(connection, cancellation).await;
-            UpstreamConnectionPool::publish_startup_result(
-                pool.lock().await.database.clone(),
-                &attempt.server_id,
-                false,
-                failure_message,
-            )
-            .await;
-            Ok(StartupAttemptOutcome::Failed(error))
+            let event_database = pool.lock().await.database.clone();
+            UpstreamConnectionPool::publish_startup_result(event_database, &attempt.server_id, false, failure_message)
+                .await;
+            StartupAttemptOutcome::Failed(error)
         }
         StartupPublish::Invalidated {
             connection,
             cancellation,
         } => {
             UpstreamConnectionPool::discard_startup_result(connection, cancellation).await;
-            Ok(StartupAttemptOutcome::Superseded)
+            StartupAttemptOutcome::Superseded
         }
     }
 }
@@ -511,16 +557,32 @@ for line in sys.stdin:
     sys.stdout.flush()
 "#;
 
-    const FAILING_STARTUP_FIXTURE: &str = r#"
+    const SLOW_FAILING_STARTUP_FIXTURE: &str = r#"
+import json
 import os
 import sys
+import time
 
 counter = os.environ.get("STARTUP_COUNTER")
 if counter:
     with open(counter, "a") as f:
         f.write("start\n")
-sys.stderr.write("startup fixture failing immediately\n")
-sys.exit(1)
+marker = os.environ.get("STARTUP_MARKER")
+delay = float(os.environ.get("STARTUP_DELAY_SECS", "0"))
+for line in sys.stdin:
+    request = json.loads(line)
+    request_id = request.get("id")
+    if request_id is None:
+        continue
+    if request.get("method") == "initialize":
+        if marker:
+            with open(marker, "a") as f:
+                f.write("init\n")
+        time.sleep(delay)
+        error = {"code": -32000, "message": "slow initialize failure"}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request_id, "error": error}) + "\n")
+        sys.stdout.flush()
+        break
 "#;
 
     fn write_fixture(
@@ -610,7 +672,7 @@ sys.exit(1)
         let marker = temp.path().join("slow-init.marker");
         let slow_env = HashMap::from([
             ("STARTUP_MARKER".to_string(), marker.to_string_lossy().into_owned()),
-            ("STARTUP_DELAY_SECS".to_string(), "2.0".to_string()),
+            ("STARTUP_DELAY_SECS".to_string(), "5.0".to_string()),
         ]);
 
         let mut config = Config::default();
@@ -632,13 +694,13 @@ sys.exit(1)
 
         let pool_b = pool.clone();
         let t_begin = Instant::now();
-        let result_b = tokio::time::timeout(Duration::from_secs(1), async move {
+        let result_b = tokio::time::timeout(Duration::from_secs(2), async move {
             UpstreamConnectionPool::ensure_connected_coordinated(&pool_b, &selection("server-b")).await
         })
         .await
         .expect("server-b must start while server-a is still initializing");
         assert!(
-            t_begin.elapsed() < Duration::from_secs(2),
+            t_begin.elapsed() < Duration::from_secs(3),
             "server-b startup must not wait for slow server-a"
         );
         assert!(result_b.is_ok(), "server-b must reach a connected instance");
@@ -653,9 +715,14 @@ sys.exit(1)
     async fn concurrent_demands_for_same_identity_share_one_startup_attempt() {
         let temp = TempDir::new().expect("temp dir");
         let python = which::which("python3").expect("python3 is required for the stdio fixture");
-        let failing_script = write_fixture(&temp, "failing_startup.py", FAILING_STARTUP_FIXTURE);
+        let failing_script = write_fixture(&temp, "slow_failing_startup.py", SLOW_FAILING_STARTUP_FIXTURE);
+        let marker = temp.path().join("slow-fail-init.marker");
         let counter = temp.path().join("starts.txt");
-        let counter_env = HashMap::from([("STARTUP_COUNTER".to_string(), counter.to_string_lossy().into_owned())]);
+        let counter_env = HashMap::from([
+            ("STARTUP_COUNTER".to_string(), counter.to_string_lossy().into_owned()),
+            ("STARTUP_MARKER".to_string(), marker.to_string_lossy().into_owned()),
+            ("STARTUP_DELAY_SECS".to_string(), "2.0".to_string()),
+        ]);
 
         let mut config = Config::default();
         config.mcp_servers.insert(
@@ -664,11 +731,21 @@ sys.exit(1)
         );
         let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config), None)));
 
-        let demand = |pool: Arc<Mutex<UpstreamConnectionPool>>| {
-            let selection = selection("server-a");
-            async move { UpstreamConnectionPool::ensure_connected_coordinated(&pool, &selection).await }
-        };
-        let (result_one, result_two) = tokio::join!(demand(pool.clone()), demand(pool.clone()));
+        // The first demand starts and blocks in initialize; the second demand
+        // must join the same in-flight attempt deterministically.
+        let pool_one = pool.clone();
+        let demand_one = tokio::spawn(async move {
+            UpstreamConnectionPool::ensure_connected_coordinated(&pool_one, &selection("server-a")).await
+        });
+        wait_for_marker(&marker, Duration::from_secs(10)).await;
+
+        let pool_two = pool.clone();
+        let demand_two = tokio::spawn(async move {
+            UpstreamConnectionPool::ensure_connected_coordinated(&pool_two, &selection("server-a")).await
+        });
+
+        let result_one = demand_one.await.expect("first demand task should complete");
+        let result_two = demand_two.await.expect("second demand task should complete");
         let error_one = result_one.expect_err("first demand must observe the startup failure");
         let error_two = result_two.expect_err("second demand must share the same startup failure");
         assert_eq!(
@@ -786,5 +863,135 @@ sys.exit(1)
             .expect("old server should stop after discard")
             .expect("old server task should join")
             .expect("old server should stop");
+    }
+
+    /// Contract 1/6 for HTTP transports: a successful startup with no pool
+    /// cancellation token (HTTP transports never register one) must publish
+    /// without panicking or blocking the outcome (C1 regression guard).
+    #[tokio::test]
+    async fn startup_publish_tolerates_missing_pool_token() {
+        let (connection, server_handle) = ready_connection("server-a", "instance-a").await;
+        let mut config = Config::default();
+        config.mcp_servers.insert(
+            "server-a".to_string(),
+            MCPServerConfig {
+                source_fingerprint: Some("v1".to_string()),
+                kind: ServerType::StreamableHttp,
+                command: None,
+                args: None,
+                url: Some("http://127.0.0.1:1/mcp".to_string()),
+                env: None,
+                headers: None,
+            },
+        );
+        let mut pool = UpstreamConnectionPool::new(Arc::new(config), None);
+        let mut instance = UpstreamConnection::new("server-a".to_string());
+        instance.id = "instance-a".to_string();
+        instance.update_initializing();
+        let created_at = instance.created_at;
+        pool.connections.insert(
+            "server-a".to_string(),
+            HashMap::from([("instance-a".to_string(), instance)]),
+        );
+        let route_key = ProductionRouteKey::shareable("server-a");
+        pool.production_routes
+            .insert(route_key.clone(), "instance-a".to_string());
+        let (outcome_tx, outcome_rx) = watch::channel(None);
+        pool.startup_attempts.insert(
+            route_key.clone(),
+            StartupAttemptEntry {
+                attempt_id: 11,
+                outcome_tx,
+            },
+        );
+
+        let publish = pool.publish_startup_attempt(
+            &route_key,
+            "server-a",
+            "instance-a",
+            created_at,
+            Some("v1"),
+            11,
+            Ok(()),
+            Some(connection),
+            None,
+        );
+        assert!(
+            matches!(
+                publish,
+                StartupPublish::Published {
+                    replaced_token: None,
+                    ..
+                }
+            ),
+            "missing pool token must not panic or block publication"
+        );
+        let outcome = outcome_rx.borrow().clone().expect("outcome must be published");
+        assert!(
+            matches!(outcome, StartupAttemptOutcome::Published(instance) if instance == "instance-a"),
+            "joiners must receive the published instance id"
+        );
+        let published = pool
+            .get_instance("server-a", "instance-a")
+            .expect("published instance exists");
+        assert!(published.service.is_some(), "service must be published");
+        assert!(published.is_connected(), "instance must be ready");
+        let service = published.service.clone().expect("service published");
+        service.cancellation_token().cancel();
+        let _ = published;
+        drop(pool);
+
+        tokio::time::timeout(Duration::from_secs(5), server_handle)
+            .await
+            .expect("server should stop after cancellation")
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+
+    /// Affinity-bound production routes allocate instances into
+    /// `client_bound_connections`; their startup must publish from that map
+    /// instead of panicking on a missing shared connection (Copilot finding).
+    #[tokio::test]
+    async fn affinity_bound_startup_publishes_from_client_bound_instances() {
+        let temp = TempDir::new().expect("temp dir");
+        let python = which::which("python3").expect("python3 is required for the stdio fixture");
+        let fast_script = write_fixture(&temp, "affinity_fast.py", SLOW_STARTUP_FIXTURE);
+
+        let mut config = Config::default();
+        config.mcp_servers.insert(
+            "server-a".to_string(),
+            stdio_server_config(&python, &fast_script, Some("v1"), None),
+        );
+        let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(Arc::new(config), None)));
+
+        let selection = ConnectionSelection {
+            server_id: "server-a".to_string(),
+            affinity_key: AffinityKey::PerClient("client-1".to_string()),
+        };
+        let pool_a = pool.clone();
+        let instance_id = tokio::time::timeout(Duration::from_secs(10), async move {
+            UpstreamConnectionPool::ensure_connected_coordinated(&pool_a, &selection).await
+        })
+        .await
+        .expect("affinity-bound startup must complete within timeout")
+        .expect("affinity-bound startup must succeed");
+
+        let guard = pool.lock().await;
+        let bound_instances = guard
+            .client_bound_connections
+            .get(&("server-a".to_string(), "client-1".to_string()))
+            .expect("affinity-bound instance must live in client_bound_connections");
+        let bound = bound_instances
+            .get(&instance_id)
+            .expect("published affinity-bound instance exists");
+        assert!(bound.is_connected(), "affinity-bound instance must be ready");
+        assert!(bound.service.is_some(), "affinity-bound service must be published");
+        drop(guard);
+
+        pool.lock()
+            .await
+            .disconnect("server-a", &instance_id)
+            .await
+            .expect("disconnect affinity-bound instance");
     }
 }
