@@ -11,6 +11,7 @@ const originalPrepareOAuth = serversApi.prepareOAuth;
 const originalInitiateOAuth = serversApi.initiateOAuth;
 const originalWindow = globalThis.window;
 const originalBroadcastChannel = globalThis.BroadcastChannel;
+const originalDateNow = Date.now;
 
 const config: OAuthConfigRequest = {
 	authorization_endpoint: "",
@@ -77,6 +78,7 @@ afterEach(() => {
 		configurable: true,
 		value: originalBroadcastChannel,
 	});
+	Date.now = originalDateNow;
 });
 
 describe("startOAuthAccessFlow", () => {
@@ -196,9 +198,10 @@ describe("reserveOAuthAuthorizationWindow", () => {
 });
 
 describe("publishOAuthCallbackNotification", () => {
-	test("publishes an opener-independent storage event payload", () => {
+	test("publishes only non-sensitive storage fallback signals", () => {
 		let storedPayload = "";
 		let removedKey = "";
+		Date.now = () => 456;
 		installWebWindow(() => null, () => undefined);
 		Object.assign(window, {
 			opener: null,
@@ -215,14 +218,33 @@ describe("publishOAuthCallbackNotification", () => {
 		});
 		const payload = {
 			type: "OAUTH_CALLBACK_ERROR" as const,
-			error: "Authorization failed",
+			serverId: "server-secret",
+			error: "Token exchange failed with a sensitive response",
 			timestamp: 123,
 		};
 
 		publishOAuthCallbackNotification(payload);
 
-		expect(JSON.parse(storedPayload)).toEqual(payload);
+		expect(JSON.parse(storedPayload)).toEqual({
+			type: "OAUTH_CALLBACK_ERROR",
+			timestamp: 456,
+		});
+		expect(storedPayload).not.toContain(payload.serverId);
+		expect(storedPayload).not.toContain(payload.error);
 		expect(removedKey).toBe("mcpmate.oauth.callback");
+
+		Date.now = () => 457;
+		publishOAuthCallbackNotification({
+			type: "OAUTH_CALLBACK_SUCCESS",
+			serverId: "server-secret",
+			timestamp: 124,
+		});
+
+		expect(JSON.parse(storedPayload)).toEqual({
+			type: "OAUTH_CALLBACK_SUCCESS",
+			timestamp: 457,
+		});
+		expect(storedPayload).not.toContain("server-secret");
 	});
 
 	test("does not publish a storage fallback when BroadcastChannel succeeds", () => {

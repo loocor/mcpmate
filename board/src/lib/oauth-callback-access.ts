@@ -88,6 +88,25 @@ function tryAction(action: () => void): boolean {
 	}
 }
 
+function buildOAuthCallbackStorageSignal(
+	type: OAuthCallbackNotificationPayload["type"],
+): OAuthCallbackNotificationPayload | null {
+	switch (type) {
+		case "OAUTH_CALLBACK_SUCCESS":
+			return {
+				type: "OAUTH_CALLBACK_SUCCESS",
+				timestamp: Date.now(),
+			};
+		case "OAUTH_CALLBACK_ERROR":
+			return {
+				type: "OAUTH_CALLBACK_ERROR",
+				timestamp: Date.now(),
+			};
+		default:
+			return null;
+	}
+}
+
 export function publishOAuthCallbackNotification(
 	payload: OAuthCallbackNotificationPayload,
 ): void {
@@ -111,8 +130,16 @@ export function publishOAuthCallbackNotification(
 		}
 	}
 
+	const storageSignal = buildOAuthCallbackStorageSignal(payload.type);
+	if (!storageSignal) {
+		return;
+	}
+
 	tryAction(() => {
-		window.localStorage.setItem(OAUTH_CALLBACK_STORAGE_KEY, JSON.stringify(payload));
+		window.localStorage.setItem(
+			OAUTH_CALLBACK_STORAGE_KEY,
+			JSON.stringify(storageSignal),
+		);
 		window.localStorage.removeItem(OAUTH_CALLBACK_STORAGE_KEY);
 	});
 }
